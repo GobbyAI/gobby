@@ -22,6 +22,7 @@ from gobby.mcp_proxy.tools.tasks._task_scope import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 
 pytestmark = pytest.mark.unit
 
@@ -435,6 +436,7 @@ def _synced_side_branch(tmp_path: Path, *, conflict: bool, land: bool) -> list[s
     linked = [git("rev-parse", "HEAD")]
     git("checkout", "-q", "main")
     (tmp_path / "unrelated.py").write_text("UNRELATED = True\n")
+    (tmp_path / "foreign.py").write_text("FOREIGN = True\n")
     if conflict:
         (tmp_path / "shared.py").write_text("MAIN = True\n")
     git("add", ".")
@@ -561,8 +563,9 @@ async def test_net_commit_paths_skip_a_stranded_original_whose_replay_the_candid
     assert net == task_scope.NetCommitPaths(
         changed=frozenset({"f.py", "g.py"}), undelivered=(original,)
     )
-    with pytest.raises(RuntimeError, match="Cannot compute the net diff"):
-        await task_scope.collect_net_commit_paths_async(linked, str(tmp_path))
+    # Without a candidate, every linked non-merge remains in the conservative inventory.
+    unpartitioned = await task_scope.collect_net_commit_paths_async(linked, str(tmp_path))
+    assert unpartitioned == task_scope.NetCommitPaths(changed=frozenset({"f.py", "g.py"}))
 
 
 async def test_net_commit_paths_skip_originals_an_inexact_rebase_left_behind(
@@ -624,10 +627,11 @@ async def test_net_commit_paths_take_each_links_last_status_over_interleaved_for
     )
 
 
-async def test_net_commit_paths_stay_unavailable_when_a_linked_merge_needs_foreign_content(
-    tmp_path: Path,
+@pytest.mark.parametrize("link_merges", [False, True])
+async def test_net_commit_paths_cover_segments_split_by_feature_merges(
+    tmp_path: Path, link_merges: bool
 ) -> None:
-    """A linked merge's first-parent diff can carry unlinked content, so no per-link fallback."""
+    """Inventory both linked segments without importing intervening mainline work."""
     git = _git_repo(tmp_path)
     git("checkout", "-qb", "main")
     _commit_files(tmp_path, git, "base", {"base.py": "BASE = 1\n"})
@@ -636,14 +640,163 @@ async def test_net_commit_paths_stay_unavailable_when_a_linked_merge_needs_forei
     git("checkout", "-q", "main")
     git("merge", "-q", "--no-ff", "-m", "land early", "early")
     early = git("rev-parse", "HEAD")
-    _commit_files(tmp_path, git, "unlinked foreign", {"probe.py": "PROBE = 5\n"})
+    _commit_files(
+        tmp_path, git, "unlinked foreign", {"probe.py": "PROBE = 5\n", "foreign.py": "F = 1\n"}
+    )
     git("checkout", "-qb", "late")
     change = _commit_files(tmp_path, git, "change", {"probe.py": "PROBE = 6\n"})
     git("checkout", "-q", "main")
     git("merge", "-q", "--no-ff", "-m", "land late", "late")
     late = git("rev-parse", "HEAD")
 
-    with pytest.raises(RuntimeError, match="Cannot compute the net diff"):
-        await task_scope.collect_net_commit_paths_async(
-            [started, early, change, late], str(tmp_path)
-        )
+    links = [started, early, change, late] if link_merges else [started, change]
+    net = await task_scope.collect_net_commit_paths_async(links, str(tmp_path), candidate=late)
+
+    assert net == task_scope.NetCommitPaths(changed=frozenset({"early.py", "probe.py"}))
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+async def test_fallback_sync_merge_excludes_mainline_only_paths(
+    tmp_path: Path, conflict: bool
+) -> None:
+    """A late link depends on incoming content; only resolutions belong to the merge."""
+    links = _synced_side_branch(tmp_path, conflict=conflict, land=False)
+    git = _git_repo(tmp_path)
+    links.append(_commit_files(tmp_path, git, "late", {"unrelated.py": "UNRELATED = False\n"}))
+
+    net = await task_scope.collect_net_commit_paths_async(links, str(tmp_path))
+
+    expected = {"feature.py", "unrelated.py"}
+    if conflict:
+        expected.add("shared.py")
+    assert net == task_scope.NetCommitPaths(changed=frozenset(expected))
+
+
+async def test_fallback_rename_keeps_both_paths_and_reverted_paths(tmp_path: Path) -> None:
+    """The conservative inventory keeps touched paths even when their net change is zero."""
+    git = _git_repo(tmp_path)
+    _commit_files(tmp_path, git, "base", {"old.py": "OLD = 1\n", "shared.py": "A = 1\n"})
+    first = _commit_files(tmp_path, git, "first", {"old.py": None, "new.py": "OLD = 1\n"})
+    _commit_files(tmp_path, git, "foreign", {"shared.py": "A = 2\n"})
+    second = _commit_files(
+        tmp_path, git, "second", {"new.py": None, "old.py": "OLD = 1\n", "shared.py": "A = 3\n"}
+    )
+
+    net = await task_scope.collect_net_commit_paths_async([first, second], str(tmp_path))
+
+    assert net == task_scope.NetCommitPaths(
+        changed=frozenset({"old.py", "new.py", "shared.py"}), deleted=frozenset({"new.py"})
+    )
+
+
+async def test_fallback_reports_evil_merge_edits(tmp_path: Path) -> None:
+    """An otherwise clean merge's additional edits belong to the merge itself."""
+    git = _git_repo(tmp_path)
+    git("checkout", "-qb", "main")
+    _commit_files(tmp_path, git, "base", {"shared.py": "A = 1\n", "extra.py": "E = 1\n"})
+    git("checkout", "-qb", "side")
+    first = _commit_files(tmp_path, git, "first", {"feature.py": "F = 1\n"})
+    git("checkout", "-q", "main")
+    _commit_files(tmp_path, git, "foreign", {"shared.py": "A = 2\n", "foreign.py": "F = 2\n"})
+    git("checkout", "-q", "side")
+    git("merge", "--no-ff", "--no-commit", "main")
+    merge = _commit_files(tmp_path, git, "evil merge", {"extra.py": "E = 2\n"})
+    last = _commit_files(tmp_path, git, "last", {"shared.py": "A = 3\n"})
+
+    net = await task_scope.collect_net_commit_paths_async([first, merge, last], str(tmp_path))
+
+    assert net == task_scope.NetCommitPaths(
+        changed=frozenset({"feature.py", "extra.py", "shared.py"})
+    )
+
+
+@pytest.mark.parametrize("delete_resolution", [False, True])
+async def test_fallback_delete_modify_resolution_is_nul_status_output(
+    tmp_path: Path, delete_resolution: bool
+) -> None:
+    """Real remerge output has no conflict headers masquerading as status/path records."""
+    git = _git_repo(tmp_path)
+    git("checkout", "-qb", "main")
+    _commit_files(tmp_path, git, "base", {"victim.py": "V = 1\n", "shared.py": "A = 1\n"})
+    git("checkout", "-qb", "side")
+    first = _commit_files(tmp_path, git, "first", {"feature.py": "F = 1\n", "victim.py": None})
+    git("checkout", "-q", "main")
+    _commit_files(tmp_path, git, "foreign", {"victim.py": "V = 2\n", "shared.py": "A = 2\n"})
+    git("checkout", "-q", "side")
+    conflict = subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", "main"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert conflict.returncode == 1
+    merge = _commit_files(
+        tmp_path, git, "resolve", {"victim.py": None if delete_resolution else "V = 3\n"}
+    )
+    last = _commit_files(tmp_path, git, "last", {"shared.py": "A = 3\n"})
+    raw = git("show", "--remerge-diff", "--format=", "--name-status", "--no-renames", "-z", merge)
+    assert raw == ("D\0victim.py\0" if delete_resolution else "M\0victim.py\0")
+
+    net = await task_scope.collect_net_commit_paths_async([first, merge, last], str(tmp_path))
+
+    assert net == task_scope.NetCommitPaths(
+        changed=frozenset({"feature.py", "victim.py", "shared.py"}),
+        deleted=frozenset({"victim.py"}) if delete_resolution else frozenset(),
+    )
+
+
+async def test_fallback_rejects_octopus_merge(tmp_path: Path) -> None:
+    """An unsupported three-parent merge's empty output cannot prove ownership."""
+    git = _git_repo(tmp_path)
+    base = _commit_files(tmp_path, git, "base", {"base.py": "B = 1\n"})
+    for name in ("one", "two", "three"):
+        git("checkout", "-qb", name, base)
+        _commit_files(tmp_path, git, name, {f"{name}.py": "F = 1\n"})
+    git("checkout", "-q", "one")
+    git("merge", "--no-ff", "-qm", "octopus", "two", "three")
+
+    assert (
+        await task_scope._last_touch_name_status([git("rev-parse", "HEAD")], str(tmp_path)) is None
+    )
+
+
+@pytest.mark.parametrize(
+    "listing",
+    ["M\0path.py", "M\0", "M\0path.py\0extra\0", "header\nM\0path.py\0", "R100\0a\0b\0"],
+)
+async def test_fallback_rejects_malformed_status_records(tmp_path: Path, listing: str) -> None:
+    """Missing fields, headers, and unexpected rename records cannot become path evidence."""
+    sha = "a" * 40
+
+    async def run(args: list[str], **_kwargs: object) -> GitOk:
+        output = f"{sha}\n" if args[0] == "rev-list" and "--parents" in args else listing
+        if args[0] == "rev-list" and "--min-parents=2" in args:
+            output = ""
+        return GitOk(status="ok", argv=tuple(args), stdout=output, stderr="")
+
+    with (
+        patch.object(task_scope, "ancestry_order", new=AsyncMock(return_value=[sha])),
+        patch.object(daemon_git, "run", side_effect=run),
+    ):
+        assert await task_scope._last_touch_name_status([sha], str(tmp_path)) is None
+
+
+@pytest.mark.parametrize("warning", [False, True])
+async def test_fallback_remerge_failure_stays_unavailable(tmp_path: Path, warning: bool) -> None:
+    """A timeout or successful command that warns remerge is unavailable is not evidence."""
+    sha = "a" * 40
+
+    async def run(args: list[str], **_kwargs: object) -> GitOk | GitTimeout:
+        if args[0] == "rev-list":
+            output = f"{sha} {'b' * 40} {'c' * 40}\n" if "--parents" in args else sha
+            return GitOk(status="ok", argv=tuple(args), stdout=output, stderr="")
+        if warning:
+            return GitOk(status="ok", argv=tuple(args), stdout="", stderr="remerge unavailable")
+        return GitTimeout(status="timeout", argv=tuple(args), timeout=10)
+
+    with (
+        patch.object(task_scope, "ancestry_order", new=AsyncMock(return_value=[sha])),
+        patch.object(daemon_git, "run", side_effect=run),
+    ):
+        assert await task_scope._last_touch_name_status([sha], str(tmp_path)) is None
