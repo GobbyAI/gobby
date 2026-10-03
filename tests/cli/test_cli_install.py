@@ -390,7 +390,7 @@ class TestInstallCommand:
         assert result is expected
         assert "Cursor, Antigravity" in capsys.readouterr().out
         mock_confirm.assert_called_once_with(
-            "Configure detected VS Code-family IDE terminals to use tmux and Gobby session titles?",
+            "Configure detected VS Code-family IDE terminals to show Gobby session titles?",
             default=True,
         )
 

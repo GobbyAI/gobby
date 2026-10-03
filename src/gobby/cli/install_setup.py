@@ -246,9 +246,7 @@ def configure_ide_terminals() -> None:
                 f"Configured VS Code-family terminal integration: {', '.join(configured_ides)}"
             )
         for ide_name, result in ide_results.items():
-            if result.get("warning"):
-                click.echo(f"Warning: Skipped {ide_name} terminal integration: {result['warning']}")
-            elif result.get("error"):
+            if result.get("error"):
                 click.echo(
                     f"Warning: Failed to configure {ide_name} terminal integration: "
                     f"{result['error']}"
