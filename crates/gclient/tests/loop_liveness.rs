@@ -411,9 +411,25 @@ impl StallingHost {
             )
             .await
             .expect("direct welcome");
-            let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
+            let ClientMessage::AttachTerminal {
+                host_terminal_id, ..
+            } = read_message_async(&mut stream, MAX_FRAME_SIZE)
                 .await
-                .expect("direct attach");
+                .expect("direct attach")
+            else {
+                panic!("the direct client attaches a terminal after the welcome");
+            };
+            // A host completes the attach with `Attached`; the client waits
+            // for it before the pane goes live (#23076).
+            write_message_async(
+                &mut stream,
+                &ServerMessage::Attached {
+                    created: false,
+                    host_terminal_id,
+                },
+            )
+            .await
+            .expect("direct attached");
             loop {
                 tokio::select! {
                     biased;
