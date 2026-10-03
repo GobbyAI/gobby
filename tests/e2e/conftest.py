@@ -343,11 +343,11 @@ def _checkout_gdaemon_bin_dir(
     gterm dir would otherwise run that dir's gdaemon. The pinned identity stamp
     stays out: it describes the gdaemon this dir replaces.
 
-    Pinned binaries are hard links, never copies: gterm pins its own executable
-    and refuses to host when that executable is a symlink. Non-executable
-    metadata (version and runtime JSON) is copied, since a sandbox may refuse a
-    link to it. The checkout gdaemon stays a symlink so a rebuild that replaces
-    its inode is still followed.
+    Pinned files are hard links, never symlinks: gterm pins its own executable
+    and refuses to host when that executable is a symlink. A sandbox that cannot
+    write the pinned dir refuses the link with EPERM, so those files are copied
+    into this temp dir; the installed set itself is never touched. The checkout
+    gdaemon stays a symlink so a rebuild that replaces its inode is still followed.
     """
     from gobby.utils.native_bin import IDENTITY_STAMP_NAME, native_bin_name
 
@@ -355,15 +355,16 @@ def _checkout_gdaemon_bin_dir(
     skipped = {native_bin_name("gdaemon"), IDENTITY_STAMP_NAME}
     for entry in pinned_bin_dir.iterdir():
         if entry.is_file() and entry.name not in skipped:
-            if not os.access(entry, os.X_OK):
-                shutil.copy2(entry, composite / entry.name)
-                continue
             try:
                 os.link(entry.resolve(), composite / entry.name)
             except OSError as exc:
+                if exc.errno == errno.EPERM:
+                    # A sandbox without write access to the pinned dir refuses every link.
+                    shutil.copy2(entry, composite / entry.name)
+                    continue
                 if exc.errno != errno.EXDEV:
                     raise
-                # No symlink or copy fallback: either would break gterm or the installed set.
+                # No symlink fallback: a symlinked gterm refuses to host.
                 raise RuntimeError(
                     f"cannot hard-link {entry} into {composite}: {exc}. The pinned native "
                     "bin dir and the e2e home must share a filesystem."
