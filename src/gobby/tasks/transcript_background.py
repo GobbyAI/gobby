@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 import shlex
 from dataclasses import replace
-from xml.etree import ElementTree
+
+from defusedxml import ElementTree
 
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
