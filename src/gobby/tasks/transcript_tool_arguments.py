@@ -149,14 +149,34 @@ def python_added_source(old: str, new: str) -> str | None:
     return added if python_noop_module(added) is not None else None
 
 
-def python_noop_module(
-    source: str, *, context_source: str | None = None
-) -> dict[str, frozenset[str] | None] | None:
-    """Recognize a new API module containing declarations and inert class bodies only."""
+PythonModuleCache = dict[str, ast.Module | None]
+
+
+def parse_python_module(source: str, cache: PythonModuleCache | None = None) -> ast.Module | None:
+    """Reuse read-only module trees within one evidence evaluation, including invalid source."""
+    if cache is not None and source in cache:
+        return cache[source]
     try:
         module = ast.parse(source)
-        context = ast.parse(context_source) if context_source is not None else module
     except (SyntaxError, ValueError):
+        module = None
+    if cache is not None:
+        cache[source] = module
+    return module
+
+
+def python_noop_module(
+    source: str,
+    *,
+    context_source: str | None = None,
+    parse_cache: PythonModuleCache | None = None,
+) -> dict[str, frozenset[str] | None] | None:
+    """Recognize a new API module containing declarations and inert class bodies only."""
+    module = parse_python_module(source, parse_cache)
+    context = (
+        parse_python_module(context_source, parse_cache) if context_source is not None else module
+    )
+    if module is None or context is None:
         return None
     classes: dict[str, frozenset[str] | None] = {}
     for statement in module.body:

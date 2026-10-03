@@ -716,7 +716,8 @@ async def _evaluate_close(
                 rename_aliases = await collect_commit_rename_aliases_async(
                     commit_shas, cwd=repo_path
                 )
-                tdd = evaluate_tdd_evidence(
+                tdd = await asyncio.to_thread(
+                    evaluate_tdd_evidence,
                     artifacts.tests,
                     transcript,
                     renamed_test_paths=rename_aliases,

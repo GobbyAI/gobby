@@ -232,6 +232,29 @@ async def _evaluate_named_test_close(
     return evaluation, tdd_check
 
 
+@pytest.mark.asyncio
+async def test_close_tdd_evaluation_runs_off_the_event_loop() -> None:
+    loop_thread = threading.get_ident()
+    evaluator_threads: list[int] = []
+    original = evaluate_tdd_evidence
+
+    def checked_evaluator(*args: Any, **kwargs: Any) -> TddEvidenceResult:
+        evaluator_threads.append(threading.get_ident())
+        return original(*args, **kwargs)
+
+    task = replace(_task(), labels=["tdd:required"])
+    with patch(
+        "tests.mcp_proxy.tools.tasks.test_close_task_flow.evaluate_tdd_evidence",
+        wraps=checked_evaluator,
+    ):
+        evaluation, tdd_check = await _evaluate_named_test_close(task, tdd_result=None)
+
+    assert evaluation.error == "tdd_evidence_missing"
+    tdd_check.assert_called_once()
+    assert len(evaluator_threads) == 1
+    assert evaluator_threads[0] != loop_thread
+
+
 def _ready_evaluation(
     task: Task,
     *,

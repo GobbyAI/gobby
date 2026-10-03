@@ -1,5 +1,8 @@
 """Receipt-backed Python shape edits must preserve genuine TDD chronology."""
 
+import ast
+from collections import Counter
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -7,6 +10,7 @@ import pytest
 
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
+from gobby.tasks.tdd_python_evidence import PythonBindingCache, _binding_count
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -14,6 +18,84 @@ from gobby.tasks.transcript_evidence_models import (
 )
 
 START = datetime(2026, 10, 3, tzinfo=UTC)
+
+
+def test_binding_index_preserves_shadowing_with_one_module_walk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = ast.parse(
+        "from feature import left, right\n"
+        "import feature.tools as tools\n"
+        "def nested(left):\n    right = tools()\n"
+    )
+    walk = ast.walk
+    walked: list[ast.AST] = []
+
+    def counted_walk(node: ast.AST) -> Iterator[ast.AST]:
+        walked.append(node)
+        return walk(node)
+
+    monkeypatch.setattr(ast, "walk", counted_walk)
+    cache: PythonBindingCache = {}
+    assert _binding_count(module, "left", cache) == 2
+    assert _binding_count(module, "right", cache) == 2
+    assert _binding_count(module, "tools", cache) == 1
+    assert _binding_count(module, "nested", cache) == 1
+    assert _binding_count(module, "missing", cache) == 0
+    assert walked == [module]
+
+
+def test_tdd_module_parses_are_bounded_by_distinct_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = "from bridge import Bridge\ndef test_feature():\n    assert Bridge().value == 1\n"
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body=source,
+    )
+    bridge = (
+        "from stub import Stub\nclass Bridge:\n"
+        "    def __init__(self):\n        self.value = existing()\n"
+    )
+    edits = (
+        _edit(test.path, 1, source),
+        _edit("src/stub.py", 2, "class Stub:\n    pass\n"),
+        _edit("src/other.py", 3, "class Other:\n    pass\n"),
+        _edit("src/bridge.py", 4, bridge),
+        _edit(test.path, 5, source),
+        _edit("src/stub.py", 6, "class Stub:\n    pass\n"),
+        _edit(test.path, 7, source),
+        _edit("src/bridge.py", 8, bridge),
+        _edit("src/bridge.py", 12, bridge),
+        _edit("src/bridge.py", 14, bridge),
+    )
+    runs = tuple(
+        replace(
+            _run(test, order, red=True),
+            output="FAILED tests/test_feature.py::test_feature - AssertionError\nE assert 0 == 1",
+        )
+        for order in (9, 10, 11)
+    )
+    evidence = TranscriptEvidence(edits=edits, validation_runs=runs)
+    counts: Counter[str] = Counter()
+    parse = ast.parse
+
+    def counted_parse(source: str, *args: object, **kwargs: object) -> ast.Module:
+        counts[source] += 1
+        return parse(source)
+
+    monkeypatch.setattr(ast, "parse", counted_parse)
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is False
+    assert counts[source] == 1
+    assert counts[bridge] == 1
+    assert max(counts.values()) == 1
+    first_counts = counts.copy()
+    assert evaluate_tdd_evidence((test,), evidence) == result
+    assert counts == Counter({text: count * 2 for text, count in first_counts.items()})
 
 
 def _edit(path: str, order: int, source: str | None = None) -> TranscriptEdit:
