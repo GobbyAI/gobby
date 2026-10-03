@@ -46,6 +46,14 @@ def show_pipeline_run(ctx: click.Context, execution_id: str, json_format: bool) 
     # Fetch step executions
     steps = execution_manager.get_steps_for_execution(execution_id)
 
+    def step_output(raw: str | None) -> Any:
+        if not raw:
+            return None
+        try:
+            return facade.json.loads(raw)
+        except facade.json.JSONDecodeError:
+            return raw
+
     if json_format:
         exec_dict: dict[str, Any] = {
             "id": execution.id,
@@ -71,6 +79,7 @@ def show_pipeline_run(ctx: click.Context, execution_id: str, json_format: bool) 
                     "id": step.id,
                     "step_id": step.step_id,
                     "status": step.status.value,
+                    "output": step_output(step.output_json),
                 }
                 for step in steps
             ],
@@ -96,6 +105,9 @@ def show_pipeline_run(ctx: click.Context, execution_id: str, json_format: bool) 
                 else "○"
             )
             click.echo(f"  {status_icon} {step.step_id} ({step.status.value})")
+            output = step_output(step.output_json)
+            if isinstance(output, dict) and output.get("run_id"):
+                click.echo(f"      run_id: {output['run_id']}")
 
 
 @click.command("approve")

@@ -25,6 +25,7 @@ _background_tasks_by_execution: dict[str, asyncio.Task[None]] = {}
 RunDb = Callable[..., Awaitable[Any]]
 
 DEFINITION_SNAPSHOT_UNUSABLE = "definition_snapshot_unusable"
+RUNBOOK_RESUME_REFUSED = "runbook_resume_refused"
 
 
 def _definition_snapshot(execution: PipelineExecution) -> PipelineDefinition | None:
@@ -442,6 +443,18 @@ async def resume_pipeline(
             "error": f"Only failed pipelines can be resumed (current status: {execution.status.value})",
         }
 
+    # The launch snapshot, not the current definition, decides whether this is a runbook.
+    snapshot = _definition_snapshot(execution)
+    if snapshot is not None and "runbook" in snapshot.tags:
+        return {
+            "success": False,
+            "error_code": RUNBOOK_RESUME_REFUSED,
+            "error": (
+                f"Execution '{execution_id}' is a failed runbook and is never resumed; "
+                "relaunch the missing seats with a fresh run that names them in 'seats'"
+            ),
+        }
+
     # Load the pipeline definition
     try:
         pipeline = await loader.load_pipeline(execution.pipeline_name, execution.project_id)
@@ -461,7 +474,6 @@ async def resume_pipeline(
         }
 
     # The live definition above is only a kill switch; the step graph is the launch snapshot.
-    snapshot = _definition_snapshot(execution)
     if snapshot is None:
         return {
             "success": False,
