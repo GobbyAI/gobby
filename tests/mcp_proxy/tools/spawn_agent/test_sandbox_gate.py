@@ -34,7 +34,7 @@ def _runner() -> MagicMock:
 
 async def _spawn(runner: MagicMock, daemon_config: DaemonConfig) -> dict[str, Any]:
     return await spawn_agent_impl(
-        terminal_backend="tmux",
+        terminal_backend="native",
         prompt="Do the thing",
         runner=runner,
         provider="claude",

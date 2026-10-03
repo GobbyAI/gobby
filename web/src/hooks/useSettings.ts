@@ -115,6 +115,13 @@ function saveToLocalStorage(settings: Settings): void {
   }
 }
 
+// Every Settings field is a primitive, so a shallow comparison is exact.
+function settingsEqual(a: Settings, b: Settings): boolean {
+  return (Object.keys(a) as (keyof Settings)[]).every(
+    (key) => a[key] === b[key],
+  );
+}
+
 const DENSITY_VALUES: readonly Density[] = ["comfortable", "compact"];
 const READING_DIRECTIONS: readonly ReadingDirection[] = ["auto", "ltr", "rtl"];
 const RTL_LANGUAGES = new Set([
@@ -311,7 +318,9 @@ export function useSettings() {
 
   const initialized = useRef(false);
   const pendingChanges = useRef<Partial<Settings>>({});
-  const skipNextPersistence = useRef(false);
+  // The remote merge, while it awaits its first render. Persistence skips only
+  // a render that still equals it, so a change batched into that render is kept.
+  const unpersistedRemoteMerge = useRef<Settings | null>(null);
 
   // On mount: fetch from API and merge (API wins over localStorage, while
   // explicit changes made during the fetch win over the API).
@@ -324,7 +333,7 @@ export function useSettings() {
       const changes = pendingChanges.current;
       pendingChanges.current = {};
       if (!remote && Object.keys(changes).length === 0) return;
-      skipNextPersistence.current = Object.keys(changes).length === 0;
+      const hasChanges = Object.keys(changes).length > 0;
 
       setSettings((prev) => {
         const merged = {
@@ -332,6 +341,7 @@ export function useSettings() {
           ...normalizePersistedSettings(remote),
           ...changes,
         };
+        unpersistedRemoteMerge.current = hasChanges ? null : merged;
         // Also update localStorage with the API values
         saveToLocalStorage(merged);
         return merged;
@@ -400,10 +410,9 @@ export function useSettings() {
   // Persist settings on change (localStorage + API)
   useEffect(() => {
     if (!initialized.current) return;
-    if (skipNextPersistence.current) {
-      skipNextPersistence.current = false;
-      return;
-    }
+    const remoteMerge = unpersistedRemoteMerge.current;
+    unpersistedRemoteMerge.current = null;
+    if (remoteMerge && settingsEqual(settings, remoteMerge)) return;
     saveToLocalStorage(settings);
     saveUISettings(settings);
   }, [settings]);

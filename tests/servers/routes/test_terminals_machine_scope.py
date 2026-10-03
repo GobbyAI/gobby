@@ -100,4 +100,10 @@ def test_discovered_terminal_list_uses_daemon_machine_identity(
     if expected:
         item = listing.json()["items"][0]
         assert item["backend"] == "tmux"
-        assert item["attach"] is None
+        # The external pane is attachable through its own tmux server.
+        attach = item["attach"]
+        assert attach["backend"] == "tmux"
+        assert attach["socket_path"] == "/tmp/isolated-restart-proof.sock"
+        assert attach["pane_id"] == "%proof"
+        assert attach["server_pid"] == 12345
+        assert attach["server_start_time"] == 100

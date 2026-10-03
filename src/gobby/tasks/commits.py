@@ -231,23 +231,25 @@ async def _is_ancestor(ancestor: str, descendant: str, *, cwd: str | Path) -> bo
 
 
 async def _is_sync_merge(sha: str, ordered: list[str], *, cwd: str | Path) -> bool:
-    """True when the other linked commits live on this merge's first-parent line.
+    """Prove a sync from linked first-parent work without second-parent-only delivery.
 
     They were already on that parent, or they were committed there after the
     merge. A landing merge's other commits are reachable only through its
-    second parent, so this returns false and the first-parent diff stands.
+    second parent. Unrelated historical links supply neither proof nor a veto.
     """
     if not await _is_merge(sha, cwd=cwd):
         return False
     others = [other for other in ordered if other != sha]
     if not others:
         return False
+    first_parent_work = False
     for other in others:
         on_first_parent = await _is_ancestor(other, f"{sha}^1", cwd=cwd)
         committed_after = await _is_ancestor(sha, other, cwd=cwd)
-        if not on_first_parent and not committed_after:
+        if not on_first_parent and await _is_ancestor(other, f"{sha}^2", cwd=cwd):
             return False
-    return True
+        first_parent_work |= on_first_parent or committed_after
+    return first_parent_work
 
 
 async def _show_one_commit(

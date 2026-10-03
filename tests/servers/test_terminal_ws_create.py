@@ -32,24 +32,25 @@ async def test_web_create_uses_row_owning_primitive(
     monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID)
     manager = _manager(temp_db)
     runtime = MagicMock()
-    runtime.backend = "tmux"
+    runtime.backend = "native"
+    runtime.reserve_observer = AsyncMock(
+        return_value={"reservation_id": "rsv-1", "reserve_key": "reserve-1"}
+    )
     runtime.prepare_spawn = AsyncMock(
         return_value=MagicMock(
-            stored_locator={
-                "socket_path": "/tmp/tmux/default",
-                "server_pid": 1,
-                "server_start_time": 2,
-                "pane_id": "%1",
-            },
-            locator_key="tmux:/tmp/tmux/default:1:2:%1",
+            stored_locator={"host_terminal_id": "ht-1"},
+            locator_key="native:epoch-1:ht-1",
+            locator=MagicMock(frame_host_epoch="epoch-1"),
+            host_terminal_id="ht-1",
             process=None,
             rows=24,
             cols=80,
             acknowledge_persist=MagicMock(),
         )
     )
+    runtime.bind_observer = AsyncMock()
     runtime.commit_spawn = AsyncMock(
-        return_value=MagicMock(locator=MagicMock(frame_host_epoch=None))
+        return_value=MagicMock(locator=MagicMock(frame_host_epoch="epoch-1"))
     )
     runtime.terminate = AsyncMock()
     result = await spawn_web_terminal(
@@ -67,6 +68,10 @@ async def test_web_create_uses_row_owning_primitive(
     assert row is not None
     assert row.ownership == "gobby"
     assert row.state == "live"
+    assert row.backend == "native"
+    assert (row.process or {}).get("host_terminal_id") == "ht-1"
+    runtime.reserve_observer.assert_awaited_once()
+    runtime.bind_observer.assert_awaited_once()
     listing = manager.list_by_project(sample_project["id"])
     assert row.id in {item.id for item in listing}
 
@@ -228,9 +233,9 @@ async def test_create_without_a_project_lands_in_global_and_names_the_failure(
     server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
     server.terminal_manager = _manager(temp_db)
     runtime = MagicMock()
-    runtime.backend = "tmux"
+    runtime.backend = "native"
     server.terminal_runtime_registry = MagicMock(resolve=MagicMock(return_value=runtime))
-    server.terminal_config = MagicMock(default_backend="tmux")
+    server.terminal_config = MagicMock(default_backend="native")
     created_id = str(uuid.uuid4())
     _create_pending(server.terminal_manager, GLOBAL_PROJECT_ID, terminal_id=created_id)
     spawn = AsyncMock(
@@ -242,11 +247,24 @@ async def test_create_without_a_project_lands_in_global_and_names_the_failure(
     monkeypatch.setattr("gobby.terminals.web_spawn.spawn_web_terminal", spawn)
     ws = MockWebSocket()
     server.clients[ws] = {}
-    request = {"type": "terminal_create", "rows": 24, "cols": 80, "command": ["zsh"]}
+    # A client that still asks for tmux gets the configured native runtime: the
+    # create path never reads a backend from the request.
+    request = {
+        "type": "terminal_create",
+        "rows": 24,
+        "cols": 80,
+        "command": ["zsh"],
+        "backend": "tmux",
+    }
 
     await server._handle_terminal_create(ws, {**request, "request_id": "c-1"})
     await server._handle_terminal_create(ws, {**request, "request_id": "c-2"})
 
+    assert [call.args for call in server.terminal_runtime_registry.resolve.call_args_list] == [
+        ("native",),
+        ("native",),
+    ]
+    assert [call.kwargs["runtime"] for call in spawn.await_args_list] == [runtime, runtime]
     assert [call.kwargs["project_id"] for call in spawn.await_args_list] == [
         GLOBAL_PROJECT_ID,
         GLOBAL_PROJECT_ID,
@@ -257,7 +275,7 @@ async def test_create_without_a_project_lands_in_global_and_names_the_failure(
         "request_id": "c-1",
         "success": False,
         "terminal_id": "t-1",
-        "backend": "tmux",
+        "backend": "native",
         "code": "backend boom",
         "reason": "backend boom",
     }

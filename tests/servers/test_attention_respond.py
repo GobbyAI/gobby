@@ -80,7 +80,7 @@ def _client(
         return function(*args, **kwargs)
 
     async def resolve_pane(_state: AttentionState) -> AttentionPane:
-        return AttentionPane(target="%42", tmux_cmd=("tmux",), capture=capture)
+        return AttentionPane(target="%42", capture=capture)
 
     server = SimpleNamespace(
         services=SimpleNamespace(
@@ -508,83 +508,3 @@ def test_attention_router_composes_session_pane_dependencies(
 
     assert response.status_code == 200
     assert injected[-1].option == 1
-
-
-@pytest.mark.parametrize(
-    ("answer", "expected_payload", "expected_key"),
-    [
-        (AttentionAnswer(option=2), "2", "Enter"),
-        (AttentionAnswer(text="line one\nline two"), "line one\nline two", "Enter"),
-        (AttentionAnswer(key="enter"), None, "Enter"),
-        (AttentionAnswer(key="escape"), None, "Escape"),
-        (AttentionAnswer(key="tab"), None, "Tab"),
-        (AttentionAnswer(key="up"), None, "Up"),
-        (AttentionAnswer(key="down"), None, "Down"),
-    ],
-)
-@pytest.mark.asyncio
-async def test_attention_injection_sequences(
-    answer: AttentionAnswer,
-    expected_payload: str | None,
-    expected_key: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gobby.agents.tmux import text_injection
-
-    commands: list[tuple[str, ...]] = []
-
-    async def record(command: Any, *, timeout: float) -> None:
-        del timeout
-        commands.append(tuple(command))
-
-    monkeypatch.setattr(text_injection, "_run_tmux_command", record)
-
-    await text_injection.inject_attention_answer_to_tmux_target(
-        "%42",
-        option=answer.option,
-        text=answer.text,
-        key=answer.key,
-        enter_delay_seconds=0,
-    )
-
-    send_keys = [command for command in commands if "send-keys" in command]
-    assert send_keys[-1][-1] == expected_key
-    if expected_payload is None:
-        assert len(commands) == 1
-    else:
-        set_buffer = next(command for command in commands if "set-buffer" in command)
-        assert set_buffer[-1] == expected_payload
-        assert send_keys == [("tmux", "send-keys", "-t", "%42", "Enter")]
-
-
-@pytest.mark.parametrize(
-    ("fail_on_command", "expected_stage"),
-    [(1, "none"), (2, "none"), (4, "partial")],
-)
-@pytest.mark.asyncio
-async def test_attention_injection_failure_stage_tracks_delivered_bytes(
-    fail_on_command: int,
-    expected_stage: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gobby.agents.tmux import text_injection
-
-    command_count = 0
-
-    async def fail_at_selected_command(command: Any, *, timeout: float) -> None:
-        nonlocal command_count
-        del command, timeout
-        command_count += 1
-        if command_count == fail_on_command:
-            raise RuntimeError("tmux failed")
-
-    monkeypatch.setattr(text_injection, "_run_tmux_command", fail_at_selected_command)
-
-    with pytest.raises(AttentionInjectionError) as error:
-        await text_injection.inject_attention_answer_to_tmux_target(
-            "%42",
-            option=1,
-            enter_delay_seconds=0,
-        )
-
-    assert error.value.stage == expected_stage

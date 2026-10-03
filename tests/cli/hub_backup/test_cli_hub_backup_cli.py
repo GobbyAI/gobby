@@ -1005,7 +1005,7 @@ class TestEpoch:
             ) -> DaemonConfig:
                 return config
 
-        monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
+        monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", open_database)
         monkeypatch.setenv(MAINTENANCE_EPOCH_ENV, "e1")
         runtime = CliRuntime(
             config_file=None,

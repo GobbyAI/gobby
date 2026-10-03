@@ -183,7 +183,7 @@ def agents() -> None:
 @click.option("--task", "-t", help="Task ID or reference")
 @click.option(
     "--terminal-backend",
-    type=click.Choice(["tmux", "native"]),
+    type=click.Choice(["native"]),
     help="Terminal backend override",
 )
 @click.option("--provider", "-p", default="claude", help="LLM provider (claude, qwen, etc.)")

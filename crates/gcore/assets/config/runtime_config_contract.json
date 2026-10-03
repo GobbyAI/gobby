@@ -4332,7 +4332,7 @@
     {
       "activation": "live",
       "default": "native",
-      "description": "Default TerminalRuntime backend for new Gobby-owned terminals.",
+      "description": "TerminalRuntime backend for new Gobby-owned terminals; only native spawns.",
       "key": "terminals.default_backend",
       "machineExport": false,
       "namespace": "terminals",
@@ -4365,7 +4365,7 @@
     {
       "activation": "live",
       "default": 150.0,
-      "description": "Age below which a pending spawn is in doubt, not dead. Defaults to the tmux init timeout (120s) plus a 30s margin.",
+      "description": "Age below which a pending spawn is in doubt, not dead.",
       "key": "terminals.spawn_in_doubt_seconds",
       "machineExport": false,
       "namespace": "terminals",
@@ -4459,53 +4459,6 @@
       "namespace": "tmux",
       "secrecy": "none",
       "type": "boolean",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": "tmux",
-      "description": "Path or name of the tmux binary.",
-      "key": "tmux.command",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "string",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": null,
-      "description": "Optional tmux config file (passed as -f <path>).",
-      "key": "tmux.config_file",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": [
-        "string",
-        "null"
-      ],
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": true,
-      "description": "Enable tmux as first-class agent spawning backend.",
-      "key": "tmux.enabled",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "boolean",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 10000,
-      "description": "Scrollback buffer size for spawned sessions and maximum post-mortem full-capture history.",
-      "key": "tmux.history_limit",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "integer",
       "visibility": "public"
     },
     {
@@ -4631,42 +4584,6 @@
     },
     {
       "activation": "live",
-      "default": "gobby",
-      "description": "Prefix for auto-generated session names.",
-      "key": "tmux.session_prefix",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "string",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": "gobby",
-      "description": "Isolated tmux socket name (passed as -L <socket_name>).",
-      "key": "tmux.socket_name",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "string",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": null,
-      "description": "Exact tmux socket path (passed as -S <socket_path>). When set, this takes precedence over socket_name.",
-      "key": "tmux.socket_path",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": [
-        "string",
-        "null"
-      ],
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
       "default": 4.0,
       "description": "Kill the largest agent tree when available memory drops below this %. Must be at or below the warn threshold.",
       "key": "tmux.system_memory_critical_available_percent",
@@ -4685,20 +4602,6 @@
       "namespace": "tmux",
       "secrecy": "none",
       "type": "number",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": null,
-      "description": "WSL distribution for Windows (e.g., 'Ubuntu'). None uses default.",
-      "key": "tmux.wsl_distribution",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": [
-        "string",
-        "null"
-      ],
       "visibility": "public"
     },
     {

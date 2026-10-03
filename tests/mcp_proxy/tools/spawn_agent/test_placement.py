@@ -112,15 +112,14 @@ class _Isolation:
 class _UnkillableRuntime(FakeRuntime):
     """A runtime whose kill leaves the session running.
 
-    A tmux kill returns while the session stays present; the native host
-    raises ``kill_unproven``, since its kill returns only on a proven exit.
+    The native host raises ``kill_unproven``, since its kill returns only on a
+    proven exit.
     """
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         del terminal, grace_seconds
         self.terminate_started.set()
-        if self.backend == "native":
-            raise HostCommandError("kill_unproven")
+        raise HostCommandError("kill_unproven")
 
 
 @dataclass
@@ -327,7 +326,7 @@ def placed(
         project=sample_project,
         tmp_path=tmp_path,
         monkeypatch=monkeypatch,
-        runtimes=(FakeRuntime(backend="tmux"), FakeRuntime(backend="native")),
+        runtimes=(FakeRuntime(backend="native"),),
     )
 
 
@@ -350,7 +349,7 @@ async def _spawn(h: _Harness, placement: dict[str, Any] | None, **overrides: Any
         "target_project_id": h.project_id,
         "session_manager": h.sessions,
         "db": h.db,
-        "terminal_backend": "tmux",
+        "terminal_backend": "native",
         "placement": placement,
         "agent_pane_reserver": h.reserver,
         "project_context_authoritative": True,
@@ -376,7 +375,7 @@ def _held_seat(h: _Harness, title: str = SEAT, state: str = "pending") -> Worksp
     )
     terminal_id = mint_terminal_id()
     h.terminals.create_pending(
-        terminal_id, h.project_id, "tmux", "gobby", terminal_id, machine_id=LOCAL_MACHINE_ID
+        terminal_id, h.project_id, "native", "gobby", terminal_id, machine_id=LOCAL_MACHINE_ID
     )
     if state == "exited":
         h.terminals.fail_pending(terminal_id)
@@ -466,7 +465,7 @@ def _create_launch_terminal(h: _Harness, request: SpawnRequest) -> str:
     h.terminals.create_pending(
         terminal_id,
         request.project_id,
-        "tmux",
+        "native",
         "gobby",
         terminal_id,
         machine_id=LOCAL_MACHINE_ID,
@@ -640,7 +639,7 @@ async def test_exceptions_and_cancellation_release_pane(placed: _Harness, exit_k
 
     h.executor = bind_busy if exit_kind == "busy" else bind_then_fail
     if exit_kind == "kill_fails":
-        h.kill_error = RuntimeError("tmux kill-session failed")
+        h.kill_error = RuntimeError("host kill failed")
     if exit_kind == "cleanup_fails":
         h.isolation.cleanup_error = RuntimeError("worktree removal failed")
 
@@ -901,8 +900,8 @@ async def test_concurrent_placed_spawns_share_one_reserver(
     ws_config = MagicMock(spec=WebSocketConfig)
     ws_config.host, ws_config.port = "localhost", 60888
     ws_config.ping_interval, ws_config.ping_timeout, ws_config.max_message_size = 30, 10, 1024
-    tmux = _ExecOrderedRuntime(backend="tmux", order=order)
-    registry = runtime_registry(tmux, FakeRuntime(backend="native"))
+    native = _ExecOrderedRuntime(backend="native", order=order)
+    registry = runtime_registry(native)
     server = WebSocketServer(ws_config, MagicMock(), MagicMock())
     server.session_manager = SessionManager(temp_db)
     server.configure_terminals(
@@ -919,7 +918,7 @@ async def test_concurrent_placed_spawns_share_one_reserver(
         project=sample_project,
         tmp_path=tmp_path,
         monkeypatch=monkeypatch,
-        runtimes=(tmux,),
+        runtimes=(native,),
         reserver=reserver,
     )
     h.runner.terminal_runtime_registry = registry
@@ -929,7 +928,7 @@ async def test_concurrent_placed_spawns_share_one_reserver(
         "provider": "claude",
         "isolation": "worktree",
         "parent_session_id": h.parent_id,
-        "terminal_backend": "tmux",
+        "terminal_backend": "native",
         "placement": _tab(h),
     }
 
@@ -1049,7 +1048,7 @@ async def test_duplicate_placed_request_precedence(placed: _Harness) -> None:
         "isolation": "worktree",
         "task_id": task.id,
         "parent_session_id": h.parent_id,
-        "terminal_backend": "tmux",
+        "terminal_backend": "native",
     }
 
     free_seat = await tool.call("spawn_agent", {**arguments, "placement": _tab(h)})
@@ -1070,7 +1069,6 @@ async def test_duplicate_placed_request_precedence(placed: _Harness) -> None:
     assert _panes(h) == {occupied.id: occupied.terminal_id}
 
 
-@pytest.mark.parametrize("backend", ["tmux", "native"])
 @pytest.mark.parametrize("proven", [True, False])
 @pytest.mark.parametrize("cancel_while_held", [False, True])
 async def test_placed_timeout_race_keeps_pane_until_owner_settles(
@@ -1078,13 +1076,12 @@ async def test_placed_timeout_race_keeps_pane_until_owner_settles(
     sample_project: dict[str, Any],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    backend: str,
     proven: bool,
     cancel_while_held: bool,
 ) -> None:
     hold = asyncio.Event()
     runtime_type = FakeRuntime if proven else _UnkillableRuntime
-    runtime = runtime_type(backend=cast(Any, backend), spawn_hold=hold)
+    runtime = runtime_type(backend="native", spawn_hold=hold)
     h = _build(
         db=temp_db,
         project=sample_project,
@@ -1093,7 +1090,7 @@ async def test_placed_timeout_race_keeps_pane_until_owner_settles(
         runtimes=(runtime,),
     )
 
-    result = await _spawn(h, _tab(h), timeout=0.05, terminal_backend=backend)
+    result = await _spawn(h, _tab(h), timeout=0.05)
 
     assert result["success"] is False
     [terminal_id] = _terminal_states(h)
@@ -1134,16 +1131,14 @@ async def test_placed_timeout_race_keeps_pane_until_owner_settles(
     assert _panes(h) == {pane_id: terminal_id}
 
 
-@pytest.mark.parametrize("backend", ["tmux", "native"])
 async def test_unplaced_timeout_rolls_back_at_once_without_a_claim(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    backend: str,
 ) -> None:
     hold = asyncio.Event()
-    runtime = FakeRuntime(backend=cast(Any, backend), spawn_hold=hold)
+    runtime = FakeRuntime(backend="native", spawn_hold=hold)
     h = _build(
         db=temp_db,
         project=sample_project,
@@ -1152,7 +1147,7 @@ async def test_unplaced_timeout_rolls_back_at_once_without_a_claim(
         runtimes=(runtime,),
     )
 
-    result = await _spawn(h, None, timeout=0.05, terminal_backend=backend)
+    result = await _spawn(h, None, timeout=0.05)
     [launch] = [
         task
         for key, task in impl._spawn_background_tasks.items()
@@ -1179,7 +1174,4 @@ async def test_unplaced_timeout_rolls_back_at_once_without_a_claim(
 
     # The late cleanup kills what the prepare created.
     assert _terminal_states(h) == {terminal_id: "exited"}
-    if backend == "native":
-        assert runtime.killed_host_ids == ["ht-1"]
-    else:
-        assert runtime.live_keys == set()
+    assert runtime.killed_host_ids == ["ht-1"]

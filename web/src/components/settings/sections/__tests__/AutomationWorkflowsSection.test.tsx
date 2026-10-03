@@ -105,15 +105,7 @@ function makeConfigValues(): Record<string, unknown> {
     },
     workflow: { enabled: true, timeout: 300, debug_echo_context: false },
     tmux: {
-      enabled: true,
-      command: "tmux",
-      socket_name: "gobby",
-      socket_path: null,
-      config_file: null,
-      session_prefix: "gobby-",
-      history_limit: 10000,
       attach_history_lines: 500,
-      wsl_distribution: null,
       idle_check_enabled: true,
       idle_timeout_seconds: 120,
       idle_reprompt_delay_seconds: 30,
@@ -233,9 +225,19 @@ describe("AutomationWorkflowsSection", () => {
     expect(screen.getByLabelText("Workflow timeout (seconds)")).toHaveValue(
       300,
     );
-    expect(screen.getByLabelText("Scrollback history limit")).toHaveValue(
-      10000,
-    );
+    expect(
+      screen.getByLabelText("Attach history lines (0 disables)"),
+    ).toHaveValue(500);
+    // Gobby runs no tmux server, so nothing configures one (#22856).
+    for (const label of [
+      "tmux command",
+      "Socket name",
+      "Socket path",
+      "tmux config file",
+      "WSL distribution",
+    ]) {
+      expect(screen.queryByLabelText(label)).toBeNull();
+    }
     // cron.backoff_delays is an int array rendered as a typed number list.
     expect(screen.getByLabelText("Retry backoff delay item 2")).toHaveValue(60);
     expect(

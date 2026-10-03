@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
 from concurrent.futures import CancelledError, Future
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -38,25 +37,6 @@ if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 logger = logging.getLogger(__name__)
-
-
-def _warn_missing_terminal_dependency(config: DaemonConfig) -> None:
-    if not config.tmux.enabled:
-        return
-
-    from gobby.agents.tmux.wsl_compat import needs_wsl
-
-    if needs_wsl():
-        if not shutil.which("wsl"):
-            logger.warning(
-                "WSL is not installed. Agent spawning in terminal mode will not work. "
-                "Install: wsl --install"
-            )
-    elif not shutil.which("tmux"):
-        logger.warning(
-            "tmux is not installed. Agent spawning in terminal mode will not work. "
-            "Install: brew install tmux (macOS), apt install tmux (Linux)"
-        )
 
 
 def bundled_content_refusal(runner: GobbyRunner) -> str | None:
@@ -237,7 +217,6 @@ def open_storage_and_config(
         ),
         runner.bootstrap_config,
     )
-    _warn_missing_terminal_dependency(runner.startup_config)
     runner.config_runtime = ConfigRuntime(
         config_repository,
         notification_source=ConfigNotificationListener(

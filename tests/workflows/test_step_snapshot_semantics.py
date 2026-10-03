@@ -5,12 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
 import signal
 import subprocess
 import time
 from collections.abc import Iterator, Mapping
-from contextlib import ExitStack
+from contextlib import ExitStack, suppress
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -1101,43 +1100,29 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _tmux_env() -> dict[str, str]:
-    env = dict(os.environ)
-    env.pop("TMUX", None)
-    return env
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
-def _tmux_cmd(*args: str) -> list[str]:
-    return ["tmux", "-L", "gobby", "-f", "/dev/null", *args]
+def _start_live_sleep() -> tuple[int, int]:
+    """Start a detached sleep in its own process group; return its pid and pgid.
 
-
-def _tmux_session_exists(name: str) -> bool:
-    result = subprocess.run(
-        _tmux_cmd("has-session", "-t", name),
-        check=False,
-        capture_output=True,
-        env=_tmux_env(),
-    )
-    return result.returncode == 0
-
-
-def _start_live_tmux_sleep() -> tuple[int, str]:
-    name = f"gobby-snap-{uuid4().hex[:10]}"
-    created = subprocess.run(
-        _tmux_cmd("new-session", "-d", "-s", name, "--", "/bin/sleep", "60"),
-        check=False,
-        capture_output=True,
+    The launching shell exits at once, so init reaps the sleep once it is killed
+    and its pid stops answering instead of lingering as this process's zombie.
+    """
+    pid = subprocess.check_output(
+        ["/bin/sh", "-c", "/bin/sleep 60 >/dev/null 2>&1 & echo $!"],
         text=True,
-        env=_tmux_env(),
-    )
-    if created.returncode != 0:
-        raise RuntimeError(created.stderr or created.stdout or "tmux new-session failed")
-    pane = subprocess.check_output(
-        _tmux_cmd("list-panes", "-t", name, "-F", "#{pane_pid}"),
-        text=True,
-        env=_tmux_env(),
+        start_new_session=True,
     ).strip()
-    return int(pane.splitlines()[0]), name
+    live_pid = int(pid)
+    return live_pid, os.getpgid(live_pid)
 
 
 def _wait_until_dead(pid: int, *, timeout: float = 5.0) -> None:
@@ -1159,16 +1144,7 @@ async def test_post_launch_failure_terminates_process(
     fault: Literal["terminal_health", "start_run", "post_claim"],
     temp_db: Any,
     sample_git_project: dict[str, object],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from gobby.agents.tmux import configure_tmux
-    from gobby.config.tmux import TmuxConfig
-
-    if shutil.which("tmux") is None:
-        pytest.skip("tmux is required to prove post-launch process compensation")
-
-    monkeypatch.delenv("TMUX", raising=False)
-    configure_tmux(TmuxConfig())
     sample_project = sample_git_project
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         outcome = await _run_post_launch_failure_case(
@@ -1179,7 +1155,7 @@ async def test_post_launch_failure_terminates_process(
     assert outcome["accepted"] is True
     assert outcome["run_status"] == "cancelled"
     assert outcome["pid_alive"] is False
-    assert outcome["tmux_exists"] is False
+    assert outcome["group_alive"] is False
     assert outcome["mutex"] is None
     assert outcome["mutex_by_run"] is None
 
@@ -1230,19 +1206,20 @@ async def _run_post_launch_failure_case(
     live: dict[str, Any] = {}
 
     async def execute_spawn(request: Any) -> SimpleNamespace:
-        pid, tmux_name = _start_live_tmux_sleep()
+        pid, pgid = _start_live_sleep()
         live["pid"] = pid
-        live["tmux"] = tmux_name
+        live["pgid"] = pgid
         live["child_session_id"] = request.prepared_spawn.session_id
         live["run_id"] = request.prepared_spawn.agent_run_id
         assert _pid_alive(pid)
-        assert _tmux_session_exists(tmux_name)
+        assert _group_alive(pgid)
         terminal = SimpleNamespace(
             id=request.prepared_spawn.agent_run_id,
-            backend="tmux",
+            backend="native",
             state="pending",
-            spawn_key=tmux_name,
+            spawn_key=f"gobby-snap-{uuid4().hex[:10]}",
             locator=None,
+            process={"pgid": pgid},
         )
         runner.terminal_manager.get.return_value = terminal
         runtime = MagicMock()
@@ -1250,16 +1227,12 @@ async def _run_post_launch_failure_case(
         runtime.snapshot_full = AsyncMock(return_value=SimpleNamespace(text=""))
 
         async def terminate(row: SimpleNamespace, _grace_seconds: float) -> None:
-            await asyncio.to_thread(
-                subprocess.run,
-                _tmux_cmd("kill-session", "-t", row.spawn_key),
-                check=False,
-                capture_output=True,
-                env=_tmux_env(),
-            )
+            with suppress(ProcessLookupError):
+                os.killpg(int(row.process["pgid"]), signal.SIGTERM)
+            await asyncio.to_thread(_wait_until_dead, int(live["pid"]))
 
         async def session_present(row: SimpleNamespace) -> bool:
-            return await asyncio.to_thread(_tmux_session_exists, row.spawn_key)
+            return _group_alive(int(row.process["pgid"]))
 
         runtime.terminate = AsyncMock(side_effect=terminate)
         runtime.session_present = session_present
@@ -1269,7 +1242,7 @@ async def _run_post_launch_failure_case(
             child_session_id=request.prepared_spawn.session_id,
             status="pending",
             pid=pid,
-            backend="tmux",
+            backend="native",
             terminal_id=terminal.id,
             message="dummy live spawn",
             error=None,
@@ -1367,19 +1340,15 @@ async def _run_post_launch_failure_case(
             "accepted": result["success"],
             "run_status": run.status,
             "pid_alive": _pid_alive(int(live["pid"])),
-            "tmux_exists": _tmux_session_exists(str(live["tmux"])),
+            "group_alive": _group_alive(int(live["pgid"])),
             "mutex": mutex.get_mutex(task.id),
             "mutex_by_run": mutex.get_mutex_by_run_id(str(live["run_id"])),
         }
     finally:
-        tmux_name = live.get("tmux")
-        if isinstance(tmux_name, str) and _tmux_session_exists(tmux_name):
-            subprocess.run(
-                _tmux_cmd("kill-session", "-t", tmux_name),
-                check=False,
-                capture_output=True,
-                env=_tmux_env(),
-            )
+        pgid = live.get("pgid")
+        if isinstance(pgid, int):
+            with suppress(ProcessLookupError):
+                os.killpg(pgid, signal.SIGKILL)
         pid = live.get("pid")
         if isinstance(pid, int) and _pid_alive(pid):
             os.kill(pid, signal.SIGKILL)

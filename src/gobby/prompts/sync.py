@@ -4,13 +4,16 @@ This module provides sync_bundled_prompts() which loads prompts from the
 bundled install/shared/prompts/ directory and syncs them to the database.
 """
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.prompts.models import parse_frontmatter
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.prompts import LocalPromptManager
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 __all__ = ["get_bundled_prompts_path", "sync_bundled_prompts"]
 
@@ -59,6 +62,10 @@ def sync_bundled_prompts(db: HubDatabase) -> dict[str, Any]:
         logger.warning("Bundled prompts path not found: %s", prompts_path)
         result["errors"].append(f"Prompts path not found: {prompts_path}")
         return result
+
+    # Deferred: the stdio bridge imports this module for the prompts path only,
+    # and the storage layer drags psycopg in before initialize is answered.
+    from gobby.storage.prompts import LocalPromptManager
 
     # dev_mode=True so we can update bundled records during sync
     manager = LocalPromptManager(db, dev_mode=True)

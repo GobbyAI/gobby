@@ -74,7 +74,7 @@ Outcomes:
    `/api/sessions` on session events. Rejected: a session event per pane rename,
    which adds a second event for one change on a file already at 858 lines
    (`terminals/workspace_ops.py`).
-9. **Migration 458 ships inside 3.4 with the code it guards** (Q4; PD
+9. **Migration 459 ships inside 3.4 with the code it guards** (Q4; PD
    ruling 22:51, Decision 13). It nulls every title whose
    `title_source` is not `manual`, keeps communications titles, and drops the
    column. It is irreversible on the live hub and ships in a package whose
@@ -95,18 +95,18 @@ Outcomes:
     project name is `project_label`: the user's card label, else the
     daemon's name. A project the sidebar does not list yields the bare
     `#<seq>`.
-13. **The title removals and migration 458 are one deliverable, 3.4** (PD
+13. **The title removals and migration 459 are one deliverable, 3.4** (PD
     rulings 19:48 and 22:51; close reviews `cfd753e3` and `173e8399`).
-    Migration 458 keeps only titles stamped `manual`. The clear-successor
+    Migration 459 keeps only titles stamped `manual`. The clear-successor
     copy and the title writes after the title-source removal set no
     `title_source`, so a name a person set after either went live and
     before the cutover would be nulled. One deliverable lands in one merge,
-    so no part of it can go live ahead of 458, and the hold needs no
+    so no part of it can go live ahead of 459, and the hold needs no
     mechanism. The old code stamps `manual` on every person-set title write
-    up to the stop, and 458 runs before the new code starts, so no title
+    up to the stop, and 459 runs before the new code starts, so no title
     writer has a window. 3.4.4 proves the migration side in isolation: a
     `manual` title written before the stop survives, automatic titles are
-    nulled, and only 458 drops the column. Rejected: four leaves held by the
+    nulled, and only 459 drops the column. Rejected: four leaves held by the
     MM and landed together, whose only acceptance was a comment phrase
     (`173e8399`); new hold code in the daemon wind-down (option B); and
     stamping `manual` on each writer and removing the stamps later (option
@@ -221,8 +221,10 @@ Outcomes:
   `monochrome` and `label_ladder` screen fixtures. 1.1 lands after it
   (package 10) and rebases. 1.1 keeps `SidebarRow.reference` and
   `SidebarRow.definition`, so the styling carries over.
-- Migration 458 is the next free number at drafting (the latest is
-  `457_workspace_pane_role.sql`). If another migration lands first, the 3.4
+- Migration 459 is the next free number at drafting. The latest on 0.5.0 is
+  `457_workspace_pane_role.sql`, and #23271 '`api_keys`, key format,
+  issuance routes, and local-key adoption' owns `458_add_api_keys.sql` (PD
+  ruling 2026-10-03 00:26). If another migration lands first, the 3.4
   executor takes the next free number and renames the file, its `assets.rs`
   entry and its tests to match.
 - The executor of a leaf that touches `src/gobby/install/shared/` reads
@@ -434,7 +436,7 @@ register caller, and the title source column is gone.
 3.1, 3.2 and 3.3 were folded into 3.4 (PD ruling 22:51, Decision 13). Their
 ids are retired.
 
-### 3.4 Automatic titles, the title source and tmux naming retire with migration 458 [category: code]
+### 3.4 Automatic titles, the title source and tmux naming retire with migration 459 [category: code]
 `kind: deliverable`
 
 Targets:
@@ -474,15 +476,15 @@ Targets:
 - `src/gobby/hooks/event_handlers/_session_start/flow.py::*` — scope-reason: stop scheduling window renames
 - `src/gobby/hooks/session_lookup.py::*` — scope-reason: stop calling window naming
 - `src/gobby/storage/sessions/_bootstrap.py::*` — scope-reason: remove the title listener registry
-- `crates/gcore/assets/schema/migrations/458_drop_session_title_source.sql`
-- `crates/gcore/src/schema/assets.rs::*` — scope-reason: embed migration 458
+- `crates/gcore/assets/schema/migrations/459_drop_session_title_source.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: embed migration 459
 - `crates/gcore/src/schema/verify.rs::*` — scope-reason: drop title_source from the live mutable seed field list
-- `crates/gcore/src/schema/verify_tests.rs::*` — scope-reason: migration 458 cases
+- `crates/gcore/src/schema/verify_tests.rs::*` — scope-reason: migration 459 cases
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: drop the sessions.title_source column entry
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: regenerated grant bundle expectations for the new schema identity
 - `crates/gcore/tests/schema_contract.rs::*` — scope-reason: migration count and schema identity
 - `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: schema identity
-- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: refresh the schema identity for migration 458
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: refresh the schema identity for migration 459
 - `tests/storage/test_session_title_source_migration.py`
 - `tests/sessions/test_title_lifecycle.py::*` — operation: delete — scope-reason: covers the retired module
 - `tests/mcp_proxy/tools/tasks/test_create_task.py::*` — scope-reason: import build_task_tree from its new module; create with claim leaves the title alone
@@ -517,9 +519,9 @@ Targets:
 **Granularity:** one behavior across every file above: a session title is an
 optional name a person sets, and nothing records where it came from. The
 title-write removals, the title-source removal, tmux window naming and
-migration 458 are safe only as one activation. The clear-successor copy and
+migration 459 are safe only as one activation. The clear-successor copy and
 the title-source removal write titles without a `manual` stamp, so either one
-live before 458 lets 458 null a name a person set (close reviews `cfd753e3`
+live before 459 lets 459 null a name a person set (close reviews `cfd753e3`
 and `173e8399`). One deliverable lands in one merge, so a partial landing
 cannot happen (Decision 13). tmux naming joins because it shares
 `_title_fields.py` and `materialize.py` with the title removals.
@@ -555,8 +557,8 @@ cannot happen (Decision 13). tmux naming joins because it shares
 - Clear successor (PD ruling 15:47): `_commit_web_chat_clear_successor_rows`
   inserts the successor with `title` copied from the predecessor row and
   writes no `title_source`. `clear_successor_title` goes with
-  `title_lifecycle.py`. Migration 458 would null a copy written before it
-  ran, and this code never runs before 458 (Decision 13).
+  `title_lifecycle.py`. Migration 459 would null a copy written before it
+  ran, and this code never runs before 459 (Decision 13).
 - Tests that import the retired helpers: `tests/sessions/test_handoff.py`
   drops `test_title_lifecycle_is_provisional_task_manual_and_clear_sticky`
   (~1888) and its `provider_title_label` import (~60).
@@ -608,7 +610,7 @@ have nothing left to rank. Edits:
 - `servers/routes/sessions/core.py` (~317) stops serving `title_source`.
   `servers/routes/sessions/lifecycle.py` (~441) keeps `POST /api/sessions/{id}/rename`
   and writes the title alone (Q3).
-- No code reads or writes the column after these edits. Migration 458 drops
+- No code reads or writes the column after these edits. Migration 459 drops
   it (below).
 
 **tmux window naming (formerly 3.3).** `tmux_window_naming.py` consumers: `_session_start/__init__.py`
@@ -640,7 +642,7 @@ notification. Move the probe cases from `tests/sessions/test_tmux_window_naming.
 into `tests/test_runner_maintenance_tmux_repair.py`, which already patches the
 probe at `gobby.runner_maintenance.isolation.probe_tmux_pane`.
 
-**Migration 458 (formerly 3.4).** Template: commit `b9303f8183` ([gobby-#22740] migration
+**Migration 459 (formerly 3.4).** Template: commit `b9303f8183` ([gobby-#22740] migration
 450 drops `sessions.heuristic_title`) changed exactly this carrier set. It
 added the SQL file, an `EmbeddedMigration` entry in `assets.rs` with the file's
 checksum, a removal in `verify.rs::is_live_mutable_seed_field` (~622 lists
@@ -668,13 +670,13 @@ and no copy is kept. That is intended (Q4). This leaf ships in a package whose
 cutover Josh approves. The PD runs it from the main checkout outside quiet
 hours with `global` notices before and after. `gobby cutover` refuses
 uncommitted schema inputs. None of this leaf's code is live before the cutover
-(Decision 13): the old daemon stops, 458 runs, and the new daemon starts with
+(Decision 13): the old daemon stops, 459 runs, and the new daemon starts with
 code that never reads the column.
 
 **Migration test (3.4.4).** The new
 `tests/storage/test_session_title_source_migration.py` follows
 `tests/storage/test_validation_system_prompt_migration.py` (migration 445). It
-reads `458_drop_session_title_source.sql` from
+reads `459_drop_session_title_source.sql` from
 `crates/gcore/assets/schema/migrations/`, creates a TEMP `sessions` table with
 `id`, `title`, `title_source` and `source` inside a `force_rollback`
 transaction on the isolated test hub (`DATABASE_URL`), and runs the file.
@@ -684,7 +686,7 @@ up to the stop (this leaf deletes that writer, so the test seeds its row); a
 communications session (`source = 'comms'`) titled "Comms: <user>" with a
 non-`manual` source. Asserts: the manual and communications titles survive;
 the other three are NULL; the TEMP table has no `title_source` column; and of
-every `*.sql` file in the migrations directory, only 458 contains
+every `*.sql` file in the migrations directory, only 459 contains
 `DROP COLUMN title_source`.
 
 Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_session_title_source_migration.py tests/mcp_proxy/tools/tasks/test_create_task.py tests/mcp_proxy/tools/tasks/test_close_task_flow.py tests/mcp_proxy/tools/spawn_agent/test_execution.py tests/mcp_proxy/tools/sessions/test_mcp_proxy_tools_sessions_registration.py tests/sessions/test_handoff.py tests/sessions/test_clear_continuation.py tests/sessions/test_acp_lifecycle_service.py tests/storage/sessions tests/storage/test_sessions_import.py tests/storage/test_local_model_flags.py tests/hooks tests/servers/test_session_control.py tests/servers/test_http_models.py tests/servers/routes/test_agent_spawn_routes.py tests/servers/routes/test_servers_routes_sessions_routes.py tests/servers/routes/test_sessions_acp_routes.py tests/servers/websocket/chat/test_stream_persistence.py tests/test_runner_maintenance_tmux_repair.py -q`.
@@ -698,20 +700,20 @@ updates. Then `cargo nextest run -p gobby-core`,
 
 **Acceptance:**
 
-- 3.4.1 - Migration 458 nulls every title not marked `manual` outside
+- 3.4.1 - Migration 459 nulls every title not marked `manual` outside
   communications sessions and drops `sessions.title_source`. behavior:
   "IS DISTINCT FROM 'manual'" in
-  `crates/gcore/assets/schema/migrations/458_drop_session_title_source.sql`.
+  `crates/gcore/assets/schema/migrations/459_drop_session_title_source.sql`.
 - 3.4.2 - `title_source` is no longer a live mutable seed field and migration
-  458 is embedded. test:
+  459 is embedded. test:
   `crates/gcore/src/schema/verify_tests.rs::title_source_is_not_a_live_mutable_seed_field`.
 - 3.4.3 - The schema identity carriers match the migrated schema. file:
   `src/gobby/storage/schema_expected_identity.json`.
-- 3.4.4 - Migration 458, run in isolation against seeded `sessions` rows,
+- 3.4.4 - Migration 459, run in isolation against seeded `sessions` rows,
   keeps a title stamped `manual` before the stop and a communications title,
   nulls the `task`, `provisional` and NULL-source titles, and drops
   `sessions.title_source`. No other migration drops that column. test:
-  `tests/storage/test_session_title_source_migration.py::test_migration_458_keeps_manual_titles_and_drops_title_source`.
+  `tests/storage/test_session_title_source_migration.py::test_migration_459_keeps_manual_titles_and_drops_title_source`.
 - 3.4.5 - Creating a task with `claim=true`, claiming it and closing it leave
   the session title unchanged. test:
   `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_claim_and_close_leave_session_title`.
@@ -998,6 +1000,13 @@ which must return nothing.
   now excludes `src/gobby/install/shared/skills/`, which 5.1 updates. M1
   withdrawn (memory `f5577ae0`); the Adversary (gobby#14550) derives a fresh
   M1 after round 4.
+- 2026-10-03: Close review `061775b8` (run `eb2d5d6c`) was invalid: #23271
+  '`api_keys`, key format, issuance routes, and local-key adoption' owns
+  migration 458 (`458_add_api_keys.sql`, `48470a3a9f`). PD ruling 00:26 and
+  GO 00:41: #23271 keeps 458, and this plan renumbers to 459, free on 0.5.0
+  and every branch. Every earlier 458 site, including 3.4.4's test name, is
+  now 459 (`f9fcdad`). M1 withdrawn (memory `f5577ae0`); the Adversary
+  (gobby#14579) derives a fresh M1.
 
 ## V2: Verification
 `kind: verification`
@@ -1061,7 +1070,7 @@ pytest suite.
   - covers:pane-seat-titles:1.1:1.1.7
   tdd: true
   source_section: '1.1'
-  implementation_domain: frontend
+  implementation_domain: fullstack
 - title: Spawn writes the placement title as the pane label
   category: code
   task_type: feature
@@ -1082,23 +1091,23 @@ pytest suite.
   source_section: '2.1'
   implementation_domain: backend
 - title: Automatic titles, the title source and tmux naming retire with migration
-    458
+    459
   category: code
   task_type: feature
   depends_on: []
-  validation_criteria: '3.4.1: Migration 458 nulls every title not marked `manual`
+  validation_criteria: '3.4.1: Migration 459 nulls every title not marked `manual`
     outside communications sessions and drops `sessions.title_source`. behavior: "IS
-    DISTINCT FROM ''manual''" in `crates/gcore/assets/schema/migrations/458_drop_session_title_source.sql`.
+    DISTINCT FROM ''manual''" in `crates/gcore/assets/schema/migrations/459_drop_session_title_source.sql`.
 
-    3.4.2: `title_source` is no longer a live mutable seed field and migration 458
+    3.4.2: `title_source` is no longer a live mutable seed field and migration 459
     is embedded. test: `crates/gcore/src/schema/verify_tests.rs::title_source_is_not_a_live_mutable_seed_field`.
 
     3.4.3: The schema identity carriers match the migrated schema. file: `src/gobby/storage/schema_expected_identity.json`.
 
-    3.4.4: Migration 458, run in isolation against seeded `sessions` rows, keeps a
+    3.4.4: Migration 459, run in isolation against seeded `sessions` rows, keeps a
     title stamped `manual` before the stop and a communications title, nulls the `task`,
     `provisional` and NULL-source titles, and drops `sessions.title_source`. No other
-    migration drops that column. test: `tests/storage/test_session_title_source_migration.py::test_migration_458_keeps_manual_titles_and_drops_title_source`.
+    migration drops that column. test: `tests/storage/test_session_title_source_migration.py::test_migration_459_keeps_manual_titles_and_drops_title_source`.
 
     3.4.5: Creating a task with `claim=true`, claiming it and closing it leave the
     session title unchanged. test: `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_claim_and_close_leave_session_title`.

@@ -102,11 +102,11 @@ def test_backend_field_at_every_spawn_ingress() -> None:
     backend_schema = properties["terminal_backend"]
     allowed = backend_schema.get("enum") or backend_schema.get("anyOf")
     if isinstance(allowed, list) and allowed and isinstance(allowed[0], str):
-        assert set(allowed) == {"tmux", "native"}
+        assert set(allowed) == {"native"}
 
     defaulted = AgentSpawnRequest(task_id="#1")
     native = AgentSpawnRequest(task_id="#1", terminal_backend="native")
-    assert defaulted.terminal_backend in {None, "tmux"}
+    assert defaulted.terminal_backend is None
     assert native.terminal_backend == "native"
     with pytest.raises(ValidationError):
         AgentSpawnRequest(task_id="#1", terminal_backend="ghostty")
@@ -129,7 +129,7 @@ def test_backend_field_at_every_spawn_ingress() -> None:
             task_ref="#1",
             agent_slug="backend-developer",
             prompt="go",
-            terminal_backend=cast(Literal["tmux", "native"], "ghostty"),
+            terminal_backend=cast(Literal["native"], "tmux"),
         )
 
     stage = SimpleNamespace(name="planning", stage_name="planning", state="ready", position=0)
@@ -140,9 +140,9 @@ def test_backend_field_at_every_spawn_ingress() -> None:
     )
     context = SimpleNamespace(prompt_context={})
     rule_action = _spawn_stage_agent(task, stage, context, "planner")
-    assert rule_action.terminal_backend in {"tmux", "native"}
+    assert rule_action.terminal_backend == "native"
     enhancement = _spawn_plan_enhancer(task, stage, context, round_number=1, max_rounds=2)
-    assert enhancement.terminal_backend in {"tmux", "native"}
+    assert enhancement.terminal_backend == "native"
 
 
 @pytest.mark.asyncio
@@ -165,8 +165,6 @@ async def test_spawn_request_carries_resolved_backend() -> None:
             message="ok",
             locator=None,
             tmux_session_name=None,
-            tmux_socket_name=None,
-            tmux_socket_path=None,
             speed=None,
         )
 
@@ -179,7 +177,7 @@ async def test_spawn_request_carries_resolved_backend() -> None:
     runner.terminal_runtime_registry = MagicMock()
     runner.write_coordinator = MagicMock()
 
-    daemon = SimpleNamespace(terminals=TerminalConfig(default_backend="tmux"))
+    daemon = SimpleNamespace(terminals=TerminalConfig())
 
     with (
         patch(
@@ -240,7 +238,7 @@ async def test_spawn_request_carries_resolved_backend() -> None:
             prompt="go",
             runner=runner,
             provider="claude",
-            terminal_backend=cast(Literal["tmux", "native"] | None, "ghostty"),
+            terminal_backend=cast(Literal["native"] | None, "tmux"),
             daemon_config=daemon,
             project_path="/repo",
             parent_session_id="parent",
@@ -248,7 +246,7 @@ async def test_spawn_request_carries_resolved_backend() -> None:
 
     assert native_result.get("success") is not False or captured.get("request") is not None
     request = cast(SpawnRequest, captured["request"])
-    assert request.terminal_backend in {"tmux", "native"}
+    assert request.terminal_backend == "native"
     del scheduled_result
     assert invalid["success"] is False
     assert "terminal_backend" in str(invalid.get("error", "")).lower() or invalid.get(

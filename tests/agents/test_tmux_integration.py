@@ -3,38 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import shlex
 import shutil
 import subprocess
-import sys
 import tempfile
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-import psutil
 import pytest
 
-from gobby.agents.tmux.launcher import INLINE_LAUNCH_LIMIT
-from gobby.agents.tmux.output_reader import TmuxOutputReader
 from gobby.agents.tmux.session_manager import TmuxSessionManager
-from gobby.config.tmux import TmuxConfig
-from gobby.servers.websocket.server import WebSocketServer
-from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sessions import SessionManager
-from gobby.storage.terminals import Terminal, TerminalManager
-from gobby.terminals import TerminalRuntimeRegistry
-from gobby.terminals.leases import TerminalLeaseRegistry
-from gobby.terminals.runtime import TerminalSpawnRequest
-from gobby.terminals.services import TerminalServices
-from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
-from gobby.utils.machine_id import require_machine_id
-from tests.agents.cleanup_test_support import _handler, _stub_runtime_cleanup
-from tests.servers.terminal_fakes import MockWebSocket
 
 pytestmark = pytest.mark.integration
 
@@ -58,15 +37,9 @@ def tmux_socket_path() -> Iterator[Path]:
 
 
 @pytest.fixture
-def tmux_config(tmux_socket_path: Path) -> TmuxConfig:
-    return TmuxConfig(socket_name="", socket_path=str(tmux_socket_path), config_file="/dev/null")
-
-
-@pytest.fixture
-async def tmux_manager(tmux_config: TmuxConfig) -> AsyncIterator[TmuxSessionManager]:
-    manager = TmuxSessionManager(tmux_config)
-    yield manager
-    await manager.shutdown()
+def tmux_manager(tmux_socket_path: Path) -> TmuxSessionManager:
+    """A manager on the isolated server; ``tmux_socket_path`` kills it at teardown."""
+    return TmuxSessionManager(str(tmux_socket_path))
 
 
 async def _wait_for(
@@ -83,71 +56,41 @@ async def _wait_for(
     raise AssertionError("condition was not met before timeout")
 
 
-async def _wait_for_async(
-    predicate: Callable[[], Awaitable[bool]],
-    *,
-    timeout: float = 5.0,
-) -> None:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while loop.time() < deadline:
-        if await predicate():
-            return
-        await asyncio.sleep(0.05)
-    raise AssertionError("condition was not met before timeout")
-
-
 def _path_contains(path: Path, expected: str) -> bool:
     return path.exists() and expected in path.read_text(encoding="utf-8")
 
 
-async def test_get_session_requires_exact_session_name(
-    tmux_manager: TmuxSessionManager,
-) -> None:
-    await tmux_manager.create_session(
-        name="agent-extra",
-        command="tail -f /dev/null",
+def _start_session(manager: TmuxSessionManager, name: str, command: str) -> None:
+    """Start a hand-made session on the manager's isolated server.
+
+    ``-f /dev/null`` keeps the user's tmux.conf out of the server it starts.
+    """
+    subprocess.run(
+        [*manager.base_args(), "-f", "/dev/null", "new-session", "-d", "-s", name, command],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=5,
     )
 
-    assert await tmux_manager.get_session("agent") is None
 
-    exact = await tmux_manager.get_session("agent-extra")
-    assert exact is not None
-    assert exact.name == "agent-extra"
+async def test_has_session_requires_exact_session_name(
+    tmux_manager: TmuxSessionManager,
+) -> None:
+    _start_session(tmux_manager, "agent-extra", "tail -f /dev/null")
+
+    assert await tmux_manager.has_session("agent") is False
+    assert await tmux_manager.has_session("agent-extra") is True
 
 
 async def test_kill_session_requires_exact_session_name(
     tmux_manager: TmuxSessionManager,
 ) -> None:
-    await tmux_manager.create_session(
-        name="agent-157",
-        command="tail -f /dev/null",
-    )
+    _start_session(tmux_manager, "agent-157", "tail -f /dev/null")
 
     assert await tmux_manager.kill_session("agent-15", missing_ok=True, timeout=0.1) is True
 
-    exact = await tmux_manager.get_session("agent-157")
-    assert exact is not None
-    assert exact.name == "agent-157"
-
-
-async def test_create_session_preserves_env_value_with_trailing_semicolon(
-    tmux_manager: TmuxSessionManager,
-    tmp_path: Path,
-) -> None:
-    output_path = tmp_path / "env-value.txt"
-
-    await tmux_manager.create_session(
-        name="env-semicolon",
-        command='printf "%s" "$TRAILING_VALUE" > "$GOBBY_OUT"; tail -f /dev/null',
-        env={
-            "GOBBY_OUT": str(output_path),
-            "TRAILING_VALUE": "value;",
-        },
-    )
-
-    await _wait_for(lambda: output_path.exists())
-    assert output_path.read_text(encoding="utf-8") == "value;"
+    assert await tmux_manager.has_session("agent-157") is True
 
 
 async def test_send_keys_pastes_multiline_literal_text(
@@ -163,376 +106,7 @@ async def test_send_keys_pastes_multiline_literal_text(
         "done; tail -f /dev/null"
     )
 
-    await tmux_manager.create_session(name="paste-target", command=command)
+    _start_session(tmux_manager, "paste-target", command)
     assert await tmux_manager.send_keys("paste-target", "alpha\nbeta\ndone\n")
 
     await _wait_for(lambda: _path_contains(output_path, "alpha\nbeta\ndone\n"))
-
-
-async def test_output_reader_streams_multibyte_fifo_data(
-    tmux_manager: TmuxSessionManager,
-    tmux_config: TmuxConfig,
-) -> None:
-    chunks: list[str] = []
-
-    async def collect(_run_id: str, data: str) -> None:
-        chunks.append(data)
-
-    await tmux_manager.create_session(name="fifo-target")
-    reader = TmuxOutputReader(tmux_config)
-    reader.set_output_callback(collect)
-    started = await reader.start_reader("run-fifo", "fifo-target")
-    assert started is True
-
-    try:
-        assert await tmux_manager.send_keys(
-            "fifo-target", "printf 'fifo-multibyte: cafe é 漢\\n'\n"
-        )
-        await _wait_for(lambda: "fifo-multibyte: cafe é 漢" in "".join(chunks))
-    finally:
-        await reader.stop_reader("run-fifo")
-
-
-async def test_agy_live_child_strips_denied_ambient_credentials(
-    tmux_manager: TmuxSessionManager,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gobby.agents.tmux.spawner import tmux_spawn_shell_and_env
-
-    output_path = tmp_path / "child-env.txt"
-    monkeypatch.setenv("GOOGLE_API_KEY", "google-secret")
-    monkeypatch.setenv("GEMINI_API_KEY", "gemini-secret")
-    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/tmp/creds.json")
-    monkeypatch.setenv("PATH", os.environ.get("PATH", "/usr/bin"))
-    quoted = shlex.quote(str(output_path))
-    command = [
-        "python3",
-        "-c",
-        (
-            "import os; "
-            f"open({str(output_path)!r}, 'w', encoding='utf-8').write("
-            "'\\n'.join("
-            "f'{k}={os.environ.get(k, \"\")}' "
-            "for k in ("
-            "'GOOGLE_API_KEY','GEMINI_API_KEY',"
-            "'GOOGLE_APPLICATION_CREDENTIALS','PATH'"
-            ")"
-            ")"
-            ")"
-        ),
-    ]
-    shell_cmd, extra_env = tmux_spawn_shell_and_env(command, {"PATH": os.environ["PATH"]}, "agy")
-    extra_env["PATH"] = os.environ["PATH"]
-    await tmux_manager.create_session(
-        name="agy-env",
-        command=shell_cmd,
-        env=extra_env,
-    )
-    await _wait_for(lambda: output_path.exists())
-    text = output_path.read_text(encoding="utf-8")
-    assert "GOOGLE_API_KEY=\n" in text or "GOOGLE_API_KEY=" in text.splitlines()
-    values = dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
-    assert values.get("GOOGLE_API_KEY", "") == ""
-    assert values.get("GEMINI_API_KEY", "") == ""
-    assert values.get("GOOGLE_APPLICATION_CREDENTIALS", "") == ""
-    assert values.get("PATH")
-    del quoted
-
-
-def _pane_runs_program(pid: int, program: list[str]) -> bool:
-    """Whether pid is ``program`` exec'd by this test's own Python interpreter.
-
-    A macOS framework Python re-execs its bin/ stub as Python.app/Contents/MacOS/Python
-    on the same PID, so argv[0] never settles on sys.executable. Compare the arguments
-    and the resolved executable against this process, which ran the same re-exec.
-    """
-    try:
-        process = psutil.Process(pid)
-        args = [str(part) for part in process.cmdline()[1:]]
-        executable = str(process.exe())
-        own_executable = str(psutil.Process().exe())
-    except psutil.Error:
-        return False
-    return args == program[1:] and executable == own_executable
-
-
-@pytest.mark.parametrize("shell", ["/bin/bash", "/bin/zsh"])
-@pytest.mark.parametrize("transport", ["inline", "launcher"])
-async def test_argv_spawn_pane_pid_is_the_launched_program(
-    tmux_manager: TmuxSessionManager,
-    monkeypatch: pytest.MonkeyPatch,
-    shell: str,
-    transport: str,
-) -> None:
-    """The recorded pane PID must pass the pane monitor's provider identity check."""
-    from gobby.agents.kill import pid_matches_agent_identity
-    from gobby.agents.tmux.spawner import tmux_spawn_shell_and_env
-
-    if not Path(shell).is_file():
-        pytest.skip(f"{shell} is not installed")
-    # tmux runs pane commands with the $SHELL of the environment that starts its server.
-    monkeypatch.setenv("SHELL", shell)
-    session_id = str(uuid4())
-    padding = ["x" * INLINE_LAUNCH_LIMIT] if transport == "launcher" else []
-    command = [
-        sys.executable,
-        "-c",
-        "import time; time.sleep(60)",
-        "claude",
-        "--session-id",
-        session_id,
-        *padding,
-    ]
-    shell_cmd, extra_env = tmux_spawn_shell_and_env(command, {"PATH": os.environ["PATH"]}, None)
-    await tmux_manager.create_session(name=f"argv-{transport}", command=shell_cmd, env=extra_env)
-
-    info = await tmux_manager.get_session(f"argv-{transport}")
-    assert info is not None and info.pane_pid is not None
-    pane_pid = info.pane_pid
-    await _wait_for(lambda: _pane_runs_program(pane_pid, command))
-    assert await pid_matches_agent_identity(pane_pid, provider="claude", session_id=session_id)
-
-
-@pytest.mark.parametrize("shell", ["/bin/bash", "/bin/zsh"])
-async def test_shell_line_spawn_pane_pid_is_the_launched_program(
-    tmux_manager: TmuxSessionManager,
-    monkeypatch: pytest.MonkeyPatch,
-    shell: str,
-) -> None:
-    """A web terminal's single command line must leave pane_pid on its program, not sh."""
-    from gobby.agents.tmux.spawner import tmux_spawn_shell_and_env
-
-    if not Path(shell).is_file():
-        pytest.skip(f"{shell} is not installed")
-    monkeypatch.setenv("SHELL", shell)
-    program = [sys.executable, "-c", "import time; time.sleep(60)"]
-    shell_cmd, extra_env = tmux_spawn_shell_and_env(
-        [shlex.join(program)], {"PATH": os.environ["PATH"]}, None
-    )
-    await tmux_manager.create_session(name="shell-line", command=shell_cmd, env=extra_env)
-
-    info = await tmux_manager.get_session("shell-line")
-    assert info is not None and info.pane_pid is not None
-    pane_pid = info.pane_pid
-    await _wait_for(lambda: _pane_runs_program(pane_pid, program))
-
-
-async def _spawn_gobby_terminal(
-    *,
-    runtime: TmuxTerminalRuntime,
-    manager: TerminalManager,
-    project_id: str,
-    machine_id: str,
-    command: list[str],
-    session_id: str | None = None,
-    agent_run_id: str | None = None,
-) -> Terminal:
-    terminal_id = str(uuid4())
-    spawn_key = f"gobby-{terminal_id}"
-    pending = manager.create_pending(
-        terminal_id=terminal_id,
-        project_id=project_id,
-        backend="tmux",
-        ownership="gobby",
-        spawn_key=spawn_key,
-        machine_id=machine_id,
-        session_id=session_id,
-        agent_run_id=agent_run_id,
-    )
-    prepared = await runtime.prepare_spawn(
-        TerminalSpawnRequest(
-            terminal_id=UUID(terminal_id),
-            spawn_key=spawn_key,
-            command=command,
-        )
-    )
-    assert prepared.stored_locator is not None
-    assert prepared.locator_key is not None
-    live = manager.promote_to_live(
-        pending.id,
-        locator=prepared.stored_locator,
-        locator_key=prepared.locator_key,
-        session_name=spawn_key,
-    )
-    assert live is not None
-    return live
-
-
-async def test_finalise_kills_remain_on_exit_session_and_agrees_with_terminal_list(
-    tmux_manager: TmuxSessionManager,
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    session_manager: SessionManager,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Finalising an agent run leaves no gobby-socket pane without a live row."""
-    _stub_runtime_cleanup(monkeypatch)
-    monkeypatch.setattr(
-        "gobby.agents.terminal_delivery.deliver_and_cleanup_terminal_run",
-        AsyncMock(),
-    )
-    monkeypatch.setattr(
-        "gobby.agents.terminal_cleanup.reap_srt_runner_process_tree",
-        AsyncMock(),
-    )
-
-    runtime = TmuxTerminalRuntime(tmux_manager)
-    terminals = TerminalManager(temp_db)
-    machine_id = require_machine_id()
-    session = session_manager.register(
-        external_id="finalise-orphan-session",
-        machine_id=machine_id,
-        source="claude",
-        project_id=sample_project["id"],
-    )
-    arm = LocalAgentRunManager(temp_db)
-    run = arm.create(
-        parent_session_id=session.id,
-        provider="claude",
-        prompt="finalise orphan",
-        child_session_id=session.id,
-    )
-    arm.start(run.id)
-    dying = await _spawn_gobby_terminal(
-        runtime=runtime,
-        manager=terminals,
-        project_id=sample_project["id"],
-        machine_id=machine_id,
-        command=["true"],
-        session_id=session.id,
-        agent_run_id=run.id,
-    )
-    survivor = await _spawn_gobby_terminal(
-        runtime=runtime,
-        manager=terminals,
-        project_id=sample_project["id"],
-        machine_id=machine_id,
-        command=["tail", "-f", "/dev/null"],
-        session_id=session.id,
-    )
-    temp_db.execute(
-        "UPDATE agent_runs SET terminal_id = %s WHERE id = %s",
-        (dying.id, run.id),
-    )
-    fetched = arm.get(run.id)
-    assert fetched is not None
-    run = fetched
-
-    # Pin the regression: finalise only once the pane is remain-on-exit dead.
-    # A still-live pane would have been killed by the pre-fix is_live gate too.
-    async def _pane_dead() -> bool:
-        return not await runtime.is_live(dying)
-
-    await _wait_for_async(_pane_dead)
-    assert await runtime.session_present(dying) is True
-
-    registry = TerminalRuntimeRegistry()
-    registry.register(runtime)
-    services = TerminalServices(manager=terminals, registry=registry)
-    handler = _handler(
-        temp_db,
-        agent_run_manager=arm,
-        session_manager=session_manager,
-        terminal_services=services,
-    )
-    assert await handler.terminalize_successful_run(
-        run.id,
-        notify_result={"status": "completed"},
-        message="done",
-    )
-
-    assert await runtime.session_present(dying) is False
-    assert await runtime.is_live(survivor) is True
-    panes = await tmux_manager.list_panes()
-    assert panes is not None
-    pane_names = {pane.session_name for pane in panes}
-    live_rows = terminals.list_live_by_machine(machine_id)
-    row_names = {row.session_name for row in live_rows if row.session_name}
-    assert pane_names == row_names == {survivor.session_name}
-    assert dying.session_name not in pane_names
-    exited = terminals.get(dying.id)
-    assert exited is not None and exited.state == "exited"
-
-    config = MagicMock()
-    config.host = "localhost"
-    config.port = 60888
-    config.ping_interval = 30
-    config.ping_timeout = 10
-    config.max_message_size = 1024
-    ws_server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
-    ws_server.terminal_manager = terminals
-    ws_server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
-    ws_server.session_manager = session_manager
-    ws = MockWebSocket()
-    await ws_server._handle_terminal_list(ws, {"type": "terminal_list", "request_id": "proof"})
-    page = ws.last_message()
-
-    assert page["type"] == "terminal_list"
-    listed_ids = {item["terminal_id"] for item in page["items"]}
-    assert listed_ids == {row.id for row in live_rows} == {survivor.id}
-
-
-async def test_sweep_kills_surviving_session_of_orphaned_row(
-    tmux_manager: TmuxSessionManager,
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    session_manager: SessionManager,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An orphaned row whose tmux session survived is killed and settled on sweep."""
-    _stub_runtime_cleanup(monkeypatch)
-
-    runtime = TmuxTerminalRuntime(tmux_manager)
-    terminals = TerminalManager(temp_db)
-    machine_id = require_machine_id()
-    session = session_manager.register(
-        external_id="orphan-sweep-session",
-        machine_id=machine_id,
-        source="claude",
-        project_id=sample_project["id"],
-    )
-    arm = LocalAgentRunManager(temp_db)
-    run = arm.create(
-        parent_session_id=session.id,
-        provider="claude",
-        prompt="orphan sweep",
-        child_session_id=session.id,
-    )
-    arm.start(run.id)
-    orphan = await _spawn_gobby_terminal(
-        runtime=runtime,
-        manager=terminals,
-        project_id=sample_project["id"],
-        machine_id=machine_id,
-        command=["tail", "-f", "/dev/null"],
-        session_id=session.id,
-        agent_run_id=run.id,
-    )
-    temp_db.execute(
-        """
-        UPDATE agent_runs
-        SET terminal_id = %s, status = 'success', completed_at = now(), updated_at = now()
-        WHERE id = %s
-        """,
-        (orphan.id, run.id),
-    )
-    assert terminals.mark_orphaned(orphan.id) is not None
-    assert await runtime.session_present(orphan) is True
-
-    registry = TerminalRuntimeRegistry()
-    registry.register(runtime)
-    services = TerminalServices(manager=terminals, registry=registry)
-    handler = _handler(
-        temp_db,
-        agent_run_manager=arm,
-        session_manager=session_manager,
-        terminal_services=services,
-    )
-    assert await handler.cleanup_terminal_tmux_sessions() == 1
-
-    assert await runtime.session_present(orphan) is False
-    settled = terminals.get(orphan.id)
-    assert settled is not None and settled.state == "exited"
-    swept = arm.get(run.id)
-    assert swept is not None and swept.pid is None

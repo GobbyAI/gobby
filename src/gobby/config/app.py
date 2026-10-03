@@ -390,7 +390,7 @@ class DaemonConfig(BaseModel):
     )
     tmux: TmuxConfig = Field(
         default_factory=TmuxConfig,
-        description="Tmux agent spawning configuration",
+        description="Agent terminal monitoring and tmux attach history",
     )
     terminals: TerminalConfig = Field(
         default_factory=TerminalConfig,

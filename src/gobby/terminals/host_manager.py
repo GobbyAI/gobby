@@ -661,6 +661,10 @@ class TerminalHostManager:
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / HOST_LOG_NAME
         env = os.environ.copy()
+        # Agents inherit the host env; a daemon started inside tmux must not
+        # hand them its own pane as their terminal context.
+        env.pop("TMUX", None)
+        env.pop("TMUX_PANE", None)
         env["GTERM_LOG_FILE"] = str(log_path)
         with log_path.open("a", encoding="utf-8") as log_file:
             return __import__("subprocess").Popen(  # nosec B603

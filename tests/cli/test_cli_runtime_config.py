@@ -46,7 +46,7 @@ def test_cli_runtime_closes_config_resources(monkeypatch: pytest.MonkeyPatch) ->
         finally:
             database.close()
 
-    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", open_database)
     runtime = CliRuntime(
         config_file=None,
         config_repository_factory=lambda opened_database: repository,

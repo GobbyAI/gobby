@@ -12,6 +12,7 @@ from types import ModuleType, SimpleNamespace
 from typing import ClassVar
 
 import pytest
+from psycopg.pq import TransactionStatus
 
 from gobby.build import lifecycle as build_lifecycle
 from gobby.build.options import BuildOptions
@@ -19,6 +20,8 @@ from gobby.build.results import BuildResult
 from gobby.config.postgres_pool import PostgresPoolConfig
 
 pytestmark = pytest.mark.unit
+
+_OPEN_TRANSACTION_INFO = SimpleNamespace(transaction_status=TransactionStatus.INTRANS)
 
 
 def _postgres_module():
@@ -55,6 +58,8 @@ def test_postgres_transaction_is_closed_when_context_exits(
     module = _postgres_module()
 
     class Connection:
+        info = _OPEN_TRANSACTION_INFO
+
         @contextmanager
         def transaction(self) -> Iterator[None]:
             yield
@@ -128,6 +133,8 @@ def test_postgres_after_commit_callback_failures_are_isolated(
     pool_module = _postgres_pool_module()
 
     class Connection:
+        info = _OPEN_TRANSACTION_INFO
+
         @contextmanager
         def transaction(self) -> Iterator[None]:
             yield
@@ -170,6 +177,8 @@ def test_nested_native_transaction_callbacks_run_on_their_own_commit(
     module = _postgres_module()
 
     class Connection:
+        info = _OPEN_TRANSACTION_INFO
+
         @contextmanager
         def transaction(self) -> Iterator[None]:
             yield
@@ -213,6 +222,8 @@ async def test_interleaved_transactions_own_callbacks_and_lock_order(
         PRIORITY: ClassVar[int] = 10
 
     class Connection:
+        info = _OPEN_TRANSACTION_INFO
+
         @contextmanager
         def transaction(self) -> Iterator[None]:
             yield
@@ -257,6 +268,8 @@ async def test_build_dry_run_interleaving_keeps_transaction_locks_task_local(
     module = _postgres_module()
 
     class Connection:
+        info = _OPEN_TRANSACTION_INFO
+
         @contextmanager
         def transaction(self) -> Iterator[None]:
             yield

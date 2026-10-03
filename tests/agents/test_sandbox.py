@@ -3,7 +3,6 @@ Tests for Sandbox Configuration Models.
 """
 
 import json
-import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -28,7 +27,6 @@ from gobby.agents.sandbox import (
 from gobby.agents.sandbox_policy import (
     assert_sensitive_path_contract,
     default_write_paths,
-    tmux_socket_roots,
 )
 from gobby.agents.sandbox_resolvers import (
     ClaudeSandboxResolver,
@@ -46,7 +44,6 @@ from gobby.agents.spawn_cache_policy import (
     sandbox_config_for_spawn,
 )
 from gobby.config.app import DaemonConfig
-from gobby.config.tmux import socket_root
 from gobby.integrations.rtk import platform_paths
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.utils.daemon_git import GitFailed, GitTimeout
@@ -871,6 +868,17 @@ class TestComputeSandboxPaths:
         )
 
         assert str(workspace) in paths.write_paths
+
+    async def test_unix_sockets_are_only_the_configured_ones(self, tmp_path: Path) -> None:
+        """Agents never reach a tmux server, so no tmux socket directory is granted."""
+        socket = tmp_path / "gobby.sock"
+        config = SandboxConfig(enabled=True, allow_unix_sockets=[str(socket)])
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        paths = await compute_sandbox_paths(config=config, workspace_path=str(workspace))
+
+        assert paths.allow_unix_sockets == [str(socket.resolve())]
 
     async def test_canonicalizes_workspace_symlink_before_granting_access(
         self, tmp_path: Path
@@ -1874,42 +1882,6 @@ class TestAgySandboxResolver:
 
         assert isinstance(session, AgyManagedChatSession)
         assert session.conversation_id == "agy-srt"
-
-
-@pytest.mark.unit
-class TestTmuxSocketAllowance:
-    """The sandbox unix-socket allowance must name the directory tmux really uses."""
-
-    def test_defaults_to_tmp_not_the_per_user_tmpdir(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("TMUX_TMPDIR", raising=False)
-        monkeypatch.setenv("TMPDIR", "/var/folders/xx/T")
-
-        assert socket_root() == f"/tmp/tmux-{os.getuid()}"
-
-    def test_honours_tmux_tmpdir_when_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("TMUX_TMPDIR", "/custom/tmux")
-
-        assert socket_root() == f"/custom/tmux/tmux-{os.getuid()}"
-
-    def test_treats_empty_tmux_tmpdir_as_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("TMUX_TMPDIR", "")
-
-        assert socket_root() == f"/tmp/tmux-{os.getuid()}"
-
-    @pytest.mark.parametrize("tmux_tmpdir", [None, "/custom/tmux"])
-    def test_allowance_is_the_directory_holding_the_socket(
-        self, monkeypatch: pytest.MonkeyPatch, tmux_tmpdir: str | None
-    ) -> None:
-        if tmux_tmpdir is None:
-            monkeypatch.delenv("TMUX_TMPDIR", raising=False)
-        else:
-            monkeypatch.setenv("TMUX_TMPDIR", tmux_tmpdir)
-
-        roots = tmux_socket_roots()
-        socket_path = os.path.realpath(os.path.join(socket_root(), "gobby"))
-
-        assert roots == [os.path.realpath(socket_root())]
-        assert os.path.dirname(socket_path) in roots
 
 
 async def test_workspace_gcode_runtime_home_is_writable_under_srt_write_precedence(

@@ -348,12 +348,12 @@ class TestFormatStatusMessage:
                 "coding_clis": {"claude": "installed", "qwen": None, "codex": None, "hooks": {}},
                 "dependencies": {
                     "required": {
-                        "tmux": {
+                        "git": {
                             "state": "healthy",
-                            "installed_version": "3.7b",
-                            "minimum_version": "3.2",
+                            "installed_version": "2.50.1",
+                            "minimum_version": "2.38.0",
                             "expected_version": None,
-                            "path": "/usr/bin/tmux",
+                            "path": "/usr/bin/git",
                             "error": None,
                         }
                     },
@@ -367,7 +367,7 @@ class TestFormatStatusMessage:
         assert "Coding CLIs:" in result
         assert "Claude Code:" in result
         assert "Required Dependencies:" in result
-        assert "tmux:" in result
+        assert "git:" in result
 
     def test_gobby_section_reports_every_managed_native_binary(self) -> None:
         """gterm and gclient were carried in the payload and never rendered.

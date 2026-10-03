@@ -55,6 +55,137 @@ def _context(links: list[dict[str, Any]], sessions: dict[str, Any]) -> MagicMock
     return ctx
 
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        "valid",
+        "partial-owner",
+        "ambiguous-root",
+        "root-mismatch",
+        "machine-mismatch",
+        "project-mismatch",
+        "before-window",
+        "after-window",
+        "wrong-task",
+        "no-terminal",
+    ],
+)
+async def test_legacy_linked_edits_require_registered_task_checkout_proof(
+    tmp_path: Path, case: str
+) -> None:
+    root = tmp_path / "task-checkout"
+    root.mkdir()
+    test_path, production_path = "tests/test_named.py", "src/named.py"
+    for path, source in (
+        (test_path, "def test_named():\n    assert named()\n"),
+        (production_path, "def named():\n    return True\n"),
+    ):
+        target = root / path
+        target.parent.mkdir()
+        target.write_text(source)
+    for args in (
+        ("init", "-q"),
+        ("add", "."),
+        ("-c", "user.email=t@t", "-c", "user.name=Test", "commit", "-qm", "task work"),
+    ):
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    start = datetime(2026, 9, 30, 2, tzinfo=UTC)
+    transcript = tmp_path / "legacy.jsonl"
+    implementer = _claude_edit_session(
+        transcript, IMPLEMENTER, root / test_path, start + timedelta(seconds=10)
+    )
+    first = json.loads(transcript.read_text())
+    records = [first]
+    command = f"cd {root} && uv run pytest {test_path} -q"
+    records += _claude_shell_records(
+        start,
+        20,
+        "red",
+        command,
+        f"E   AssertionError\n{test_path}:2: AssertionError\nFAILED {test_path}::test_named",
+        1,
+    )
+    if case == "no-terminal":
+        records.pop()
+    for offset, relative in ((30, production_path), (70, test_path)):
+        record = json.loads(json.dumps(first))
+        record["timestamp"] = (start + timedelta(seconds=offset)).isoformat()
+        record["message"]["content"][0]["id"] = f"edit-{offset}"
+        record["message"]["content"][0]["input"]["file_path"] = str(root / relative)
+        records.append(record)
+    records += _claude_shell_records(start, 40, "green", command, "1 passed in 0.1s", 0)
+    transcript.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    qa = _claude_edit_session(
+        tmp_path / "qa.jsonl", QA, tmp_path / "foreign.py", start + timedelta(hours=1)
+    )
+    ctx = _context(
+        [
+            _link(IMPLEMENTER, "claimed", start.isoformat()),
+            _link(QA, "claimed", (start + timedelta(hours=1)).isoformat()),
+        ],
+        {IMPLEMENTER: implementer, QA: qa},
+    )
+    ctx.session_var_manager.get_variables.return_value = {}
+    ctx.task_manager.get_task.return_value = SimpleNamespace(id="task", commits=[commit])
+    ctx.session_task_manager.get_session_tasks.return_value = [
+        _session_link("task", start.isoformat()),
+        _session_link("other", (start + timedelta(seconds=60)).isoformat()),
+    ]
+    created = start + timedelta(seconds=5)
+    if case == "before-window":
+        created = start - timedelta(seconds=1)
+    elif case == "after-window":
+        created = start + timedelta(seconds=61)
+    worktree = SimpleNamespace(
+        task_id="other" if case == "wrong-task" else "task",
+        project_id="other" if case == "project-mismatch" else implementer.project_id,
+        machine_id="other" if case == "machine-mismatch" else implementer.machine_id,
+        worktree_path=str(tmp_path / "wrong") if case == "root-mismatch" else str(root),
+        created_at=created,
+    )
+    worktrees = [worktree]
+    if case == "ambiguous-root":
+        worktrees.append(
+            SimpleNamespace(**{**vars(worktree), "worktree_path": str(tmp_path / "other")})
+        )
+    ctx.worktree_manager.list_worktrees.return_value = worktrees
+    with (
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+    ):
+        evidence = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=QA,
+            closing_session_id=QA,
+            owner_window_start=(start + timedelta(hours=1)).isoformat(),
+            task_edited_files={production_path}
+            if case == "partial-owner"
+            else {test_path, production_path},
+            repo_path=str(root),
+        )
+    tests = (
+        AcceptanceTest(
+            reference=f"{test_path}::test_named",
+            path=test_path,
+            symbol="test_named",
+            body="def test_named():\n    assert named()\n",
+        ),
+    )
+    result = evaluate_tdd_evidence(tests, evidence)
+    assert result.passed is (case in {"valid", "partial-owner"}), result.findings
+    if case in {"valid", "partial-owner", "no-terminal"}:
+        assert [(edit.path, edit.timestamp) for edit in evidence.edits] == [
+            (test_path, start + timedelta(seconds=10)),
+            (production_path, start + timedelta(seconds=30)),
+        ]
+    else:
+        assert not evidence.edits
+
+
 def _session(session_id: str, created_at: str) -> SimpleNamespace:
     # ``source`` and ``transcript_path`` carry the provider identity the close path
     # reads before parsing, so every stand-in session must supply them.

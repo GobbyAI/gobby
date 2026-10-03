@@ -1,7 +1,7 @@
-"""Tmux session lifecycle management.
+"""Tmux session queries and control for hand-started panes.
 
-Creates, lists, kills, and queries tmux sessions on an isolated socket
-(``-L gobby``) so Gobby never interferes with the user's personal tmux.
+Lists, probes, captures, writes to, and kills tmux sessions on the socket a
+pane recorded. Gobby creates no tmux sessions (#22856).
 """
 
 from __future__ import annotations
@@ -9,29 +9,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
 import signal
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from gobby.agents.tmux.errors import TmuxNotFoundError
 from gobby.agents.tmux.session_activation import (
-    REFRESH_CLIENT_TIMEOUT_SECONDS,
     TMUX_COMMAND_TIMEOUT_SECONDS,
-    activate_session,
     exact_session_target,
-    refresh_session_clients,
     run_tmux_command,
 )
 from gobby.agents.tmux.text_injection import (
     TmuxTextInjectionError,
     send_literal_text_to_tmux_target,
 )
-from gobby.agents.tmux.wsl_compat import needs_wsl
-from gobby.config.tmux import TmuxConfig
-from gobby.utils import spawn
 
 if TYPE_CHECKING:
     from gobby.terminals.runtime import SnapshotMode
@@ -47,7 +38,6 @@ _MISSING_TARGET_ERRORS = (
     "can't find window",
     "no such window",
 )
-TMUX_HEALTH_CHECK_TIMEOUT_FAILURE_LIMIT = 3
 
 
 class TmuxProbeState(StrEnum):
@@ -107,21 +97,6 @@ def _send_keys_target(target: str) -> str:
 
 
 @dataclass
-class TmuxSessionInfo:
-    """Metadata about a running tmux session."""
-
-    name: str
-    created_at: float = field(default_factory=time.time)
-    pane_pid: int | None = None
-    pane_id: str | None = None
-    window_name: str | None = None
-    pane_title: str | None = None
-    pane_dead: bool = False
-    pane_command: str | None = None
-    pane_path: str | None = None
-
-
-@dataclass
 class TmuxPaneInfo:
     """One pane on a tmux server, keyed by the server generation that owns it."""
 
@@ -164,74 +139,26 @@ _PANE_LIST_FORMAT = "\t".join(
 
 
 class TmuxSessionManager:
-    """Manages tmux sessions on an isolated Gobby socket.
+    """Queries and controls one tmux server, addressed by its socket path.
 
-    All tmux commands use ``-L <socket_name>`` so that Gobby sessions
-    are invisible to ``tmux ls`` in the user's default server.
+    Gobby starts no tmux server; the path is the one a hand-started pane
+    recorded from ``$TMUX``.
     """
 
-    def __init__(self, config: TmuxConfig | None = None) -> None:
-        self._config = config or TmuxConfig()
-        self._health_check_timeout_failures = 0
-
-    @property
-    def config(self) -> TmuxConfig:
-        return self._config
+    def __init__(self, socket_path: str) -> None:
+        self._socket_path = socket_path
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
     def _base_args(self) -> list[str]:
-        """Return the common tmux prefix args (binary + socket + config).
-
-        On Windows the command is prefixed with ``wsl`` (and optionally
-        ``-d <distro>``) so that tmux runs inside WSL.
-        """
-        from gobby.agents.tmux.wsl_compat import needs_wsl
-
-        args: list[str] = []
-        if needs_wsl():
-            args.append("wsl")
-            if self._config.wsl_distribution:
-                args.extend(["-d", self._config.wsl_distribution])
-
-        args.append(self._config.command)
-        if self._config.socket_path:
-            args.extend(["-S", self._config.socket_path])
-        elif self._config.socket_name:
-            args.extend(["-L", self._config.socket_name])
-        # Always use explicit config to prevent user's ~/.tmux.conf from
-        # interfering (e.g. 'destroy-unattached on' kills detached sessions).
-        if self._config.config_file:
-            args.extend(["-f", self._config.config_file])
-        else:
-            args.extend(["-f", "/dev/null"])
-        return args
+        """Return the tmux prefix that addresses this manager's server."""
+        return ["tmux", "-S", self._socket_path]
 
     def base_args(self) -> list[str]:
         """Return the public tmux command prefix for this manager."""
         return self._base_args()
-
-    @staticmethod
-    def _parse_session_info_line(line: str) -> TmuxSessionInfo | None:
-        """Parse one tab-delimited tmux metadata row."""
-        if not line.strip():
-            return None
-        parts = line.split("\t")
-        if len(parts) < 2:
-            return None
-        pid_str = parts[1]
-        return TmuxSessionInfo(
-            name=parts[0],
-            pane_pid=int(pid_str) if pid_str.isdigit() else None,
-            pane_id=parts[2] if len(parts) > 2 and parts[2] else None,
-            window_name=parts[3] if len(parts) > 3 and parts[3] else None,
-            pane_title=parts[4] if len(parts) > 4 and parts[4] else None,
-            pane_dead=parts[5] == "1" if len(parts) > 5 else False,
-            pane_command=parts[6] if len(parts) > 6 and parts[6] else None,
-            pane_path=parts[7] if len(parts) > 7 and parts[7] else None,
-        )
 
     async def _run(
         self,
@@ -242,8 +169,6 @@ class TmuxSessionManager:
         return await run_tmux_command(
             [*self._base_args(), *tmux_args],
             timeout=timeout,
-            socket_name=self._config.socket_name,
-            socket_path=self._config.socket_path,
         )
 
     async def probe_target(self, target: str) -> TmuxProbeResult:
@@ -276,167 +201,18 @@ class TmuxSessionManager:
     # Public API
     # ------------------------------------------------------------------
 
-    def is_available(self) -> bool:
-        """Check whether tmux (or WSL on Windows) is available."""
-        from gobby.agents.tmux.wsl_compat import needs_wsl
-
-        if needs_wsl():
-            if not shutil.which("wsl"):
-                return False
-            import subprocess
-
-            try:
-                result = spawn.run(
-                    ["wsl", "--exec", "which", self._config.command],
-                    capture_output=True,
-                    timeout=5,
-                )
-                return result.returncode == 0
-            except (subprocess.TimeoutExpired, OSError):
-                return False
-        return shutil.which(self._config.command) is not None
-
-    def require_available(self) -> None:
-        """Raise :class:`TmuxNotFoundError` if tmux is missing."""
-        if not self.is_available():
-            raise TmuxNotFoundError(self._config.command)
-
-    async def health_check(self) -> bool:
-        """Verify the tmux socket is responsive. Kill stale server if not.
-
-        Returns True if healthy (or recovered), False if tmux is unavailable.
-        """
-        if not self.is_available():
-            self._health_check_timeout_failures = 0
-            return False
-
-        try:
-            rc, _stdout, stderr = await self._run("list-sessions", timeout=5.0)
-            # rc=1 with no server is fine; tmux will start it on next create.
-            if rc == 0 or _is_missing_tmux_server_error(stderr):
-                self._health_check_timeout_failures = 0
-                return True
-            self._health_check_timeout_failures = 0
-            logger.warning("tmux health check returned rc=%s: %s", rc, stderr.strip())
-            return False
-        except TimeoutError:
-            self._health_check_timeout_failures += 1
-            if self._health_check_timeout_failures < TMUX_HEALTH_CHECK_TIMEOUT_FAILURE_LIMIT:
-                logger.warning(
-                    "tmux socket unresponsive (timeout %s/%s); deferring kill-server.",
-                    self._health_check_timeout_failures,
-                    TMUX_HEALTH_CHECK_TIMEOUT_FAILURE_LIMIT,
-                )
-                return False
-            logger.warning(
-                "tmux socket unresponsive after %s consecutive timeouts. Killing stale server.",
-                self._health_check_timeout_failures,
-            )
-        except Exception as e:
-            self._health_check_timeout_failures = 0
-            logger.warning("tmux health check failed: %s", e)
-            return False
-
-        # Attempt to kill the stale server and let it restart on next use
-        try:
-            await self._run("kill-server", timeout=5.0)
-            self._health_check_timeout_failures = 0
-            logger.info("Killed stale tmux server on socket '%s'", self._config.socket_name)
-            return True
-        except Exception as e:
-            logger.warning("Failed to kill stale tmux server: %s", e)
-            return False
-
-    async def shutdown(self) -> None:
-        """Stop the configured tmux server."""
-        await self._run("kill-server", timeout=5.0)
-
-    async def set_option(self, session_name: str, option: str, value: str) -> None:
-        """Set an option on a tmux session."""
-        await self._run("set-option", "-t", session_name, option, value, timeout=5.0)
-
-    async def refresh_client(
-        self,
-        session_name: str,
-        *,
-        timeout: float = REFRESH_CLIENT_TIMEOUT_SECONDS,
-    ) -> None:
-        """Redraw every attached client within one shared deadline."""
-        await refresh_session_clients(self, session_name, timeout=timeout)
-
-    async def create_session(
-        self,
-        name: str,
-        command: str | list[str] | None = None,
-        cwd: str | None = None,
-        env: dict[str, str] | None = None,
-        rows: int | None = 50,
-        cols: int | None = 200,
-    ) -> TmuxSessionInfo:
-        """Create a new detached tmux session (see ``activate_session``).
-
-        Raises:
-            TmuxSessionError: If session creation fails.
-        """
-        safe_name, pane_pid = await activate_session(
-            self,
-            name,
-            command,
-            cwd,
-            env,
-            rows=rows,
-            cols=cols,
-        )
-        return TmuxSessionInfo(name=safe_name, pane_pid=pane_pid)
-
-    async def list_sessions(self) -> list[TmuxSessionInfo]:
-        """List all Gobby tmux sessions on the isolated socket."""
-        # Fetch name, pid, pane_id, window name, pane title, pane_dead,
-        # running command, and cwd in one go
-        rc, stdout, _stderr = await self._run(
-            "list-sessions",
-            "-F",
-            "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}",
-        )
-        if rc != 0:
-            # No server running is rc=1 with "no server running"
-            return []
-
-        results: list[TmuxSessionInfo] = []
-        for line in stdout.splitlines():
-            if not line.strip():
-                continue
-            info = self._parse_session_info_line(line)
-            if info:
-                results.append(info)
-        return results
-
-    async def get_session(self, name: str) -> TmuxSessionInfo | None:
-        """Fetch metadata for the first pane in one tmux session."""
-        rc, stdout, _stderr = await self._run(
-            "list-panes",
-            "-t",
-            exact_session_target(name),
-            "-F",
-            "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}",
-            timeout=2.0,
-        )
-        if rc != 0:
-            return None
-        for line in stdout.splitlines():
-            info = self._parse_session_info_line(line)
-            if info:
-                return info
-        return None
-
-    async def list_panes(self) -> list[TmuxPaneInfo] | None:
+    async def list_panes(
+        self, *, timeout: float = TMUX_COMMAND_TIMEOUT_SECONDS
+    ) -> list[TmuxPaneInfo] | None:
         """Every pane on this server.
 
         ``[]`` when no server is running on the socket; ``None`` when tmux
         failed for any other reason, so callers keep their last view instead
         of treating the panes as gone.
         """
-        rc, stdout, stderr = await self._run("list-panes", "-a", "-F", _PANE_LIST_FORMAT)
+        rc, stdout, stderr = await self._run(
+            "list-panes", "-a", "-F", _PANE_LIST_FORMAT, timeout=timeout
+        )
         if rc != 0:
             return [] if _is_missing_tmux_server_error(stderr) else None
         panes: list[TmuxPaneInfo] = []
@@ -555,10 +331,6 @@ class TmuxSessionManager:
             logger.warning("Failed to kill tmux session '%s': %s", name, message)
             return False
 
-        if needs_wsl():
-            logger.info("Killed tmux session '%s' via WSL tmux", name)
-            return True
-
         # Kill process groups rooted at each pane shell
         pgids: set[int] = set()
         for pid in pids:
@@ -598,22 +370,6 @@ class TmuxSessionManager:
             except ValueError:
                 pass
         return pids
-
-    async def get_pane_pid(self, session_name: str) -> int | None:
-        """Get the PID of the process running in the first pane."""
-        rc, stdout, _stderr = await self._run(
-            "display-message",
-            "-t",
-            exact_session_target(session_name),
-            "-p",
-            "#{pane_pid}",
-        )
-        if rc != 0 or not stdout.strip():
-            return None
-        try:
-            return int(stdout.strip())
-        except ValueError:
-            return None
 
     async def get_window_automatic_rename(self, target: str) -> bool | None:
         """Return whether ``automatic-rename`` is on for *target*'s window.
@@ -851,10 +607,6 @@ class TmuxSessionManager:
     async def dispatch_keys(self, session_name: str, keys: str, *, literal: bool = True) -> bool:
         """Backend-neutral alias used by plan-keystroke playback."""
         return await self.send_keys(session_name, keys, literal=literal)
-
-    async def destroy_session(self, session_name: str, *, missing_ok: bool = False) -> bool:
-        """Backend-neutral alias for killing a tmux session by name."""
-        return await self.kill_session(session_name, missing_ok=missing_ok)
 
     async def snapshot_lines(
         self, session_name: str, lines: int = 5, *, mode: SnapshotMode = "text"

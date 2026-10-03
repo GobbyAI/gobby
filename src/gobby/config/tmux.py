@@ -1,75 +1,24 @@
-"""Configuration for the tmux agent spawning module."""
+"""Configuration for hand-started tmux panes and agent terminal monitoring."""
 
 from __future__ import annotations
 
-import os
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# The one source of the attach-history default; gobby.agents.tmux.history
-# imports it for direct callers of capture_history. 500 matches herdr's
-# default bound. The cost model behind it is measured by
+# The one source of the attach-history default the terminal host and the
+# proxy relay share. 500 matches herdr's default bound. The cost model behind it is measured by
 # web/tests/history-perf.spec.ts and recorded on the field below.
 ATTACH_HISTORY_LINES = 500
 
 
-def socket_root() -> str:
-    """Return the directory tmux puts its sockets in, resolved the way tmux does.
-
-    tmux honours ``TMUX_TMPDIR`` when it is set and non-empty and otherwise uses
-    ``/tmp``; it never reads ``TMPDIR``, which on macOS names a per-user
-    directory no tmux server lives under. Both consumers that have to name this
-    directory - the pane sweep and the sandbox unix-socket allowance - resolve it
-    here, so an allowance cannot point somewhere tmux never listens.
-    """
-    base = os.environ.get("TMUX_TMPDIR") or "/tmp"
-    return os.path.join(base, f"tmux-{os.getuid()}")
-
-
 class TmuxConfig(BaseModel):
-    """Configuration for tmux-based agent spawning.
+    """How Gobby monitors agent terminals and restores attach history.
 
-    Controls how Gobby creates and manages tmux sessions for agents.
-    All sessions use ``-L <socket_name>`` to isolate from the user's
-    personal tmux server.
+    Gobby spawns no tmux sessions and runs no tmux server (#22856); a
+    hand-started pane is addressed by the socket it recorded from ``$TMUX``.
     """
 
-    enabled: bool = Field(
-        default=True,
-        description="Enable tmux as first-class agent spawning backend.",
-    )
-    command: str = Field(
-        default="tmux",
-        description="Path or name of the tmux binary.",
-    )
-    socket_name: str = Field(
-        default="gobby",
-        description="Isolated tmux socket name (passed as -L <socket_name>).",
-    )
-    socket_path: str | None = Field(
-        default=None,
-        description=(
-            "Exact tmux socket path (passed as -S <socket_path>). "
-            "When set, this takes precedence over socket_name."
-        ),
-    )
-    config_file: str | None = Field(
-        default=None,
-        description="Optional tmux config file (passed as -f <path>).",
-    )
-    session_prefix: str = Field(
-        default="gobby",
-        description="Prefix for auto-generated session names.",
-    )
-    history_limit: int = Field(
-        default=10000,
-        ge=100,
-        description=(
-            "Scrollback buffer size for spawned sessions and maximum post-mortem "
-            "full-capture history."
-        ),
-    )
     attach_history_lines: int = Field(
         default=ATTACH_HISTORY_LINES,
         ge=0,
@@ -81,10 +30,6 @@ class TmuxConfig(BaseModel):
             "throttle), and the built-in fallback core retains at most 1000 rows, "
             "so the ceiling is where a larger window stops being deliverable."
         ),
-    )
-    wsl_distribution: str | None = Field(
-        default=None,
-        description="WSL distribution for Windows (e.g., 'Ubuntu'). None uses default.",
     )
     idle_check_enabled: bool = Field(
         default=True,

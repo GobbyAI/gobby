@@ -33,33 +33,11 @@ RunDbHook = Callable[..., Awaitable[Any]] | Callable[..., Any]
 
 
 async def _emit_pty_terminal_output(websocket_server: object, run_id: str, data: str) -> None:
-    """Broadcast PTY/tmux bytes with terminal_id and attachment_id distinct.
-
-    The PTY reader keys streams by streaming_id, which for a tmux web attach
-    is the attachment id. Look that id up on the live bridge so the frame
-    carries the terminals row in ``terminal_id`` and the attachment in
-    ``attachment_id``. Agent/FIFO streams have no bridge and keep
-    ``terminal_id=run_id`` with ``attachment_id=None``.
-    """
+    """Broadcast PTY bytes keyed by the run, with no web attachment."""
     broadcast = getattr(websocket_server, "broadcast_terminal_output", None)
     if not callable(broadcast):
         return
-    terminal_id = run_id
-    attachment_id: str | None = None
-    lookup = getattr(websocket_server, "_tmux_bridge_for", None)
-    if callable(lookup):
-        try:
-            bridge = await lookup(run_id)
-        except Exception:
-            # The web client drops frames whose attachment_id doesn't match a
-            # live attachment; a frozen terminal must be diagnosable from here.
-            logger.warning("terminal output id lookup failed for %s", run_id, exc_info=True)
-        else:
-            row_id = getattr(bridge, "terminal_id", None)
-            if isinstance(row_id, str) and row_id:
-                terminal_id = row_id
-                attachment_id = run_id
-    await broadcast(terminal_id, data, attachment_id)
+    await broadcast(run_id, data, None)
 
 
 class CommunicationsEventBroadcaster(Protocol):
@@ -373,13 +351,11 @@ async def shutdown_agent_event_broadcasting() -> None:
 def reset_agent_event_broadcasting() -> None:
     """Remove lifecycle-owned callbacks published during runner construction."""
     from gobby.agents.pty_reader import reset_pty_output_callback
-    from gobby.agents.tmux import reset_tmux_output_callback
 
     global _agent_event_callback, _agent_output_readers
     _agent_event_callback = None
     _agent_output_readers = None
     reset_pty_output_callback()
-    reset_tmux_output_callback()
 
 
 def fire_agent_event(event_type: str, run_id: str, data: dict[str, Any]) -> None:

@@ -42,7 +42,7 @@ def _runtime_database() -> Iterator[None]:
     config = MagicMock()
     with (
         patch(
-            "gobby.cli.runtime.runtime_hub_database",
+            "gobby.storage.hub.runtime.runtime_hub_database",
             return_value=nullcontext(database),
         ),
         patch("gobby.cli.runtime.CliRuntime.require_config", return_value=config),
@@ -504,7 +504,7 @@ class TestAgentsSpawnCommand:
         assert "Error: Unexpected error" in result.output
 
     def test_spawn_terminal_backend_choices(self, runner: CliRunner) -> None:
-        """Test spawn terminal backend option validates choices."""
+        """Test spawn terminal backend option rejects tmux."""
         result = runner.invoke(
             cli,
             [
@@ -514,7 +514,7 @@ class TestAgentsSpawnCommand:
                 "--session",
                 "sess",
                 "--terminal-backend",
-                "invalid_term",
+                "tmux",
             ],
         )
 

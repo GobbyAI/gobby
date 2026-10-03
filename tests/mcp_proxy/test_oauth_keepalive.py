@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import random
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -97,6 +98,23 @@ def test_retry_after_backoff_blocks_a_second_call_inside_the_window() -> None:
     assert backoff_active(state, 1_010.0)
     assert not backoff_active(state, 1_031.0)
     assert state.retry_not_before == 1_030.0
+
+
+def test_exponential_backoff_jitter_draws_from_the_system_random_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draws: list[tuple[float, float]] = []
+
+    def uniform(_self: random.SystemRandom, low: float, high: float) -> float:
+        draws.append((low, high))
+        return high
+
+    monkeypatch.setattr(random.SystemRandom, "uniform", uniform)
+    state = OAuthState()
+    schedule_backoff(state, status=500, retry_after=None, now=1_000.0)
+    schedule_backoff(state, status=500, retry_after=None, now=1_000.0)
+    assert draws == [(0.5, 1.0), (0.5, 1.0)]
+    assert state.retry_not_before == 1_010.0
 
 
 @pytest.mark.asyncio

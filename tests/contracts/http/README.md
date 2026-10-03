@@ -110,8 +110,8 @@ Masked fields in the first corpus:
 - `health_ok`: `status` and `hook_runtime` depend on the host's services,
   `install_dir` on the checkout path, and `gterm_host` on the terminal host
   process.
-- `config_values`: the per-fixture temporary `terminal_host/socket_dir` and
-  `tmux/socket_path`, under both `desired` and `active`.
+- `config_values`: the per-fixture temporary `terminal_host/socket_dir`, under
+  both `desired` and `active`.
 - `runtime_handshake`: both `fencing_epoch` fields; the grant's `issued_at` and
   `expires_at`; and each capability's `valid_until` and `credential_generation`.
   It also masks `capabilities/postgres/role_name`, which the database derives

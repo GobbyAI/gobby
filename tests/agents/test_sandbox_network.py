@@ -98,7 +98,7 @@ async def test_unreadable_seed_refuses_trusted_spawn_only(
         patch(f"{_IMPL}.execute_spawn") as execute,
     ):
         result: dict[str, Any] = await spawn_agent_impl(
-            terminal_backend="tmux",
+            terminal_backend="native",
             prompt="Do the thing",
             runner=runner,
             provider="claude",

@@ -504,8 +504,12 @@ def test_grok_tool_hook_from_another_process_in_the_pane_auto_registers() -> Non
     session_manager.register_session.assert_called_once()
 
 
-def test_spawned_grok_parent_survives_first_of_three_process_bound_children() -> None:
-    """A process-bound Grok child's session_end leaves the parent run, session, and terminal live."""
+def test_hand_started_grok_parent_survives_first_of_three_process_bound_children() -> None:
+    """A process-bound Grok child's session_end leaves the hand-started tmux parent live.
+
+    The parent's own session_end then pauses it: gobby never spawns tmux, so the
+    pane outlives the CLI and its external terminal row stays attached.
+    """
     session_manager, session_task_manager, service = _uncached_service()
     parent_context = _live_grok_terminal_context()
     parent = SimpleNamespace(
@@ -514,7 +518,7 @@ def test_spawned_grok_parent_survives_first_of_three_process_bound_children() ->
         project_id="project-1",
         status="active",
         session_type="terminal",
-        agent_run_id="b8fba33c-1661-4a7e-b835-6e03e0dcd59c",
+        agent_run_id=None,
         created_at=datetime.now(UTC),
         terminal_context=parent_context,
     )
@@ -528,8 +532,8 @@ def test_spawned_grok_parent_survives_first_of_three_process_bound_children() ->
     terminal_manager = MagicMock()
     terminal_manager.get_live_for_session.return_value = SimpleNamespace(
         id="2228eb40-parent-terminal",
-        ownership="gobby",
-        agent_run_id=parent.agent_run_id,
+        ownership="external",
+        agent_run_id=None,
     )
     handlers = EventHandlers(
         session_manager=session_manager,
@@ -581,9 +585,10 @@ def test_spawned_grok_parent_survives_first_of_three_process_bound_children() ->
     assert "_native_subagent_binding" not in parent_end.metadata
     assert handlers.handle_session_end(parent_end).decision == "allow"
 
-    coordinator.complete_agent_run.assert_called_once_with(parent)
-    session_manager.update_status_if_non_terminal.assert_called_once_with(parent.id, "expired")
-    terminal_manager.mark_exited.assert_called_once_with("2228eb40-parent-terminal")
+    session_manager.update_status_if_non_terminal.assert_called_once_with(parent.id, "paused")
+    coordinator.complete_agent_run.assert_not_called()
+    terminal_manager.mark_exited.assert_not_called()
+    terminal_manager.release_session.assert_not_called()
 
 
 def test_grok_debug_trace_records_dispatched_subagent_start() -> None:

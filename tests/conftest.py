@@ -221,7 +221,6 @@ def _reset_process_global_state() -> None:
     from opentelemetry.util._once import Once
 
     from gobby.agents import terminal_delivery
-    from gobby.agents.tmux import reset_tmux_globals
     from gobby.storage import schema_contract
     from gobby.telemetry import providers as telemetry_providers
 
@@ -248,10 +247,6 @@ def _reset_process_global_state() -> None:
     terminal_delivery.detach_shielded_terminal_deliveries()
     terminal_delivery.reset_terminal_delivery_offload()
     terminal_delivery.reopen_terminal_delivery_admission()
-
-    # configure_tmux (runner init, agent tests) sets a process-global config that
-    # session_end reads to decide whether a terminal session ends paused or expired.
-    reset_tmux_globals()
 
     # The gdaemon schema-identity probe is cached per installed binary; a probe a
     # test faked must not answer for a later test's binary.

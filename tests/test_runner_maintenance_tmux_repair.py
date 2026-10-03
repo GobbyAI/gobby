@@ -375,8 +375,8 @@ async def test_repair_loop_enforces_resolved_owner() -> None:
 
 
 @pytest.mark.asyncio
-async def test_repair_loop_scopes_missing_socket_to_effective_default() -> None:
-    """Root and agent default tmux sockets are distinct, but agent depths share one socket."""
+async def test_repair_loop_scopes_missing_socket_to_each_session() -> None:
+    """Gobby runs no tmux server, so a pane with no recorded socket names no shared one."""
     root = SimpleNamespace(
         agent_depth=0,
         external_id="root-session",
@@ -417,8 +417,8 @@ async def test_repair_loop_scopes_missing_socket_to_effective_default() -> None:
     ):
         await tmux_window_name_repair_loop(session_manager, lambda: True)
 
-    assert owner.await_count == 2
-    assert enforce.await_args_list == [call(root), call(nested_agent)]
+    assert owner.await_count == 3
+    assert enforce.await_args_list == [call(root), call(shallow_agent), call(nested_agent)]
 
 
 @pytest.mark.asyncio

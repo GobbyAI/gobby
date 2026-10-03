@@ -36,6 +36,7 @@ from gobby.sessions.transcripts.base import (
     raw_lines_from_texts,
 )
 from gobby.storage.session_models import Session
+from gobby.tasks.transcript_background import pending_background_run, recover_background_receipt
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -171,7 +172,7 @@ def _derivation_fingerprint(
     """Fingerprint every input the derived records are a function of."""
     payload = json.dumps(
         {
-            "derivation_version": 10,
+            "derivation_version": 11,
             "session": session.id,
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,
@@ -573,11 +574,13 @@ def _consume_message(state: _DerivationState, message: ParsedMessage) -> None:
         return
     order = state.next_order()
     call_id = message.tool_use_id
+    if state.session.source == "claude":
+        recover_background_receipt(state.runs, message, state.pending.get(call_id or ""), order)
     if message.content_type == "tool_use":
         name = message.tool_name or ""
         arguments = message.tool_input or {}
         if call_id:
-            state.pending[call_id] = PendingTool(name, arguments, timestamp, order)
+            state.pending[call_id] = PendingTool(name, arguments, timestamp, order, call_id)
         _record_edit(state, name, arguments, timestamp, order)
         return
     if message.content_type != "tool_result" or not call_id:
@@ -604,7 +607,7 @@ def _consume_tool_event(state: _DerivationState, event: ParsedToolEvent) -> None
     if event.phase == "begin":
         name = event.tool or ""
         if call_id:
-            state.pending[call_id] = PendingTool(name, event.arguments, timestamp, order)
+            state.pending[call_id] = PendingTool(name, event.arguments, timestamp, order, call_id)
         _record_edit(state, name, event.arguments, timestamp, order)
         return
     if event.phase != "end" or not call_id:
@@ -821,6 +824,8 @@ def _record_validation_run(
             validation_segments=segments,
         )
     )
+    if state.session.source == "claude":
+        state.runs[-1] = pending_background_run(state.runs[-1], pending.call_id)
     _recover_rtk_output(state, result)
 
 

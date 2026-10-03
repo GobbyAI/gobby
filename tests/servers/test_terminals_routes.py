@@ -12,6 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.agents.tmux.session_manager import TmuxPaneInfo, TmuxSessionManager
 from gobby.servers.routes.terminals import create_terminals_router
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import TerminalManager, tmux_locator_key
@@ -31,6 +32,13 @@ _SOCKET = "/private/tmp/tmux-501/default"
 def _machine() -> Any:
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
+
+
+@pytest.fixture(autouse=True)
+def tmux_panes() -> Any:
+    """Live tmux rows probe their server; no test may reach the user's real tmux."""
+    with patch.object(TmuxSessionManager, "list_panes", AsyncMock(return_value=[])) as probe:
+        yield probe
 
 
 def _server(temp_db: HubDatabase, websocket_server: Any = None) -> Any:
@@ -82,7 +90,13 @@ def test_terminal_rest_surface(temp_db: HubDatabase, sample_project: dict[str, A
         assert detail.status_code == 200
         payload = detail.json()
         assert payload["id"] == promoted.id
-        assert payload["attach"] is None
+        # An external tmux row stays attachable by its physical pane locator.
+        attach = payload["attach"]
+        assert attach["backend"] == "tmux"
+        assert attach["socket_path"] == _SOCKET
+        assert attach["pane_id"] == "%1"
+        assert attach["server_pid"] == 1
+        assert attach["server_start_time"] == 2
         other = uuid.uuid4()
         isolated = client.get("/api/terminals", params={"project_id": str(other)})
         assert isolated.json()["items"] == []
@@ -247,9 +261,63 @@ def test_a_native_row_reports_the_command_in_its_terminal_foreground(
     assert detail.json()["command"] == "nvim"
     assert rows[native.id]["cwd"] == "/srv/app"
     assert detail.json()["cwd"] == "/srv/app"
-    # Historical tmux rows stay visible without querying a live pane.
-    assert rows[promoted.id]["command"] is None
-    assert rows[promoted.id]["cwd"] is None
+
+
+def _live_tmux_row(manager: TerminalManager, project_id: str) -> Any:
+    row = _create_pending(manager, project_id)
+    promoted = manager.promote_to_live(
+        row.id,
+        locator={"socket_path": _SOCKET, "server_pid": 1, "server_start_time": 2, "pane_id": "%1"},
+        locator_key=tmux_locator_key(
+            socket_path=_SOCKET, server_pid=1, server_start_time=2, pane_id="%1"
+        ),
+    )
+    assert promoted is not None
+    return promoted
+
+
+def test_a_tmux_row_reports_its_pane_command_and_cwd(
+    temp_db: HubDatabase, sample_project: dict[str, Any], tmux_panes: AsyncMock
+) -> None:
+    promoted = _live_tmux_row(_manager(temp_db), sample_project["id"])
+    pane = TmuxPaneInfo(
+        socket_path=_SOCKET,
+        server_pid=1,
+        server_start_time=2,
+        session_name="sess",
+        window_id="@1",
+        window_name=None,
+        pane_id="%1",
+        pane_pid=None,
+        pane_title=None,
+        pane_dead=False,
+        pane_command="vim",
+        pane_path="/Users/dev/projects/gobby",
+    )
+    tmux_panes.return_value = [pane]
+
+    with _client(temp_db) as client:
+        listing = client.get("/api/terminals", params={"project_id": sample_project["id"]})
+
+    # The gclient sidebar relist reads a hand-started pane's command and directory.
+    row = {item["id"]: item for item in listing.json()["items"]}[promoted.id]
+    assert row["command"] == "vim"
+    assert row["cwd"] == "/Users/dev/projects/gobby"
+
+
+def test_a_stalled_tmux_server_leaves_the_list_intact(
+    temp_db: HubDatabase, sample_project: dict[str, Any], tmux_panes: AsyncMock
+) -> None:
+    promoted = _live_tmux_row(_manager(temp_db), sample_project["id"])
+    tmux_panes.side_effect = TimeoutError("tmux command timed out")
+
+    with _client(temp_db) as client:
+        listing = client.get("/api/terminals", params={"project_id": sample_project["id"]})
+
+    assert listing.status_code == 200
+    row = {item["id"]: item for item in listing.json()["items"]}[promoted.id]
+    assert row["command"] is None
+    assert row["cwd"] is None
 
 
 def test_a_native_row_falls_back_to_its_spawn_shell(
