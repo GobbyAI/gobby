@@ -66,7 +66,7 @@ describe("FeedbackTab", () => {
   it("shows a loading state before the first response", () => {
     fetchMock.mockReturnValue(new Promise(() => {}));
 
-    render(<FeedbackTab />);
+    render(<FeedbackTab onOpenTask={vi.fn()} />);
 
     expect(screen.getByText("Loading feedback review…")).toBeInTheDocument();
   });
@@ -77,7 +77,7 @@ describe("FeedbackTab", () => {
       makeRun({ id: "run-1", status: "failed", error: "provider unavailable" }),
     ]);
 
-    render(<FeedbackTab />);
+    render(<FeedbackTab onOpenTask={vi.fn()} />);
 
     const summary = await screen.findByTestId("feedback-status-strip");
     expect(summary).toHaveTextContent("7 unreviewed");
@@ -92,7 +92,7 @@ describe("FeedbackTab", () => {
   it("uses the singular for a run that considered one row", async () => {
     const user = userEvent.setup();
     serve(STATUS, [makeRun({ rows_considered: 1 })]);
-    render(<FeedbackTab />);
+    render(<FeedbackTab onOpenTask={vi.fn()} />);
 
     const row = await screen.findByTestId("feedback-run-row");
     expect(row).toHaveTextContent("1 row");
@@ -105,14 +105,14 @@ describe("FeedbackTab", () => {
 
   it("labels a disabled or missing schedule", async () => {
     serve({ ...STATUS, schedule: { ...SCHEDULE, enabled: false } }, []);
-    const { unmount } = render(<FeedbackTab />);
+    const { unmount } = render(<FeedbackTab onOpenTask={vi.fn()} />);
     expect(
       await screen.findByTestId("feedback-status-strip"),
     ).toHaveTextContent("paused");
     unmount();
 
     serve({ ...STATUS, schedule: null }, []);
-    render(<FeedbackTab />);
+    render(<FeedbackTab onOpenTask={vi.fn()} />);
     expect(
       await screen.findByTestId("feedback-status-strip"),
     ).toHaveTextContent("not scheduled");
@@ -121,7 +121,7 @@ describe("FeedbackTab", () => {
   it("renders the empty state when no review has run", async () => {
     serve({ ...STATUS, backlog: 0 }, []);
 
-    render(<FeedbackTab />);
+    render(<FeedbackTab onOpenTask={vi.fn()} />);
 
     expect(
       await screen.findByText(
@@ -142,7 +142,8 @@ describe("FeedbackTab", () => {
         },
       }),
     ]);
-    render(<FeedbackTab />);
+    const onOpenTask = vi.fn();
+    render(<FeedbackTab onOpenTask={onOpenTask} />);
 
     await user.click(await screen.findByTestId("feedback-run-row"));
 
@@ -155,6 +156,13 @@ describe("FeedbackTab", () => {
     expect(filed).toHaveTextContent("#23401");
     expect(filed).toHaveTextContent("Quiet the read guard");
     expect(detail).toHaveTextContent("2 deduplicated");
+
+    await user.click(
+      within(filed).getByRole("button", {
+        name: "Open task #23401: Quiet the read guard",
+      }),
+    );
+    expect(onOpenTask).toHaveBeenCalledExactlyOnceWith("#23401");
   });
 
   it("shows a failed run's error and a missing digest", async () => {
@@ -166,7 +174,7 @@ describe("FeedbackTab", () => {
         digest_md: null,
       }),
     ]);
-    render(<FeedbackTab />);
+    render(<FeedbackTab onOpenTask={vi.fn()} />);
 
     await user.click(await screen.findByTestId("feedback-run-row"));
 
@@ -183,7 +191,7 @@ describe("FeedbackTab", () => {
       json({ detail: "feedback review service is unavailable" }, 503),
     );
 
-    render(<FeedbackTab />);
+    render(<FeedbackTab onOpenTask={vi.fn()} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "feedback review service is unavailable",

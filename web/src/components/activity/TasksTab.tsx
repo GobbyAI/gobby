@@ -51,6 +51,9 @@ import { useTasksTabMenuActions } from "./useTasksTabMenuActions";
 interface TasksTabProps {
   projectId?: string | null;
   chatSessionId?: string | null;
+  /** Task ref or id to select once resolved; cleared via onFocusHandled. */
+  focusTaskRef?: string | null;
+  onFocusHandled?: () => void;
 }
 
 function isGobbyTaskDetailSnapshot(task: GobbyTask): task is GobbyTaskDetail {
@@ -74,6 +77,8 @@ function mergeTaskSnapshotIntoDetail(
 export const TasksTab = memo(function TasksTab({
   projectId,
   chatSessionId,
+  focusTaskRef,
+  onFocusHandled,
 }: TasksTabProps) {
   const { registry: stagesRegistry } = useStagesRegistry();
   const [tasks, setTasks] = useState<GobbyTask[]>([]);
@@ -111,6 +116,9 @@ export const TasksTab = memo(function TasksTab({
   const abortRef = useRef<AbortController | null>(null);
   const debouncedRefetchRef = useRef<number | null>(null);
   const selectedTaskIdRef = useRef<string | null>(null);
+  // A task opened by focusTaskRef stays selected even when the filters hide
+  // its row (a filed task that has since closed), until the user picks another.
+  const focusedTaskIdRef = useRef<string | null>(null);
   // Abort any in-flight WebSocket-triggered detail fetch when a newer one
   // arrives or when the component unmounts.
   const detailFetchControllerRef = useRef<AbortController | null>(null);
@@ -357,6 +365,40 @@ export const TasksTab = memo(function TasksTab({
     return () => controller.abort();
   }, [selectedTaskId]);
 
+  // Resolve a ref opened from another tab (e.g. "#23401") to its task id and
+  // select it; the detail route accepts refs as well as ids.
+  useEffect(() => {
+    if (!focusTaskRef) return;
+    const controller = new AbortController();
+    fetch(`${getBaseUrl()}/api/tasks/${encodeURIComponent(focusTaskRef)}`, {
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (res.status === 404) return null;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        const raw = extractTaskPayload(data);
+        if (raw?.id) {
+          focusedTaskIdRef.current = raw.id;
+          setActionError(null);
+          setSelectedTaskId(raw.id);
+        } else {
+          setActionError(`Task ${focusTaskRef} was not found.`);
+        }
+      })
+      .catch((err) => {
+        if (err.name !== "AbortError") {
+          setActionError(`Couldn't load task ${focusTaskRef}. Try again.`);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) onFocusHandled?.();
+      });
+    return () => controller.abort();
+  }, [focusTaskRef, onFocusHandled]);
+
   // Fetch dependencies + subtasks alongside the detail. Each call uses its own
   // controller so a stale response from a previous selection can't overwrite
   // the current panel.
@@ -516,6 +558,9 @@ export const TasksTab = memo(function TasksTab({
   // be overridden by the first-row default.
   useEffect(() => {
     setSelectedTaskId((current) => {
+      if (current !== null && current === focusedTaskIdRef.current) {
+        return current;
+      }
       if (visibleRows.length === 0) return null;
       if (current === null) return visibleRows[0].node.task.id;
       return visibleRows.some((row) => row.node.task.id === current)
@@ -621,6 +666,7 @@ export const TasksTab = memo(function TasksTab({
   }, []);
 
   const handleSelectTask = useCallback((taskId: string) => {
+    focusedTaskIdRef.current = null;
     setActionError(null);
     setSelectedTaskId(taskId);
   }, []);
