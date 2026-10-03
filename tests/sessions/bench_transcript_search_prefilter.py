@@ -154,6 +154,7 @@ def _summarize(calls: list[dict[str, Any]], found: list[str]) -> dict[str, Any]:
         "max_call_s": max(call["s"] for call in calls),
         "total_s": sum(call["s"] for call in calls),
         "total_groups": sum(call["groups"] for call in calls),
+        "total_resolutions": sum(call["resolutions"] for call in calls),
         "matches": len(found),
         "matches_sha256": hashlib.sha256("\0".join(found).encode()).hexdigest(),
     }
@@ -242,7 +243,7 @@ async def run_worker(arm: str, fixture: str, groups: int, prior_module: str) -> 
                 )
                 found.extend(_match_identities(result.get("results", [])))
                 cursor = result.get("next_cursor")
-                if not cursor or name == "common_hit":
+                if not cursor:
                     break
             report["queries"][name] = _summarize(calls, found)
         return report
@@ -316,8 +317,6 @@ async def run_worker(arm: str, fixture: str, groups: int, prior_module: str) -> 
             rendered_groups, resolved_count = take()
             calls.append({"s": elapsed, "groups": rendered_groups, "resolutions": resolved_count})
             found.extend(_match_identities(collected))
-            if name == "common_hit":
-                break
         summary = _summarize(calls, found)
         summary["candidates"] = len(candidates)
         summary["candidate_scan_s"] = scan_s
