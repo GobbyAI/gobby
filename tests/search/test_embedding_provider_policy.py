@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from gobby.ai.embedding_cache import clear_cache
 from gobby.ai.embeddings import (
     EmbeddingGenerationError,
 )
-from gobby.ai.embedding_cache import clear_cache
 from gobby.ai.embeddings import (
     _generate_embedding as generate_embedding,
 )
