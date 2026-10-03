@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-_PLANNING_CODE_INDEX_AGENTS = frozenset({"planner", "plan-adversary", "plan-enhancer"})
+_PLANNING_CODE_INDEX_AGENTS = frozenset({"planner", "plan-adversary", "plan-enhancer-old"})
 
 
 def code_index_preflight_mode(

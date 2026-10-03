@@ -74,10 +74,13 @@ Peer evidence a close depends on is recorded by the peer, not the closer:
 `record_close_receipt(task_id, kind, commit_sha, facts)` stores a daemon-attested
 `independent_review_approval` (LAND of an exact commit) or `activation` receipt
 on another session's task, authorized against the locked task row.
-An `activation` receipt needs the task's live creator or delegator. When both
-have expired, `transfer_task_authority(task_id, reason)` lets a live session in
-the task's project take the delegator slot; the claimant and close reviewers
-cannot, and a live creator or delegator keeps its authority.
+An `activation` receipt comes only from the task's creator or delegator. When
+both have ended, a live session in the task's project takes over that authority
+with `transfer_task_authority(task_id, reason)`. It becomes the delegator, the
+delegation receiver is kept, and the reason is appended to the delegation reason.
+It refuses a closed task, the claimant, a task-close reviewer, and any caller
+while the creator or delegator is still live. Re-running it is a no-op for the
+session already holding authority.
 
 When a CLOSED/VALID task's `closed_commit_sha` differs from the explicit
 `commit_sha` its original VALID close review accepted,

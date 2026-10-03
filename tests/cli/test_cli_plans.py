@@ -41,6 +41,9 @@ class _FakeDb:
     def close(self) -> None:
         pass
 
+    def fetchall(self, _query: str, _params: tuple[Any, ...]) -> list[dict[str, Any]]:
+        return []
+
 
 class _FakeIndex:
     def __init__(

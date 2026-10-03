@@ -428,7 +428,10 @@ def claim_pid_file(pid_file: Path, *, role: str = "daemon") -> PidFileClaim | No
             return None
         generation = next_generation(record)
         _write_role_record(lock_fd, role=role, generation=generation)
-        _write_pid_file(pid_file)
+        # The PID file names the daemon. A maintenance holder is recorded in the
+        # lock only, so its live process never blocks a daemon start after release.
+        if role == "daemon":
+            _write_pid_file(pid_file)
     except SingletonError:
         _close_failed(lock_fd)
         raise

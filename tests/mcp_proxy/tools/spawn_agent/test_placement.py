@@ -534,7 +534,7 @@ async def test_refused_placement_has_no_side_effects(placed: _Harness) -> None:
 
 
 async def test_placed_launch_requires_managed_srt(
-    placed: _Harness, monkeypatch: pytest.MonkeyPatch
+    placed: _Harness, stub_srt_verifier: MagicMock
 ) -> None:
     h = placed
     panes, terminals = _panes(h), _terminal_states(h)
@@ -547,10 +547,8 @@ async def test_placed_launch_requires_managed_srt(
         assert result["placement_error"] == "sandbox_required"
         _assert_untouched(h, panes, terminals)
 
-    def missing_srt(**kwargs: Any) -> None:
-        raise SrtRuntimeError("managed SRT is not installed")
-
-    monkeypatch.setattr("gobby.agents.sandbox_gate.verify_srt_installation", missing_srt)
+    # Configure the module's verifier stub; patching over it would outlive the stub's teardown.
+    stub_srt_verifier.side_effect = SrtRuntimeError("managed SRT is not installed")
     result = await _spawn(h, _tab(h))
     assert result["placement_error"] == "sandbox_required"
     _assert_untouched(h, panes, terminals)

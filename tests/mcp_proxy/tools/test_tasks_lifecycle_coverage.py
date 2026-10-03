@@ -16,6 +16,7 @@ from gobby.storage.tasks import Task
 from gobby.tasks.validation import PreparedCloseReview
 from gobby.utils.session_context import session_context_for_test
 from tests.mcp_proxy.tools.close_review_test_support import (
+    CLOSE_COMMIT_SEQ_NUM,
     ECHOING_DAEMON_GIT,
     complete_valid_close_review,
 )
@@ -136,6 +137,8 @@ def _linked_commits_exist() -> Iterator[None]:
             "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.daemon_git",
             new=ECHOING_DAEMON_GIT,
         ),
+        # The link step stores Git's short form of each close SHA (#23251).
+        patch("gobby.utils.git.normalize_commit_sha", side_effect=_resolve_sha),
         patch(
             "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_net_commit_paths",
             return_value=NetCommitPaths(),
@@ -488,6 +491,7 @@ class TestCloseTaskTool:
         """A prospective commit is linked only after the checklist passes."""
         mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_task.seq_num = CLOSE_COMMIT_SEQ_NUM
         mock_task.commits = ["abc123"]
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task.validation_criteria = "Test task completion is observable."

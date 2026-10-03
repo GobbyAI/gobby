@@ -85,11 +85,14 @@ def _write_corpus(
         (root / f"{case['name']}.json").write_text(json.dumps(case))
 
 
-def _synthetic_case(name: str, family: str, version: int = 1) -> dict[str, Any]:
+def _synthetic_case(
+    name: str, family: str, version: int = 1, backend: str = "up"
+) -> dict[str, Any]:
     return {
         "schema_version": version,
         "name": name,
         "family": family,
+        "backend": backend,
         "credential": "none",
         "request": {"method": "GET", "path": "/", "query": {}, "headers": {}, "body": None},
         "response": {"status": 200, "headers": {}, "body": None},
@@ -97,35 +100,54 @@ def _synthetic_case(name: str, family: str, version: int = 1) -> dict[str, Any]:
     }
 
 
+SYNTHETIC_FAMILIES = {
+    "health": {"parity": "native", "origin": "python"},
+    "front_door": {"parity": "native", "origin": "gdaemon"},
+}
+
+
 @pytest.mark.unit
-def test_loader_rejects_version_and_filters_origin(tmp_path: Path) -> None:
-    families = {
-        "health": {"parity": "native", "origin": "python"},
-        "front_door": {"parity": "proxy", "origin": "gdaemon"},
-    }
+def test_loader_rejects_stale_schema_version(tmp_path: Path) -> None:
+    _write_corpus(
+        tmp_path,
+        version=2,
+        families=SYNTHETIC_FAMILIES,
+        cases=[_synthetic_case("health_ok", "health", version=1)],
+    )
+    with pytest.raises(http_corpus.CorpusError, match="schema_version 1 differs from manifest 2"):
+        http_corpus.load_cases(tmp_path)
+
+
+@pytest.mark.unit
+def test_loader_rejects_missing_or_invalid_backend(tmp_path: Path) -> None:
     good = tmp_path / "good"
     good.mkdir()
     _write_corpus(
         good,
         version=1,
-        families=families,
-        cases=[_synthetic_case("health_ok", "health"), _synthetic_case("typed_503", "front_door")],
+        families=SYNTHETIC_FAMILIES,
+        cases=[
+            _synthetic_case("health_ok", "health"),
+            _synthetic_case("health_backend_down", "health", backend="down"),
+            _synthetic_case("front_door_backend_down", "front_door", backend="down"),
+            _synthetic_case("front_door_up", "front_door"),
+        ],
     )
     assert [case["name"] for case in http_corpus.load_cases(good)] == ["health_ok"]
-    assert [case["name"] for case in http_corpus.load_cases(good, origin="gdaemon")] == [
-        "typed_503"
-    ]
 
-    stale = tmp_path / "stale"
-    stale.mkdir()
-    _write_corpus(
-        stale,
-        version=2,
-        families=families,
-        cases=[_synthetic_case("health_ok", "health", version=1)],
-    )
-    with pytest.raises(http_corpus.CorpusError, match="schema_version 1 differs from manifest 2"):
-        http_corpus.load_cases(stale)
+    missing = _synthetic_case("health_missing", "health")
+    del missing["backend"]
+    invalid = [_synthetic_case("health_sideways", "health", backend="sideways")]
+    for label, value in (("null", None), ("number", 0), ("list", []), ("object", {})):
+        case = _synthetic_case(f"health_{label}", "health")
+        case["backend"] = value
+        invalid.append(case)
+    for case in (missing, *invalid):
+        bad = tmp_path / case["name"]
+        bad.mkdir()
+        _write_corpus(bad, version=1, families=SYNTHETIC_FAMILIES, cases=[case])
+        with pytest.raises(http_corpus.CorpusError, match=rf"^{case['name']}\.json: backend"):
+            http_corpus.load_cases(bad)
 
 
 @pytest.mark.unit
@@ -151,6 +173,7 @@ def test_manifest_contract() -> None:
         assert case_path.is_file(), file_name
         case = json.loads(case_path.read_text())
         assert case["family"] in families, file_name
+        assert case["backend"] in http_corpus.BACKEND_VALUES, file_name
         assert case["credential"] in http_corpus.CREDENTIALS, file_name
         assert case["name"] == case_path.stem, file_name
 

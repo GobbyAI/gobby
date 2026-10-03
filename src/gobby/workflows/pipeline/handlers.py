@@ -101,11 +101,14 @@ async def execute_mcp_step(
         return converted
 
     # Check for MCP-level failure (dict responses from internal tools)
-    # Supports both old pattern (success=False) and new pattern (error key only)
+    # Supports both old pattern (success=False) and new pattern (a non-null error).
+    # The proxy strips success=True from internal replies, so a success payload
+    # that carries "error": None must still pass.
     if isinstance(result, dict) and (
-        result.get("success") is False or ("error" in result and result.get("success") is not True)
+        result.get("success") is False
+        or (result.get("error") is not None and result.get("success") is not True)
     ):
-        error_msg = result.get("error", "Unknown MCP tool error")
+        error_msg = result.get("error") or "Unknown MCP tool error"
         raise RuntimeError(
             f"MCP step {rendered_step.id} failed: "
             f"{mcp_config.server}:{mcp_config.tool} returned error: {error_msg}"

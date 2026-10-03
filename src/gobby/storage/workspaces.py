@@ -828,6 +828,25 @@ class WorkspaceManager:
         )
         return None if row is None else WorkspacePane.from_row(row)
 
+    def placement_refs_for_terminal(self, terminal_id: str) -> dict[str, str] | None:
+        """The placement-reply refs of the pane holding ``terminal_id``, if any."""
+        row = self.db.fetchone(
+            """
+            SELECT m.ref AS node, w.ref AS workspace, t.ref AS tab, p.ref AS pane
+            FROM workspace_panes p
+            JOIN workspace_tabs t ON t.id = p.tab_id
+            JOIN workspaces w ON w.id = t.workspace_id
+            JOIN machines m ON m.id = w.machine_id
+            WHERE p.terminal_id = %s
+            """,
+            (_uuid(terminal_id),),
+        )
+        if row is None:
+            return None
+        workspace = f"{row['node']}:{row['workspace']}"
+        tab_ref = f"{workspace}:{row['tab']}"
+        return {"workspace": workspace, "tab_ref": tab_ref, "pane_ref": f"{tab_ref}:{row['pane']}"}
+
     def sweep_dead_panes(self, workspace_id: str) -> LayoutChange:
         """Prune the workspace's dead panes; read-time derivation, never a hook.
 

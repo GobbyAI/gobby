@@ -1,6 +1,6 @@
 """Tests for the spawn-time plan validation gate.
 
-Specifically: ``planner``, ``plan-adversary``, and ``plan-enhancer`` spawns
+Specifically: ``planner``, ``plan-adversary``, and ``plan-enhancer-old`` spawns
 refuse to start when the task's ``plan_file_path`` artifact fails the
 Plan-Coverage Contract validator. Other agents pass through, and the gate is a
 no-op when no plan artifact is recorded.
@@ -143,7 +143,7 @@ class _FreshZeroSymbolIndex:
 
 
 def test_planning_agents_constant() -> None:
-    assert PLANNING_AGENTS == frozenset({"planner", "plan-adversary", "plan-enhancer"})
+    assert PLANNING_AGENTS == frozenset({"planner", "plan-adversary", "plan-enhancer-old"})
 
 
 def test_plan_enhancer_spawn_against_malformed_plan_returns_structured_failure(
@@ -153,7 +153,7 @@ def test_plan_enhancer_spawn_against_malformed_plan_returns_structured_failure(
     manager = _make_task_manager_with_artifact(str(plan))
 
     result = validate_plan_for_agent_spawn(
-        agent_name="plan-enhancer", task_id="t1", task_manager=manager
+        agent_name="plan-enhancer-old", task_id="t1", task_manager=manager
     )
 
     assert result is not None
@@ -189,7 +189,7 @@ def test_no_plan_artifact_passes_through() -> None:
     assert result is None
 
 
-@pytest.mark.parametrize("agent_name", ["planner", "plan-enhancer"])
+@pytest.mark.parametrize("agent_name", ["planner", "plan-enhancer-old"])
 def test_repair_agent_spawn_receives_missing_index_diagnostics(
     tmp_path: Path,
     agent_name: str,

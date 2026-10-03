@@ -1,4 +1,4 @@
-name: plan-adversary-taskless
+name: plan-adversary-taskless-old
 description: |
   Taskless adversarial plan reviewer for /gobby plan. Reviews a plan artifact,
   returns structured findings to the parent session, and never claims or mutates

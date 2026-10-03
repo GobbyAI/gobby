@@ -99,4 +99,5 @@ def test_config_open_remote_upserts_sentinel_without_identity(tmp_path: Path) ->
     assert config.datastore_mode == "remote"
     assert ensure.call_count == 1
     assert ensure.call_args.args == (db,)
-    assert claim.call_count == 0
+    assert claim.call_args.kwargs == {"role": "maintenance"}
+    claim.return_value.release.assert_called_once_with()

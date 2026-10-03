@@ -1,0 +1,1023 @@
+header:
+  plan_id: deploy-runbook
+  plan_hash: 80afcd4e586018db4716597b2088b016f5607e78d45fcedc008471e2cdc468f2
+  root_task_ref: '22691'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-03T00:05:59Z'
+  task_tree_source: db
+  task_tree_source_hash: 6154c0b2a102670818c5395867897289c8dd28c08b06590fd2be5b545fdd3baf
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: 8481cedc1ab27dc9bd8630a5922de880a07b688f1cbc89b8a8683e86a64bd8f5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23327'
+    validation_criteria_snippet: '5.1.1: A project pipeline YAML with `tags: [runbook]`
+      imports with `runbook` in the row''s tags, and a re-import with changed tags
+      updates them. test: `tests/wo...'
+    matched_artifact_ref: tests/workflows/test_imports.py::test_pipeline_yaml_tags_persist_on_import
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.2
+  plan_node_hash: d52f73b541037247a69b146a24ca63ef1bf0cbbc7677535102b695a3c025ea74
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23327'
+    validation_criteria_snippet: '5.1.1: A project pipeline YAML with `tags: [runbook]`
+      imports with `runbook` in the row''s tags, and a re-import with changed tags
+      updates them. test: `tests/wo...'
+    matched_artifact_ref: tests/workflows/test_workflows_sync.py::test_bundled_pipeline_tags_merge_with_gobby
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.3
+  plan_node_hash: bb254cfa968e56bb051f513e6e335674895020997b8c2079d2c664ae6ed920c9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23327'
+    validation_criteria_snippet: '5.1.1: A project pipeline YAML with `tags: [runbook]`
+      imports with `runbook` in the row''s tags, and a re-import with changed tags
+      updates them. test: `tests/wo...'
+    matched_artifact_ref: tests/mcp_proxy/tools/workflows/test_mcp_proxy_tools_workflows_pipelines.py::test_list_pipelines_filters_by_tag
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.4
+  plan_node_hash: d59944d107f197cc455ecaa9d78de056a3ccd248e78ddd9db7c7693afd5786ae
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23327'
+    validation_criteria_snippet: '5.1.1: A project pipeline YAML with `tags: [runbook]`
+      imports with `runbook` in the row''s tags, and a re-import with changed tags
+      updates them. test: `tests/wo...'
+    matched_artifact_ref: tests/cli/test_cli_pipelines.py::test_list_filters_by_tag
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.1
+  plan_node_hash: 22da31e16fc7071c88cbb87772c82a6cc838b4f61b88f45a41cb2307abc9cf89
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23328'
+    validation_criteria_snippet: '6.1.1: A run whose resume metadata carries a placement
+      lists `seat: {workspace, title}` in `list_running_agents` and `list_agent_runs`,
+      and an unplaced run lis...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_agents_run_payload.py::test_seat_from_placement_metadata
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.2
+  plan_node_hash: d5f9cba258de2f43962058b370497c35a7676ffcc1cab223aaf259e8324407e6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23328'
+    validation_criteria_snippet: '6.1.1: A run whose resume metadata carries a placement
+      lists `seat: {workspace, title}` in `list_running_agents` and `list_agent_runs`,
+      and an unplaced run lis...'
+    matched_artifact_ref: src/gobby/mcp_proxy/tools/agents_run_payload.py::_list_run_payload
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.1
+  plan_node_hash: 26b510f12bb73d0c434df45ffc14196a852536f8d1094aa9adc303f472d11a6e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23329'
+    validation_criteria_snippet: '6.2.1: A seat held by a run in any active status
+      (queued, pending or running) refuses with that run id, and an ended run''s seat
+      passes. test: `tests/agents/tes...'
+    matched_artifact_ref: tests/agents/test_runbook_seats.py::test_live_run_seat_refuses
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.2
+  plan_node_hash: a6fe0a45bff164e6a50bc9ab93694df76ac99a841fe48d91cb5db30adf765fb4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23329'
+    validation_criteria_snippet: '6.2.1: A seat held by a run in any active status
+      (queued, pending or running) refuses with that run id, and an ended run''s seat
+      passes. test: `tests/agents/tes...'
+    matched_artifact_ref: tests/agents/test_runbook_seats.py::test_seat_agent_definitions_resolved
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.3
+  plan_node_hash: 5552ccb8ad7d16198e9dd14d4e3d2ce36ef2db4897297cf7ce1f4a4c33a5d3d9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23329'
+    validation_criteria_snippet: '6.2.1: A seat held by a run in any active status
+      (queued, pending or running) refuses with that run id, and an ended run''s seat
+      passes. test: `tests/agents/tes...'
+    matched_artifact_ref: tests/agents/test_runbook_seats.py::test_concurrent_executions_admit_at_most_one
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.4
+  plan_node_hash: d434ceba6ebda677e6fe42823192270c3895aa17be7cdabaf9823336a07cb007
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23329'
+    validation_criteria_snippet: '6.2.1: A seat held by a run in any active status
+      (queued, pending or running) refuses with that run id, and an ended run''s seat
+      passes. test: `tests/agents/tes...'
+    matched_artifact_ref: tests/agents/test_runbook_seats.py::test_uncertain_lookup_fails_closed
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.5
+  plan_node_hash: 7bbaa7804f5f00faa558630815f8cc6528f9e8cc57137be4c42c9ec17cb6d1b9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23329'
+    validation_criteria_snippet: '6.2.1: A seat held by a run in any active status
+      (queued, pending or running) refuses with that run id, and an ended run''s seat
+      passes. test: `tests/agents/tes...'
+    matched_artifact_ref: tests/agents/test_runbook_seats.py::test_capacity_shortfall_refuses
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.6
+  plan_node_hash: 052461859c17374628aacce18f481b3a18f722ad79bff472a33689d364802db3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23329'
+    validation_criteria_snippet: '6.2.1: A seat held by a run in any active status
+      (queued, pending or running) refuses with that run id, and an ended run''s seat
+      passes. test: `tests/agents/tes...'
+    matched_artifact_ref: tests/agents/test_runbook_seats.py::test_requested_seats_validated
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.1
+  plan_node_hash: 619cc4e82ce76de90f3ef79d062b6bdb9aadc3db2c6bc1d889ffc358269bc06d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23330'
+    validation_criteria_snippet: '7.1.1: A pipeline launched through `run_pipeline`
+      stores its definition snapshot, and a definition changed after launch leaves
+      the resumed step graph unchanged...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py::test_resume_uses_launch_snapshot
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.2
+  plan_node_hash: 5dbc3e0493f1dc63950d0cd15de22158624d8e012b933842dfd67e52df6e3f78
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23330'
+    validation_criteria_snippet: '7.1.1: A pipeline launched through `run_pipeline`
+      stores its definition snapshot, and a definition changed after launch leaves
+      the resumed step graph unchanged...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py::test_missing_snapshot_fails_closed
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.3
+  plan_node_hash: 4ee1ba20e74306acb382f59639ac962dd40f207976a5885c1780f3f7f5b309d9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23330'
+    validation_criteria_snippet: '7.1.1: A pipeline launched through `run_pipeline`
+      stores its definition snapshot, and a definition changed after launch leaves
+      the resumed step graph unchanged...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py::test_precreate_records_caller_project
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.1
+  plan_node_hash: b2af577d68abaf69ef6def643d416958247086d01037d4a742ca8583e8a68ee2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23331'
+    validation_criteria_snippet: '7.2.1: A step''s `invocation_id` is the same before
+      and after a restart, two steps of one execution get different ids, and a step
+      whose id is `invocation_id` do...'
+    matched_artifact_ref: tests/workflows/test_pipeline_invocation_id.py::test_invocation_id_is_stable_per_step
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.2
+  plan_node_hash: 6dd3c18a8fcdcbde0439d3498d86909bd23045302619b53b21f295828f465049
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23331'
+    validation_criteria_snippet: '7.2.1: A step''s `invocation_id` is the same before
+      and after a restart, two steps of one execution get different ids, and a step
+      whose id is `invocation_id` do...'
+    matched_artifact_ref: tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_started_run_is_adopted
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.3
+  plan_node_hash: 0eab7fcefe4af42da6430ddedc569763b2dbc6fd889c55c235ece56ce6957c76
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23331'
+    validation_criteria_snippet: '7.2.1: A step''s `invocation_id` is the same before
+      and after a restart, two steps of one execution get different ids, and a step
+      whose id is `invocation_id` do...'
+    matched_artifact_ref: tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_distinct_steps_do_not_share_runs
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.4
+  plan_node_hash: afd9ee93305e487d48c2812d6f79a51beb1537703caba6cebfa1c3203d588a6b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23331'
+    validation_criteria_snippet: '7.2.1: A step''s `invocation_id` is the same before
+      and after a restart, two steps of one execution get different ids, and a step
+      whose id is `invocation_id` do...'
+    matched_artifact_ref: tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_unstarted_run_refuses
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.5
+  plan_node_hash: 5ea3093e36fb1fbd4e90266c98551c8aefc389d3b7acd1ee05db4e10e2d5e228
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23331'
+    validation_criteria_snippet: '7.2.1: A step''s `invocation_id` is the same before
+      and after a restart, two steps of one execution get different ids, and a step
+      whose id is `invocation_id` do...'
+    matched_artifact_ref: tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_invocation_authority
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.6
+  plan_node_hash: d6407854a60b35394cca13bad87743ed79840328ceef4134bbf574506a959f01
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23331'
+    validation_criteria_snippet: '7.2.1: A step''s `invocation_id` is the same before
+      and after a restart, two steps of one execution get different ids, and a step
+      whose id is `invocation_id` do...'
+    matched_artifact_ref: tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_adopted_reply_names_bound_pane
+  deferral_target: null
+  detail: ''
+- section_id: '7.3'
+  item_id: 7.3.1
+  plan_node_hash: ad5f2b51baaeb674ecfdd5a683ba2955b503a820e38189c051ae95fafdc64430
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23332'
+    validation_criteria_snippet: '7.3.1: A cron `pipeline` job parents the pipeline
+      child to the cron session, and each spawn the pipeline makes carries that child
+      as parent and the job''s proje...'
+    matched_artifact_ref: tests/scheduler/test_cron_runbook_chain.py::test_cron_chain_identity
+  deferral_target: null
+  detail: ''
+- section_id: '7.3'
+  item_id: 7.3.2
+  plan_node_hash: 1d404df40f93a8c2413a467f7c1cfcddb8cec91c673ce6c5d1c7114b10ea4b8a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23332'
+    validation_criteria_snippet: '7.3.1: A cron `pipeline` job parents the pipeline
+      child to the cron session, and each spawn the pipeline makes carries that child
+      as parent and the job''s proje...'
+    matched_artifact_ref: tests/scheduler/test_cron_runbook_chain.py::test_cron_session_failure_refuses
+  deferral_target: null
+  detail: ''
+- section_id: '8.1'
+  item_id: 8.1.1
+  plan_node_hash: ecbce660837ad1eb14eb443199873c79a14dabd01dfbedcfd62d46c2fd5ef012
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23333'
+    validation_criteria_snippet: '8.1.1: Bundled sync installs the runbook with the
+      `gobby` and `runbook` tags, and it validates as a `PipelineDefinition`. Each
+      seat step spawns its agent defin...'
+    matched_artifact_ref: src/gobby/install/shared/workflows/pipelines/planning.yaml
+  deferral_target: null
+  detail: ''
+- section_id: '8.1'
+  item_id: 8.1.2
+  plan_node_hash: 4624c3c3d987fd20e995ac897003ea83ecacf115c4f847e2b69a58124becb50e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23333'
+    validation_criteria_snippet: '8.1.1: Bundled sync installs the runbook with the
+      `gobby` and `runbook` tags, and it validates as a `PipelineDefinition`. Each
+      seat step spawns its agent defin...'
+    matched_artifact_ref: tests/workflows/test_runbook_pipeline.py::test_entrypoint_parent_chain
+  deferral_target: null
+  detail: ''
+- section_id: '8.1'
+  item_id: 8.1.3
+  plan_node_hash: 0cf313efacf334733335b2bf3693ba252a3f51832ce2a2e06b855b44bbeca083
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23333'
+    validation_criteria_snippet: '8.1.1: Bundled sync installs the runbook with the
+      `gobby` and `runbook` tags, and it validates as a `PipelineDefinition`. Each
+      seat step spawns its agent defin...'
+    matched_artifact_ref: tests/workflows/test_runbook_pipeline.py::test_restart_reruns_on_same_child
+  deferral_target: null
+  detail: ''
+- section_id: '8.1'
+  item_id: 8.1.4
+  plan_node_hash: 5a7f171e1cf38715aa25c6ec31935cc945911abf9578e136eaf98c30b1ce539f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23333'
+    validation_criteria_snippet: '8.1.1: Bundled sync installs the runbook with the
+      `gobby` and `runbook` tags, and it validates as a `PipelineDefinition`. Each
+      seat step spawns its agent defin...'
+    matched_artifact_ref: tests/workflows/test_runbook_pipeline.py::test_partial_deploy_relaunches_missing_seat
+  deferral_target: null
+  detail: ''
+- section_id: '8.1'
+  item_id: 8.1.5
+  plan_node_hash: dd6db290926c0b5be8a79e105685e2eee5f21b6bf8e0390b3fe9e60f5d3a8797
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23333'
+    validation_criteria_snippet: '8.1.1: Bundled sync installs the runbook with the
+      `gobby` and `runbook` tags, and it validates as a `PipelineDefinition`. Each
+      seat step spawns its agent defin...'
+    matched_artifact_ref: tests/workflows/test_runbook_pipeline.py::test_failed_runbook_resume_refused
+  deferral_target: null
+  detail: ''
+- section_id: '8.1'
+  item_id: 8.1.6
+  plan_node_hash: 151bb542a44d7da882cafd05c70f008efc6ef543cc2eb669dc57253a9674b73d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23333'
+    validation_criteria_snippet: '8.1.1: Bundled sync installs the runbook with the
+      `gobby` and `runbook` tags, and it validates as a `PipelineDefinition`. Each
+      seat step spawns its agent defin...'
+    matched_artifact_ref: tests/cli/test_cli_pipelines.py::test_runs_show_includes_step_outputs
+  deferral_target: null
+  detail: ''
+- section_id: '9.1'
+  item_id: 9.1.1
+  plan_node_hash: 5a1370d0be53cd04ecaaf3572c2919be7fc029444ce933c00eec0068508ca79a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23334'
+    validation_criteria_snippet: '9.1.1: The pipelines guide documents runbooks, their
+      guard, entrypoints, restart and stop. behavior: "## Runbooks" in `docs/guides/pipelines.md`.
+      9.1.2: The sk...'
+    matched_artifact_ref: '## Runbooks'
+  deferral_target: null
+  detail: ''
+- section_id: '9.1'
+  item_id: 9.1.2
+  plan_node_hash: d7062f927618d42d0f77133f37f457d3ddd08a226f948aeeb99556fe6a9be776
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23334'
+    validation_criteria_snippet: '9.1.1: The pipelines guide documents runbooks, their
+      guard, entrypoints, restart and stop. behavior: "## Runbooks" in `docs/guides/pipelines.md`.
+      9.1.2: The sk...'
+    matched_artifact_ref: src/gobby/install/shared/skills/gobby/references/pipelines/runbooks.md
+  deferral_target: null
+  detail: ''
+- section_id: '9.1'
+  item_id: 9.1.3
+  plan_node_hash: 5488d657537975485c01459b5ae0bdaf2eeb44a505693d4c496bf6ea65b99736
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23334'
+    validation_criteria_snippet: '9.1.1: The pipelines guide documents runbooks, their
+      guard, entrypoints, restart and stop. behavior: "## Runbooks" in `docs/guides/pipelines.md`.
+      9.1.2: The sk...'
+    matched_artifact_ref: seat_launch_unsettled
+  deferral_target: null
+  detail: ''
+- section_id: '9.1'
+  item_id: 9.1.4
+  plan_node_hash: dc7cf97b9163d9ad482a471a44c083eb366b9295fe8a021b4ab2a868ad3ff8e1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23334'
+    validation_criteria_snippet: '9.1.1: The pipelines guide documents runbooks, their
+      guard, entrypoints, restart and stop. behavior: "## Runbooks" in `docs/guides/pipelines.md`.
+      9.1.2: The sk...'
+    matched_artifact_ref: tests/skills/test_reference_library.py::test_pipelines_runbooks_topic_is_registered
+  deferral_target: null
+  detail: ''
+- section_id: D1
+  item_id: 8.1.7
+  plan_node_hash: b47a1702386a048777ed563cefcf3be1b008f65dc379cfd08b0cb174513b3269
+  status: deferred
+  leaves: []
+  deferral_target: '#23335'
+  detail: deferral is valid
+- section_id: D1
+  item_id: 8.1.8
+  plan_node_hash: 6de5dc943cd04d96b6cb601bdfdc959ee518e68ab8c94149141d0d94a34c7a9d
+  status: deferred
+  leaves: []
+  deferral_target: '#23335'
+  detail: deferral is valid
+- section_id: D1
+  item_id: 8.1.9
+  plan_node_hash: 65f4c3d81f84d8cd9d013d0420c496f87a997d83f4c8e8acf46d569dc8e0f778
+  status: deferred
+  leaves: []
+  deferral_target: '#23335'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.1
+  plan_node_hash: 15599f4b1184e8066a76cb344f37aec9a9b3aab7e26d92d4362447a6dae9db99
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.2
+  plan_node_hash: 17124d13b3f8d4fae20c840762cc640b6503da361b3473286dc3de09a117dab1
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.3
+  plan_node_hash: ae2ba3a8171d671839b8ce72af788f7a9c47a3df223c4d3b2949c85df42b8f5a
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.4
+  plan_node_hash: 2a88b08183cf652221324ff98188c7d4ee6e0e09ce097387c553ab520fe33568
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.5
+  plan_node_hash: d0e7e7a147e6e8f11e0645b38607aa9afba2eaa14516506babdce8e382e49563
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.6
+  plan_node_hash: d0091cb9ba3626eb7cdcafa3e362e37d14eb4e8c9c3185dbadf15234c398fd62
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.7
+  plan_node_hash: c8ec64bec912c9cf778915a7e37c653974a84a01b676ae99d4aec21f950153e3
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.8
+  plan_node_hash: 7672f5971afc7292ce3547618b88426585356fbc62058735b03bf1d0804d769b
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.9
+  plan_node_hash: 2b12ada82f0924f899aeee0d2d1e0e40d1babfbdd0cb8dae338e33117e81120a
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.10
+  plan_node_hash: 1eadb2b563e0b95d6037099eaa003e283a4a890585bfc5c466f945bf99c1c50d
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.11
+  plan_node_hash: f91f51fa71986153dbb95b68ad4f8d2e94e1706731a4d4dce71f99aaaaec2ff6
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.12
+  plan_node_hash: f3fd699625ac3d650bbbd80ccf7adcd7f49cceaab8727062d7c609e96cdd4734
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.13
+  plan_node_hash: bf5445f8ae834c0409d35b000e483a58938a5c00a99a9c7a3350c1df44eac280
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.14
+  plan_node_hash: 0b0a201b388bb61fcfe28620b9f410a5c90e83f7422292a7b769fa0ed9c6dcf3
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 1.1.15
+  plan_node_hash: 20e32bddfc2f5f78d0317a489eb7922a0b3167ff5475ff3ba126f89a7d3712fe
+  status: deferred
+  leaves: []
+  deferral_target: '#23009'
+  detail: deferral is valid
+- section_id: D3
+  item_id: 1.2.1
+  plan_node_hash: 68decd404164211922b58a9287c0a1da774fe8b2bf9674dcc2e3b1015e495c5b
+  status: deferred
+  leaves: []
+  deferral_target: '#23010'
+  detail: deferral is valid
+- section_id: D3
+  item_id: 1.2.2
+  plan_node_hash: 0d03360e3b76ee1cedf6c985847c6b66948b44443412f83ac09fa5e82ef3fc93
+  status: deferred
+  leaves: []
+  deferral_target: '#23010'
+  detail: deferral is valid
+- section_id: D3
+  item_id: 1.2.3
+  plan_node_hash: 8dfff84ae175c2413087e34c0156943de3ce11368f03a8f45a910d7bbb865193
+  status: deferred
+  leaves: []
+  deferral_target: '#23010'
+  detail: deferral is valid
+- section_id: D3
+  item_id: 1.2.4
+  plan_node_hash: 398544b1f3e7e8c9094a29dc4eec73058b114c246ebe8156bf10a18aee4745e6
+  status: deferred
+  leaves: []
+  deferral_target: '#23010'
+  detail: deferral is valid
+- section_id: D3
+  item_id: 1.2.5
+  plan_node_hash: 812f95342463f594451e9220e91b6094b7a80b0e318c3c559db94ba23e4db1c4
+  status: deferred
+  leaves: []
+  deferral_target: '#23010'
+  detail: deferral is valid
+- section_id: D3
+  item_id: 1.2.6
+  plan_node_hash: 9fcf7953823aa0a127697c3148c7651138f7227f7e4fdcdcd1effc0d0c921a5b
+  status: deferred
+  leaves: []
+  deferral_target: '#23010'
+  detail: deferral is valid
+- section_id: D3
+  item_id: 1.2.7
+  plan_node_hash: cfe9f44dc47708a461f572804cb61c90148ec720d83d56377f7d114657d4644f
+  status: deferred
+  leaves: []
+  deferral_target: '#23010'
+  detail: deferral is valid
+- section_id: D3
+  item_id: 1.2.8
+  plan_node_hash: d8b9e9cfde1ec0e30484a32be99c0772c310ff880f453923dde06b8e90d3ba83
+  status: deferred
+  leaves: []
+  deferral_target: '#23010'
+  detail: deferral is valid
+- section_id: D3
+  item_id: 1.2.9
+  plan_node_hash: c2c2db4e8e68591ab31d83132a56a1021cc5ac8418a2e4b2c752b797fa683bfd
+  status: deferred
+  leaves: []
+  deferral_target: '#23010'
+  detail: deferral is valid
+- section_id: D3
+  item_id: 1.2.10
+  plan_node_hash: 0993ed21d607f67afb06e544ab18e62ef0b167811a0ac7209a3a68a21da8844b
+  status: deferred
+  leaves: []
+  deferral_target: '#23010'
+  detail: deferral is valid
+- section_id: D3
+  item_id: 1.2.11
+  plan_node_hash: cc51e4171e7cd35455ed40b165c74c593b9a7c56471394c8d24000d1de89e95c
+  status: deferred
+  leaves: []
+  deferral_target: '#23010'
+  detail: deferral is valid
+- section_id: D3
+  item_id: 1.2.12
+  plan_node_hash: a8919e5b5d0f28d380833b63ed8df365d82f9dc59b959fab6a9cc8dcc3cb9784
+  status: deferred
+  leaves: []
+  deferral_target: '#23010'
+  detail: deferral is valid
+- section_id: D3
+  item_id: 1.2.13
+  plan_node_hash: affcb9cef0b794546353ee98ca1deaf7385a57b0f05e4a9402747db2cd40f24b
+  status: deferred
+  leaves: []
+  deferral_target: '#23010'
+  detail: deferral is valid
+- section_id: D3
+  item_id: 1.2.14
+  plan_node_hash: 281ed103419c86356f657af56bd95d90cb808f200a7f110b2e34ba2973880b38
+  status: deferred
+  leaves: []
+  deferral_target: '#23010'
+  detail: deferral is valid
+- section_id: D4
+  item_id: 1.3.1
+  plan_node_hash: e6339be2e2582dafb1f869eb9a57c78d78ead864a1745fe32626518bae54c499
+  status: deferred
+  leaves: []
+  deferral_target: '#23011'
+  detail: deferral is valid
+- section_id: D4
+  item_id: 1.3.2
+  plan_node_hash: 8810f22f401df50fb74fd5755c635229705a367d6bdf1dd341ca44260b582822
+  status: deferred
+  leaves: []
+  deferral_target: '#23011'
+  detail: deferral is valid
+- section_id: D5
+  item_id: 1.4.1
+  plan_node_hash: dad0706a1d9e1450d12e568c73c6c8342c665a9bf5a06471a43b401d0235bc01
+  status: deferred
+  leaves: []
+  deferral_target: '#23012'
+  detail: deferral is valid
+- section_id: D5
+  item_id: 1.4.2
+  plan_node_hash: 6615eca63a93e39324636080f969d75c6c9abc6e687225a69a44895950256a07
+  status: deferred
+  leaves: []
+  deferral_target: '#23012'
+  detail: deferral is valid
+- section_id: D5
+  item_id: 1.4.3
+  plan_node_hash: 3969ff2e0019224e38010f74c4a4db33602d8b87c4df2ef5c32244a45d7a550a
+  status: deferred
+  leaves: []
+  deferral_target: '#23012'
+  detail: deferral is valid
+- section_id: D5
+  item_id: 1.4.4
+  plan_node_hash: eeda249a23671562769ef7d6e7175be3040e1cff3788bf3da858c228a0171f6f
+  status: deferred
+  leaves: []
+  deferral_target: '#23012'
+  detail: deferral is valid
+- section_id: D5
+  item_id: 1.4.5
+  plan_node_hash: ec25a4ffe253627c13a03de211f08d0706d612987efadcdd66b773e9cf9218e7
+  status: deferred
+  leaves: []
+  deferral_target: '#23012'
+  detail: deferral is valid
+- section_id: D5
+  item_id: 1.4.6
+  plan_node_hash: 66bf7a4dc921169aff19be92667f3f4d5a6f618207f44e1010f475c5c3a069a7
+  status: deferred
+  leaves: []
+  deferral_target: '#23012'
+  detail: deferral is valid
+- section_id: D5
+  item_id: 1.4.7
+  plan_node_hash: 1957d79f2f70651e5c3f24ac4d0e813ea8f83eb646b3fdeb3c3dee15b6276459
+  status: deferred
+  leaves: []
+  deferral_target: '#23012'
+  detail: deferral is valid
+- section_id: D5
+  item_id: 1.4.8
+  plan_node_hash: 6a7add0d93690ce494bca9211797f10fef6b3e093700c5988fb43a7417ae8482
+  status: deferred
+  leaves: []
+  deferral_target: '#23012'
+  detail: deferral is valid
+- section_id: D5
+  item_id: 1.4.9
+  plan_node_hash: 6b2ac7f95d6d61d0d66b7d7e3354f905e256a770451f203af64243ac8dc59178
+  status: deferred
+  leaves: []
+  deferral_target: '#23012'
+  detail: deferral is valid
+- section_id: D5
+  item_id: 1.4.10
+  plan_node_hash: 92a7563f796836f8bdf2715b79c1a31260b97f9274b4df103f05da9f291820cc
+  status: deferred
+  leaves: []
+  deferral_target: '#23012'
+  detail: deferral is valid
+- section_id: D5
+  item_id: 1.4.11
+  plan_node_hash: 1b4019cd51ec2b4097acfab83cdedc7afd738adf7f5be946eaa336429672f6e7
+  status: deferred
+  leaves: []
+  deferral_target: '#23012'
+  detail: deferral is valid
+- section_id: D5
+  item_id: 1.4.12
+  plan_node_hash: d01d8baa92c1abbee0acbcab0d5e230dcd9be862d1d260d0f98b72e9b31cbddc
+  status: deferred
+  leaves: []
+  deferral_target: '#23012'
+  detail: deferral is valid
+- section_id: D5
+  item_id: 1.4.13
+  plan_node_hash: b6774aacb86f823b17144df30646f4cd8af96fdb896bca920ff8b3c475d71bd4
+  status: deferred
+  leaves: []
+  deferral_target: '#23012'
+  detail: deferral is valid
+- section_id: D5
+  item_id: 1.4.14
+  plan_node_hash: dfc0562aaa9f4c5b1b1bb8b430c738f1b006bef5b70b59eda62e68dd6bbcf555
+  status: deferred
+  leaves: []
+  deferral_target: '#23012'
+  detail: deferral is valid
+- section_id: D6
+  item_id: 1.5.1
+  plan_node_hash: 8de9fe8acb72c4e5ad91e0c6cdbd9a3e87f57768aa89e12e75aab2a545b12008
+  status: deferred
+  leaves: []
+  deferral_target: '#23013'
+  detail: deferral is valid
+- section_id: D6
+  item_id: 1.5.2
+  plan_node_hash: 3cdd7f6d62034ad3b5be773b664b888c80202850db3eeb48c199f4b304c7956e
+  status: deferred
+  leaves: []
+  deferral_target: '#23013'
+  detail: deferral is valid
+- section_id: D6
+  item_id: 1.5.3
+  plan_node_hash: f2590bcb8845b06412253b6e98895d4d668f0a791382be00840fec40a9e3f7fc
+  status: deferred
+  leaves: []
+  deferral_target: '#23013'
+  detail: deferral is valid
+- section_id: D6
+  item_id: 1.5.4
+  plan_node_hash: 847af289ef800dc0b6a08c73e9d781f65fb6225b07518bf95fefb6dd4bd3acfd
+  status: deferred
+  leaves: []
+  deferral_target: '#23013'
+  detail: deferral is valid
+- section_id: D6
+  item_id: 1.5.5
+  plan_node_hash: f210ff2890fc87bc47de520da194c0020000db38c9997a589fbae6e3b2ad5958
+  status: deferred
+  leaves: []
+  deferral_target: '#23013'
+  detail: deferral is valid
+- section_id: D6
+  item_id: 1.5.6
+  plan_node_hash: 0e69040715f539d72cae17078d62abb3dbf5c33820a0647cc810265eff08b2df
+  status: deferred
+  leaves: []
+  deferral_target: '#23013'
+  detail: deferral is valid
+- section_id: D6
+  item_id: 1.5.7
+  plan_node_hash: f7399e836b72e6ea8b45e912394391eba00c2b4b85f787eee303c0ee8bdea19d
+  status: deferred
+  leaves: []
+  deferral_target: '#23013'
+  detail: deferral is valid
+- section_id: D6
+  item_id: 1.5.8
+  plan_node_hash: e1c22cc65f34424ebeb9f2a8d58c624b7643ccb8c8b877a26936fec9c9707f12
+  status: deferred
+  leaves: []
+  deferral_target: '#23013'
+  detail: deferral is valid
+- section_id: D6
+  item_id: 1.5.9
+  plan_node_hash: a748c5ce851312c1e52a8f30c8e826cc0321040fd84c18a769e2c623e5491770
+  status: deferred
+  leaves: []
+  deferral_target: '#23013'
+  detail: deferral is valid
+- section_id: D7
+  item_id: 1.6.1
+  plan_node_hash: f08dbeac0909df41e60f15d446f3b96af42891a4866b27da6aa187ed39f1f501
+  status: deferred
+  leaves: []
+  deferral_target: '#23014'
+  detail: deferral is valid
+- section_id: D7
+  item_id: 1.6.2
+  plan_node_hash: 7643220f59e975d943d97440fe90f0a3382baef1df3d187f237bb999cf63a100
+  status: deferred
+  leaves: []
+  deferral_target: '#23014'
+  detail: deferral is valid
+- section_id: D7
+  item_id: 1.6.3
+  plan_node_hash: c4cab1fa8fe7859a2939d328eb9ea0864a17b6cc2e23f4f3bd22549fc12c5bc5
+  status: deferred
+  leaves: []
+  deferral_target: '#23014'
+  detail: deferral is valid
+- section_id: D7
+  item_id: 1.6.4
+  plan_node_hash: f57eaa6fe5f6c9c4620d6502d0180503cec45060b4301aa12760146764b1ecf0
+  status: deferred
+  leaves: []
+  deferral_target: '#23014'
+  detail: deferral is valid
+- section_id: D7
+  item_id: 1.6.5
+  plan_node_hash: d0914de34570b0788f98d65477f228739053d620647c2965969d3e18f698a612
+  status: deferred
+  leaves: []
+  deferral_target: '#23014'
+  detail: deferral is valid
+- section_id: D7
+  item_id: 1.6.6
+  plan_node_hash: fb51d1a75c5bb01217337a433ccfa5191db64a4315d1c76846aea39b07787d35
+  status: deferred
+  leaves: []
+  deferral_target: '#23014'
+  detail: deferral is valid
+- section_id: D7
+  item_id: 1.6.7
+  plan_node_hash: 55eadc491cd7a767b6bc5713dbaa7b6167695590c70f7b7e680553a251154534
+  status: deferred
+  leaves: []
+  deferral_target: '#23014'
+  detail: deferral is valid
+- section_id: D8
+  item_id: 1.7.1
+  plan_node_hash: df8fd31f2c50d04f58d8105fa80956ee56258abf8ef69a8f7f56ea681d2c2597
+  status: deferred
+  leaves: []
+  deferral_target: '#23015'
+  detail: deferral is valid
+- section_id: D8
+  item_id: 1.7.2
+  plan_node_hash: 82730962098e69e09fbc3ebce7917913c1d0cfd264ca7deee09c7b7c434a82e9
+  status: deferred
+  leaves: []
+  deferral_target: '#23015'
+  detail: deferral is valid
+- section_id: D8
+  item_id: 1.7.3
+  plan_node_hash: 9289c9544aef8e3a4fae4c84375d905ef74a93664a98f6833a5c9929af2cde1b
+  status: deferred
+  leaves: []
+  deferral_target: '#23015'
+  detail: deferral is valid
+- section_id: D8
+  item_id: 1.7.4
+  plan_node_hash: 723d5c0f0e8cf051418af41e7c6a73ac7bbd2c5a08a3cce11c2849fcff0d362b
+  status: deferred
+  leaves: []
+  deferral_target: '#23015'
+  detail: deferral is valid
+- section_id: D8
+  item_id: 1.7.5
+  plan_node_hash: 9d6c781f70f35903646bc356c0992e1d21136b2f3452c4e6f0ba147898ddd81e
+  status: deferred
+  leaves: []
+  deferral_target: '#23015'
+  detail: deferral is valid
+- section_id: D8
+  item_id: 1.7.6
+  plan_node_hash: 1e6c45e8fc777bdac94eec6b8f110807460138b2bb1a5d4c3c58e9a77b14d8bd
+  status: deferred
+  leaves: []
+  deferral_target: '#23015'
+  detail: deferral is valid
+- section_id: D9
+  item_id: 1.9.1
+  plan_node_hash: 1081e677a24f4e2c40d4c4e7b3ff07463816a381bc6c8af3f86a7f381a13f666
+  status: deferred
+  leaves: []
+  deferral_target: '#23017'
+  detail: deferral is valid
+- section_id: D9
+  item_id: 1.9.2
+  plan_node_hash: 826ba4032a5a85ce5868b4d4f0ba1cb96bad4b0dc0d09fce744ac33fcd087a1b
+  status: deferred
+  leaves: []
+  deferral_target: '#23017'
+  detail: deferral is valid
+- section_id: D9
+  item_id: 1.9.3
+  plan_node_hash: dc717abcadf1669e715b5206855e0e65778bdd4b116a0614c98b7f8b72256bf7
+  status: deferred
+  leaves: []
+  deferral_target: '#23017'
+  detail: deferral is valid
+- section_id: D9
+  item_id: 1.9.4
+  plan_node_hash: 15975f171860839b53e8241a256b609b85b7d6ccc6683e005a177094d9c41e24
+  status: deferred
+  leaves: []
+  deferral_target: '#23017'
+  detail: deferral is valid
+- section_id: D9
+  item_id: 1.9.5
+  plan_node_hash: 5e0c6c5aecdec1e577ecd6d8806d897223c57233ccfe3734a5328c8317a4a8d5
+  status: deferred
+  leaves: []
+  deferral_target: '#23017'
+  detail: deferral is valid
+- section_id: D9
+  item_id: 1.9.6
+  plan_node_hash: 7b5beb915193c198dda89515547d2a086ae2f0dbb0efd04741e09de5ebef0d86
+  status: deferred
+  leaves: []
+  deferral_target: '#23017'
+  detail: deferral is valid
+- section_id: D10
+  item_id: 1.8.1
+  plan_node_hash: 9d083db8e61f83974650163696ba652ad28e2881935baab4017abba1cd009b7e
+  status: deferred
+  leaves: []
+  deferral_target: '#23016'
+  detail: deferral is valid
+- section_id: D10
+  item_id: 1.8.3
+  plan_node_hash: 70d2dad5ffcdbfbe8b31df088a7514f469955378720e025e633783d7913f5e12
+  status: deferred
+  leaves: []
+  deferral_target: '#23016'
+  detail: deferral is valid
+- section_id: D10
+  item_id: 1.8.5
+  plan_node_hash: edb8f456413d661b40f20e808149cac90f8e7cc38675507bb784bdc411611805
+  status: deferred
+  leaves: []
+  deferral_target: '#23016'
+  detail: deferral is valid
+- section_id: D10
+  item_id: 1.8.6
+  plan_node_hash: 6be8d174d4339767a7f841d2541cb2b56b23928cff387beb8b53dbdbcc29ef9a
+  status: deferred
+  leaves: []
+  deferral_target: '#23016'
+  detail: deferral is valid
+- section_id: D11
+  item_id: 2.1.1
+  plan_node_hash: 44c0019c1eea2ac72cbda560827ef4455493b49ac564037a109056a8bea3b91d
+  status: deferred
+  leaves: []
+  deferral_target: '#23018'
+  detail: deferral is valid
+- section_id: D11
+  item_id: 2.1.2
+  plan_node_hash: c7ab82795288a85357e42acc8bf90f2cd3ea2eb760f817764ec3877713469aff
+  status: deferred
+  leaves: []
+  deferral_target: '#23018'
+  detail: deferral is valid
+- section_id: D11
+  item_id: 2.1.3
+  plan_node_hash: f903e3f32e05645e634a7d80d34ffc64e4f66e87785cfe06a29217d0d2b62bfa
+  status: deferred
+  leaves: []
+  deferral_target: '#23018'
+  detail: deferral is valid
+- section_id: D12
+  item_id: 3.1.1
+  plan_node_hash: 7e6aeb6e687f6b25d92dad0cd9fd23f2fc8a054afd89c4b67fb3b4ff47922862
+  status: deferred
+  leaves: []
+  deferral_target: '#23019'
+  detail: deferral is valid
+- section_id: D12
+  item_id: 3.1.2
+  plan_node_hash: 2171f3e443783bb573256da6757983494cce16c9d2d1d6d15517d2ff170123ae
+  status: deferred
+  leaves: []
+  deferral_target: '#23019'
+  detail: deferral is valid
+- section_id: D12
+  item_id: 3.1.3
+  plan_node_hash: 12bfece404a01aeb125f404a56b3fa332d6e1319098571ec721511b41f2a0ff4
+  status: deferred
+  leaves: []
+  deferral_target: '#23019'
+  detail: deferral is valid
+- section_id: D12
+  item_id: 3.1.4
+  plan_node_hash: a75586010ab84b2ed868e2f5a321494d8cc93c41ee76a89a63782202b827096d
+  status: deferred
+  leaves: []
+  deferral_target: '#23019'
+  detail: deferral is valid
+- section_id: D12
+  item_id: 3.1.5
+  plan_node_hash: 2c2855184ab792638cc842acceaa6e88ad6ca2f546cb5dda211ffeb533512e61
+  status: deferred
+  leaves: []
+  deferral_target: '#23019'
+  detail: deferral is valid

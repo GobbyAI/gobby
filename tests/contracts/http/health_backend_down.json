@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "name": "health_backend_down",
+  "family": "health",
+  "backend": "down",
+  "credential": "none",
+  "request": {
+    "method": "GET",
+    "path": "/api/health",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 503,
+    "headers": {
+      "content-type": "application/json",
+      "retry-after": "1"
+    },
+    "body": {
+      "status": "unavailable",
+      "backend": {
+        "state": "down",
+        "target": "@mask@"
+      }
+    }
+  },
+  "mask": [
+    "/response/body/backend/target"
+  ]
+}

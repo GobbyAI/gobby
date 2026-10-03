@@ -85,7 +85,7 @@ class TestSyncBundledAgents:
         """Template sync installs the grok-4.7 xhigh adversary definition."""
         source = (
             Path(__file__).resolve().parents[2]
-            / "src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml"
+            / "src/gobby/install/shared/workflows/agents/plan-adversary-taskless-old.yaml"
         )
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -99,7 +99,7 @@ class TestSyncBundledAgents:
         row = next(
             item
             for item in _mgr(definition_db).list_all()
-            if item.name == "plan-adversary-taskless"
+            if item.name == "plan-adversary-taskless-old"
         )
         body = _parse_body(row)
         assert body.provider == "grok"
@@ -936,6 +936,46 @@ class TestSyncBundledAgents:
         assert deleted is not None
         assert deleted.deleted_at is not None
         assert mgr.get_by_name("plan-review-researcher-taskless") is None
+
+    @pytest.mark.integration
+    def test_renamed_planning_definitions_retire_old_rows(
+        self, definition_db: PostgresHubDatabase
+    ) -> None:
+        """Renaming the planning definitions to -old retires every old-name row."""
+        mgr = _mgr(definition_db)
+        old_names = ("plan-enhancer", "plan-enhancer-taskless", "plan-adversary-taskless")
+        for name in old_names:
+            mgr.create(
+                name=name,
+                definition_json=json.dumps(
+                    {"name": name, "provider": "inherit", "mode": "interactive"}
+                ),
+                source="installed",
+                enabled=True,
+                tags=["gobby"],
+            )
+
+        result = sync_bundled_agents(definition_db)
+
+        assert result["success"] is True
+        assert result["errors"] == []
+        retired_names = ("plan-enhancer-taskless", "plan-adversary-taskless")
+        for name in old_names:
+            renamed = mgr.get_by_name(f"{name}-old")
+            assert renamed is not None
+            assert renamed.source == "installed"
+            assert renamed.enabled is True
+            assert _parse_body(renamed).name == f"{name}-old"
+        for name in retired_names:
+            assert mgr.get_by_name(name) is None
+        enabled_names = {row.name for row in mgr.list_all() if row.enabled}
+        assert enabled_names.isdisjoint(retired_names)
+        # The plan-enhancer name now belongs to the bundled planning seat.
+        seat = mgr.get_by_name("plan-enhancer")
+        assert seat is not None
+        seat_prompts = _parse_body(seat).prompts
+        assert seat_prompts is not None
+        assert "You are the Plan Enhancer seat" in (seat_prompts.agent or "")
 
     @pytest.mark.unit
     def test_sync_orphan_cleanup_preserves_non_sync_managed_agents(

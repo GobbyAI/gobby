@@ -135,6 +135,7 @@ def _clear_invoking_agent_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     need one set it explicitly.
     """
     from gobby.agents import constants
+    from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
     from gobby.utils.local_token import GOBBY_MANAGED_EXECUTION_ID_ENV
 
     for name in (
@@ -143,6 +144,7 @@ def _clear_invoking_agent_identity(monkeypatch: pytest.MonkeyPatch) -> None:
         constants.GOBBY_AGENT_RUN_ID,
         constants.GOBBY_AGENT_API_TOKEN,
         GOBBY_MANAGED_EXECUTION_ID_ENV,
+        MANAGED_EXECUTION_BOOTSTRAP_ENV,
         constants.GOBBY_WORKFLOW_NAME,
         constants.GOBBY_PROJECT_ID,
         constants.GOBBY_AGENT_DEPTH,

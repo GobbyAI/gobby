@@ -1,4 +1,4 @@
-name: plan-enhancer-taskless
+name: plan-enhancer-taskless-old
 description: |
   Taskless constructive plan enhancer for /gobby plan. Reads a plan artifact,
   returns ranked Better/Bigger enhancement suggestions to the parent session,

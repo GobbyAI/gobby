@@ -1,4 +1,4 @@
-"""Wiring tests for plan-adversary.yaml — no plan-file edits on rejection (§2.22.5).
+"""Wiring tests for plan-adversary-old.yaml — no plan-file edits on rejection (§2.22.5).
 
 When emitting findings (rejection rounds), the adversary must NOT edit the
 plan file. Plan edits between rounds are the planner's responsibility (§2.23).
@@ -7,6 +7,8 @@ The adversary writes only into the planning task's description (via
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 import yaml
@@ -17,8 +19,8 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(scope="module")
-def agent(repo_root) -> AgentDefinitionBody:
-    adversary_path = repo_root / "src/gobby/install/shared/workflows/agents/plan-adversary.yaml"
+def agent(repo_root: Path) -> AgentDefinitionBody:
+    adversary_path = repo_root / "src/gobby/install/shared/workflows/agents/plan-adversary-old.yaml"
     with adversary_path.open() as f:
         data = yaml.safe_load(f)
     return AgentDefinitionBody.model_validate(data)

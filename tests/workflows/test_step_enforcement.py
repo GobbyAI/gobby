@@ -876,7 +876,7 @@ def test_zsh_quoting_guidance_contract() -> None:
         repo_root / "src/gobby/install/shared/skills/bash/references/quoting-and-data.md"
     ).read_text()
     adversary_guidance = (
-        repo_root / "src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml"
+        repo_root / "src/gobby/install/shared/workflows/agents/plan-adversary-taskless-old.yaml"
     ).read_text()
 
     for required in ("zsh", "single-quote", "@theme", "@custom-variant", "parenthesized", "#"):
@@ -921,7 +921,7 @@ class TestAgentToolEnforcement:
         variables: dict[str, Any] = {
             "_agent_blocked_tools": ["Edit"],
             "_agent_blocked_mcp_tools": ["gobby-memory:create_memory"],
-            "_agent_type": "plan-adversary-taskless",
+            "_agent_type": "plan-adversary-taskless-old",
         }
 
         response = _check_agent_tool(tool_name, variables)
@@ -933,7 +933,7 @@ class TestAgentToolEnforcement:
         """Explicit blocked_tools entries still win over the catalog-tool exemption."""
         variables: dict[str, Any] = {
             "_agent_blocked_tools": [tool_name],
-            "_agent_type": "plan-adversary-taskless",
+            "_agent_type": "plan-adversary-taskless-old",
         }
 
         response = _check_agent_tool(tool_name, variables)
@@ -3481,7 +3481,7 @@ async def test_capability_neutral_tools_pass_step_allowlist(
 
 _PLAN_ENHANCER_TASKLESS = (
     Path(__file__).resolve().parents[2]
-    / "src/gobby/install/shared/workflows/agents/plan-enhancer-taskless.yaml"
+    / "src/gobby/install/shared/workflows/agents/plan-enhancer-taskless-old.yaml"
 )
 
 

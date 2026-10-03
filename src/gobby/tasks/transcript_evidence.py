@@ -81,6 +81,7 @@ from gobby.tasks.transcript_output_retention import (
 )
 from gobby.tasks.transcript_tool_arguments import (
     edited_source,
+    python_added_source,
     python_edit_tokens,
     python_keyword_stub,
 )
@@ -921,10 +922,12 @@ def _record_edit(
         python_edit = basename == "edit" and task_file.endswith(".py")
         fragment: str | None = None
         stub: tuple[str, tuple[str, ...]] | None = None
+        added: str | None = None
         unchanged = False
         if python_edit and isinstance(old, str) and isinstance(new, str):
             fragment = new
             stub = python_keyword_stub(old, new)
+            added = python_added_source(old, new)
             old_tokens = python_edit_tokens(old)
             unchanged = bool(old_tokens and old_tokens == python_edit_tokens(new))
         state.edits.append(
@@ -938,6 +941,7 @@ def _record_edit(
                 source_after=source_after,
                 source_fragment=fragment,
                 python_stub=stub,
+                python_added_source=added,
                 source_unchanged=unchanged,
             )
         )

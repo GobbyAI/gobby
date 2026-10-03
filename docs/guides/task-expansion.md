@@ -266,7 +266,7 @@ selected profile and stage settings in the [orchestration guide](./orchestration
 sequenceDiagram
     participant U as User
     participant P as /gobby plan
-    participant N as plan-enhancer
+    participant N as plan-enhancer-old
     participant R as plan-adversary
     participant E as /gobby expand
     participant EP as expand-task pipeline
