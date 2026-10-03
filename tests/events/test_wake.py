@@ -1820,34 +1820,13 @@ class TestComposerGate:
         )
 
     @pytest.mark.asyncio
-    async def test_unprobeable_provider_keeps_the_blind_drain(self) -> None:
-        from gobby.agents.idle_detector import ComposerRead
-        from gobby.events.live_wake import TerminalActivity
-
-        pane_sender = AsyncMock()
-        probe = AsyncMock(
-            return_value=TerminalActivity(ComposerRead("unknown"), composer_probeable=False)
-        )
-        dispatcher = self._dispatcher(probe, pane_sender)
-
-        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
-
-        assert result["delivered"] is True
-        pane_sender.assert_awaited_once_with(
-            "terminal-1",
-            CONTINUE_WAKE_MESSAGE,
-            submit=True,
-            clear_before_submit=True,
-            cli_source=ANY,
-        )
-
-    @pytest.mark.asyncio
-    async def test_unknown_read_only_withholds_when_the_provider_can_classify(
+    async def test_unknown_read_withholds_even_for_a_provider_without_composer_rules(
         self,
     ) -> None:
-        from gobby.agents.idle_detector import ComposerRead
-        from gobby.events.live_wake import TerminalActivity, composer_unconfirmed_result
+        """Grok's manifest has no composer rules, so every read is ``unknown``; it still withholds."""
+        from gobby.events.live_wake import composer_unconfirmed_result
 
+        assert not IdleDetector(BundledDetectionRegistry(), "grok").reads_composer()
         pane_sender = AsyncMock()
         probe = AsyncMock(return_value=TerminalActivity(ComposerRead("unknown")))
         dispatcher = self._dispatcher(probe, pane_sender)
@@ -1856,24 +1835,6 @@ class TestComposerGate:
 
         assert result == composer_unconfirmed_result(WAKE_SESSION_ID, method="terminal")
         pane_sender.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_unknown_read_drains_when_the_provider_cannot_classify(
-        self,
-    ) -> None:
-        from gobby.agents.idle_detector import ComposerRead
-        from gobby.events.live_wake import TerminalActivity
-
-        pane_sender = AsyncMock()
-        probe = AsyncMock(
-            return_value=TerminalActivity(ComposerRead("unknown"), composer_probeable=False)
-        )
-        dispatcher = self._dispatcher(probe, pane_sender)
-
-        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
-
-        assert result["delivered"] is True
-        pane_sender.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_probe_error_withholds_until_a_positive_empty_read(self) -> None:
