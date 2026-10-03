@@ -194,6 +194,12 @@ def _git_common_dir(path: Path) -> Path | None:
     return None
 
 
+def checkout_root(path: Path) -> Path | None:
+    """Return the nearest enclosing checkout: a directory holding a `.git` dir or file."""
+    start = path if path.is_dir() else path.parent
+    return next((d for d in (start, *start.parents) if (d / ".git").exists()), None)
+
+
 def _linked_git_dir(marker: Path) -> Path | None:
     try:
         first_line = marker.read_text(encoding="utf-8").splitlines()[0]
