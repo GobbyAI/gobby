@@ -612,12 +612,32 @@ impl Attempt {
             soft_deadline_in_capture: self.faults.soft_deadline_in_capture,
         };
         let state = Arc::clone(&self.state);
-        let captured = tokio::task::spawn_blocking(move || {
+        let mut capture_job = tokio::task::spawn_blocking(move || {
             let mut masters = Vec::new();
             let captured = capture(&state, spec, &mut masters);
             (captured, masters)
-        })
-        .await;
+        });
+        let captured =
+            match tokio::time::timeout(until_soft_cutoff(self.deadline_ns), &mut capture_job).await
+            {
+                Ok(captured) => captured,
+                Err(_) => {
+                    // Abort prevents a queued job starting. A running blocking
+                    // job must finish before rollback can resume its panes;
+                    // its private masters are dropped with its result.
+                    capture_job.abort();
+                    if tokio::time::timeout(remaining(self.deadline_ns), capture_job)
+                        .await
+                        .is_err()
+                    {
+                        // SAFETY: SIGALRM has its default fatal action. Never
+                        // reopen the gate over a capture that cannot finish.
+                        unsafe { libc::raise(libc::SIGALRM) };
+                        std::future::pending::<()>().await;
+                    }
+                    return UpgradeOutcome::Aborted(UpgradeReason::SoftDeadline);
+                }
+            };
         let handover = match captured {
             Ok((captured, masters)) => {
                 window.masters = masters;
@@ -820,7 +840,8 @@ fn capture(
         .ok_or(UpgradeReason::CaptureFailed)?;
     let inner = state.inner.blocking_lock();
     if spec.soft_deadline_in_capture {
-        std::thread::sleep(until_soft_cutoff(spec.deadline_ns));
+        // Exercise a worker still running when the window's soft wait expires.
+        std::thread::sleep(until_soft_cutoff(spec.deadline_ns) + HANDOFF_ROLLBACK);
     }
     let mut slots: Vec<_> = inner
         .terminals
@@ -831,6 +852,9 @@ fn capture(
     let failed = |_what: &str, _id: &str, _err: std::io::Error| UpgradeReason::CaptureFailed;
     let mut panes = Vec::with_capacity(slots.len());
     for (slot, child) in slots {
+        if until_soft_cutoff(spec.deadline_ns).is_zero() {
+            return Err(UpgradeReason::SoftDeadline);
+        }
         let id = slot.host_terminal_id.as_str();
         if spec.encode_error.as_deref() == Some(id) {
             return Err(failed(
@@ -843,6 +867,9 @@ fn capture(
             .runtime
             .encode_handover()
             .map_err(|err| failed("encode", id, err))?;
+        if until_soft_cutoff(spec.deadline_ns).is_zero() {
+            return Err(UpgradeReason::SoftDeadline);
+        }
         let master_fd = child
             .runtime
             .duplicate_handoff_fd()

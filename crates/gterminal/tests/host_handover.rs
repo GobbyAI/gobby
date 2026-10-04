@@ -736,6 +736,7 @@ fn fallback_failure_and_wedged_restore_end_the_process() {
     spec.env = fault("GTERM_RESTORE_FAULT", "decode").to_vec();
     spec.env.extend(fault("GTERM_FALLBACK_FAULT", "decode"));
     let mut host = launch(&spec);
+    host.wait_captured();
     let status = host.wait_exit(WAIT);
     assert_eq!(
         status.and_then(|status| status.code()),
@@ -750,6 +751,7 @@ fn fallback_failure_and_wedged_restore_end_the_process() {
     spec.env = fault("GTERM_RESTORE_FAULT", "decode").to_vec();
     spec.previous_image = Some(dir.path().join("missing-gterm"));
     let mut host = launch(&spec);
+    host.wait_captured();
     let status = host.wait_exit(WAIT);
     assert_eq!(
         status.and_then(|status| status.code()),
@@ -767,6 +769,7 @@ fn fallback_failure_and_wedged_restore_end_the_process() {
     spec.env = fault("GTERM_RESTORE_FAULT", "decode").to_vec();
     spec.previous_image = Some(impostor);
     let mut host = launch(&spec);
+    host.wait_captured();
     let status = host.wait_exit(WAIT);
     assert_eq!(
         status.and_then(|status| status.code()),
@@ -782,6 +785,7 @@ fn fallback_failure_and_wedged_restore_end_the_process() {
     spec.env = fault("GTERM_RESTORE_FAULT", "wedge").to_vec();
     spec.alarm_secs = Some(3);
     let mut host = launch(&spec);
+    host.wait_captured();
     let status = host.wait_exit(WAIT);
     assert_eq!(
         status.and_then(|status| status.signal()),
@@ -1332,6 +1336,12 @@ fn rollback_case(case: &RollbackCase) {
     }
 
     let after = wait_outcome(&dir, UPGRADE_TOKEN, label, OUTCOME_WAIT);
+    if label == "soft-cutoff-in-capture" {
+        assert!(
+            accepted_at.elapsed() < remaining,
+            "{label}: capture rollback must finish inside the upgrade budget"
+        );
+    }
     if case.stalled_writer {
         std::fs::write(dir.join("stall-go"), b"").expect("release the stalled pane");
     }
@@ -1465,7 +1475,9 @@ fn every_pre_exec_failure_rolls_back() {
         },
         RollbackCase {
             label: "soft-cutoff-in-capture",
-            fault: |_| json!({"soft_deadline_in_capture": true}),
+            // Deadline expiry wins before the next pane's encode fault. This
+            // also exercises rollback while the capture wait reaches cutoff.
+            fault: |id| json!({"soft_deadline_in_capture": true, "encode_error": id}),
             outcome: "aborted",
             reason: "soft_deadline",
             errno: None,
