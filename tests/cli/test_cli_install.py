@@ -31,6 +31,9 @@ from gobby.cli.install_setup_impeccable import ImpeccableRemovalResult
 from gobby.cli.install_setup_rtk import RtkCleanupReport, RtkInstallStatus
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.storage.auth import hash_token
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -56,7 +59,7 @@ _MACHINE_ID = "00000000-0000-4000-8000-000000000001"
 
 @contextmanager
 def _full_local_install(
-    files_home: Path, *, real_token: bool = False
+    files_home: Path, *, real_token: bool = False, real_api_key: bool = False
 ) -> Iterator[dict[str, MagicMock]]:
     """Patch the full-install steps that need Docker, a hub, or the host filesystem."""
     mocks = {
@@ -95,6 +98,8 @@ def _full_local_install(
     }
     if not real_token:
         replacements["gobby.cli.install._provision_local_api_token"] = mocks["provision_token"]
+    if real_api_key:
+        del replacements["gobby.cli.install.ensure_local_api_key"]
     with ExitStack() as stack:
         for target, replacement in replacements.items():
             stack.enter_context(patch(target, replacement))
@@ -563,25 +568,44 @@ class TestInstallCommand:
         runner: CliRunner,
         temp_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
+        hub_db: HubDatabase,
     ) -> None:
+        """4.2.5: install with a reachable hub writes a live machine-bound key to bootstrap."""
+        monkeypatch.setenv("HOME", str(temp_dir / "home"))
         gobby_home = temp_dir / "gobby-home"
+        gobby_home.mkdir()
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
         files_home = temp_dir / "files"
         files_home.mkdir()
-        auth_store = MagicMock()
+        bootstrap = gobby_home / "bootstrap.yaml"
+        bootstrap.write_text(
+            yaml.safe_dump({"datastore_mode": "local", "files_home": str(files_home)}),
+            encoding="utf-8",
+        )
+        bootstrap.chmod(0o600)
+        LocalMachineManager(hub_db).upsert_seen(_MACHINE_ID, TEST_USER_ID)
+        auth_store = MagicMock(db=hub_db)
         auth_store._read_local_api_token_hash.return_value = (None, False)
 
         with (
-            _full_local_install(files_home, real_token=True) as mocks,
+            _full_local_install(files_home, real_token=True, real_api_key=True),
             patch("gobby.cli.install.AuthStore", return_value=auth_store),
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
         ):
             result = runner.invoke(cli, ["install", "--no-interactive"])
 
         assert result.exit_code == 0, result.output
-        mocks["local_api_key"].assert_called_once_with(
-            auth_store.db, _MACHINE_ID, gobby_home / "bootstrap.yaml"
+        # Compare hashes only so a failure never renders the key itself.
+        written = yaml.safe_load(bootstrap.read_text(encoding="utf-8"))
+        written_key_hash = hash_token(written["api_key"])
+        live = hub_db.fetchall(
+            "SELECT id::TEXT AS id, key_hash FROM api_keys "
+            "WHERE machine_id = %s AND revoked_at IS NULL",
+            (_MACHINE_ID,),
         )
+        assert [(row["id"], row["key_hash"]) for row in live] == [
+            (written["api_key_id"], written_key_hash)
+        ]
 
     def test_install_reports_local_api_key_failure(
         self,
