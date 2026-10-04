@@ -190,8 +190,15 @@ def test_executed_claude_result_quoting_denial_text_is_not_unexecuted() -> None:
     )
     rejected = _claude_edit_result(is_error=True, content=_CLAUDE_USER_REJECTED)
 
-    assert is_unexecuted_tool_result(executed) is False
-    assert is_unexecuted_tool_result(rejected) is True
+    assert is_unexecuted_tool_result(executed, source="claude") is False
+    assert is_unexecuted_tool_result(rejected, source="claude") is True
+
+
+def test_unflagged_droid_hook_denial_is_unexecuted() -> None:
+    """Droid's parser coerces a missing flag to False, which proves nothing (#23410)."""
+    result = {"tool_result": {"content": _HOOK_BLOCKED, "is_error": False}}
+
+    assert is_unexecuted_tool_result(result) is True
 
 
 @pytest.mark.parametrize(

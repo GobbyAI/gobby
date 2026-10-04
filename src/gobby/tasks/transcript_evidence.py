@@ -746,7 +746,7 @@ def _record_validation_run(
     order: int,
     source_label: str,
 ) -> None:
-    if _is_unexecuted_tool_result(result):
+    if _is_unexecuted_tool_result(result, source=state.session.source):
         # Begin records are provisional until an explicit denial proves no edit ran.
         state.edits[:] = [edit for edit in state.edits if edit.order != pending.order]
         return

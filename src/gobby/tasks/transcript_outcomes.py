@@ -40,6 +40,8 @@ _UNEXECUTED_TOOL_PATTERNS = (
     re.compile(r"hook blocked this tool call", re.IGNORECASE),
     re.compile(r"permission to use \S+ (?:has been )?denied", re.IGNORECASE),
 )
+# Transcript sources whose contract flags every unexecuted tool call with is_error.
+_DENIAL_FLAGGING_SOURCES = frozenset({"claude"})
 
 _TYPE_CHECK_FAILURE_PATTERNS = (
     re.compile(r"(?m)^Found [1-9]\d* errors? in [1-9]\d* files?\b"),
@@ -177,7 +179,7 @@ def _first_executable(parsed: ParsedShellCommand) -> tuple[str, tuple[str, ...]]
     return executable, arguments
 
 
-def is_unexecuted_tool_result(result: Any) -> bool:
+def is_unexecuted_tool_result(result: Any, *, source: str | None = None) -> bool:
     """Return whether a tool result shows the call never executed.
 
     User rejections, permission denials, and hook blocks are tool-layer errors
@@ -200,9 +202,14 @@ def is_unexecuted_tool_result(result: Any) -> bool:
             return True
     # Claude flags every rejection, hook block and permission denial with
     # is_error. An unflagged result ran, and its transport copy (the edited
-    # file, the patch context) may quote denial text without being one.
+    # file, the patch context) may quote denial text without being one. Other
+    # parsers coerce a missing flag to False, so for them it proves nothing.
     tool_result = result.get("tool_result") if isinstance(result, dict) else None
-    if isinstance(tool_result, dict) and tool_result.get("is_error") is False:
+    if (
+        source in _DENIAL_FLAGGING_SOURCES
+        and isinstance(tool_result, dict)
+        and tool_result.get("is_error") is False
+    ):
         return False
     output, _truncated = extract_output(result)
     if not output:
