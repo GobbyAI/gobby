@@ -62,7 +62,7 @@ class TestPackHelpers:
 
 class TestPackCommand:
     @patch("gobby.cli.pack.get_gobby_home")
-    def test_pack_no_gobby_home(self, mock_home, runner: CliRunner) -> None:
+    def test_pack_no_gobby_home(self, mock_home: MagicMock, runner: CliRunner) -> None:
         fake_path = MagicMock()
         fake_path.exists.return_value = False
         mock_home.return_value = fake_path
@@ -74,7 +74,12 @@ class TestPackCommand:
     @patch("gobby.cli.pack._daemon_is_running", return_value=False)
     @patch("gobby.cli.pack._docker_available", return_value=False)
     def test_pack_dry_run(
-        self, mock_docker, mock_daemon, mock_home, tmp_path, runner: CliRunner
+        self,
+        mock_docker: MagicMock,
+        mock_daemon: MagicMock,
+        mock_home: MagicMock,
+        tmp_path: Path,
+        runner: CliRunner,
     ) -> None:
         # Setup fake GOBBY_HOME structure
         fake_home = tmp_path / ".gobby"
@@ -98,7 +103,12 @@ class TestPackCommand:
     @patch("gobby.cli.pack._daemon_is_running", return_value=False)
     @patch("gobby.cli.pack._docker_available", return_value=False)
     def test_pack_success(
-        self, mock_docker, mock_daemon, mock_home, tmp_path, runner: CliRunner
+        self,
+        mock_docker: MagicMock,
+        mock_daemon: MagicMock,
+        mock_home: MagicMock,
+        tmp_path: Path,
+        runner: CliRunner,
     ) -> None:
         fake_home = tmp_path / ".gobby"
         fake_home.mkdir()
@@ -132,11 +142,11 @@ class TestPackCommand:
     @patch("gobby.cli.pack.postgres_backup_configured", return_value=True)
     def test_pack_includes_postgres_logical_dump_without_raw_volume(
         self,
-        mock_postgres_configured,
-        mock_docker,
-        mock_daemon,
-        mock_home,
-        tmp_path,
+        mock_postgres_configured: MagicMock,
+        mock_docker: MagicMock,
+        mock_daemon: MagicMock,
+        mock_home: MagicMock,
+        tmp_path: Path,
         runner: CliRunner,
     ) -> None:
         fake_home = tmp_path / ".gobby"
@@ -160,7 +170,9 @@ class TestPackCommand:
         assert result.exit_code == 0
         with tarfile.open(out_path, "r:gz") as tar:
             names = tar.getnames()
-            manifest = json.loads(tar.extractfile("gobby/manifest.json").read() or b"{}")
+            member = tar.extractfile("gobby/manifest.json")
+            assert member is not None
+            manifest = json.loads(member.read() or b"{}")
         assert "gobby/postgres/gobby.dump" in names
         assert "gobby/postgres/metadata.json" in names
         assert "gobby/postgres/SHA256SUMS" in names
@@ -175,12 +187,12 @@ class TestPackCommand:
     @patch("gobby.cli.pack._docker_available", return_value=False)
     def test_pack_daemon_lifecycle(
         self,
-        mock_docker,
-        mock_start,
-        mock_stop,
-        mock_daemon,
-        mock_home,
-        tmp_path,
+        mock_docker: MagicMock,
+        mock_start: MagicMock,
+        mock_stop: MagicMock,
+        mock_daemon: MagicMock,
+        mock_home: MagicMock,
+        tmp_path: Path,
         runner: CliRunner,
     ) -> None:
         fake_home = tmp_path / ".gobby"
@@ -345,8 +357,8 @@ class TestUnpackCommand:
     )
     def test_unpack_rejects_escaping_member(
         self,
-        mock_stop_services,
-        mock_daemon,
+        mock_stop_services: MagicMock,
+        mock_daemon: MagicMock,
         mock_home: MagicMock,
         member_name: str,
         expected: str,
@@ -447,10 +459,10 @@ class TestUnpackCommand:
     @patch("gobby.cli.pack.install_git_hooks", return_value={"success": True, "installed": []})
     def test_unpack_restores_postgres_payload(
         self,
-        mock_hooks,
-        mock_docker,
-        mock_stop_services,
-        mock_daemon,
+        mock_hooks: MagicMock,
+        mock_docker: MagicMock,
+        mock_stop_services: MagicMock,
+        mock_daemon: MagicMock,
         mock_home: MagicMock,
         pack_env: PackEnv,
         tmp_path: Path,

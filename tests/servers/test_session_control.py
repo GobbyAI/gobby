@@ -455,13 +455,13 @@ class TestContinueInChatTerminalKill:
         host.agent_run_manager = None
 
         async def fake_create_chat_session(
-            conv_id,
-            model=None,
-            project_id=None,
-            resume_session_id=None,
-            provider=None,
-            reasoning_effort=None,
-        ):
+            conv_id: str,
+            model: str | None = None,
+            project_id: str | None = None,
+            resume_session_id: str | None = None,
+            provider: str | None = None,
+            reasoning_effort: str | None = None,
+        ) -> MagicMock:
             return mock_chat_session
 
         host._create_chat_session = fake_create_chat_session
@@ -553,13 +553,13 @@ class TestContinueInChatTerminalKill:
         mock_run.mode = "interactive"
 
         async def fake_create_chat_session(
-            conv_id,
-            model=None,
-            project_id=None,
-            resume_session_id=None,
-            provider=None,
-            reasoning_effort=None,
-        ):
+            conv_id: str,
+            model: str | None = None,
+            project_id: str | None = None,
+            resume_session_id: str | None = None,
+            provider: str | None = None,
+            reasoning_effort: str | None = None,
+        ) -> MagicMock:
             return mock_chat_session
 
         host._create_chat_session = fake_create_chat_session
@@ -605,7 +605,9 @@ class TestContinueInChatTerminalKill:
         mock_kill_terminal.assert_not_called()
         assert mock_kill_terminal.call_count == 0
         assert not mock_kill_terminal.called
-        assert deliver_terminal_run.await_args.kwargs["run_id"] == mock_run.id
+        deliver_call = deliver_terminal_run.await_args
+        assert deliver_call is not None
+        assert deliver_call.kwargs["run_id"] == mock_run.id
         session_manager.update_parent_session_id.assert_not_called()
         assert session_manager.update_parent_session_id.call_count == 0
         assert not session_manager.update_parent_session_id.called
@@ -636,7 +638,7 @@ class TestContinueInChatTerminalKill:
 
         session_manager = MagicMock()
 
-        def get_session(session_id: str):
+        def get_session(session_id: str) -> MagicMock | None:
             if session_id == "source-uuid":
                 return source_session
             if session_id == "new-conv":
@@ -658,13 +660,13 @@ class TestContinueInChatTerminalKill:
         captured: dict[str, object] = {}
 
         async def fake_create_chat_session(
-            conv_id,
-            model=None,
-            project_id=None,
-            resume_session_id=None,
-            provider=None,
-            reasoning_effort=None,
-        ):
+            conv_id: str,
+            model: str | None = None,
+            project_id: str | None = None,
+            resume_session_id: str | None = None,
+            provider: str | None = None,
+            reasoning_effort: str | None = None,
+        ) -> MagicMock:
             captured["conversation_id"] = conv_id
             captured["provider"] = provider
             captured["model"] = model
@@ -873,13 +875,13 @@ class TestContinueInChatTerminalKill:
         captured: dict[str, object] = {}
 
         async def fake_create_chat_session(
-            conv_id,
-            model=None,
-            project_id=None,
-            resume_session_id=None,
-            provider=None,
-            reasoning_effort=None,
-        ):
+            conv_id: str,
+            model: str | None = None,
+            project_id: str | None = None,
+            resume_session_id: str | None = None,
+            provider: str | None = None,
+            reasoning_effort: str | None = None,
+        ) -> MagicMock:
             captured["conversation_id"] = conv_id
             captured["provider"] = provider
             captured["model"] = model
@@ -984,13 +986,13 @@ class TestContinueInChatTerminalKill:
         captured: dict[str, object] = {}
 
         async def fake_create_chat_session(
-            conv_id,
-            model=None,
-            project_id=None,
-            resume_session_id=None,
-            provider=None,
-            reasoning_effort=None,
-        ):
+            conv_id: str,
+            model: str | None = None,
+            project_id: str | None = None,
+            resume_session_id: str | None = None,
+            provider: str | None = None,
+            reasoning_effort: str | None = None,
+        ) -> MagicMock:
             captured["conversation_id"] = conv_id
             captured["provider"] = provider
             captured["model"] = model
@@ -1090,13 +1092,13 @@ class TestContinueInChatTerminalKill:
         captured: dict[str, object] = {}
 
         async def fake_create_chat_session(
-            conv_id,
-            model=None,
-            project_id=None,
-            resume_session_id=None,
-            provider=None,
-            reasoning_effort=None,
-        ):
+            conv_id: str,
+            model: str | None = None,
+            project_id: str | None = None,
+            resume_session_id: str | None = None,
+            provider: str | None = None,
+            reasoning_effort: str | None = None,
+        ) -> MagicMock:
             captured["conversation_id"] = conv_id
             captured["resume_session_id"] = resume_session_id
             captured["provider"] = provider
@@ -1170,13 +1172,13 @@ class TestContinueInChatTerminalKill:
         host._send_error = AsyncMock()
 
         async def fake_create_chat_session(
-            conv_id,
-            model=None,
-            project_id=None,
-            resume_session_id=None,
-            provider=None,
-            reasoning_effort=None,
-        ):
+            conv_id: str,
+            model: str | None = None,
+            project_id: str | None = None,
+            resume_session_id: str | None = None,
+            provider: str | None = None,
+            reasoning_effort: str | None = None,
+        ) -> MagicMock:
             return mock_chat_session
 
         host._create_chat_session = fake_create_chat_session
@@ -1248,13 +1250,13 @@ class TestContinueInChatTerminalKill:
         host._send_error = AsyncMock()
 
         async def fake_create_chat_session(
-            conv_id,
-            model=None,
-            project_id=None,
-            resume_session_id=None,
-            provider=None,
-            reasoning_effort=None,
-        ):
+            conv_id: str,
+            model: str | None = None,
+            project_id: str | None = None,
+            resume_session_id: str | None = None,
+            provider: str | None = None,
+            reasoning_effort: str | None = None,
+        ) -> MagicMock:
             return mock_chat_session
 
         host._create_chat_session = fake_create_chat_session
@@ -1328,13 +1330,13 @@ class TestContinueInChatTerminalKill:
         captured: dict[str, object] = {}
 
         async def fake_create_chat_session(
-            conv_id,
-            model=None,
-            project_id=None,
-            resume_session_id=None,
-            provider=None,
-            reasoning_effort=None,
-        ):
+            conv_id: str,
+            model: str | None = None,
+            project_id: str | None = None,
+            resume_session_id: str | None = None,
+            provider: str | None = None,
+            reasoning_effort: str | None = None,
+        ) -> MagicMock:
             captured["resume_session_id"] = resume_session_id
             return mock_chat_session
 
@@ -1401,13 +1403,13 @@ class TestContinueInChatTerminalKill:
         host._send_error = AsyncMock()
 
         async def fake_create_chat_session(
-            conv_id,
-            model=None,
-            project_id=None,
-            resume_session_id=None,
-            provider=None,
-            reasoning_effort=None,
-        ):
+            conv_id: str,
+            model: str | None = None,
+            project_id: str | None = None,
+            resume_session_id: str | None = None,
+            provider: str | None = None,
+            reasoning_effort: str | None = None,
+        ) -> MagicMock:
             return mock_chat_session
 
         host._create_chat_session = fake_create_chat_session

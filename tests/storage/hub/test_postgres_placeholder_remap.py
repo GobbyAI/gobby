@@ -4,7 +4,7 @@ import asyncio
 import importlib
 import inspect
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -24,7 +24,7 @@ pytestmark = pytest.mark.unit
 _OPEN_TRANSACTION_INFO = SimpleNamespace(transaction_status=TransactionStatus.INTRANS)
 
 
-def _postgres_module():
+def _postgres_module() -> ModuleType:
     return importlib.import_module("gobby.storage.hub.postgres")
 
 
@@ -95,16 +95,16 @@ def test_postgres_execute_materializes_results_before_transaction_exits(
             assert checkout_active
             return 2
 
-        def fetchone(self):
+        def fetchone(self) -> dict[str, int]:
             assert checkout_active
             return {"id": 1}
 
-        def fetchall(self):
+        def fetchall(self) -> list[dict[str, int]]:
             assert checkout_active
             return [{"id": 1}, {"id": 2}]
 
     class Transaction:
-        def execute(self, sql: str, params: object = ()):
+        def execute(self, sql: str, params: object = ()) -> object:
             return pool_module.PostgresCursor(Result())
 
     @contextmanager
@@ -450,11 +450,11 @@ class _FakePostgresConnection:
         self.execute_calls: list[tuple[str, object]] = []
         self.executemany_calls: list[tuple[str, list[tuple[object, ...]]]] = []
 
-    def execute(self, sql: str, params: object = ()):
+    def execute(self, sql: str, params: object = ()) -> object:
         self.execute_calls.append((sql, params))
         return object()
 
-    def executemany(self, sql: str, rows) -> SimpleNamespace:
+    def executemany(self, sql: str, rows: Iterable[Iterable[object]]) -> SimpleNamespace:
         materialized = [tuple(row) for row in rows]
         self.executemany_calls.append((sql, materialized))
         return SimpleNamespace(rowcount=len(materialized))
@@ -534,14 +534,14 @@ def test_postgres_safe_update_rejects_invalid_identifiers() -> None:
 
 
 class _FakeResult:
-    def __init__(self, rows):
+    def __init__(self, rows: list[dict[str, object]]) -> None:
         self._rows = rows
         self.rowcount = len(rows)
 
-    def fetchone(self):
+    def fetchone(self) -> dict[str, object] | None:
         return self._rows[0] if self._rows else None
 
-    def fetchall(self):
+    def fetchall(self) -> list[dict[str, object]]:
         return list(self._rows)
 
 

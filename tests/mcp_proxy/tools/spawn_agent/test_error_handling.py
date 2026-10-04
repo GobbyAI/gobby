@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.agents.isolation import IsolationContext, SpawnConfig
 from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.completion_delivery_helpers import record_removals
@@ -216,7 +219,7 @@ class TestSpawnAgentImplErrorBranches:
             assert "not found" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_worktree_dir_missing_cleans_up(self, tmp_path) -> None:
+    async def test_worktree_dir_missing_cleans_up(self, tmp_path: Path) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = MagicMock()
@@ -302,7 +305,7 @@ class TestSpawnAgentImplErrorBranches:
             assert "not found" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_clone_dir_missing_cleans_up(self, tmp_path) -> None:
+    async def test_clone_dir_missing_cleans_up(self, tmp_path: Path) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = MagicMock()
@@ -457,7 +460,7 @@ class TestSpawnAgentImplErrorBranches:
 
     @pytest.mark.asyncio
     async def test_reused_worktree_persists_rebased_base_commit_sha(
-        self, temp_db, sample_project, tmp_path
+        self, temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path
     ) -> None:
         from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
         from gobby.mcp_proxy.tools.spawn_agent._worktree_reuse import prepare_reused_worktree
@@ -532,7 +535,7 @@ class TestSpawnAgentImplErrorBranches:
         )
 
     @pytest.mark.asyncio
-    async def test_reused_worktree_repairs_isolation_before_spawn(self, tmp_path) -> None:
+    async def test_reused_worktree_repairs_isolation_before_spawn(self, tmp_path: Path) -> None:
         from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
@@ -619,6 +622,7 @@ class TestSpawnAgentImplErrorBranches:
             provider="codex",
         )
         mock_execute.assert_awaited_once()
+        assert mock_execute.await_args is not None
         spawn_request = mock_execute.await_args.args[0]
         assert spawn_request.cwd == str(worktree_path)
         assert spawn_request.worktree_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"
@@ -639,7 +643,7 @@ test"""
         )
 
     @pytest.mark.asyncio
-    async def test_reused_clone_restores_isolation_context_prompt(self, tmp_path) -> None:
+    async def test_reused_clone_restores_isolation_context_prompt(self, tmp_path: Path) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = MagicMock()
@@ -697,6 +701,7 @@ test"""
 
         assert result["success"] is True
         assert result["status"] == "starting"
+        assert mock_execute.await_args is not None
         spawn_request = mock_execute.await_args.args[0]
         assert spawn_request.cwd == str(clone_path)
         assert spawn_request.clone_id == "clone-1"
@@ -717,7 +722,7 @@ test"""
 
     @pytest.mark.asyncio
     async def test_reused_worktree_rebase_conflict_preserves_original_and_stops_spawn(
-        self, tmp_path
+        self, tmp_path: Path
     ) -> None:
         from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
@@ -811,7 +816,7 @@ test"""
         assert checkpoint.read_text(encoding="utf-8") == "preserved checkpoint"
 
     @pytest.mark.asyncio
-    async def test_isolated_spawn_defers_indexing_to_executor(self, tmp_path) -> None:
+    async def test_isolated_spawn_defers_indexing_to_executor(self, tmp_path: Path) -> None:
         from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
@@ -868,9 +873,10 @@ test"""
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
             ) as mock_execute,
         ):
-            mock_execute.side_effect = lambda *_args, **_kwargs: (
+
+            def execute(*_args: object, **_kwargs: object) -> MagicMock:
                 events.append("spawn")
-                or MagicMock(
+                return MagicMock(
                     success=True,
                     child_session_id="c-1",
                     status="ok",
@@ -880,7 +886,8 @@ test"""
                     message="ok",
                     process=None,
                 )
-            )
+
+            mock_execute.side_effect = execute
 
             result = await spawn_agent_impl(
                 terminal_backend="native",
@@ -897,10 +904,13 @@ test"""
         assert result["success"] is True
         assert result["status"] == "starting"
         assert events == ["sync", "repair", "spawn"]
+        assert mock_execute.await_args is not None
         assert mock_execute.await_args.args[0].code_index_preflight_mode == "best_effort"
 
     @pytest.mark.asyncio
-    async def test_docs_isolated_spawn_skips_blocking_code_index_preflight(self, tmp_path) -> None:
+    async def test_docs_isolated_spawn_skips_blocking_code_index_preflight(
+        self, tmp_path: Path
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = MagicMock()
@@ -995,6 +1005,7 @@ test"""
         assert result["success"] is True
         assert result["status"] == "starting"
         mock_execute.assert_awaited_once()
+        assert mock_execute.await_args is not None
         spawn_request = mock_execute.await_args.args[0]
         assert spawn_request.cwd == str(worktree_path)
         assert spawn_request.code_index_preflight_mode is None
@@ -1010,7 +1021,7 @@ test"""
         self,
         agent_name: str,
         stage_state: str,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
@@ -1059,6 +1070,7 @@ test"""
         assert result["success"] is True
         assert result["status"] == "starting"
         mock_execute.assert_awaited_once()
+        assert mock_execute.await_args is not None
         spawn_request = mock_execute.await_args.args[0]
         assert spawn_request.cwd == str(repo_path)
         assert spawn_request.sandbox_config.enabled is True
@@ -1068,7 +1080,7 @@ test"""
     @pytest.mark.asyncio
     async def test_planning_code_index_failure_blocks_spawn_before_execute(
         self,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         from gobby.agents.spawn_models import SpawnResult
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
@@ -1125,7 +1137,7 @@ test"""
         assert execute_args.args[0].code_index_preflight_mode == "required"
 
     @pytest.mark.asyncio
-    async def test_isolated_spawn_returns_executor_preflight_warning(self, tmp_path) -> None:
+    async def test_isolated_spawn_returns_executor_preflight_warning(self, tmp_path: Path) -> None:
         from gobby.agents.spawn_models import SpawnRequest
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
@@ -1220,7 +1232,9 @@ test"""
         assert spawn_request.code_index_preflight_mode == "best_effort"
 
     @pytest.mark.asyncio
-    async def test_isolated_spawn_fails_when_provider_mcp_config_missing(self, tmp_path) -> None:
+    async def test_isolated_spawn_fails_when_provider_mcp_config_missing(
+        self, tmp_path: Path
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = MagicMock()

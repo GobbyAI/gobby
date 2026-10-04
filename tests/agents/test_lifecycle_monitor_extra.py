@@ -1,8 +1,8 @@
 """Additional tests for AgentLifecycleMonitor."""
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -13,6 +13,7 @@ from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.watchdog import WatchdogReaderRegistry
+from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -82,7 +83,7 @@ def _task(
     stage_state: str = "in_progress",
     seq_num: int | None = 5,
     dispatch_failure_count: int = 0,
-    closed_at: str | None = None,
+    closed_at: datetime | None = None,
 ) -> Task:
     return Task(
         id=task_id,
@@ -90,8 +91,8 @@ def _task(
         title="test",
         priority=2,
         task_type="task",
-        created_at="2024-01-01",
-        updated_at="2024-01-01",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         claimed_by_session_id=owner,
         closed_at=closed_at,
         seq_num=seq_num,
@@ -135,8 +136,8 @@ class TestRecoverTaskFromFailedAgent:
             prompt="do it",
             status="error",
             error="API failed",
-            created_at="2024-01-01T00:00:00Z",
-            updated_at="2024-01-01T00:00:00Z",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
         mock_run_mgr.get.return_value = db_run
 
@@ -183,8 +184,8 @@ class TestRecoverTaskFromFailedAgent:
             prompt="do it",
             status="error",
             error="",
-            created_at="2024-01-01",
-            updated_at="2024-01-01T00:00:00Z",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
         mock_run_mgr.get.return_value = db_run
 
@@ -239,8 +240,8 @@ class TestRecoverTaskFromFailedAgent:
             prompt="review it",
             status="error",
             error="agent crashed",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
         mock_run_mgr.get.return_value = db_run
 
@@ -267,8 +268,7 @@ class TestRecoverTaskFromFailedAgent:
             agent_run_manager=MagicMock(),
             db=MagicMock(),
         )
-        result = await monitor._recover_task_from_failed_agent("run-1")
-        assert result is None
+        await monitor._recover_task_from_failed_agent("run-1")
         assert monitor._task_manager is None
 
     @pytest.mark.asyncio
@@ -290,15 +290,15 @@ class TestRecoverTaskFromFailedAgent:
             provider="claude",
             prompt="p",
             status="error",
-            created_at="2024-01-01",
-            updated_at="2024-01-01T00:00:00Z",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
         mock_run_mgr.get.return_value = db_run
 
         mock_task = _task(
             task_id="task-123",
             owner="owner-1",
-            closed_at="2024-01-02T00:00:00Z",
+            closed_at=datetime(2024, 1, 2, tzinfo=UTC),
         )
         mock_task_mgr.get_task.return_value = mock_task
 
@@ -331,8 +331,8 @@ class TestRecoverTaskFromFailedAgent:
             prompt="p",
             status="error",
             error="agent crashed",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
         mock_run_mgr.get.return_value = db_run
 
@@ -380,8 +380,8 @@ class TestRecoverTaskFromFailedAgent:
             prompt="p",
             status="error",
             error="rate limit exceeded",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
         mock_run_mgr.get.return_value = db_run
 
@@ -427,8 +427,8 @@ class TestRecoverTaskFromFailedAgent:
             prompt="p",
             status="error",
             error="agent crashed",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
         mock_run_mgr.get.return_value = db_run
 
@@ -477,8 +477,8 @@ class TestRecoverTaskFromFailedAgent:
             provider="codex",
             prompt="test",
             status="running",
-            created_at="2024-01-01T00:00:00+00:00",
-            updated_at="2024-01-01T00:00:00+00:00",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             task_id="task-1",
             terminal_id="agent-run-1",
         )
@@ -491,7 +491,7 @@ class TestRecoverTaskFromFailedAgent:
         idle_detector = IdleDetector(DETECTION_REGISTRY, "claude")
         cleanup_handler = AsyncMock()
 
-        async def run_db(func, *args, **kwargs):
+        async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
             return func(*args, **kwargs)
 
         handler = IdleCheckHandler(
@@ -503,7 +503,7 @@ class TestRecoverTaskFromFailedAgent:
             stall_classifier=MagicMock(),
             watchdog_readers=WatchdogReaderRegistry(),
             cleanup_handler=cleanup_handler,
-            tmux_config=SimpleNamespace(
+            tmux_config=TmuxConfig(
                 idle_timeout_seconds=60,
                 idle_reprompt_delay_seconds=60,
                 max_reprompt_attempts=2,
@@ -531,8 +531,8 @@ class TestLoopPromptEscalation:
             provider="claude",
             prompt="p",
             status="running",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             terminal_id="gobby-test",
             pid=12345,
         )
@@ -708,8 +708,8 @@ class TestApprovalPromptAutoEnter:
             provider="codex",
             prompt="p",
             status="running",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             terminal_id=terminal_id,
             pid=12345,
         )
@@ -844,8 +844,8 @@ class TestPeriodicAgentTerminalEnter:
             provider=provider,
             prompt="p",
             status="running",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             terminal_id=terminal_id,
             pid=12345,
         )
@@ -1156,8 +1156,8 @@ class TestDispatchFailureCountCRUD:
             title="test",
             priority=2,
             task_type="task",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             stages=(_stage("ready"),),
         )
         assert task.dispatch_failure_count == 0
@@ -1171,8 +1171,8 @@ class TestDispatchFailureCountCRUD:
             title="test",
             priority=2,
             task_type="task",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             dispatch_failure_count=3,
             stages=(_stage("ready"),),
         )
@@ -1188,10 +1188,10 @@ class TestDispatchFailureCountCRUD:
             title="test",
             priority=2,
             task_type="task",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             dispatch_failure_count=3,
-            escalated_at="2024-01-02T00:00:00Z",
+            escalated_at=datetime(2024, 1, 2, tzinfo=UTC),
             escalation_reason="manual review",
             stages=(_stage("ready"),),
         )
@@ -1199,7 +1199,7 @@ class TestDispatchFailureCountCRUD:
         assert brief["dispatch_failure_count"] == 3
 
     def test_update_task_sets_dispatch_failure_count(
-        self, temp_db: HubDatabase, sample_project: dict
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
     ) -> None:
         """update_task can set dispatch_failure_count."""
 
@@ -1214,7 +1214,7 @@ class TestDispatchFailureCountCRUD:
         assert updated.dispatch_failure_count == 2
 
     def test_reopen_resets_dispatch_failure_count(
-        self, temp_db: HubDatabase, sample_project: dict
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
     ) -> None:
         """Reopening a task resets dispatch_failure_count to 0."""
 
@@ -1255,8 +1255,8 @@ class TestTerminalizeCancelledRun:
             prompt="cancel it",
             status="cancelled",
             terminal_reason="user_cancelled",
-            created_at="2024-01-01T00:00:00Z",
-            updated_at="2024-01-01T00:00:00Z",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
         mock_run_mgr.cancel.return_value = run
 
@@ -1327,8 +1327,8 @@ class TestTerminalizeCancelledRun:
             prompt="cancel review",
             status="cancelled",
             terminal_reason="user_cancelled",
-            created_at="2024-01-01T00:00:00Z",
-            updated_at="2024-01-01T00:00:00Z",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
         mock_run_mgr.cancel.return_value = run
 
@@ -1359,7 +1359,7 @@ class TestTerminalizeCancelledRun:
     async def test_cancelled_task_linked_run_cleans_child_session_claim_state(
         self,
         temp_db: HubDatabase,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         session_manager = SessionManager(temp_db)
         parent = session_manager.register(
@@ -1439,7 +1439,7 @@ class TestTerminalizeCancelledRun:
     async def test_cancelled_run_preserves_replacement_claim_and_cleans_old_child_state(
         self,
         temp_db: HubDatabase,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         session_manager = SessionManager(temp_db)
         parent = session_manager.register(
@@ -1537,8 +1537,8 @@ class TestTerminalizeCancelledRun:
             provider="claude",
             prompt="done",
             status="success",
-            created_at="2024-01-01T00:00:00Z",
-            updated_at="2024-01-01T00:00:00Z",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
         mock_completion_registry = MagicMock()
         mock_completion_registry.notify = AsyncMock()

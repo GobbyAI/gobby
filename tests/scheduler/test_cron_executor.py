@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -13,11 +13,13 @@ import pytest
 from gobby.scheduler.executor import CronExecutor
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.cron import CronJobStorage
-from gobby.storage.cron_models import CronJob
+from gobby.storage.cron_children import ChildActionType
+from gobby.storage.cron_models import CronJob, CronRun
 from gobby.storage.sessions import SessionManager, ensure_system_session, system_session_id
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
+    from gobby.workflows.pipeline_executor import PipelineExecutor
 
 pytestmark = pytest.mark.unit
 
@@ -34,7 +36,9 @@ def executor(cron_storage: CronJobStorage) -> CronExecutor:
     return CronExecutor(storage=cron_storage)
 
 
-def _make_job(storage: CronJobStorage, action_type: str, action_config: dict) -> CronJob:
+def _make_job(
+    storage: CronJobStorage, action_type: ChildActionType, action_config: dict[str, Any]
+) -> CronJob:
     return storage.create_job(
         project_id=PROJECT_ID,
         name=f"Test {action_type}",
@@ -43,6 +47,12 @@ def _make_job(storage: CronJobStorage, action_type: str, action_config: dict) ->
         action_config=action_config,
         cron_expr="0 * * * *",
     )
+
+
+def _create_run(storage: CronJobStorage, job: CronJob) -> CronRun:
+    run = storage.create_run(job.id)
+    assert run is not None
+    return run
 
 
 def _agent_spawn_services(
@@ -93,7 +103,7 @@ async def test_shutdown_cancels_background_tasks(executor: CronExecutor) -> None
 async def test_execute_shell_success(cron_storage: CronJobStorage, executor: CronExecutor) -> None:
     """Shell action runs command and captures output."""
     job = _make_job(cron_storage, "shell", {"command": "echo", "args": ["hello world"]})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     with patch("gobby.scheduler.executor.record_automation_event") as record_event:
         result = await executor.execute(job, run)
@@ -114,7 +124,7 @@ async def test_execute_shell_timeout(cron_storage: CronJobStorage, executor: Cro
         "shell",
         {"command": "sleep", "args": ["10"], "timeout_seconds": 1},
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
     assert result.status == "failed"
@@ -129,7 +139,7 @@ async def test_execute_shell_failure(cron_storage: CronJobStorage, executor: Cro
         "shell",
         {"command": "false"},  # always exits with 1
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     with patch("gobby.scheduler.executor.record_automation_event") as record_event:
         result = await executor.execute(job, run)
@@ -155,13 +165,13 @@ async def test_execute_bounds_long_running_actions(
     cron_storage: CronJobStorage,
     executor: CronExecutor,
     monkeypatch: pytest.MonkeyPatch,
-    action_type: str,
+    action_type: ChildActionType,
     method_name: str,
 ) -> None:
     """Agent, pipeline, and handler actions are cancelled at the run timeout."""
     cancelled = asyncio.Event()
 
-    async def hang(*args: object) -> object:
+    async def hang(*args: object) -> None:
         try:
             await asyncio.Event().wait()
         finally:
@@ -175,7 +185,7 @@ async def test_execute_bounds_long_running_actions(
         "handler": {"handler": "hang"},
     }[action_type]
     job = _make_job(cron_storage, action_type, action_config)
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
 
@@ -210,7 +220,7 @@ async def test_handler_timeout_override_outlives_global_budget(
             "timeout_seconds": 0.1,
         },
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
 
@@ -242,7 +252,7 @@ async def test_handler_timeout_override_rejects_invalid_values(
             "timeout_seconds": timeout,
         },
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
 
@@ -261,7 +271,7 @@ async def test_execute_agent_spawn_no_runner(
         "agent_spawn",
         {"prompt": "test", "provider": "claude"},
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
     assert result.status == "failed"
@@ -284,7 +294,7 @@ async def test_execute_agent_spawn_with_mock_runner(
         "agent_spawn",
         {"prompt": "say hello", "provider": "claude", "timeout_seconds": 30},
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
     assert run is not None
 
     temp_db.execute("DELETE FROM sessions WHERE id = %s", (system_session_id(),))
@@ -349,7 +359,7 @@ async def test_execute_agent_spawn_default_overlap_skips_active_child(
     """agent_spawn skips before creating cron lineage when a child remains active."""
     ensure_system_session(temp_db)
     job = _make_job(cron_storage, "agent_spawn", {"prompt": "say hello"})
-    previous = cron_storage.create_run(job.id)
+    previous = _create_run(cron_storage, job)
     assert previous is not None
 
     agent_runs = LocalAgentRunManager(temp_db)
@@ -366,7 +376,7 @@ async def test_execute_agent_spawn_default_overlap_skips_active_child(
         agent_run_id=active.id,
         completed_at="2026-09-09T00:00:00+00:00",
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
     assert run is not None
 
     services = _agent_spawn_services()
@@ -398,7 +408,7 @@ async def test_execute_agent_spawn_fails_without_project_checkout(
         services=_agent_spawn_services(has_checkout=False),
     )
     job = _make_job(cron_storage, "agent_spawn", {"prompt": "say hello"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
     assert run is not None
 
     with patch(
@@ -421,7 +431,7 @@ async def test_execute_agent_spawn_skips_when_daemon_not_ready(
     services = MagicMock(startup_ready=False, shutdown_in_progress=False)
     executor = CronExecutor(storage=cron_storage, agent_runner=mock_runner, services=services)
     job = _make_job(cron_storage, "agent_spawn", {"prompt": "say hello"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     with patch(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -446,7 +456,7 @@ async def test_execute_agent_spawn_failure_records_failed_run(
         services=_agent_spawn_services(),
     )
     job = _make_job(cron_storage, "agent_spawn", {"prompt": "say hello"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     with patch(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -471,7 +481,7 @@ async def test_execute_agent_spawn_success_without_run_id_fails(
         services=_agent_spawn_services(),
     )
     job = _make_job(cron_storage, "agent_spawn", {"prompt": "say hello"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     with patch(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -494,7 +504,7 @@ async def test_execute_pipeline_no_executor(
         "pipeline",
         {"pipeline_name": "test-pipeline"},
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
     assert result.status == "failed"
@@ -517,13 +527,15 @@ async def test_execute_pipeline_disabled_is_skipped_without_side_effects(
         execution_manager=execution_manager,
         execute=execute_pipeline,
     )
-    executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
+    executor = CronExecutor(
+        storage=cron_storage, pipeline_executor=cast("PipelineExecutor", pipeline_executor)
+    )
     job = _make_job(
         cron_storage,
         "pipeline",
         {"pipeline_name": "disabled-pipeline"},
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
 
@@ -550,13 +562,15 @@ async def test_execute_pipeline_missing_target_still_fails(
         execution_manager=MagicMock(),
         execute=AsyncMock(),
     )
-    executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
+    executor = CronExecutor(
+        storage=cron_storage, pipeline_executor=cast("PipelineExecutor", pipeline_executor)
+    )
     job = _make_job(
         cron_storage,
         "pipeline",
         {"pipeline_name": "missing-pipeline"},
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
 
@@ -598,7 +612,7 @@ async def test_execute_pipeline_resolves_executor_for_job_project(
         "pipeline",
         {"pipeline_name": "cron-test-pipeline"},
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
     if executor._background_tasks:
@@ -640,7 +654,7 @@ async def test_execute_pipeline_recreates_missing_system_session(
         "pipeline",
         {"pipeline_name": "cron-test-pipeline"},
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
     if executor._background_tasks:
@@ -684,7 +698,7 @@ async def test_execute_pipeline_background_success_completes_cron_run(
 
     executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
     job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-success"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     with patch("gobby.scheduler.executor.record_automation_event") as record_event:
         dispatched = await executor.execute(job, run)
@@ -725,7 +739,7 @@ async def test_execute_pipeline_background_failure_fails_cron_run(
 
     executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
     job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-failure"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     with patch("gobby.scheduler.executor.record_automation_event") as record_event:
         dispatched = await executor.execute(job, run)
@@ -767,7 +781,7 @@ async def test_execute_pipeline_background_timeout_fails_cron_run(
 
     cancelled = asyncio.Event()
 
-    async def hang(**kwargs: object) -> object:
+    async def hang(**kwargs: object) -> None:
         try:
             await asyncio.Event().wait()
         finally:
@@ -776,7 +790,7 @@ async def test_execute_pipeline_background_timeout_fails_cron_run(
     pipeline_executor.execute = AsyncMock(side_effect=hang)
     executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
     job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-timeout"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     dispatched = await executor.execute(job, run)
     # Bound only the background pipeline; the launch writes a real cron session.
@@ -799,7 +813,7 @@ async def test_execute_pipeline_default_overlap_skips_active_child(
 ) -> None:
     """Pipeline cron skips when a previous dispatched child is still active."""
     job = _make_job(cron_storage, "pipeline", {"pipeline_name": "approval"})
-    previous = cron_storage.create_run(job.id)
+    previous = _create_run(cron_storage, job)
     assert previous is not None
     cron_storage.db.execute(
         """
@@ -814,7 +828,7 @@ async def test_execute_pipeline_default_overlap_skips_active_child(
         pipeline_execution_id="eeeeeeee-eeee-4eee-8eee-eeeeeeee0202",
         completed_at="2026-02-10T00:00:00+00:00",
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
     assert run is not None
     executor = CronExecutor(storage=cron_storage)
 
@@ -849,7 +863,7 @@ async def test_execute_pipeline_overlap_allow_launches_another_child(
         "pipeline",
         {"pipeline_name": "approval", "overlap_policy": "allow"},
     )
-    previous = cron_storage.create_run(job.id)
+    previous = _create_run(cron_storage, job)
     assert previous is not None
     cron_storage.db.execute(
         """
@@ -864,7 +878,7 @@ async def test_execute_pipeline_overlap_allow_launches_another_child(
         pipeline_execution_id="eeeeeeee-eeee-4eee-8eee-eeeeeeee0204",
         completed_at="2026-02-10T00:00:00+00:00",
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
     assert run is not None
 
     result = await executor.execute(job, run)
@@ -887,7 +901,7 @@ async def test_execute_agent_spawn_invalid_overlap_policy_fails(
         "agent_spawn",
         {"prompt": "hello", "overlap_policy": "sometimes"},
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
 
@@ -902,8 +916,8 @@ async def test_execute_unknown_action_type(
     """Unknown action_type returns error."""
     job = _make_job(cron_storage, "shell", {"command": "echo"})
     # Hack action_type to something invalid
-    job.action_type = "unknown"
-    run = cron_storage.create_run(job.id)
+    job.action_type = cast(ChildActionType, "unknown")
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
     assert result.status == "failed"
@@ -916,7 +930,7 @@ async def test_execute_updates_run_status(
 ) -> None:
     """Execute updates run to 'completed' and clears stale errors."""
     job = _make_job(cron_storage, "shell", {"command": "echo", "args": ["test"]})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
     cron_storage.update_run(run.id, error="Cron run exceeded running timeout (60s)")
     assert run.status == "pending"
 
@@ -936,7 +950,7 @@ async def test_execute_shell_missing_command(
 ) -> None:
     """Shell action without command in config returns error."""
     job = _make_job(cron_storage, "shell", {"args": ["hello"]})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
     assert result.status == "failed"
@@ -957,7 +971,7 @@ async def test_execute_handler_success(
 
     executor.register_handler("test_handler", my_handler)
     job = _make_job(cron_storage, "handler", {"handler": "test_handler"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
     assert result.status == "completed"
@@ -975,7 +989,7 @@ async def test_execute_preserves_oversized_handler_output(
 
     executor.register_handler("oversized_output", oversized_handler)
     job = _make_job(cron_storage, "handler", {"handler": "oversized_output"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
 
@@ -989,7 +1003,7 @@ async def test_execute_handler_missing_name(
 ) -> None:
     """Handler action without handler name in config returns error."""
     job = _make_job(cron_storage, "handler", {"some_key": "value"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
     assert result.status == "failed"
@@ -1002,7 +1016,7 @@ async def test_execute_handler_unregistered(
 ) -> None:
     """Handler action with unregistered handler name returns error."""
     job = _make_job(cron_storage, "handler", {"handler": "nonexistent"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
     assert result.status == "failed"
@@ -1021,7 +1035,7 @@ async def test_execute_handler_error_propagates(
 
     executor.register_handler("boom", failing_handler)
     job = _make_job(cron_storage, "handler", {"handler": "boom"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
     assert result.status == "failed"
@@ -1039,7 +1053,7 @@ async def test_execute_preserves_oversized_handler_error(
 
     executor.register_handler("oversized_error", failing_handler)
     job = _make_job(cron_storage, "handler", {"handler": "oversized_error"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
 
@@ -1058,7 +1072,7 @@ async def test_execute_handler_mapping_failure_result_records_failed_run(
 
     executor.register_handler("mapping_failure", failing_handler)
     job = _make_job(cron_storage, "handler", {"handler": "mapping_failure"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
 
@@ -1077,7 +1091,7 @@ async def test_execute_handler_json_failure_result_records_failed_run(
 
     executor.register_handler("json_failure", failing_handler)
     job = _make_job(cron_storage, "handler", {"handler": "json_failure"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     result = await executor.execute(job, run)
 
@@ -1108,7 +1122,7 @@ async def test_execute_agent_spawn_with_agent_definition(
             "agent_definition": "test-agent",
         },
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     # Mock resolve_agent to return an agent with preamble
     mock_body = MagicMock()
@@ -1157,7 +1171,7 @@ async def test_execute_agent_spawn_agent_definition_not_found(
             "agent_definition": "nonexistent-agent",
         },
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
 
     mock_result = {"success": True, "run_id": "dddddddd-dddd-4ddd-8ddd-dddddddd0987"}
     with (
@@ -1193,7 +1207,7 @@ async def test_agent_spawn_supplies_owning_completion_registry(
         "agent_spawn",
         {"prompt": "say hello", "provider": "claude", "timeout_seconds": 30},
     )
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
     assert run is not None
 
     with patch(
@@ -1271,7 +1285,7 @@ async def test_execute_pipeline_keeps_project_id_without_checkout(
 
     # PROJECT_ID is a checkout-free sentinel, so the root lookup is refused.
     job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-test-pipeline"})
-    run = cron_storage.create_run(job.id)
+    run = _create_run(cron_storage, job)
     assert run is not None
 
     with patch.object(executor, "_run_pipeline_background", new=background):

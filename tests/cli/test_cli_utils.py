@@ -34,6 +34,7 @@ from gobby.cli.utils import (
     wait_for_port_available,
 )
 from gobby.cli.utils_process import get_port_listener_pid
+from gobby.storage.hub.protocol import HubDatabase
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
@@ -124,7 +125,9 @@ class TestResolveProjectRef:
             result = resolve_project_ref(None)
             assert result is None
 
-    def test_uuid_lookup(self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db) -> None:
+    def test_uuid_lookup(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db: HubDatabase
+    ) -> None:
         """Test direct UUID lookup."""
         # Create a project
         from gobby.storage.projects import LocalProjectManager
@@ -137,7 +140,9 @@ class TestResolveProjectRef:
                 result = resolve_project_ref(project.id)
                 assert result == project.id
 
-    def test_name_lookup(self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db) -> None:
+    def test_name_lookup(
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db: HubDatabase
+    ) -> None:
         """Test project name lookup."""
         from gobby.storage.projects import LocalProjectManager
 
@@ -149,14 +154,14 @@ class TestResolveProjectRef:
                 result = resolve_project_ref("my-named-project")
                 assert result == project.id
 
-    def test_not_found_returns_none(self, hub_db) -> None:
+    def test_not_found_returns_none(self, hub_db: HubDatabase) -> None:
         """Test project not found returns None when exit_on_not_found=False."""
         with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
                 result = resolve_project_ref("nonexistent-project", exit_on_not_found=False)
                 assert result is None
 
-    def test_not_found_exits(self, hub_db) -> None:
+    def test_not_found_exits(self, hub_db: HubDatabase) -> None:
         """Test project not found exits when exit_on_not_found=True."""
         with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
@@ -173,7 +178,7 @@ class TestGetActiveSessionId:
     """Tests for get_active_session_id function."""
 
     def test_with_active_session(
-        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db: HubDatabase
     ) -> None:
         """Test finding an active session."""
         from gobby.storage.projects import LocalProjectManager
@@ -195,7 +200,7 @@ class TestGetActiveSessionId:
         result = get_active_session_id(hub_db)
         assert result == session.id
 
-    def test_no_active_session(self, hub_db) -> None:
+    def test_no_active_session(self, hub_db: HubDatabase) -> None:
         """Test no active session returns None."""
         result = get_active_session_id(hub_db)
         assert result is None
@@ -220,7 +225,7 @@ class TestResolveSessionId:
     """Tests for resolve_session_id function."""
 
     def test_resolves_active_session(
-        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db: HubDatabase
     ) -> None:
         """Test resolving to active session when no ref provided."""
         from gobby.storage.projects import LocalProjectManager
@@ -242,7 +247,7 @@ class TestResolveSessionId:
                 result = resolve_session_id(None, project_id=project.id)
                 assert result == session.id
 
-    def test_no_active_session_raises(self, hub_db) -> None:
+    def test_no_active_session_raises(self, hub_db: HubDatabase) -> None:
         """Test ClickException when no active session."""
         with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
@@ -251,7 +256,7 @@ class TestResolveSessionId:
                 assert "No active session found" in str(exc_info.value)
 
     def test_resolves_session_reference(
-        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db: HubDatabase
     ) -> None:
         """Test resolving a specific session reference."""
         from gobby.storage.projects import LocalProjectManager
@@ -274,7 +279,7 @@ class TestResolveSessionId:
                 assert result == session.id
 
     def test_resolves_seq_num_with_project_context(
-        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db: HubDatabase
     ) -> None:
         """Test resolving #N format using project context."""
         from gobby.storage.projects import LocalProjectManager
@@ -301,7 +306,7 @@ class TestResolveSessionId:
                     assert result == session.id
 
     def test_resolves_seq_num_with_explicit_project_id(
-        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db: HubDatabase
     ) -> None:
         """Test resolving #N format with explicit project_id parameter."""
         from gobby.storage.projects import LocalProjectManager
@@ -346,7 +351,7 @@ class TestListProjectNames:
     """Tests for list_project_names function."""
 
     def test_lists_all_project_names(
-        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db
+        self, isolated_checkout_factory: IsolatedCheckoutFactory, hub_db: HubDatabase
     ) -> None:
         """Test listing all project names."""
         from gobby.storage.projects import LocalProjectManager
@@ -361,7 +366,7 @@ class TestListProjectNames:
                 assert "project-alpha" in result
                 assert "project-beta" in result
 
-    def test_returns_list(self, hub_db) -> None:
+    def test_returns_list(self, hub_db: HubDatabase) -> None:
         """Test that list_project_names returns a list."""
         with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
@@ -552,7 +557,7 @@ class TestWaitForPortAvailable:
         # Port becomes available after 2 calls
         call_count = [0]
 
-        def mock_is_available(port, host="localhost"):
+        def mock_is_available(port: int, host: str = "localhost") -> bool:
             call_count[0] += 1
             return call_count[0] >= 3
 
@@ -605,7 +610,7 @@ class TestKillAllGobbyDaemons:
     """Tests for kill_all_gobby_daemons function."""
 
     @pytest.fixture(autouse=True)
-    def _mock_shutdown_source(self):
+    def _mock_shutdown_source(self) -> Iterator[None]:
         """Avoid shutdown provenance writes in daemon kill tests."""
         with patch("gobby.runner_maintenance.write_shutdown_source"):
             yield
@@ -674,7 +679,7 @@ class TestStopDaemon:
     """Tests for stop_daemon function."""
 
     @pytest.fixture(autouse=True)
-    def _mock_stop_daemon_deps(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def _mock_stop_daemon_deps(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         """Mock dependencies added to stop_daemon after tests were written."""
         # Clear GOBBY_TEST_PROTECT so the test-safety guard doesn't short-circuit
         monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
@@ -872,7 +877,7 @@ class TestStopDaemon:
 
         alive_calls = [True, True, False]  # Process dies after SIGTERM
 
-        def mock_is_alive(pid):
+        def mock_is_alive(pid: int) -> bool:
             return alive_calls.pop(0) if alive_calls else False
 
         mock_proc = MagicMock()
@@ -894,15 +899,15 @@ class TestStopDaemon:
         pid_file.write_text("12345")
 
         # Process stays alive until SIGKILL
-        kill_calls = []
+        kill_calls: list[int] = []
 
-        def mock_kill(pid, sig):
+        def mock_kill(pid: int, sig: int) -> None:
             kill_calls.append(sig)
             if sig == signal.SIGKILL:
                 return None
             return None
 
-        def mock_is_alive(pid):
+        def mock_is_alive(pid: int) -> bool:
             # Still alive until after SIGKILL
             return signal.SIGKILL not in kill_calls
 

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import signal
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -38,9 +39,8 @@ def test_terminate_ui_process_tolerates_process_races() -> None:
     child.kill.side_effect = psutil.NoSuchProcess(pid=2)
 
     with patch("gobby.cli.utils_ui.psutil.wait_procs", return_value=([], [child])) as wait_procs:
-        result = _terminate_ui_process(proc)
+        _terminate_ui_process(proc)
 
-    assert result is None
     proc.children.assert_called_once_with(recursive=True)
     proc.terminate.assert_called_once_with()
     wait_procs.assert_called_once_with([proc], timeout=3)
@@ -48,7 +48,7 @@ def test_terminate_ui_process_tolerates_process_races() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _mock_shutdown_source_writes(request: pytest.FixtureRequest):
+def _mock_shutdown_source_writes(request: pytest.FixtureRequest) -> Iterator[None]:
     """Keep daemon-path coverage tests from creating shutdown markers."""
     if request.node.name == "test_stop_daemon_writes_shutdown_intent_inside_safe_gobby_home":
         yield
@@ -1261,9 +1261,8 @@ def test_kill_port_holder_finds_process(monkeypatch: pytest.MonkeyPatch) -> None
         patch("gobby.cli.utils.psutil.Process", return_value=parent_proc),
         patch("gobby.cli.utils.psutil.wait_procs", return_value=([], [])),
     ):
-        result = _kill_port_holder(5173)
+        _kill_port_holder(5173)
 
-    assert result is None
     assert parent_proc.children.call_count == 1
     parent_proc.terminate.assert_called_once()
     child.terminate.assert_called_once()
@@ -1285,8 +1284,7 @@ def test_kill_port_holder_no_match(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_proc.net_connections.return_value = [conn]
 
     with patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]):
-        result = _kill_port_holder(5173)
-        assert result is None
+        _kill_port_holder(5173)
         fake_proc.net_connections.assert_called_once()
         assert fake_proc.net_connections.call_count == 1
 
@@ -1302,8 +1300,7 @@ def test_kill_port_holder_access_denied(monkeypatch: pytest.MonkeyPatch) -> None
     fake_proc.net_connections.side_effect = psutil.AccessDenied(55555)
 
     with patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]):
-        result = _kill_port_holder(5173)
-        assert result is None
+        _kill_port_holder(5173)
         fake_proc.net_connections.assert_called_once()
 
 
@@ -1335,8 +1332,7 @@ def test_kill_port_holder_kills_alive_procs(monkeypatch: pytest.MonkeyPatch) -> 
         patch("gobby.cli.utils.psutil.Process", return_value=parent_proc),
         patch("gobby.cli.utils.psutil.wait_procs", return_value=([], [alive_proc])),
     ):
-        result = _kill_port_holder(5173)
-    assert result is None
+        _kill_port_holder(5173)
     alive_proc.kill.assert_called_once()
     assert alive_proc.kill.call_count == 1
 

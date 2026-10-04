@@ -20,7 +20,7 @@ pytestmark = pytest.mark.unit
 class TestSessionEndHandling:
     """Test SESSION_END handler edge cases and error paths."""
 
-    def test_session_end_lookup_from_database(self, mock_dependencies: dict) -> None:
+    def test_session_end_lookup_from_database(self, mock_dependencies: dict[str, Any]) -> None:
         """Test session_id lookup from database when not in metadata."""
         mock_dependencies["session_manager"].lookup_session_id.return_value = "found-sess-123"
 
@@ -43,7 +43,7 @@ class TestSessionEndHandling:
         assert response.decision == "allow"
         mock_dependencies["session_manager"].lookup_session_id.assert_called_once()
 
-    def test_session_end_workflow_error(self, mock_dependencies: dict) -> None:
+    def test_session_end_workflow_error(self, mock_dependencies: dict[str, Any]) -> None:
         """Test workflow error during session end is handled."""
         mock_dependencies["workflow_handler"].evaluate.side_effect = Exception("Workflow error")
 
@@ -58,7 +58,7 @@ class TestSessionEndHandling:
         # Should still allow despite error
         assert response.decision == "allow"
 
-    def test_session_end_auto_link_commits(self, mock_dependencies: dict) -> None:
+    def test_session_end_auto_link_commits(self, mock_dependencies: dict[str, Any]) -> None:
         """Session end hands the commit auto-link to the managed worker."""
         from gobby.hooks.session_end_auto_link import SessionEndAutoLinkJob
 
@@ -90,7 +90,7 @@ class TestSessionEndHandling:
             )
         )
 
-    def test_session_end_auto_link_error(self, mock_dependencies: dict) -> None:
+    def test_session_end_auto_link_error(self, mock_dependencies: dict[str, Any]) -> None:
         """A worker that refuses the job must not fail session end."""
         mock_session = MagicMock()
         mock_session.id = "sess-uuid-1"
@@ -116,7 +116,7 @@ class TestSessionEndHandling:
         assert response.decision == "allow"
         worker.submit.assert_called_once()
 
-    def test_session_end_complete_agent_run(self, mock_dependencies: dict) -> None:
+    def test_session_end_complete_agent_run(self, mock_dependencies: dict[str, Any]) -> None:
         """Test completing agent run on session end."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
@@ -137,7 +137,7 @@ class TestSessionEndHandling:
         assert mock_dependencies["session_coordinator"].complete_agent_run.call_count == 1
         assert mock_dependencies["session_coordinator"].complete_agent_run.call_args is not None
 
-    def test_session_end_complete_agent_run_error(self, mock_dependencies: dict) -> None:
+    def test_session_end_complete_agent_run_error(self, mock_dependencies: dict[str, Any]) -> None:
         """Test error completing agent run is handled gracefully."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
@@ -158,7 +158,9 @@ class TestSessionEndHandling:
         # Should still allow despite error
         assert response.decision == "allow"
 
-    def test_session_end_unregister_message_processor(self, mock_dependencies: dict) -> None:
+    def test_session_end_unregister_message_processor(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
         """Test unregistering from message processor on session end."""
         handlers = EventHandlers(**mock_dependencies)
         registered_processor = mock_dependencies["message_processor_resolver"]()
@@ -178,7 +180,7 @@ class TestSessionEndHandling:
         assert "sess-123" not in handlers._session_message_processors
 
     def test_session_end_unregister_maps_external_id_to_platform_id(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict[str, Any]
     ) -> None:
         """An event without metadata unregisters the mapped platform session ID."""
         mock_dependencies["session_manager"].lookup_session_id.return_value = "mapped-sess-123"
@@ -199,7 +201,7 @@ class TestSessionEndHandling:
         assert "mapped-sess-123" not in handlers._session_message_processors
 
     def test_session_end_lookup_miss_does_not_unregister_external_id(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict[str, Any]
     ) -> None:
         """An unknown external ID is never used as a processor registration key."""
         mock_dependencies["session_manager"].lookup_session_id.return_value = None
@@ -215,7 +217,7 @@ class TestSessionEndHandling:
         assert response.decision == "allow"
         mock_dependencies["message_processor_resolver"]().unregister_session.assert_not_called()
 
-    def test_session_end_unregister_error(self, mock_dependencies: dict) -> None:
+    def test_session_end_unregister_error(self, mock_dependencies: dict[str, Any]) -> None:
         """Test error unregistering from message processor is handled."""
         mock_dependencies[
             "message_processor_resolver"
@@ -238,7 +240,7 @@ class TestSessionEndHandling:
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_end_marks_expired_without_handoff(
-        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict[str, Any]
     ) -> None:
         """Test SESSION_END marks session as expired when no handoff_source."""
         mock_sv_mgr_cls.return_value.get_variables.return_value = {}
@@ -263,7 +265,7 @@ class TestSessionEndHandling:
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_end_marks_expired_with_clear_reason(
-        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict[str, Any]
     ) -> None:
         """Test SESSION_END marks expired when event reason is 'clear'."""
         mock_session = MagicMock()
@@ -288,7 +290,7 @@ class TestSessionEndHandling:
         )
 
     def test_session_end_marks_awaiting_handoff_with_compact_reason(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict[str, Any]
     ) -> None:
         """Test SESSION_END marks awaiting_handoff when event reason is 'compact'."""
         mock_session = MagicMock()
@@ -316,7 +318,7 @@ class TestSessionEndHandling:
         manager_cls.return_value.delete_for_session.assert_not_called()
 
     def test_session_end_leaves_awaiting_handoff_for_the_successor(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict[str, Any]
     ) -> None:
         """An ordinary SESSION_END never expires a clear predecessor; its successor's bind does."""
         mock_session = MagicMock()
@@ -338,7 +340,9 @@ class TestSessionEndHandling:
         assert response.decision == "allow"
         mock_dependencies["session_storage"].update_status_if_non_terminal.assert_not_called()
 
-    def test_session_end_resume_reason_expires_session(self, mock_dependencies: dict) -> None:
+    def test_session_end_resume_reason_expires_session(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
         """Runtime resume on a live row is an ordinary exit."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
@@ -361,7 +365,9 @@ class TestSessionEndHandling:
             "sess-123", "expired"
         )
 
-    def test_session_end_idle_reason_pauses_session(self, mock_dependencies: dict) -> None:
+    def test_session_end_idle_reason_pauses_session(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
         """Idle eviction keeps a durable web-chat row resumable."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
@@ -389,7 +395,7 @@ class TestSessionEndHandling:
         manager_cls.return_value.delete_for_session.assert_not_called()
 
     def test_session_end_idle_reason_expires_terminal_session(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict[str, Any]
     ) -> None:
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
@@ -413,7 +419,9 @@ class TestSessionEndHandling:
             "sess-123", "expired"
         )
 
-    def test_session_end_pauses_interactive_tmux_session(self, mock_dependencies: dict) -> None:
+    def test_session_end_pauses_interactive_tmux_session(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
         mock_session.agent_run_id = "run-456"
@@ -444,7 +452,7 @@ class TestSessionEndHandling:
 
     def test_session_end_awaiting_handoff_error_handled(
         self,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Test error marking awaiting_handoff doesn't block response."""

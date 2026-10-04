@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -13,11 +14,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from qdrant_client import AsyncQdrantClient, QdrantClient
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
-from qdrant_client.models import Distance, VectorParams
+from qdrant_client.models import (
+    CreateAliasOperation,
+    DeleteAliasOperation,
+    Distance,
+    PointIdsList,
+    VectorParams,
+)
 
 from gobby.config.persistence import MemoryConfig
-from gobby.memory import vectorstore as vectorstore_module
 from gobby.memory.services._search_paths import _qdrant_hits_or_empty
 from gobby.memory.services.crossref import CrossrefService
 from gobby.memory.vectorstore import (
@@ -28,6 +35,7 @@ from gobby.memory.vectorstore import (
     memory_scope_filter,
 )
 from gobby.storage.embedding_generation_state import EmbeddingGenerationLeaseLost
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.memories_scope import MemoryScope
 
@@ -100,7 +108,7 @@ class _TrackingAsyncLock:
 
 
 @pytest.mark.asyncio
-async def test_initialize_creates_collection(tmp_path) -> None:
+async def test_initialize_creates_collection(tmp_path: Path) -> None:
     """initialize() should create a Qdrant collection with cosine distance."""
     store = VectorStore(
         path=str(tmp_path / "qdrant"),
@@ -116,7 +124,7 @@ async def test_initialize_creates_collection(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_initialize_idempotent(tmp_path) -> None:
+async def test_initialize_idempotent(tmp_path: Path) -> None:
     """Calling initialize() twice should not fail or reset data."""
     store = VectorStore(
         path=str(tmp_path / "qdrant"),
@@ -136,7 +144,7 @@ async def test_initialize_idempotent(tmp_path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_operation_lazily_initializes(tmp_path) -> None:
+async def test_operation_lazily_initializes(tmp_path: Path) -> None:
     """Async operations should initialize Qdrant on first use."""
     store = VectorStore(
         path=str(tmp_path / "qdrant"),
@@ -151,10 +159,12 @@ async def test_operation_lazily_initializes(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_lazy_init_backoff_suppresses_repeated_attempts(monkeypatch) -> None:
+async def test_lazy_init_backoff_suppresses_repeated_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Failed lazy init should not hammer Qdrant before the backoff expires."""
     now = 1000.0
-    monkeypatch.setattr(vectorstore_module.time, "monotonic", lambda: now)
+    monkeypatch.setattr(time, "monotonic", lambda: now)
 
     client = MagicMock()
     client.collection_exists = AsyncMock(side_effect=ResponseHandlingException(Exception("down")))
@@ -174,14 +184,14 @@ async def test_lazy_init_backoff_suppresses_repeated_attempts(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_lazy_init_retries_after_backoff(monkeypatch) -> None:
+async def test_lazy_init_retries_after_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lazy init should retry after elapsed backoff and reset retry state on success."""
     now = 1000.0
 
     def monotonic() -> float:
         return now
 
-    monkeypatch.setattr(vectorstore_module.time, "monotonic", monotonic)
+    monkeypatch.setattr(time, "monotonic", monotonic)
 
     client = MagicMock()
     client.collection_exists = AsyncMock(
@@ -206,10 +216,10 @@ async def test_lazy_init_retries_after_backoff(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_transient_operation_error_resets_client(monkeypatch) -> None:
+async def test_transient_operation_error_resets_client(monkeypatch: pytest.MonkeyPatch) -> None:
     """Recoverable operation failures should drop the client for lazy re-init."""
     now = 1000.0
-    monkeypatch.setattr(vectorstore_module.time, "monotonic", lambda: now)
+    monkeypatch.setattr(time, "monotonic", lambda: now)
 
     store = VectorStore(collection_name="operation_test", embedding_dim=4)
     client = MagicMock()
@@ -449,7 +459,7 @@ async def test_search_with_memory_scope_filter_includes_explicit_globals(
 @pytest.mark.asyncio
 async def test_crossref_create_fills_links_from_project_and_global_only(
     vector_store: VectorStore,
-    temp_db,
+    temp_db: HubDatabase,
 ) -> None:
     db = temp_db
     project_a = "11111111-1111-4111-8111-111111111111"
@@ -504,7 +514,7 @@ async def test_crossref_create_fills_links_from_project_and_global_only(
 @pytest.mark.asyncio
 async def test_crossref_create_for_global_source_links_global_candidates_only(
     vector_store: VectorStore,
-    temp_db,
+    temp_db: HubDatabase,
 ) -> None:
     db = temp_db
     project_a = "11111111-1111-4111-8111-111111111111"
@@ -564,9 +574,8 @@ async def test_delete(vector_store: VectorStore) -> None:
 @pytest.mark.asyncio
 async def test_delete_nonexistent(vector_store: VectorStore) -> None:
     """delete() on nonexistent ID should not raise."""
-    result = await vector_store.delete(MEM_1)
+    await vector_store.delete(MEM_1)
 
-    assert result is None
     assert await vector_store.count() == 0
 
 
@@ -643,10 +652,12 @@ async def test_rebuild_same_dimension_does_not_recreate_collection(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_rebuild_calls_are_serialized() -> None:
+async def test_concurrent_rebuild_calls_are_serialized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     store = VectorStore(collection_name="mock_memories", embedding_dim=4)
     tracking_lock = _TrackingAsyncLock()
-    store._rebuild_lock = tracking_lock
+    monkeypatch.setattr(store, "_rebuild_lock", tracking_lock)
     client = MagicMock()
     client.collection_exists.return_value = True
     client.get_collection.return_value = _collection_info(4)
@@ -868,6 +879,7 @@ async def test_rebuild_deletes_stale_point_ids_in_batches_under_lifecycle_lock()
 
     def delete(**kwargs: object) -> None:
         selector = kwargs["points_selector"]
+        assert isinstance(selector, PointIdsList)
         delete_batch_sizes.append(len(selector.points))
         delete_lock_states.append(store._collection_lifecycle_lock.locked())
 
@@ -918,9 +930,12 @@ async def test_rebuild_dimension_mismatch_populates_before_atomic_alias_swap() -
         assert populated is True
         assert store._collection_lifecycle_lock.locked()
         assert len(change_aliases_operations) == 2
-        assert change_aliases_operations[0].delete_alias.alias_name == "mock_memories"
-        assert change_aliases_operations[1].create_alias.collection_name == target_name
-        assert change_aliases_operations[1].create_alias.alias_name == "mock_memories"
+        delete_op, create_op = change_aliases_operations
+        assert isinstance(delete_op, DeleteAliasOperation)
+        assert isinstance(create_op, CreateAliasOperation)
+        assert delete_op.delete_alias.alias_name == "mock_memories"
+        assert create_op.create_alias.collection_name == target_name
+        assert create_op.create_alias.alias_name == "mock_memories"
 
     client.create_collection.side_effect = create_collection
     client.update_collection_aliases.side_effect = update_aliases
@@ -937,7 +952,7 @@ async def test_rebuild_dimension_mismatch_populates_before_atomic_alias_swap() -
 
 
 @pytest.mark.asyncio
-async def test_dimension_mismatch_recovers_and_supports_writes_and_queries(tmp_path) -> None:
+async def test_dimension_mismatch_recovers_and_supports_writes_and_queries(tmp_path: Path) -> None:
     """A completed rebuild replaces the old collection through a serving alias."""
     # Create a collection with dim=4
     store = VectorStore(
@@ -978,7 +993,7 @@ async def test_dimension_mismatch_recovers_and_supports_writes_and_queries(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_dimension_rebuild_failure_keeps_old_collection_serving(tmp_path) -> None:
+async def test_dimension_rebuild_failure_keeps_old_collection_serving(tmp_path: Path) -> None:
     store = VectorStore(
         path=str(tmp_path / "qdrant"),
         collection_name="dim_test",
@@ -1016,14 +1031,14 @@ async def test_dimension_rebuild_failure_keeps_old_collection_serving(tmp_path) 
     assert [result[0] for result in old_results] == [MEM_1]
     assert await replacement.get_aliases() == {}
     client = replacement._client
-    assert client is not None
+    assert isinstance(client, QdrantClient)
     collections = await asyncio.to_thread(client.get_collections)
     assert [collection.name for collection in collections.collections] == ["dim_test"]
     await replacement.close()
 
 
 @pytest.mark.asyncio
-async def test_dimension_match_no_error(tmp_path, caplog) -> None:
+async def test_dimension_match_no_error(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """initialize() should NOT log error when dimensions match."""
     import logging
 
@@ -1048,7 +1063,7 @@ async def test_dimension_match_no_error(tmp_path, caplog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_close(tmp_path) -> None:
+async def test_close(tmp_path: Path) -> None:
     """close() should work without error."""
     store = VectorStore(
         path=str(tmp_path / "qdrant"),
@@ -1059,13 +1074,14 @@ async def test_close(tmp_path) -> None:
     await store.close()
     assert store._client is None
 
-    result = await store.close()
-    assert result is None
+    await store.close()
     assert store._client is None
 
 
 @pytest.mark.asyncio
-async def test_get_collection_dimension_returns_none_on_client_error(caplog) -> None:
+async def test_get_collection_dimension_returns_none_on_client_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     store = VectorStore(collection_name="test_memories", embedding_dim=4)
     client = MagicMock()
     client.get_collection.side_effect = RuntimeError("boom")
@@ -1081,8 +1097,6 @@ class TestRemoteTimeoutHint:
     """The remote-call timeout hint must respect qdrant method signatures."""
 
     def test_accepts_timeout_kwarg_matches_qdrant_signatures(self) -> None:
-        from qdrant_client import AsyncQdrantClient
-
         from gobby.memory.vectorstore_client import _accepts_timeout_kwarg
 
         assert not _accepts_timeout_kwarg(AsyncQdrantClient.get_collection)
@@ -1095,10 +1109,6 @@ class TestRemoteTimeoutHint:
 
     @pytest.mark.asyncio
     async def test_remote_call_injects_timeout_only_where_accepted(self) -> None:
-        import time
-
-        from qdrant_client import AsyncQdrantClient, QdrantClient
-
         from gobby.memory.vectorstore_client import VectorStoreClient
 
         class _FakeRemoteClient:
@@ -1107,7 +1117,9 @@ class TestRemoteTimeoutHint:
             def __init__(self) -> None:
                 self.calls: list[tuple[str, object]] = []
 
-            async def upsert(self, collection_name: str, points: list, **kwargs: object) -> str:
+            async def upsert(
+                self, collection_name: str, points: list[object], **kwargs: object
+            ) -> str:
                 if kwargs:
                     raise ValueError(f"Unknown arguments: {list(kwargs.keys())}")
                 self.calls.append(("upsert", None))
@@ -1126,10 +1138,10 @@ class TestRemoteTimeoutHint:
                 return "ok"
 
         ops = VectorStoreClient(
-            SimpleNamespace(_url="http://qdrant:6333"),
+            cast(VectorStore, SimpleNamespace(_url="http://qdrant:6333")),
             time.monotonic,
             local_client_factory=QdrantClient,
-            remote_client_factory=lambda **kwargs: None,
+            remote_client_factory=AsyncQdrantClient,
         )
         fake = _FakeRemoteClient()
         client = cast(AsyncQdrantClient, fake)
