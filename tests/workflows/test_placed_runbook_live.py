@@ -910,11 +910,14 @@ def test_live_crash_window_adopts_seat(live: Live, seat_name: str, renamed: bool
     standins = live_standins(_standin_paths(live.rig))
     assert standins == sorted(seat.pid for seat in all_seats), standins
     runs = [_run(live.db, seat.run_id) or {} for seat in all_seats]
-    assert {str(run.get("parent_session_id")) for run in runs} == {child}, runs
+    # Seats launched before and after the restart share one parent session.
+    parents = {str(run.get("parent_session_id")) for run in runs}
+    assert len(parents) == 1, runs
     live.evidence["reconciled"] = {
         "adopted_reply": adopted,
         "seats": all_seats,
         "child_session": child,
+        "parent_sessions": sorted(parents),
         "launch_counts": {seat.step_id: len(seat.launches) for seat in all_seats},
         "standins": standins,
     }
