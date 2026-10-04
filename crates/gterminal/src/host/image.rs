@@ -49,9 +49,11 @@ impl PinnedImage {
     }
 }
 
-/// Pins `src` into `images_dir`.
+/// Pins `src`, or the binary it links to, into `images_dir`. A hard link to a
+/// symlink links the symlink itself on macOS, so the pin would not be a binary.
 pub fn pin_image(images_dir: &Path, src: &Path) -> io::Result<PinnedImage> {
-    pin_image_linking(images_dir, src, |from, to| fs::hard_link(from, to))
+    let src = fs::canonicalize(src)?;
+    pin_image_linking(images_dir, &src, |from, to| fs::hard_link(from, to))
 }
 
 /// `pin_image` with the hard-link step supplied, so a cross-device link

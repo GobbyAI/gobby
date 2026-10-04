@@ -577,7 +577,8 @@ fn gobby_home() -> Option<PathBuf> {
 fn run_from_pin(images_dir: &Path) -> io::Result<image::PinnedImage> {
     use std::os::unix::process::CommandExt;
 
-    let exe = std::env::current_exe()?;
+    // A symlink to the pin is the pin; pinned_image judges the path it names.
+    let exe = fs::canonicalize(std::env::current_exe()?)?;
     if let Some(pin) = image::pinned_image(images_dir, &exe)? {
         return Ok(pin);
     }
