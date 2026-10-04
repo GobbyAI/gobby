@@ -552,7 +552,7 @@ def test_feature() -> None:
     test_other()
     assert value or True
 """
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=body))
+    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
 
     result = evaluate_acceptance_artifacts(
         criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
@@ -575,7 +575,7 @@ fn protocol_frame_roundtrip() {
     assert_eq!(format!("{}", 256), "256");
 }
 """
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=body))
+    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
 
     result = evaluate_acceptance_artifacts(
         criteria=(
@@ -628,7 +628,7 @@ def test_test_named_helper_call_is_not_delegation(
     symbol: str,
     body: str,
 ) -> None:
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=body))
+    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
 
     result = evaluate_acceptance_artifacts(
         criteria=f"Contract is executable.\ntest: {path}::{symbol}",
@@ -673,7 +673,7 @@ def test_delegation_only_body_still_requires_an_executable_assertion(
     body: str,
     finding: str,
 ) -> None:
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=body))
+    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
 
     result = evaluate_acceptance_artifacts(
         criteria=f"Contract is executable.\ntest: {path}::{symbol}",
@@ -683,6 +683,116 @@ def test_delegation_only_body_still_requires_an_executable_assertion(
 
     assert result.passed is False
     assert result.findings == (f"{path}::{symbol}: {finding}",)
+
+
+_RUST_HELPER_TEST = """\
+#[test]
+fn attribute_ranges_python_autouse_fixture() -> anyhow::Result<()> {
+    check_declaration(
+        "conftest.py",
+        "@pytest.fixture(autouse=True)\\ndef clear_identity():\\n    yield\\n",
+        "clear_identity",
+    )?;
+    Ok(())
+}
+"""
+
+
+def _evaluate_committed_rust_helper(
+    tmp_path: Path, helpers: str
+) -> artifacts_module.AcceptanceArtifactResult:
+    repo = _init_repo(tmp_path)
+    test_file = repo / "crates" / "gcode" / "src" / "attribute_ranges_tests.rs"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text(f"use super::*;\n\n{helpers}\n{_RUST_HELPER_TEST}", encoding="utf-8")
+    linked_sha = _commit(repo, "committed Rust helper test")
+    # The working tree differs from the close candidate; gate 11 must read the commit.
+    test_file.write_text(f"use super::*;\n\n{_RUST_HELPER_TEST}", encoding="utf-8")
+    return evaluate_acceptance_artifacts(
+        criteria=(
+            "Ranges include attributes.\ntest: crates/gcode/src/attribute_ranges_tests.rs"
+            "::attribute_ranges_python_autouse_fixture"
+        ),
+        repo_path=str(repo),
+        commit_shas=[linked_sha],
+    )
+
+
+_CHECK_DECLARATION_HELPER = """\
+fn check_declaration(path: &str, source: &str, name: &str) -> anyhow::Result<()> {
+    let parsed = parse_fixture(path, source)?;
+    let symbol = parsed.find(name).unwrap_or_else(|| panic!("missing {name}"));
+    assert_eq!(symbol.name, name, "{}: {name}", path);
+    Ok(())
+}
+"""
+
+
+@pytest.mark.parametrize(
+    "helpers",
+    [
+        pytest.param(_CHECK_DECLARATION_HELPER, id="direct-helper"),
+        pytest.param(
+            "fn check_declaration(path: &str, source: &str, name: &str)"
+            " -> anyhow::Result<()> {\n"
+            "    assert_symbol(path, source, name)\n}\n\n"
+            "fn assert_symbol(path: &str, source: &str, name: &str) -> anyhow::Result<()> {\n"
+            '    assert_ne!(source.find(name), None, "{path}");\n    Ok(())\n}\n',
+            id="helper-chain",
+        ),
+    ],
+)
+def test_rust_test_asserting_through_same_file_helper_is_accepted(
+    tmp_path: Path, helpers: str
+) -> None:
+    result = _evaluate_committed_rust_helper(tmp_path, helpers)
+
+    assert result.findings == ()
+    assert result.passed is True
+    (test,) = result.tests
+    assert any("fn check_declaration" in helper for helper in test.helpers)
+    rendered = artifacts_module.render_acceptance_test_bodies(result.tests)
+    assert "assert" in rendered.split("fn check_declaration", 1)[1]
+
+
+@pytest.mark.parametrize(
+    ("helpers", "finding"),
+    [
+        pytest.param(
+            "fn check_declaration(path: &str, source: &str, name: &str)"
+            " -> anyhow::Result<()> {\n    parse_fixture(path, source)?.find(name);\n"
+            "    Ok(())\n}\n",
+            "contains no executable assertion or panic expectation",
+            id="helper-without-assertion",
+        ),
+        pytest.param(
+            "fn unrelated() {\n    assert_eq!(compute(), 2);\n}\n\n"
+            "fn check_declaration(path: &str, source: &str, name: &str)"
+            ' -> anyhow::Result<()> {\n    let _ = "unrelated()";\n    Ok(())\n}\n',
+            "contains no executable assertion or panic expectation",
+            id="asserting-function-named-only-in-a-string",
+        ),
+        pytest.param(
+            "fn check_declaration(path: &str, source: &str, name: &str)"
+            " -> anyhow::Result<()> {\n    assert!(true);\n    Ok(())\n}\n",
+            "contains a constant, stub, or placebo assertion",
+            id="placebo-helper",
+        ),
+    ],
+)
+def test_rust_test_without_a_real_same_file_assertion_path_is_rejected(
+    tmp_path: Path, helpers: str, finding: str
+) -> None:
+    result = _evaluate_committed_rust_helper(tmp_path, helpers)
+
+    assert result.passed is False
+    assert result.findings == (
+        "crates/gcode/src/attribute_ranges_tests.rs::attribute_ranges_python_autouse_fixture: "
+        f"{finding}",
+    )
+    # The helper was resolved from the candidate and still earned no credit.
+    (test,) = result.tests
+    assert any("fn check_declaration" in helper for helper in test.helpers)
 
 
 def test_structured_evidence_rejects_postdated_sha_and_missing_workflow(

@@ -57,6 +57,12 @@ _NON_ASSERTION_FAILURE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_TEXT_ASSERTION_RE = re.compile(r"\b(?:assert|debug_assert)(?:_eq|_ne)?!\s*\(|\bshould_panic\b")
+# Calls a same-file helper can answer: no method, path or macro calls, and no
+# name that appears only inside a string literal or comment.
+_BARE_CALL_RE = re.compile(r"(?<![\w.:])([A-Za-z_]\w*)\s*\(")
+_STRING_OR_COMMENT_RE = re.compile(r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/', re.DOTALL)
+
 
 @dataclass(frozen=True, slots=True)
 class AcceptanceTest:
@@ -66,6 +72,8 @@ class AcceptanceTest:
     path: str
     symbol: str
     body: str
+    # Same-file functions the test reaches through bare calls (braced languages).
+    helpers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,11 +219,11 @@ async def resolve_acceptance_tests_async(
             findings.append(f"{reference}: an explicit linked close candidate is required")
             continue
         try:
-            body = await _resolve_test_body(path, symbol, repo_path, candidate)
+            body, helpers = await _resolve_test_body(path, symbol, repo_path, candidate)
         except (OSError, RuntimeError, ValueError) as exc:
             findings.append(f"{reference}: could not resolve the committed test body: {exc}")
             continue
-        tests.append(AcceptanceTest(reference, path, symbol, body))
+        tests.append(AcceptanceTest(reference, path, symbol, body, helpers))
     return tuple(tests), tuple(findings)
 
 
@@ -241,6 +249,7 @@ def render_acceptance_test_bodies(tests: tuple[AcceptanceTest, ...]) -> str:
     parts = ["Named acceptance tests (exact bodies from the reviewed close candidate):"]
     for test in tests:
         parts.append(f"\n### {test.reference}\n{test.body}")
+        parts.extend(f"\n#### same-file helper\n{helper}" for helper in test.helpers)
     return "\n".join(parts)
 
 
@@ -417,11 +426,34 @@ def parse_test_reference(reference: str) -> tuple[str, str] | None:
     return (path, symbol) if path and symbol else None
 
 
-async def _resolve_test_body(path: str, symbol: str, repo_path: str, commit_sha: str) -> str:
+async def _resolve_test_body(
+    path: str, symbol: str, repo_path: str, commit_sha: str
+) -> tuple[str, tuple[str, ...]]:
     source = await _read_test_file_from_commit(path, commit_sha, repo_path)
     if Path(path).suffix.casefold() == ".py":
-        return _extract_python_test_body(source, symbol)
-    return _extract_braced_test_body(source, symbol)
+        return _extract_python_test_body(source, symbol), ()
+    body = _extract_braced_test_body(source, symbol)
+    return body, _same_file_helper_bodies(source, symbol, body)
+
+
+def _same_file_helper_bodies(source: str, symbol: str, body: str) -> tuple[str, ...]:
+    """Bodies of same-file functions reachable from the test through bare calls."""
+    seen = {symbol.rsplit("::", 1)[-1].rsplit(".", 1)[-1]}
+    helpers: list[str] = []
+    pending = [body]
+    while pending:
+        code = _STRING_OR_COMMENT_RE.sub("", pending.pop())
+        for name in _BARE_CALL_RE.findall(code):
+            if name in seen:
+                continue
+            seen.add(name)
+            try:
+                helper = _extract_braced_test_body(source, name)
+            except RuntimeError:
+                continue
+            helpers.append(helper)
+            pending.append(helper)
+    return tuple(helpers)
 
 
 async def _read_test_file_from_commit(path: str, commit_sha: str, repo_path: str) -> str:
@@ -571,7 +603,8 @@ def _python_test_findings(test: AcceptanceTest) -> list[str]:
 
 
 def _text_test_findings(test: AcceptanceTest) -> list[str]:
-    body = test.body
+    credited = [helper for helper in test.helpers if _TEXT_ASSERTION_RE.search(helper)]
+    body = "\n".join((test.body, *credited))
     findings: list[str] = []
     placebo_patterns = (
         r"assert!\s*\(\s*true\s*\)",
@@ -582,7 +615,7 @@ def _text_test_findings(test: AcceptanceTest) -> list[str]:
     )
     if any(re.search(pattern, body, re.IGNORECASE | re.DOTALL) for pattern in placebo_patterns):
         findings.append(f"{test.reference}: contains a constant, stub, or placebo assertion")
-    if not re.search(r"\b(?:assert|debug_assert)(?:_eq|_ne)?!\s*\(|\bshould_panic\b", body):
+    if not _TEXT_ASSERTION_RE.search(body):
         findings.append(f"{test.reference}: contains no executable assertion or panic expectation")
     return findings
 
