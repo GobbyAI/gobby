@@ -50,7 +50,7 @@ pytestmark = pytest.mark.unit
         ("dotnet format --verify-no-changes", "csharp-format-check"),
         ("mix format --check-formatted", "elixir-format-check"),
         ("prettier . --check", "js-ts-format-check"),
-        ("swift test", "swift-validation"),
+        ("swift test", "swift-tests"),
         ("jq empty .gobby/project.json", "json-jq-validation"),
         ("jq -e '.verification' .gobby/project.json", "json-jq-validation"),
         ("jq --exit-status '.verification' .gobby/project.json", "json-jq-validation"),
@@ -97,19 +97,36 @@ NEXTEST_STRESS = (
         ("go vet ./...", ("lint", "type_check"), "go"),
         ("golangci-lint run ./...", ("lint", "type_check"), "go"),
         ("staticcheck ./...", ("lint", "type_check"), "go"),
+        ("phpunit tests/", ("test",), "php"),
+        ("vendor/bin/phpunit", ("test",), "php"),
+        ("composer test", ("test",), "php"),
+        ("phpstan analyse src", ("lint", "type_check"), "php"),
+        ("dart test", ("test",), "dart"),
+        ("flutter test", ("test",), "dart"),
+        ("dart analyze lib", ("lint", "type_check"), "dart"),
+        ("dotnet test", ("test",), "csharp"),
+        ("dotnet build", ("lint", "type_check"), "csharp"),
+        ("ctest --output-on-failure", ("test",), ("c", "cpp")),
+        ("cmake --build build", ("lint", "type_check"), ("c", "cpp")),
+        ("mix test", ("test",), "elixir"),
+        ("bundle exec rspec", ("test",), "ruby"),
+        ("rake test", ("test",), "ruby"),
+        ("swift test", ("test",), "swift"),
+        ("make test", ("test",), ()),
+        ("make lint", ("lint",), ()),
     ],
 )
 def test_test_runners_and_static_checks_carry_only_their_own_categories(
     command: str,
     categories: tuple[str, ...],
-    language: str,
+    language: str | tuple[str, ...],
 ) -> None:
     """A failed test run must not stand as lint/type-check evidence, or the reverse (#23382)."""
     match = classify_validation_command(command)
 
     assert match is not None
     assert match.categories == categories
-    assert match.languages == (language,)
+    assert match.languages == ((language,) if isinstance(language, str) else language)
 
 
 def test_test_types_ratchet_requires_baseline_and_fail_on_new() -> None:
