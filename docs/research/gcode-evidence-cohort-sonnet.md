@@ -3,7 +3,7 @@
 Status: cohort 2 (Sonnet 5) finished 2026-09-15. Cohort 3 (Sonnet 5.5, #22405) finished
 2026-10-04 UTC. The cohorts are reported separately and not pooled.
 Owner tasks: #22391 (design), #22394 (results), #22405 (cohort 3).
-Coordinator session: gobby#13417.
+Coordinator sessions: gobby#13417 (cohort 2), gobby#14550 (cohort 3).
 
 ## Background
 
@@ -385,7 +385,8 @@ Every run used the installed `~/.gobby/bin/gcode`, sha256
 ### Launch record
 
 The runs were launched serially. Each one started after the previous run had
-delivered, and the Lane Manager got a START and an END message for each run. No run
+delivered. The Lane Manager got START and END messages for B1, A2 and B2, and an
+END message for A1. No run
 used Explore, and the coordinator did not intervene in any run.
 
 A1 ran in an earlier worktree at `468ac4bebd`. The other three runs ran in a fresh
@@ -441,7 +442,8 @@ were not examined further.
 
 - **Arm A used evidence only to read files.** Neither A run made a search,
   symbol-read or graph request.
-- **A1:** about 29 range reads, made through 13 Bash calls and a shell helper.
+- **A1:** 29 range reads in 13 Bash calls: 3 direct requests and 26 through an
+  `rd` shell helper.
   - It hit one error, `--max-bytes` passed as a CLI flag.
   - It requested an `end_line` past the end of the file on purpose, and got 4 clamp
     warnings.
@@ -511,10 +513,13 @@ drop cannot be credited to #22400 alone. What the data does show:
    ("hybrid search requires a verified semantic identity"). This was checked at
    `4947fc5681`. No arm A run searched, so it affected no result. A future cohort
    should drop `hybrid` from the block or configure the semantic identity first.
-2. **`get_session_messages` cannot supply these metrics.** It renders each child run
-   as two messages: the prompt and the final turn. It has no per-call tool blocks or
-   usage, so API calls, tool calls and tokens came from the raw Claude Code
-   transcripts.
+2. **`get_session_messages` cannot supply the cost metrics.** It renders each child
+   run as two messages: the prompt, and one assistant message that holds every tool
+   chain. The tool calls are present, but that message's `usage` covers a single API
+   call (B1: 581 output tokens), and there is no per-call boundary. API call counts
+   and token totals therefore came from the raw Claude Code transcripts under
+   `~/.claude/projects/-Users-josh--gobby-worktrees-gobby-r-22405-cohort3-468ac4/`
+   (A1) and `.../r-22405-cohort3-4947fc/` (B1, A2, B2).
 3. **A1 needed an erratum** to withdraw a wrong claim after delivery. The protocol
    has no slot for corrections, so the erratum arrived as a second message.
 
