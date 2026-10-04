@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import importlib
+import json
 import subprocess
+import sys
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
+import psutil
 import pytest
 from click.testing import CliRunner
 
@@ -16,6 +20,7 @@ from gobby.cli.ui import (
     _get_ui_pid,
     ui,
 )
+from gobby.cli.utils_ui import _write_ui_pid_record
 from gobby.config.app import DaemonConfig
 from gobby.ui_exposure import UiExposeError, UiExposeResult
 
@@ -26,6 +31,16 @@ ui_module = importlib.import_module("gobby.cli.ui")
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+@pytest.fixture
+def live_process() -> Iterator[subprocess.Popen[bytes]]:
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        yield process
+    finally:
+        process.kill()
+        process.wait()
 
 
 @pytest.fixture(autouse=True)
@@ -53,21 +68,29 @@ class TestGetUiPid:
         assert _get_ui_pid() is None
 
     @patch("gobby.cli.ui.get_gobby_home")
-    @patch("gobby.cli.ui.os.kill")
-    def test_valid_pid(self, mock_kill: MagicMock, mock_home: MagicMock, tmp_path: Path) -> None:
-        pid_file = tmp_path / "ui.pid"
-        pid_file.write_text("12345")
+    def test_running_ui_from_written_record(
+        self, mock_home: MagicMock, tmp_path: Path, live_process: subprocess.Popen[bytes]
+    ) -> None:
+        _write_ui_pid_record(tmp_path / "ui.pid", live_process)
         mock_home.return_value = tmp_path
-        mock_kill.return_value = None  # process exists
-        assert _get_ui_pid() == 12345
+        assert _get_ui_pid() == live_process.pid
 
     @patch("gobby.cli.ui.get_gobby_home")
-    @patch("gobby.cli.ui.os.kill")
-    def test_stale_pid(self, mock_kill: MagicMock, mock_home: MagicMock, tmp_path: Path) -> None:
-        pid_file = tmp_path / "ui.pid"
-        pid_file.write_text("99999")
+    def test_reused_pid_with_other_start_time(
+        self, mock_home: MagicMock, tmp_path: Path, live_process: subprocess.Popen[bytes]
+    ) -> None:
+        started_at = psutil.Process(live_process.pid).create_time() - 100
+        record = {"pid": live_process.pid, "started_at": started_at}
+        (tmp_path / "ui.pid").write_text(json.dumps(record))
         mock_home.return_value = tmp_path
-        mock_kill.side_effect = ProcessLookupError
+        assert _get_ui_pid() is None
+
+    @patch("gobby.cli.ui.get_gobby_home")
+    def test_stale_pid(self, mock_home: MagicMock, tmp_path: Path) -> None:
+        exited = subprocess.Popen([sys.executable, "-c", "pass"])
+        exited.wait()
+        _write_ui_pid_record(tmp_path / "ui.pid", exited)
+        mock_home.return_value = tmp_path
         assert _get_ui_pid() is None
 
     @patch("gobby.cli.ui.get_gobby_home")

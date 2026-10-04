@@ -4,13 +4,13 @@ CLI commands for Gobby web UI management and development.
 
 from __future__ import annotations
 
-import os
 import subprocess  # nosec B404 # subprocess needed for npm commands
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
+import psutil
 
 from gobby.config.bootstrap import load_bootstrap
 from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
@@ -22,7 +22,14 @@ from gobby.ui_exposure import (
 )
 
 from .ui_mode import UIModeResolution
-from .utils import find_web_dir, get_gobby_home, spawn_ui_server, stop_ui_server
+from .utils import (
+    _is_process_alive,
+    find_web_dir,
+    get_gobby_home,
+    spawn_ui_server,
+    stop_ui_server,
+)
+from .utils_ui import _process_start_matches, _read_ui_pid_record
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -59,11 +66,12 @@ def _get_ui_pid() -> int | None:
     if not pid_file.exists():
         return None
     try:
-        pid = int(pid_file.read_text().strip())
-        os.kill(pid, 0)
-        return pid
-    except (ProcessLookupError, ValueError, OSError):
-        return None
+        pid, started_at = _read_ui_pid_record(pid_file)
+        if _is_process_alive(pid) and _process_start_matches(psutil.Process(pid), started_at):
+            return pid
+    except (OSError, ValueError, psutil.Error):
+        pass
+    return None
 
 
 def _ensure_npm_deps_installed(web_dir: Path) -> bool:
