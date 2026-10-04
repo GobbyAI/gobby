@@ -108,7 +108,7 @@ class TestE2EInfrastructure:
 
         # Should have internal gobby servers
         server_names = [s.get("name") for s in servers]
-        assert "gobby-tasks" in server_names or len(servers) >= 0
+        assert "gobby-tasks" in server_names, f"gobby-tasks missing from {server_names}"
 
     def test_project_dir_has_gobby_structure(self, e2e_project_dir: Path) -> None:
         """Verify project directory has .gobby structure."""
