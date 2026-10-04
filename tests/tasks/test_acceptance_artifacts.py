@@ -894,6 +894,35 @@ def test_rust_test_without_a_real_same_file_assertion_path_is_rejected(
     assert any("fn check_declaration" in helper for helper in test.helpers)
 
 
+_ASSERTING_CHECK_DECLARATION = (
+    "fn check_declaration(path: &str, source: &str, name: &str)"
+    " -> anyhow::Result<()> {\n    assert_eq!(name, path);\n    Ok(())\n}\n"
+)
+
+
+@pytest.mark.parametrize(
+    "helpers",
+    [
+        pytest.param(f"/*\n{_ASSERTING_CHECK_DECLARATION}*/\n", id="block-comment"),
+        pytest.param(
+            f'const DOC: &str = r#"\n{_ASSERTING_CHECK_DECLARATION}"#;\n', id="raw-string"
+        ),
+    ],
+)
+def test_rust_helper_defined_only_in_a_comment_or_string_is_not_credited(
+    tmp_path: Path, helpers: str
+) -> None:
+    result = _evaluate_committed_rust_helper(tmp_path, helpers)
+
+    assert result.passed is False
+    assert result.findings == (
+        "crates/gcode/src/attribute_ranges_tests.rs::attribute_ranges_python_autouse_fixture: "
+        "contains no executable assertion or panic expectation",
+    )
+    (test,) = result.tests
+    assert test.helpers == ()
+
+
 def test_structured_evidence_rejects_postdated_sha_and_missing_workflow(
     tmp_path: Path,
 ) -> None:
