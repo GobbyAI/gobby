@@ -144,6 +144,32 @@ impl RestoredHost {
         stream
     }
 
+    /// Wait for setup to finish before observing the restore's termination.
+    pub fn wait_captured(&mut self) {
+        // Setup includes pinning the image and preparing every pane. Its bound
+        // record is written last before exec, so exit observation starts there.
+        let bound = self.socket_dir.join(BOUND_FILE);
+        let deadline = Instant::now() + WAIT;
+        while !bound.exists() {
+            if let Some(status) = self.child.try_wait().expect("poll helper") {
+                // A fatal restore can finish between the marker check and poll.
+                if bound.exists() {
+                    return;
+                }
+                panic!(
+                    "helper exited {status} before capture: {}",
+                    self.diagnostics()
+                );
+            }
+            assert!(
+                Instant::now() < deadline,
+                "helper never captured: {}",
+                self.diagnostics()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     /// The helper's exit status, or `None` if it still runs after `timeout`.
     pub fn wait_exit(&mut self, timeout: Duration) -> Option<ExitStatus> {
         let deadline = Instant::now() + timeout;
