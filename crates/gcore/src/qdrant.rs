@@ -124,7 +124,7 @@ pub fn search(
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("Qdrant URL not configured"))?
         .trim_end_matches('/');
-    let client = reqwest::blocking::Client::builder()
+    let client = crate::loopback::dial_localhost_as_loopback(reqwest::blocking::Client::builder())
         .timeout(QDRANT_TIMEOUT)
         .build()?;
 
@@ -422,7 +422,7 @@ pub fn upsert(
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("Qdrant URL not configured"))?
         .trim_end_matches('/');
-    let client = reqwest::blocking::Client::builder()
+    let client = crate::loopback::dial_localhost_as_loopback(reqwest::blocking::Client::builder())
         .timeout(QDRANT_TIMEOUT)
         .build()?;
 
@@ -619,7 +619,7 @@ fn qdrant_request(
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("Qdrant URL not configured"))?
         .trim_end_matches('/');
-    let client = reqwest::blocking::Client::builder()
+    let client = crate::loopback::dial_localhost_as_loopback(reqwest::blocking::Client::builder())
         .timeout(QDRANT_TIMEOUT)
         .build()?;
     let mut req = client.request(method, format!("{url}{path}"));

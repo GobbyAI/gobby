@@ -49,7 +49,9 @@ fn direct_http_client() -> Result<Client, AiError> {
     if let Some(client) = DIRECT_HTTP_CLIENT.get() {
         return Ok(client.clone());
     }
-    let client = Client::builder().build().map_err(reqwest_error)?;
+    let client = crate::loopback::dial_localhost_as_loopback(Client::builder())
+        .build()
+        .map_err(reqwest_error)?;
     if DIRECT_HTTP_CLIENT.set(client.clone()).is_ok() {
         return Ok(client);
     }

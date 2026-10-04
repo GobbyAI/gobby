@@ -46,10 +46,11 @@ impl CodeSymbolVectorLifecycle {
 
         let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &project_id)?;
         let embedding = EmbeddingBackend::new(embedding.into())?;
-        let client = reqwest::blocking::Client::builder()
-            .timeout(QDRANT_LIFECYCLE_TIMEOUT)
-            .build()
-            .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+        let client =
+            gobby_core::loopback::dial_localhost_as_loopback(reqwest::blocking::Client::builder())
+                .timeout(QDRANT_LIFECYCLE_TIMEOUT)
+                .build()
+                .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
         Ok(Self {
             project_id,
             collection,

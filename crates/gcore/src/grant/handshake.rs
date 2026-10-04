@@ -102,11 +102,8 @@ pub fn daemon_reachable(daemon_url: &str, timeout: Duration) -> bool {
     let Ok(host) = url_host(daemon_url) else {
         return false;
     };
-    let host = match host.as_str() {
-        "localhost" => "127.0.0.1".to_string(),
-        other => other.to_string(),
-    };
-    let Ok(mut addrs) = (host.as_str(), port).to_socket_addrs() else {
+    let host = crate::loopback::numeric_loopback_host(&host);
+    let Ok(mut addrs) = (host, port).to_socket_addrs() else {
         return false;
     };
     let Some(addr) = addrs.next() else {

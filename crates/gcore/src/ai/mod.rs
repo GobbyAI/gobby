@@ -79,7 +79,9 @@ pub struct AiTransport<'a> {
 
 impl<'a> AiTransport<'a> {
     pub fn new(context: &'a AiContext) -> Result<Self, AiError> {
-        let client = Client::builder().build().map_err(reqwest_error)?;
+        let client = crate::loopback::dial_localhost_as_loopback(Client::builder())
+            .build()
+            .map_err(reqwest_error)?;
 
         Ok(Self { context, client })
     }

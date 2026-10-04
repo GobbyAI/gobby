@@ -370,10 +370,11 @@ fn qdrant_http_client() -> Result<reqwest::blocking::Client, VectorLifecycleErro
     if let Some(client) = QDRANT_HTTP_CLIENT.get() {
         return Ok(client.clone());
     }
-    let client = reqwest::blocking::Client::builder()
-        .timeout(qdrant_delete_timeout())
-        .build()
-        .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+    let client =
+        gobby_core::loopback::dial_localhost_as_loopback(reqwest::blocking::Client::builder())
+            .timeout(qdrant_delete_timeout())
+            .build()
+            .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
     let _ = QDRANT_HTTP_CLIENT.set(client.clone());
     Ok(client)
 }
