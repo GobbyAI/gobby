@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -91,12 +91,86 @@ def test_batch_keeps_the_last_novel_sample_when_replaying_old_occurrences(
     assert replayed.sample_hash == row.sample_hash
 
 
-def test_empty_or_unidentified_batch_does_not_open_a_transaction(temp_db: HubDatabase) -> None:
+def test_empty_or_unidentified_batch_does_not_open_a_transaction(
+    temp_db: HubDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
     store = UnmodeledObservationStore(temp_db)
-    with patch.object(temp_db, "transaction", wraps=temp_db.transaction) as transactions:
+    with (
+        patch.object(temp_db, "transaction", wraps=temp_db.transaction) as transactions,
+        caplog.at_level("INFO", logger="gobby.storage.unmodeled_observations"),
+    ):
         assert store.record_many([]) == 0
         assert store.record_many([replace(_observation("no_ref"), source_ref="")]) == 0
         assert transactions.call_count == 0
+    assert "Unmodeled transcript block observed without stable source_ref" in caplog.text
+
+
+def test_batch_normalizes_uuid_case_when_selecting_the_novel_sample(temp_db: HubDatabase) -> None:
+    store = UnmodeledObservationStore(temp_db)
+    old = replace(_observation("uuid_case", source_ref="1"), sample={"old": "value"})
+    new = replace(
+        _observation("uuid_case", source_ref="2"),
+        session_id=SESSION_STORAGE.upper(),
+        sample={"new": "value"},
+    )
+    assert store.record(old) is True
+    assert store.record_many([old, new]) == 1
+    row = store.list_observations(source="codex", kind="block_type")[0]
+    assert row.count == 2
+    assert row.sample_keys == ["new"]
+    assert row.sample_hash == stable_sample_hash(new.sample)
+
+
+def test_prune_between_duplicate_insert_and_refresh_leaves_no_zero_count_aggregate(
+    temp_db: HubDatabase,
+) -> None:
+    store = UnmodeledObservationStore(temp_db)
+    observation = _observation("retention_race")
+    assert store.record(observation) is True
+    temp_db.execute(
+        "UPDATE unmodeled_observation_events SET last_seen_at = NOW() - INTERVAL '2 days'"
+    )
+    real_transaction = temp_db.transaction
+    pruned: list[int] = []
+    with ThreadPoolExecutor(max_workers=1) as executor:
+
+        @contextmanager
+        def interleaved_transaction() -> Iterator[Transaction]:
+            with real_transaction() as transaction:
+                spy = MagicMock(wraps=transaction)
+
+                def execute(sql: str, parameters: Any = None) -> Any:
+                    result = transaction.execute(sql, parameters)
+                    if sql.lstrip().startswith("INSERT INTO unmodeled_observation_events"):
+                        pruned.append(
+                            executor.submit(store.prune_events_older_than, retention_days=1).result(
+                                timeout=5
+                            )
+                        )
+                    return result
+
+                spy.execute.side_effect = execute
+                yield cast(Transaction, spy)
+
+        with patch.object(temp_db, "transaction", side_effect=interleaved_transaction):
+            assert store.record_many([observation]) == 0
+    assert pruned == [1]
+    assert store.list_observations(source="codex", kind="block_type") == []
+
+
+def test_parallel_mixed_replays_and_novel_keys_keep_both_counts(temp_db: HubDatabase) -> None:
+    store = UnmodeledObservationStore(temp_db)
+    first = _observation("mixed_a", source_ref="1")
+    second = _observation("mixed_b", source_ref="1")
+    assert store.record_many([first, second]) == 2
+    batches = [
+        [replace(first, source_ref="2"), second],
+        [first, replace(second, source_ref="2")],
+    ]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        assert list(executor.map(store.record_many, batches)) == [1, 1]
+    rows = store.list_observations(source="codex", kind="block_type")
+    assert sorted((row.name, row.count) for row in rows) == [("mixed_a", 2), ("mixed_b", 2)]
 
 
 def _observation(name: str, *, source_ref: str = "42") -> UnmodeledObservationInput:

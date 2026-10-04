@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model, require_stored_datetime
@@ -231,10 +231,20 @@ class UnmodeledObservationStore:
         events: dict[tuple[str, ...], dict[str, Any]] = {}
         for observation in observations:
             if not observation.source_ref:
+                logger.info(
+                    "Unmodeled transcript block observed without stable source_ref",
+                    extra={
+                        "session_id": observation.session_id,
+                        "source": observation.source,
+                        "kind": observation.kind,
+                        "observation_name": observation.name,
+                        "sample_keys": sample_keys(observation.sample),
+                    },
+                )
                 continue
             event = {
                 "id": str(uuid4()),
-                "session_id": observation.session_id,
+                "session_id": str(UUID(observation.session_id)) if observation.session_id else None,
                 "source": observation.source,
                 "kind": observation.kind,
                 "name": observation.name,
@@ -305,14 +315,11 @@ class UnmodeledObservationStore:
                 key = tuple(str(row[field]) for field in fields)
                 counts[key] = counts.get(key, 0) + 1
                 novel.add(
-                    tuple(
-                        str(row[field] or "")
-                        for field in (
-                            *fields,
-                            "session_id",
-                            "source_ref",
-                            "sample_hash",
-                        )
+                    (
+                        *key,
+                        str(UUID(str(row["session_id"]))) if row["session_id"] else "",
+                        str(row["source_ref"]),
+                        str(row["sample_hash"]),
                     )
                 )
             aggregates: dict[tuple[str, ...], dict[str, Any]] = {}
@@ -322,16 +329,26 @@ class UnmodeledObservationStore:
                     aggregates[key] = {**event, "count": counts.get(key, 0)}
             txn.execute(
                 """
+                WITH incoming AS (
+                    SELECT * FROM jsonb_to_recordset(%s::jsonb) AS x(
+                        source text, kind text, name text, server_name text, tool_type text,
+                        count bigint, session_id uuid, sample_keys jsonb, sample_hash text
+                    )
+                ), refreshed AS (
+                    UPDATE unmodeled_observations AS aggregate SET last_seen_at = NOW()
+                    FROM incoming AS x
+                    WHERE x.count = 0
+                      AND aggregate.source = x.source AND aggregate.kind = x.kind
+                      AND aggregate.name = x.name AND aggregate.server_name = x.server_name
+                      AND aggregate.tool_type = x.tool_type
+                )
                 INSERT INTO unmodeled_observations (
                     source, kind, name, server_name, tool_type, count, first_seen_at,
                     last_seen_at, example_session_id, sample_keys, sample_hash
                 )
                 SELECT source, kind, name, server_name, tool_type, count, NOW(), NOW(),
                        session_id, sample_keys, sample_hash
-                FROM jsonb_to_recordset(%s::jsonb) AS x(
-                    source text, kind text, name text, server_name text, tool_type text,
-                    count bigint, session_id uuid, sample_keys jsonb, sample_hash text
-                )
+                FROM incoming WHERE count > 0
                 ON CONFLICT (source, kind, name, server_name, tool_type) DO UPDATE SET
                     count = unmodeled_observations.count + EXCLUDED.count,
                     last_seen_at = EXCLUDED.last_seen_at,
