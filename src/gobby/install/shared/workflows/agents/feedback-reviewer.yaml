@@ -11,6 +11,7 @@ provider: codex
 model: gpt-5.6-sol
 reasoning_effort: medium
 isolation: none
+prewarm_pre_commit_store: false
 blocked_mcp_tools:
   - "gobby-agents:spawn_agent"
   - "gobby-agents:kill_agent"

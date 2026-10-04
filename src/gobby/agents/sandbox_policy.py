@@ -843,8 +843,13 @@ def prepare_sandbox_run_paths(
     *,
     workspace: Path,
     short_tmp: bool = False,
+    prewarm_pre_commit_store: bool = True,
 ) -> SandboxRunPaths:
-    """Materialize one daemon-owned run root with four writable siblings."""
+    """Materialize one daemon-owned run root with four writable siblings.
+
+    ``prewarm_pre_commit_store=False`` skips the pre-commit store prewarm for runs
+    whose definition never commits.
+    """
     managed_root = managed_execution_root()
     bootstrap = env.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
     bootstrap_path = Path(bootstrap).resolve(strict=False) if bootstrap else None
@@ -877,10 +882,11 @@ def prepare_sandbox_run_paths(
         candidate = Path(cache_path)
         if candidate.is_relative_to(paths.cache):
             candidate.mkdir(mode=0o700, parents=True, exist_ok=True)
-    _prewarm_pre_commit_store(
-        workspace=workspace,
-        destination=Path(paths.environment("unknown")["XDG_CACHE_HOME"]) / "pre-commit",
-    )
+    if prewarm_pre_commit_store:
+        _prewarm_pre_commit_store(
+            workspace=workspace,
+            destination=Path(paths.environment("unknown")["XDG_CACHE_HOME"]) / "pre-commit",
+        )
     # Stable across runs: gterminal's build script reruns whenever the dir changes.
     zig_system_dir = _prepare_zig_system_dir(workspace=workspace, cache_root=zig_cache)
     return replace(paths, zig_system_dir=zig_system_dir)

@@ -90,6 +90,7 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `fallback_agent` | Optional fallback definition for provider rotation |
 | `api_base` / `api_token` | Optional custom model endpoint configuration |
 | `isolation` | `none`, `worktree`, `clone`, or `inherit` |
+| `prewarm_pre_commit_store` | Whether a sandboxed spawn copies the pre-commit hook store into its run cache (default `true`); set `false` for definitions that never commit |
 | `base_branch` | Branch used for new isolation, or `inherit` |
 | `timeout` | Runtime limit in seconds; `0` means unlimited |
 | `workflows` | Rule, skill, variable, and pipeline selectors |

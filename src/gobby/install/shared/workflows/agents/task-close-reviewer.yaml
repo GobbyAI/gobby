@@ -13,6 +13,7 @@ provider: codex
 model: gpt-6-luna
 reasoning_effort: medium
 isolation: none
+prewarm_pre_commit_store: false
 blocked_mcp_tools:
   - "gobby-tasks:create_task"
   - "gobby-tasks:claim_task"

@@ -814,6 +814,9 @@ async def spawn_agent_impl(
                 code_index_mode=code_index_mode,
                 code_index_api_token=await run_thread_to_completion(read_local_api_token),
                 phase_timings_ms=phase_timings_ms,
+                prewarm_pre_commit_store=(
+                    agent_body.prewarm_pre_commit_store if agent_body else True
+                ),
                 terminal_backend=resolved_terminal_backend,
                 droid_mode=droid_mode,
             )

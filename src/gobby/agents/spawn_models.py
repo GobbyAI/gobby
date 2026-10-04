@@ -92,6 +92,7 @@ class SpawnRequest:
     code_index_preflight_warning: dict[str, str] | None = None
     prepared_spawn: PreparedSpawn
     phase_timings_ms: dict[str, float] = field(default_factory=dict)
+    prewarm_pre_commit_store: bool = True
     terminal_manager: TerminalManager | None = None
     terminal_runtime_registry: TerminalRuntimeRegistry | None = None
     write_coordinator: WriteCoordinator | None = None
