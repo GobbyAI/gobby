@@ -505,7 +505,7 @@ not. The three facts with several components are:
 | --- | --- | --- | --- | --- | --- | --- |
 | A1 | 14 | 14 | — | 10 | 1 (withdrawn by erratum) | 1 |
 | A2 | 12 | 13 | 5, 14 | 10 | 0 | 0 |
-| B1 | 13 | 13.5 | 11 | 5 | 0 | 2 |
+| B1 | 12 | 13 | 11, 14 | 5 | 0 | 2 |
 | B2 | 12 | 13 | 5, 14 | 10 | 0 | 0 |
 
 Notes on individual runs:
@@ -523,9 +523,13 @@ Notes on individual runs:
 - **A2 marked one point unverified**: the final `compare_digest` step in
   `verify_password_hash`. That is why it has partial credit on fact 5.
 - **Arm B on fact 5.** B2 names Argon2id, `compare_digest` and the dummy hash but
-  only cites the parameter constants, so it has partial credit. B1 says "Argon2",
-  cites the constants without their values, and names `compare_digest` only for the
-  bearer token. With two components missing, fact 5 counts as missed for B1.
+  omits the parameter values, so it has partial credit. B1 says "Argon2", cites the
+  constants without their values, and names `compare_digest` only for the bearer
+  token. With two components missing, fact 5 counts as missed for B1.
+- **B1 on fact 14.** B1 states the grant header and the lease 409, but says only
+  that grant routes' "identity checks follow". It never states that the grant
+  principal must match the bearer, so it has partial credit. A1 is the only run
+  that states the match.
 
 **Did per-line numbering change arm A's bad-citation count?** Cohort 2's A1 and A2
 had 4 and 5 bad citations. All five of A2's sat in files it read only through
@@ -558,8 +562,8 @@ drop cannot be credited to #22400 alone. What the data does show:
 
 Evidence availability again made no measurable accuracy difference.
 
-- **Scores.** Arm A scored 14 and 12 strict, and arm B scored 13 and 12. With
-  partial credit, arm A has 14 and 13, and arm B has 13.5 and 13.
+- **Scores.** Arm A scored 14 and 12 strict, and arm B scored 12 and 12. With
+  partial credit, arm A has 14 and 13, and arm B has 13 and 13.
 - **Adoption.** Both arm A runs adopted evidence, but only as a file reader.
 - **Cost.** Research time overlapped across arms: arm A took 4.9 minutes for both
   runs, and arm B took 3.5 and 12.6.
