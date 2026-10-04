@@ -22,9 +22,23 @@ _SYNTHETIC_TOOL_NAMES = frozenset({"", "unknown", "unknown_result"})
 class ObservationTracker:
     """Deduplicate unmodeled observation writes within one render/parse run."""
 
-    def __init__(self, store: UnmodeledObservationStore | None = None) -> None:
+    def __init__(
+        self, store: UnmodeledObservationStore | None = None, *, batch: bool = False
+    ) -> None:
         self._store = store
+        self._batch = batch
+        self._pending: list[UnmodeledObservationInput] = []
         self._seen: set[tuple[str, str, str, str, str, str, str, str]] = set()
+
+    def flush(self) -> None:
+        """Persist deferred window observations without changing render failures."""
+        if self._store is None or not self._pending:
+            return
+        pending, self._pending = self._pending, []
+        try:
+            self._store.record_many(pending)
+        except Exception:
+            logger.debug("Failed to persist unmodeled transcript observations", exc_info=True)
 
     def observe_block_type(
         self,
@@ -123,20 +137,22 @@ class ObservationTracker:
         # The uuid columns take NULL when the block carries no resolvable
         # session uuid; "unknown" stays local to the log/dedup key above.
         db_session_id = session_id if session_id and is_session_uuid(session_id) else None
+        observation = UnmodeledObservationInput(
+            session_id=db_session_id,
+            source=resolved_source,
+            kind=kind,
+            name=name,
+            server_name=server_name,
+            tool_type=tool_type,
+            source_ref=source_ref,
+            source_line=source_line,
+            sample=sample,
+        )
+        if self._batch:
+            self._pending.append(observation)
+            return
         try:
-            self._store.record(
-                UnmodeledObservationInput(
-                    session_id=db_session_id,
-                    source=resolved_source,
-                    kind=kind,
-                    name=name,
-                    server_name=server_name,
-                    tool_type=tool_type,
-                    source_ref=source_ref,
-                    source_line=source_line,
-                    sample=sample,
-                )
-            )
+            self._store.record(observation)
         except Exception:
             logger.debug(
                 "Failed to persist unmodeled transcript observation",

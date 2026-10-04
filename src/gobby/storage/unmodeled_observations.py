@@ -222,6 +222,131 @@ class UnmodeledObservationStore:
             )
             return False
 
+    def record_many(self, observations: list[UnmodeledObservationInput]) -> int:
+        """Persist one rendered window in three statements and one transaction.
+
+        Keep the same distinct-occurrence and last-seen semantics as ``record``;
+        only the number of database round trips changes.
+        """
+        events: dict[tuple[str, ...], dict[str, Any]] = {}
+        for observation in observations:
+            if not observation.source_ref:
+                continue
+            event = {
+                "id": str(uuid4()),
+                "session_id": observation.session_id,
+                "source": observation.source,
+                "kind": observation.kind,
+                "name": observation.name,
+                "server_name": observation.server_name or "",
+                "tool_type": observation.tool_type or "",
+                "source_ref": observation.source_ref,
+                "source_line": observation.source_line,
+                "sample_keys": sample_keys(observation.sample),
+                "sample_hash": stable_sample_hash(observation.sample),
+            }
+            key = tuple(
+                str(event[field] or "")
+                for field in (
+                    "source",
+                    "kind",
+                    "name",
+                    "server_name",
+                    "tool_type",
+                    "session_id",
+                    "source_ref",
+                    "sample_hash",
+                )
+            )
+            events[key] = event
+        if not events:
+            return 0
+        # Consistent lock order also lets overlapping concurrent batches compose.
+        payload = json.dumps([events[key] for key in sorted(events)])
+        with self._db.transaction() as txn:
+            inserted = txn.execute(
+                """
+                INSERT INTO unmodeled_observation_events (
+                    id, session_id, source, kind, name, server_name, tool_type,
+                    source_ref, source_line, sample_keys, sample_hash
+                )
+                SELECT id, session_id, source, kind, name, server_name, tool_type,
+                       source_ref, source_line, sample_keys, sample_hash
+                FROM jsonb_to_recordset(%s::jsonb) AS x(
+                    id uuid, session_id uuid, source text, kind text, name text,
+                    server_name text, tool_type text, source_ref text, source_line integer,
+                    sample_keys jsonb, sample_hash text
+                )
+                ON CONFLICT (session_id, source, kind, name, server_name, tool_type,
+                             source_ref, sample_hash) DO NOTHING
+                RETURNING source, kind, name, server_name, tool_type,
+                          session_id, source_ref, sample_hash
+                """,
+                (payload,),
+            ).fetchall()
+            txn.execute(
+                """
+                UPDATE unmodeled_observation_events AS event SET last_seen_at = NOW()
+                FROM jsonb_to_recordset(%s::jsonb) AS x(
+                    session_id uuid, source text, kind text, name text,
+                    server_name text, tool_type text, source_ref text, sample_hash text
+                )
+                WHERE event.session_id IS NOT DISTINCT FROM x.session_id
+                  AND event.source = x.source AND event.kind = x.kind AND event.name = x.name
+                  AND event.server_name = x.server_name AND event.tool_type = x.tool_type
+                  AND event.source_ref = x.source_ref AND event.sample_hash = x.sample_hash
+                """,
+                (payload,),
+            )
+            counts: dict[tuple[str, ...], int] = {}
+            fields = ("source", "kind", "name", "server_name", "tool_type")
+            novel: set[tuple[str, ...]] = set()
+            for row in inserted:
+                key = tuple(str(row[field]) for field in fields)
+                counts[key] = counts.get(key, 0) + 1
+                novel.add(
+                    tuple(
+                        str(row[field] or "")
+                        for field in (
+                            *fields,
+                            "session_id",
+                            "source_ref",
+                            "sample_hash",
+                        )
+                    )
+                )
+            aggregates: dict[tuple[str, ...], dict[str, Any]] = {}
+            for identity, event in events.items():
+                key = tuple(str(event[field]) for field in fields)
+                if identity in novel or key not in aggregates:
+                    aggregates[key] = {**event, "count": counts.get(key, 0)}
+            txn.execute(
+                """
+                INSERT INTO unmodeled_observations (
+                    source, kind, name, server_name, tool_type, count, first_seen_at,
+                    last_seen_at, example_session_id, sample_keys, sample_hash
+                )
+                SELECT source, kind, name, server_name, tool_type, count, NOW(), NOW(),
+                       session_id, sample_keys, sample_hash
+                FROM jsonb_to_recordset(%s::jsonb) AS x(
+                    source text, kind text, name text, server_name text, tool_type text,
+                    count bigint, session_id uuid, sample_keys jsonb, sample_hash text
+                )
+                ON CONFLICT (source, kind, name, server_name, tool_type) DO UPDATE SET
+                    count = unmodeled_observations.count + EXCLUDED.count,
+                    last_seen_at = EXCLUDED.last_seen_at,
+                    example_session_id = CASE WHEN EXCLUDED.count > 0
+                        THEN EXCLUDED.example_session_id
+                        ELSE unmodeled_observations.example_session_id END,
+                    sample_keys = CASE WHEN EXCLUDED.count > 0
+                        THEN EXCLUDED.sample_keys ELSE unmodeled_observations.sample_keys END,
+                    sample_hash = CASE WHEN EXCLUDED.count > 0
+                        THEN EXCLUDED.sample_hash ELSE unmodeled_observations.sample_hash END
+                """,
+                (json.dumps([aggregates[key] for key in sorted(aggregates)]),),
+            )
+        return len(inserted)
+
     def list_observations(
         self,
         *,
