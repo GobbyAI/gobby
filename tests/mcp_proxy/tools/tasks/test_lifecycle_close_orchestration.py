@@ -1720,6 +1720,9 @@ async def test_reviewer_exit_during_finalization_defers_caller_delivery(
 
     assert delivery is None
     registry.notify.assert_not_awaited()
+    # The reconciler wakes the caller durably, never through the registry, so the
+    # deferred run's in-memory registry state is evicted now rather than retained.
+    registry.cleanup.assert_called_once_with(run_id)
     current = store.get(review.id)
     assert current is not None
     assert current.status == "finalizing"
