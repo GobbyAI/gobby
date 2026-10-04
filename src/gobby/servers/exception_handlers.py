@@ -11,6 +11,7 @@ from starlette.requests import ClientDisconnect
 
 from gobby.servers.lease_fence import LeaseNotHeld, StaleEpochFence
 from gobby.servers.responses import JSONResponse
+from gobby.servers.routes.api_keys import KeyPrincipalRejected
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
 from gobby.utils.logging import ThrottledLogger
 
@@ -66,6 +67,15 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def lease_not_held_handler(_request: Request, exc: LeaseNotHeld) -> JSONResponse:
         return JSONResponse(
             status_code=409,
+            content={"error": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(KeyPrincipalRejected)
+    async def key_principal_rejected_handler(
+        _request: Request, exc: KeyPrincipalRejected
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
             content={"error": exc.message, "code": exc.code},
         )
 

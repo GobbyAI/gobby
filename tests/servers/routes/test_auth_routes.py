@@ -175,6 +175,36 @@ class TestAuthLogin:
         assert alice.status_code == 429
         assert bob.status_code == 401
 
+    def test_tailscale_identity_header_ignored_behind_lan_dev_ui(self, temp_db: HubDatabase) -> None:
+        # A dev UI listening on a LAN host proxies LAN browsers to the daemon from
+        # 127.0.0.1, so a loopback peer no longer proves the request came via Tailscale.
+        _set_password(temp_db, "mypassword")
+        server = create_http_server(
+            config=DaemonConfig(bind_host="192.168.1.20"),
+            database=temp_db,
+            task_manager=LocalTaskManager(temp_db),
+            authenticated_requests=False,
+        )
+        server.bootstrap_config = BootstrapConfig(ui_expose="tailscale")
+        client = TestClient(server.app, client=("127.0.0.1", 50000))
+        credentials = {"email": TEST_USER_EMAIL, "password": "wrong"}
+
+        for attempt in range(5):
+            response = client.post(
+                "/api/auth/login",
+                json=credentials,
+                headers={"Tailscale-User-Login": f"rotated-{attempt}@example.com"},
+            )
+            assert response.status_code == 401
+
+        response = client.post(
+            "/api/auth/login",
+            json=credentials,
+            headers={"Tailscale-User-Login": "fresh-rotation@example.com"},
+        )
+
+        assert response.status_code == 429
+
     def test_tailscale_identity_header_requires_loopback_proxy(self, temp_db: HubDatabase) -> None:
         _set_password(temp_db, "mypassword")
         server = _server(temp_db)

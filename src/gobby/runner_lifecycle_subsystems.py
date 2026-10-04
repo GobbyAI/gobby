@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
+from gobby.config.ui import effective_ui_host
 from gobby.hooks.background_tasks import create_background_task
 from gobby.hooks.terminal_handoff_delivery import resume_dead_handoff_dispatches
 from gobby.runner_hook_replay import _run_agent_hook_replay_barrier
@@ -598,9 +599,7 @@ def _maybe_start_ui_dev_server(runner: GobbyRunner) -> None:
     web_dir = ui_resolution.source_web_dir
     if web_dir:
         ui_log = resolved_log_path(config.logging, UI_LOG_FILENAME)
-        ui_host = config.ui.host
-        if config.bind_host != "localhost" and ui_host == "localhost":
-            ui_host = config.bind_host
+        ui_host = effective_ui_host(config.ui.host, config.bind_host)
         ui_pid = spawn_ui_server(
             ui_host,
             config.ui.port,
