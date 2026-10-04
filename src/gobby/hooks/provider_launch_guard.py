@@ -231,6 +231,31 @@ def option_word_count(option: str, value_options: Container[str]) -> int:
     return 1
 
 
+def _env_split_string(
+    option: str, rest: list[str], value_options: Container[str]
+) -> list[str] | None:
+    """The words env's -S option reads as a command string, or None without -S.
+
+    ``-S`` may end a short cluster (``-iS cmd``) or carry its string attached
+    (``-Scmd``, ``--split-string=cmd``); an earlier value option in the cluster
+    takes the rest of it instead (``-uS`` unsets ``S``).
+    """
+    if option == "--split-string":
+        return rest
+    if option.startswith("--split-string="):
+        return [option.split("=", 1)[1], *rest]
+    if option.startswith("--"):
+        return None
+    for index in range(1, len(option)):
+        letter = "-" + option[index]
+        if letter == "-S":
+            attached = option[index + 1 :]
+            return [attached, *rest] if attached else rest
+        if letter in value_options:
+            return None
+    return None
+
+
 def _unwrap(words: list[str]) -> list[str]:
     """Common literal execution wrappers; never treat query operands as launches."""
     while words:
@@ -263,7 +288,8 @@ def _unwrap(words: list[str]) -> list[str]:
         }:
             words = words[1:]
             takes_value = {
-                "env": {"-u", "--unset", "-C", "--chdir"},
+                # BSD env adds -P; GNU env adds -a/--argv0. -S is handled below.
+                "env": {"-u", "--unset", "-C", "--chdir", "-P", "-a", "--argv0"},
                 "exec": {"-a"},
                 "nice": {"-n", "--adjustment"},
                 "timeout": {"-s", "--signal", "-k", "--kill-after"},
@@ -310,11 +336,12 @@ def _unwrap(words: list[str]) -> list[str]:
                     break
                 if name == "command" and any(flag in option for flag in "vV"):
                     return []
-                if name == "env" and option in {"-S", "--split-string"}:
+                script = (
+                    _env_split_string(option, words[1:], takes_value) if name == "env" else None
+                )
+                if script is not None:
                     # env -S interprets its argument as a command string.
-                    return ["sh", "-c", " ".join(words[1:])]
-                if name == "env" and option.startswith("--split-string="):
-                    return ["sh", "-c", " ".join([option.split("=", 1)[1], *words[1:]])]
+                    return ["sh", "-c", " ".join(script)]
                 words = words[option_word_count(option, takes_value) :]
             if name == "timeout" and words:
                 words = words[1:]
