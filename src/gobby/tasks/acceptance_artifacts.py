@@ -61,18 +61,22 @@ _TEXT_ASSERTION_RE = re.compile(r"\b(?:assert|debug_assert)(?:_eq|_ne)?!\s*\(|\b
 # Calls a same-file helper can answer: no method, path or macro calls.
 _BARE_CALL_RE = re.compile(r"(?<![\w.:])([A-Za-z_]\w*)\s*\(")
 # Comments, then literals. Rust takes raw strings and char literals (a lifetime
-# such as 'a has no closing quote); other braced languages take '...' and `...`.
+# such as 'a has no closing quote); other braced languages take single-line
+# '...' (so prose such as JSX "Don't" cannot swallow later lines) and `...`.
 _COMMENT_PATTERN = r"//[^\n]*|/\*.*?\*/"
 _DOUBLE_QUOTED_PATTERN = r'"(?:\\.|[^"\\])*"'
-_RUST_LITERAL_RE = re.compile(
+_RUST_LITERAL_PATTERN = (
     rf"{_COMMENT_PATTERN}|(?<!\w)b?r(#*)\".*?\"\1|{_DOUBLE_QUOTED_PATTERN}"
-    r"|'(?:\\(?:u\{[0-9A-Fa-f]+\}|.)|[^'\\])'",
-    re.DOTALL,
+    r"|'(?:\\(?:u\{[0-9A-Fa-f]+\}|.)|[^'\\])'"
 )
-_TEXT_LITERAL_RE = re.compile(
-    rf"{_COMMENT_PATTERN}|{_DOUBLE_QUOTED_PATTERN}|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`",
-    re.DOTALL,
+_TEXT_LITERAL_PATTERN = (
+    rf"{_COMMENT_PATTERN}|{_DOUBLE_QUOTED_PATTERN}|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`"
 )
+_RUST_LITERAL_RE = re.compile(_RUST_LITERAL_PATTERN, re.DOTALL)
+_TEXT_LITERAL_RE = re.compile(_TEXT_LITERAL_PATTERN, re.DOTALL)
+# Brace matching skips the same literals, so '{', '"' and r"{" never count.
+_RUST_BRACE_SCAN_RE = re.compile(rf"{_RUST_LITERAL_PATTERN}|[{{}}]", re.DOTALL)
+_TEXT_BRACE_SCAN_RE = re.compile(rf"{_TEXT_LITERAL_PATTERN}|[{{}}]", re.DOTALL)
 
 
 @dataclass(frozen=True, slots=True)
@@ -443,8 +447,12 @@ async def _resolve_test_body(
     source = await _read_test_file_from_commit(path, commit_sha, repo_path)
     if Path(path).suffix.casefold() == ".py":
         return _extract_python_test_body(source, symbol), ()
-    body = _extract_braced_test_body(source, symbol)
+    body = _extract_braced_test_body(source, symbol, path)
     return body, _same_file_helper_bodies(source, path, symbol, body)
+
+
+def _is_rust(path: str) -> bool:
+    return Path(path).suffix.casefold() == ".rs"
 
 
 def _mask_code(code: str, path: str) -> str:
@@ -452,7 +460,7 @@ def _mask_code(code: str, path: str) -> str:
 
     Equal literals share a token, so placebo checks still see `assert_eq!("a", "a")`.
     """
-    literal_re = _RUST_LITERAL_RE if Path(path).suffix.casefold() == ".rs" else _TEXT_LITERAL_RE
+    literal_re = _RUST_LITERAL_RE if _is_rust(path) else _TEXT_LITERAL_RE
     tokens: dict[str, str] = {}
 
     def replace(match: re.Match[str]) -> str:
@@ -476,7 +484,7 @@ def _same_file_helper_bodies(source: str, path: str, symbol: str, body: str) -> 
                 continue
             seen.add(name)
             try:
-                helper = _extract_braced_test_body(source, name)
+                helper = _extract_braced_test_body(source, name, path)
             except RuntimeError:
                 continue
             helpers.append(helper)
@@ -522,7 +530,7 @@ def _extract_python_test_body(source: str, symbol: str) -> str:
     return "".join(source.splitlines(keepends=True)[start_line - 1 : node.end_lineno])
 
 
-def _extract_braced_test_body(source: str, symbol: str) -> str:
+def _extract_braced_test_body(source: str, symbol: str, path: str) -> str:
     name = symbol.rsplit("::", 1)[-1].rsplit(".", 1)[-1]
     escaped = re.escape(name)
     patterns = (
@@ -539,7 +547,7 @@ def _extract_braced_test_body(source: str, symbol: str) -> str:
     body_start = source.find("{", matches[0].end())
     if body_start < 0:
         raise RuntimeError("matching symbol has no braced body")
-    body_end = _matching_brace_end(source, body_start)
+    body_end = _matching_brace_end(source, body_start, path)
     start = _include_symbol_attributes(source, declaration_start)
     return source[start:body_end]
 
@@ -556,44 +564,16 @@ def _include_symbol_attributes(source: str, declaration_start: int) -> int:
     return start
 
 
-def _matching_brace_end(source: str, opening: int) -> int:
+def _matching_brace_end(source: str, opening: int, path: str) -> int:
+    scan_re = _RUST_BRACE_SCAN_RE if _is_rust(path) else _TEXT_BRACE_SCAN_RE
     depth = 0
-    index = opening
-    quote: str | None = None
-    escaped = False
-    line_comment = False
-    block_comment = False
-    while index < len(source):
-        char = source[index]
-        following = source[index + 1] if index + 1 < len(source) else ""
-        if line_comment:
-            line_comment = char != "\n"
-        elif block_comment:
-            if char == "*" and following == "/":
-                block_comment = False
-                index += 1
-        elif quote is not None:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == quote:
-                quote = None
-        elif char == "/" and following == "/":
-            line_comment = True
-            index += 1
-        elif char == "/" and following == "*":
-            block_comment = True
-            index += 1
-        elif char in {'"', "`"}:
-            quote = char
-        elif char == "{":
+    for match in scan_re.finditer(source, opening):
+        if match.group(0) == "{":
             depth += 1
-        elif char == "}":
+        elif match.group(0) == "}":
             depth -= 1
             if depth == 0:
-                return index + 1
-        index += 1
+                return match.end()
     raise RuntimeError("matching symbol has an unclosed braced body")
 
 
