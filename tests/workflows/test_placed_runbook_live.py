@@ -32,6 +32,7 @@ import tests.e2e.conftest as e2e_fixtures
 from gobby.agents.sync import sync_bundled_agents
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.definitions import AgentDefinitionManager, PipelineDefinitionManager
+from gobby.storage.definitions._shared import decode_json_object
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
@@ -680,7 +681,8 @@ def _assert_snapshot(live: Live, execution_id: str) -> None:
         "SELECT definition_json FROM pipeline_executions WHERE id = %s", (execution_id,)
     )
     assert row is not None and row["definition_json"], execution_id
-    snapshot = PipelineDefinition.model_validate_json(str(row["definition_json"]))
+    # jsonb may arrive decoded or as text, depending on the driver's loaders.
+    snapshot = PipelineDefinition.model_validate(decode_json_object(row["definition_json"]))
     assert snapshot == live.runbook, "launch snapshot differs from the installed runbook"
 
 
@@ -816,7 +818,8 @@ def test_live_crash_window_adopts_seat(live: Live, seat_name: str, renamed: bool
     assert live.evidence["restarted_host"] == live.evidence["host"]
     _completed(live, execution)
     rows = {row["step_id"]: row for row in _snapshot_steps(live, execution)}
-    adopted = json.loads(rows[selected.id]["output_json"])
+    adopted = decode_json_object(rows[selected.id]["output_json"])
+    assert adopted is not None, rows[selected.id]
     current = _pane(live.db, place, seats[-1].terminal_id)
     assert current is not None and current.id == pane.id and current.label == label
     tab = next(t for t in WorkspaceManager(live.db).list_tabs(place.id) if t.id == current.tab_id)
