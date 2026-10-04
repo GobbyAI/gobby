@@ -387,26 +387,26 @@ async def test_startup_sweep_leaves_live_pre_commit_spare_replenish_alone(
     def blocked_clone(_source: Path, destination: Path) -> None:
         _create_root(destination)
         clone_started.set()
-        assert release_clone.wait(timeout=5)
+        release_clone.wait()
 
     monkeypatch.setattr(sandbox_policy, "_clone_pre_commit_store", blocked_clone)
     sandbox_policy._schedule_pre_commit_store_spare(source)
     worker = sandbox_policy._pre_commit_spare_thread
-    assert worker is not None
     try:
+        assert worker is not None
         assert clone_started.wait(timeout=5)
         result = await sweep_sandbox_run_roots(set(), gobby_home=gobby_home, now=_NOW)
         assert result.removed_roots == 0
         assert result.skipped_roots == 0
         assert (temporary / "payload").is_file()
-    finally:
+
         release_clone.set()
         worker.join(timeout=5)
-    try:
         assert not worker.is_alive()
         assert (spare / "payload").is_file()
         assert not temporary.exists()
     finally:
+        release_clone.set()
         sandbox_policy.shutdown_pre_commit_store_spare()
 
 
