@@ -38,8 +38,10 @@ Client → host:
   reports; the control `spawn` takes the same `terminal_theme` object.
   Only on a host advertising `terminal_theme`. It applies to a granted pane only
   from the stream bound to the grant holder. A declaration themes only its own
-  attachment's pane; a spawn with no theme of its own starts unset and leaves
-  OSC 10/11 unanswered
+  attachment's pane. A spawn starts with its own `terminal_theme`, else the
+  current theme of the live native pane its optional `theme_from` names (the
+  daemon names the spawning session's pane), else unset, leaving OSC 10/11
+  unanswered. An unknown, external or unthemed `theme_from` pane counts as unset
 - `Detach`
 
 Host → client:
