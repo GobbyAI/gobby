@@ -97,11 +97,13 @@ from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.storage.tasks._stage_manifest import initialize_task_manifest_for_task
 from gobby.storage.tasks._stage_registry import StageRegistryManager
 from gobby.storage.tasks._stage_states import StageStatesManager
+from gobby.storage.tasks._stage_utils import close_eligible_parent_chain
 from gobby.storage.tasks._transitions_facade import TaskTransitionsMixin
 from gobby.storage.tasks._updates import (
     update_task_metadata as _update_task_metadata,
 )
 from gobby.tasks.criteria_contract import require_validation_criteria
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -399,7 +401,15 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             if validation_criteria is not UNSET:
                 validation_criteria = effective_criteria
 
-        with self.db.transaction():
+        with self.db.transaction() as conn:
+            moved_from = (
+                None
+                if parent_task_id is UNSET
+                else conn.execute(
+                    "SELECT parent_task_id, closed_at FROM tasks WHERE id = %s FOR UPDATE",
+                    (task_id,),
+                ).fetchone()
+            )
             parent_changed = _update_task_metadata(
                 self.db,
                 task_id=task_id,
@@ -439,6 +449,22 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
 
             if parent_changed:
                 self.update_descendant_paths(task_id)
+                if (
+                    moved_from is not None
+                    and moved_from["closed_at"] is None
+                    and moved_from["parent_task_id"] != parent_task_id
+                ):
+                    # Moving an open child out can leave the old parent with none,
+                    # and no child close will ever arrive to close it (#23384).
+                    close_eligible_parent_chain(
+                        conn,
+                        moved_from["parent_task_id"],
+                        db=self.db,
+                        reason=None,
+                        closed_at=utc_now(),
+                        closed_in_session_id=None,
+                        closed_ancestors=None,
+                    )
 
             if affected_files is not UNSET:
                 TaskAffectedFileManager(self.db).replace_declared_files(

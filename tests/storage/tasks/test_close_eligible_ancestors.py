@@ -249,3 +249,54 @@ def test_criteria_owning_parent_survives_its_last_child(
     assert closed_ancestors == []
     assert _open(manager, parent.id)
     assert _open(manager, epic.id)
+
+
+def test_reparent_that_empties_the_old_parent_closes_it(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    """Moving the last open child out closes the old parent and its emptied ancestors.
+
+    #22508 kept 33 closed children open for days: its last open child was moved
+    to another lane, and no child close ever arrived to run the walk (#23384).
+    """
+    manager, project_id = _manager(temp_db, tmp_path)
+    grand = _create(manager, project_id, "Grand epic", task_type="epic")
+    old_parent = _create(manager, project_id, "Old epic", task_type="epic", parent_task_id=grand.id)
+    done = _create(manager, project_id, "Done child", parent_task_id=old_parent.id)
+    moved = _create(manager, project_id, "Moved child", parent_task_id=old_parent.id)
+    new_parent = _create(manager, project_id, "New epic", task_type="epic")
+    manager.close_task(done.id)
+    assert _open(manager, old_parent.id)
+
+    manager.update_task(moved.id, parent_task_id=new_parent.id)
+
+    assert not _open(manager, old_parent.id)
+    assert not _open(manager, grand.id)
+    assert _open(manager, new_parent.id)
+    assert _open(manager, moved.id)
+
+
+@pytest.mark.parametrize("guard", ["open_sibling", "hold_label", "claimed"])
+def test_reparent_keeps_a_guarded_old_parent_open(
+    temp_db: HubDatabase, tmp_path: Path, guard: str
+) -> None:
+    """A reparent runs the same walk as a child close, with every guard intact."""
+    manager, project_id = _manager(temp_db, tmp_path)
+    labels = ["needs-decision"] if guard == "hold_label" else None
+    old_parent = _create(manager, project_id, "Old epic", task_type="epic", labels=labels)
+    moved = _create(manager, project_id, "Moved child", parent_task_id=old_parent.id)
+    new_parent = _create(manager, project_id, "New epic", task_type="epic")
+    if guard == "open_sibling":
+        _create(manager, project_id, "Open sibling", parent_task_id=old_parent.id)
+    if guard == "claimed":
+        owner = SessionManager(temp_db).register(
+            external_id="owner-session",
+            machine_id=get_machine_id(),
+            source="codex",
+            project_id=project_id,
+        )
+        claim_task(temp_db, old_parent.id, owner.id)
+
+    manager.update_task(moved.id, parent_task_id=new_parent.id)
+
+    assert _open(manager, old_parent.id)
