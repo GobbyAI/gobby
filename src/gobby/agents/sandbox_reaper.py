@@ -23,6 +23,7 @@ from gobby.agents.sandbox_policy import (
     SRT_SETTINGS_RELATIVE_PATH,
     SRT_VIOLATIONS_RELATIVE_PATH,
     registered_run_tmp,
+    retire_stale_pre_commit_store_spare,
 )
 from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
 from gobby.paths import get_gobby_home
@@ -353,6 +354,7 @@ def _startup_sweep(
 ) -> SandboxReapResult:
     cutoff = now - _MINIMUM_ORPHAN_AGE_SECONDS
     roots_by_run_id: dict[str, list[Path]] = {}
+    spare_leftovers: list[Path] = []
     skipped_roots = 0
     first_skipped_path: Path | None = None
     for parent in _run_root_parents(gobby_home):
@@ -375,7 +377,7 @@ def _startup_sweep(
                     PRE_COMMIT_STORE_SPARE_NAME,
                     PRE_COMMIT_STORE_SPARE_TEMP_NAME,
                 }:
-                    roots_by_run_id.setdefault(root.name, []).append(root)
+                    spare_leftovers.append(root)
                     continue
                 if root.name in active_run_ids:
                     continue
@@ -392,6 +394,18 @@ def _startup_sweep(
             skipped_roots += 1
             if first_skipped_path is None:
                 first_skipped_path = parent
+
+    # The spare's owner decides: a live replenisher's spares are never renamed aside.
+    for leftover in spare_leftovers:
+        try:
+            retired = retire_stale_pre_commit_store_spare(leftover)
+        except OSError:
+            skipped_roots += 1
+            if first_skipped_path is None:
+                first_skipped_path = leftover
+            continue
+        if retired is not None:
+            roots_by_run_id.setdefault(retired.name, []).append(retired)
 
     removed_roots = 0
     removed_bytes = 0

@@ -12,6 +12,7 @@ import subprocess  # nosec B404 # fixed local cp/chmod commands.
 import sys
 import tempfile
 import threading
+import uuid
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -715,6 +716,24 @@ def _schedule_pre_commit_store_spare(source: Path) -> None:
         except RuntimeError:
             _pre_commit_spare_thread = None
             logger.warning("Failed to start pre-commit store spare replenisher", exc_info=True)
+
+
+def retire_stale_pre_commit_store_spare(path: Path) -> Path | None:
+    """Rename a previous daemon's leftover spare aside so the startup sweep can reap it.
+
+    Returns None once this daemon has scheduled a replenisher, because its spare
+    and partial clone are live, or when the path is already gone. A racing
+    consume or replenish then loses with ENOENT, which both tolerate.
+    """
+    with _pre_commit_spare_lock:
+        if _pre_commit_spare_root is not None:
+            return None
+        retired = path.with_name(f"{PRE_COMMIT_STORE_SPARE_NAME}.stale-{uuid.uuid4().hex}")
+        try:
+            os.rename(path, retired)
+        except FileNotFoundError:
+            return None
+    return retired
 
 
 def shutdown_pre_commit_store_spare() -> None:
