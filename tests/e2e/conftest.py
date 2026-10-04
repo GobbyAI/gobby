@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
+import psutil
 import pytest
 import pytest_asyncio
 import yaml
@@ -38,6 +39,8 @@ from websockets.sync.client import connect as connect_websocket
 
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
 from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
+from gobby.guard_set_g import finalize_pidfile_host
+from gobby.terminals.host_protocol import read_pidfile
 from gobby.utils.dependency_requirements import SRT_RELEASE
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
 from tests.native_binary_selection import (
@@ -715,8 +718,6 @@ def daemon_health_unavailable(port: int) -> bool:
 
 def terminate_process_tree(pid: int, timeout: float = 5.0) -> None:
     """Terminate a process and all its children."""
-    import psutil
-
     try:
         parent = psutil.Process(pid)
         try:
@@ -772,6 +773,53 @@ def terminate_process_tree(pid: int, timeout: float = 5.0) -> None:
 
     except psutil.NoSuchProcess:
         pass
+
+
+# Records the pytest process that created a host socket directory, so a later
+# session can stop hosts orphaned when that process died before teardown.
+E2E_HOST_OWNER_FILE = "e2e-owner.pid"
+
+
+def create_host_socket_dir(root: Path | None = None, prefix: str = "gh-") -> Path:
+    """Create a gterm host socket directory owned by this pytest process."""
+    socket_dir = Path(tempfile.mkdtemp(prefix=prefix, dir=root)).resolve()
+    (socket_dir / E2E_HOST_OWNER_FILE).write_text(str(os.getpid()))
+    return socket_dir
+
+
+def stop_terminal_host(socket_dir: Path) -> None:
+    """Stop the detached gterm host serving ``socket_dir``.
+
+    The host outlives its daemon by design, so stopping the daemon leaves it
+    running. Only a process whose command line is ``gterm host`` with this
+    exact ``--socket-dir`` is signalled.
+    """
+    resolved = socket_dir.resolve()
+    pid = read_pidfile(resolved)
+    if pid is not None:
+        finalize_pidfile_host(pid, resolved, (resolved.parent,))
+
+
+def reap_orphaned_terminal_hosts(root: Path) -> None:
+    """Stop hosts in ``root`` whose owning pytest process is gone, then drop their dirs."""
+    for marker in root.glob(f"*/{E2E_HOST_OWNER_FILE}"):
+        try:
+            owner_pid = int(marker.read_text().strip())
+        except (OSError, ValueError):
+            continue
+        if psutil.pid_exists(owner_pid):
+            continue
+        stop_terminal_host(marker.parent)
+        shutil.rmtree(marker.parent, ignore_errors=True)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _reap_orphaned_terminal_hosts() -> None:
+    roots = {Path(tempfile.gettempdir()).resolve()}
+    if override := os.environ.get("CLAUDE_CODE_TMPDIR"):
+        roots.add(Path(override).resolve())
+    for root in roots:
+        reap_orphaned_terminal_hosts(root)
 
 
 @pytest.fixture(scope="function")
@@ -927,7 +975,7 @@ def e2e_config(
 
     # Runtime configuration is PostgreSQL-owned. The legacy config.yaml below
     # remains input coverage for bootstrap-path resolution only.
-    terminal_host_socket_dir = Path(tempfile.mkdtemp(prefix="gh-"))
+    terminal_host_socket_dir = create_host_socket_dir()
     _seed_e2e_runtime_state(
         postgres_db,
         e2e_project_dir,
@@ -996,6 +1044,7 @@ front_door:
 
     yield config_path, http_port, ws_port
 
+    stop_terminal_host(terminal_host_socket_dir)
     shutil.rmtree(terminal_host_socket_dir, ignore_errors=True)
 
 

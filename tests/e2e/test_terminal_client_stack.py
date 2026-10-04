@@ -42,8 +42,10 @@ from tests._timing import wait_for_awaited_condition, wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
+    create_host_socket_dir,
     daemon_token,
     link_operator_srt,
+    stop_terminal_host,
 )
 from tests.e2e.gclient_driver import GclientDriver, Screen, in_prefix_mode
 from tests.e2e.test_external_terminal_attach import (
@@ -143,7 +145,7 @@ def e2e_pre_daemon_setup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(_gterm_bin_dir()))
-    socket_dir = Path(tempfile.mkdtemp(prefix="gh-"))
+    socket_dir = create_host_socket_dir()
     stub_dir = Path(tempfile.mkdtemp(prefix="gs-"))
     # A relocated host reads its frame credential from the socket directory.
     # Seed the same isolated credential for the daemon and the host before startup.
@@ -184,18 +186,7 @@ def e2e_pre_daemon_setup(
     try:
         yield
     finally:
-        pid = None
-        try:
-            from gobby.terminals.host_protocol import read_pidfile
-
-            pid = read_pidfile(socket_dir)
-        except OSError:
-            pid = None
-        if isinstance(pid, int) and pid > 0:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except OSError:
-                pass
+        stop_terminal_host(socket_dir)
         shutil.rmtree(socket_dir, ignore_errors=True)
         shutil.rmtree(stub_dir, ignore_errors=True)
 
