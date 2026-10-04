@@ -203,6 +203,9 @@ class RuleEffect(BaseModel):
     # cannot sit in command position. Double-quoted spans containing `$(` or a
     # backtick stay visible: command substitution in them still executes.
     mask_quoted: bool = False
+    # Match command_pattern against the command `uv run …` executes. A rule
+    # whose required form is `uv run` (require-uv) turns this off.
+    resolve_uv_run: bool = True
 
     # set_variable — update session/workflow state
     variable: str | None = None

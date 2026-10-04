@@ -170,12 +170,18 @@ def _decoded_stages(subject: str) -> list[list[str]]:
             continue
         for stage in _pipeline_stages(scan.tokens):
             words = _stage_words(stage)
+            # A subshell runs its body: `(time cmd)` scans as `(time`, `cmd)`.
+            if words and words[0].startswith("("):
+                head = words[0].lstrip("(")
+                words = [head, *words[1:]] if head else words[1:]
+                tail = words[-1].rstrip(")") if words else ""
+                words = [*words[:-1], tail] if tail else words[:-1]
             if words and words not in stages:
                 stages.append(words)
     return stages
 
 
-def _wrapper_scripts(stages: list[list[str]]) -> list[str]:
+def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) -> list[str]:
     """Return the command strings a segment's literal wrappers would execute.
 
     Only arguments that are code count: a shell ``-c`` string, ``eval``'s
@@ -213,7 +219,7 @@ def _wrapper_scripts(stages: list[list[str]]) -> list[str]:
         # These exec their argv directly, so each word stays one word.
         if name == "uv" and unwrapped[1:2] == ["run"]:
             rest = _after_options(unwrapped[2:], _UV_RUN_VALUE_OPTIONS)
-            if rest:
+            if rest and resolve_uv_run:
                 scripts.append(shlex.join(rest))
             continue
         if unwrapped != words:
@@ -227,6 +233,7 @@ def command_patterns_match(
     pattern: str | None,
     not_pattern: str | None = None,
     mask_quoted: bool = False,
+    resolve_uv_run: bool = True,
 ) -> bool:
     """Return whether ``command`` selects a block effect carrying these patterns.
 
@@ -254,7 +261,7 @@ def command_patterns_match(
         # scanner reads as one segment's words. Resolve it through these same
         # rules, to a bounded depth, so a nested wrapped invocation such as
         # ``bash -c "bash -c '…'"`` still matches (#23134).
-        for script in _wrapper_scripts(stages):
+        for script in _wrapper_scripts(stages, resolve_uv_run=resolve_uv_run):
             pending.extend((inner, depth + 1) for inner in executable_command_subjects(script))
     if not any(re.search(pattern, subject) for subject in pattern_subjects):
         return False

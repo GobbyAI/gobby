@@ -351,6 +351,7 @@ def _require_uv_effect() -> RuleEffect:
         tools=["Bash"],
         command_pattern=REQUIRE_UV_COMMAND_PATTERN,
         reason=REQUIRE_UV_REASON,
+        resolve_uv_run=False,
     )
 
 
