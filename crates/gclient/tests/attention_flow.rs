@@ -7,7 +7,6 @@ use gobby_client::app::run_live_loop;
 use gobby_client::daemon::LiveDaemon;
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::chrome::attention_label;
-use gobby_client::ui::dialogs::Dialog;
 use gobby_client::ui::hit::SidebarSection;
 use gobby_client::ui::sidebar::section_body_rect;
 use gobby_client::ui::sidebar_rows::{RowKind, SidebarRow};
@@ -122,12 +121,6 @@ async fn respond_reaches_daemon() {
         200,
         json!({"ok": true}),
     );
-    mock.enqueue(
-        "POST",
-        "/api/attention/run:1/respond",
-        409,
-        json!({"detail": {"code": "stale_episode", "message": "stale-episode"}}),
-    );
 
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
@@ -146,16 +139,9 @@ async fn respond_reaches_daemon() {
         send_key(&input_tx, KeyCode::Char('a'), KeyModifiers::NONE).await;
         wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
         send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
+        // The stale-episode refusal and the rendered dialog are covered in
+        // loop_liveness, where the driver can watch the drawn screen.
         wait_for_http_requests(&mock, "POST", "/api/attention/run:1/respond", 1).await;
-
-        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-        send_key(&input_tx, KeyCode::Char('a'), KeyModifiers::NONE).await;
-        wait_for_http_requests(&mock, "GET", "/api/attention/roster", 3).await;
-        send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
-        wait_for_http_requests(&mock, "POST", "/api/attention/run:1/respond", 2).await;
-        for _ in 0..16 {
-            tokio::task::yield_now().await;
-        }
         drop(input_tx);
     };
 
@@ -179,7 +165,7 @@ async fn respond_reaches_daemon() {
             request.method == "POST" && request.target == "/api/attention/run:1/respond"
         })
         .collect();
-    assert_eq!(responses.len(), 2, "a stale response must not be retried");
+    assert_eq!(responses.len(), 1, "one Enter posts one answer");
     for response in &responses {
         assert_eq!(
             response.body,
@@ -190,33 +176,6 @@ async fn respond_reaches_daemon() {
             }))
         );
     }
-    assert!(matches!(chrome.dialog, Some(Dialog::Respond { .. })));
-    assert!(
-        chrome
-            .last_alert()
-            .is_some_and(|message| message.contains("stale_episode")),
-        "stale episode must remain visible: {:?}",
-        chrome.last_alert()
-    );
-
-    terminal
-        .draw(|frame| {
-            render_workspace(frame, &workspace, &chrome);
-        })
-        .expect("render attention dialog");
-    let screen: String = terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect();
-    assert!(
-        screen.contains("Ship this change?"),
-        "rendered UI: {screen:?}"
-    );
-    assert!(screen.contains("Approve"), "rendered UI: {screen:?}");
-
     assert!(
         mock.requests().iter().all(|request| {
             request.method != "WS"

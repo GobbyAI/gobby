@@ -299,13 +299,25 @@ impl LiveDaemon {
     }
 
     pub(super) async fn request(&self, message: Value) -> Result<Value, DaemonError> {
-        self.request_with_deadline(message, None).await
+        self.request_with_deadline(message, None, None).await
+    }
+
+    /// `send`, also resolving `written` once the request is on the socket,
+    /// so a later request can be ordered behind it without its reply.
+    pub async fn send_marking_written(
+        &self,
+        message: Value,
+        written: watch::Sender<bool>,
+    ) -> Result<Value, DaemonError> {
+        self.request_with_deadline(message, None, Some(written))
+            .await
     }
 
     pub(super) async fn request_with_deadline(
         &self,
         message: Value,
         override_deadline: Option<Duration>,
+        on_written: Option<watch::Sender<bool>>,
     ) -> Result<Value, DaemonError> {
         let raw = encode_frame_text(&message)?;
         let request = super::message_kind(&message)
@@ -345,6 +357,9 @@ impl LiveDaemon {
             .await
             .map_err(|_| request_timed_out(&request))?
             .map_err(|_| DaemonError::Unavailable { retry_after: None })?;
+        if let Some(on_written) = on_written {
+            let _ = on_written.send(true);
+        }
         let reply = timeout_at(deadline, reply_rx)
             .await
             .map_err(|_| request_timed_out(&request))?

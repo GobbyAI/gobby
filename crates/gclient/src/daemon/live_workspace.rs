@@ -89,7 +89,10 @@ impl LiveDaemon {
         let mut request = op_request(&op)?;
         request["request_id"] = json!(Uuid::new_v4().to_string());
         self.theme_spawn(&op, &mut request);
-        decode(self.request_with_deadline(request, Some(deadline)).await?)
+        decode(
+            self.request_with_deadline(request, Some(deadline), None)
+                .await?,
+        )
     }
 }
 

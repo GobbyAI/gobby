@@ -21,14 +21,21 @@ use crate::ui::{Action, Chrome, Mode};
 use crossterm::event::KeyEvent;
 use gobby_terminal::layout::{self, find_in_direction, NavDirection};
 use ratatui::layout::Rect;
+use tokio::sync::mpsc::UnboundedSender;
 
 use super::super::attention::{open_response_dialog, route_response_input};
 use super::super::viewer_state::EMPTY_LOCAL_TAB_PREFIX;
 use super::super::{PaneId, Workspace};
 use super::control::{
-    focus_live_pane, observe_live_pane, release_live_control, send_live_report,
+    close_barrier, focus_live_pane, observe_live_pane, release_live_control, send_live_report,
     set_live_scroll_offset, take_live_control,
 };
+use super::daemon_ops::{
+    close_daemon_pane, close_daemon_tab, kill_live_panes, move_active_daemon_tab, move_daemon_tab,
+    move_focused_pane_to_tab, pane_close_op, place_live_terminal, rename_daemon_target,
+    resize_daemon_split, swap_live_slots, tab_close_op,
+};
+use super::jobs::{issue_response, JobOutcome, LoopJobs};
 use super::menu_dispatch::apply_live_menu_action;
 use super::modal_input::{apply_rename, ModalOutcome};
 use super::mouse::{MouseOutcome, Placement};
@@ -39,11 +46,7 @@ use super::projects::{
     focus_terminal, open_new_project_dialog, open_worktree, remove_worktree, submit_new_project,
 };
 use super::sync_live_chrome;
-use super::workspace_actions::{
-    close_daemon_pane, close_daemon_tab, daemon_pane_id, move_active_daemon_tab, move_daemon_tab,
-    move_focused_pane_to_tab, place_live_terminal, rename_daemon_target, resize_daemon_split,
-    spawn_owned_live_shell, swap_live_slots,
-};
+use super::workspace_actions::{daemon_pane_id, spawn_owned_live_shell};
 
 mod sidebar;
 
@@ -61,37 +64,44 @@ pub(super) use sidebar::toggle_sidebar_pin;
 pub(super) async fn apply_live_mouse_outcome(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    jobs: &mut LoopJobs,
     outcome: MouseOutcome,
 ) -> Result<bool, FrameError> {
+    let outcomes = jobs.outcomes();
     match outcome {
         MouseOutcome::Handled | MouseOutcome::Ignore => {}
         MouseOutcome::Respond(code) => {
-            route_response_input(workspace, chrome, &KeyEvent::from(code)).await?;
+            if let Some(submission) = route_response_input(workspace, chrome, &KeyEvent::from(code))
+            {
+                issue_response(workspace.daemon(), jobs, submission);
+            }
         }
         MouseOutcome::Focus { pane, observe_only } => {
             chrome.focus_pane(pane);
             if observe_only {
-                observe_live_pane(workspace, pane).await?;
+                observe_live_pane(workspace, pane);
             } else {
-                focus_live_pane(workspace, pane).await?;
+                focus_live_pane(workspace, pane);
             }
         }
         MouseOutcome::Action(Action::Quit) => return Ok(true),
-        MouseOutcome::Action(action) => handle_live_action(workspace, chrome, action).await?,
+        MouseOutcome::Action(action) => {
+            handle_live_action(workspace, chrome, outcomes, action).await?
+        }
         MouseOutcome::TakeFreeControl { pane } => workspace.request_control(pane, false),
         MouseOutcome::Spawn { placement } => {
-            spawn_live_terminal(workspace, chrome, placement).await?;
+            spawn_live_terminal(workspace, chrome, outcomes, placement).await?;
         }
         MouseOutcome::Write { pane, bytes } => {
-            send_live_report(workspace, pane, &bytes).await?;
+            send_live_report(workspace, jobs, pane, &bytes)?;
         }
         MouseOutcome::FocusWrite { pane, bytes } => {
             chrome.focus_pane(pane);
-            focus_live_pane(workspace, pane).await?;
-            send_live_report(workspace, pane, &bytes).await?;
+            focus_live_pane(workspace, pane);
+            send_live_report(workspace, jobs, pane, &bytes)?;
         }
         MouseOutcome::Scroll { pane, rows } => {
-            set_live_scroll_offset(workspace, pane, rows).await?;
+            set_live_scroll_offset(workspace, chrome, jobs, pane, rows);
         }
         MouseOutcome::Copy => {
             let mut output = std::io::stdout();
@@ -110,26 +120,31 @@ pub(super) async fn apply_live_mouse_outcome(
             focus_project(workspace, chrome, &project_id).await?;
         }
         MouseOutcome::FocusAgent(entry_id) => {
-            focus_agent(workspace, chrome, &entry_id).await?;
+            focus_agent(workspace, chrome, outcomes, &entry_id).await?;
         }
         MouseOutcome::OpenWorktree(worktree_id) => {
-            open_worktree(workspace, chrome, &worktree_id).await?;
+            open_worktree(workspace, chrome, outcomes, &worktree_id).await?;
         }
         MouseOutcome::Menu { kind, action } => {
-            return apply_live_menu_action(workspace, chrome, kind, action).await;
+            return apply_live_menu_action(workspace, chrome, outcomes, kind, action).await;
         }
         MouseOutcome::Confirm(target) => {
-            return apply_live_modal_outcome(workspace, chrome, ModalOutcome::Confirm(target))
-                .await;
+            return apply_live_modal_outcome(
+                workspace,
+                chrome,
+                outcomes,
+                ModalOutcome::Confirm(target),
+            )
+            .await;
         }
         MouseOutcome::Modal(outcome) => {
-            return apply_live_modal_outcome(workspace, chrome, outcome).await;
+            return apply_live_modal_outcome(workspace, chrome, outcomes, outcome).await;
         }
         MouseOutcome::MoveTab { tab, position } => {
-            move_daemon_tab(workspace, chrome, tab, position).await?;
+            move_daemon_tab(workspace, outcomes, tab, position);
         }
         MouseOutcome::ResizeSplit { slot, ratio } => {
-            resize_daemon_split(workspace, chrome, slot, ratio).await?;
+            resize_daemon_split(workspace, chrome, outcomes, slot, ratio);
         }
     }
     Ok(false)
@@ -139,43 +154,46 @@ pub(super) async fn apply_live_mouse_outcome(
 pub(super) async fn apply_live_modal_outcome(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     outcome: ModalOutcome,
 ) -> Result<bool, FrameError> {
     match outcome {
         ModalOutcome::Consumed | ModalOutcome::Close | ModalOutcome::Passthrough => {}
         ModalOutcome::Focus(pane) => {
             chrome.focus_pane(pane);
-            focus_live_pane(workspace, pane).await?;
+            focus_live_pane(workspace, pane);
         }
         ModalOutcome::FocusProject(project_id) => {
             focus_project(workspace, chrome, &project_id).await?;
         }
         ModalOutcome::FocusTerminal(terminal_id) => {
-            focus_terminal(workspace, chrome, &terminal_id).await?;
+            focus_terminal(workspace, chrome, outcomes, &terminal_id).await?;
         }
         ModalOutcome::OpenWorktree(worktree_id) => {
-            open_worktree(workspace, chrome, &worktree_id).await?;
+            open_worktree(workspace, chrome, outcomes, &worktree_id).await?;
         }
         ModalOutcome::Action(Action::Quit) => return Ok(true),
-        ModalOutcome::Action(action) => handle_live_action(workspace, chrome, action).await?,
+        ModalOutcome::Action(action) => {
+            handle_live_action(workspace, chrome, outcomes, action).await?
+        }
         ModalOutcome::Confirm(CloseTarget::Tab(tab_id)) => {
             if chrome.active_tab().is_some_and(|tab| tab.id == tab_id) {
-                close_live_tab(workspace, chrome).await?;
+                close_live_tab(workspace, chrome, outcomes).await?;
             }
         }
         ModalOutcome::Confirm(CloseTarget::Pane(pane)) => {
             if workspace.panes.contains_key(&pane) && chrome.focus_pane(pane) {
-                close_live_pane(workspace, chrome).await?;
+                close_live_pane(workspace, chrome, outcomes).await?;
             }
         }
         ModalOutcome::Confirm(CloseTarget::Terminal(pane)) => {
-            close_live_terminal(workspace, chrome, pane).await?;
+            close_live_terminal(workspace, chrome, outcomes, pane).await?;
         }
         ModalOutcome::Confirm(
             CloseTarget::Project(project_id) | CloseTarget::WorktreeGroup(project_id),
         ) => close_project_confirmed(workspace, chrome, &project_id).await?,
         ModalOutcome::Commit(kind, value) => {
-            if !rename_daemon_target(workspace, chrome, &kind, &value).await? {
+            if !rename_daemon_target(workspace, chrome, outcomes, &kind, &value) {
                 apply_rename(workspace, chrome, kind, value);
             }
         }
@@ -184,13 +202,23 @@ pub(super) async fn apply_live_modal_outcome(
             project_id,
             branch,
             base,
-        } => create_worktree(workspace, chrome, &project_id, &branch, base.as_deref()).await?,
+        } => {
+            create_worktree(
+                workspace,
+                chrome,
+                outcomes,
+                &project_id,
+                &branch,
+                base.as_deref(),
+            )
+            .await?
+        }
         ModalOutcome::RemoveWorktree(worktree_id) => {
             remove_worktree(workspace, chrome, &worktree_id).await?;
         }
         ModalOutcome::DestroyOrphans(rows) => destroy_orphans(workspace, chrome, rows).await?,
         ModalOutcome::Menu { kind, action } => {
-            return apply_live_menu_action(workspace, chrome, kind, action).await;
+            return apply_live_menu_action(workspace, chrome, outcomes, kind, action).await;
         }
     }
     Ok(false)
@@ -215,14 +243,15 @@ pub(super) fn open_link(opener: &str, url: &str) -> io::Result<()> {
 pub(super) async fn handle_live_action(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     action: Action,
 ) -> Result<(), FrameError> {
     match action {
         Action::NewTerminal | Action::SplitVertical => {
-            spawn_live_terminal(workspace, chrome, Placement::SplitRight).await?;
+            spawn_live_terminal(workspace, chrome, outcomes, Placement::SplitRight).await?;
         }
         Action::SplitHorizontal => {
-            spawn_live_terminal(workspace, chrome, Placement::SplitDown).await?;
+            spawn_live_terminal(workspace, chrome, outcomes, Placement::SplitDown).await?;
         }
         Action::NewTab => open_empty_tab(chrome),
         Action::NextWorkspace => {
@@ -240,7 +269,7 @@ pub(super) async fn handle_live_action(
                     });
                     chrome.mode = Mode::ConfirmClose;
                 } else {
-                    close_live_terminal(workspace, chrome, pane_id).await?;
+                    close_live_terminal(workspace, chrome, outcomes, pane_id).await?;
                 }
             }
         }
@@ -254,10 +283,10 @@ pub(super) async fn handle_live_action(
                     });
                     chrome.mode = Mode::ConfirmClose;
                 } else {
-                    close_live_pane(workspace, chrome).await?;
+                    close_live_pane(workspace, chrome, outcomes).await?;
                 }
             } else {
-                close_live_pane(workspace, chrome).await?;
+                close_live_pane(workspace, chrome, outcomes).await?;
             }
         }
         Action::CloseTab => {
@@ -276,7 +305,7 @@ pub(super) async fn handle_live_action(
                 });
                 chrome.mode = Mode::ConfirmClose;
             } else {
-                close_live_tab(workspace, chrome).await?;
+                close_live_tab(workspace, chrome, outcomes).await?;
             }
         }
         Action::TakeControl | Action::TakeBack => {
@@ -303,7 +332,7 @@ pub(super) async fn handle_live_action(
         }
         Action::ReleaseControl | Action::Detach => {
             if let Some(pane_id) = chrome.focused_pane() {
-                release_live_control(workspace, pane_id).await?;
+                release_live_control(workspace, pane_id);
             }
         }
         Action::PreviousTerminal | Action::CyclePanePrevious => {
@@ -362,11 +391,17 @@ pub(super) async fn handle_live_action(
         Action::NavigatePaneRight => {
             navigate_live_neighbour(workspace, chrome, NavDirection::Right).await?;
         }
-        Action::SwapPaneLeft => swap_live_neighbour(workspace, chrome, NavDirection::Left).await?,
-        Action::SwapPaneDown => swap_live_neighbour(workspace, chrome, NavDirection::Down).await?,
-        Action::SwapPaneUp => swap_live_neighbour(workspace, chrome, NavDirection::Up).await?,
+        Action::SwapPaneLeft => {
+            swap_live_neighbour(workspace, chrome, outcomes, NavDirection::Left).await?
+        }
+        Action::SwapPaneDown => {
+            swap_live_neighbour(workspace, chrome, outcomes, NavDirection::Down).await?
+        }
+        Action::SwapPaneUp => {
+            swap_live_neighbour(workspace, chrome, outcomes, NavDirection::Up).await?
+        }
         Action::SwapPaneRight => {
-            swap_live_neighbour(workspace, chrome, NavDirection::Right).await?;
+            swap_live_neighbour(workspace, chrome, outcomes, NavDirection::Right).await?;
         }
         Action::LastPane => {
             if let Some(pane_id) = chrome.last_focused {
@@ -375,14 +410,14 @@ pub(super) async fn handle_live_action(
         }
         Action::PreviousTab => activate_relative_live_tab(workspace, chrome, -1).await?,
         Action::NextTab => activate_relative_live_tab(workspace, chrome, 1).await?,
-        Action::MoveTabLeft => move_active_daemon_tab(workspace, chrome, -1).await?,
-        Action::MoveTabRight => move_active_daemon_tab(workspace, chrome, 1).await?,
+        Action::MoveTabLeft => move_active_daemon_tab(workspace, chrome, outcomes, -1),
+        Action::MoveTabRight => move_active_daemon_tab(workspace, chrome, outcomes, 1),
         Action::MovePaneToTab(index) => {
             if let Some(index) = usize::from(index).checked_sub(1) {
-                move_focused_pane_to_tab(workspace, chrome, Some(index)).await?;
+                move_focused_pane_to_tab(workspace, chrome, outcomes, Some(index));
             }
         }
-        Action::MovePaneToNewTab => move_focused_pane_to_tab(workspace, chrome, None).await?,
+        Action::MovePaneToNewTab => move_focused_pane_to_tab(workspace, chrome, outcomes, None),
         Action::SwitchTab(index) => {
             if let Some(index) = usize::from(index).checked_sub(1) {
                 activate_live_tab(workspace, chrome, index).await?;
@@ -390,14 +425,14 @@ pub(super) async fn handle_live_action(
         }
         Action::PreviousAttention | Action::NextAttention | Action::FocusAttention(_) => {
             if let Some(entry_id) = pick_attention_entry(workspace, chrome, action) {
-                jump_live_attention(workspace, chrome, &entry_id).await?;
+                jump_live_attention(workspace, chrome, outcomes, &entry_id).await?;
             }
         }
         Action::OpenNotificationTarget => {
             let target = chrome.latest_alert_target().map(str::to_owned);
             chrome.dismiss_toasts();
             if let Some(terminal_id) = target {
-                focus_terminal(workspace, chrome, &terminal_id).await?;
+                focus_terminal(workspace, chrome, outcomes, &terminal_id).await?;
             }
         }
         Action::ReloadConfig => reload_live_prefs(workspace, chrome),
@@ -417,7 +452,7 @@ async fn focus_live_shown_pane(
     pane_id: PaneId,
 ) -> Result<(), FrameError> {
     if chrome.focus_pane(pane_id) {
-        focus_live_pane(workspace, pane_id).await?;
+        focus_live_pane(workspace, pane_id);
     }
     Ok(())
 }
@@ -476,10 +511,11 @@ async fn navigate_live_neighbour(
 async fn swap_live_neighbour(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     direction: NavDirection,
 ) -> Result<(), FrameError> {
     if let Some((focused, neighbour)) = live_neighbour_slots(chrome, direction) {
-        swap_live_slots(workspace, chrome, focused, neighbour).await?;
+        swap_live_slots(workspace, chrome, outcomes, focused, neighbour);
     }
     Ok(())
 }
@@ -549,6 +585,7 @@ fn daemon_pane_is_adopted(
 pub(super) async fn close_live_pane(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
 ) -> Result<(), FrameError> {
     if chrome
         .active_tab()
@@ -561,22 +598,26 @@ pub(super) async fn close_live_pane(
         return Ok(());
     };
     let Some(pane_id) = chrome.focused_pane() else {
-        close_daemon_pane(workspace, chrome, slot).await?;
+        close_daemon_pane(workspace, chrome, outcomes, slot, Vec::new());
         return Ok(());
     };
+    // The close waits until the pane's accepted input (and its release) went out.
     if workspace.pane(pane_id).external || daemon_pane_is_adopted(workspace, chrome, slot)? {
-        release_live_control(workspace, pane_id).await?;
-        if !close_daemon_pane(workspace, chrome, slot).await? {
+        release_live_control(workspace, pane_id);
+        let after = close_barrier(workspace, outcomes, pane_id)
+            .into_iter()
+            .collect();
+        if !close_daemon_pane(workspace, chrome, outcomes, slot, after) {
             chrome.close_focused();
         }
         return Ok(());
     }
-    terminate_live_terminal(workspace, pane_id).await?;
     // A refused kill keeps the pane; only a killed one's row is closed.
-    if !workspace.panes.contains_key(&pane_id) {
-        close_daemon_pane(workspace, chrome, slot).await?;
-    }
-    sync_live_chrome(workspace, chrome);
+    let after = close_barrier(workspace, outcomes, pane_id)
+        .into_iter()
+        .collect();
+    let then = pane_close_op(chrome, slot);
+    kill_live_panes(workspace, outcomes, vec![pane_id], after, then);
     Ok(())
 }
 
@@ -584,6 +625,7 @@ pub(super) async fn close_live_pane(
 pub(super) async fn close_live_tab(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
 ) -> Result<(), FrameError> {
     if chrome
         .active_tab()
@@ -613,18 +655,24 @@ pub(super) async fn close_live_tab(
             .iter()
             .all(|(_, _, preserve_terminal)| *preserve_terminal)
     {
+        let mut after = Vec::new();
         for &(_, pane_id, _) in &panes {
-            release_live_control(workspace, pane_id).await?;
+            release_live_control(workspace, pane_id);
+            after.extend(close_barrier(workspace, outcomes, pane_id));
         }
-        close_daemon_tab(workspace, chrome).await?;
+        close_daemon_tab(workspace, chrome, outcomes, after);
         sync_live_chrome(workspace, chrome);
         return Ok(());
     }
     let mut owned_native = Vec::new();
+    let mut owned_after = Vec::new();
     for &(slot, pane_id, preserve_terminal) in &panes {
         if preserve_terminal {
-            release_live_control(workspace, pane_id).await?;
-            if local || !close_daemon_pane(workspace, chrome, slot).await? {
+            release_live_control(workspace, pane_id);
+            let after = close_barrier(workspace, outcomes, pane_id)
+                .into_iter()
+                .collect();
+            if local || !close_daemon_pane(workspace, chrome, outcomes, slot, after) {
                 let index = chrome.active_index();
                 let viewer = &mut chrome.viewer;
                 if let Some(tab) = chrome.project_tabs.set_mut().tabs.get_mut(index) {
@@ -635,18 +683,14 @@ pub(super) async fn close_live_tab(
             // A killed pane leaves the roster and `sync_live_chrome` reaps
             // its slot; a refused kill keeps the pane, and so its tab.
             owned_native.push(pane_id);
-            terminate_live_terminal(workspace, pane_id).await?;
+            owned_after.extend(close_barrier(workspace, outcomes, pane_id));
         }
     }
     // A refused kill keeps its pane in the roster, and so its tab: the
     // daemon closes a tab only once every owned pane is gone. A local tab
     // goes when it empties.
-    let refused = owned_native
-        .iter()
-        .any(|pane| workspace.panes.contains_key(pane));
-    if !refused {
-        close_daemon_tab(workspace, chrome).await?;
-    }
+    let then = tab_close_op(chrome);
+    kill_live_panes(workspace, outcomes, owned_native, owned_after, then);
     sync_live_chrome(workspace, chrome);
     Ok(())
 }
@@ -682,10 +726,11 @@ fn pick_attention_entry(
 async fn jump_live_attention(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     entry_id: &str,
 ) -> Result<(), FrameError> {
     // The terminal already shows the question, so a jump only reveals it.
-    focus_agent(workspace, chrome, entry_id).await
+    focus_agent(workspace, chrome, outcomes, entry_id).await
 }
 
 /// Re-read the prefs file (1.1) and the keymap override file it names
@@ -733,7 +778,8 @@ pub(super) async fn focus_relative_live_pane(
         .unwrap_or(0);
     let next = (current as isize + delta).rem_euclid(pane_ids.len() as isize) as usize;
     chrome.focus_pane(pane_ids[next]);
-    focus_live_pane(workspace, pane_ids[next]).await
+    focus_live_pane(workspace, pane_ids[next]);
+    Ok(())
 }
 
 /// Spawn a terminal and show it where `placement` says: in a fresh tab, beside
@@ -741,10 +787,11 @@ pub(super) async fn focus_relative_live_pane(
 pub(super) async fn spawn_live_terminal(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     placement: Placement,
 ) -> Result<(), FrameError> {
     let cwd = workspace.focused_checkout_path();
-    spawn_live_shell(workspace, chrome, placement, cwd, None).await
+    spawn_live_shell(workspace, chrome, outcomes, placement, cwd, None).await
 }
 
 fn open_empty_tab(chrome: &mut Chrome) {
@@ -763,6 +810,7 @@ fn open_empty_tab(chrome: &mut Chrome) {
 pub(super) async fn spawn_live_shell(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     placement: Placement,
     cwd: Option<String>,
     worktree_id: Option<String>,
@@ -793,12 +841,22 @@ pub(super) async fn spawn_live_shell(
         ..SpawnRequest::default()
     };
     let outcome = workspace.daemon().spawn(request).await?;
-    finish_live_shell_spawn(workspace, chrome, placement, worktree_id, None, outcome).await
+    finish_live_shell_spawn(
+        workspace,
+        chrome,
+        outcomes,
+        placement,
+        worktree_id,
+        None,
+        outcome,
+    )
+    .await
 }
 
 pub(super) async fn finish_live_shell_spawn(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     placement: Placement,
     worktree_id: Option<String>,
     project_override: Option<&str>,
@@ -812,12 +870,12 @@ pub(super) async fn finish_live_shell_spawn(
             place_live_terminal(
                 workspace,
                 chrome,
+                outcomes,
                 placement,
                 &terminal_id,
                 worktree_id,
                 project_override,
-            )
-            .await?;
+            );
             sync_live_chrome(workspace, chrome);
         }
         SpawnOutcome::Refused { reason } => chrome.notify(Toast::warning(reason)),

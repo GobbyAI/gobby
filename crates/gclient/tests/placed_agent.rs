@@ -7,13 +7,14 @@
 
 mod mock_daemon;
 
-use gobby_client::app::sync_live_chrome;
-use gobby_client::daemon::{Daemon, LiveDaemon, WorkspaceOp};
+use gobby_client::app::{focus_agent, sync_live_chrome};
+use gobby_client::daemon::{Daemon, DaemonError, LiveDaemon, WorkspaceOp};
 use gobby_client::ui::Chrome;
 use gobby_client::Workspace;
 use mock_daemon::MockDaemon;
 use serde_json::{json, Value};
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 const AGENT: &str = "agent-1";
@@ -290,5 +291,67 @@ async fn reconnect_projects_bound_terminal_once() {
         "the active tab is stable"
     );
     assert_eq!(s.chrome.focused_pane(), focus, "focus is stable");
+    s.mock.shutdown().await;
+}
+
+/// A placement still waiting on its op when the connection drops never moves
+/// the view later: the reply comes on the lost connection, so the loop drops
+/// it, and a pane event for that terminal is somebody else's placement.
+#[tokio::test]
+async fn a_placement_lost_with_the_connection_never_moves_the_view() {
+    let mut s = session(&[(&["existing"], "existing")], &["existing", AGENT]).await;
+    s.mock
+        .enqueue("GET", &format!("/api/terminals/{AGENT}"), 200, agent_row());
+    let _held = s.mock.hold_ws("workspace_op", |request| {
+        request.get("op") == Some(&json!("tab.create"))
+    });
+    let (outcomes, _unapplied) = mpsc::unbounded_channel();
+    focus_agent(
+        &mut s.workspace,
+        &mut s.chrome,
+        &outcomes,
+        &format!("terminal:{AGENT}"),
+    )
+    .await
+    .expect("focus the unplaced agent");
+    let placing = |mock: &MockDaemon| {
+        mock.workspace_requests().iter().any(|request| {
+            request.get("op") == Some(&json!("tab.create"))
+                && request["terminal_id"] == json!(AGENT)
+        })
+    };
+    timeout(Duration::from_secs(1), async {
+        while !placing(&s.mock) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the agent was sent to a new tab");
+
+    let generation = s.workspace.daemon().generation();
+    s.workspace
+        .observe_daemon_disconnect(generation, DaemonError::Unavailable { retry_after: None });
+    s.workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("reconnect reconciliation");
+    s.sync();
+    let active = s.chrome.active_tab().map(|tab| tab.id.clone());
+    assert!(active.is_some(), "an active tab after reconnect");
+
+    let tab_id = s.bind_agent_tab().await;
+    s.drain_until(|workspace| {
+        workspace
+            .workspace_model()
+            .is_some_and(|model| model.tab(&tab_id).is_some())
+    })
+    .await;
+    s.sync();
+
+    assert_eq!(
+        s.chrome.active_tab().map(|tab| tab.id.clone()),
+        active,
+        "the lost placement leaves the active tab"
+    );
     s.mock.shutdown().await;
 }

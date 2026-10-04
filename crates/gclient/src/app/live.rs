@@ -4,7 +4,6 @@ use crate::daemon::{message_kind, ProjectRow, RunRow, SessionRow, SourceStatus, 
 use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
-use tokio::sync::mpsc::UnboundedSender;
 #[path = "live_sidebar.rs"]
 mod live_sidebar;
 pub(super) use live_sidebar::FetchRetry;
@@ -204,94 +203,6 @@ impl Workspace<LiveDaemon> {
         // Roster order is pane order: the window's order first, new rows
         // after it in daemon order (`ensure_live_pane` appends them).
         self.roster_ids = self.tab_order();
-    }
-
-    /// Records the control request a focus change or a queued key needs. It is
-    /// only a note: `start_control_request` turns it into the daemon round
-    /// trip, beside the loop, so nothing a person does waits on it (#22573).
-    /// A pane already waiting on a reply keeps that one.
-    pub fn request_control(&mut self, pane_id: PaneId, takeover: bool) {
-        let idle = self
-            .panes
-            .get(&pane_id)
-            .is_some_and(|pane| pane.control_request.is_none());
-        if idle {
-            let takeover = takeover
-                || self
-                    .pending_control
-                    .is_some_and(|pending| pending.pane_id == pane_id && pending.takeover);
-            self.pending_control = Some(PendingControl { pane_id, takeover });
-        }
-    }
-
-    /// True while this pane is waiting on a grant, whether its request is
-    /// already in flight or is still the note a focus change just made. Input
-    /// arriving in that window belongs to the pane, not to the floor (#22573).
-    pub fn awaiting_control(&self, pane_id: PaneId) -> bool {
-        self.pending_control
-            .is_some_and(|pending| pending.pane_id == pane_id)
-            || self
-                .panes
-                .get(&pane_id)
-                .is_some_and(|pane| pane.is_acquiring())
-    }
-
-    /// Starts the recorded control request, if the pane can still use one. The
-    /// reply comes back through `outcomes`, so requests never queue behind one
-    /// another: a pane whose grant is still in flight must not delay the grant
-    /// the pane someone just clicked is waiting for (#22573).
-    pub fn start_control_request(&mut self, outcomes: &UnboundedSender<ControlOutcome>) {
-        let Some(PendingControl { pane_id, takeover }) = self.pending_control else {
-            return;
-        };
-        if self.exit_reason.is_some() {
-            self.pending_control = None;
-            return;
-        }
-        // A focus change can arrive while the daemon is reconnecting. Keep
-        // the wish until it can be sent so the input queued behind that focus
-        // is not orphaned (#22573).
-        if !self.daemon_ready() {
-            return;
-        }
-        let Some(pane) = self.panes.get(&pane_id) else {
-            self.pending_control = None;
-            return;
-        };
-        // An attachment can become live on a later daemon event. The pending
-        // request belongs to that pane until then.
-        if !pane.is_live() {
-            return;
-        }
-        // A host-recovered pane stays live on its host stream while it takes
-        // a fresh daemon attachment; the one it holds died with the old
-        // generation, so the request waits for the new one (#23419).
-        if pane.attached_generation() != Some(self.daemon.generation()) {
-            return;
-        }
-        self.pending_control = None;
-        self.next_control_seq += 1;
-        let request = self.next_control_seq;
-        let pane = self.panes.get_mut(&pane_id).expect("pane checked above");
-        pane.control_request = Some(request);
-        let message = json!({
-            "type": "terminal_take_control",
-            "terminal_id": pane.terminal_id,
-            "attachment_id": pane.attachment_id(),
-            "takeover": takeover,
-        });
-        let daemon = self.daemon.clone();
-        let outcomes = outcomes.clone();
-        tokio::spawn(async move {
-            let reply = daemon.send(message).await;
-            // The loop is gone when the send fails on a closed channel; the
-            // lease it was asking for is released by `shutdown` either way.
-            let _ = outcomes.send(ControlOutcome {
-                pane_id,
-                request,
-                reply,
-            });
-        });
     }
 
     pub async fn reconcile_subscribe_first(&mut self) -> Result<(), DaemonError> {
@@ -534,13 +445,6 @@ fn is_cursor_error(error: &DaemonError) -> bool {
     };
     let detail = detail.to_ascii_lowercase();
     detail.contains("cursor_stale") || detail.contains("invalid cursor")
-}
-
-/// What one control request came back with.
-pub struct ControlOutcome {
-    pub(super) pane_id: PaneId,
-    pub(super) request: u64,
-    pub(super) reply: Result<Value, DaemonError>,
 }
 
 /// The command in the terminal's foreground, as the daemon observed it when it

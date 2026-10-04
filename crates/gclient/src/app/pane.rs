@@ -5,9 +5,11 @@ use std::fmt;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::watch;
 use tokio::time::Instant;
 
 use super::attach::{AttachState, ATTACH_RETRY_BASE};
+use super::live_loop::writer::PaneWriter;
 use crate::daemon::Generation;
 use crate::frame_source::{
     AttachLocator, FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource, Transport,
@@ -167,6 +169,17 @@ pub struct Pane {
     pub copy_seeded_from_history: bool,
     pub required_created_flag: bool,
     pub in_flight_write: Option<u64>,
+    /// The task that sends this pane's daemon writes in typed order (plan A2).
+    pub(super) writer: Option<PaneWriter>,
+    /// A focus move gave up this pane's lease; the loop has yet to send the
+    /// release.
+    pub(super) release_pending: bool,
+    /// Resolves once this pane's release has followed its accepted writes
+    /// onto the wire. Every take waits on it (plan A2).
+    pub(super) release_done: Option<watch::Receiver<bool>>,
+    /// Resolves once this pane's own take was written, so a release that
+    /// undoes it never overtakes it.
+    pub(super) take_done: Option<watch::Receiver<bool>>,
     /// Keys and pastes typed between a focus change and the input grant that
     /// focus asked for, kept in the order they were typed. A person typing
     /// into a pane they just clicked is not asking to lose the first word
@@ -268,6 +281,10 @@ impl Pane {
             copy_seeded_from_history: false,
             required_created_flag: false,
             in_flight_write: None,
+            writer: None,
+            release_pending: false,
+            release_done: None,
+            take_done: None,
             pending_input: Vec::new(),
             pending_input_bytes: 0,
             control_request: None,
@@ -558,6 +575,14 @@ impl Pane {
         }
     }
 
+    /// This pane's release, while it is still waiting behind accepted writes.
+    pub(super) fn pending_release(&self) -> Option<watch::Receiver<bool>> {
+        self.release_done
+            .as_ref()
+            .filter(|done| !*done.borrow() && done.has_changed().is_ok())
+            .cloned()
+    }
+
     /// Record the host input grant that came with a granted writer lease. A
     /// direct native pane the host did not grant cannot type there, and
     /// gclient never falls back to daemon-mediated keys, so the pane returns
@@ -576,8 +601,12 @@ impl Pane {
 
     /// gterm refused a host write: `input_not_granted` once the daemon moved
     /// the grant, `terminal_gone` once the PTY went away. The stream stays
-    /// open; only this pane's claim to type on it is gone.
+    /// open; only this pane's claim to type on it is gone. A pane that
+    /// already let go has no claim left to lose (see [`Pane::let_go`]).
     pub(super) fn refuse_host_input(&mut self, code: &str) {
+        if self.let_go() {
+            return;
+        }
         self.host_input_granted = false;
         self.control = ControlState::Observe;
         self.take_back = true;
@@ -585,6 +614,13 @@ impl Pane {
         self.status_message = Some(format!(
             "terminal refused input ({code}); take control again"
         ));
+    }
+
+    /// Whether this pane released control and has not been granted it since.
+    /// A host refusal it meets then is for bytes the host read only after
+    /// the revoke, so their delivery is unconfirmed (A2.11).
+    pub(super) fn let_go(&self) -> bool {
+        self.release_done.is_some() && !self.is_held()
     }
 
     pub fn frame_source(&self) -> Option<&PaneFrameSource> {

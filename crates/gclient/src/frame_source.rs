@@ -151,8 +151,9 @@ impl From<crate::daemon::DaemonError> for FrameError {
 pub trait FrameSource {
     async fn send(&mut self, message: &ClientMessage) -> Result<(), FrameError>;
     /// Queue one host input verb -- `BindAttachment`, `Input` or `Paste` --
-    /// or a `SetViewport` without awaiting anything. Keys are typed and panes
-    /// sized on the render loop's thread, so this never waits on a socket, a
+    /// or a `SetViewport` or `SetScrollOffset` without awaiting anything. Keys
+    /// are typed and panes sized and scrolled on the render loop's thread, so
+    /// this never waits on a socket, a
     /// daemon or a writer task (#22573).
     fn send_input(&mut self, message: &ClientMessage) -> Result<(), FrameError>;
     async fn recv(&mut self) -> Result<ServerMessage, FrameError>;
@@ -287,6 +288,15 @@ impl PaneFrameSource {
             Self::Direct(_) | Self::Proxy(_) => None,
         }
     }
+
+    /// The receipt of a direct source's last queued write; the other
+    /// sources write nothing of their own.
+    pub fn take_write_receipt(&mut self) -> Option<WriteReceipt> {
+        match self {
+            Self::Direct(source) => source.take_write_receipt(),
+            Self::Proxy(_) | Self::Scripted(_) => None,
+        }
+    }
 }
 
 impl FrameSource for PaneFrameSource {
@@ -417,8 +427,15 @@ impl AsyncWrite for SourceWriteHalf {
     }
 }
 
+/// Resolves once a queued frame write reached the socket, or failed. It
+/// proves a local flush only, never that the host read the bytes.
+pub type WriteReceipt = oneshot::Receiver<Result<(), FrameError>>;
+
 pub struct UnixSocketFrameSource {
     outbound: mpsc::Sender<WriteRequest>,
+    /// The receipt of the last write `send_input` queued. The writer task
+    /// flushes in order, so it covers every write before it.
+    last_write: Option<WriteReceipt>,
     inbound: mpsc::Receiver<ServerMessage>,
     /// Messages read during the attach handshake, before the reader task owns
     /// the stream. They are delivered before any reader-task message so an
@@ -628,6 +645,7 @@ impl UnixSocketFrameSource {
 
         Self {
             outbound: write_tx,
+            last_write: None,
             inbound,
             pending,
             retired,
@@ -640,6 +658,12 @@ impl UnixSocketFrameSource {
             #[cfg(test)]
             write_pause_after,
         }
+    }
+
+    /// Takes the receipt of the last write `send_input` queued, if one is
+    /// still unclaimed.
+    pub fn take_write_receipt(&mut self) -> Option<WriteReceipt> {
+        self.last_write.take()
     }
 
     fn retired_reason(&self) -> Option<RetireReason> {
@@ -724,20 +748,24 @@ impl FrameSource for UnixSocketFrameSource {
                 | ClientMessage::Input { .. }
                 | ClientMessage::Paste { .. }
                 | ClientMessage::SetViewport { .. }
+                | ClientMessage::SetScrollOffset { .. }
         ) {
             return Err(FrameError::Protocol(
                 "message is not a host input verb".into(),
             ));
         }
-        // The writer task owns the socket. Dropping the `done` receiver only
-        // means nobody waits for this write; a failed write still retires the
-        // source, which the next call or `recv` reports.
-        let (done, _) = oneshot::channel();
+        // The writer task owns the socket. Nothing here waits for the write;
+        // a failed write still retires the source, which the next call or
+        // `recv` reports. The receipt is kept for a release to order behind.
+        let (done, receipt) = oneshot::channel();
         match self.outbound.try_send(WriteRequest {
             message: message.clone(),
             done,
         }) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                self.last_write = Some(receipt);
+                Ok(())
+            }
             Err(mpsc::error::TrySendError::Full(_)) => Err(FrameError::Backpressure),
             Err(mpsc::error::TrySendError::Closed(_)) => Err(self
                 .retired_reason()

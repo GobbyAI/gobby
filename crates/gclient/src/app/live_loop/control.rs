@@ -1,18 +1,21 @@
 //! Pane control for the live loop: focus, take/release control, and the
 //! daemon writes that carry pane input.
 
-use gobby_terminal::protocol::ClientMessage;
 use serde_json::{json, Value};
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::watch;
 use tokio::time::Instant;
 
-use crate::daemon::{Daemon, LiveDaemon};
-use crate::frame_source::{FrameError, FrameSource};
+use crate::daemon::LiveDaemon;
+use crate::frame_source::{FrameError, PaneFrameSource};
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
 
 use super::super::{
-    AttachState, ControlOutcome, ControlState, PaneId, Workspace, HOST_GRANT_UNAVAILABLE,
+    AttachState, ControlOutcome, ControlState, Pane, PaneId, Workspace, HOST_GRANT_UNAVAILABLE,
 };
+use super::jobs::{JobKey, JobOutcome, LoopJobs, Pending};
+use super::writer::PaneWriter;
 
 /// Status shown when a key lands in a pane whose lease another viewer took.
 pub const LEASE_LOST_INPUT: &str =
@@ -26,45 +29,39 @@ pub const READ_ONLY_INPUT: &str =
 pub const INPUT_QUEUE_FULL: &str = "too much typed while acquiring control; the rest was dropped";
 pub const HELD_BY_PEER: &str =
     "another viewer holds control: take control again or take back (prefix+shift+a) to type";
+/// Status shown when input reaches a pane whose release is still on its way.
+pub const FOCUS_MOVED_INPUT: &str = "Focus moved; input not sent.";
+/// Reported when typed input left gclient but its delivery is unknown.
+pub(super) const UNCONFIRMED_INPUT: &str = "Input delivery unconfirmed.";
 
-pub(super) async fn focus_live_pane(
-    workspace: &mut Workspace<LiveDaemon>,
-    pane_id: PaneId,
-) -> Result<(), FrameError> {
-    if !move_live_focus(workspace, pane_id).await? {
-        return Ok(());
+pub(super) fn focus_live_pane(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) {
+    if !move_live_focus(workspace, pane_id) {
+        return;
     }
     if !workspace.pane(pane_id).is_held() && !workspace.pane(pane_id).take_back {
         // Focus may claim a free pane, but must never interrupt a peer holder.
         workspace.request_control(pane_id, false);
     }
-    Ok(())
 }
 
 /// Focus `pane_id` without taking control (alt+click): the lease still
 /// follows focus away from the previous pane, and the new pane stays observed
 /// until a key or the indicator takes it.
-pub(super) async fn observe_live_pane(
-    workspace: &mut Workspace<LiveDaemon>,
-    pane_id: PaneId,
-) -> Result<(), FrameError> {
-    move_live_focus(workspace, pane_id).await.map(drop)
+pub(super) fn observe_live_pane(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) {
+    move_live_focus(workspace, pane_id);
 }
 
 /// Move focus and release the previous pane's lease. `false` when the loop
 /// is exiting or the daemon is not ready, in which case nothing moved.
-async fn move_live_focus(
-    workspace: &mut Workspace<LiveDaemon>,
-    pane_id: PaneId,
-) -> Result<bool, FrameError> {
+fn move_live_focus(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) -> bool {
     if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
-        return Ok(false);
+        return false;
     }
     let previous = workspace.focus.replace(pane_id);
     if let Some(previous) = previous.filter(|previous| *previous != pane_id) {
-        release_live_control(workspace, previous).await?;
+        release_live_control(workspace, previous);
     }
-    Ok(true)
+    true
 }
 
 /// An explicit take: the indicator, the context menu, `prefix+t`,
@@ -84,9 +81,10 @@ pub(super) fn take_live_control(workspace: &mut Workspace<LiveDaemon>, pane_id: 
 /// key typed since the click is still queued, so a grant flushes them in the
 /// order they were typed instead of crediting the first one and losing the
 /// rest (#22573).
-pub(super) async fn apply_control_outcome(
+pub(super) fn apply_control_outcome(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    jobs: &LoopJobs,
     outcome: ControlOutcome,
 ) {
     let (pane_id, request) = (outcome.pane_id, outcome.request);
@@ -104,7 +102,7 @@ pub(super) async fn apply_control_outcome(
     let reply = match outcome.reply {
         Ok(reply) => reply,
         Err(error) => {
-            retire_live_control(workspace, pane_id).await;
+            retire_live_control(workspace, jobs.outcomes(), pane_id);
             chrome.notify(Toast::error(error.to_string()));
             return;
         }
@@ -135,6 +133,10 @@ pub(super) async fn apply_control_outcome(
             ControlState::Observe
         };
         pane.take_back = !granted;
+        // A grant follows this pane's own release, which the take waited on.
+        if granted {
+            pane.release_done = None;
+        }
         if !granted {
             pane.clear_pending_input();
             chrome.notify(Toast::warning(refusal_reason));
@@ -152,50 +154,50 @@ pub(super) async fn apply_control_outcome(
     };
     for input in pending {
         let (data, paste) = input.parts();
-        if let Err(error) = send_live_write(workspace, pane_id, data, paste).await {
+        if let Err(error) = send_live_write(workspace, jobs, pane_id, data, paste) {
             chrome.notify(Toast::error(error.to_string()));
             break;
         }
     }
 }
 
-pub(super) async fn retire_live_control(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) {
+pub(super) fn retire_live_control(
+    workspace: &mut Workspace<LiveDaemon>,
+    outcomes: &UnboundedSender<JobOutcome>,
+    pane_id: PaneId,
+) {
     let Some((terminal_id, attachment_id, _)) =
         workspace.retire_indeterminate_control(pane_id, Instant::now())
     else {
         return;
     };
-    let _ = workspace
-        .daemon()
-        .notify(json!({
-            "type": "terminal_detach",
-            "request_id": uuid::Uuid::new_v4().to_string(),
-            "terminal_id": terminal_id,
-            "attachment_id": attachment_id,
-        }))
-        .await;
+    // The detach goes out behind whatever the pane already queued.
+    let message = json!({
+        "type": "terminal_detach",
+        "request_id": uuid::Uuid::new_v4().to_string(),
+        "terminal_id": terminal_id,
+        "attachment_id": attachment_id,
+    });
+    let pane = pane_writer(workspace, outcomes, pane_id);
+    let writer = pane.writer.as_ref().expect("writer spawned");
+    let _ = writer.enqueue_barrier(Some(message), None, None);
 }
 
-pub(super) async fn release_live_control(
-    workspace: &mut Workspace<LiveDaemon>,
-    pane_id: PaneId,
-) -> Result<(), FrameError> {
+/// Give up `pane_id`'s lease. This only marks the release; the loop sends it
+/// through the pane's writer, behind every write the pane already accepted,
+/// and every later take waits for it (plan A2).
+pub(super) fn release_live_control(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) {
     if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
-        return Ok(());
+        return;
     }
-    let pane = workspace.pane(pane_id);
+    let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
     // A pane whose grant is still in flight holds a lease the daemon is about
     // to give it, so leaving without releasing would leak it. The release verb
     // is idempotent, which is what makes this safe to send either way.
     if !pane.is_live() || !(pane.is_held() || pane.control_request.is_some()) {
-        return Ok(());
+        return;
     }
-    let message = json!({
-        "type": "terminal_release_control",
-        "terminal_id": pane.terminal_id,
-        "attachment_id": pane.attachment_id(),
-    });
-    let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
+    pane.release_pending = true;
     pane.control = ControlState::Observe;
     pane.take_back = false;
     // A grant still in flight for a pane we just left must not move it.
@@ -205,11 +207,74 @@ pub(super) async fn release_live_control(
     // whenever it next wins control would run a command long after it was
     // typed, which is worse than the words never landing (#22573).
     pane.clear_pending_input();
-    workspace
-        .daemon()
-        .notify(message)
-        .await
-        .map_err(FrameError::from)
+}
+
+/// Send the releases focus moves marked, each behind its pane's accepted
+/// writes and its own take, then start the recorded control request, which
+/// waits for every one of them before it writes the take.
+pub(super) fn start_live_control(
+    workspace: &mut Workspace<LiveDaemon>,
+    jobs: &LoopJobs,
+    control: &UnboundedSender<ControlOutcome>,
+) {
+    let releasing: Vec<PaneId> = workspace
+        .panes
+        .iter()
+        .filter(|(_, pane)| pane.release_pending)
+        .map(|(pane_id, _)| *pane_id)
+        .collect();
+    for pane_id in releasing {
+        enqueue_release(workspace, jobs.outcomes(), pane_id);
+    }
+    workspace.start_control_request(control);
+}
+
+/// Queue a pane's pending release behind its accepted writes and its take.
+fn enqueue_release(
+    workspace: &mut Workspace<LiveDaemon>,
+    outcomes: &UnboundedSender<JobOutcome>,
+    pane_id: PaneId,
+) -> watch::Receiver<bool> {
+    let pane = pane_writer(workspace, outcomes, pane_id);
+    pane.release_pending = false;
+    let message = json!({
+        "type": "terminal_release_control",
+        "terminal_id": pane.terminal_id,
+        "attachment_id": pane.attachment_id(),
+    });
+    let after = pane.take_done.take();
+    // A direct pane typed on its frame socket: the release follows the local
+    // flush of those bytes, which is all gclient can order (A2.11).
+    let flushed = pane
+        .frame_source_mut()
+        .and_then(PaneFrameSource::take_write_receipt);
+    let writer = pane.writer.as_ref().expect("writer spawned");
+    let done = writer.enqueue_barrier(Some(message), after, flushed);
+    pane.release_done = Some(done.clone());
+    done
+}
+
+/// What a close of this pane waits on: its pending release, which follows
+/// every write accepted before it, or else a barrier behind those writes.
+/// A pane keeps at most one barrier pending, so a release already queued is
+/// reused rather than joined by another.
+pub(super) fn close_barrier(
+    workspace: &mut Workspace<LiveDaemon>,
+    outcomes: &UnboundedSender<JobOutcome>,
+    pane_id: PaneId,
+) -> Option<watch::Receiver<bool>> {
+    let pane = workspace.panes.get(&pane_id)?;
+    if pane.release_pending {
+        return Some(enqueue_release(workspace, outcomes, pane_id));
+    }
+    if let Some(release) = pane.pending_release() {
+        return Some(release);
+    }
+    let writer = pane
+        .writer
+        .as_ref()
+        .filter(|writer| writer.serves(workspace.daemon().generation()))?;
+    Some(writer.enqueue_barrier(None, None, None))
 }
 
 /// Keys for a held pane go out at once; an observed pane takes control
@@ -218,9 +283,10 @@ pub(super) async fn release_live_control(
 /// control is taken explicitly (the scripted path's `read_only` refusal),
 /// and keys typed while a take is already pending are dropped; the status
 /// line says so in both cases.
-pub(super) async fn send_live_input(
+pub(super) fn send_live_input(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    jobs: &LoopJobs,
     pane_id: PaneId,
     data: &[u8],
     paste: bool,
@@ -236,13 +302,13 @@ pub(super) async fn send_live_input(
         && (workspace.host_recovered.contains(&pane_id)
             || (!workspace.daemon_ready() && pane.writable()))
     {
-        return send_live_write(workspace, pane_id, data, paste).await;
+        return send_live_write(workspace, jobs, pane_id, data, paste);
     }
     if !workspace.daemon_ready() {
         return Ok(());
     }
     if workspace.pane(pane_id).writable() {
-        return send_live_write(workspace, pane_id, data, paste).await;
+        return send_live_write(workspace, jobs, pane_id, data, paste);
     }
     let acquiring = workspace.awaiting_control(pane_id);
     let pane = workspace.pane(pane_id);
@@ -281,13 +347,14 @@ pub(super) async fn send_live_input(
 /// a grant already in flight, so the click that asked for that grant does not
 /// lose the report it produced (#22573). A report that overruns the queue is
 /// dropped without a toast, because pointer motion would make a storm of them.
-pub(super) async fn send_live_report(
+pub(super) fn send_live_report(
     workspace: &mut Workspace<LiveDaemon>,
+    jobs: &LoopJobs,
     pane_id: PaneId,
     data: &[u8],
 ) -> Result<(), FrameError> {
     if workspace.pane(pane_id).writable() {
-        return send_live_write(workspace, pane_id, data, false).await;
+        return send_live_write(workspace, jobs, pane_id, data, false);
     }
     if !workspace.awaiting_control(pane_id) {
         return Ok(());
@@ -297,50 +364,137 @@ pub(super) async fn send_live_report(
     Ok(())
 }
 
-pub(super) async fn send_live_write(
+/// The pane, with a writer serving the current connection.
+fn pane_writer<'a>(
+    workspace: &'a mut Workspace<LiveDaemon>,
+    outcomes: &UnboundedSender<JobOutcome>,
+    pane_id: PaneId,
+) -> &'a mut Pane {
+    let generation = workspace.daemon().generation();
+    let writer = (!workspace
+        .pane(pane_id)
+        .writer
+        .as_ref()
+        .is_some_and(|writer| writer.serves(generation)))
+    .then(|| PaneWriter::spawn(workspace.daemon(), outcomes, pane_id));
+    let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
+    if writer.is_some() {
+        pane.writer = writer;
+    }
+    pane
+}
+
+/// Hand one write to the pane's writer, which sends it after the writes
+/// typed before it. Nothing here waits on the daemon.
+pub(super) fn send_live_write(
     workspace: &mut Workspace<LiveDaemon>,
+    jobs: &LoopJobs,
     pane_id: PaneId,
     data: &[u8],
     paste: bool,
 ) -> Result<(), FrameError> {
-    let message = {
-        let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
-        // A direct native pane types on its own frame socket: no write
-        // sequence, no in-flight write, no daemon round trip per key (#22573).
-        // A pane restored by a host-local reconnect keeps typing even after a
-        // later daemon outage cleared its lease: the carried grant lives at
-        // the host, which enforces it, and the daemon was never part of that
-        // reconnect (#23076).
-        let host_recovered = workspace.host_recovered.contains(&pane_id);
-        if pane.direct_input() && (host_recovered || pane.writable()) {
-            return pane.send_host_input(data, paste);
-        }
-        if !pane.writable() {
-            return Ok(());
-        }
-        pane.client_write_seq += 1;
-        pane.in_flight_write = Some(pane.client_write_seq);
-        let mut message = json!({
-            "type": if paste { "terminal_paste" } else { "terminal_input" },
-            "terminal_id": pane.terminal_id,
-            "attachment_id": pane.attachment_id(),
-            "client_write_seq": pane.client_write_seq,
-        });
-        message[if paste { "text" } else { "data" }] = json!(String::from_utf8_lossy(data));
-        message
-    };
-    match workspace.daemon().send(message).await {
-        Ok(reply) => {
-            apply_live_write_outcome(workspace, &reply);
-            Ok(())
-        }
-        Err(error) => {
+    let generation = workspace.daemon().generation();
+    // A direct native pane types on its own frame socket: no write
+    // sequence, no in-flight write, no daemon round trip per key (#22573).
+    // A pane restored by a host-local reconnect keeps typing even after a
+    // later daemon outage cleared its lease: the carried grant lives at
+    // the host, which enforces it, and the daemon was never part of that
+    // reconnect (#23076).
+    let host_recovered = workspace.host_recovered.contains(&pane_id);
+    let pane = workspace.pane(pane_id);
+    let direct = pane.direct_input() && (host_recovered || pane.writable());
+    if !direct && !pane.writable() {
+        if pane.release_pending || pane.pending_release().is_some() {
             let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
+            pane.status_message = Some(FOCUS_MOVED_INPUT.to_string());
+        }
+        return Ok(());
+    }
+    if direct {
+        let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
+        return pane.send_host_input(data, paste);
+    }
+    let pane = pane_writer(workspace, jobs.outcomes(), pane_id);
+    let client_write_seq = pane.client_write_seq + 1;
+    let mut body = json!({
+        "type": if paste { "terminal_paste" } else { "terminal_input" },
+        "terminal_id": pane.terminal_id,
+        "attachment_id": pane.attachment_id(),
+        "client_write_seq": client_write_seq,
+    });
+    body[if paste { "text" } else { "data" }] = json!(String::from_utf8_lossy(data));
+    let backlog = FrameError::Backpressure.to_string();
+    let writer = pane.writer.as_ref().expect("writer spawned");
+    match writer.enqueue(generation, client_write_seq, body, data.len()) {
+        Ok(true) => {
+            pane.client_write_seq = client_write_seq;
+            pane.in_flight_write = Some(client_write_seq);
+            if pane.status_message.as_deref() == Some(backlog.as_str()) {
+                pane.status_message = None;
+            }
+        }
+        Ok(false) => {}
+        Err(error) => pane.status_message = Some(error.to_string()),
+    }
+    Ok(())
+}
+
+/// Land one write's outcome from the pane writer. A write whose reply never
+/// came leaves the pane read-only until control is taken again.
+pub(super) fn apply_write_result(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    bytes: usize,
+    reply: &Value,
+) {
+    if reply.get("outcome").and_then(Value::as_str) == Some("refused") {
+        let reason = reply
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        chrome.notify(
+            Toast::warning(format!("Input refused: {reason}.")).with_body(format!("{bytes} bytes")),
+        );
+    }
+    apply_live_write_outcome(workspace, reply);
+}
+
+/// A write whose send failed may or may not have reached the terminal, so
+/// the pane stops typing until control is taken again. Only the connection
+/// it was typed on still holds that pane state.
+pub(super) fn apply_write_unconfirmed(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    pane_id: PaneId,
+    current: bool,
+) {
+    if current {
+        if let Some(pane) = workspace.panes.get_mut(&pane_id) {
             pane.in_flight_write = None;
             pane.control = ControlState::UncertainReadOnly;
-            Err(FrameError::from(error))
         }
     }
+    chrome.notify(Toast::warning(UNCONFIRMED_INPUT));
+}
+
+/// Writes dropped unsent behind an unconfirmed write or a connection change.
+pub(super) fn apply_write_abandoned(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    pane_id: PaneId,
+    messages: usize,
+    bytes: usize,
+    current: bool,
+) {
+    if current {
+        if let Some(pane) = workspace.panes.get_mut(&pane_id) {
+            pane.in_flight_write = None;
+        }
+    }
+    chrome.notify(
+        Toast::warning(format!("Input not sent: {bytes} bytes."))
+            .with_body(format!("{messages} writes")),
+    );
 }
 
 /// Scroll `pane_id`'s viewport to `rows` above the live edge on whichever
@@ -349,23 +503,20 @@ pub(super) async fn send_live_write(
 /// so the chrome draws the new position before `ScrollOffsetApplied`
 /// confirms it, as the scripted `Workspace::set_scroll_offset` does. A pane
 /// without a frame source has nothing to scroll.
-pub(super) async fn set_live_scroll_offset(
+pub(super) fn set_live_scroll_offset(
     workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    jobs: &mut LoopJobs,
     pane_id: PaneId,
     rows: u32,
-) -> Result<(), FrameError> {
+) {
     if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
-        return Ok(());
+        return;
     }
     let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
-    let Some(source) = pane.frame_source_mut() else {
-        return Ok(());
-    };
-    source
-        .send(&ClientMessage::SetScrollOffset {
-            rows_from_live_edge: rows,
-        })
-        .await?;
+    if pane.frame_source().is_none() {
+        return;
+    }
     if pane.scroll_offset != rows {
         pane.scrolled_at = Some(std::time::Instant::now());
     }
@@ -373,7 +524,12 @@ pub(super) async fn set_live_scroll_offset(
     if rows == 0 {
         pane.new_output = false;
     }
-    Ok(())
+    jobs.offer(
+        workspace,
+        chrome,
+        JobKey::Scroll(pane_id),
+        Pending::Scroll(pane_id, rows),
+    );
 }
 
 pub(super) fn apply_live_write_outcome(workspace: &mut Workspace<LiveDaemon>, message: &Value) {
@@ -382,10 +538,21 @@ pub(super) fn apply_live_write_outcome(workspace: &mut Workspace<LiveDaemon>, me
     };
     let outcome = message.get("outcome").and_then(Value::as_str).unwrap_or("");
     let reason = message.get("reason").and_then(Value::as_str).unwrap_or("");
+    let seq = message.get("client_write_seq").and_then(Value::as_u64);
     if let Some(pane) = workspace.pane_for_attachment_mut(attachment_id) {
-        pane.in_flight_write = None;
+        // Writes queued behind this one are still in flight.
+        if seq.is_none_or(|seq| pane.in_flight_write == Some(seq)) {
+            pane.in_flight_write = None;
+        }
         match outcome {
-            "delivered" if pane.control != ControlState::LeaseLost => {
+            // A write queued before a release or observe may be confirmed
+            // after it; that confirmation never hands the lease back.
+            "delivered"
+                if !matches!(
+                    pane.control,
+                    ControlState::LeaseLost | ControlState::Observe
+                ) =>
+            {
                 pane.control = ControlState::Held;
             }
             "indeterminate" => pane.control = ControlState::UncertainReadOnly,

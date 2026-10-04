@@ -5997,13 +5997,23 @@ async fn wheel_and_scrollbar_drive_scrollback() {
             )
             .await;
         }
-        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 4).await;
+        // One offset is in flight per pane and the latest wish replaces a
+        // pending one (plan A2), so a burst may skip middle offsets but always
+        // lands on the last.
+        wait_until(|| offsets().last() == Some(&10)).await;
         settle_live_event().await;
-        assert_eq!(
-            offsets(),
-            vec![3, 6, 9, 10],
-            "up steps three rows a notch, clamps at the top, and a notch that cannot move sends nothing"
+        let burst = offsets();
+        assert!(
+            burst.windows(2).all(|pair| pair[0] < pair[1])
+                && burst.iter().all(|rows| rows % 3 == 0 || *rows == 10),
+            "up steps three rows a notch and clamps at the top: {burst:?}"
         );
+        assert_eq!(
+            burst.iter().filter(|rows| **rows == 10).count(),
+            1,
+            "a notch that cannot move sends nothing: {burst:?}"
+        );
+        let base = burst.len();
         send_mouse(
             &input_tx,
             MouseEventKind::ScrollDown,
@@ -6012,9 +6022,9 @@ async fn wheel_and_scrollbar_drive_scrollback() {
             KeyModifiers::NONE,
         )
         .await;
-        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 5).await;
+        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", base + 1).await;
         assert_eq!(
-            offsets()[4],
+            offsets()[base],
             7,
             "down steps three rows toward the live edge"
         );
@@ -6034,9 +6044,9 @@ async fn wheel_and_scrollbar_drive_scrollback() {
             KeyModifiers::NONE,
         )
         .await;
-        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 6).await;
+        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", base + 2).await;
         assert_eq!(
-            offsets()[5],
+            offsets()[base + 1],
             jump,
             "a track click jumps the scrollback there"
         );
@@ -6080,9 +6090,9 @@ async fn wheel_and_scrollbar_drive_scrollback() {
             KeyModifiers::NONE,
         )
         .await;
-        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 7).await;
+        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", base + 3).await;
         assert_eq!(
-            offsets()[6],
+            offsets()[base + 2],
             dragged,
             "a thumb drag maps the drop row to an offset"
         );
@@ -6097,7 +6107,7 @@ async fn wheel_and_scrollbar_drive_scrollback() {
         settle_live_event().await;
         assert_eq!(
             offsets().len(),
-            7,
+            base + 3,
             "a thumb press and its release send nothing of their own"
         );
 
@@ -6150,7 +6160,7 @@ async fn wheel_and_scrollbar_drive_scrollback() {
         );
         assert_eq!(
             offsets().len(),
-            7,
+            base + 3,
             "a pane on its alternate screen never scrolls scrollback"
         );
         drop(input_tx);
@@ -11123,6 +11133,7 @@ async fn worktree_flows_round_trip_the_daemon() {
     create_worktree(
         &mut workspace,
         &mut chrome,
+        &mpsc::unbounded_channel().0,
         "project-1",
         "feature",
         Some("0.5.0"),
@@ -12763,6 +12774,9 @@ async fn closing_an_unshown_agent_row_kills_that_row_not_the_focused_pane() {
         // Unblocked row: focus, open in new tab, mark seen, take control, close.
         press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 4)).await;
         wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
+        // The kill is a job: its reply drops the pane and relists.
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", 2).await;
+        settle_live_event().await;
         drop(input_tx);
     };
 
@@ -12949,9 +12963,14 @@ async fn an_unknown_sidebar_id_still_resolves_to_no_pane() {
     // Driven outside the loop, where ordering is deterministic. A bare
     // terminal id without the row prefix is not a row id either.
     for entry in ["run:missing", "session:missing", "terminal-a"] {
-        focus_agent(&mut workspace, &mut chrome, entry)
-            .await
-            .expect("an unresolved row is not an error");
+        focus_agent(
+            &mut workspace,
+            &mut chrome,
+            &mpsc::unbounded_channel().0,
+            entry,
+        )
+        .await
+        .expect("an unresolved row is not an error");
         assert_eq!(chrome.focused_pane(), Some(pane), "{entry} moves nothing");
     }
     mock.shutdown().await;
