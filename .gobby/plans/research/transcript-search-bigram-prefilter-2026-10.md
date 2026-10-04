@@ -49,15 +49,19 @@ was 9.00/9.20/10.49 at start and 8.83/10.50/10.82 at end.
 
 ## Results
 
-| Query | Baseline first call | Baseline full pagination | Prefilter call | Candidates | Scan per call |
+| Query | Baseline first call | Baseline full pagination | Prefilter call (= full pagination) | Candidates | Scan per call |
 | --- | --- | --- | --- | --- | --- |
-| miss, distinct grams | 0.317 s, 2000 groups | 100 calls, 200k groups, 27.99 s | 0.687 s, 0 groups | 0 | 0.521 s |
-| miss, common grams (`please check item 2000000`) | 0.233 s | 100 calls, 27.33 s | 3.765 s, 185 groups | 185 | 4.914 s |
-| rare hit, common grams (`please check item 99999`) | 0.282 s | 100 calls, 40.20 s | 6.186 s, 1296 groups | 1296 | 4.629 s |
-| rare hit, distinct needle | 0.187 s | 100 calls, 25.81 s | 0.380 s, 1 group | 1 | 0.392 s |
-| common hit (`lorem ipsum`) | 0.072 s, 200 groups | first page only | 2.913 s, 20 groups | 100,000 | 2.634 s |
+| miss, distinct grams | 0.317 s, 2000 groups, 1 resolution | 100 calls, 200k groups, 27.99 s | 0.687 s, 0 groups, 1 resolution | 0 | 0.521 s |
+| miss, common grams (`please check item 2000000`) | 0.233 s, 2000 groups, 1 resolution | 100 calls, 200k groups, 27.33 s | 3.765 s, 185 groups, 1 resolution | 185 | 4.914 s |
+| rare hit, common grams (`please check item 99999`) | 0.282 s, 2000 groups, 1 resolution | 100 calls, 200k groups, 40.20 s | 6.186 s, 1296 groups, 1 resolution | 1296 | 4.629 s |
+| rare hit, distinct needle | 0.187 s, 2000 groups, 1 resolution | 100 calls, 200k groups, 25.81 s | 0.380 s, 1 group, 1 resolution | 1 | 0.392 s |
+| common hit (`lorem ipsum`) | 0.072 s, 200 groups, 1 resolution | first page only | 2.913 s, 20 groups, 1 resolution | 100,000 | 2.634 s |
 
-Every prefilter query finished in a single call. At 200k, the snippet sequences
+Every prefilter query finished in a single call, so its full pagination is that
+one call: one resolution and the groups shown. The draft emitted only
+first-call resolutions. It recorded no full-pagination resolution total for the
+baseline; the committed-harness rerun below records it (one per call: 100 for
+each miss and rare hit, 5000 for the common hit). At 200k, the snippet sequences
 were identical across both arms for all five queries. The full-message identity
 check above reproduces that equality at 3k, which supports the superset
 guarantee on this fixture.
@@ -80,11 +84,11 @@ The baseline arm finished uncontended and reproduces the draft numbers:
 
 | Query | First call | Full pagination | Matches |
 | --- | --- | --- | --- |
-| miss, distinct grams | 0.312 s, 2000 groups | 100 calls, 200k groups, 29.21 s | 0 |
-| miss, common grams | 0.303 s | 100 calls, 27.03 s | 0 |
-| rare hit, common grams | 0.252 s | 100 calls, 24.75 s | 1 |
-| rare hit, distinct needle | 0.272 s | 100 calls, 25.15 s | 1 |
-| common hit | 0.034 s, 200 groups | 5000 calls, 999,600 groups, 140.38 s | 100,000 |
+| miss, distinct grams | 0.312 s, 2000 groups, 1 resolution | 100 calls, 200k groups, 100 resolutions, 29.21 s | 0 |
+| miss, common grams | 0.303 s, 2000 groups, 1 resolution | 100 calls, 200k groups, 100 resolutions, 27.03 s | 0 |
+| rare hit, common grams | 0.252 s, 2000 groups, 1 resolution | 100 calls, 200k groups, 100 resolutions, 24.75 s | 1 |
+| rare hit, distinct needle | 0.272 s, 2000 groups, 1 resolution | 100 calls, 200k groups, 100 resolutions, 25.15 s | 1 |
+| common hit | 0.034 s, 200 groups, 1 resolution | 5000 calls, 999,600 groups, 5000 resolutions, 140.38 s | 100,000 |
 
 The index cold build took 29.2 s. The common-term query now paginates to
 exhaustion (503d724862) and yields all 100,000 matches; its sha256 is
@@ -92,8 +96,8 @@ exhaustion (503d724862) and yields all 100,000 matches; its sha256 is
 
 The six prefilter shards never reported. Each loads the 743 MB fixture
 and signs its share in its own interpreter. On a memory-starved host (about
-140 MB free, 5-minute load 20-27) each shard got 15-22% of a CPU, about
-2m45s CPU in 2h41m. The Orchestrator stopped the run gracefully at about
+140 MB free, 5-minute load 20-27) each shard showed 15-22% of a CPU in
+instantaneous samples, but averaged only about 2m45s CPU over 2h41m (under 2%). The Orchestrator stopped the run gracefully at about
 09:00 CDT so that queued work could proceed. Prefilter timings from any sharded run
 are contended by design and are not evidence; the verdict above rests on the
 single-process draft measurements. Full-message identity across both arms is
