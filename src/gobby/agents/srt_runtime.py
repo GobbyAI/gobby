@@ -590,6 +590,7 @@ async def prepare_sandbox_launch(
     env: Mapping[str, str],
     allow_run_unix_sockets: bool = False,
     phase_timings_ms: MutableMapping[str, float] | None = None,
+    prewarm_pre_commit_store: bool = True,
 ) -> SandboxLaunch:
     """Resolve and preflight the explicit backend without any fallback."""
     from gobby.agents.sandbox import compute_sandbox_paths
@@ -634,6 +635,7 @@ async def prepare_sandbox_launch(
             short_tmp=(
                 config.backend == "srt" and allow_run_unix_sockets and sys.platform == "darwin"
             ),
+            prewarm_pre_commit_store=prewarm_pre_commit_store,
         )
     finally:
         finish_spawn_phase(

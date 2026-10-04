@@ -1141,3 +1141,59 @@ async def test_prepare_srt_launch_grants_write_on_the_managed_grant_lock_only(
     assert str(grant_path.resolve()) not in allowed_writes
     assert str(run_root.resolve()) not in allowed_writes
     assert str(grant_path.resolve()) in policy["filesystem"]["allowRead"]
+
+
+class _StopAfterRunPaths(Exception):
+    pass
+
+
+async def test_prepare_sandbox_launch_forwards_pre_commit_prewarm_opt_out(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    forwarded: list[bool] = []
+
+    def fake_run_paths(
+        run_id: str,
+        env: dict[str, str],
+        *,
+        workspace: Path,
+        short_tmp: bool = False,
+        prewarm_pre_commit_store: bool = True,
+    ) -> None:
+        forwarded.append(prewarm_pre_commit_store)
+        raise _StopAfterRunPaths
+
+    monkeypatch.setattr(
+        srt_runtime, "_resolve_provider_executable", lambda _provider, _env: "claude"
+    )
+    monkeypatch.setattr(srt_runtime, "prepare_sandbox_run_paths", fake_run_paths)
+    config = SandboxConfig(enabled=True, backend="srt", allow_network=False)
+
+    with pytest.raises(_StopAfterRunPaths):
+        await prepare_sandbox_launch(
+            config=config,
+            provider="claude",
+            workspace_path=str(tmp_path),
+            run_id="run-default",
+            resolver=None,
+            daemon_port=60887,
+            websocket_port=60888,
+            api_base=None,
+            env={},
+        )
+    with pytest.raises(_StopAfterRunPaths):
+        await prepare_sandbox_launch(
+            config=config,
+            provider="claude",
+            workspace_path=str(tmp_path),
+            run_id="run-opt-out",
+            resolver=None,
+            daemon_port=60887,
+            websocket_port=60888,
+            api_base=None,
+            env={},
+            prewarm_pre_commit_store=False,
+        )
+
+    assert forwarded == [True, False]

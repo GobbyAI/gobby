@@ -138,6 +138,8 @@ class AgentDefinitionBody(BaseModel):
             "Egress for the agent's SRT sandbox; `trusted` is set only by bundled templates"
         ),
     )
+    # False skips the sandbox's pre-commit store prewarm for definitions that never commit.
+    prewarm_pre_commit_store: StrictBool = True
     isolation: Literal["none", "worktree", "clone", "inherit"] | None = "inherit"
     base_branch: str = "inherit"
     timeout: float = 0

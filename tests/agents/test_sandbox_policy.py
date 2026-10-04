@@ -663,3 +663,40 @@ def test_managed_grant_lock_path_refuses_a_bootstrap_outside_the_managed_root(
         )
         is None
     )
+
+
+def test_prepare_sandbox_run_paths_skips_pre_commit_prewarm_when_definition_opts_out(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    source = _operator_store(tmp_path / "operator-pre-commit", "operator")
+    monkeypatch.setenv("PRE_COMMIT_HOME", str(source))
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+    spare, _temporary = sandbox_policy.pre_commit_store_spare_paths()
+    _operator_store(spare, "spare")
+    spare_inode = spare.stat().st_ino
+    clones: list[Path] = []
+    schedules: list[Path] = []
+    monkeypatch.setattr(
+        sandbox_policy,
+        "_clone_pre_commit_store",
+        lambda _source, destination: clones.append(destination),
+    )
+    monkeypatch.setattr(sandbox_policy, "_schedule_pre_commit_store_spare", schedules.append)
+
+    paths = sandbox_policy.prepare_sandbox_run_paths(
+        "run-1",
+        {},
+        workspace=workspace,
+        prewarm_pre_commit_store=False,
+    )
+
+    destination = Path(paths.environment("codex")["XDG_CACHE_HOME"]) / "pre-commit"
+    assert not destination.exists()
+    assert spare.stat().st_ino == spare_inode
+    assert (spare / "db.db").read_text(encoding="utf-8") == "database:spare\n"
+    assert clones == []
+    assert schedules == []
+    assert sandbox_policy._pre_commit_spare_thread is None
