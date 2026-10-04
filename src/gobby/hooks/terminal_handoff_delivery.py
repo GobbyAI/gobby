@@ -574,14 +574,17 @@ async def _settle_delivery(
             raise_if_closed=True,
         )
     except TerminalDeliveryAdmissionClosedError as exc:
-        _compensate_delivery_failure(db, claimed, str(exc))
+        # The daemon is stopping, so a live wake would be lost; queue the prompt durably.
+        failure = _compensate_delivery_failure(db, claimed, str(exc))
+        await _queue_failed_attempt(db, claimed.session_id, failure)
     except Exception as exc:
         logger.warning(
             "Terminal handoff delivery scope failed for session %s",
             claimed.session_id,
             exc_info=True,
         )
-        _compensate_delivery_failure(db, claimed, str(exc))
+        failure = _compensate_delivery_failure(db, claimed, str(exc))
+        await _wake_failed_attempt(db, claimed.session_id, failure)
 
 
 def _delivery_succeeded(result: Mapping[str, Any], *, clear_session: bool) -> bool:
@@ -724,18 +727,14 @@ async def _wake_failed_attempt(
     """Tell the seat its attempt failed; an idle seat otherwise waits for a keystroke."""
     if failure is None:
         return
-    attempt_id = str(failure["attempt_id"])
-    message = (
-        f"Gobby handoff delivery failed: {failure['reason']}. "
-        f"{failure['retry_guidance']} {failure['recovery_guidance']}"
-    )
     dispatcher = getattr(get_app_context(), "wake_dispatcher", None)
     if dispatcher is None:
-        await asyncio.to_thread(persist_pull_prompt_message, db, session_id, message, attempt_id)
+        await _queue_failed_attempt(db, session_id, failure)
         return
+    attempt_id = str(failure["attempt_id"])
     await dispatcher.wake(
         session_id,
-        message,
+        _failed_attempt_prompt(failure),
         {
             "message_type": "handoff_delivery_failed",
             "completion_id": f"handoff-failed:{attempt_id}",
@@ -743,6 +742,28 @@ async def _wake_failed_attempt(
             "error_code": failure.get("error_code"),
         },
         bypass_debounce=True,
+    )
+
+
+async def _queue_failed_attempt(
+    db: HubDatabase, session_id: str, failure: Mapping[str, Any] | None
+) -> None:
+    """Persist the failed-attempt pull prompt for the seat's next turn, without a live wake."""
+    if failure is None:
+        return
+    await asyncio.to_thread(
+        persist_pull_prompt_message,
+        db,
+        session_id,
+        _failed_attempt_prompt(failure),
+        str(failure["attempt_id"]),
+    )
+
+
+def _failed_attempt_prompt(failure: Mapping[str, Any]) -> str:
+    return (
+        f"Gobby handoff delivery failed: {failure['reason']}. "
+        f"{failure['retry_guidance']} {failure['recovery_guidance']}"
     )
 
 

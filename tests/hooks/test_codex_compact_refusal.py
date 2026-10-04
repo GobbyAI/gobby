@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.terminal_delivery import TerminalDeliveryAdmissionClosedError
 from gobby.events.live_wake import handoff_delivery_skip
 from gobby.hooks import terminal_handoff_delivery
 from gobby.sessions.compact_continuation import (
@@ -203,6 +204,67 @@ async def test_readiness_timeout_without_receipt_leaves_the_seat_wakeable_and_wo
     assert session_id == SESSION_ID
     assert f"failed_attempt_id={ATTEMPT_ID!r}" in message
     assert result["error_code"] == "compact_unconfirmed"
+
+
+async def _settle_with_scope_failure(
+    claimed: ClaimedHandoffDelivery,
+    session_manager: SessionManager,
+    app: SimpleNamespace,
+    error: Exception,
+) -> None:
+    with (
+        patch(f"{_DELIVERY}.shielded_terminal_delivery", new=AsyncMock(side_effect=error)),
+        patch(f"{_DELIVERY}.get_app_context", return_value=app),
+    ):
+        await terminal_handoff_delivery._settle_delivery(
+            claimed,
+            session_manager=session_manager,
+            agent_run_manager=MagicMock(),
+            terminal_manager=None,
+            terminal_runtime_registry=None,
+        )
+
+
+async def test_delivery_scope_failure_wakes_the_restored_seat(hub_db: HubDatabase) -> None:
+    session_manager = _session_manager(hub_db)
+    claimed = _claim(hub_db)
+    dispatcher = _wake_dispatcher()
+
+    await _settle_with_scope_failure(
+        claimed,
+        session_manager,
+        SimpleNamespace(wake_dispatcher=dispatcher),
+        RuntimeError("delivery scope broke"),
+    )
+
+    _assert_seat_can_continue(hub_db, session_manager)
+    dispatcher.wake.assert_awaited_once()
+    session_id, message, result = dispatcher.wake.await_args.args
+    assert session_id == SESSION_ID
+    assert f"failed_attempt_id={ATTEMPT_ID!r}" in message
+    assert result["attempt_id"] == ATTEMPT_ID
+
+
+async def test_admission_closed_at_shutdown_queues_the_pull_prompt_instead_of_waking(
+    hub_db: HubDatabase,
+) -> None:
+    session_manager = _session_manager(hub_db)
+    claimed = _claim(hub_db)
+    dispatcher = _wake_dispatcher()
+
+    await _settle_with_scope_failure(
+        claimed,
+        session_manager,
+        SimpleNamespace(wake_dispatcher=dispatcher),
+        TerminalDeliveryAdmissionClosedError("terminal delivery is not running"),
+    )
+
+    # The daemon is stopping, so a live wake would be lost; the durable prompt outlives it.
+    _assert_seat_can_continue(hub_db, session_manager)
+    dispatcher.wake.assert_not_awaited()
+    queued = InterSessionMessageManager(hub_db).get_undelivered_messages(SESSION_ID)
+    assert len(queued) == 1
+    assert f"failed_attempt_id={ATTEMPT_ID!r}" in queued[0].content
 
 
 async def test_failed_attempt_without_a_wake_dispatcher_queues_its_pull_prompt(
