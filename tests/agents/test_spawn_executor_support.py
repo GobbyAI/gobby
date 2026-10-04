@@ -10,6 +10,7 @@ def test_codex_shell_tmpdir_points_at_sandbox_scratchpad() -> None:
 
     assert f'shell_environment_policy.set.TMPDIR="{scratchpad}"' in overrides
     assert f'shell_environment_policy.set.TMPPREFIX="{scratchpad}/zsh"' in overrides
+    assert 'shell_environment_policy.set.OCR_NO_UPDATE="1"' in overrides
 
 
 def test_codex_shell_tmpdir_is_omitted_without_sandbox() -> None:
