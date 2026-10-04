@@ -21,9 +21,40 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_pre_commit_store_spare() -> Iterator[None]:
+def _cleanup_pre_commit_store_spare(tmp_path: Path) -> Iterator[None]:
     yield
     sandbox_policy.shutdown_pre_commit_store_spare()
+    # Tests chmod operator stores read-only; leaving them so turns pytest's later
+    # basetemp cleanup into concurrent garbage-* sweeps that fail with Errno 66.
+    _restore_user_write(tmp_path)
+
+
+def _restore_user_write(root: Path) -> None:
+    # Top-down, so each directory is listable before its children are visited.
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        directory.chmod(directory.stat().st_mode | stat.S_IRWXU)
+        pending.extend(
+            path for path in directory.iterdir() if path.is_dir() and not path.is_symlink()
+        )
+
+
+def test_read_only_operator_stores_are_writable_after_teardown(tmp_path: Path) -> None:
+    source = _operator_store(tmp_path / "operator-pre-commit", "teardown")
+    (source / "repoabc" / "hook.py").chmod(0o400)
+    (source / "repoabc").chmod(0o500)
+    source.chmod(0o500)
+
+    _restore_user_write(tmp_path)
+
+    assert all(
+        path.stat().st_mode & stat.S_IWUSR
+        for path in (tmp_path, *tmp_path.rglob("*"))
+        if path.is_dir()
+    )
+    shutil.rmtree(source)
+    assert not source.exists()
 
 
 def _workspace(tmp_path: Path, *, configured: bool = True) -> Path:
