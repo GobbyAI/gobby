@@ -3,66 +3,181 @@ use gobby_client::app::{
     ModalOutcome,
 };
 use gobby_client::daemon::LiveDaemon;
+use gobby_client::theme::{Theme, ThemeKind};
 use gobby_client::ui::dialogs::{render_dialog, Dialog};
+use gobby_client::ui::marks::{self, MarkPalette};
 use gobby_client::ui::menu_bar::MenuBarMenu;
 use gobby_client::ui::Chrome;
 use gobby_client::ui::Mode;
 use gobby_client::Workspace;
 use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 use ratatui::Terminal;
 use std::time::Duration;
 mod mock_daemon;
 use mock_daemon::MockDaemon;
 
-#[test]
-fn about_dialog_is_72_by_15_with_the_goblin_and_the_stated_rows() {
-    let mut chrome = Chrome::dark();
+fn about_chrome(kind: ThemeKind) -> Chrome {
+    let mut chrome = Chrome::new(Theme::new(kind));
     chrome.dialog = Some(Dialog::About {
         url: "http://127.0.0.1:60887".into(),
         gclient_version: "0.5.0".into(),
         daemon_version: Some("0.5.0".into()),
         machine: "workstation".into(),
     });
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
+    chrome
+}
+
+fn draw_about(chrome: &Chrome, cols: u16, rows: u16) -> Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(cols, rows)).expect("test terminal");
     terminal
         .draw(|frame| {
-            render_dialog(frame, Rect::new(0, 0, 100, 30), &chrome);
+            render_dialog(frame, Rect::new(0, 0, cols, rows), chrome);
         })
         .expect("render about dialog");
-    let buffer = terminal.backend().buffer();
-    assert_eq!(buffer[(14, 7)].symbol(), "┌");
-    assert_eq!(buffer[(85, 21)].symbol(), "┘");
-    assert!((15..85).all(|x| buffer[(x, 21)].symbol() == "─"));
-    assert_eq!(buffer[(75, 8)].fg, chrome.palette.accent);
-    assert_eq!(buffer[(47, 13)].fg, chrome.palette.subtext0);
-    assert_eq!(buffer[(55, 13)].fg, chrome.palette.text);
-    let row = |y| {
-        (14..86)
-            .map(|x| buffer[(x, y)].symbol())
+    terminal.backend().buffer().clone()
+}
+
+/// The approved v3 About: a 101x22 panel with the haloed goblin beside the
+/// braille wordmark, one blank row under the wordmark and one above the
+/// bottom border, in dark and light.
+#[test]
+fn about_dialog_is_101_by_22_with_the_goblin_beside_the_wordmark() {
+    for (kind, wordmark_ink) in [
+        (ThemeKind::Dark, None),
+        (ThemeKind::Light, Some(Color::Rgb(0x15, 0x17, 0x14))),
+    ] {
+        let chrome = about_chrome(kind);
+        let p = &chrome.palette;
+        let buffer = draw_about(&chrome, 120, 30);
+        // The panel spans columns 9..=109 and rows 4..=25; inside it the
+        // header is row 5, the goblin rows 6..=23, the wordmark rows 7..=14.
+        assert_eq!(buffer[(9, 4)].symbol(), "┌", "{kind:?}");
+        assert_eq!(buffer[(109, 25)].symbol(), "┘", "{kind:?}");
+        assert!((10..109).all(|x| buffer[(x, 25)].symbol() == "─"));
+        let row = |y: u16| {
+            (10..109)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        };
+        assert!(row(5).contains("About gobby"));
+        assert!(row(5).contains("esc Close"));
+
+        let goblin = marks::goblin_large();
+        let mut alone = Terminal::new(TestBackend::new(goblin.cols, goblin.rows)).unwrap();
+        alone
+            .draw(|frame| {
+                marks::render_mark(frame, (0, 0), goblin, &MarkPalette::normal(p, false));
+            })
+            .unwrap();
+        let alone = alone.backend().buffer();
+        for (gx, gy) in (0..goblin.rows).flat_map(|y| (0..goblin.cols).map(move |x| (x, y))) {
+            let (want, got) = (&alone[(gx, gy)], &buffer[(11 + gx, 6 + gy)]);
+            assert_eq!(
+                got.symbol(),
+                want.symbol(),
+                "{kind:?} goblin cell {gx},{gy}"
+            );
+            if want.symbol() != " " {
+                assert_eq!(got.fg, want.fg, "{kind:?} goblin cell {gx},{gy}");
+            }
+        }
+
+        let braille: Vec<_> = (7..15)
+            .flat_map(|y| (54..108).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                ('\u{2801}'..='\u{28FF}').contains(&buffer[(x, y)].symbol().chars().next().unwrap())
+            })
+            .collect();
+        assert!(braille.len() > 100, "{kind:?} wordmark is missing");
+        let ink = wordmark_ink.unwrap_or(p.accent);
+        assert!(
+            braille.iter().all(|&(x, y)| buffer[(x, y)].fg == ink),
+            "{kind:?}"
+        );
+
+        let blank =
+            |y: u16, xs: std::ops::Range<u16>| xs.clone().all(|x| buffer[(x, y)].symbol() == " ");
+        assert!(blank(15, 54..108), "{kind:?} blank row under the wordmark");
+        assert!(
+            blank(24, 10..109),
+            "{kind:?} blank row above the bottom border"
+        );
+
+        let text = |y: u16| {
+            (54..108)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        };
+        for (y, expected) in [
+            (16, "Fleet management for AI agents"),
+            (18, "gclient 0.5.0"),
+            (19, "daemon  0.5.0"),
+            (20, "url     http://127.0.0.1:60887"),
+            (21, "machine workstation"),
+            (23, "gobby.ai"),
+        ] {
+            assert!(
+                text(y).starts_with(expected),
+                "{kind:?} row {y}: {}",
+                text(y)
+            );
+        }
+        assert_eq!(buffer[(54, 16)].fg, p.subtext0);
+        assert_eq!(buffer[(54, 18)].fg, p.subtext0);
+        assert_eq!(buffer[(62, 18)].fg, p.text);
+        assert_eq!(buffer[(54, 23)].fg, p.overlay0);
+    }
+}
+
+/// A terminal too small for the whole panel drops the goblin first, then the
+/// wordmark, and keeps the text.
+#[test]
+fn a_small_terminal_drops_the_goblin_then_the_wordmark() {
+    let chrome = about_chrome(ThemeKind::Dark);
+    let has_braille = |buffer: &Buffer| {
+        buffer
+            .content()
+            .iter()
+            .any(|cell| ('\u{2801}'..='\u{28FF}').contains(&cell.symbol().chars().next().unwrap()))
+    };
+    let has_halfblock = |buffer: &Buffer| {
+        buffer
+            .content()
+            .iter()
+            .any(|cell| matches!(cell.symbol(), "▀" | "▄"))
+    };
+    let text = |buffer: &Buffer| {
+        buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
             .collect::<String>()
     };
-    assert!(row(8).contains("About gobby"));
-    assert!(row(8).contains("esc Close"));
-    let body: String = (9..21).map(row).collect();
-    for expected in [
-        "Gobby",
-        "fleet management for AI coding agents",
-        "gclient",
-        "daemon",
-        "url",
-        "machine",
-        "workstation",
-        "gobby.ai",
-    ] {
-        assert!(body.contains(expected), "missing {expected} in {body}");
+
+    let wide = draw_about(&chrome, 80, 30);
+    assert!(
+        !has_halfblock(&wide) && has_braille(&wide),
+        "80 columns: the wordmark alone"
+    );
+    let narrow = draw_about(&chrome, 50, 24);
+    assert!(
+        !has_halfblock(&narrow) && !has_braille(&narrow),
+        "50 columns: text only"
+    );
+    for buffer in [&wide, &narrow] {
+        for expected in [
+            "About gobby",
+            "Fleet management for AI agents",
+            "workstation",
+            "gobby.ai",
+        ] {
+            assert!(text(buffer).contains(expected), "missing {expected}");
+        }
     }
-    let accent_cells = (9..21)
-        .flat_map(|y| (16..45).map(move |x| (x, y)))
-        .filter(|&(x, y)| buffer[(x, y)].fg == chrome.palette.accent)
-        .count();
-    assert!(accent_cells > 10, "goblin mark is missing");
 }
 
 #[test]

@@ -2301,32 +2301,12 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
         .await
         .expect_err("pre-write cancelled control")
         .is_cancelled());
-    let replacement = {
-        let daemon = daemon.clone();
-        tokio::spawn(async move {
-            daemon
-                .send(json!({
-                    "type": "terminal_take_control",
-                    "terminal_id": "terminal-1",
-                    "attachment_id": "attachment-pre-write",
-                    "takeover": false,
-                    "schedule": "pre-write-replacement"
-                }))
-                .await
-        })
-    };
-    poll_until(
-        Duration::from_secs(10),
-        || daemon.pending_counts().2 == 2,
-        "pre-write replacement registered",
-    )
-    .await;
     mid_send.abort();
     assert!(mid_send
         .await
         .expect_err("mid-send cancelled control")
         .is_cancelled());
-    assert_eq!(daemon.pending_counts().2, 1);
+    assert_eq!(daemon.pending_counts().2, 0);
     assert_eq!(
         timeout(
             Duration::from_millis(100),
@@ -2341,6 +2321,33 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
         Err(DaemonError::ControlScopeIndeterminate)
     );
     read_gate.notify_one();
+    // Draining the 8 MiB frame is throughput, not a deadline claim, so the
+    // replacement starts only after it, inside its own control deadline.
+    poll_until(
+        Duration::from_secs(30),
+        || {
+            mock.requests().iter().any(|request| {
+                request.body.as_ref().and_then(|body| body.get("schedule"))
+                    == Some(&json!("mid-send"))
+            })
+        },
+        "the mid-send frame drains",
+    )
+    .await;
+    let replacement = {
+        let daemon = daemon.clone();
+        tokio::spawn(async move {
+            daemon
+                .send(json!({
+                    "type": "terminal_take_control",
+                    "terminal_id": "terminal-1",
+                    "attachment_id": "attachment-pre-write",
+                    "takeover": false,
+                    "schedule": "pre-write-replacement"
+                }))
+                .await
+        })
+    };
     poll_until(
         Duration::from_secs(5),
         || {
