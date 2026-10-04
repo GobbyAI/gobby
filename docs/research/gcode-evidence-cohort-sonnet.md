@@ -390,11 +390,23 @@ END message for A1. No run
 used Explore, and the coordinator did not intervene in any run.
 
 A1 ran in an earlier worktree at `468ac4bebd`. The other three runs ran in a fresh
-worktree at `4947fc5681`. The commits between those HEADs touched none of the
-answer-key files or any auth source the runs cited. They also touched nothing
-under `crates/`. The only Python changes outside docs were in
-`runner_init/wake_activity.py` and the `tasks/tdd_*evidence.py` modules. A1 was
-therefore not rerun.
+worktree at `4947fc5681`. `git diff --stat 468ac4bebd..4947fc5681` lists 42 files.
+None is an answer-key file or an auth source any run cited; a diff scoped to those
+paths is empty. The other changes are:
+
+- `crates/gclient/` UI and tests (14 files). Every run used the installed `gcode`
+  above, so no crate source was built into a run.
+- Python outside the auth surface: `agents/resume_executor.py`,
+  `events/live_wake.py`, `events/wake.py`,
+  `mcp_proxy/tools/tasks/_lifecycle_close.py`, `runner_init/wake_activity.py`,
+  `runner_lifecycle_reconcile.py`, `tasks/tdd_evidence.py`,
+  `tasks/tdd_python_evidence.py` and `tasks/transcript_tool_arguments.py`, plus
+  their tests.
+- Web Activity panel components (`web/src/components/activity/`), docs, the
+  deploy runbook, the roster and one skill reference.
+
+None of these touches the web UI auth path the question asks about, so A1 was not
+rerun.
 
 | Run | Arm | Run ID | Child session | Spawned (UTC) | HEAD |
 | --- | --- | --- | --- | --- | --- |
