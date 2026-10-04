@@ -17,15 +17,11 @@ from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 from gobby.tasks.transcript_evidence_pool import run_in_transcript_evidence_pool
 from gobby.tasks.transcript_evidence_snapshots import (
     EvidenceSnapshot,
-    load_snapshot,
-    store_snapshot,
 )
 from gobby.tasks.transcript_evidence_transfer import (
     ChunkedPayload,
-    decode,
     decode_cooperatively,
     encode,
-    encode_cooperatively,
 )
 
 
@@ -48,8 +44,6 @@ async def derive_prelink_runs(
     start = _coerce_datetime(window_start)
     if start is None:
         return ()
-    snapshot_key = f"{session.id}:prelink"
-    resume = load_snapshot(snapshot_key)
     payload = await run_in_transcript_evidence_pool(
         _derive_chunked_prelink_runs,
         start,
@@ -58,15 +52,8 @@ async def derive_prelink_runs(
         repo_path,
         archive_dir,
         require_local_session_ownership(session),
-        None if resume is None else await encode_cooperatively(resume),
     )
-    runs, snapshot = cast(
-        tuple[tuple[TranscriptValidationRun, ...], EvidenceSnapshot | None],
-        await decode_cooperatively(payload),
-    )
-    if snapshot is not None:
-        store_snapshot(snapshot_key, snapshot)
-    return runs
+    return cast(tuple[TranscriptValidationRun, ...], await decode_cooperatively(payload))
 
 
 def _derive_chunked_prelink_runs(
@@ -76,7 +63,6 @@ def _derive_chunked_prelink_runs(
     repo_path: str,
     archive_dir: str | None,
     local_machine_id: str,
-    resume: ChunkedPayload | None,
 ) -> ChunkedPayload:
     """Pool entry: records cross the boundary in chunks the event loop decodes."""
     return encode(
@@ -87,8 +73,8 @@ def _derive_chunked_prelink_runs(
             repo_path,
             archive_dir,
             local_machine_id,
-            None if resume is None else cast(EvidenceSnapshot, decode(resume)),
-        )
+            None,
+        )[0]
     )
 
 

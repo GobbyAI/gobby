@@ -51,18 +51,14 @@ from gobby.tasks.transcript_evidence_snapshots import (
     PendingTool,
     TranscriptRead,
     load_durable_snapshot,
-    load_snapshot,
     read_transcript,
     read_transcript_suffix,
     store_durable_snapshot,
-    store_snapshot,
 )
 from gobby.tasks.transcript_evidence_transfer import (
     ChunkedPayload,
-    decode,
     decode_cooperatively,
     encode,
-    encode_cooperatively,
 )
 from gobby.tasks.transcript_outcomes import (
     classify_validation_command_equivalence,
@@ -204,7 +200,6 @@ async def derive_transcript_evidence(
 ) -> TranscriptEvidence:
     """Parse a complete provider transcript and derive close-checklist evidence."""
     local_machine_id = require_local_session_ownership(session)
-    resume = load_snapshot(session.id)
     payload = await run_in_transcript_evidence_pool(
         _derive_chunked_transcript_evidence,
         session,
@@ -215,15 +210,8 @@ async def derive_transcript_evidence(
         task_checkout_paths,
         archive_dir,
         local_machine_id,
-        None if resume is None else await encode_cooperatively(resume),
     )
-    evidence, snapshot = cast(
-        tuple[TranscriptEvidence, EvidenceSnapshot | None],
-        await decode_cooperatively(payload),
-    )
-    if snapshot is not None:
-        store_snapshot(session.id, snapshot)
-    return evidence
+    return cast(TranscriptEvidence, await decode_cooperatively(payload))
 
 
 def select_window_raw_lines(
@@ -329,7 +317,6 @@ def _derive_chunked_transcript_evidence(
     task_checkout_paths: frozenset[tuple[str, str]] | None,
     archive_dir: str | None,
     local_machine_id: str,
-    resume: ChunkedPayload | None,
 ) -> ChunkedPayload:
     """Pool entry: records cross the boundary in chunks the event loop decodes."""
     return encode(
@@ -342,8 +329,8 @@ def _derive_chunked_transcript_evidence(
             task_checkout_paths,
             archive_dir,
             local_machine_id,
-            None if resume is None else cast(EvidenceSnapshot, decode(resume)),
-        )
+            None,
+        )[0]
     )
 
 
@@ -358,8 +345,17 @@ def _derive_transcript_evidence_sync(
     local_machine_id: str,
     resume: EvidenceSnapshot | None,
 ) -> tuple[TranscriptEvidence, EvidenceSnapshot | None]:
+    fingerprint = _derivation_fingerprint(
+        session,
+        window_start,
+        detection_config,
+        {_normalize_known_path(item, repo_path) for item in task_edited_files},
+        repo_path,
+        task_checkout_paths,
+    )
+    snapshot_key = f"{session.id}:{fingerprint}"
     if resume is None:
-        resume = load_durable_snapshot(session.id)
+        resume = load_durable_snapshot(snapshot_key)
     paths, attempted_paths = _resolve_transcript_paths(session, archive_dir, local_machine_id)
     if not paths:
         raise TranscriptEvidenceUnavailable(
@@ -398,7 +394,7 @@ def _derive_transcript_evidence_sync(
             },
         )
         if resume is None or updated.checkpoint() != resume.checkpoint():
-            store_durable_snapshot(session.id, updated)
+            store_durable_snapshot(snapshot_key, updated)
     return merge_transcript_evidence(*(result[0] for result in results)), updated
 
 
