@@ -107,8 +107,9 @@ class TestAgentDefinitionBodyModel:
         from gobby.workflows.definitions import AgentDefinitionBody, AgentStepWorkflowBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 24, f"Expected 24 fields, got {len(fields)}: {list(fields.keys())}"
+        assert len(fields) == 25, f"Expected 25 fields, got {len(fields)}: {list(fields.keys())}"
         assert "network" in fields
+        assert "prewarm_pre_commit_store" in fields
         assert "spawnable_agents" in fields
         assert "send_message_targets" in fields
         assert "surfaces" in fields
