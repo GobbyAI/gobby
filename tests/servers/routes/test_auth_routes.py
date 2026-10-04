@@ -175,7 +175,9 @@ class TestAuthLogin:
         assert alice.status_code == 429
         assert bob.status_code == 401
 
-    def test_tailscale_identity_header_ignored_behind_lan_dev_ui(self, temp_db: HubDatabase) -> None:
+    def test_tailscale_identity_header_ignored_behind_lan_dev_ui(
+        self, temp_db: HubDatabase
+    ) -> None:
         # A dev UI listening on a LAN host proxies LAN browsers to the daemon from
         # 127.0.0.1, so a loopback peer no longer proves the request came via Tailscale.
         _set_password(temp_db, "mypassword")
