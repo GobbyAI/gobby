@@ -1029,11 +1029,13 @@ def spawn_daemon_instance(
     e2e_config: tuple[Path, int, int],
     *,
     tls: str | None = None,
+    runner_module: str = "gobby.runner",
 ) -> Generator[DaemonInstance]:
     """Spawn the isolated daemon; `tls="self-signed"` puts the front door on TLS.
 
     The certificate pair lives under the fixture's isolated home, and readiness
     probes stay plaintext: the front door serves loopback plaintext on its TLS port.
+    `runner_module` lets a test bootstrap wrap the genuine runner; restart reuses it.
     """
     config_path, http_port, ws_port = e2e_config
     gobby_home = config_path.parent
@@ -1060,7 +1062,7 @@ def spawn_daemon_instance(
     env["GOBBY_CONFIG"] = str(config_path)
     env["GOBBY_HOME"] = str(gobby_home)
 
-    command = [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+    command = [sys.executable, "-m", runner_module, "--config", str(config_path)]
 
     # Start daemon process
     with open(log_file, "w") as log_f, open(error_log_file, "w") as err_f:

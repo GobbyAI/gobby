@@ -97,6 +97,12 @@ async def start(client: CodexAppServerClient) -> None:
         )
         await stop(client)
         raise RuntimeError(f"Failed to start Codex app-server: {failure_detail}") from e
+    except BaseException:
+        # A cancelled start (a capability-refresh timeout) never reaches __aexit__,
+        # so reap the app-server here or it outlives the probe.
+        client._state = CodexConnectionState.ERROR
+        await stop(client)
+        raise
 
 
 async def stop(client: CodexAppServerClient) -> None:
