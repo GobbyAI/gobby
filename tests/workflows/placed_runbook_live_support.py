@@ -29,9 +29,11 @@ import os
 import shutil
 import stat
 import subprocess
+import tempfile
 import time
-from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -63,6 +65,8 @@ REACHED = "reached.json"
 RELEASE = "release.json"
 RELEASE_CONSUMED = "release.consumed.json"
 DISARMED_SUFFIX = ".disarmed"
+# Each stand-in appends its own pid here, in the TMPDIR of the run that launched it.
+LAUNCH_LOG = "inert-launches.log"
 
 # Only these spawn-reply fields are copied into the reached witness.
 _HELD_FIELDS = ("success", "adopted", "run_id", "terminal_id", "tab_ref", "pane_ref")
@@ -87,11 +91,17 @@ _REDACTED_KEY_PARTS = (
 _STANDIN = """\
 #!/bin/sh
 # Inert {provider} stand-in for the placed-runbook live acceptance (#23335).
-# It does no model or planning work: it answers a version probe, prints one
-# ready line and holds its terminal until the terminal closes.
+# It does no model or planning work: it answers a version probe, records its pid
+# as a launch marker in the run's TMPDIR, prints one ready line and holds its
+# terminal until the terminal closes. The marker log stays open on fd 3 so the
+# fixture can find it: macOS hides a platform shell's environment.
 case "${{1:-}}" in
   --version|-v|version) echo "{provider} 0.0.0-inert"; exit 0 ;;
 esac
+log="${{TMPDIR:-/nonexistent}}/{launch_log}"
+if {{ printf '%s\\n' "$$" >>"$log"; }} 2>/dev/null; then
+  exec 3<"$log"
+fi
 printf 'INERT-%s-READY %s\\n' "{provider}" "$$"
 while IFS= read -r _line; do :; done
 """
@@ -254,9 +264,73 @@ class Barrier:
 
 def write_standin(directory: Path, provider: str) -> Path:
     path = directory / provider
-    path.write_text(_STANDIN.format(provider=provider), encoding="utf-8")
+    path.write_text(_STANDIN.format(provider=provider, launch_log=LAUNCH_LOG), encoding="utf-8")
     path.chmod(0o755)
     return path
+
+
+def is_standin(cmdline: Sequence[str], standins: Collection[str]) -> bool:
+    """The stand-in itself: its interpreter runs it as argv[1], or it is argv[0].
+
+    Wrappers such as the SRT runner, sandbox-exec or ``sh -c`` carry the path
+    later in argv or inside a longer argument, so they never match.
+    """
+    return any(arg in standins for arg in cmdline[:2])
+
+
+def launch_markers(process: psutil.Process) -> tuple[int, ...]:
+    """The pids in the launch log this process holds open, one per launch into its run."""
+    logs = {Path(file.path) for file in process.open_files() if file.path.endswith(LAUNCH_LOG)}
+    if not logs:
+        return ()
+    assert len(logs) == 1, f"process {process.pid} holds several launch logs: {logs}"
+    [log] = logs
+    return tuple(int(pid) for pid in log.read_text(encoding="utf-8").split())
+
+
+@dataclass(frozen=True)
+class Standin:
+    """A stand-in process, its run's launch markers and whether the SRT runner wraps it."""
+
+    pid: int
+    created: float
+    launches: tuple[int, ...]
+    wrapped: bool
+
+
+def find_standin(leader_pid: int, standins: Collection[str], runner: str) -> Standin | None:
+    """The single stand-in in a process tree, once it has recorded its own launch."""
+    try:
+        leader = psutil.Process(leader_pid)
+        processes = [leader, *leader.children(recursive=True)]
+        tree = {proc.pid: (proc, proc.cmdline()) for proc in processes}
+        found = [proc for proc, cmdline in tree.values() if is_standin(cmdline, standins)]
+        if not found:
+            return None
+        assert len(found) == 1, f"several stand-ins under process {leader_pid}: {found}"
+        [proc] = found
+        launches = launch_markers(proc)
+        # Only the stand-in writes its own pid, which no wrapper can share.
+        if proc.pid not in launches:
+            return None
+        ancestors = [tree[parent.pid][1] for parent in proc.parents() if parent.pid in tree]
+        wrapped = any(runner in " ".join(cmdline) for cmdline in ancestors)
+        return Standin(proc.pid, proc.create_time(), launches, wrapped)
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        # The tree changed under the probe; the caller polls again.
+        return None
+
+
+def live_standins(standins: Collection[str]) -> list[int]:
+    """Every live stand-in process on the machine; the paths belong to one test."""
+    found: list[int] = []
+    for proc in psutil.process_iter():
+        try:
+            if is_standin(proc.cmdline(), standins):
+                found.append(proc.pid)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return sorted(found)
 
 
 def set_executable(path: Path, executable: bool) -> None:
@@ -347,7 +421,9 @@ class FixtureHost:
         return self.process.poll() is None
 
 
-def start_fixture_host(binary: Path, socket_dir: Path, env: Mapping[str, str]) -> FixtureHost:
+def start_fixture_host(
+    binary: Path, socket_dir: Path, env: Mapping[str, str], ready_timeout: float = 30.0
+) -> FixtureHost:
     """Start ``gterm host`` in its own session with the daemon's environment."""
     log_dir = socket_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -362,15 +438,21 @@ def start_fixture_host(binary: Path, socket_dir: Path, env: Mapping[str, str]) -
             env=host_env,
             start_new_session=True,
         )
-    deadline = time.monotonic() + 30.0
-    while not (
-        control_socket_path(socket_dir).exists() and read_pidfile(socket_dir) == process.pid
-    ):
-        if process.poll() is not None:
-            raise AssertionError(f"fixture gterm host exited with {process.returncode}")
-        assert time.monotonic() < deadline, "fixture gterm host never served its socket"
-        time.sleep(0.05)
-    return FixtureHost(socket_dir, process, psutil.Process(process.pid).create_time())
+    try:
+        deadline = time.monotonic() + ready_timeout
+        while not (
+            control_socket_path(socket_dir).exists() and read_pidfile(socket_dir) == process.pid
+        ):
+            if process.poll() is not None:
+                raise AssertionError(f"fixture gterm host exited with {process.returncode}")
+            assert time.monotonic() < deadline, "fixture gterm host never served its socket"
+            time.sleep(0.05)
+        return FixtureHost(socket_dir, process, psutil.Process(process.pid).create_time())
+    except BaseException:
+        # The caller never gets a handle, so nothing else would reap this host.
+        process.kill()
+        process.wait(timeout=15)
+        raise
 
 
 async def _control(socket_dir: Path) -> HostClient:
@@ -412,12 +494,54 @@ def stop_fixture_host(host: FixtureHost) -> dict[str, Any]:
         host.process.wait(timeout=15)
     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
         method = "kill"
-    # The host runs in its own session, so nothing else would reap it.
-    if host.alive():
-        method = "kill"
-        host.process.kill()
-        host.process.wait(timeout=15)
+    finally:
+        # The host runs in its own session, so nothing else would reap it, whatever
+        # the shutdown request raised.
+        if host.alive():
+            method = "kill"
+            host.process.kill()
+            host.process.wait(timeout=15)
     return {"pid": host.pid, "already_exited": False, "method": method}
+
+
+@contextmanager
+def host_socket_dir() -> Iterator[Path]:
+    """A short private socket directory, removed whatever happens while it is in use."""
+    socket_dir = Path(tempfile.mkdtemp(prefix="grb-"))
+    try:
+        yield socket_dir
+    finally:
+        shutil.rmtree(socket_dir, ignore_errors=True)
+
+
+@contextmanager
+def fixture_host(binary: Path, socket_dir: Path, env: Mapping[str, str]) -> Iterator[FixtureHost]:
+    host = start_fixture_host(binary, socket_dir, env)
+    try:
+        yield host
+    finally:
+        stop_fixture_host(host)
+
+
+@dataclass
+class Attempts:
+    """Run every cleanup step even after another fails, then raise the failures together."""
+
+    record: dict[str, Any]
+    errors: list[Exception] = field(default_factory=list)
+
+    def run(self, name: str, action: Callable[[], Any]) -> Any:
+        try:
+            self.record[name] = action()
+        except Exception as exc:
+            self.record[name] = {"error": repr(exc)}
+            self.errors.append(exc)
+            return None
+        return self.record[name]
+
+    def check(self) -> None:
+        if self.errors:
+            raise ExceptionGroup("fixture cleanup failed", self.errors)
 
 
 def sanitize(value: Any) -> Any:

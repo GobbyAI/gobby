@@ -16,10 +16,10 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -57,15 +57,20 @@ from tests.fixtures.postgres import TEST_USER_ID
 from tests.workflows.placed_runbook_live_support import (
     BARRIER_DIR_ENV,
     RUNNER_MODULE,
+    Attempts,
     Barrier,
     FixtureHost,
+    Standin,
     curated_path,
+    find_standin,
+    fixture_host,
     host_identity,
+    host_socket_dir,
+    launch_markers,
+    live_standins,
     set_executable,
     sha256_file,
     stage_real_srt,
-    start_fixture_host,
-    stop_fixture_host,
     write_evidence,
 )
 
@@ -148,37 +153,37 @@ def rig(
     pythonpath = [str(CHECKOUT_ROOT), *filter(None, [os.environ.get("PYTHONPATH")])]
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join(pythonpath))
     srt = stage_real_srt(home)
-    socket_dir = Path(tempfile.mkdtemp(prefix="grb-"))
-    token = uuid4().hex
-    for directory in (home, home / ".gobby", socket_dir):
-        directory.mkdir(exist_ok=True)
-        (directory / "local_cli_token").write_text(token)
-        (directory / "local_cli_token").chmod(0o600)
-    control_token_path(socket_dir).write_text(uuid4().hex)
-    control_token_path(socket_dir).chmod(0o600)
-    # Two three-seat pods are live at once in scenarios A and D.
-    (home / ".gobby" / "build.yaml").write_text("max_active_agents: 8\n")
-    mutations = ConfigMutations(postgres_db)
-    mutations.patch_internal(
-        expected_revision=mutations.repository.current_revision(),
-        # Inert seats never register a session; keep them past every restart.
-        patch=ConfigPatch(
-            values={"terminal_host.socket_dir": str(socket_dir), "tmux.init_timeout_seconds": 600}
-        ),
-        source="placed-runbook-live",
-    )
-    env = prepare_daemon_env(home_dir=home)
-    env.update(GOBBY_CONFIG=str(e2e_config[0]), GOBBY_HOME=str(home))
-    native_bin = Path(env[NATIVE_BIN_DIR_ENV])
-    binaries = {
-        name: sha256_file(native_bin / native_bin_name(name)) for name in ("gdaemon", "gterm")
-    }
-    host = start_fixture_host(native_bin / native_bin_name("gterm"), socket_dir, env)
-    try:
-        yield Rig(barrier, standins, providers, path, host, srt, binaries)
-    finally:
-        stop_fixture_host(host)
-        shutil.rmtree(socket_dir, ignore_errors=True)
+    # Each resource is owned the moment it exists, so a failed setup still frees it.
+    with host_socket_dir() as socket_dir:
+        token = uuid4().hex
+        for directory in (home, home / ".gobby", socket_dir):
+            directory.mkdir(exist_ok=True)
+            (directory / "local_cli_token").write_text(token)
+            (directory / "local_cli_token").chmod(0o600)
+        control_token_path(socket_dir).write_text(uuid4().hex)
+        control_token_path(socket_dir).chmod(0o600)
+        # Two three-seat pods are live at once in scenarios A and D.
+        (home / ".gobby" / "build.yaml").write_text("max_active_agents: 8\n")
+        mutations = ConfigMutations(postgres_db)
+        mutations.patch_internal(
+            expected_revision=mutations.repository.current_revision(),
+            # Inert seats never register a session; keep them past every restart.
+            patch=ConfigPatch(
+                values={
+                    "terminal_host.socket_dir": str(socket_dir),
+                    "tmux.init_timeout_seconds": 600,
+                }
+            ),
+            source="placed-runbook-live",
+        )
+        env = prepare_daemon_env(home_dir=home)
+        env.update(GOBBY_CONFIG=str(e2e_config[0]), GOBBY_HOME=str(home))
+        native_bin = Path(env[NATIVE_BIN_DIR_ENV])
+        binaries = {
+            name: sha256_file(native_bin / native_bin_name(name)) for name in ("gdaemon", "gterm")
+        }
+        with fixture_host(native_bin / native_bin_name("gterm"), socket_dir, env) as host:
+            yield Rig(barrier, standins, providers, path, host, srt, binaries)
 
 
 @pytest.fixture
@@ -208,6 +213,7 @@ class Seat:
     tab_id: str
     pid: int
     created: float
+    launches: tuple[int, ...]
 
 
 @dataclass
@@ -220,7 +226,8 @@ class Live:
     machine_ref: int
     runbook: PipelineDefinition
     evidence: dict[str, Any]
-    seats: list[Seat] = field(default_factory=list)
+    # Every accepted execution, recorded before any of its seats is awaited.
+    executions: list[str] = field(default_factory=list)
     places: list[Place] = field(default_factory=list)
 
 
@@ -271,8 +278,10 @@ def live(
         state.evidence["host"] = _assert_adopted(state)
         yield state
     finally:
+        cleanup: dict[str, Any] = {}
+        state.evidence["cleanup"] = cleanup
         try:
-            state.evidence["cleanup"] = _cleanup(state)
+            _cleanup(state, cleanup)
         finally:
             # A failed cleanup still leaves the evidence of the run it was cleaning.
             evidence_dir = Path(os.environ.get("GOBBY_E2E_EVIDENCE_DIR") or tmp_path / "evidence")
@@ -436,7 +445,9 @@ def _launch(live: Live, place: Place, **inputs: str) -> str:
         },
     )
     assert started.status_code == 202, started.text
-    return str(started.json()["execution_id"])
+    execution_id = str(started.json()["execution_id"])
+    live.executions.append(execution_id)
+    return execution_id
 
 
 def _execution(live: Live, execution_id: str) -> dict[str, Any]:
@@ -515,7 +526,8 @@ def _row(db: HubDatabase, sql: str, key: str) -> dict[str, Any] | None:
 def _run(db: HubDatabase, run_id: str) -> dict[str, Any] | None:
     return _row(
         db,
-        "SELECT id, status, started_at, terminal_id, agent_name FROM agent_runs WHERE id = %s",
+        "SELECT id, status, started_at, terminal_id, agent_name, parent_session_id "
+        "FROM agent_runs WHERE id = %s",
         run_id,
     )
 
@@ -539,25 +551,20 @@ def _bound_panes(db: HubDatabase, terminal_id: str) -> int:
     return int(row["n"])
 
 
-def _provider(rig: Rig, terminal: dict[str, Any]) -> tuple[int, float, bool] | None:
-    """The inert stand-in under this terminal's process group, and whether SRT wraps it."""
+def _standin_paths(rig: Rig) -> frozenset[str]:
+    # SRT resolves the provider executable, so match either spelling of the path.
+    paths = rig.standins.values()
+    return frozenset({str(path) for path in paths} | {str(path.resolve()) for path in paths})
+
+
+def _provider(rig: Rig, terminal: dict[str, Any]) -> Standin | None:
+    """The inert stand-in in this terminal's process group, found by its own launch marker."""
     process = terminal["process"]
     process = json.loads(process) if isinstance(process, str) else process
     if not isinstance(process, dict) or not process.get("pgid"):
         return None
-    standins = [str(path) for path in rig.standins.values()]
     runner = str(Path(rig.srt["root"]).resolve() / "runner.mjs")
-    try:
-        leader = psutil.Process(int(process["pgid"]))
-        tree = [leader, *leader.children(recursive=True)]
-        lines = [(proc, " ".join(proc.cmdline())) for proc in tree]
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        return None
-    wrapped = any(runner in line for _proc, line in lines)
-    for proc, line in lines:
-        if any(standin in line for standin in standins):
-            return proc.pid, proc.create_time(), wrapped
-    return None
+    return find_standin(int(process["pgid"]), _standin_paths(rig), runner)
 
 
 def _alive(pid: int, created: float) -> bool:
@@ -582,15 +589,23 @@ def _seat(live: Live, place: Place, execution_id: str, step: PipelineStep) -> Se
     provider = _provider(live.rig, terminal)
     if provider is None:
         return None
-    pid, created, wrapped = provider
-    assert wrapped, f"{step.id}'s provider is not under the staged SRT runner"
-    return Seat(step.id, _agent(step), run_id, terminal_id, pane.id, pane.tab_id, pid, created)
+    assert provider.wrapped, f"{step.id}'s provider is not under the staged SRT runner"
+    assert provider.launches == (provider.pid,), f"{step.id} launched {provider.launches}"
+    return Seat(
+        step.id,
+        _agent(step),
+        run_id,
+        terminal_id,
+        pane.id,
+        pane.tab_id,
+        provider.pid,
+        provider.created,
+        provider.launches,
+    )
 
 
 def _await_seat(live: Live, place: Place, execution_id: str, step: PipelineStep) -> Seat:
-    seat = _until(lambda: _seat(live, place, execution_id, step), 120, f"{step.id} seat")
-    live.seats.append(seat)
-    return seat
+    return _until(lambda: _seat(live, place, execution_id, step), 120, f"{step.id} seat")
 
 
 def _assert_live(live: Live, seats: list[Seat]) -> None:
@@ -601,6 +616,8 @@ def _assert_live(live: Live, seats: list[Seat]) -> None:
         assert terminal is not None and terminal["state"] == "live", (seat, terminal)
         assert _bound_panes(live.db, seat.terminal_id) == 1, seat
         assert _alive(seat.pid, seat.created), f"{seat.step_id} provider died"
+        # No second launch reused this seat's run.
+        assert launch_markers(psutil.Process(seat.pid)) == seat.launches, seat
 
 
 def _tool(live: Live, server: str, tool: str, **arguments: Any) -> dict[str, Any]:
@@ -616,16 +633,20 @@ def _roster(live: Live) -> dict[str, dict[str, Any]]:
     return {str(agent["run_id"]): agent for agent in listed["agents"]}
 
 
-def _settled(live: Live, seat: Seat) -> bool:
-    run = _run(live.db, seat.run_id)
-    terminal = _terminal(live.db, seat.terminal_id)
-    return (
-        run is not None
-        and run["status"] not in ACTIVE_RUNS
-        and (terminal is None or terminal["state"] not in UNSETTLED_TERMINALS)
-        and _bound_panes(live.db, seat.terminal_id) == 0
-        and not _alive(seat.pid, seat.created)
+def _run_settled(live: Live, run_id: str) -> bool:
+    run = _run(live.db, run_id)
+    if run is None or run["status"] in ACTIVE_RUNS:
+        return False
+    if not run["terminal_id"]:
+        return True
+    terminal = _terminal(live.db, str(run["terminal_id"]))
+    return (terminal is None or terminal["state"] not in UNSETTLED_TERMINALS) and (
+        _bound_panes(live.db, str(run["terminal_id"])) == 0
     )
+
+
+def _settled(live: Live, seat: Seat) -> bool:
+    return _run_settled(live, seat.run_id) and not _alive(seat.pid, seat.created)
 
 
 def _kill(live: Live, seats: list[Seat]) -> list[dict[str, Any]]:
@@ -636,20 +657,47 @@ def _kill(live: Live, seats: list[Seat]) -> list[dict[str, Any]]:
     return [{"run_id": seat.run_id, "settled": True} for seat in seats]
 
 
-def _cleanup(live: Live) -> dict[str, Any]:
-    inventory: dict[str, Any] = {"barrier": live.rig.barrier.cleanup()}
-    remaining = [seat for seat in live.seats if not _settled(live, seat)]
-    inventory["killed"] = [seat.run_id for seat in remaining]
-    for seat in remaining:
-        _tool(live, "gobby-agents", "kill_agent", run_id=seat.run_id)
-    inventory["settled"] = _until(
-        lambda: all(_settled(live, seat) for seat in remaining) or None, 90, "cleanup settles"
-    )
-    inventory["workspaces"] = [
-        _tool(live, "gobby-workspaces", "close_workspace", workspace=place.ref).get("success")
-        for place in live.places
+def _owned_runs(live: Live) -> list[str]:
+    """Every run an accepted execution created, whether or not its seat ever resolved."""
+    candidates = [
+        step_invocation_id(execution, step.id)
+        for execution in live.executions
+        for step in live.runbook.steps
     ]
-    return inventory
+    return [run_id for run_id in candidates if _run(live.db, run_id) is not None]
+
+
+def _kill_unsettled(live: Live, run_id: str) -> dict[str, Any] | str:
+    if _run_settled(live, run_id):
+        return "settled"
+    return _tool(live, "gobby-agents", "kill_agent", run_id=run_id)
+
+
+def _owned_settled(live: Live, owned: list[str]) -> dict[str, Any] | None:
+    """Settled only when every owned run is and no stand-in process survives anywhere."""
+    if not all(_run_settled(live, run_id) for run_id in owned):
+        return None
+    if live_standins(_standin_paths(live.rig)):
+        return None
+    return {"runs": owned, "standins": []}
+
+
+def _cleanup(live: Live, record: dict[str, Any]) -> None:
+    """Settle every fixture-owned run, then close every place; no failure skips a later step.
+
+    The rig's host shutdown stays the last resort for anything this leaves running.
+    """
+    attempts = Attempts(record)
+    attempts.run("barrier", live.rig.barrier.cleanup)
+    owned: list[str] = attempts.run("owned", partial(_owned_runs, live)) or []
+    for run_id in owned:
+        attempts.run(f"kill {run_id}", partial(_kill_unsettled, live, run_id))
+    settled = partial(_owned_settled, live, owned)
+    attempts.run("settled", partial(_until, settled, 90, "owned runs settle"))
+    for place in live.places:
+        close = partial(_tool, live, "gobby-workspaces", "close_workspace", workspace=place.ref)
+        attempts.run(f"close {place.ref}", close)
+    attempts.check()
 
 
 def _snapshot_steps(live: Live, execution_id: str) -> list[dict[str, Any]]:
@@ -684,6 +732,20 @@ def _assert_snapshot(live: Live, execution_id: str) -> None:
     # jsonb may arrive decoded or as text, depending on the driver's loaders.
     snapshot = PipelineDefinition.model_validate(decode_json_object(row["definition_json"]))
     assert snapshot == live.runbook, "launch snapshot differs from the installed runbook"
+
+
+def _child_session(live: Live, execution_id: str) -> str:
+    """The execution's pipeline child session, which must be the only one it has."""
+    row = live.db.fetchone(
+        "SELECT session_id FROM pipeline_executions WHERE id = %s", (execution_id,)
+    )
+    assert row is not None and row["session_id"] is not None, execution_id
+    child = str(row["session_id"])
+    rows = live.db.fetchall(
+        "SELECT id FROM sessions WHERE external_id = %s", (f"pipeline-{execution_id}",)
+    )
+    assert [str(session["id"]) for session in rows] == [child], rows
+    return child
 
 
 def test_live_three_seat_runbook(live: Live) -> None:
@@ -789,15 +851,21 @@ def test_live_crash_window_adopts_seat(live: Live, seat_name: str, renamed: bool
         moved = _pane(live.db, place, seats[-1].terminal_id)
         assert moved is not None and moved.id == pane.id and moved.label == label
     predecessors = {step.id: rows[step.id]["output_json"] for step in held[:-1]}
+    child = _child_session(live, execution)
+    # Every provider process the fixture can see, counted outside the runner.
+    standins = live_standins(_standin_paths(live.rig))
+    assert standins == sorted(seat.pid for seat in seats), standins
     runner_pid = live.daemon.pid
     witness = {
         "execution": execution,
+        "child_session": child,
         "reached": reached,
         "seats": seats,
         "predecessor_outputs": predecessors,
         "host": host_identity(live.rig.host.socket_dir),
         "runner_pid": runner_pid,
-        "launch_counts": {step.id: 1 for step in held},
+        "launch_counts": {seat.step_id: len(seat.launches) for seat in seats},
+        "standins": standins,
     }
     # The witness lives outside the runner before the crash.
     live.evidence["pre_crash"] = witness
@@ -817,6 +885,9 @@ def test_live_crash_window_adopts_seat(live: Live, seat_name: str, renamed: bool
     live.evidence["restarted_host"] = _assert_adopted(live)
     assert live.evidence["restarted_host"] == live.evidence["host"]
     _completed(live, execution)
+    assert _child_session(live, execution) == child
+    # The same provider processes in the same terminals and panes, each launched once.
+    assert [_await_seat(live, place, execution, step) for step in held] == seats
     rows = {row["step_id"]: row for row in _snapshot_steps(live, execution)}
     adopted = decode_json_object(rows[selected.id]["output_json"])
     assert adopted is not None, rows[selected.id]
@@ -836,7 +907,17 @@ def test_live_crash_window_adopts_seat(live: Live, seat_name: str, renamed: bool
     assert grown["terminals"] - baseline["terminals"] == {seat.terminal_id for seat in all_seats}
     assert grown["panes"] - baseline["panes"] == {seat.pane_id for seat in all_seats}
     _assert_live(live, all_seats)
-    live.evidence["reconciled"] = {"adopted_reply": adopted, "seats": all_seats}
+    standins = live_standins(_standin_paths(live.rig))
+    assert standins == sorted(seat.pid for seat in all_seats), standins
+    runs = [_run(live.db, seat.run_id) or {} for seat in all_seats]
+    assert {str(run.get("parent_session_id")) for run in runs} == {child}, runs
+    live.evidence["reconciled"] = {
+        "adopted_reply": adopted,
+        "seats": all_seats,
+        "child_session": child,
+        "launch_counts": {seat.step_id: len(seat.launches) for seat in all_seats},
+        "standins": standins,
+    }
     live.evidence["kills"] = _kill(live, all_seats)
 
 
