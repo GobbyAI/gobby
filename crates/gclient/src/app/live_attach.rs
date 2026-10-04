@@ -38,6 +38,11 @@ enum RecoveryStep {
         terminal_id: String,
         outcome: Result<DirectAttach, FrameError>,
     },
+    /// A host-restored pane's fresh daemon attachment on a new generation;
+    /// its host stream stays (#23419).
+    Reregistered {
+        outcome: Result<(Value, String), FrameError>,
+    },
 }
 
 enum DetachOutcome {
@@ -73,7 +78,9 @@ impl Workspace<LiveDaemon> {
                 || self.panes[&pane_id].attached_generation() == Some(snapshot.generation)
                 || self.panes[&pane_id].attach_retry_pending(now)
                 || self.panes[&pane_id].fallback_in_flight
-                || self.pane_host_attached(pane_id)
+                // A pane restored straight onto its host keeps that stream;
+                // `start_due_attaches` re-registers it with the daemon (#23419).
+                || self.host_recovered.contains(&pane_id)
             {
                 continue;
             }
@@ -355,7 +362,59 @@ impl Workspace<LiveDaemon> {
                 }
                 Ok(self.begin_recovery_attach(pane_id, terminal_id, generation))
             }
+            RecoveryStep::Reregistered { outcome } => {
+                self.clear_fallback_flight(pane_id);
+                let Ok((reply, attachment)) = outcome else {
+                    // No fresh attachment to adopt: the full daemon re-attach
+                    // replaces the host stream as well.
+                    return Ok(self.begin_daemon_recovery(pane_id));
+                };
+                self.host_recovered.remove(&pane_id);
+                let lease_generation = reply
+                    .get("lease_generation")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default();
+                let pane = self.panes.get_mut(&pane_id).expect("pane exists");
+                pane.adopt_attachment(attachment, generation, lease_generation);
+                pane.observe_lease_holder(
+                    reply
+                        .get("lease_holder")
+                        .and_then(|holder| holder.get("attachment_id"))
+                        .and_then(Value::as_str),
+                );
+                self.attached_generation.insert(pane_id, generation);
+                // The carried grant named the dead attachment; the focused
+                // pane asks again under the fresh one.
+                if self.focus == Some(pane_id) {
+                    self.request_control(pane_id, false);
+                }
+                Ok(None)
+            }
         }
+    }
+
+    /// Re-register a host-restored pane with a daemon on a new generation.
+    /// The attachment it kept died with the old socket, so it takes a fresh
+    /// one and keeps its host stream, which rebinds on its next write.
+    pub(super) fn begin_host_reregister(
+        &mut self,
+        pane_id: PaneId,
+        generation: Generation,
+    ) -> RecoveryFuture {
+        let pane = self.panes.get_mut(&pane_id).expect("pane exists");
+        // The re-register owns its pane until it lands, as a recovery does.
+        pane.fallback_in_flight = true;
+        let terminal_id = pane.terminal_id.clone();
+        let daemon = self.daemon.clone();
+        Box::pin(async move {
+            let request_id = uuid::Uuid::new_v4().to_string();
+            let outcome = request_direct_attachment(&daemon, &terminal_id, &request_id).await;
+            Recovery {
+                pane_id,
+                generation,
+                step: RecoveryStep::Reregistered { outcome },
+            }
+        })
     }
 
     fn begin_recovery_attach(
@@ -493,23 +552,36 @@ impl Workspace<LiveDaemon> {
             return Vec::new();
         }
         let generation = snapshot.generation;
+        let stale = |workspace: &Self, pane_id: &PaneId| {
+            let pane = &workspace.panes[pane_id];
+            !pane.fallback_in_flight
+                && pane.attached_generation() != Some(generation)
+                && workspace.attached_generation.get(pane_id) != Some(&generation)
+        };
+        // A host-local restore keeps an attachment that dies with its daemon
+        // generation; once the daemon is back on a new one, the pane takes a
+        // fresh attachment without waiting for a retry to fall due (#23419).
+        let reregister: Vec<PaneId> = self
+            .order
+            .iter()
+            .filter(|pane_id| self.host_recovered.contains(pane_id) && stale(self, pane_id))
+            .copied()
+            .collect();
         let due: Vec<PaneId> = self
             .order
             .iter()
-            .copied()
             .filter(|pane_id| {
-                let pane = &self.panes[pane_id];
+                let pane = &self.panes[*pane_id];
                 (pane.attach_retry_due(now) || (include_initial && !pane.attach_retry_pending(now)))
-                    && !pane.fallback_in_flight
-                    && pane.attached_generation() != Some(generation)
-                    && self.attached_generation.get(pane_id) != Some(&generation)
-                    // A pane already speaking straight to its host keeps that
-                    // attachment; a daemon generation change must not replace
-                    // it with a daemon attach (#23076).
-                    && !self.pane_host_attached(*pane_id)
+                    && !self.host_recovered.contains(pane_id)
+                    && stale(self, pane_id)
             })
+            .copied()
             .collect();
-        let mut started = Vec::new();
+        let mut started: Vec<RecoveryFuture> = reregister
+            .into_iter()
+            .map(|pane_id| self.begin_host_reregister(pane_id, generation))
+            .collect();
         for pane_id in due {
             let pane = self.panes.get_mut(&pane_id).expect("pane exists");
             // The retry owns its pane until it lands, as a recovery does.
@@ -673,6 +745,30 @@ async fn request_direct_source(
     terminal_id: &str,
     request_id: &str,
 ) -> Result<DirectAttach, FrameError> {
+    let (reply, attachment) = request_direct_attachment(daemon, terminal_id, request_id).await?;
+    match connect_direct_reply(gobby_home, &reply).await {
+        Ok((locator, source)) => Ok((reply, attachment, locator, source)),
+        Err(error) => {
+            daemon
+                .notify(json!({
+                    "type": "terminal_detach",
+                    "request_id": uuid::Uuid::new_v4().to_string(),
+                    "terminal_id": terminal_id,
+                    "attachment_id": attachment,
+                }))
+                .await?;
+            Err(error)
+        }
+    }
+}
+
+/// Ask the daemon for a direct attachment: its reply and attachment id. The
+/// caller connects the host stream the reply locates, or keeps its own.
+async fn request_direct_attachment(
+    daemon: &LiveDaemon,
+    terminal_id: &str,
+    request_id: &str,
+) -> Result<(Value, String), FrameError> {
     let reply = daemon
         .send(json!({
             "type": "terminal_attach",
@@ -697,20 +793,7 @@ async fn request_direct_source(
         .and_then(Value::as_str)
         .ok_or_else(|| FrameError::Protocol("attach result omitted attachment_id".into()))?
         .to_string();
-    match connect_direct_reply(gobby_home, &reply).await {
-        Ok((locator, source)) => Ok((reply, attachment, locator, source)),
-        Err(error) => {
-            daemon
-                .notify(json!({
-                    "type": "terminal_detach",
-                    "request_id": uuid::Uuid::new_v4().to_string(),
-                    "terminal_id": terminal_id,
-                    "attachment_id": attachment,
-                }))
-                .await?;
-            Err(error)
-        }
-    }
+    Ok((reply, attachment))
 }
 
 async fn connect_direct_reply(

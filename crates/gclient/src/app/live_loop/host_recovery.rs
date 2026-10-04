@@ -7,10 +7,13 @@
 //! for the whole upgrade window.
 //!
 //! This set is deliberately separate from `live_attach`'s daemon recoveries:
-//! daemon reconnect results and daemon generation changes must not clear it.
-//! It is cancelled only when the pane is replaced or closed. A foreign host
-//! epoch fails recovery, and a cancelled or failed host recovery falls through
-//! to the daemon path unchanged.
+//! daemon reconnect results and daemon generation changes must not cancel a
+//! reconnect in flight. It is cancelled only when the pane is replaced or
+//! closed. A foreign host epoch fails recovery, and a cancelled or failed host
+//! recovery falls through to the daemon path unchanged. A restored pane keeps
+//! its daemon attachment only while that daemon generation lasts: once the
+//! daemon is back on a new one, the pane takes a fresh attachment and keeps
+//! its host stream (#23419).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -278,9 +281,23 @@ impl Workspace<LiveDaemon> {
                 pane.install_frame_source(PaneFrameSource::Direct(source));
                 pane.live = true;
                 pane.restore_host_control();
+                pane.fallback_in_flight = false;
+                let minted_on = pane.attached_generation();
                 self.host_recovered.insert(pane_id);
+                // The attachment keeps the daemon generation it was minted
+                // on; stamping the current one hid a generation change, and
+                // the kept attachment, finalized with its socket, then refused
+                // control until a restart (#23419). A daemon already back on a
+                // new generation passed this pane by while it recovered, so
+                // the fresh attachment is taken here; one still away is
+                // handled by `start_due_attaches` once it is back.
                 let generation = self.daemon.generation();
-                self.attached_generation.insert(pane_id, generation);
+                if self.daemon_ready
+                    && minted_on != Some(generation)
+                    && self.attached_generation.get(&pane_id) != Some(&generation)
+                {
+                    return Some(self.begin_host_reregister(pane_id, generation));
+                }
                 None
             }
             HostRecoveryOutcome::Restored(_) => {
@@ -304,12 +321,6 @@ impl Workspace<LiveDaemon> {
                 self.begin_daemon_recovery(pane_id)
             }
         }
-    }
-
-    /// Whether this pane is attached straight to its host, so the daemon's
-    /// reconcile pass leaves the attachment alone.
-    pub(in crate::app) fn pane_host_attached(&self, pane_id: PaneId) -> bool {
-        self.host_recovered.contains(&pane_id)
     }
 }
 
