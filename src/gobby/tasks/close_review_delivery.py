@@ -7,7 +7,7 @@ import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from gobby.autonomous.progress_tracker import ProgressTracker, ProgressType
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -25,6 +25,9 @@ from gobby.tasks.agentic_close_review import (
     build_terminal_review_payload,
 )
 from gobby.tasks.state_semantics import is_task_closed
+
+#: A review still finalizing owns its outcome; the caller's delivery waits for it.
+DELIVERY_DEFERRED: Literal["deferred"] = "deferred"
 
 _DENIAL_OPERATION = re.compile(r"(?:^|\s)deny(?:\(\d+\))?\s+([a-z][a-z0-9*-]*)")
 
@@ -77,8 +80,13 @@ def _review_sandbox_denials(run: AgentRun | None) -> dict[str, Any] | None:
 def terminal_review_delivery(
     db: HubDatabase,
     run_id: str,
-) -> tuple[dict[str, Any], str] | None:
-    """Return the durable review payload, terminalizing an abandoned active intent."""
+) -> tuple[dict[str, Any], str] | Literal["deferred"] | None:
+    """Return the durable review payload, terminalizing an abandoned active intent.
+
+    ``None`` means the run carries no review. ``DELIVERY_DEFERRED`` means a
+    submission is still finalizing the review, so nothing may be delivered for
+    the run until that finalization (or the orphan sweep) persists a result.
+    """
     store = TaskCloseReviewStore(db)
     review = store.get_by_run(run_id)
     if review is None:
@@ -88,7 +96,7 @@ def terminal_review_delivery(
         task = LocalTaskManager(db).get_task(review.task_id)
         if review.status == "finalizing":
             if task is None or not is_task_closed(task):
-                return None
+                return DELIVERY_DEFERRED
             close_result = {
                 "success": True,
                 "can_close": True,
@@ -202,4 +210,4 @@ def mark_terminal_review_delivered(
     return True
 
 
-__all__ = ["mark_terminal_review_delivered", "terminal_review_delivery"]
+__all__ = ["DELIVERY_DEFERRED", "mark_terminal_review_delivered", "terminal_review_delivery"]

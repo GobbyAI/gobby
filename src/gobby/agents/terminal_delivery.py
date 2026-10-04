@@ -494,7 +494,7 @@ async def _deliver_and_cleanup_terminal_run_once(
     run_db: Callable[..., Awaitable[Any]],
 ) -> _DeliveryAttempt:
     """Deliver a terminal result, remove acknowledged rows, then evict registry state."""
-    from gobby.tasks.close_review_delivery import terminal_review_delivery
+    from gobby.tasks.close_review_delivery import DELIVERY_DEFERRED, terminal_review_delivery
 
     try:
         review_delivery = await run_db(terminal_review_delivery, db, run_id)
@@ -507,6 +507,9 @@ async def _deliver_and_cleanup_terminal_run_once(
         review_delivery = None
     if isinstance(review_delivery, tuple) and len(review_delivery) == 2:
         result, message = review_delivery
+    elif review_delivery == DELIVERY_DEFERRED:
+        # The review's finalization owns the outcome; the run's bare status is not it.
+        result = None
     if completion_registry is None:
         return _DeliveryAttempt(None, False, False)
 
