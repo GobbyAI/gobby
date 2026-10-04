@@ -44,24 +44,21 @@ right and half a cell below the letters.
 
 `goblin-41x18.grid` is hand-authored and is never regenerated (#23280). It
 is Josh's 33×16 goblin, corrected so both eyes draw the same cells, at cell
-column 4, row 2 inside its node halo. Splash and the Empty tab draw it. The
+column 4, row 2 inside its node halo. Splash, About and the Empty tab draw it. The
 generator's 33×16 output survives only as the `goblin-33x16-*.ans` previews,
 which show neither the eye correction nor the halo.
 
 ## Regenerate
 
-Run from the repository root. The 56×16 and 48×14 boxes preserve the source
-image aspect; the generator crops them to 33×16 and 29×14 drawn marks.
-All eleven commands rewrite the committed files byte-identically.
+Run from the repository root. The 56×16 box preserves the source image
+aspect; the generator crops it to a 33×16 drawn mark.
+All eight commands rewrite the committed files byte-identically.
 
 ```sh
-uv run python crates/gclient/assets/marks/mask2.py web/public/logo.png 48 14 grid > crates/gclient/assets/marks/goblin-29x14.grid
 uv run python crates/gclient/assets/marks/wordmark.py braille grid lower > crates/gclient/assets/marks/wordmark-braille-54x8.txt
 uv run python crates/gclient/assets/marks/wordmark.py shadow grid lower > crates/gclient/assets/marks/wordmark-shadow-49x9.grid
 uv run python crates/gclient/assets/marks/mask2.py web/public/logo.png 56 16 ansi-dark > crates/gclient/assets/marks/renders/goblin-33x16-dark.ans
 uv run python crates/gclient/assets/marks/mask2.py web/public/logo.png 56 16 ansi-light > crates/gclient/assets/marks/renders/goblin-33x16-light.ans
-uv run python crates/gclient/assets/marks/mask2.py web/public/logo.png 48 14 ansi-dark > crates/gclient/assets/marks/renders/goblin-29x14-dark.ans
-uv run python crates/gclient/assets/marks/mask2.py web/public/logo.png 48 14 ansi-light > crates/gclient/assets/marks/renders/goblin-29x14-light.ans
 uv run python crates/gclient/assets/marks/wordmark.py braille ansi-dark lower > crates/gclient/assets/marks/renders/wordmark-braille-dark.ans
 uv run python crates/gclient/assets/marks/wordmark.py braille ansi-light lower > crates/gclient/assets/marks/renders/wordmark-braille-light.ans
 uv run python crates/gclient/assets/marks/wordmark.py shadow ansi-dark lower > crates/gclient/assets/marks/renders/wordmark-shadow-dark.ans

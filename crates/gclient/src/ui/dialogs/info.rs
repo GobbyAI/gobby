@@ -4,7 +4,7 @@ use crate::ui::marks::{self, MarkPalette};
 use crate::ui::widgets::{render_modal_header, render_modal_shell};
 use crate::ui::Chrome;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
@@ -73,27 +73,33 @@ pub fn render_about(
     machine: &str,
 ) -> Vec<Rect> {
     let p = &chrome.palette;
-    let Some(inner) = render_modal_shell(frame, area, 72, 15, p) else {
+    let (goblin, wordmark) = (marks::goblin_large(), marks::wordmark());
+    // A pad, the goblin, a gap, the wordmark and a pad wide; the header row,
+    // the goblin's rows and one blank row above the bottom border tall.
+    let (cols, rows) = (1 + goblin.cols + 2 + wordmark.cols + 1, 1 + goblin.rows + 1);
+    let Some(inner) = render_modal_shell(frame, area, cols + 2, rows + 2, p) else {
         return Vec::new();
     };
     if inner.width < 35 || inner.height < 10 {
         return Vec::new();
     }
 
-    let show_mark = inner.width >= 68 && inner.height >= 13;
-    if show_mark {
-        marks::render_mark(
-            frame,
-            (inner.x + 1, inner.y),
-            marks::goblin_small(),
-            &MarkPalette::normal(p, chrome.prefs.monochrome),
-        );
-        // The 14-row asset reaches the panel's final row; keep its frame intact.
-        for x in inner.x + 1..inner.x + 30 {
-            if let Some(cell) = frame.buffer_mut().cell_mut((x, inner.bottom())) {
-                cell.set_symbol("─").set_fg(p.accent).set_bg(p.panel_bg);
-            }
-        }
+    // Short of the full panel, the goblin goes first, then the wordmark.
+    let tall = inner.height >= rows;
+    let show_goblin = tall && inner.width >= cols;
+    let x = if show_goblin {
+        inner.x + 1 + goblin.cols + 2
+    } else {
+        inner.x + 2
+    };
+    // The wordmark keeps a one-column pad before the right border.
+    let show_wordmark = tall && inner.right() > x + wordmark.cols;
+    let palette = MarkPalette::normal(p, chrome.prefs.monochrome);
+    if show_goblin {
+        marks::render_mark(frame, (inner.x + 1, inner.y + 1), goblin, &palette);
+    }
+    if show_wordmark {
+        marks::render_mark(frame, (x, inner.y + 2), wordmark, &palette);
     }
     render_modal_header(
         frame,
@@ -107,47 +113,45 @@ pub fn render_about(
         close,
     );
 
-    let x = if show_mark { inner.x + 32 } else { inner.x + 2 };
     let width = inner.right().saturating_sub(x + 1);
     let text = |frame: &mut Frame, y: u16, line: Line<'static>| {
         if y < inner.bottom() {
             frame.render_widget(Paragraph::new(line), Rect::new(x, y, width, 1));
         }
     };
+    // The text starts one blank row under the wordmark, or under the header
+    // when the wordmark is dropped.
+    let top = if show_wordmark {
+        inner.y + 2 + wordmark.rows + 1
+    } else {
+        inner.y + 2
+    };
     text(
         frame,
-        inner.y + 2,
+        top,
         Line::from(Span::styled(
-            "Gobby",
-            Style::default().fg(p.text).add_modifier(Modifier::BOLD),
-        )),
-    );
-    text(
-        frame,
-        inner.y + 3,
-        Line::from(Span::styled(
-            "fleet management for AI coding agents",
+            "Fleet management for AI agents",
             Style::default().fg(p.subtext0),
         )),
     );
     for (offset, label, value) in [
-        (5, "gclient", gclient_version),
-        (6, "daemon", daemon_version.unwrap_or("—")),
-        (7, "url", url),
-        (8, "machine", machine),
+        (2, "gclient", gclient_version),
+        (3, "daemon", daemon_version.unwrap_or("—")),
+        (4, "url", url),
+        (5, "machine", machine),
     ] {
         text(
             frame,
-            inner.y + offset,
+            top + offset,
             Line::from(vec![
-                Span::styled(format!("{label} "), Style::default().fg(p.subtext0)),
+                Span::styled(format!("{label:<7} "), Style::default().fg(p.subtext0)),
                 Span::styled(value.to_owned(), Style::default().fg(p.text)),
             ]),
         );
     }
     text(
         frame,
-        inner.y + 10,
+        top + 7,
         Line::from(Span::styled("gobby.ai", Style::default().fg(p.overlay0))),
     );
     vec![close]

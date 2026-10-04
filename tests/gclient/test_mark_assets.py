@@ -34,19 +34,11 @@ def test_generators_regenerate_grids_byte_identically() -> None:
     assert (MARKS / "mask2.py").is_file()
     assert (MARKS / "wordmark.py").is_file()
     cases = [
-        ("mask2.py", (str(LOGO), "48", "14", "grid"), "goblin-29x14.grid"),
         ("wordmark.py", ("braille", "grid", "lower"), "wordmark-braille-54x8.txt"),
         ("wordmark.py", ("shadow", "grid", "lower"), "wordmark-shadow-49x9.grid"),
     ]
     for script, args, name in cases:
         assert generate(script, *args) == (MARKS / name).read_bytes()
-
-
-def test_generated_goblin_grid_has_the_committed_dimensions_and_roles() -> None:
-    data = data_lines(MARKS / "goblin-29x14.grid", "halfblock", 29, 14)
-    assert all(len(line) == 58 for line in data)
-    assert set("".join(data)) <= set("aoig.")
-    assert "a" in "".join(data)
 
 
 def test_hand_authored_goblin_grid_wears_its_node_halo() -> None:
@@ -70,13 +62,9 @@ def test_wordmark_assets_have_the_committed_dimensions_and_roles() -> None:
 
 def test_dark_and_light_terminal_renders_match_generators() -> None:
     for theme in ("dark", "light"):
-        for source, cols, rows, name in (
-            ("mask2.py", "56", "16", "goblin-33x16"),
-            ("mask2.py", "48", "14", "goblin-29x14"),
-        ):
-            rendered = generate(source, str(LOGO), cols, rows, f"ansi-{theme}")
-            assert rendered == (MARKS / "renders" / f"{name}-{theme}.ans").read_bytes()
-            assert b"\x1b[" in rendered
+        rendered = generate("mask2.py", str(LOGO), "56", "16", f"ansi-{theme}")
+        assert rendered == (MARKS / "renders" / f"goblin-33x16-{theme}.ans").read_bytes()
+        assert b"\x1b[" in rendered
         for variant, name in (("braille", "wordmark-braille"), ("shadow", "wordmark-shadow")):
             rendered = generate("wordmark.py", variant, f"ansi-{theme}", "lower")
             assert rendered == (MARKS / "renders" / f"{name}-{theme}.ans").read_bytes()
@@ -91,7 +79,6 @@ def test_readme_documents_roles_homes_and_regeneration() -> None:
         assert role in readme
     for name in (
         "goblin-41x18.grid",
-        "goblin-29x14.grid",
         "wordmark-braille-54x8.txt",
         "wordmark-shadow-49x9.grid",
     ):

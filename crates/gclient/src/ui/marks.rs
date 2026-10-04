@@ -7,7 +7,6 @@ use std::fmt;
 use std::sync::OnceLock;
 
 const GOBLIN_LARGE: &str = include_str!("../../assets/marks/goblin-41x18.grid");
-const GOBLIN_SMALL: &str = include_str!("../../assets/marks/goblin-29x14.grid");
 const WORDMARK: &str = include_str!("../../assets/marks/wordmark-braille-54x8.txt");
 const WORDMARK_SHADOW: &str = include_str!("../../assets/marks/wordmark-shadow-49x9.grid");
 
@@ -189,11 +188,6 @@ pub fn goblin_large() -> &'static Mark {
     static MARK: OnceLock<Mark> = OnceLock::new();
     // The committed asset format and size are checked by the marks integration test.
     MARK.get_or_init(|| parse(GOBLIN_LARGE).expect("valid large goblin asset"))
-}
-
-pub fn goblin_small() -> &'static Mark {
-    static MARK: OnceLock<Mark> = OnceLock::new();
-    MARK.get_or_init(|| parse(GOBLIN_SMALL).expect("valid small goblin asset"))
 }
 
 pub fn wordmark() -> &'static Mark {

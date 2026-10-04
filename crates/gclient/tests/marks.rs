@@ -1,7 +1,6 @@
 use gobby_client::theme::{Palette, Theme, ThemeKind};
 use gobby_client::ui::marks::{
-    goblin_large, goblin_small, parse, render_mark, wordmark, wordmark_shadow, MarkKind,
-    MarkPalette,
+    goblin_large, parse, render_mark, wordmark, wordmark_shadow, MarkKind, MarkPalette,
 };
 use ratatui::backend::TestBackend;
 use ratatui::style::Color;
@@ -19,7 +18,6 @@ fn halfblock_grid_parses_to_its_declared_size() {
 
     for (mark, kind, size) in [
         (goblin_large(), MarkKind::Halfblock, (41, 18)),
-        (goblin_small(), MarkKind::Halfblock, (29, 14)),
         (wordmark(), MarkKind::Braille, (54, 8)),
         (wordmark_shadow(), MarkKind::Halfblock, (49, 9)),
     ] {
@@ -140,8 +138,9 @@ fn dimmed_palette_keeps_every_role_distinct_with_the_glint() {
     }
 }
 
-/// Every palette a goblin surface paints `goblin_large` with: the splash in
-/// each theme and in monochrome, and the empty tab's dimmed mark in each.
+/// Every palette a goblin surface paints `goblin_large` with: the splash and
+/// About in each theme and in monochrome, and the empty tab's dimmed mark in
+/// each.
 fn goblin_variants() -> Vec<(String, MarkPalette)> {
     let mut variants = Vec::new();
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
