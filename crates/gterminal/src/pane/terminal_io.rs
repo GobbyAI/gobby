@@ -66,6 +66,15 @@ impl GhosttyPaneTerminal {
         }
     }
 
+    /// The ground this pane answers OSC 10/11 with: the declared host theme,
+    /// unaffected by a child's own default-colour override.
+    pub fn host_terminal_theme(&self) -> crate::terminal_theme::TerminalTheme {
+        self.core
+            .lock()
+            .map(|core| core.host_terminal_theme)
+            .unwrap_or_default()
+    }
+
     pub fn apply_host_terminal_theme(&self, theme: crate::terminal_theme::TerminalTheme) {
         if let Ok(mut core) = self.core.lock() {
             let foreground_unowned = !core.child_default_foreground_changed;

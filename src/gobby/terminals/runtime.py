@@ -109,6 +109,9 @@ class TerminalSpawnRequest:
     # The requesting client's colours, as the gterm host's ThemeDeclaration
     # JSON. Only the native host reads it; the host validates it.
     terminal_theme: dict[str, object] | None = None
+    # The spawning session's own native pane as (host_epoch, host_terminal_id).
+    # A request without terminal_theme starts on that pane's current ground.
+    theme_from: tuple[str, str] | None = None
 
 
 # Snapshot representations every backend implements. ``text`` is plain unwrapped

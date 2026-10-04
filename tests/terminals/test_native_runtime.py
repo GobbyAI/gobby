@@ -135,6 +135,7 @@ class FakeHostClient:
         cols: int,
         commit_deadline_ms: int = 30000,
         terminal_theme: dict[str, object] | None = None,
+        theme_from: str | None = None,
     ) -> dict[str, Any]:
         await self.ensure_connected()
         if self.reservation_error is not None:
@@ -155,6 +156,7 @@ class FakeHostClient:
             "cols": cols,
             "commit_deadline_ms": commit_deadline_ms,
             "terminal_theme": terminal_theme,
+            "theme_from": theme_from,
         }
         self.spawns.append(request)
         self.next_seq += 1
@@ -838,6 +840,24 @@ async def test_prepare_spawn_forwards_the_client_theme() -> None:
         )
 
     assert recorded == [theme, None]
+
+
+async def test_prepare_spawn_names_the_spawner_pane_only_within_its_host_epoch() -> None:
+    """A pane id from an earlier host epoch could name another client's pane (#23286)."""
+    runtime, host = _runtime()
+    for theme_from in ((host.host_epoch, "ht-parent"), ("epoch-before-restart", "ht-parent"), None):
+        await runtime.prepare_spawn(
+            TerminalSpawnRequest(
+                terminal_id=uuid4(),
+                spawn_key="gobby-native",
+                command=["/bin/sh"],
+                reservation_id="rsv",
+                reserve_key="rk",
+                theme_from=theme_from,
+            )
+        )
+
+    assert [spawn["theme_from"] for spawn in host.spawns] == ["ht-parent", None, None]
 
 
 async def test_prepare_spawn_forwards_requested_cwd() -> None:

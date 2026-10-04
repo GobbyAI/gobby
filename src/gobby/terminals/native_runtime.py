@@ -420,9 +420,16 @@ class NativeTerminalRuntime(NativeHostProbeMixin):
             if not reservation_id or not reserve_key:
                 raise HostCommandError("invalid_reservation")
             argv, env = apply_native_env_policy(request.command, request.env, request.auth_cli)
+            # A pane id names a pane only within its host epoch.
+            seed: dict[str, str] = {}
+            if request.theme_from is not None:
+                seed_epoch, seed_pane = request.theme_from
+                if seed_epoch == str(getattr(self._client, "host_epoch", "") or ""):
+                    seed["theme_from"] = seed_pane
             payload = await self._client.spawn(
-                # None: the host starts the child on its latest client declaration.
+                # None: the child starts on theme_from's ground, else unset.
                 terminal_theme=request.terminal_theme,
+                **seed,
                 terminal_id=str(request.terminal_id),
                 spawn_key=request.spawn_key,
                 reservation_id=reservation_id,

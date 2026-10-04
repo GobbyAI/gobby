@@ -99,6 +99,11 @@ impl Host {
     /// Spawns and commits the query loop; returns its host terminal id or the
     /// spawn error code.
     fn spawn(&mut self, theme: Option<Value>) -> Result<String, String> {
+        self.spawn_with("terminal_theme", theme.unwrap_or(Value::Null))
+    }
+
+    /// Spawn with one extra request field, such as `theme_from`.
+    fn spawn_with(&mut self, field: &str, value: Value) -> Result<String, String> {
         self.next += 1;
         let terminal_id = format!("term-{}", self.next);
         let reserved = rpc(
@@ -119,8 +124,8 @@ impl Host {
             "cols": 100,
             "commit_deadline_ms": 8000,
         });
-        if let Some(theme) = theme {
-            request["terminal_theme"] = theme;
+        if !value.is_null() {
+            request[field] = value;
         }
         send_json(&mut self.ctrl, &request);
         let prepared = recv_json(&mut self.ctrl);
@@ -407,6 +412,49 @@ fn a_declaration_never_seeds_another_clients_spawn() {
     let screen = host.wait_for(&desktop, "the desktop's theme", |s| DARK.shown_by(s));
     let first_answer = screen.lines().find(|line| line.contains("A<")).unwrap();
     assert!(first_answer.contains(DARK.bg_answer), "{screen}");
+}
+
+/// A daemon spawn names its spawner's pane in `theme_from` and answers with
+/// that pane's current ground, never with a newer declaration on another
+/// client's pane (#23286).
+#[test]
+fn theme_from_seeds_a_spawn_with_its_parents_ground_alone() {
+    let mut host = Host::start("theme-from");
+    let parent = host.spawn(None).unwrap();
+    let mut desktop = host.attach(&parent);
+    declare(&mut desktop, &DARK);
+    host.wait_for(&parent, "the desktop's theme", |s| DARK.shown_by(s));
+    let other = host.spawn(None).unwrap();
+    let mut laptop = host.attach(&other);
+    declare(&mut laptop, &LIGHT);
+    host.wait_for(&other, "the laptop's theme", |s| LIGHT.shown_by(s));
+
+    let child = host.spawn_with("theme_from", json!(parent)).unwrap();
+    let screen = host.wait_for(&child, "a first answer", |s| {
+        s.lines()
+            .any(|line| line.contains("A<") && line.contains('>'))
+    });
+    let first_answer = screen.lines().find(|line| line.contains("A<")).unwrap();
+    assert!(first_answer.contains(DARK.bg_answer), "{screen}");
+    assert!(first_answer.contains(DARK.fg_answer), "{screen}");
+}
+
+/// A `theme_from` naming no live pane leaves the spawn unset.
+#[test]
+fn theme_from_an_unknown_pane_leaves_the_spawn_unset() {
+    let mut host = Host::start("theme-from-unknown");
+    let child = host
+        .spawn_with("theme_from", json!("no-such-pane"))
+        .unwrap();
+    let screen = host.wait_for(&child, "a first answer", |s| {
+        s.lines()
+            .any(|line| line.contains("A<") && line.contains('>'))
+    });
+    let answer = screen
+        .lines()
+        .find(|line| line.contains("A<") && line.contains('>'))
+        .unwrap();
+    assert_eq!(answer.trim(), "A<>", "{screen}");
 }
 
 #[test]

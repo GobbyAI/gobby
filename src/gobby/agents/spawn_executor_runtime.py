@@ -25,6 +25,27 @@ from gobby.terminals.runtime import PreparedSpawn as RuntimePreparedSpawn
 logger = logging.getLogger(__name__)
 
 
+def spawner_theme_source(
+    manager: TerminalManager, parent_session_id: str
+) -> tuple[str, str] | None:
+    """The spawning session's own native pane, as ``(host_epoch, host_terminal_id)``.
+
+    The child starts on that pane's ground, so it answers OSC 10/11 with the
+    colours its spawner sits on. ``None`` (the child starts unset) when the
+    spawner has no live native pane: cron, pipelines and other paneless spawners.
+    """
+    try:
+        parent = manager.get_live_for_session(parent_session_id)
+    except ValueError:
+        return None
+    if parent is None or parent.backend != "native" or not parent.host_epoch:
+        return None
+    host_terminal_id = (parent.locator or {}).get("host_terminal_id")
+    if not isinstance(host_terminal_id, str) or not host_terminal_id:
+        return None
+    return parent.host_epoch, host_terminal_id
+
+
 async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> SpawnResult:
     """Sole pending-row owner: wrap, create/retry, prepare_spawn, promote_to_live."""
     from gobby.agents.spawn_executor import (
@@ -152,6 +173,9 @@ async def _unplaced_runtime_spawn(
         env=plan.env,
         title=plan.title,
         auth_cli=plan.auth_cli,
+        theme_from=await asyncio.to_thread(
+            spawner_theme_source, manager, request.parent_session_id
+        ),
     )
     if not can_reserve_observer(runtime):
         await asyncio.to_thread(manager.fail_pending, terminal_id)
