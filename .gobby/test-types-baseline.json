@@ -1751,16 +1751,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/e2e/test_e2e_smoke.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 59,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 7,
-      "path": "tests/e2e/test_e2e_smoke.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/e2e/test_full_workflow.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 42,

@@ -4,9 +4,12 @@ Smoke tests for E2E infrastructure.
 Verifies that the E2E test fixtures work correctly.
 """
 
+from pathlib import Path
+
+import httpx
 import pytest
 
-from tests.e2e.conftest import _is_production_daemon_artifact
+from tests.e2e.conftest import DaemonInstance, MCPTestClient, _is_production_daemon_artifact
 
 pytestmark = pytest.mark.e2e
 
@@ -58,7 +61,9 @@ def test_production_daemon_comms_attachment_is_external_write_exempt() -> None:
 class TestE2EInfrastructure:
     """Tests verifying E2E fixtures work correctly."""
 
-    def test_daemon_starts_and_responds(self, daemon_instance, daemon_client) -> None:
+    def test_daemon_starts_and_responds(
+        self, daemon_instance: DaemonInstance, daemon_client: httpx.Client
+    ) -> None:
         """Verify daemon starts and responds to health check."""
         # Check daemon is running
         assert daemon_instance.is_alive(), "Daemon process should be alive"
@@ -70,7 +75,7 @@ class TestE2EInfrastructure:
         data = response.json()
         assert data.get("status") == "healthy"
 
-    def test_daemon_instance_has_isolated_config(self, daemon_instance) -> None:
+    def test_daemon_instance_has_isolated_config(self, daemon_instance: DaemonInstance) -> None:
         """Verify daemon uses isolated configuration."""
         # Config should be in temp directory
         assert "gobby_e2e_" in str(daemon_instance.config_path)
@@ -78,12 +83,14 @@ class TestE2EInfrastructure:
         # Database should be in temp directory
         assert "gobby_e2e_" in str(daemon_instance.db_path)
 
-    def test_daemon_logs_captured(self, daemon_instance) -> None:
+    def test_daemon_logs_captured(self, daemon_instance: DaemonInstance) -> None:
         """Verify daemon logs are captured to files."""
         # Log files should exist
         assert daemon_instance.log_file.exists() or daemon_instance.error_log_file.exists()
 
-    def test_cli_events_simulator_works(self, daemon_instance, daemon_client) -> None:
+    def test_cli_events_simulator_works(
+        self, daemon_instance: DaemonInstance, daemon_client: httpx.Client
+    ) -> None:
         """Verify CLI event endpoints are accessible."""
         # Test that sessions endpoint is accessible
         response = daemon_client.get("/api/sessions")
@@ -93,7 +100,9 @@ class TestE2EInfrastructure:
         assert "sessions" in data
         assert "count" in data
 
-    def test_mcp_client_lists_internal_servers(self, daemon_instance, mcp_client) -> None:
+    def test_mcp_client_lists_internal_servers(
+        self, daemon_instance: DaemonInstance, mcp_client: MCPTestClient
+    ) -> None:
         """Verify MCP client can list internal servers."""
         servers = mcp_client.list_servers()
 
@@ -101,7 +110,7 @@ class TestE2EInfrastructure:
         server_names = [s.get("name") for s in servers]
         assert "gobby-tasks" in server_names or len(servers) >= 0
 
-    def test_project_dir_has_gobby_structure(self, e2e_project_dir) -> None:
+    def test_project_dir_has_gobby_structure(self, e2e_project_dir: Path) -> None:
         """Verify project directory has .gobby structure."""
         gobby_dir = e2e_project_dir / ".gobby"
         assert gobby_dir.exists()
@@ -110,7 +119,7 @@ class TestE2EInfrastructure:
         assert project_json.exists()
 
     def test_multiple_daemon_instances_use_different_ports(
-        self, e2e_project_dir, e2e_config
+        self, e2e_project_dir: Path, e2e_config: tuple[Path, int, int]
     ) -> None:
         """Verify config uses dynamically allocated ports."""
         config_path, http_port, ws_port = e2e_config
