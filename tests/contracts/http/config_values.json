@@ -957,6 +957,7 @@
             "rye run",
             "bundle exec",
             "npx",
+            "npm exec",
             "pnpm exec",
             "yarn exec",
             "bunx"
@@ -2018,6 +2019,7 @@
             "rye run",
             "bundle exec",
             "npx",
+            "npm exec",
             "pnpm exec",
             "yarn exec",
             "bunx"
