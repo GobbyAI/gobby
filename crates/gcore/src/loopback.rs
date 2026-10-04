@@ -6,8 +6,10 @@
 //! and that answer lists `::1` first. In #22412 a `::1` dial self-connected to
 //! the hub's own port and hung a `gcode` refresh for five hours. Local Gobby
 //! services listen on 127.0.0.1 or a wildcard, so clients dial that address
-//! directly. Configured hosts stay as written for identity, TLS names and
-//! `Host` headers; only the dial address changes.
+//! directly. AI and embedding clients, which serve user-configured local
+//! endpoints, fall back to ::1 when 127.0.0.1 refuses. Configured hosts stay
+//! as written for identity, TLS names and `Host` headers; only the dial
+//! address changes.
 
 use std::net::{IpAddr, Ipv4Addr};
 
