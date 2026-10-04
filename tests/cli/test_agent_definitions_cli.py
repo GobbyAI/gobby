@@ -171,6 +171,7 @@ class TestAgentDefinitionsShow:
         assert "step_workflow" in data
         assert data["step_workflow"] is None
         assert "max_turns" not in data
+        assert data["prewarm_pre_commit_store"] is True
 
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_show_json_emits_nested_step_workflow(

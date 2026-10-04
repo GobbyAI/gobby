@@ -15,6 +15,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.workflows._auto_export import require_exportable_endpoint_token
 from gobby.storage.definitions import AgentDefinitionManager, AgentDefinitionRow
+from gobby.workflows.agent_detail import agent_definition_detail
 from gobby.workflows.definitions import AgentDefinitionBody, AgentStepWorkflowBody
 
 logger = logging.getLogger(__name__)
@@ -59,31 +60,6 @@ def _agent_summary(row: AgentDefinitionRow) -> dict[str, Any]:
         "surfaces": body.get("surfaces", ["spawn"]),
         "has_steps": bool(steps),
         "step_count": len(steps),
-        "enabled": row.enabled,
-        "source": row.source,
-        "project_id": row.project_id,
-    }
-
-
-def _agent_detail(row: AgentDefinitionRow) -> dict[str, Any]:
-    """Build a detailed dict for an agent definition row, including full definition."""
-    raw_body = _row_body(row)
-    raw_body.setdefault("name", row.name)
-    body = AgentDefinitionBody.model_validate(raw_body).model_dump(mode="json")
-    return {
-        "id": row.id,
-        "name": row.name,
-        "description": row.description,
-        "provider": body.get("provider"),
-        "model": body.get("model"),
-        "mode": raw_body.get("mode"),
-        "isolation": body.get("isolation"),
-        "surfaces": body.get("surfaces", ["spawn"]),
-        "base_branch": body.get("base_branch"),
-        "timeout": body.get("timeout"),
-        "prompts": body.get("prompts"),
-        "workflows": body.get("workflows"),
-        "step_workflow": body.get("step_workflow"),
         "enabled": row.enabled,
         "source": row.source,
         "project_id": row.project_id,
@@ -140,7 +116,7 @@ def get_agent_definition(
     except Exception as e:
         return {"success": False, "error": f"Failed to parse agent definition: {e}"}
 
-    detail = _agent_detail(row)
+    detail = agent_definition_detail(row)
     # Normalize provider for display
     if detail.get("provider") in (None, "inherit"):
         detail["provider"] = "claude"
@@ -206,7 +182,7 @@ def create_agent_definition(
     except Exception as e:
         logger.warning("Failed to auto-export agent '%s': %s", name, e)
 
-    return {"success": True, "agent": _agent_detail(row)}
+    return {"success": True, "agent": agent_definition_detail(row)}
 
 
 def toggle_agent_definition(
@@ -232,7 +208,7 @@ def toggle_agent_definition(
     updated = def_manager.update(row.id, enabled=enabled)
     logger.info("Toggled agent definition '%s' enabled=%s", name, enabled)
 
-    return {"success": True, "agent": _agent_detail(updated)}
+    return {"success": True, "agent": agent_definition_detail(updated)}
 
 
 def delete_agent_definition(
