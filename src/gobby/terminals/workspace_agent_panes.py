@@ -11,7 +11,7 @@ from typing import Literal
 from psycopg.errors import UniqueViolation
 
 from gobby.storage.sessions import SessionManager
-from gobby.storage.terminals import TerminalManager, truncate_title
+from gobby.storage.terminals import TerminalManager
 from gobby.storage.workspaces import (
     LayoutChange,
     WorkspaceBusyError,
@@ -33,8 +33,6 @@ from gobby.terminals.workspace_contract import (
     storage_errors,
 )
 
-SEAT_HELD_STATES = frozenset({"pending", "live", "orphaned"})
-
 AgentPlacementErrorCode = Literal[
     "invalid_ref",
     "not_found",
@@ -42,7 +40,6 @@ AgentPlacementErrorCode = Literal[
     "invalid_op",
     "busy",
     "invalid_placement",
-    "seat_live",
     "sandbox_required",
 ]
 
@@ -61,8 +58,6 @@ _SHARED_CODES: dict[str, AgentPlacementErrorCode] = {
     "invalid_op": "invalid_op",
     "busy": "busy",
 }
-
-_SeatKey = tuple[str, str]
 
 
 class AgentPlacementError(Exception):
@@ -131,7 +126,6 @@ class ResolvedPlacement:
     placement: AgentPlacement
     workspace_id: str
     project_id: str
-    seat: str
     node_ref: int
     workspace_ref: int
     beside_pane_id: str | None = None
@@ -148,12 +142,15 @@ class ReservedPane:
     pane_ref: str
     tab_ref: str
     kind: Literal["tab", "split"]
-    seat: str
     tab: WorkspaceTab
 
 
 class AgentPaneReserver:
-    """Owns the per-workspace seat locks and in-flight seat entries for placed agents."""
+    """Owns the per-workspace insert locks for placed agent panes.
+
+    Seats are told apart by ``project#session_ref``; a pane title never refuses a
+    placement.
+    """
 
     def __init__(
         self,
@@ -170,12 +167,11 @@ class AgentPaneReserver:
         self._sessions = sessions
         self._publish = publish
         self._locks: dict[str, asyncio.Lock] = {}
-        self._seats: dict[_SeatKey, str] = {}
 
     async def preflight(
         self, actor: str, project_id: str, placement: AgentPlacement
     ) -> ResolvedPlacement:
-        """Resolve and authorize ``placement`` read-only; refuse a live seat."""
+        """Resolve and authorize ``placement`` read-only."""
         return await asyncio.to_thread(self._preflight, actor, project_id, placement)
 
     def _preflight(
@@ -202,50 +198,23 @@ class AgentPaneReserver:
                 workspace, beside_pane_id, tab_id = target.workspace, beside.id, tab.id
             if target.node.ref is None:
                 raise AgentPlacementError("invalid_op", f"Node {target.node.id} has no ref")
-            seat = truncate_title(placement.title) or placement.title
-            if self._seat_held(workspace.id, seat):
-                raise AgentPlacementError("seat_live", f"Seat {seat!r} is held")
         return ResolvedPlacement(
             placement=placement,
             workspace_id=workspace.id,
             project_id=project_id,
-            seat=seat,
             node_ref=target.node.ref,
             workspace_ref=workspace.ref,
             beside_pane_id=beside_pane_id,
             tab_id=tab_id,
         )
 
-    def _seat_held(self, workspace_id: str, seat: str) -> bool:
-        """Whether a tab title or pane label equal to ``seat`` holds a held terminal."""
-        row = self._workspaces.db.fetchone(
-            """
-            SELECT 1 FROM workspace_panes p
-            JOIN workspace_tabs t ON t.id = p.tab_id
-            JOIN terminals term ON term.id = p.terminal_id
-            WHERE t.workspace_id = %s
-              AND (t.title = %s OR p.label = %s)
-              AND term.state = ANY(%s)
-            LIMIT 1
-            """,
-            (workspace_id, seat, seat, sorted(SEAT_HELD_STATES)),
-        )
-        return row is not None
-
     async def reserve(
         self, resolved: ResolvedPlacement, *, worktree_id: str | None
     ) -> ReservedPane:
-        """Insert the unbound pane under the seat lock; compensate on any failure."""
-        key = (resolved.workspace_id, resolved.seat)
+        """Insert the unbound pane under the workspace lock; compensate on any failure."""
         lock = self._locks.setdefault(resolved.workspace_id, asyncio.Lock())
         async with lock:
-            if key in self._seats or await asyncio.to_thread(
-                self._seat_held, resolved.workspace_id, resolved.seat
-            ):
-                raise AgentPlacementError("seat_live", f"Seat {resolved.seat!r} is held")
-            # No await between the seat check and these marks.
             pane_id = mint_pane_id()
-            self._seats[key] = pane_id
             self._workspaces.mark_spawn_in_flight(pane_id)
             # asyncio.wait leaves the insert running when reserve is cancelled, like
             # shield, without shield's loop-handler report of a later insert failure.
@@ -257,7 +226,7 @@ class AgentPaneReserver:
                     await asyncio.wait([insert])
                     tab, pane = insert.result()
                 except BaseException as exc:
-                    interrupted = await self._compensate(insert, key, pane_id)
+                    interrupted = await self._compensate(insert, pane_id)
                     if interrupted and not isinstance(exc, asyncio.CancelledError):
                         raise asyncio.CancelledError from exc
                     raise
@@ -268,7 +237,6 @@ class AgentPaneReserver:
             pane_ref=f"{resolved.node_ref}:{resolved.workspace_ref}:{tab.ref}:{pane.ref}",
             tab_ref=f"{resolved.node_ref}:{resolved.workspace_ref}:{tab.ref}",
             kind=resolved.placement.kind,
-            seat=resolved.seat,
             tab=tab,
         )
 
@@ -300,11 +268,10 @@ class AgentPaneReserver:
     async def _compensate(
         self,
         insert: asyncio.Future[tuple[WorkspaceTab, WorkspacePane]],
-        key: _SeatKey,
         pane_id: str,
     ) -> bool:
         """Roll back to completion through any cancellation; True if one arrived."""
-        cleanup = asyncio.ensure_future(self._abandon(insert, key, pane_id))
+        cleanup = asyncio.ensure_future(self._abandon(insert, pane_id))
         interrupted = False
         while not cleanup.done():
             try:
@@ -317,7 +284,6 @@ class AgentPaneReserver:
     async def _abandon(
         self,
         insert: asyncio.Future[tuple[WorkspaceTab, WorkspacePane]],
-        key: _SeatKey,
         pane_id: str,
     ) -> None:
         """Wait for the insert to settle so no commit lands after the rollback."""
@@ -329,7 +295,7 @@ class AgentPaneReserver:
                 insert.exception()
             await self._roll_back(pane_id)
         finally:
-            self._clear(key, pane_id)
+            self._workspaces.clear_spawn_in_flight(pane_id)
 
     async def _roll_back(self, pane_id: str) -> None:
         """Remove an unbound pane; a failure leaves residue the next sweep prunes."""
@@ -340,7 +306,7 @@ class AgentPaneReserver:
         await self._publish_removal(change)
 
     async def bind(self, reserved: ReservedPane, terminal_id: str) -> WorkspacePane:
-        """Bind the launch terminal and announce the pane; the mark and seat stay."""
+        """Bind the launch terminal and announce the pane; the in-flight mark stays."""
         try:
             pane = await asyncio.to_thread(
                 self._workspaces.set_pane_terminal,
@@ -361,23 +327,23 @@ class AgentPaneReserver:
     async def release(self, reserved: ReservedPane, *, terminal_id: str | None) -> None:
         """Kill an active launch terminal, then remove the pane; never raises.
 
-        A terminal whose kill failed, or that is orphaned, keeps the pane bound so it
-        holds the seat until the terminal settles.
+        A terminal whose kill failed, or that is orphaned, keeps the pane bound until
+        the terminal settles.
         """
         try:
-            if terminal_id is not None and await self._holds_seat(terminal_id):
+            if terminal_id is not None and await self._still_held(terminal_id):
                 await self._keep(reserved.pane_id, terminal_id)
             else:
                 await self._remove(reserved.pane_id)
         finally:
             self.settle(reserved)
 
-    async def _holds_seat(self, terminal_id: str) -> bool:
-        """Kill the launch terminal when active; True when it still holds the seat."""
+    async def _still_held(self, terminal_id: str) -> bool:
+        """Kill the launch terminal when active; True when it may still be running."""
         try:
             terminal = await asyncio.to_thread(self._terminals.get, terminal_id)
         except Exception:
-            # An unreadable terminal may still be running: keep holding the seat.
+            # An unreadable terminal may still be running: keep its pane.
             return True
         if terminal is None or terminal.state == "exited":
             return False
@@ -386,7 +352,7 @@ class AgentPaneReserver:
         try:
             await kill_terminal(self._terminals, self._registry, terminal)
         except Exception:
-            # Best effort: the kept pane holds the seat whether or not the mark lands.
+            # Best effort: the pane is kept whether or not the mark lands.
             with suppress(Exception):
                 await asyncio.to_thread(
                     self._terminals.mark_kill_failed,
@@ -442,10 +408,5 @@ class AgentPaneReserver:
         )
 
     def settle(self, reserved: ReservedPane) -> None:
-        """Clear the in-flight mark and the seat entry; the bound pane holds the seat."""
-        self._clear((reserved.workspace_id, reserved.seat), reserved.pane_id)
-
-    def _clear(self, key: _SeatKey, pane_id: str) -> None:
-        self._workspaces.clear_spawn_in_flight(pane_id)
-        if self._seats.get(key) == pane_id:
-            del self._seats[key]
+        """Clear the pane's in-flight mark."""
+        self._workspaces.clear_spawn_in_flight(reserved.pane_id)

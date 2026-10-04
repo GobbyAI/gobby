@@ -21,14 +21,13 @@ from gobby.mcp_proxy.tools.spawn_agent import _implementation as impl
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.terminals import mint_terminal_id, native_locator_key
 from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.terminals.runtime import TerminalSpawnRequest
 from tests.mcp_proxy.tools.spawn_agent.test_placement import (
     LOCAL_MACHINE_ID,
     SEAT,
+    _assert_pane_held,
     _assert_seat_free,
-    _assert_seat_live,
     _build,
     _drain_owners,
     _ExecOrderedRuntime,
@@ -137,29 +136,6 @@ def _parked_original(h: _Harness) -> AgentRun:
     parked = h.runs.cancel(original.id, terminal_reason="daemon_stop")
     assert parked is not None
     return parked
-
-
-def _orphaned_seat(h: _Harness) -> None:
-    """A tab titled ``SEAT`` whose pane holds an orphaned terminal."""
-    change = h.workspaces.create_tab(
-        h.workspace.id, pane_id=str(uuid.uuid4()), project_id=h.project_id, title=SEAT
-    )
-    terminal_id = mint_terminal_id()
-    row = h.terminals.create_pending(
-        terminal_id, h.project_id, "native", "gobby", terminal_id, machine_id=LOCAL_MACHINE_ID
-    )
-    # A committed native terminal is addressed by its host terminal id on the
-    # host epoch that spawned it.
-    live = h.terminals.promote_to_live(
-        row.id,
-        locator={"host_terminal_id": "ht-orphan"},
-        locator_key=native_locator_key("orphan-epoch", "ht-orphan"),
-        host_epoch="orphan-epoch",
-        session_name=row.spawn_key,
-    )
-    assert live is not None
-    assert h.terminals.mark_orphaned(live.id) is not None
-    assert h.workspaces.set_pane_terminal(change.panes[0].id, terminal_id, owns_terminal=True)
 
 
 def _tab_snapshot(h: _Harness) -> dict[str, Any]:
@@ -272,7 +248,7 @@ async def test_placed_resume_replaces_before_exec(
     assert _successor_status(h, result.run_id) == ("running", None)
     assert finalize.await_count == 1
     _assert_seat_free(h)
-    await _assert_seat_live(h)
+    _assert_pane_held(h)
 
 
 @pytest.mark.parametrize(
@@ -280,8 +256,6 @@ async def test_placed_resume_replaces_before_exec(
     [
         "missing",
         "moved",
-        "seat_live",
-        "orphaned",
         "forbidden",
         "parent_unresolved",
         "sandbox_required",
@@ -316,11 +290,6 @@ async def test_placed_resume_refusals_park_successor(
             "axis": "horizontal",
         }
         expected = "placement_error:not_found"
-    elif case == "seat_live":
-        _held_seat(h, SEAT)
-    elif case == "orphaned":
-        _orphaned_seat(h)
-        expected = "placement_error:seat_live"
     elif case == "forbidden":
         outsider = LocalProjectManager(h.db).create(name="resume-outsider")
         change = h.workspaces.create_tab(
@@ -485,7 +454,7 @@ async def test_placed_resume_cancel_keeps_in_doubt_owner(
     assert in_doubt_spawns.holds(terminal_id)
     [pane_id] = _panes(h)
     assert _panes(h) == {pane_id: terminal_id}
-    await _assert_seat_live(h)
+    _assert_pane_held(h)
     assert finalize.await_count == 1
 
     hold.set()

@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NoReturn, get_args
 from unittest.mock import patch
 
 import pytest
@@ -22,7 +22,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.terminals import TITLE_MAX_BYTES, Terminal, TerminalManager, tmux_locator_key
+from gobby.storage.terminals import Terminal, TerminalManager, tmux_locator_key
 from gobby.storage.workspaces import (
     Workspace,
     WorkspaceManager,
@@ -367,32 +367,32 @@ async def test_preflight_refusals_have_no_side_effects(harness: _Harness) -> Non
     assert h.events == [] and h.minted == []
 
 
-async def test_live_seat_refused_across_kinds_ended_seat_allowed(harness: _Harness) -> None:
+async def test_duplicate_title_placements_both_succeed(harness: _Harness) -> None:
+    """Seats are told apart by project#session_ref, so a pane title never refuses."""
     h = harness
     for state in ("pending", "live", "orphaned"):
-        ws = _workspace(h, f"seats-{state}")
+        ws = _workspace(h, f"titles-{state}")
         _, anchor = _base(h, ws)
         _base(h, ws, title="alpha", terminal=_terminal(h, state))
-        _labeled_split(h, anchor, "beta", _terminal(h, state))
-        # A tab seat refuses a split request and a split seat refuses a tab request.
-        for title in ("alpha", "beta"):
-            for placement in (_tab(ws.id, title), _split(anchor.id, title)):
-                await _refused("seat_live", h.reserver.preflight(OPERATOR, h.project_id, placement))
-
-    # Two titles that truncate to one stored value are one seat.
-    ws = _workspace(h, "truncation")
-    prefix = "x" * TITLE_MAX_BYTES
-    held = _terminal(h)
-    _base(h, ws, title=f"{prefix}a", terminal=held)
-    await _refused(
-        "seat_live", h.reserver.preflight(OPERATOR, h.project_id, _tab(ws.id, f"{prefix}b"))
-    )
-
-    # Once that terminal has ended, the seat relaunches.
-    assert h.terminals.mark_exited(held.id) is not None
-    resolved = await h.reserver.preflight(OPERATOR, h.project_id, _tab(ws.id, f"{prefix}b"))
-    assert resolved.seat == prefix
-    assert h.events == [] and h.minted == []
+        _labeled_split(h, anchor, "alpha", _terminal(h, state))
+        # Tab and split placements titled like a held tab and a held pane both reserve,
+        # and each keeps its own pane while the other is still in flight.
+        reserved = [
+            await _reserve(h, placement)
+            for placement in (_tab(ws.id, "alpha"), _split(anchor.id, "alpha"))
+        ]
+        pane_ids = [pane.pane_id for pane in reserved]
+        assert len(set(pane_ids)) == 2
+        assert set(pane_ids) <= _pane_ids(h, ws)
+        assert sorted(_in_flight(h)) == sorted(pane_ids)
+        terminals = [_terminal(h) for _ in reserved]
+        for pane, terminal in zip(reserved, terminals, strict=True):
+            bound = await h.reserver.bind(pane, terminal.id)
+            assert (bound.id, bound.terminal_id) == (pane.pane_id, terminal.id)
+        for pane, terminal in zip(reserved, terminals, strict=True):
+            await h.reserver.release(pane, terminal_id=terminal.id)
+        assert _in_flight(h) == []
+    assert "seat_live" not in get_args(agent_panes.AgentPlacementErrorCode)
 
 
 async def test_reserve_bind_emits_once(harness: _Harness) -> None:
@@ -458,19 +458,37 @@ async def test_release_is_idempotent(harness: _Harness) -> None:
     await h.reserver.preflight(OPERATOR, h.project_id, _split(anchor.id, "scout"))
 
 
-async def test_concurrent_same_seat_reserves_once(harness: _Harness) -> None:
+async def test_concurrent_same_title_reserves_both_one_insert_at_a_time(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same-title reserves all succeed; the workspace lock still serializes their inserts."""
     h = harness
     ws = _workspace(h)
     _, anchor = _base(h, ws)
-    for index, kinds in enumerate(
-        (("tab", "tab"), ("split", "split"), ("tab", "split"), ("split", "tab"))
-    ):
-        title = f"seat-{index}"
+    real_insert = h.reserver._insert
+    guard = threading.Lock()
+    inside: list[int] = [0]
+    overlaps: list[int] = []
+
+    def counted_insert(*args: Any, **kwargs: Any) -> tuple[WorkspaceTab, WorkspacePane]:
+        with guard:
+            inside[0] += 1
+            overlaps.append(inside[0])
+        try:
+            # Long enough for an unserialized second insert to start meanwhile.
+            threading.Event().wait(0.05)
+            return real_insert(*args, **kwargs)
+        finally:
+            with guard:
+                inside[0] -= 1
+
+    monkeypatch.setattr(h.reserver, "_insert", counted_insert)
+    for kinds in (("tab", "tab"), ("split", "split"), ("tab", "split"), ("split", "tab")):
         resolved = [
             await h.reserver.preflight(
                 OPERATOR,
                 h.project_id,
-                _tab(ws.id, title) if kind == "tab" else _split(anchor.id, title),
+                _tab(ws.id, "seat") if kind == "tab" else _split(anchor.id, "seat"),
             )
             for kind in kinds
         ]
@@ -479,11 +497,12 @@ async def test_concurrent_same_seat_reserves_once(harness: _Harness) -> None:
             return_exceptions=True,
         )
         reserved = [outcome for outcome in outcomes if isinstance(outcome, ReservedPane)]
-        refused = [outcome for outcome in outcomes if isinstance(outcome, AgentPlacementError)]
-        assert len(reserved) == 1, outcomes
-        assert [error.code for error in refused] == ["seat_live"], outcomes
-        assert _in_flight(h) == [reserved[0].pane_id]
-        await h.reserver.release(reserved[0], terminal_id=None)
+        assert len(reserved) == 2, outcomes
+        assert len({pane.pane_ref for pane in reserved}) == 2
+        assert sorted(_in_flight(h)) == sorted(pane.pane_id for pane in reserved)
+        for pane in reserved:
+            await h.reserver.release(pane, terminal_id=None)
+    assert overlaps and max(overlaps) == 1, overlaps
 
 
 async def test_split_axis_maps_to_storage_axis(harness: _Harness) -> None:
@@ -641,7 +660,7 @@ async def test_release_kills_only_an_active_owned_terminal(
     assert len(kills) == attempts
     assert reserved.pane_id not in _pane_ids(h, ws)
 
-    # A failed kill keeps the pane bound to the launch terminal, which holds the seat:
+    # A failed kill keeps the pane bound to the launch terminal, which stays held:
     # a live row is orphaned and a pending row stays pending.
     for state, settled in (("live", "orphaned"), ("pending", "pending")):
         terminal = _terminal(h, state)
@@ -656,11 +675,8 @@ async def test_release_kills_only_an_active_owned_terminal(
         pane = _pane(h, ws, reserved.pane_id)
         assert (pane.terminal_id, pane.owns_terminal) == (terminal.id, True)
         assert _in_flight(h) == []
-        await _refused(
-            "seat_live", h.reserver.preflight(OPERATOR, h.project_id, _tab(ws.id, title))
-        )
 
-    # An orphaned terminal is not killed; its pane holds the seat until the terminal exits.
+    # An orphaned terminal is not killed; its pane stays bound until the terminal exits.
     orphan = _terminal(h)
     reserved = await _reserve(h, _tab(ws.id, "orphaned"))
     await h.reserver.bind(reserved, orphan.id)
@@ -668,14 +684,12 @@ async def test_release_kills_only_an_active_owned_terminal(
     attempts = len(kills)
     await h.reserver.release(reserved, terminal_id=orphan.id)
     assert len(kills) == attempts
-    assert _pane(h, ws, reserved.pane_id).terminal_id == orphan.id
-    await _refused(
-        "seat_live", h.reserver.preflight(OPERATOR, h.project_id, _tab(ws.id, "orphaned"))
-    )
+    pane = _pane(h, ws, reserved.pane_id)
+    assert (pane.terminal_id, pane.owns_terminal) == (orphan.id, True)
+    assert _state(h, orphan) == "orphaned"
     assert h.terminals.mark_exited(orphan.id) is not None
     swept = h.workspaces.sweep_dead_panes(ws.id)
     assert reserved.pane_id in {pane.id for pane in swept.removed_panes}
-    await h.reserver.preflight(OPERATOR, h.project_id, _tab(ws.id, "orphaned"))
 
 
 async def test_release_steps_are_independent(

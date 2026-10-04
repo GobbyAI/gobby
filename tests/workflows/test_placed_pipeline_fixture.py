@@ -386,9 +386,10 @@ def test_two_seat_tab_and_split(
         assert [[seat["terminal_id"], pane.id]] in bound_at_exec, bound_at_exec
 
 
-def test_rerun_refuses_live_seat(
+def test_rerun_launches_a_second_pod_beside_live_titles(
     daemon_instance: DaemonInstance, postgres_db: HubDatabase, home: Home, seat_state: Path
 ) -> None:
+    """Pane titles never refuse: a rerun beside the live first pod launches its own seats."""
     _import_fixture(postgres_db)
     inputs = _inputs(home, "rerun")
     with _client(daemon_instance) as client:
@@ -398,15 +399,21 @@ def test_rerun_refuses_live_seat(
         )
         _providers(seat_state, 2)
         second = _run(client, inputs)
-    steps = _steps(second)
-    assert second["status"] == "failed"
-    assert steps["seat_a"]["status"] == "failed"
-    assert "Seat 'rerun-a' is held" in steps["seat_a"]["error"]
-    seat_b_status = steps["seat_b"]["status"] if "seat_b" in steps else None
-    assert seat_b_status in {None, "pending", "skipped"}
-    assert len(_markers(seat_state, "provider")) == 2
-    assert _agent_terminals(postgres_db) == 2
-    assert len(_tab_panes(postgres_db, home, "rerun-a")[1]) == 2
+        assert second["status"] == "completed", _diagnosis(
+            daemon_instance, postgres_db, _steps(second)
+        )
+        _providers(seat_state, 4)
+    seats = [_output(_steps(run)[seat]) for run in (first, second) for seat in ("seat_a", "seat_b")]
+    assert len({seat["terminal_id"] for seat in seats}) == 4
+    assert len({seat["pane_ref"] for seat in seats}) == 4
+    assert all(_terminal_state(postgres_db, seat["terminal_id"]) == "live" for seat in seats)
+    assert _agent_terminals(postgres_db) == 4
+    tabs = [
+        tab
+        for tab in WorkspaceManager(postgres_db).list_tabs(home.workspace_id)
+        if tab.title == "rerun-a"
+    ]
+    assert len(tabs) == 2
 
 
 def test_invalid_ref_refuses_without_spawn(

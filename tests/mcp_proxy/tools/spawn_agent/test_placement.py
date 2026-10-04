@@ -8,10 +8,10 @@ import threading
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, cast
+from typing import Any, Literal, NoReturn, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -38,8 +38,13 @@ from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager, ensure_system_session, system_session_id
 from gobby.storage.tasks import LocalTaskManager
-from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id
-from gobby.storage.workspaces import Workspace, WorkspaceManager, WorkspacePane
+from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id, native_locator_key
+from gobby.storage.workspaces import (
+    Workspace,
+    WorkspaceBusyError,
+    WorkspaceManager,
+    WorkspacePane,
+)
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.host_client import HostCommandError
@@ -47,7 +52,7 @@ from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.termination import kill_terminal
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
-from gobby.terminals.workspace_agent_panes import AgentPaneReserver, AgentPlacementError
+from gobby.terminals.workspace_agent_panes import AgentPaneReserver
 from gobby.terminals.workspace_contract import WorkspaceEvent, WorkspaceOpError
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.terminals.write_coordinator import WriteCoordinator
@@ -127,13 +132,22 @@ class _UnkillableRuntime(FakeRuntime):
 
 @dataclass
 class _ExecOrderedRuntime(FakeRuntime):
-    """Records provider exec into a shared order list."""
+    """Records provider exec into a shared order list; each spawn gets its own host id."""
 
     order: list[str] = field(default_factory=list)
 
     async def prepare_spawn(self, request: Any) -> Any:
         self.order.append("exec")
-        return await super().prepare_spawn(request)
+        prepared = await super().prepare_spawn(request)
+        assert prepared.locator is not None
+        host_id = f"ht-{self.create_calls}"
+        return replace(
+            prepared,
+            host_terminal_id=host_id,
+            stored_locator={"host_terminal_id": host_id},
+            locator=replace(prepared.locator, pane_id=host_id),
+            locator_key=native_locator_key(self.host_epoch, host_id),
+        )
 
 
 @dataclass
@@ -428,7 +442,7 @@ def _kinds(h: _Harness) -> list[str]:
 
 
 def _assert_untouched(h: _Harness, panes: dict[str, str | None], terminals: dict[str, str]) -> None:
-    """No isolation, child session, run, terminal, pane, event or seat mark exists."""
+    """No isolation, child session, run, terminal, pane, event or in-flight mark exists."""
     assert h.isolation.prepared == 0
     assert h.prepared == []
     assert h.launches == []
@@ -437,19 +451,22 @@ def _assert_untouched(h: _Harness, panes: dict[str, str | None], terminals: dict
     assert _terminal_states(h) == terminals
     assert _panes(h) == panes
     assert h.events == []
-    assert h.reserver._seats == {}
+    _assert_seat_free(h)
 
 
 def _assert_seat_free(h: _Harness) -> None:
-    assert h.reserver._seats == {}
     assert not any(h.workspaces.is_spawn_in_flight(pane_id) for pane_id in _panes(h))
 
 
-async def _assert_seat_live(h: _Harness) -> None:
-    placement = agent_panes.AgentPlacement.parse(_tab(h))
-    with pytest.raises(AgentPlacementError) as refused:
-        await h.reserver.preflight(f"session:{h.parent_id}", h.project_id, placement)
-    assert refused.value.code == "seat_live"
+def _assert_pane_held(h: _Harness) -> None:
+    """A placed pane stays bound to its pending, live or orphaned launch terminal."""
+    states = _terminal_states(h)
+    held = [
+        pane_id
+        for pane_id, terminal_id in _panes(h).items()
+        if terminal_id is not None and states.get(terminal_id) in {"pending", "live", "orphaned"}
+    ]
+    assert held, (_panes(h), states)
 
 
 async def _drain_owners() -> None:
@@ -509,7 +526,6 @@ async def _sandbox_refused(request: SpawnRequest) -> SpawnResult:
 
 async def test_refused_placement_has_no_side_effects(placed: _Harness) -> None:
     h = placed
-    occupied = _held_seat(h, "occupied-seat")
     other = LocalProjectManager(h.db).create(name="placed-outsider")
     outsider = h.sessions.register_session(
         external_id="placed-outsider",
@@ -521,7 +537,6 @@ async def test_refused_placement_has_no_side_effects(placed: _Harness) -> None:
     panes, terminals = _panes(h), _terminal_states(h)
     cases: list[tuple[str, dict[str, Any], dict[str, Any]]] = [
         ("invalid_placement", {"tab": {"title": SEAT}}, {}),
-        ("seat_live", _tab(h, "occupied-seat"), {}),
         ("not_found", {"tab": {"workspace": str(uuid.uuid4()), "title": SEAT}}, {}),
         ("forbidden", _tab(h), {"parent_session_id": outsider}),
     ]
@@ -532,7 +547,6 @@ async def test_refused_placement_has_no_side_effects(placed: _Harness) -> None:
         assert result["placement_error"] == code
         assert isinstance(result["error"], str) and result["error"]
         _assert_untouched(h, panes, terminals)
-    assert _panes(h)[occupied.id] == occupied.terminal_id
 
 
 async def test_placed_launch_requires_managed_srt(
@@ -672,7 +686,7 @@ async def test_exceptions_and_cancellation_release_pane(placed: _Harness, exit_k
         [pane_id] = _panes(h)
         assert _panes(h) == {pane_id: terminal_id}
         assert _terminal_states(h)[terminal_id] in {"pending", "orphaned"}
-        await _assert_seat_live(h)
+        _assert_pane_held(h)
         return
     assert _terminal_states(h) == {terminal_id: "exited"}
     assert _panes(h) == {} and _tabs(h) == set()
@@ -704,10 +718,10 @@ async def test_placed_spawn_reply_carries_refs(placed: _Harness, kind: str) -> N
     else:
         assert _tabs(h) == tabs_before
     _assert_seat_free(h)
-    await _assert_seat_live(h)
+    _assert_pane_held(h)
 
 
-@pytest.mark.parametrize("refusal", ["slot", "lease", "active_task", "seat_race"])
+@pytest.mark.parametrize("refusal", ["slot", "lease", "active_task", "reserve_busy"])
 async def test_late_refusals_leave_no_pane(
     placed: _Harness, monkeypatch: pytest.MonkeyPatch, refusal: str
 ) -> None:
@@ -734,13 +748,11 @@ async def test_late_refusals_leave_no_pane(
 
         monkeypatch.setattr(impl, "admit_task_spawn", active)
     else:
-        real_reserve = h.reserver.reserve
 
-        async def lost_race(resolved: Any, *, worktree_id: str | None) -> Any:
-            _held_seat(h)  # A concurrent launch took the seat after preflight.
-            return await real_reserve(resolved, worktree_id=worktree_id)
+        def busy(*args: Any, **kwargs: Any) -> NoReturn:
+            raise WorkspaceBusyError("the workspace layout changed after preflight")
 
-        monkeypatch.setattr(h.reserver, "reserve", lost_race)
+        monkeypatch.setattr(h.workspaces, "create_tab", busy)
 
     panes = _panes(h)
     result = await _spawn(h, _tab(h))
@@ -749,15 +761,13 @@ async def test_late_refusals_leave_no_pane(
     assert h.launches == []
     assert h.isolation.prepared == 1 and h.isolation.cleaned == 1
     assert h.events == []
-    if refusal == "seat_race":
-        assert result["placement_error"] == "seat_live"
+    assert _panes(h) == panes
+    if refusal == "reserve_busy":
+        assert result["placement_error"] == "busy"
         assert h.cleanups == [result["run_id"]]
         run = h.runs.get(result["run_id"])
         assert run is not None and run.status == "cancelled"
         assert _child_sessions(h) == 0
-        assert len(_panes(h)) == 1  # Only the winner's seat.
-    else:
-        assert _panes(h) == panes
     if refusal == "active_task":
         assert result["placement_error"] == "task_active"
         assert result["run_id"] == "run-active"
@@ -939,14 +949,14 @@ async def test_concurrent_placed_spawns_share_one_reserver(
         tool.call("spawn_agent", dict(arguments)), tool.call("spawn_agent", dict(arguments))
     )
 
-    winners = [r for r in (first, second) if r["success"] is True]
-    losers = [r for r in (first, second) if r["success"] is not True]
-    assert len(winners) == 1 and len(losers) == 1, (first, second)
-    assert losers[0]["placement_error"] == "seat_live"
-    assert winners[0]["pane_ref"]
-    assert [event["kind"] for event in broadcasts] == ["tab.created"]
-    assert order == ["tab.created", "exec"]
-    assert len(_panes(h)) == 1
+    # One title, two seats: both launch, each in its own tab and pane.
+    assert first["success"] is True and second["success"] is True, (first, second)
+    assert first["pane_ref"] != second["pane_ref"]
+    assert first["tab_ref"] != second["tab_ref"]
+    assert [event["kind"] for event in broadcasts] == ["tab.created", "tab.created"]
+    assert sorted(order) == ["exec", "exec", "tab.created", "tab.created"]
+    assert order[0] == "tab.created"
+    assert len(_panes(h)) == 2
 
 
 @pytest.mark.parametrize("cancel", [False, True])
@@ -1060,16 +1070,11 @@ async def test_duplicate_placed_request_precedence(placed: _Harness) -> None:
     assert h.isolation.prepared == 1 and h.isolation.cleaned == 1
     assert _panes(h) == {}
 
-    occupied = _held_seat(h)
-    held_seat = await tool.call("spawn_agent", {**arguments, "placement": _tab(h)})
-    assert held_seat["placement_error"] == "seat_live"
-    assert h.isolation.prepared == 1
-
     unplaced = await tool.call("spawn_agent", arguments)
     assert unplaced["success"] is True and unplaced["skipped"] is True
     assert unplaced["run_id"] == "run-active"
     assert h.launches == []
-    assert _panes(h) == {occupied.id: occupied.terminal_id}
+    assert _panes(h) == {}
 
 
 @pytest.mark.parametrize("proven", [True, False])
@@ -1115,7 +1120,7 @@ async def test_placed_timeout_race_keeps_pane_until_owner_settles(
         await h.ops.pane_close("operator", pane_id)
     assert refused.value.code == "busy"
     assert _panes(h) == {pane_id: terminal_id}
-    await _assert_seat_live(h)
+    _assert_pane_held(h)
 
     hold.set()
     await _drain_owners()
