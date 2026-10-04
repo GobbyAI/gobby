@@ -34,19 +34,19 @@ pytestmark = pytest.mark.unit
         ("npx playwright test tests/terminal-colors.spec.ts --workers=1", "js-ts-tests"),
         ("deno lint", "js-ts-direct-checks"),
         ("pnpm run lint", "js-ts-script-checks"),
-        ("cargo check --no-default-features", "rust-validation"),
-        ("cargo nextest run", "rust-validation"),
-        ("cargo clippy --no-default-features -- -D warnings", "rust-validation"),
+        ("cargo check --no-default-features", "rust-checks"),
+        ("cargo nextest run", "rust-tests"),
+        ("cargo clippy --no-default-features -- -D warnings", "rust-checks"),
         ("cargo fmt --all -- --check", "rust-format-check"),
         ("ruff format --check src tests", "python-format-check"),
         ("uv run ruff format --check src/", "python-format-check"),
         ("uv run ruff check src/", "python-lint-type"),
-        ("rust-token-killer -- cargo check", "rust-validation"),
-        ("rust-token-killer -- 'cargo check --no-default-features'", "rust-validation"),
+        ("rust-token-killer -- cargo check", "rust-checks"),
+        ("rust-token-killer -- 'cargo check --no-default-features'", "rust-checks"),
         ("timeout 30 -- npm test", "js-ts-tests"),
         ("bash -lc 'GOBBY_TEST_PROTECT=1 uv run pytest tests/config'", "python-tests"),
-        ("env RUSTFLAGS=-Awarnings -- cargo check", "rust-validation"),
-        ("go test ./...", "go-validation"),
+        ("env RUSTFLAGS=-Awarnings -- cargo check", "rust-checks"),
+        ("go test ./...", "go-tests"),
         ("dotnet format --verify-no-changes", "csharp-format-check"),
         ("mix format --check-formatted", "elixir-format-check"),
         ("prettier . --check", "js-ts-format-check"),
@@ -70,6 +70,46 @@ def test_builtin_validation_detection_accepts_common_commands(
     match = classify_validation_command(command)
     assert match is not None
     assert match.matcher_id == matcher_id
+
+
+NEXTEST_STRESS = (
+    "cargo nextest run -p gobby-client --status-level pass --stress-count 30 "
+    "-E 'binary(loop_liveness)'"
+)
+
+
+@pytest.mark.parametrize(
+    "command,categories,language",
+    [
+        (NEXTEST_STRESS, ("test",), "rust"),
+        (f"env RUST_BACKTRACE=1 {NEXTEST_STRESS}", ("test",), "rust"),
+        (f"cd crates/gobby-client && {NEXTEST_STRESS}", ("test",), "rust"),
+        ("cargo test -p gobby-core", ("test",), "rust"),
+        ("RUSTFLAGS=-Awarnings cargo test -p gobby-core", ("test",), "rust"),
+        ("cargo check --no-default-features", ("lint", "type_check"), "rust"),
+        ("env RUSTFLAGS=-Awarnings -- cargo check", ("lint", "type_check"), "rust"),
+        ("cargo clippy -p gobby-core -- -D warnings", ("lint", "type_check"), "rust"),
+        ("cd crates && cargo clippy --all-targets -- -D warnings", ("lint", "type_check"), "rust"),
+        ("cargo fmt --all -- --check", ("format",), "rust"),
+        ("cd crates && cargo fmt --all -- --check", ("format",), "rust"),
+        ("go test ./...", ("test",), "go"),
+        ("cd cmd && go test -count=1 ./...", ("test",), "go"),
+        ("go vet ./...", ("lint", "type_check"), "go"),
+        ("golangci-lint run ./...", ("lint", "type_check"), "go"),
+        ("staticcheck ./...", ("lint", "type_check"), "go"),
+    ],
+)
+def test_test_runners_and_static_checks_carry_only_their_own_categories(
+    command: str,
+    categories: tuple[str, ...],
+    language: str,
+) -> None:
+    """A failed test run must not stand as lint/type-check evidence, or the reverse (#23382)."""
+    match = classify_validation_command(command)
+
+    assert match is not None
+    assert match.categories == categories
+    assert match.languages == (language,)
 
 
 def test_test_types_ratchet_requires_baseline_and_fail_on_new() -> None:
@@ -299,7 +339,7 @@ def test_default_wrapper_rules_apply_to_explicit_config() -> None:
     )
 
     assert match is not None
-    assert match.matcher_id == "rust-validation"
+    assert match.matcher_id == "rust-checks"
     assert match.wrapper_chain == ("rust-token-killer-command-string",)
 
 
@@ -555,7 +595,7 @@ def test_nice_numeric_option_and_absolute_path_are_detected() -> None:
 
 def test_disabled_builtin_matcher_is_not_used() -> None:
     config = ValidationDetectionConfig(
-        disabled_builtin_matcher_ids=["rust-validation"],
+        disabled_builtin_matcher_ids=["rust-checks"],
     )
     assert classify_validation_command("cargo check", config) is None
 
