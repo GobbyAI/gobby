@@ -79,7 +79,18 @@ pub(crate) fn spawn_response(
     content_type: &'static str,
     body: String,
 ) -> io::Result<(String, RequestHandle)> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
+    spawn_response_at("127.0.0.1:0", status, reason, content_type, body)
+}
+
+#[cfg(any(feature = "ai", feature = "qdrant"))]
+pub(crate) fn spawn_response_at(
+    bind: &str,
+    status: u16,
+    reason: &'static str,
+    content_type: &'static str,
+    body: String,
+) -> io::Result<(String, RequestHandle)> {
+    let listener = TcpListener::bind(bind)?;
     let api_base = format!("http://{}", listener.local_addr()?);
     let handle = thread::spawn(move || {
         let (mut stream, _) = listener.accept()?;

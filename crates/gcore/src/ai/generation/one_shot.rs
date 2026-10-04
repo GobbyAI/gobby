@@ -49,7 +49,7 @@ fn direct_http_client() -> Result<Client, AiError> {
     if let Some(client) = DIRECT_HTTP_CLIENT.get() {
         return Ok(client.clone());
     }
-    let client = crate::loopback::dial_localhost_as_loopback(Client::builder())
+    let client = crate::loopback::dial_localhost_on_either_loopback(Client::builder())
         .build()
         .map_err(reqwest_error)?;
     if DIRECT_HTTP_CLIENT.set(client.clone()).is_ok() {
