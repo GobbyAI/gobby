@@ -133,6 +133,7 @@ fn connection_config(database_url: &str) -> anyhow::Result<postgres::Config> {
     if config.get_connect_timeout().is_none() {
         config.connect_timeout(DEFAULT_CONNECT_TIMEOUT);
     }
+    crate::loopback::dial_postgres_localhost_as_loopback(&mut config);
     Ok(config)
 }
 
@@ -659,6 +660,29 @@ mod tests {
         assert_eq!(
             config.get_connect_timeout().copied(),
             Some(Duration::from_secs(17))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn connection_config_dials_localhost_on_numeric_loopback() -> anyhow::Result<()> {
+        // #22412: a `localhost` dial tried ::1 first and self-connected.
+        let config = connection_config("postgresql://LocalHost:60891/gobby")?;
+        assert_eq!(config.get_hosts(), [Host::Tcp("LocalHost".to_string())]);
+        assert_eq!(
+            config.get_hostaddrs(),
+            ["127.0.0.1".parse::<std::net::IpAddr>()?]
+        );
+
+        // Names stay resolvable, and an explicit hostaddr wins.
+        let named = connection_config("postgresql://db.example/gobby")?;
+        assert!(named.get_hostaddrs().is_empty());
+        let mixed = connection_config("postgresql://localhost,db.example/gobby")?;
+        assert!(mixed.get_hostaddrs().is_empty());
+        let explicit = connection_config("postgresql://localhost/gobby?hostaddr=10.0.0.5")?;
+        assert_eq!(
+            explicit.get_hostaddrs(),
+            ["10.0.0.5".parse::<std::net::IpAddr>()?]
         );
         Ok(())
     }

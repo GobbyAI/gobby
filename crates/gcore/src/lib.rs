@@ -20,6 +20,7 @@ pub mod degradation;
 pub mod grant;
 mod libpq;
 pub mod local_token;
+pub mod loopback;
 pub mod machine;
 pub mod markdown;
 pub mod mermaid;

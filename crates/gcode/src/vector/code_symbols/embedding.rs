@@ -305,10 +305,12 @@ pub fn embedding_client(
     match clients.entry(config.timeout_seconds) {
         Entry::Occupied(entry) => Ok(entry.get().clone()),
         Entry::Vacant(entry) => {
-            let client = reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(config.timeout_seconds))
-                .build()
-                .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
+            let client = gobby_core::loopback::dial_localhost_as_loopback(
+                reqwest::blocking::Client::builder(),
+            )
+            .timeout(std::time::Duration::from_secs(config.timeout_seconds))
+            .build()
+            .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
             Ok(entry.insert(client).clone())
         }
     }

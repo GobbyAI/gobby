@@ -63,7 +63,10 @@ impl GraphClient {
         socket_timeout: Duration,
     ) -> anyhow::Result<Self> {
         let connection_info = ConnectionInfo {
-            addr: ConnectionAddr::Tcp(config.host.clone(), config.port),
+            addr: ConnectionAddr::Tcp(
+                crate::loopback::numeric_loopback_host(&config.host).to_string(),
+                config.port,
+            ),
             redis: RedisConnectionInfo {
                 db: 0,
                 username: None,
