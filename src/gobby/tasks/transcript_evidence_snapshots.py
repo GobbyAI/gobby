@@ -31,6 +31,8 @@ class PendingTool:
     timestamp: datetime
     order: int
     call_id: str | None = None
+    #: The MCP server a provider reported beside a bare tool name (Codex).
+    server: str | None = None
 
 
 # --- Incremental derivation -------------------------------------------------

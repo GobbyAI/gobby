@@ -297,12 +297,7 @@ def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptE
         command_runs=tuple(run for run in runs if not run.categories),
         excluded_runs=tuple(run for evidence in evidence_sets for run in evidence.excluded_runs),
         edits=tuple(edits),
-        task_claims=tuple(
-            sorted(
-                (claim for evidence in evidence_sets for claim in evidence.task_claims),
-                key=lambda claim: claim.claimed_at,
-            )
-        ),
+        task_claims=tuple(claim for evidence in evidence_sets for claim in evidence.task_claims),
         attempted_paths=tuple(
             dict.fromkeys(path for evidence in evidence_sets for path in evidence.attempted_paths)
         ),
@@ -619,7 +614,9 @@ def _consume_tool_event(state: _DerivationState, event: ParsedToolEvent) -> None
     if event.phase == "begin":
         name = event.tool or ""
         if call_id:
-            state.pending[call_id] = PendingTool(name, event.arguments, timestamp, order, call_id)
+            state.pending[call_id] = PendingTool(
+                name, event.arguments, timestamp, order, call_id, event.server
+            )
         _record_edit(state, name, event.arguments, timestamp, order)
         return
     if event.phase != "end" or not call_id:
@@ -758,7 +755,7 @@ def _record_validation_run(
         state.edits[:] = [edit for edit in state.edits if edit.order != pending.order]
         return
     if _tool_basename(pending.name) not in _SHELL_TOOLS:
-        if claim := task_claim(pending.name, pending.arguments, result, completed_at):
+        if claim := task_claim(pending, result, completed_at):
             state.claims.append(claim)
         confirmed = _extract_outcome(result)[0] == "success"
         native_result = result.get("tool_result", result) if isinstance(result, dict) else result

@@ -140,3 +140,58 @@ async def test_claude_task_claims_are_derived(
         else ()
     )
     assert evidence.task_claims == expected
+
+
+def _codex_mcp_call(phase: str, offset: int, **extra: Any) -> dict[str, Any]:
+    return {
+        "type": "event_msg",
+        "timestamp": (BASE_TIME + timedelta(seconds=offset)).isoformat(),
+        "payload": {
+            "type": f"mcp_tool_call_{phase}",
+            "call_id": "mcp_claim",
+            "invocation": {
+                "server": "gobby-tasks",
+                "tool": "claim_task",
+                "arguments": {"task_id": "#23385"},
+            },
+            **extra,
+        },
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        pytest.param(
+            {
+                "Ok": {
+                    "content": [
+                        {"type": "text", "text": json.dumps({"success": True, "task_id": CLAIMED})}
+                    ]
+                }
+            },
+            (TranscriptTaskClaim(task_ref=CLAIMED, claimed_at=BASE_TIME + timedelta(seconds=1)),),
+            id="direct-claim",
+        ),
+        pytest.param({"Err": "Task #23385 is claimed by another session"}, (), id="refused-claim"),
+    ],
+)
+async def test_codex_direct_mcp_task_claims_are_derived(
+    tmp_path: Path, result: dict[str, Any], expected: tuple[TranscriptTaskClaim, ...]
+) -> None:
+    """Codex names the server beside a bare tool name instead of wrapping call_tool."""
+    transcript = tmp_path / "codex.jsonl"
+    _write_jsonl(
+        transcript, [_codex_mcp_call("begin", 0), _codex_mcp_call("end", 1, result=result)]
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert evidence.task_claims == expected

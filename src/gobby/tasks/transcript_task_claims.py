@@ -13,22 +13,25 @@ from typing import Any
 
 from gobby.sessions.transcripts.tool_activity import canonical_tool_name
 from gobby.tasks.transcript_evidence_models import TranscriptTaskClaim
+from gobby.tasks.transcript_evidence_snapshots import PendingTool
 from gobby.tasks.transcript_outcomes import _walk_values
 
 _CLAIM_TASK = "mcp gobby-tasks:claim_task"
 _CREATE_TASK = "mcp gobby-tasks:create_task"
 
 
-def task_claim(
-    name: str, arguments: dict[str, Any], result: Any, at: datetime
-) -> TranscriptTaskClaim | None:
+def task_claim(pending: PendingTool, result: Any, at: datetime) -> TranscriptTaskClaim | None:
     """The task a successful ``claim_task``, or ``create_task`` with ``claim``, put the session on.
 
     Only an explicit ``success`` counts. Refused calls, and results that carry any
     error, are not claims. The result's own task id is preferred over the
     argument because the claim resolved it.
     """
-    tool, tool_arguments = canonical_tool_name(name, arguments)
+    # Codex reports a direct MCP call as a bare tool name plus its server.
+    name = f"mcp__{pending.server}__{pending.name}" if pending.server else pending.name
+    tool, tool_arguments = canonical_tool_name(name, pending.arguments)
+    if pending.server and tool == name:
+        tool = f"mcp {pending.server}:{pending.name}"
     if tool == _CLAIM_TASK:
         key = "task_id"
         task_ref = tool_arguments.get("task_id")

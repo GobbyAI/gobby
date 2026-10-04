@@ -109,7 +109,7 @@ class TranscriptEvidence:
     validation_runs: tuple[TranscriptValidationRun, ...] = ()
     command_runs: tuple[TranscriptValidationRun, ...] = ()
     edits: tuple[TranscriptEdit, ...] = ()
-    #: Task claims in transcript order. They bound a linked session's work per task.
+    #: Task claims the sessions made, unordered. They bound a linked session's work per task.
     task_claims: tuple[TranscriptTaskClaim, ...] = ()
     attempted_paths: tuple[str, ...] = ()
     sessions: tuple[str, ...] = ()
