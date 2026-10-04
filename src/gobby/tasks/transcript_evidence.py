@@ -41,6 +41,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
+    TranscriptTaskClaim,
     TranscriptValidationRun,
     TranscriptValidationSegment,
 )
@@ -80,6 +81,7 @@ from gobby.tasks.transcript_output_retention import (
     _drop_settled_command_output,
     _retained_output,
 )
+from gobby.tasks.transcript_task_claims import task_claim
 from gobby.tasks.transcript_tool_arguments import (
     edited_source,
     python_added_source,
@@ -152,6 +154,7 @@ class _DerivationState:
     pending: dict[str, PendingTool] = field(default_factory=dict)
     runs: list[TranscriptValidationRun] = field(default_factory=list)
     edits: list[TranscriptEdit] = field(default_factory=list)
+    claims: list[TranscriptTaskClaim] = field(default_factory=list)
     degraded: list[str] = field(default_factory=list)
     order: int = 0
     latest_record_at: datetime | None = None
@@ -172,7 +175,7 @@ def _derivation_fingerprint(
     """Fingerprint every input the derived records are a function of."""
     payload = json.dumps(
         {
-            "derivation_version": 11,
+            "derivation_version": 12,
             "session": session.id,
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,
@@ -294,6 +297,7 @@ def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptE
         command_runs=tuple(run for run in runs if not run.categories),
         excluded_runs=tuple(run for evidence in evidence_sets for run in evidence.excluded_runs),
         edits=tuple(edits),
+        task_claims=tuple(claim for evidence in evidence_sets for claim in evidence.task_claims),
         attempted_paths=tuple(
             dict.fromkeys(path for evidence in evidence_sets for path in evidence.attempted_paths)
         ),
@@ -467,6 +471,7 @@ def _derive_transcript_path_evidence(
         state.pending = deepcopy(resume.pending)
         state.runs = list(resume.runs)
         state.edits = list(resume.edits)
+        state.claims = list(resume.claims)
         state.degraded = list(resume.degraded)
         state.order = resume.order
         state.latest_record_at = resume.latest_record_at
@@ -496,6 +501,7 @@ def _derive_transcript_path_evidence(
             order=state.order,
             runs=tuple(state.runs),
             edits=tuple(state.edits),
+            claims=tuple(state.claims),
             degraded=tuple(state.degraded),
             parsed_from_offset=resume.watermark if resume is not None else 0,
             latest_record_at=state.latest_record_at,
@@ -516,6 +522,7 @@ def _derive_transcript_path_evidence(
             validation_runs=tuple(run for run in state.runs if run.categories),
             command_runs=tuple(run for run in state.runs if not run.categories),
             edits=tuple(state.edits),
+            task_claims=tuple(state.claims),
             attempted_paths=tuple(attempted_paths),
             sessions=(session.id,),
             degraded_capabilities=tuple(dict.fromkeys(state.degraded)),
@@ -607,7 +614,9 @@ def _consume_tool_event(state: _DerivationState, event: ParsedToolEvent) -> None
     if event.phase == "begin":
         name = event.tool or ""
         if call_id:
-            state.pending[call_id] = PendingTool(name, event.arguments, timestamp, order, call_id)
+            state.pending[call_id] = PendingTool(
+                name, event.arguments, timestamp, order, call_id, event.server
+            )
         _record_edit(state, name, event.arguments, timestamp, order)
         return
     if event.phase != "end" or not call_id:
@@ -746,6 +755,8 @@ def _record_validation_run(
         state.edits[:] = [edit for edit in state.edits if edit.order != pending.order]
         return
     if _tool_basename(pending.name) not in _SHELL_TOOLS:
+        if claim := task_claim(pending, result, completed_at):
+            state.claims.append(claim)
         confirmed = _extract_outcome(result)[0] == "success"
         native_result = result.get("tool_result", result) if isinstance(result, dict) else result
         output = native_result.get("content") if isinstance(native_result, dict) else native_result

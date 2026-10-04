@@ -24,6 +24,7 @@ from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
+    TranscriptTaskClaim,
 )
 from gobby.utils.machine_id import get_machine_id
 from tests.tasks.test_close_checklist import _run
@@ -221,13 +222,15 @@ async def _derive(
     """Drive the merge with recording fakes; ``unreadable`` sessions raise as missing."""
     calls: list[tuple[str, Any]] = []
 
-    async def record(session: Any, window_start: Any, *args: Any, **kwargs: Any) -> str:
+    async def record(
+        session: Any, window_start: Any, *args: Any, **kwargs: Any
+    ) -> TranscriptEvidence:
         calls.append((session.id, window_start))
         if session.id in unreadable:
             raise TranscriptEvidenceUnavailable(
                 "transcript missing", source="unknown", attempted_paths=("/nope",)
             )
-        return f"evidence:{session.id}"
+        return TranscriptEvidence(sessions=(session.id,))
 
     merged: Any
     with (
@@ -274,7 +277,10 @@ async def test_handed_off_task_merges_the_implementer_session_within_its_own_win
         (QA, "2026-08-27T02:10:00+00:00"),
         (IMPLEMENTER, "2026-08-27T01:00:00+00:00"),
     ]
-    assert merged == [f"evidence:{QA}", f"evidence:{IMPLEMENTER}"]
+    assert merged == [
+        TranscriptEvidence(sessions=(QA,)),
+        TranscriptEvidence(sessions=(IMPLEMENTER,)),
+    ]
 
 
 @pytest.mark.asyncio
@@ -313,7 +319,7 @@ async def test_single_session_close_derives_once_from_the_owner_window() -> None
     calls, merged = await _derive(ctx, owner=QA, closing=QA, owner_window="owner-window")
 
     assert calls == [(QA, "owner-window")]
-    assert merged == [f"evidence:{QA}"]
+    assert merged == [TranscriptEvidence(sessions=(QA,))]
 
 
 @pytest.mark.asyncio
@@ -686,7 +692,7 @@ async def test_linked_session_that_no_longer_exists_or_has_no_transcript_is_skip
     # The deleted session is never parsed; the unreadable one is attempted, then dropped.
     assert [session_id for session_id, _ in calls] == [QA, IMPLEMENTER]
     assert ctx.session_manager.get.call_count == 3
-    assert merged == [f"evidence:{QA}"]
+    assert merged == [TranscriptEvidence(sessions=(QA,))]
 
 
 @pytest.mark.asyncio
@@ -1190,3 +1196,101 @@ async def test_linked_session_runs_after_it_claims_another_task_are_not_credited
     assert by_session[IMPLEMENTER].validation_runs == runs[IMPLEMENTER][:1]
     assert by_session[IMPLEMENTER].command_runs == runs[IMPLEMENTER][:1]
     assert by_session[QA].validation_runs == runs[QA]
+
+
+async def _implementer_runs_after_claims(
+    db_claims: list[dict[str, Any]],
+    transcript_claims: tuple[TranscriptTaskClaim, ...],
+    runs: tuple[Any, ...],
+) -> tuple[Any, ...]:
+    """Derive close evidence where QA owns the task and IMPLEMENTER is only linked."""
+    ctx = _context(
+        [
+            _link(IMPLEMENTER, "claimed", "2026-09-28T13:55:00+00:00"),
+            _link(QA, "claimed", "2026-09-29T20:00:00+00:00"),
+        ],
+        {
+            IMPLEMENTER: _session(IMPLEMENTER, "2026-09-28T13:00:00+00:00"),
+            QA: _session(QA, "2026-09-29T19:00:00+00:00"),
+        },
+    )
+    ctx.session_var_manager.get_variables.return_value = {}
+    ctx.session_task_manager.get_session_tasks.side_effect = {
+        IMPLEMENTER: db_claims,
+        QA: [_session_link("task", "2026-09-29T20:00:00+00:00")],
+    }.__getitem__
+
+    async def record(session: Any, *args: Any, **kwargs: Any) -> TranscriptEvidence:
+        if session.id == QA:
+            return TranscriptEvidence(sessions=(QA,))
+        return TranscriptEvidence(
+            validation_runs=runs,
+            command_runs=runs,
+            task_claims=transcript_claims,
+            sessions=(IMPLEMENTER,),
+        )
+
+    with (
+        patch(f"{_SUPPORT}.resolve_validation_detection_config"),
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_transcript_evidence", new=AsyncMock(side_effect=record)),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+        patch(f"{_SUPPORT}.merge_transcript_evidence", side_effect=lambda *sets: list(sets)),
+    ):
+        merged: Any = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=QA,
+            closing_session_id=QA,
+            owner_window_start="2026-09-29T20:00:00+00:00",
+            task_edited_files=set(),
+            repo_path="/repo",
+        )
+    by_session = {evidence.sessions[0]: evidence for evidence in merged}
+    assert by_session[IMPLEMENTER].command_runs == by_session[IMPLEMENTER].validation_runs
+    return tuple(by_session[IMPLEMENTER].validation_runs)
+
+
+def _claim(task_ref: str, at: str) -> TranscriptTaskClaim:
+    return TranscriptTaskClaim(task_ref=task_ref, claimed_at=datetime.fromisoformat(at))
+
+
+@pytest.mark.asyncio
+async def test_linked_session_runs_after_returning_to_the_task_are_credited() -> None:
+    """#23385: a reclaim writes no new session_tasks row, so only the transcript shows it."""
+    before = _run_at(IMPLEMENTER, "2026-09-28T14:30:00+00:00", "success")
+    away = _run_at(IMPLEMENTER, "2026-09-29T03:00:00+00:00", "failure")
+    red = _run_at(IMPLEMENTER, "2026-09-29T06:00:00+00:00", "failure")
+    green = _run_at(IMPLEMENTER, "2026-09-29T06:30:00+00:00", "success")
+
+    credited = await _implementer_runs_after_claims(
+        [
+            _session_link("other-task", "2026-09-29T02:14:00+00:00"),
+            _session_link("task", "2026-09-28T13:55:00+00:00"),
+        ],
+        (
+            _claim("other-task", "2026-09-29T02:14:00+00:00"),
+            _claim("task", "2026-09-29T05:00:00+00:00"),
+        ),
+        (before, away, red, green),
+    )
+
+    assert credited == (before, red, green)
+
+
+@pytest.mark.asyncio
+async def test_linked_session_runs_after_returning_to_an_earlier_task_are_not_credited() -> None:
+    """#23385: the other task's first claim predates this one, so its row shows no departure."""
+    before = _run_at(IMPLEMENTER, "2026-09-28T14:30:00+00:00", "success")
+    away = _run_at(IMPLEMENTER, "2026-09-29T03:00:00+00:00", "failure")
+
+    credited = await _implementer_runs_after_claims(
+        [
+            _session_link("task", "2026-09-28T13:55:00+00:00"),
+            _session_link("other-task", "2026-09-28T12:00:00+00:00"),
+        ],
+        (_claim("other-task", "2026-09-29T02:14:00+00:00"),),
+        (before, away),
+    )
+
+    assert credited == (before,)

@@ -18,9 +18,10 @@ from gobby.config.validation_detection import (
     resolve_validation_detection_config,
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._task_scope import collect_commit_paths_async
 from gobby.storage.session_models import Session
-from gobby.storage.tasks import Task
+from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.transcript_evidence import (
     derive_transcript_evidence,
@@ -30,6 +31,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
+    TranscriptTaskClaim,
 )
 from gobby.tasks.transcript_exclusions import derive_prelink_runs
 from gobby.tasks.transcript_sync import transcript_sync_point
@@ -345,8 +347,15 @@ async def derive_close_transcript_evidence(
                 task_checkout_paths,
                 archive_dir=archive_dir,
             )
-            if window_end is not None:
-                session_evidence = _before_epoch(session_evidence, window_end)
+            if task_links is not None and session_id not in required:
+                # session_tasks keeps one row per task, so a return to this task
+                # after a departure shows only in the transcript's own claims.
+                claims = await _resolve_transcript_claims(
+                    ctx, session, task_links, task_id, session_evidence.task_claims
+                )
+                presence = _task_presence(task_links, task_id, effective_window, claims)
+                if presence is not None:
+                    session_evidence = _while_on_task(session_evidence, presence)
             try:
                 excluded = await derive_prelink_runs(
                     session, effective_window, detection, repo_path, archive_dir=archive_dir
@@ -406,18 +415,89 @@ def _moved_on_epoch(
     return min(later_claims, default=None)
 
 
-def _before_epoch(evidence: TranscriptEvidence, end: float) -> TranscriptEvidence:
-    """Keep only the runs and edits a linked session made before it moved on."""
+async def _resolve_transcript_claims(
+    ctx: RegistryContext,
+    session: Session,
+    task_links: Iterable[dict[str, Any]],
+    task_id: str,
+    claims: Iterable[TranscriptTaskClaim],
+) -> list[tuple[str | None, datetime]]:
+    """Resolve each transcript claim to a task UUID, or ``None`` when it cannot be."""
+    known = {task_id} | {
+        linked_id for row in task_links if (linked_id := getattr(row.get("task"), "id", None))
+    }
+    project_id = getattr(session, "project_id", None)
 
-    def before(value: datetime) -> bool:
+    def resolve(ref: str) -> str | None:
+        if ref in known:
+            return ref
+        if not project_id:
+            return None
+        try:
+            return resolve_task_id_for_mcp(ctx.task_manager, ref, project_id)
+        except (TaskNotFoundError, ValueError):
+            return None
+
+    def resolve_all() -> list[tuple[str | None, datetime]]:
+        return [(resolve(claim.task_ref), claim.claimed_at) for claim in claims]
+
+    return await asyncio.to_thread(resolve_all)
+
+
+def _task_presence(
+    task_links: Iterable[dict[str, Any]],
+    task_id: str,
+    window_start: str | datetime | None,
+    transcript_claims: Iterable[tuple[str | None, datetime]],
+) -> list[tuple[float, bool]] | None:
+    """When a linked session left this task for another and when it returned.
+
+    Its runs and edits while away belong to that other work, so a failing
+    validation there must not count against this task's close (#22884, #23017).
+    Each event is ``(epoch, returned)``; ``None`` means it never left. An
+    unresolvable transcript claim counts as leaving, so it never adds credit.
+    """
+    start = _evidence_epoch(window_start)
+    if start is None:
+        return None
+    events = [
+        (epoch, getattr(row.get("task"), "id", None) == task_id)
+        for row in task_links
+        if (row.get("action") or row.get("session_action")) == "claimed"
+        and (epoch := _evidence_epoch(row.get("link_created_at"))) is not None
+        and epoch > start
+    ]
+    events.extend(
+        (epoch, claimed_id == task_id)
+        for claimed_id, claimed_at in transcript_claims
+        if (epoch := _evidence_epoch(claimed_at)) is not None and epoch > start
+    )
+    if all(returned for _, returned in events):
+        return None
+    return sorted(events)
+
+
+def _while_on_task(
+    evidence: TranscriptEvidence, presence: list[tuple[float, bool]]
+) -> TranscriptEvidence:
+    """Keep only the runs and edits a linked session made while working this task."""
+
+    def on_task(value: datetime) -> bool:
         epoch = _evidence_epoch(value)
-        return epoch is not None and epoch < end
+        if epoch is None:
+            return False
+        on = True
+        for at, returned in presence:
+            if at > epoch:
+                break
+            on = returned
+        return on
 
     return replace(
         evidence,
-        validation_runs=tuple(r for r in evidence.validation_runs if before(r.started_at)),
-        command_runs=tuple(r for r in evidence.command_runs if before(r.started_at)),
-        edits=tuple(e for e in evidence.edits if before(e.timestamp)),
+        validation_runs=tuple(r for r in evidence.validation_runs if on_task(r.started_at)),
+        command_runs=tuple(r for r in evidence.command_runs if on_task(r.started_at)),
+        edits=tuple(e for e in evidence.edits if on_task(e.timestamp)),
     )
 
 
