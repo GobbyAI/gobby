@@ -1768,11 +1768,16 @@ describe("SessionsTab", () => {
         onExpireSession={onExpireSession}
       />,
     );
+    // Scope to the list row: once the deferred initial selection lands, the
+    // detail header shows the same label, and an unscoped query matches twice.
+    const rowTitle = () =>
+      screen.queryByText(/(?:^|: )Paused Terminal$/, {
+        selector: ".session-entry *",
+      });
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )Paused Terminal$/)).toBeInTheDocument();
+      expect(rowTitle()).toBeInTheDocument();
     });
-
     fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
     expect(
       screen.getByRole("menuitem", { name: "Send Context" }),
@@ -1781,14 +1786,14 @@ describe("SessionsTab", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Expire Session" }));
 
     expect(onExpireSession).toHaveBeenCalledWith("paused-1");
-    expect(screen.queryByText(/(?:^|: )Paused Terminal$/)).toBeNull();
+    expect(rowTitle()).toBeNull();
 
     await act(async () => {
       resolveExpire?.(false);
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )Paused Terminal$/)).toBeInTheDocument();
+      expect(rowTitle()).toBeInTheDocument();
     });
   });
 
