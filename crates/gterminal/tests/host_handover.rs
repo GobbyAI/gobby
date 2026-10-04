@@ -1278,7 +1278,7 @@ fn no_fault(_: &str) -> Value {
     Value::Null
 }
 
-fn rollback_case(case: &RollbackCase) {
+fn rollback_case(case: &RollbackCase) -> Value {
     let label = case.label;
     let mut host = live_host(&[]);
     let dir = host.socket_dir().to_path_buf();
@@ -1404,6 +1404,7 @@ fn rollback_case(case: &RollbackCase) {
         "{label}: the host answers"
     );
     shutdown(&mut host, &mut writer);
+    after
 }
 
 /// Plan gterm-host-handover 1.3.4. The cases run on their own hosts at once,
@@ -1517,6 +1518,30 @@ fn every_pre_exec_failure_rolls_back() {
 }
 
 #[test]
+fn capture_finishing_inside_drain_rolls_back_with_live_panes() {
+    let after = rollback_case(&RollbackCase {
+        label: "soft-cutoff-in-capture",
+        // The worker finishes inside the drain slack; the deadline still
+        // wins before the next pane's encode fault, and rollback is safe.
+        fault: |id| {
+            json!({
+                "soft_deadline_in_capture": true,
+                "capture_cutoff_delay_ms": 500,
+                "encode_error": id,
+            })
+        },
+        outcome: "aborted",
+        reason: "soft_deadline",
+        errno: None,
+        stalled_writer: false,
+        block_state_file: false,
+        exiting_pane: false,
+        tamper_pin: false,
+    });
+    assert_eq!(after["upgrade"]["last_outcome"]["reason"], "soft_deadline");
+}
+
+#[test]
 fn overdue_capture_ends_the_host_inside_rollback_reserve() {
     let mut host = live_host(&[]);
     let dir = host.socket_dir().to_path_buf();
@@ -1528,24 +1553,27 @@ fn overdue_capture_ends_the_host_inside_rollback_reserve() {
         &mut ctl,
         &gterm_bin(),
         "attempt-capture-reserve",
-        json!({"soft_deadline_in_capture": true, "encode_error": id}),
+        json!({
+            "soft_deadline_in_capture": true,
+            "capture_cutoff_delay_ms": 2000,
+            "encode_error": id,
+        }),
     );
     let accepted_at = Instant::now();
     assert_eq!(accepted["accepted"], true, "{accepted}");
     let remaining = Duration::from_millis(accepted["remaining_ms"].as_u64().expect("remaining_ms"));
     let (status, died_at) = wait_death(&mut host, remaining);
     assert_eq!(status.signal(), Some(libc::SIGALRM), "{status:?}");
-    // The injected capture stays active one second past the soft cutoff.
-    // Fatal exit must leave time in the three-second rollback reserve rather
-    // than waiting for the attempt's hard alarm. Allow only observation skew
-    // at the reserve's start, as in the existing hard-alarm tests.
+    // Capture outlives the one-second drain slack. Fatal exit must leave both
+    // one-second rollback acknowledgements on the clock. Allow 500ms of
+    // observation skew, as in the existing hard-alarm tests.
     assert!(
-        died_at + Duration::from_millis(500) >= accepted_at + remaining - Duration::from_secs(3),
-        "capture ended before the rollback reserve: {status:?}"
+        died_at + Duration::from_millis(500) >= accepted_at + remaining - Duration::from_secs(2),
+        "capture ended before exhausting its drain slack: {status:?}"
     );
     assert!(
-        died_at + Duration::from_secs(2) < accepted_at + remaining,
-        "capture consumed the rollback reserve: {status:?}"
+        died_at + Duration::from_millis(1500) < accepted_at + remaining,
+        "capture consumed the two-second rollback budget: {status:?}"
     );
 }
 

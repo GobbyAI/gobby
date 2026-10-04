@@ -207,6 +207,21 @@ fn until_soft_cutoff(deadline_ns: u64) -> Duration {
     remaining(deadline_ns).saturating_sub(ROLLBACK_RESERVE)
 }
 
+fn capture_drain_budget(remaining: Duration) -> Duration {
+    remaining.saturating_sub(2 * HANDOFF_ROLLBACK)
+}
+
+#[cfg(test)]
+#[test]
+fn capture_drain_budget_preserves_two_rollbacks() {
+    for (remaining, drain) in [(0, 0), (1, 0), (2, 0), (3, 1), (15, 13)] {
+        assert_eq!(
+            capture_drain_budget(Duration::from_secs(remaining)),
+            Duration::from_secs(drain)
+        );
+    }
+}
+
 /// Admission (Decision 9): a host that is not draining, holds no unconsumed
 /// reservation, and whose every prepared reservation names a committed pane.
 async fn admission(state: &HostState) -> Result<(), UpgradeReason> {
@@ -253,6 +268,7 @@ struct Faults {
     quiesce_ack: Option<(String, AckFault)>,
     encode_error: Option<String>,
     soft_deadline_in_capture: bool,
+    capture_cutoff_delay: Duration,
     soft_deadline_in_exec: bool,
     exec_error: bool,
     rollback_fail: Option<String>,
@@ -301,6 +317,7 @@ impl Faults {
             quiesce_ack,
             encode_error: pane("encode_error"),
             soft_deadline_in_capture: flag("soft_deadline_in_capture"),
+            capture_cutoff_delay: ms("capture_cutoff_delay_ms", FAULT_DELAY_CAP),
             soft_deadline_in_exec: flag("soft_deadline_in_exec"),
             exec_error: flag("exec_error"),
             rollback_fail: pane("rollback_fail"),
@@ -610,6 +627,7 @@ impl Attempt {
             deadline_ns: self.deadline_ns,
             encode_error: self.faults.encode_error.clone(),
             soft_deadline_in_capture: self.faults.soft_deadline_in_capture,
+            capture_cutoff_delay: self.faults.capture_cutoff_delay,
         };
         let state = Arc::clone(&self.state);
         let mut capture_job = tokio::task::spawn_blocking(move || {
@@ -624,12 +642,16 @@ impl Attempt {
                 Err(_) => {
                     // Abort prevents a queued job starting. A running blocking
                     // job must finish before rollback can resume its panes;
-                    // its private masters are dropped with its result. Keep
-                    // the rollback reserve intact while waiting for the job.
+                    // its private masters are dropped with its result. Drain
+                    // gets the cleanup slack; two rollback acknowledgements
+                    // remain reserved.
                     capture_job.abort();
-                    if tokio::time::timeout(until_soft_cutoff(self.deadline_ns), capture_job)
-                        .await
-                        .is_err()
+                    if tokio::time::timeout(
+                        capture_drain_budget(remaining(self.deadline_ns)),
+                        capture_job,
+                    )
+                    .await
+                    .is_err()
                     {
                         // SAFETY: SIGALRM has its default fatal action. Never
                         // reopen the gate over a capture that cannot finish.
@@ -824,6 +846,7 @@ struct CaptureSpec {
     deadline_ns: u64,
     encode_error: Option<String>,
     soft_deadline_in_capture: bool,
+    capture_cutoff_delay: Duration,
 }
 
 /// Step 5 on a blocking thread, under the `inner` lock then the events lock.
@@ -842,7 +865,10 @@ fn capture(
     let inner = state.inner.blocking_lock();
     if spec.soft_deadline_in_capture {
         // Exercise a worker still running when the window's soft wait expires.
-        std::thread::sleep(until_soft_cutoff(spec.deadline_ns) + HANDOFF_ROLLBACK);
+        std::thread::sleep(
+            until_soft_cutoff(spec.deadline_ns)
+                + spec.capture_cutoff_delay.max(HANDOFF_ROLLBACK / 2),
+        );
     }
     let mut slots: Vec<_> = inner
         .terminals
