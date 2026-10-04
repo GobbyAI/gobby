@@ -100,9 +100,13 @@ impl Workspace<LiveDaemon> {
             .filter_map(|pane| pane.pending_release())
             .collect();
         let (taken, take_done) = watch::channel(false);
+        let (answered, take_answered) = watch::channel(false);
         let pane = self.panes.get_mut(&pane_id).expect("pane checked above");
         pane.control_request = Some(request);
         pane.take_done = Some(take_done);
+        // The daemon answers one take per attachment at a time, so this one
+        // goes out after the pane's last take was answered.
+        let previous = pane.take_answered.replace(take_answered);
         let message = json!({
             "type": "terminal_take_control",
             "terminal_id": pane.terminal_id,
@@ -112,10 +116,14 @@ impl Workspace<LiveDaemon> {
         let daemon = self.daemon.clone();
         let outcomes = outcomes.clone();
         tokio::spawn(async move {
+            if let Some(mut previous) = previous {
+                let _ = previous.wait_for(|answered| *answered).await;
+            }
             for mut release in releases {
                 let _ = release.wait_for(|sent| *sent).await;
             }
             let reply = daemon.send_marking_written(message, taken).await;
+            let _ = answered.send(true);
             // The loop is gone when the send fails on a closed channel; the
             // lease it was asking for is released by `shutdown` either way.
             let _ = outcomes.send(ControlOutcome {

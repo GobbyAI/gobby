@@ -180,6 +180,8 @@ pub struct Pane {
     /// Resolves once this pane's own take was written, so a release that
     /// undoes it never overtakes it.
     pub(super) take_done: Option<watch::Receiver<bool>>,
+    /// Resolves once this pane's last take was answered.
+    pub(super) take_answered: Option<watch::Receiver<bool>>,
     /// Keys and pastes typed between a focus change and the input grant that
     /// focus asked for, kept in the order they were typed. A person typing
     /// into a pane they just clicked is not asking to lose the first word
@@ -285,6 +287,7 @@ impl Pane {
             release_pending: false,
             release_done: None,
             take_done: None,
+            take_answered: None,
             pending_input: Vec::new(),
             pending_input_bytes: 0,
             control_request: None,

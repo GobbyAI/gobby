@@ -65,6 +65,11 @@ impl Pane {
         source: PaneFrameSource,
     ) {
         self.tombstones.remove(&attachment_id);
+        // Writes queued for the attachment this replaces never go out under
+        // it; the writer reports them unsent and the next write gets a new one.
+        if let Some(writer) = self.writer.take() {
+            writer.retire();
+        }
         self.attach = AttachState::Attached {
             attachment_id,
             transport,

@@ -18,12 +18,10 @@ use crate::frame_source::{FrameError, WriteReceipt};
 use super::super::PaneId;
 use super::jobs::{JobKey, JobOutcome, JobResult, JobTag};
 
-/// Writes a pane may have queued behind the one being sent.
+/// Writes a pane may have queued behind the one being sent. The cap counts
+/// writes only: the channel itself is unbounded so a barrier always fits
+/// behind a full queue, however many a pane's focus moves stack up.
 const WRITE_QUEUE_MAX_MESSAGES: usize = 256;
-
-/// One above the message cap, so a barrier always fits behind a full queue
-/// of writes.
-const WRITE_CHANNEL_CAPACITY: usize = WRITE_QUEUE_MAX_MESSAGES + 1;
 
 #[derive(Debug)]
 enum QueuedWrite {
@@ -95,7 +93,7 @@ impl Abandoned {
 /// the task finishes the write it is on and exits.
 #[derive(Debug)]
 pub(in crate::app) struct PaneWriter {
-    tx: mpsc::Sender<QueuedWrite>,
+    tx: UnboundedSender<QueuedWrite>,
     generation: Generation,
     backlog: Arc<Backlog>,
 }
@@ -106,8 +104,9 @@ impl PaneWriter {
         outcomes: &UnboundedSender<JobOutcome>,
         pane: PaneId,
     ) -> Self {
-        let (tx, mut rx) = mpsc::channel(WRITE_CHANNEL_CAPACITY);
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let generation = daemon.generation();
+        let writer_generation = generation;
         let daemon = daemon.clone();
         let outcomes = outcomes.clone();
         let backlog = Arc::new(Backlog::default());
@@ -169,10 +168,24 @@ impl PaneWriter {
                             let _ = taken.wait_for(|taken| *taken).await;
                         }
                         // A direct pane's input is flushed to its frame socket
-                        // first; a failed flush retired that socket, so its
-                        // bytes are gone either way.
+                        // first. The frame writer bounds each write and retires
+                        // a socket the host stopped reading, which fails the
+                        // receipt: what was typed there is unconfirmed, and the
+                        // barrier goes on rather than holding the next take.
                         if let Some(flushed) = flushed {
-                            let _ = flushed.await;
+                            if !matches!(flushed.await, Ok(Ok(()))) {
+                                let outcome = JobOutcome {
+                                    tag: JobTag {
+                                        id: 0,
+                                        generation: writer_generation,
+                                        key: JobKey::Write(pane),
+                                    },
+                                    result: JobResult::WriteUnconfirmed { pane },
+                                };
+                                if outcomes.send(outcome).is_err() {
+                                    return;
+                                }
+                            }
                         }
                         // A release that cannot reach the daemon lost the
                         // connection, which drops the lease with it.
@@ -192,6 +205,12 @@ impl PaneWriter {
         }
     }
 
+    /// Stop sending for an attachment the pane replaced: whatever is still
+    /// queued is reported unsent, never sent under the old attachment.
+    pub(in crate::app) fn retire(&self) {
+        self.backlog.stopped.store(true, Ordering::Release);
+    }
+
     /// Whether this writer still sends for the connection `generation`.
     pub(super) fn serves(&self, generation: Generation) -> bool {
         self.generation == generation
@@ -201,24 +220,25 @@ impl PaneWriter {
 
     /// Queue `message` behind every write accepted so far, and behind
     /// `after` and `flushed` when set. The returned receiver resolves once it
-    /// was sent; a writer that is gone drops the sender, which waiters treat
-    /// as done.
+    /// was sent. `None` means the writer task is gone, which only happens
+    /// once the loop that reads its outcomes has exited; the caller must not
+    /// read that as sent.
     pub(super) fn enqueue_barrier(
         &self,
         message: Option<Value>,
         after: Option<watch::Receiver<bool>>,
         flushed: Option<WriteReceipt>,
-    ) -> watch::Receiver<bool> {
+    ) -> Option<watch::Receiver<bool>> {
         let (done, sent) = watch::channel(false);
-        // The channel holds one slot above the write cap, and a pane keeps
-        // at most one barrier pending, so this never meets a full queue.
-        let _ = self.tx.try_send(QueuedWrite::Barrier {
-            message,
-            after,
-            flushed,
-            done,
-        });
-        sent
+        self.tx
+            .send(QueuedWrite::Barrier {
+                message,
+                after,
+                flushed,
+                done,
+            })
+            .ok()
+            .map(|()| sent)
     }
 
     /// Queue a write without waiting. A write that would take the backlog
@@ -247,7 +267,7 @@ impl PaneWriter {
         // Only the loop adds, so the check above cannot be overtaken.
         backlog.messages.fetch_add(1, Ordering::AcqRel);
         backlog.bytes.fetch_add(bytes, Ordering::AcqRel);
-        if self.tx.try_send(write).is_ok() {
+        if self.tx.send(write).is_ok() {
             return Ok(true);
         }
         backlog.messages.fetch_sub(1, Ordering::AcqRel);

@@ -635,14 +635,16 @@ outcomes, and every wait below runs in the writer task or the spawned control ta
 
 - Barrier. The queue carries `QueuedWrite::Write{generation, client_write_seq,
   body}` and `QueuedWrite::Barrier{kind: Release | Close, done: watch::Sender<bool>}`. The
-  256-message and 1 MiB caps count `Write` items only, and the channel is sized one
-  above the message cap. `release_pending` admits at most one outstanding barrier
-  per pane, so a barrier enqueue never meets `Backpressure`.
+  256-message and 1 MiB caps count `Write` items only, and the channel itself is
+  unbounded, so a barrier enqueue never meets `Backpressure` however many focus
+  moves stack barriers behind a full queue. An enqueue fails only once the writer
+  task is gone, and that failure is never read as sent: the release stays
+  pending and no take follows it.
 - Barrier ownership. The writer task owns each barrier and publishes its
   completion once on a `tokio::sync::watch` channel. Every waiter holds its own
-  cloned receiver, so one completion serves any number of dependent takes. A
-  repeated release while `release_pending` is set enqueues nothing and reuses the
-  pending barrier. A close while a release barrier is pending also enqueues
+  cloned receiver, so one completion serves any number of dependent takes. Each
+  release enqueues its own barrier, because a take may have gone out after the
+  previous one. A close while a release barrier is pending enqueues
   nothing: it sets `close_after_release` on the pane, and the close's detach or
   kill is issued from that barrier's completion, after the release. A close with
   no barrier pending enqueues its own `Close` barrier in the reserved slot. A
@@ -661,11 +663,19 @@ outcomes, and every wait below runs in the writer task or the spawned control ta
   its scripted wrapper and `ProxyFrameSource::send_input` stay unchanged). That receipt proves only a
   local flush to the frame socket. It does not prove gterm read the bytes, the PTY
   consumed them, or any order against the daemon's revoke on the control socket,
-  so the direct barrier is local flush ordering only.
+  so the direct barrier is local flush ordering only. The wait is bounded by the
+  frame writer's existing per-write `CONNECT_TIMEOUT` (5s). A write the host
+  stopped reading fails the receipt, and the existing generation-change and
+  recovery path retires that source. The barrier then reports exactly one
+  `WriteUnconfirmed` for the pane (`Input delivery unconfirmed.`, no byte count,
+  nothing replayed) and goes on: the release is sent and the next take proceeds.
+  No write for the stalled pane goes out under the next pane's authority.
 - Take. `start_control_request` hands the spawned control task a cloned
   completion receiver for every Releasing pane, and the task awaits them before it writes the
   take. The wire order is: the old pane's accepted bytes, its release, the new
-  pane's take. The loop never awaits.
+  pane's take. A pane's take also waits for the reply to that pane's previous
+  take, because the daemon client routes one control reply per attachment at a
+  time. The loop never awaits.
 - Failure. Outcomes keep what gclient actually knows, in three classes:
   - Known unsent. Writes still queued, never handed to a socket, behind a failed
     write, a `Close` barrier or a generation change. The writer reports them as
@@ -692,12 +702,13 @@ outcomes, and every wait below runs in the writer task or the spawned control ta
   the frame socket. After the release barrier, no write for the old pane is
   enqueued or flushed, and gclient never replays a known-unsent or unconfirmed
   write under any authority or generation. Recovery is the user's retype.
-- Close. Pane and tab close enqueue a `Close` barrier, and the close's detach or
-  kill is issued from the barrier's `done`. Accepted bytes are flushed or reported
-  before the pane leaves.
+- Close. Pane and tab close enqueue a `Close` barrier, carrying a direct pane's
+  last frame-write receipt, and the close's detach or kill is issued from the
+  barrier's `done`. Accepted bytes are flushed or reported before the pane leaves.
 - Stale generation. Each `Write` carries the attachment generation it was accepted
   under. When the pane's generation changes (re-attach, recovery, reconnect), the
-  old writer is closed. Its still-queued writes are reported as `WriteAbandoned`
+  old writer is closed. Installing any new attachment retires the pane's writer,
+  so writes queued for the attachment it replaces are never sent under it. Its still-queued writes are reported as `WriteAbandoned`
   and any write in flight as `WriteUnconfirmed`, both for the old generation.
   Neither is re-sent under the new attachment id; a fresh writer serves the new
   generation.
@@ -809,6 +820,24 @@ carries the same fact). Planned verification: `cargo nextest run -p gobby-client
 - A2.15 - `WriteAbandoned` and `WriteUnconfirmed` reports from the old generation
   still show their status after a reconnect. test:
   `crates/gclient/tests/loop_liveness.rs::old_generation_write_uncertainty_is_reported_after_reconnect`.
+- A2.16 - With B's writer full behind a held write, focus moves B to A, back to
+  B and to A again. B's second release goes out after B's second take, A's
+  second take goes out after it, and no take is refused as already in flight.
+  test:
+  `crates/gclient/tests/loop_liveness.rs::a_second_release_behind_a_full_backlog_is_never_lost`.
+- A2.17 - Closing a direct pane whose frame writer is stalled sends no kill
+  until the pane's typed bytes flush, and none of them go through the daemon.
+  test:
+  `crates/gclient/tests/loop_liveness.rs::closing_a_direct_pane_kills_after_its_typed_bytes_flush`.
+- A2.18 - With direct pane A's frame writer stalled, focus moves to B. B's take
+  is written within the frame writer's bound, and typing into B is accepted.
+  A reports `Input delivery unconfirmed.` exactly once, nothing is replayed, and
+  frames and ticks advance. test:
+  `crates/gclient/tests/loop_liveness.rs::a_stalled_direct_release_is_bounded_and_never_blocks_the_next_take`.
+- A2.19 - A re-attach without a reconnect retires the pane's writer. Writes
+  queued for the old attachment are reported as `Input not sent`, and the next
+  key goes out under the new attachment. test:
+  `crates/gclient/tests/client_loop.rs::a_reattach_abandons_writes_queued_for_the_old_attachment`.
 
 ### A3 Attach and recovery as jobs [category: code] (depends: A2)
 `kind: deliverable`

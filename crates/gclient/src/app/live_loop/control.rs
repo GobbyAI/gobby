@@ -180,6 +180,8 @@ pub(super) fn retire_live_control(
     });
     let pane = pane_writer(workspace, outcomes, pane_id);
     let writer = pane.writer.as_ref().expect("writer spawned");
+    // Only a writer whose loop already exited refuses it, and that loop is
+    // the one retiring.
     let _ = writer.enqueue_barrier(Some(message), None, None);
 }
 
@@ -211,7 +213,8 @@ pub(super) fn release_live_control(workspace: &mut Workspace<LiveDaemon>, pane_i
 
 /// Send the releases focus moves marked, each behind its pane's accepted
 /// writes and its own take, then start the recorded control request, which
-/// waits for every one of them before it writes the take.
+/// waits for every one of them before it writes the take. A release that
+/// could not be queued is never read as sent, so no take follows it.
 pub(super) fn start_live_control(
     workspace: &mut Workspace<LiveDaemon>,
     jobs: &LoopJobs,
@@ -223,18 +226,23 @@ pub(super) fn start_live_control(
         .filter(|(_, pane)| pane.release_pending)
         .map(|(pane_id, _)| *pane_id)
         .collect();
+    let mut queued = true;
     for pane_id in releasing {
-        enqueue_release(workspace, jobs.outcomes(), pane_id);
+        queued &= enqueue_release(workspace, jobs.outcomes(), pane_id).is_some();
     }
-    workspace.start_control_request(control);
+    if queued {
+        workspace.start_control_request(control);
+    }
 }
 
 /// Queue a pane's pending release behind its accepted writes and its take.
+/// Every release gets its own barrier, since a take may have gone out after
+/// the last one. `None` leaves the release pending.
 fn enqueue_release(
     workspace: &mut Workspace<LiveDaemon>,
     outcomes: &UnboundedSender<JobOutcome>,
     pane_id: PaneId,
-) -> watch::Receiver<bool> {
+) -> Option<watch::Receiver<bool>> {
     let pane = pane_writer(workspace, outcomes, pane_id);
     pane.release_pending = false;
     let message = json!({
@@ -250,31 +258,41 @@ fn enqueue_release(
         .and_then(PaneFrameSource::take_write_receipt);
     let writer = pane.writer.as_ref().expect("writer spawned");
     let done = writer.enqueue_barrier(Some(message), after, flushed);
-    pane.release_done = Some(done.clone());
+    pane.release_pending = done.is_none();
+    pane.release_done.clone_from(&done);
     done
 }
 
 /// What a close of this pane waits on: its pending release, which follows
-/// every write accepted before it, or else a barrier behind those writes.
-/// A pane keeps at most one barrier pending, so a release already queued is
-/// reused rather than joined by another.
+/// every write accepted before it, or else a barrier behind those writes and
+/// a direct pane's last frame write. A release already queued is reused,
+/// since nothing can be typed on a pane that let go.
 pub(super) fn close_barrier(
     workspace: &mut Workspace<LiveDaemon>,
     outcomes: &UnboundedSender<JobOutcome>,
     pane_id: PaneId,
 ) -> Option<watch::Receiver<bool>> {
-    let pane = workspace.panes.get(&pane_id)?;
+    let generation = workspace.daemon().generation();
+    let pane = workspace.panes.get_mut(&pane_id)?;
     if pane.release_pending {
-        return Some(enqueue_release(workspace, outcomes, pane_id));
+        return enqueue_release(workspace, outcomes, pane_id);
     }
     if let Some(release) = pane.pending_release() {
         return Some(release);
     }
-    let writer = pane
+    let flushed = pane
+        .frame_source_mut()
+        .and_then(PaneFrameSource::take_write_receipt);
+    let serving = pane
         .writer
         .as_ref()
-        .filter(|writer| writer.serves(workspace.daemon().generation()))?;
-    Some(writer.enqueue_barrier(None, None, None))
+        .is_some_and(|writer| writer.serves(generation));
+    if flushed.is_none() && !serving {
+        return None;
+    }
+    let pane = pane_writer(workspace, outcomes, pane_id);
+    let writer = pane.writer.as_ref().expect("writer spawned");
+    writer.enqueue_barrier(None, None, flushed)
 }
 
 /// Keys for a held pane go out at once; an observed pane takes control
