@@ -5,8 +5,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import threading
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -71,7 +69,6 @@ class PendingTool:
 # duplicated or dropped record.
 
 _TAIL_CHECK_BYTES = 65_536
-_SNAPSHOT_LIMIT = 8
 
 
 @dataclass(frozen=True)
@@ -148,31 +145,9 @@ class TranscriptRead:
     tail: bytes
 
 
-_snapshot_lock = threading.Lock()
-_evidence_snapshots: OrderedDict[str, EvidenceSnapshot] = OrderedDict()
-
-
 def clear_evidence_snapshots() -> None:
-    """Drop every cached per-session derivation (test isolation)."""
-    with _snapshot_lock:
-        _evidence_snapshots.clear()
+    """Clear durable checkpoints (test isolation)."""
     clear_snapshots()
-
-
-def load_snapshot(session_id: str) -> EvidenceSnapshot | None:
-    with _snapshot_lock:
-        snapshot = _evidence_snapshots.get(session_id)
-        if snapshot is not None:
-            _evidence_snapshots.move_to_end(session_id)
-        return snapshot
-
-
-def store_snapshot(session_id: str, snapshot: EvidenceSnapshot) -> None:
-    with _snapshot_lock:
-        _evidence_snapshots[session_id] = snapshot
-        _evidence_snapshots.move_to_end(session_id)
-        while len(_evidence_snapshots) > _SNAPSHOT_LIMIT:
-            _evidence_snapshots.popitem(last=False)
 
 
 def _split_transcript_bytes(data: bytes, offset: int, prior_tail: bytes) -> TranscriptRead:
@@ -238,9 +213,7 @@ __all__ = [
     "TranscriptRead",
     "clear_evidence_snapshots",
     "load_durable_snapshot",
-    "load_snapshot",
     "read_transcript",
     "read_transcript_suffix",
     "store_durable_snapshot",
-    "store_snapshot",
 ]

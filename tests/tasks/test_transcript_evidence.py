@@ -51,7 +51,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationRun,
     TranscriptValidationSegment,
 )
-from gobby.tasks.transcript_evidence_snapshots import EvidenceSnapshot, load_snapshot
+from gobby.tasks.transcript_evidence_snapshots import load_durable_snapshot
 from gobby.tasks.transcript_evidence_transfer import CHUNK_RECORDS, ChunkedPayload, decode, encode
 from gobby.tasks.transcript_outcomes import EvidenceOutcome
 from gobby.tasks.transcript_outcomes import extract_output as _extract_output
@@ -4943,7 +4943,7 @@ async def test_derivation_yields_to_event_loop_between_record_chunks(
     crossed: list[object] = []
 
     async def recording_pool(function: Any, /, *args: object) -> object:
-        crossed.append(args[-1])
+        assert len(args) == 8, "no outbound resume argument"
         result = await real_pool(function, *args)
         crossed.append(result)
         return result
@@ -4975,18 +4975,19 @@ async def test_derivation_yields_to_event_loop_between_record_chunks(
     counter = asyncio.create_task(count_turns())
     try:
         await derive()
-        # The second derivation resumes, so its snapshot is encoded on the loop too.
+        # The second derivation resumes entirely within the worker.
         evidence = await derive()
     finally:
         counter.cancel()
         await asyncio.gather(counter, return_exceptions=True)
 
-    # crossed holds resume, result, resume, result; only a fresh cache sends no resume.
-    assert [type(item) for item in crossed[1:]] == [ChunkedPayload] * 3
-    for payload in cast(list[ChunkedPayload], crossed[1:]):
+    # Only the two requested evidence payloads cross back to the daemon.
+    assert [type(item) for item in crossed] == [ChunkedPayload] * 2
+    for payload in cast(list[ChunkedPayload], crossed):
         assert len(payload.chunks) > 1
         assert all(len(pickle.loads(chunk)[1]) <= CHUNK_RECORDS for chunk in payload.chunks)
-    for name, seen in steps.items():
+    assert steps["_encode_steps"] == [], "no snapshot is encoded on the daemon loop"
+    for name, seen in (("_decode_steps", steps["_decode_steps"]),):
         assert len(seen) > 2, name
         assert all(later > earlier for earlier, later in zip(seen, seen[1:], strict=False)), (
             name,
@@ -5048,21 +5049,19 @@ def test_chunked_derivation_matches_unchunked_derivation_in_order(
     monkeypatch.setattr(transcript_evidence, "store_durable_snapshot", lambda *_args: None)
     args = _derivation_args(_chunked_transfer_transcript(tmp_path, 3 * CHUNK_RECORDS), tmp_path)
 
-    direct = _derive_transcript_evidence_sync(*args, None)
-    payload = _derive_chunked_transcript_evidence(*args, None)
+    direct = _derive_transcript_evidence_sync(*args, None)[0]
+    payload = _derive_chunked_transcript_evidence(*args)
 
     assert len(payload.chunks) > 1
     assert decode(payload) == direct
-    evidence, snapshot = cast(tuple[TranscriptEvidence, EvidenceSnapshot], decode(payload))
+    evidence = cast(TranscriptEvidence, decode(payload))
     assert [run.order for run in evidence.command_runs] == [
-        run.order for run in direct[0].command_runs
+        run.order for run in direct.command_runs
     ]
     assert [run.command for run in evidence.validation_runs] == [
         "uv run pytest tests/tasks/test_chunked.py -q"
     ]
-    # A resume snapshot crosses the boundary through the same codec.
-    resumed = decode(_derive_chunked_transcript_evidence(*args, encode(snapshot)))
-    assert resumed == _derive_transcript_evidence_sync(*args, snapshot)
+    assert payload.record_count == len(evidence.validation_runs) + len(evidence.command_runs)
 
 
 def test_payload_envelope_does_not_grow_with_record_count() -> None:
@@ -5099,10 +5098,14 @@ async def test_chunked_derivation_fails_closed_on_invalid_chunks(
             session, BASE_TIME, default_validation_detection_config(), set(), str(tmp_path)
         )
 
-    assert load_snapshot(session.id) is None
+    fingerprint = transcript_evidence._derivation_fingerprint(
+        session, BASE_TIME, default_validation_detection_config(), set(), str(tmp_path), None
+    )
+    # Worker persistence completes before daemon-side decoding starts.
+    assert load_durable_snapshot(f"{session.id}:{fingerprint}") is not None
 
 
-async def test_chunked_derivation_cancelled_mid_decode_stores_nothing(
+async def test_chunked_derivation_cancelled_mid_decode_keeps_worker_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     first_chunk = asyncio.Event()
@@ -5134,4 +5137,8 @@ async def test_chunked_derivation_cancelled_mid_decode_stores_nothing(
         await derivation
 
     assert not finished
-    assert load_snapshot(session.id) is None
+    fingerprint = transcript_evidence._derivation_fingerprint(
+        session, BASE_TIME, default_validation_detection_config(), set(), str(tmp_path), None
+    )
+    # Worker persistence completes before daemon-side decoding starts.
+    assert load_durable_snapshot(f"{session.id}:{fingerprint}") is not None
