@@ -1288,6 +1288,60 @@ async def test_claude_pairs_shell_results_and_tracks_task_edits(tmp_path: Path) 
     assert evidence.validation_runs[0].completed_at < evidence.edits[0].timestamp
 
 
+@pytest.mark.asyncio
+async def test_failed_rust_test_run_does_not_overturn_passing_python_lint(tmp_path: Path) -> None:
+    """A failing nextest run is test evidence only; it cannot fail lint or type_check (#23382)."""
+    transcript = tmp_path / "claude.jsonl"
+    lint = "uv run ruff check src/"
+    nextest = (
+        "cargo nextest run -p gobby-client --status-level pass --stress-count 30 "
+        "-E 'binary(loop_liveness)'"
+    )
+    _write_jsonl(
+        transcript,
+        [
+            *_claude_tool_pair(
+                command=lint,
+                call_id="lint-1",
+                start=BASE_TIME,
+                result={"exit_code": 0, "stdout": "All checks passed!"},
+            ),
+            *_claude_tool_pair(
+                command=nextest,
+                call_id="rust-1",
+                start=BASE_TIME + timedelta(seconds=2),
+                result={"exit_code": 101, "stdout": "error: test run failed"},
+                is_error=True,
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        changed_paths=("src/example.py",),
+    )
+
+    assert gate.details["latest_outcomes"] == {
+        "lint": "success",
+        "type_check": "success",
+        "test": "failure",
+    }
+    assert gate.status == "failed"
+    assert [(run.command, run.outcome, run.categories) for run in evidence.validation_runs] == [
+        (lint, "success", ("lint", "type_check")),
+        (nextest, "failure", ("test",)),
+    ]
+
+
 _CLAUDE_USER_REJECTED = (
     "The user doesn't want to proceed with this tool use. The tool use was rejected "
     "(eg. if it was a file edit, the new_string was NOT written to the file). "

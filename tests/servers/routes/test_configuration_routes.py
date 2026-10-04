@@ -163,7 +163,7 @@ class TestValidationDetectionPreview:
         assert response.status_code == 200
         data = response.json()
         assert data["matched"] is True
-        assert data["matcher_id"] == "rust-validation"
+        assert data["matcher_id"] == "rust-checks"
 
     def test_preview_validation_detection_uses_supplied_config(self, client: TestClient) -> None:
         response = client.post(
