@@ -282,6 +282,20 @@ class TestGetAgentDefinition:
         assert agent["timeout"] == 300.0
         assert "max_turns" not in agent
 
+    def test_detail_includes_prewarm_opt_out_and_tool_blocks(
+        self, definition_db: PostgresHubDatabase
+    ) -> None:
+        mgr = _setup(definition_db)
+        _insert_agent(
+            mgr,
+            "reviewer",
+            prewarm_pre_commit_store=False,
+            blocked_mcp_tools=["gobby-tasks:close_task"],
+        )
+        agent = get_agent_definition(mgr, "reviewer")["agent"]
+        assert agent["prewarm_pre_commit_store"] is False
+        assert agent["blocked_mcp_tools"] == ["gobby-tasks:close_task"]
+
     def test_detail_includes_nested_step_workflow(self, definition_db: PostgresHubDatabase) -> None:
         mgr = _setup(definition_db)
         _insert_agent(

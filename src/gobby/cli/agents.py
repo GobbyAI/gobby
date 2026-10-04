@@ -31,6 +31,7 @@ from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.uuid_validation import is_full_uuid
+from gobby.workflows.agent_detail import agent_definition_detail
 from gobby.workflows.definitions import AgentDefinitionBody
 
 
@@ -108,23 +109,7 @@ def _agent_definition_summary(row: AgentDefinitionRow) -> dict[str, Any]:
 
 def _agent_definition_detail(row: AgentDefinitionRow) -> dict[str, Any]:
     """Build detailed agent definition output."""
-    body, raw = _agent_body(row)
-    return {
-        **_agent_definition_summary(row),
-        "base_branch": body.base_branch,
-        "timeout": body.timeout,
-        "prompts": body.prompts.model_dump(exclude_none=True),
-        "workflows": body.workflows.model_dump(exclude_none=True),
-        "step_workflow": (
-            body.step_workflow.model_dump(exclude_none=True) if body.step_workflow else None
-        ),
-        "blocked_tools": body.blocked_tools,
-        "blocked_mcp_tools": body.blocked_mcp_tools,
-        "send_message_targets": body.send_message_targets,
-        "sources": body.sources,
-        "tags": row.tags,
-        "raw_mode": raw.get("mode"),
-    }
+    return {**_agent_definition_summary(row), **agent_definition_detail(row)}
 
 
 def resolve_agent_run_id(run_ref: str) -> str:
