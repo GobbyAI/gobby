@@ -2,7 +2,9 @@ use super::*;
 use crate::app::pane::{Backend, PaneId};
 use crate::frame_source::{PaneFrameSource, ScriptedFrameSource};
 use crate::theme::{Theme, ThemeKind};
+use gobby_terminal::terminal_theme::{DefaultColorKind, RgbColor};
 use serde_json::json;
+use std::time::Instant;
 
 fn declaration(kind: ThemeKind) -> ThemeDeclaration {
     (&Theme::new(kind).terminal_theme()).into()
@@ -181,4 +183,47 @@ fn a_detached_pane_is_sent_nothing() {
     pane.sync_terminal_theme(&declaration(ThemeKind::Dark));
 
     assert_eq!(pane.declared_theme, None);
+}
+
+/// System declares the hosting terminal's own ground, and that terminal can
+/// answer before it repaints after an appearance flip. The first answer is
+/// then stale, so System asks again on a cadence, and the later answer is the
+/// one panes are told (#23286 close review 88b326a0).
+#[test]
+fn system_asks_again_so_a_stale_host_answer_is_replaced() {
+    let arm = HostColorQueryArm::default();
+    let query = HOST_COLOR_QUERY_SEQUENCE.as_bytes();
+    let mut chrome = crate::ui::chrome::Chrome::dark();
+    chrome.prefs.theme = "System".to_string();
+    let mut asked_at = None;
+    let mut output = Vec::new();
+    let flip = Instant::now();
+
+    assert!(query_host_colors_when_due(&arm, &mut asked_at, true, flip, &mut output).unwrap());
+    let stale = RgbColor {
+        r: 0xef,
+        g: 0xf1,
+        b: 0xf5,
+    };
+    chrome.record_host_color(DefaultColorKind::Background, stale);
+    assert_eq!(chrome.terminal_theme().background, Some(stale));
+
+    let soon = flip + HOST_COLOR_REQUERY_INTERVAL / 2;
+    assert!(!query_host_colors_when_due(&arm, &mut asked_at, false, soon, &mut output).unwrap());
+    assert_eq!(output, query, "no second ask inside the interval");
+
+    let later = flip + HOST_COLOR_REQUERY_INTERVAL;
+    assert!(query_host_colors_when_due(&arm, &mut asked_at, false, later, &mut output).unwrap());
+    assert_eq!(
+        output,
+        [query, query].concat(),
+        "asked again after the interval"
+    );
+    let repainted = RgbColor {
+        r: 0x1e,
+        g: 0x1e,
+        b: 0x2e,
+    };
+    chrome.record_host_color(DefaultColorKind::Background, repainted);
+    assert_eq!(chrome.terminal_theme().background, Some(repainted));
 }
