@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
-from gobby.agents import sandbox_reaper
+from gobby.agents import sandbox_policy, sandbox_reaper
 from gobby.agents.sandbox_policy import (
     PRE_COMMIT_STORE_SPARE_NAME,
     PRE_COMMIT_STORE_SPARE_TEMP_NAME,
@@ -369,6 +370,44 @@ async def test_startup_sweep_removes_fresh_pre_commit_spare_and_partial_temp(
     assert result.removed_roots == 2
     assert not spare.exists()
     assert not temporary.exists()
+
+
+@pytest.mark.asyncio
+async def test_startup_sweep_leaves_live_pre_commit_spare_replenish_alone(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+    source = _create_root(tmp_path / "operator-pre-commit")
+    spare, temporary = sandbox_policy.pre_commit_store_spare_paths()
+    clone_started = threading.Event()
+    release_clone = threading.Event()
+
+    def blocked_clone(_source: Path, destination: Path) -> None:
+        _create_root(destination)
+        clone_started.set()
+        assert release_clone.wait(timeout=5)
+
+    monkeypatch.setattr(sandbox_policy, "_clone_pre_commit_store", blocked_clone)
+    sandbox_policy._schedule_pre_commit_store_spare(source)
+    worker = sandbox_policy._pre_commit_spare_thread
+    assert worker is not None
+    try:
+        assert clone_started.wait(timeout=5)
+        result = await sweep_sandbox_run_roots(set(), gobby_home=gobby_home, now=_NOW)
+        assert result.removed_roots == 0
+        assert result.skipped_roots == 0
+        assert (temporary / "payload").is_file()
+    finally:
+        release_clone.set()
+        worker.join(timeout=5)
+    try:
+        assert not worker.is_alive()
+        assert (spare / "payload").is_file()
+        assert not temporary.exists()
+    finally:
+        sandbox_policy.shutdown_pre_commit_store_spare()
 
 
 @pytest.mark.asyncio
