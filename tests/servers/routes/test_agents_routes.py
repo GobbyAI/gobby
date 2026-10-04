@@ -231,6 +231,67 @@ def test_agent_run_list_is_bounded_and_detail_keeps_large_fields(
     assert "summary_markdown" not in enriched_detail.json()["run"]
 
 
+def test_agent_run_detail_carries_the_prompt_once_and_keeps_the_stored_copy(
+    client: TestClient,
+    running_agent_run: tuple[LocalAgentRunManager, AgentRun],
+) -> None:
+    manager, parent_run = running_agent_run
+    prompt = "unique-detail-prompt-" + "p" * 5_000
+    run = manager.create(
+        parent_session_id=parent_run.parent_session_id,
+        provider="claude",
+        prompt=prompt,
+        resume_metadata_json={
+            "initial_variables": {"prompt": prompt, "stage_name": "build"},
+            "continuation_note": "kept",
+        },
+    )
+
+    response = client.get(f"/api/agents/runs/{run.id}")
+
+    assert response.status_code == 200
+    assert response.text.count(prompt) == 1
+    detail = response.json()["run"]
+    assert detail["prompt"] == prompt
+    assert detail["resume_metadata_json"] == {
+        "initial_variables": {"stage_name": "build"},
+        "continuation_note": "kept",
+    }
+    stored = manager.get(run.id)
+    assert stored is not None
+    assert stored.resume_metadata_json == {
+        "initial_variables": {"prompt": prompt, "stage_name": "build"},
+        "continuation_note": "kept",
+    }
+
+
+def test_agent_run_name_route_projects_only_the_run_names(
+    client: TestClient,
+    running_agent_run: tuple[LocalAgentRunManager, AgentRun],
+) -> None:
+    manager, parent_run = running_agent_run
+    run = manager.create(
+        parent_session_id=parent_run.parent_session_id,
+        provider="claude",
+        prompt="p" * 5_000,
+        agent_name="developer",
+        workflow_name="build-stage",
+        resume_metadata_json={"initial_variables": {"prompt": "p" * 5_000}},
+    )
+    manager.start(run.id)
+    manager.complete(run.id, result="r" * 5_000)
+
+    response = client.get(f"/api/agents/runs/{run.id}/name")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "success",
+        "run": {"run_id": run.id, "agent_name": "developer", "workflow_name": "build-stage"},
+    }
+    assert len(response.content) < 500
+    assert client.get(f"/api/agents/runs/{UNKNOWN_ID}/name").status_code == 404
+
+
 @pytest.fixture(autouse=True)
 def _local_machine_identity() -> Iterator[None]:
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):

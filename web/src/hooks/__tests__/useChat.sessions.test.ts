@@ -1437,7 +1437,7 @@ describe("useChat viewed session state", () => {
         agent_run_id: "run-auto-1",
       },
     });
-    mockFetch.mockJsonResponse("/api/agents/runs/run-auto-1", {
+    mockFetch.mockJsonResponse("/api/agents/runs/run-auto-1/name", {
       run: { agent_name: "code-reviewer", workflow_name: "release-checks" },
     });
     const { result } = renderHook(() => useChat());
@@ -1559,7 +1559,7 @@ describe("useChat viewed session state", () => {
         agent_run_id: "run-bad-agent",
       },
     });
-    mockFetch.mockJsonResponse("/api/agents/runs/run-bad-agent", {
+    mockFetch.mockJsonResponse("/api/agents/runs/run-bad-agent/name", {
       run: { agent_name: { name: "not-a-string" }, workflow_name: 42 },
     });
     const { result } = renderHook(() => useChat());
@@ -1574,6 +1574,48 @@ describe("useChat viewed session state", () => {
 
     expect(result.current.viewingSessionMeta?.agentRunId).toBe("run-bad-agent");
     expect(result.current.viewingSessionMeta?.agentName).toBeNull();
+  });
+
+  it("resolves agent names through the name route, never the run detail route", async () => {
+    await loadModule();
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-named/messages?limit=100&offset=0",
+      { messages: [] },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-named", {
+      session: {
+        id: "sess-named",
+        seq_num: 2314,
+        source: "claude",
+        title: "Named agent",
+        status: "active",
+        session_type: "terminal",
+        workflow_name: "release-checks",
+        agent_run_id: "run-named",
+      },
+    });
+    mockFetch.mockJsonResponse("/api/agents/runs/run-named/name", {
+      run: {
+        run_id: "run-named",
+        agent_name: "code-reviewer",
+        workflow_name: "release-checks",
+      },
+    });
+    const { result } = renderHook(() => useChat());
+    act(() => mockWs.instances[0].simulateOpen());
+
+    await act(async () => {
+      result.current.viewSession("sess-named");
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.viewingSessionMeta?.agentName).toBe("code-reviewer");
+    const runRequests = mockFetch.fn.mock.calls
+      .map(([input]) => requestUrl(input))
+      .filter((url) => url.includes("/api/agents/runs/"));
+    expect(runRequests).toEqual(["/api/agents/runs/run-named/name"]);
   });
 
   it("does not attach viewed web chat sessions into proxy mode", async () => {
