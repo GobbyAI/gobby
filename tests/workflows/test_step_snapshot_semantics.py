@@ -1296,7 +1296,7 @@ async def _run_post_launch_failure_case(
                 )
             )
             stack.enter_context(
-                patch("gobby.mcp_proxy.tools.spawn_agent._execution.schedule_tmux_health_check")
+                patch("gobby.mcp_proxy.tools.spawn_agent._execution.schedule_spawn_health_check")
             )
             for extra in extra_patches:
                 stack.enter_context(extra)

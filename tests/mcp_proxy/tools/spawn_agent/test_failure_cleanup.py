@@ -515,7 +515,7 @@ class _HealthCaptureStorage:
 @pytest.mark.asyncio
 async def test_health_fail_persists_full_redacted_pane_for_get_agent_capture() -> None:
     from gobby.mcp_proxy.tools.agents import create_agents_registry
-    from gobby.mcp_proxy.tools.spawn_agent._health import _deferred_tmux_health_check
+    from gobby.mcp_proxy.tools.spawn_agent._health import _deferred_spawn_health_check
     from gobby.utils.terminal_output import redact_terminal_output
 
     unique_head = "HEALTH_PANE_HEAD_7f3a9c"
@@ -566,7 +566,7 @@ async def test_health_fail_persists_full_redacted_pane_for_get_agent_capture() -
             new_callable=AsyncMock,
         ),
     ):
-        await _deferred_tmux_health_check(
+        await _deferred_spawn_health_check(
             runner,
             run_id=run.id,
             terminal_id=terminal.id,

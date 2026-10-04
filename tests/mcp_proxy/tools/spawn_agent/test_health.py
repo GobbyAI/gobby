@@ -11,10 +11,10 @@ import pytest
 
 from gobby.mcp_proxy.tools.spawn_agent._health import (
     _bounded_redacted_pane_output,
-    _deferred_tmux_health_check,
+    _deferred_spawn_health_check,
     _terminal_is_live,
     cancel_health_checks,
-    schedule_tmux_health_check,
+    schedule_spawn_health_check,
 )
 from gobby.storage.terminals import Terminal
 from gobby.terminals.runtime import TerminalRuntimeRegistry
@@ -27,7 +27,7 @@ def _runner_with_terminal(run_storage: object) -> SimpleNamespace:
     terminal_manager = MagicMock()
     terminal_manager.get.return_value = cast(
         Terminal,
-        SimpleNamespace(id="terminal-1", backend="tmux"),
+        SimpleNamespace(id="terminal-1", backend="native"),
     )
     return SimpleNamespace(
         run_storage=run_storage,
@@ -38,7 +38,7 @@ def _runner_with_terminal(run_storage: object) -> SimpleNamespace:
 
 @pytest.mark.asyncio
 async def test_terminal_is_live_uses_registered_runtime() -> None:
-    row = cast(Terminal, SimpleNamespace(id="terminal-1", backend="tmux"))
+    row = cast(Terminal, SimpleNamespace(id="terminal-1", backend="native"))
     runtime = MagicMock()
     runtime.is_live = AsyncMock(return_value=True)
     registry = MagicMock(spec=TerminalRuntimeRegistry)
@@ -47,13 +47,13 @@ async def test_terminal_is_live_uses_registered_runtime() -> None:
     result = await _terminal_is_live(row, registry)
 
     assert result == (True, None)
-    registry.resolve.assert_called_once_with("tmux")
+    registry.resolve.assert_called_once_with("native")
     runtime.is_live.assert_awaited_once_with(row)
 
 
 @pytest.mark.asyncio
 async def test_terminal_is_live_reports_dead_runtime_output() -> None:
-    row = cast(Terminal, SimpleNamespace(id="terminal-1", backend="tmux"))
+    row = cast(Terminal, SimpleNamespace(id="terminal-1", backend="native"))
 
     class DeadRuntime:
         def __init__(self) -> None:
@@ -81,14 +81,14 @@ async def test_terminal_is_live_reports_dead_runtime_output() -> None:
     result = await _terminal_is_live(row, registry)
 
     assert result == (False, _bounded_redacted_pane_output("/bin/bash: claude: command not found"))
-    assert resolved_backends == ["tmux"]
+    assert resolved_backends == ["native"]
     assert runtime.live_rows == [row]
     assert runtime.snapshot_requests == [(row, 50)]
 
 
 @pytest.mark.asyncio
 async def test_terminal_is_live_bounds_dead_runtime_output() -> None:
-    row = cast(Terminal, SimpleNamespace(id="terminal-1", backend="tmux"))
+    row = cast(Terminal, SimpleNamespace(id="terminal-1", backend="native"))
     runtime = MagicMock()
     runtime.is_live = AsyncMock(return_value=False)
     runtime.snapshot = AsyncMock(return_value=SimpleNamespace(text="x" * 5000))
@@ -152,7 +152,7 @@ async def test_terminal_is_live_bounds_snapshot_timeout(
     registry = MagicMock(spec=TerminalRuntimeRegistry)
     registry.resolve.return_value = runtime
     monkeypatch.setattr(
-        "gobby.mcp_proxy.tools.spawn_agent._health._TMUX_HEALTH_CHECK_TIMEOUT_SECONDS",
+        "gobby.mcp_proxy.tools.spawn_agent._health._HEALTH_CHECK_TIMEOUT_SECONDS",
         0.001,
     )
 
@@ -187,7 +187,7 @@ async def test_deferred_health_check_does_not_fail_terminal_run() -> None:
         new_callable=AsyncMock,
         return_value=(False, None),
     ):
-        await _deferred_tmux_health_check(
+        await _deferred_spawn_health_check(
             runner,
             run_id="run-123",
             terminal_id="terminal-1",
@@ -234,7 +234,7 @@ async def test_deferred_health_failure_reports_available_pane_output(
         new_callable=AsyncMock,
         return_value=(False, pane_output),
     ):
-        await _deferred_tmux_health_check(
+        await _deferred_spawn_health_check(
             runner,
             run_id="run-123",
             terminal_id="terminal-1",
@@ -266,7 +266,7 @@ async def test_deferred_health_delivery_failure_is_logged(
         ),
         caplog.at_level("WARNING"),
     ):
-        await _deferred_tmux_health_check(
+        await _deferred_spawn_health_check(
             runner,
             run_id="run-123",
             terminal_id="terminal-1",
@@ -281,7 +281,7 @@ async def test_scheduled_health_check_does_not_create_a_sleeping_task() -> None:
     runner = SimpleNamespace(run_storage=MagicMock())
     existing_tasks = asyncio.all_tasks()
 
-    handle = schedule_tmux_health_check(
+    handle = schedule_spawn_health_check(
         runner=runner,
         run_id="run-1",
         terminal_id="session-1",
@@ -295,8 +295,8 @@ async def test_scheduled_health_check_does_not_create_a_sleeping_task() -> None:
 @pytest.mark.asyncio
 async def test_cancel_health_checks_cancels_pending_timer_before_callback() -> None:
     runner = SimpleNamespace(run_storage=MagicMock())
-    with patch("gobby.mcp_proxy.tools.spawn_agent._health._start_tmux_health_check") as start:
-        handle = schedule_tmux_health_check(
+    with patch("gobby.mcp_proxy.tools.spawn_agent._health._start_spawn_health_check") as start:
+        handle = schedule_spawn_health_check(
             runner=runner,
             run_id="run-1",
             terminal_id="session-1",
@@ -363,7 +363,7 @@ class TestDeferredHealthFailureWakesWaiter:
             new_callable=AsyncMock,
             return_value=(False, None),
         ):
-            await _deferred_tmux_health_check(
+            await _deferred_spawn_health_check(
                 harness.runner,
                 "run-123",
                 "terminal-1",
@@ -385,7 +385,7 @@ class TestDeferredHealthFailureWakesWaiter:
             new_callable=AsyncMock,
             return_value=(False, None),
         ):
-            await _deferred_tmux_health_check(
+            await _deferred_spawn_health_check(
                 harness.runner,
                 "run-123",
                 "terminal-1",

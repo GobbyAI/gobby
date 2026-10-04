@@ -17,7 +17,7 @@ from gobby.utils.terminal_output import redact_terminal_output
 
 logger = logging.getLogger(__name__)
 
-_TMUX_HEALTH_CHECK_TIMEOUT_SECONDS = 5.0
+_HEALTH_CHECK_TIMEOUT_SECONDS = 5.0
 _PANE_ERROR_MAX_CHARS = 1024
 _PANE_ERROR_TRUNCATION_MARKER = "[truncated]\n"
 
@@ -128,12 +128,12 @@ async def cancel_and_await_health_checks() -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-# Seconds to wait before checking if tmux session survived spawn.
-# Configurable via GOBBY_TMUX_HEALTH_CHECK_DELAY env var.
+# Seconds to wait before checking that the spawned terminal survived.
+# Configurable via GOBBY_SPAWN_HEALTH_CHECK_DELAY env var.
 try:
-    TMUX_HEALTH_CHECK_DELAY = float(os.environ.get("GOBBY_TMUX_HEALTH_CHECK_DELAY", "0.5"))
+    SPAWN_HEALTH_CHECK_DELAY = float(os.environ.get("GOBBY_SPAWN_HEALTH_CHECK_DELAY", "0.5"))
 except (ValueError, TypeError):
-    TMUX_HEALTH_CHECK_DELAY = 0.5
+    SPAWN_HEALTH_CHECK_DELAY = 0.5
 
 
 async def _terminal_is_live(
@@ -145,14 +145,14 @@ async def _terminal_is_live(
     try:
         alive = await asyncio.wait_for(
             runtime.is_live(row),
-            timeout=_TMUX_HEALTH_CHECK_TIMEOUT_SECONDS,
+            timeout=_HEALTH_CHECK_TIMEOUT_SECONDS,
         )
         if alive:
             return alive, None
         try:
             snapshot = await asyncio.wait_for(
                 runtime.snapshot(row, lines=50),
-                timeout=_TMUX_HEALTH_CHECK_TIMEOUT_SECONDS,
+                timeout=_HEALTH_CHECK_TIMEOUT_SECONDS,
             )
         except (TimeoutError, OSError):
             return False, None
@@ -166,7 +166,7 @@ async def _terminal_is_live(
         raise
 
 
-async def _deferred_tmux_health_check(
+async def _deferred_spawn_health_check(
     runner: _RunnerWithRunStorage,
     run_id: str,
     terminal_id: str,
@@ -225,32 +225,32 @@ async def _deferred_tmux_health_check(
         logger.warning("Deferred health check for %s failed: %s", run_id, e)
 
 
-def _start_tmux_health_check(
+def _start_spawn_health_check(
     runner: _RunnerWithRunStorage,
     run_id: str,
     terminal_id: str,
     completion_registry: Any | None = None,
 ) -> None:
     health_task = asyncio.create_task(
-        _deferred_tmux_health_check(
+        _deferred_spawn_health_check(
             runner,
             run_id,
             terminal_id,
             0,
             completion_registry,
         ),
-        name=f"tmux-health-{run_id}",
+        name=f"spawn-health-{run_id}",
     )
     _health_check_tasks.add(health_task)
     health_task.add_done_callback(_health_check_tasks.discard)
 
 
-def schedule_tmux_health_check(
+def schedule_spawn_health_check(
     runner: _RunnerWithRunStorage,
     run_id: str,
     terminal_id: str,
     completion_registry: Any | None = None,
-    delay: float = TMUX_HEALTH_CHECK_DELAY,
+    delay: float = SPAWN_HEALTH_CHECK_DELAY,
 ) -> asyncio.TimerHandle:
     """Schedule a post-spawn terminal liveness check without a sleeping task."""
     loop = asyncio.get_running_loop()
@@ -259,7 +259,7 @@ def schedule_tmux_health_check(
     def start_health_check() -> None:
         if handle is not None:
             _health_check_handles.discard(handle)
-        _start_tmux_health_check(
+        _start_spawn_health_check(
             runner,
             run_id,
             terminal_id,
