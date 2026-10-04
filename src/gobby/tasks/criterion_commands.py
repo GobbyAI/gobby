@@ -487,11 +487,13 @@ def _segment_full_suite_runner(command: str) -> str | None:
             for argument in arguments
         )
     elif runner in {"vitest", "jest"}:
+        # ``vitest related <source>`` runs only the tests that import that source.
+        related = runner == "vitest" and arguments[:1] == ["related"]
         targeted = any(
             argument.split("=", 1)[0] in _JS_TEST_NAME_OPTIONS
             or _JS_TEST_FILE_RE.search(argument) is not None
             for argument in arguments
-        )
+        ) or (related and any(not argument.startswith("-") for argument in arguments[1:]))
     elif runner == "cargo":
         if arguments[:1] and arguments[0].startswith("+"):
             arguments = arguments[1:]

@@ -1,4 +1,4 @@
-"""Python test selection and lexical coverage for the close validation gate."""
+"""Test selection and lexical coverage of Python tests and web sources at close."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ import ast
 import logging
 import posixpath
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
-from gobby.tasks.command_equivalence import pytest_targets
+from gobby.tasks.command_equivalence import pytest_targets, vitest_related_targets
 from gobby.tasks.related_tests import RELATED_TEST_MAX_FILES
 from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 
@@ -271,6 +271,65 @@ def uncovered_pytest_paths(
         if targets:
             covered.extend(targets)
     return uncovered_test_paths(changed_python_tests, tuple(covered))
+
+
+def coverage_failure_message(
+    python_tests: tuple[str, ...],
+    python_sources: Mapping[str, tuple[str, ...]],
+    web_paths: tuple[str, ...],
+) -> str | None:
+    """Describe the first uncovered test obligation in checklist priority order."""
+    if python_tests:
+        display = ", ".join(f"`{path}`" for path in python_tests)
+        return (
+            "Changed Python tests have no credited fresh passing pytest target. "
+            f"Uncovered paths: {display}."
+        )
+    if python_sources:
+        display = "; ".join(
+            f"`{source}`: " + ", ".join(f"`{test}`" for test in tests)
+            for source, tests in python_sources.items()
+        )
+        return (
+            "Changed Python sources have related tests with no credited fresh passing pytest target. "
+            f"Uncovered sources and tests: {display}."
+        )
+    if web_paths:
+        # Direct binary avoids wrappers that rewrite `vitest related` into `vitest run`.
+        display = ", ".join(f"`{path}`" for path in web_paths)
+        return (
+            "Changed web/src files have no credited fresh passing `vitest related` run. "
+            f"Uncovered paths: {display}. Run `cd web && node_modules/.bin/vitest "
+            "related <each path relative to web/> --run` clean after the final task edit."
+        )
+    return None
+
+
+def changed_web_source_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:
+    """Select changed files under ``web/src``, sources and tests alike."""
+    web_sources = {
+        normalized
+        for path in changed_paths
+        if (normalized := _normalize_repo_path(path)) is not None
+        and normalized.startswith("web/src/")
+    }
+    return tuple(sorted(web_sources))
+
+
+def uncovered_vitest_related_paths(
+    commands: Iterable[str],
+    changed_web_paths: tuple[str, ...],
+    *,
+    close_root: str | None,
+) -> tuple[str, ...]:
+    """Return changed web paths no successful ``vitest related`` command names.
+
+    ``vitest related`` takes files, so coverage is an exact path match.
+    """
+    covered: set[str] = set()
+    for command in commands:
+        covered.update(vitest_related_targets(command, close_root=close_root) or ())
+    return tuple(path for path in changed_web_paths if path not in covered)
 
 
 def _test_types_command_targets(command: str) -> tuple[str, ...] | None:
