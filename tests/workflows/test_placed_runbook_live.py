@@ -68,6 +68,7 @@ from tests.workflows.placed_runbook_live_support import (
     host_socket_dir,
     launch_markers,
     live_standins,
+    seed_seat_catalog,
     set_executable,
     sha256_file,
     stage_real_srt,
@@ -140,10 +141,14 @@ def rig(
     assert not sync_bundled_agents(postgres_db)["errors"]
     definitions = AgentDefinitionManager(postgres_db)
     providers: dict[str, str] = {}
+    seats: list[tuple[str, str]] = []
     for agent in _catalogue(_installed_runbook(postgres_db)).values():
         row = definitions.get_by_name(agent)
         assert row is not None and row.enabled, f"{agent} is not an enabled definition"
         providers[agent] = str(row.definition_json["provider"])
+        seats.append((providers[agent], str(row.definition_json["model"])))
+    # The stand-ins refuse capability probes, so the spawn gate reads these rows.
+    seed_seat_catalog(postgres_db, seats)
     path, standins = curated_path(root, providers.values())
     monkeypatch.setenv("PATH", path)
     barrier = Barrier(root / "barrier")

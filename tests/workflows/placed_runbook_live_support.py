@@ -42,6 +42,11 @@ from unittest.mock import patch
 import psutil
 
 from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
+from gobby.providers.capabilities.collectors.base import validate_snapshot
+from gobby.providers.capabilities.collectors.codex import CodexCollector
+from gobby.providers.capabilities.collectors.grok import GrokCollector
+from gobby.providers.capabilities.store import ProviderCapabilityStore
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_steps import PipelineStepStorageMixin
 from gobby.terminals.host_client import HostClient
 from gobby.terminals.host_protocol import (
@@ -95,8 +100,14 @@ _STANDIN = """\
 # as a launch marker in the run's TMPDIR, prints one ready line and holds its
 # terminal until the terminal closes. The marker log stays open on fd 3 so the
 # fixture can find it: macOS hides a platform shell's environment.
+# The daemon's capability refresh probes (`codex ... app-server`, `grok agent ...
+# stdio`) fail at once and leave no marker; the fixture seeds the seat catalog.
+for arg in "$@"; do
+  case "$arg" in app-server) exit 64 ;; esac
+done
 case "${{1:-}}" in
   --version|-v|version) echo "{provider} 0.0.0-inert"; exit 0 ;;
+  agent) exit 64 ;;
 esac
 log="${{TMPDIR:-/nonexistent}}/{launch_log}"
 if {{ printf '%s\\n' "$$" >>"$log"; }} 2>/dev/null; then
@@ -267,6 +278,67 @@ def write_standin(directory: Path, provider: str) -> Path:
     path.write_text(_STANDIN.format(provider=provider, launch_log=LAUNCH_LOG), encoding="utf-8")
     path.chmod(0o755)
     return path
+
+
+def _seat_collector(provider: str, models: Collection[str]) -> CodexCollector | GrokCollector:
+    """The provider's own collector, fed the seat models in its raw discovery shape."""
+    if provider == "codex":
+        efforts = [{"reasoningEffort": effort} for effort in ("low", "medium", "high", "xhigh")]
+        codex_models = [
+            {
+                "id": model,
+                "model": model,
+                "displayName": model,
+                "hidden": False,
+                "isDefault": False,
+                "contextWindow": 272_000,
+                "maxContextWindow": 272_000,
+                "supportedReasoningEfforts": efforts,
+                "defaultReasoningEffort": "medium",
+                "inputModalities": ["text"],
+                "serviceTiers": [],
+                "additionalSpeedTiers": [],
+            }
+            for model in sorted(models)
+        ]
+
+        async def fetch_codex() -> Sequence[Mapping[str, object]]:
+            return codex_models
+
+        async def no_codex_cache() -> Mapping[str, int]:
+            return {}
+
+        return CodexCollector(fetch_models=fetch_codex, fetch_models_cache=no_codex_cache)
+    if provider == "grok":
+        grok_models = [
+            {"value": model, "label": model, "context_length": 256_000} for model in sorted(models)
+        ]
+
+        async def discover_grok() -> Sequence[Mapping[str, object]]:
+            return grok_models
+
+        async def no_grok_cache() -> Sequence[Mapping[str, object]]:
+            return ()
+
+        return GrokCollector(discover_models=discover_grok, fetch_models_cache=no_grok_cache)
+    raise ValueError(f"no seat catalog seed for provider {provider!r}")
+
+
+def seed_seat_catalog(db: HubDatabase, seats: Iterable[tuple[str, str]]) -> None:
+    """Store a last-good capability snapshot for each seat provider and model.
+
+    The stand-ins refuse the daemon's capability probes, so the spawn gate would
+    find no codex or grok catalog. A failed refresh keeps these rows (marked
+    stale), the same as a provider CLI that stops answering after a good probe.
+    """
+    grouped: dict[str, set[str]] = {}
+    for provider, model in seats:
+        grouped.setdefault(provider, set()).add(model)
+    store = ProviderCapabilityStore(db)
+    for provider, models in grouped.items():
+        collector = _seat_collector(provider, models)
+        snapshot = asyncio.run(collector.collect())
+        store.replace_provider_snapshot(validate_snapshot(snapshot, collector.sources))
 
 
 def is_standin(cmdline: Sequence[str], standins: Collection[str]) -> bool:

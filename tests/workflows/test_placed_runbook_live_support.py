@@ -18,8 +18,18 @@ import psutil
 import pytest
 
 import tests.workflows.placed_runbook_live_support as support
+from gobby.agents.spawners.command_builder import build_cli_command
+from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
+    incompatible_spawn_model_provider,
+)
+from gobby.providers.capabilities.resolve import CapabilityResolver
+from gobby.providers.capabilities.seed import apply_seed
+from gobby.providers.capabilities.store import ProviderCapabilityStore
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.model_metadata import ModelMetadataStore
 from gobby.terminals.host_protocol import control_socket_path, pidfile_path, read_pidfile
 from tests.workflows.placed_runbook_live_support import (
+    LAUNCH_LOG,
     Attempts,
     find_standin,
     fixture_host,
@@ -27,6 +37,7 @@ from tests.workflows.placed_runbook_live_support import (
     is_standin,
     launch_markers,
     live_standins,
+    seed_seat_catalog,
     start_fixture_host,
     write_standin,
 )
@@ -174,3 +185,65 @@ def test_attempts_runs_every_step_and_raises_the_failures_together() -> None:
         attempts.check()
     assert [type(error) for error in raised.value.exceptions] == [ConnectionError]
     assert record == {"kill": {"error": "ConnectionError('runner is down')"}, "close": "closed"}
+
+
+# The bundled seats: plan-writer, plan-enhancer and plan-adversary.
+SEATS = [
+    ("codex", "gpt-5.6-sol", "medium"),
+    ("codex", "gpt-5.6-sol", "xhigh"),
+    ("grok", "grok-4.7", "xhigh"),
+]
+
+
+def test_seeded_catalog_admits_runbook_seat_models(postgres_db: HubDatabase) -> None:
+    store = ProviderCapabilityStore(postgres_db)
+    seed_seat_catalog(postgres_db, [(provider, model) for provider, model, _ in SEATS])
+    # Daemon start, then a refresh whose probes the stand-ins refuse.
+    apply_seed(store)
+    store.record_source_failure("codex", "app-server-model-list", "stand-in refused the probe")
+    store.record_source_failure("grok", "local-model-discovery", "stand-in refused the probe")
+    resolver = CapabilityResolver(store, ModelMetadataStore(postgres_db))
+    for provider, model, effort in SEATS:
+        assert resolver.find_model(provider, model) is not None, (provider, model)
+        assert (
+            incompatible_spawn_model_provider(provider=provider, model=model, resolver=resolver)
+            is None
+        )
+        resolution = resolver.resolve_reasoning(
+            provider, model, effort, transport_supports_effort=True
+        )
+        assert resolution.effective_effort == effort, resolution
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "probe"),
+    [
+        # CodexAppServerClient.start: [codex, *global_args, "app-server", ...].
+        ("codex", "gpt-5.6-sol", ["app-server"]),
+        ("codex", "gpt-5.6-sol", ["--enable", "feature", "app-server", "-c", "key=value"]),
+        # grok_acp_client: [grok, "agent", "--no-leader", "--always-approve", ..., "stdio"].
+        ("grok", "grok-4.7", ["agent", "--no-leader", "--always-approve", "stdio"]),
+    ],
+)
+def test_standin_refuses_capability_probes(
+    tmp_path: Path, provider: str, model: str, probe: list[str]
+) -> None:
+    standin = write_standin(tmp_path, provider)
+    run_tmp = tmp_path / "run-tmp"
+    run_tmp.mkdir()
+    env = {**os.environ, "TMPDIR": str(run_tmp)}
+    refused = subprocess.run(
+        [str(standin), *probe], env=env, input="", capture_output=True, text=True, timeout=10
+    )
+    assert refused.returncode == 64, refused
+    assert not (run_tmp / LAUNCH_LOG).exists()
+    seat, _ = build_cli_command(
+        cli=provider, prompt="plan", auto_approve=True, working_directory=str(tmp_path), model=model
+    )
+    launched = subprocess.run(
+        [str(standin), *seat[1:]], env=env, input="", capture_output=True, text=True, timeout=10
+    )
+    assert launched.returncode == 0, launched
+    ready, pid = launched.stdout.split()
+    assert ready == f"INERT-{provider}-READY"
+    assert (run_tmp / LAUNCH_LOG).read_text(encoding="utf-8").split() == [pid]

@@ -13,6 +13,8 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
+import sys
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,6 +43,7 @@ from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
+from gobby.utils import spawn
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
@@ -593,6 +596,34 @@ class TestCodexAppServerClientStart:
 
         wait_finished.assert_awaited_once_with()
         assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+
+    async def test_start_reaps_app_server_when_initialize_is_cancelled(self) -> None:
+        """A timeout during initialize must not leak the spawned app-server."""
+        # The child never answers initialize, like a hung `codex app-server`.
+        client = CodexAppServerClient(
+            codex_command=sys.executable,
+            global_args=["-c", "import sys; sys.stdin.read()"],
+        )
+        spawned: list[subprocess.Popen[str]] = []
+        real_popen = spawn.popen
+
+        def recording_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[str]:
+            process = real_popen(*args, **kwargs)
+            spawned.append(process)
+            return process
+
+        try:
+            with patch("gobby.utils.spawn.popen", side_effect=recording_popen):
+                with pytest.raises(TimeoutError):
+                    await asyncio.wait_for(client.start(), timeout=1.0)
+            assert len(spawned) == 1
+            assert spawned[0].poll() is not None, "app-server outlived the cancelled start"
+            assert client.state is not CodexConnectionState.CONNECTED
+        finally:
+            for process in spawned:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
 
 
 class TestCodexAppServerClientStop:
