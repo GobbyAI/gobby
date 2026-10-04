@@ -28,6 +28,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
     deliver_staged_compact_handoff,
 )
 from gobby.sessions.clear_continuation import clear_failed_attempt
+from gobby.sessions.compact_continuation import persist_pull_prompt_message
 from gobby.sessions.handoff import (
     DISPATCH_OWNER,
     HANDOFF_DELIVERY_FAILURES_VARIABLE,
@@ -530,7 +531,8 @@ async def _settle_delivery(
                 claimed.session_id,
                 exc_info=True,
             )
-            _compensate_delivery_failure(db, claimed, str(exc))
+            failure = _compensate_delivery_failure(db, claimed, str(exc))
+            await _wake_failed_attempt(db, claimed.session_id, failure)
             return
 
         if _delivery_succeeded(result, clear_session=claimed.clear_session):
@@ -557,12 +559,13 @@ async def _settle_delivery(
             return
         reason = result.get("reason") or result.get("error") or "terminal delivery failed"
         error_code = result.get("error_code")
-        _compensate_delivery_failure(
+        failure = _compensate_delivery_failure(
             db,
             claimed,
             str(reason),
             error_code=str(error_code) if isinstance(error_code, str) else None,
         )
+        await _wake_failed_attempt(db, claimed.session_id, failure)
 
     try:
         await shielded_terminal_delivery(
@@ -610,7 +613,8 @@ def _compensate_delivery_failure(
     reason: str,
     *,
     error_code: str | None = None,
-) -> None:
+) -> dict[str, Any] | None:
+    """Settle a failed attempt; return its failure when a live seat should hear of it."""
     seatless = error_code == NO_TERMINAL_TARGET_ERROR_CODE
     failures = _consecutive_delivery_failures(db, claimed.session_id) + 1
     abandoned = not seatless and failures >= _MAX_CONSECUTIVE_DELIVERY_FAILURES
@@ -669,7 +673,7 @@ def _compensate_delivery_failure(
             claimed.session_id,
             claimed.attempt_id,
         )
-        return
+        return None
     # A missing seat is not a delivery the CLI refused, so it neither nears
     # abandonment nor lifts require-handoff-at-context-limit for the next seat.
     if not seatless:
@@ -704,12 +708,41 @@ def _compensate_delivery_failure(
             claimed.attempt_id,
             reason,
         )
-        return
+        return failure
     logger.warning(
         "Terminal handoff delivery failed for session %s attempt %s: %s",
         claimed.session_id,
         claimed.attempt_id,
         reason,
+    )
+    return None if seatless else failure
+
+
+async def _wake_failed_attempt(
+    db: HubDatabase, session_id: str, failure: Mapping[str, Any] | None
+) -> None:
+    """Tell the seat its attempt failed; an idle seat otherwise waits for a keystroke."""
+    if failure is None:
+        return
+    attempt_id = str(failure["attempt_id"])
+    message = (
+        f"Gobby handoff delivery failed: {failure['reason']}. "
+        f"{failure['retry_guidance']} {failure['recovery_guidance']}"
+    )
+    dispatcher = getattr(get_app_context(), "wake_dispatcher", None)
+    if dispatcher is None:
+        await asyncio.to_thread(persist_pull_prompt_message, db, session_id, message, attempt_id)
+        return
+    await dispatcher.wake(
+        session_id,
+        message,
+        {
+            "message_type": "handoff_delivery_failed",
+            "completion_id": f"handoff-failed:{attempt_id}",
+            "attempt_id": attempt_id,
+            "error_code": failure.get("error_code"),
+        },
+        bypass_debounce=True,
     )
 
 

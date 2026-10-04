@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -177,6 +178,12 @@ async def _capture_pane_snapshot(
     return await pane.snapshot(lines)
 
 
+def compaction_refusal(output: str, command: str) -> str | None:
+    """Return the CLI's refusal of ``command`` while its turn runs, quoted or not."""
+    match = re.search(rf"'?{re.escape(command)}'? is disabled while a task is in progress", output)
+    return match.group(0) if match else None
+
+
 def _detect_compaction_rejection(
     before: str | None,
     after: str | None,
@@ -185,8 +192,8 @@ def _detect_compaction_rejection(
     if before is None or after is None:
         return None
 
-    rejection_message = f"'{command}' is disabled while a task is in progress"
-    if rejection_message not in _fresh_output_delta(before, after):
+    rejection_message = compaction_refusal(_fresh_output_delta(before, after), command)
+    if rejection_message is None:
         return None
     return {
         "error_code": _COMPACTION_REJECTION_ERROR_CODE,

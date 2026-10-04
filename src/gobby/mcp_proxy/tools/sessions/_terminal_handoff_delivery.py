@@ -17,8 +17,10 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
 )
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _CLI_COMPACT_COMMANDS,
+    _COMPACTION_REJECTION_ERROR_CODE,
     NO_TERMINAL_TARGET_ERROR_CODE,
     _fresh_output_delta,
+    compaction_refusal,
     composer_reader,
 )
 from gobby.sessions.compact_continuation import (
@@ -98,6 +100,7 @@ async def _wait_for_compact_boundary(
     cursor: TranscriptTailCursor | None,
     *,
     timeout_seconds: float | None = None,
+    command: str | None = None,
     codex_cursor: CodexRolloutCursor | None = None,
     on_codex_boundary: Callable[[], bool] | None = None,
 ) -> str | None:
@@ -131,6 +134,10 @@ async def _wait_for_compact_boundary(
             for line in fresh_output.splitlines():
                 if line.strip().startswith(_COMPACT_ERROR_PREFIX):
                     return line.strip()
+            # A CLI can render its busy-turn refusal after the sender's rejection window.
+            refusal = compaction_refusal(fresh_output, command) if command else None
+            if refusal is not None:
+                return refusal
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
             return _COMPACT_BOUNDARY_TIMEOUT_REASON
@@ -259,6 +266,7 @@ async def deliver_staged_compact_handoff(
                 pane,
                 before_command,
                 cursor,
+                command=command,
                 codex_cursor=codex_cursor,
                 on_codex_boundary=lambda: consume_and_schedule_handoff_compact_continuation(
                     db,
@@ -279,11 +287,10 @@ async def deliver_staged_compact_handoff(
                     clear_handoff_compact_continuation_pending(
                         db, session_id, attempt_id=attempt_id
                     )
-                failure_result = {
-                    "compacted": False,
-                    "reason": failure,
-                    "error_code": "compact_unconfirmed" if unconfirmed else "compact_failed",
-                }
+                error_code = "compact_unconfirmed" if unconfirmed else "compact_failed"
+                if compaction_refusal(failure, command) is not None:
+                    error_code = _COMPACTION_REJECTION_ERROR_CODE
+                failure_result = {"compacted": False, "reason": failure, "error_code": error_code}
     except Exception as exc:
         logger.warning(
             "Failed delivering compact handoff for session %s", session_id, exc_info=True
