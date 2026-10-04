@@ -305,7 +305,7 @@ pub fn embedding_client(
     match clients.entry(config.timeout_seconds) {
         Entry::Occupied(entry) => Ok(entry.get().clone()),
         Entry::Vacant(entry) => {
-            let client = gobby_core::loopback::dial_localhost_as_loopback(
+            let client = gobby_core::loopback::dial_localhost_on_either_loopback(
                 reqwest::blocking::Client::builder(),
             )
             .timeout(std::time::Duration::from_secs(config.timeout_seconds))

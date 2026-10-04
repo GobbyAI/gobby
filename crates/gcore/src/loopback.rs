@@ -40,6 +40,24 @@ pub fn dial_localhost_as_loopback(
     )
 }
 
+/// Make a blocking client dial `localhost` URLs on 127.0.0.1, then ::1,
+/// without a name lookup. For clients of user-configured local endpoints,
+/// which may listen on either loopback.
+#[cfg(any(feature = "ai", feature = "qdrant"))]
+pub fn dial_localhost_on_either_loopback(
+    builder: reqwest::blocking::ClientBuilder,
+) -> reqwest::blocking::ClientBuilder {
+    use std::net::{Ipv6Addr, SocketAddr};
+
+    builder.resolve_to_addrs(
+        "localhost",
+        &[
+            SocketAddr::new(LOCALHOST_DIAL_ADDR, 0),
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
+        ],
+    )
+}
+
 /// Give a PostgreSQL config with `localhost` hosts a numeric `hostaddr` for
 /// each host, keeping `host` for TLS and diagnostics. Explicit `hostaddr`
 /// values win, and a host list that still names another host is left alone.
@@ -96,7 +114,7 @@ mod tests {
 
     #[cfg(any(feature = "ai", feature = "qdrant"))]
     mod client {
-        use super::super::dial_localhost_as_loopback;
+        use super::super::{dial_localhost_as_loopback, dial_localhost_on_either_loopback};
         use reqwest::blocking::Client;
         use reqwest::dns::{Name, Resolve, Resolving};
         use std::sync::Arc;
@@ -132,6 +150,38 @@ mod tests {
                 "{request}"
             );
             Ok(())
+        }
+
+        fn either_loopback_client() -> reqwest::Result<Client> {
+            dial_localhost_on_either_loopback(
+                Client::builder().dns_resolver(Arc::new(RefusingResolver)),
+            )
+            .build()
+        }
+
+        /// Serve one request on `bind` and send it through `localhost`.
+        fn get_via_localhost(bind: &str, loopback: &str) -> anyhow::Result<()> {
+            let (base, handle) =
+                crate::test_http::spawn_response_at(bind, 200, "OK", "text/plain", "ok".into())?;
+            let url = base.replacen(loopback, "localhost", 1);
+
+            let response = either_loopback_client()?
+                .get(format!("{url}/probe"))
+                .send()?;
+
+            assert_eq!(response.status(), 200);
+            handle.join().expect("server thread")?;
+            Ok(())
+        }
+
+        #[test]
+        fn either_loopback_reaches_an_ipv6_only_listener() -> anyhow::Result<()> {
+            get_via_localhost("[::1]:0", "[::1]")
+        }
+
+        #[test]
+        fn either_loopback_reaches_an_ipv4_only_listener() -> anyhow::Result<()> {
+            get_via_localhost("127.0.0.1:0", "127.0.0.1")
         }
 
         #[test]
