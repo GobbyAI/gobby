@@ -216,6 +216,10 @@ impl Workspace<LiveDaemon> {
             .get(&pane_id)
             .is_some_and(|pane| pane.control_request.is_none());
         if idle {
+            let takeover = takeover
+                || self
+                    .pending_control
+                    .is_some_and(|pending| pending.pane_id == pane_id && pending.takeover);
             self.pending_control = Some(PendingControl { pane_id, takeover });
         }
     }
@@ -257,6 +261,12 @@ impl Workspace<LiveDaemon> {
         // An attachment can become live on a later daemon event. The pending
         // request belongs to that pane until then.
         if !pane.is_live() {
+            return;
+        }
+        // A host-recovered pane stays live on its host stream while it takes
+        // a fresh daemon attachment; the one it holds died with the old
+        // generation, so the request waits for the new one (#23419).
+        if pane.attached_generation() != Some(self.daemon.generation()) {
             return;
         }
         self.pending_control = None;

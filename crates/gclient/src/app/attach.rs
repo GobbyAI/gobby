@@ -82,6 +82,30 @@ impl Pane {
         self.install_frame_source(source);
     }
 
+    /// Take a fresh daemon attachment on the direct stream this pane already
+    /// has. The host rebinds the stream on its next write; control waits for
+    /// a grant under the new id (#23419).
+    pub(super) fn adopt_attachment(
+        &mut self,
+        attachment_id: String,
+        generation: Generation,
+        lease_generation: u64,
+    ) {
+        self.tombstones.remove(&attachment_id);
+        self.attach = AttachState::Attached {
+            attachment_id,
+            transport: Transport::Direct,
+            generation,
+            lease_generation,
+        };
+        self.live = true;
+        self.control = ControlState::Observe;
+        self.take_back = false;
+        self.status_message = None;
+        self.attach_retry_at = None;
+        self.attach_retry_delay = ATTACH_RETRY_BASE;
+    }
+
     pub(super) fn begin_detaching(&mut self, now: Instant) -> Option<(String, Generation)> {
         let (old_attachment_id, generation) = match &self.attach {
             AttachState::Attached {

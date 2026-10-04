@@ -89,6 +89,11 @@ struct MockState {
     websocket_closes: usize,
     unique_attachment_ids: bool,
     next_attachment_id: u64,
+    /// When set, a closed websocket finalizes every attachment it was issued,
+    /// as the daemon's `finalize_websocket` does, and `terminal_take_control`
+    /// refuses a finalized id as `stale_attachment` (#23419).
+    finalize_attachments_on_close: bool,
+    live_attachments: HashSet<String>,
     attach_lease_holders: Vec<(String, Value)>,
     attach_backends: Vec<(String, String)>,
     /// `(granted, lease_generation, reason, host_input_granted)`. The last
@@ -155,6 +160,8 @@ impl MockDaemon {
             websocket_closes: 0,
             unique_attachment_ids: false,
             next_attachment_id: 0,
+            finalize_attachments_on_close: false,
+            live_attachments: HashSet::new(),
             attach_lease_holders: Vec::new(),
             attach_backends: Vec::new(),
             take_control_replies: VecDeque::new(),
@@ -388,6 +395,15 @@ impl MockDaemon {
 
     pub fn use_unique_attachment_ids(&self) {
         self.state.lock().expect("mock state").unique_attachment_ids = true;
+    }
+
+    /// Model the daemon finalizing a closed socket's attachments: a later
+    /// `terminal_take_control` naming one is refused `stale_attachment`.
+    pub fn finalize_attachments_on_close(&self) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .finalize_attachments_on_close = true;
     }
 
     pub fn set_attach_backend(&self, terminal_id: &str, backend: &str) {
@@ -920,7 +936,13 @@ async fn serve_websocket(
             }
         }
     }
-    state.lock().expect("mock state").active_websockets -= 1;
+    {
+        let mut state = state.lock().expect("mock state");
+        state.active_websockets -= 1;
+        if state.finalize_attachments_on_close {
+            state.live_attachments.clear();
+        }
+    }
     Ok(())
 }
 
@@ -1006,12 +1028,14 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
                 .flatten();
             let attachment_id = {
                 let mut state = state.lock().expect("mock state");
-                if state.unique_attachment_ids {
+                let attachment_id: String = if state.unique_attachment_ids {
                     state.next_attachment_id += 1;
                     format!("attachment-{}", state.next_attachment_id)
                 } else {
                     "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into()
-                }
+                };
+                state.live_attachments.insert(attachment_id.clone());
+                attachment_id
             };
             let lease_holder = state
                 .lock()
@@ -1118,12 +1142,22 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
             }))
         }
         "terminal_take_control" => {
-            let reply = state
-                .lock()
-                .expect("mock state")
-                .take_control_replies
-                .pop_front()
-                .unwrap_or((true, 1, None, Some(true)));
+            let reply = {
+                let mut state = state.lock().expect("mock state");
+                let finalized = state.finalize_attachments_on_close
+                    && !request
+                        .get("attachment_id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| state.live_attachments.contains(id));
+                if finalized {
+                    (false, 0, Some("stale_attachment".to_string()), None)
+                } else {
+                    state
+                        .take_control_replies
+                        .pop_front()
+                        .unwrap_or((true, 1, None, Some(true)))
+                }
+            };
             Some(json!({
                 "type": "terminal_control_result",
                 "attachment_id": request.get("attachment_id"),
