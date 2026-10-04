@@ -48,6 +48,10 @@ use tokio::time::timeout;
 /// How long a live loop may take to show one probe's progress.
 const LIVENESS_DEADLINE: Duration = Duration::from_secs(2);
 
+/// How long a flood of serial daemon writes may take to drain. Draining is
+/// throughput under a loaded test run, not liveness, so it gets more room.
+const DRAIN_DEADLINE: Duration = Duration::from_secs(10);
+
 /// Frames fed per probe, one per render tick.
 const PROBE_FRAMES: usize = 3;
 
@@ -168,8 +172,12 @@ fn websocket_requests(mock: &MockDaemon, kind: &str) -> Vec<Value> {
         .collect()
 }
 
-async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
-    timeout(LIVENESS_DEADLINE, async {
+async fn wait_until(what: &str, done: impl FnMut() -> bool) {
+    wait_within(LIVENESS_DEADLINE, what, done).await;
+}
+
+async fn wait_within(deadline: Duration, what: &str, mut done: impl FnMut() -> bool) {
+    timeout(deadline, async {
         while !done() {
             tokio::task::yield_now().await;
         }
@@ -1411,9 +1419,11 @@ async fn a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking() {
         );
 
         release.notify_one();
-        wait_until("the accepted flood after the held write", || {
-            written(&mock, "terminal-b").len() == 2 + 255
-        })
+        wait_within(
+            DRAIN_DEADLINE,
+            "the accepted flood after the held write",
+            || written(&mock, "terminal-b").len() == 2 + 255,
+        )
         .await;
         wait_until("terminal-a's key after the release", || {
             written(&mock, "terminal-a") == ["k"]
@@ -2429,6 +2439,13 @@ async fn a_stalled_direct_release_is_bounded_and_never_blocks_the_next_take() {
     );
     result.expect("live loop exits cleanly");
     assert_eq!(alerts(&chrome, UNCONFIRMED_INPUT), 1, "reported once");
+    let pane_b = workspace
+        .pane_for_terminal("terminal-b")
+        .expect("terminal-b pane");
+    assert!(
+        !workspace.pane(pane_b).is_uncertain_readonly(),
+        "b already let go, so it keeps observing"
+    );
     assert!(chrome.ticker > ticker_before, "the render tick advanced");
     assert_eq!(written(&mock, "terminal-a"), ["y"]);
     assert!(

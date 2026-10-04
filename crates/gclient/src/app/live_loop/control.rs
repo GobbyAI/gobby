@@ -479,7 +479,8 @@ pub(super) fn apply_write_result(
 
 /// A write whose send failed may or may not have reached the terminal, so
 /// the pane stops typing until control is taken again. Only the connection
-/// it was typed on still holds that pane state.
+/// it was typed on still holds that pane state, and a pane that already let
+/// go keeps observing: its next take is the one a person asks for anyway.
 pub(super) fn apply_write_unconfirmed(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -489,7 +490,9 @@ pub(super) fn apply_write_unconfirmed(
     if current {
         if let Some(pane) = workspace.panes.get_mut(&pane_id) {
             pane.in_flight_write = None;
-            pane.control = ControlState::UncertainReadOnly;
+            if !pane.let_go() {
+                pane.control = ControlState::UncertainReadOnly;
+            }
         }
     }
     chrome.notify(Toast::warning(UNCONFIRMED_INPUT));
