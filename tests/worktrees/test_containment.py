@@ -75,9 +75,10 @@ def test_only_this_machines_sessions_bind(tree: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr("gobby.utils.machine_id.get_machine_id", lambda: "local")
     listed: list[str] = []
 
-    def list_worktrees(project_id: str) -> list[_Worktree]:
+    def list_worktrees(project_id: str, limit: int | None = 50) -> list[_Worktree]:
         listed.append(project_id)
-        return _worktrees(tree)
+        worktrees = _worktrees(tree)
+        return worktrees if limit is None else worktrees[:limit]
 
     server: Any = SimpleNamespace(
         services=SimpleNamespace(worktree_storage=SimpleNamespace(list_worktrees=list_worktrees))
@@ -93,6 +94,35 @@ def test_only_this_machines_sessions_bind(tree: Path, monkeypatch: pytest.Monkey
 
     assert [row["worktree_id"] for row in rows] == ["wt", None, None, None]
     assert listed == ["p"], "one worktree listing per project"
+
+
+def test_sessions_bind_to_roots_older_than_the_default_listing_limit(
+    tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("gobby.utils.machine_id.get_machine_id", lambda: "local")
+    # Newest first: the outer root is visible in the default 50-row page,
+    # but its nested root and an unrelated older root are beyond that page.
+    worktrees = [
+        _Worktree("wt", str(tree / "wt")),
+        *[_Worktree(f"newer-{i}", str(tree / f"newer-{i}")) for i in range(49)],
+        _Worktree("wt-inner", str(tree / "wt" / "inner")),
+        _Worktree("older", str(tree / "outside")),
+    ]
+
+    def list_worktrees(project_id: str, limit: int | None = 50) -> list[_Worktree]:
+        return worktrees if limit is None else worktrees[:limit]
+
+    server: Any = SimpleNamespace(
+        services=SimpleNamespace(worktree_storage=SimpleNamespace(list_worktrees=list_worktrees))
+    )
+    rows: list[dict[str, Any]] = [
+        {"project_id": "p", "machine_id": "local", "workspace_path": str(tree / "wt/inner/src")},
+        {"project_id": "p", "machine_id": "local", "workspace_path": str(tree / "outside/src")},
+    ]
+
+    core._bind_worktrees(server, rows)
+
+    assert [row["worktree_id"] for row in rows] == ["wt-inner", "older"]
 
 
 def test_an_unreadable_machine_id_binds_nothing(

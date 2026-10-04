@@ -65,7 +65,7 @@ def _bind_worktrees(server: "HTTPServer", session_list: list[dict[str, Any]]) ->
             project_id = data["project_id"]
             if project_id not in roots_by_project:
                 roots_by_project[project_id] = worktree_roots(
-                    worktree_storage.list_worktrees(project_id=project_id)
+                    worktree_storage.list_worktrees(project_id=project_id, limit=None)
                 )
             worktree_id = containing_worktree_id(workspace, roots_by_project[project_id])
         data["worktree_id"] = worktree_id
