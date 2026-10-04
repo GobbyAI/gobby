@@ -244,6 +244,9 @@ def test_standin_refuses_capability_probes(
         [str(standin), *seat[1:]], env=env, input="", capture_output=True, text=True, timeout=10
     )
     assert launched.returncode == 0, launched
-    ready, pid = launched.stdout.split()
-    assert ready == f"INERT-{provider}-READY"
+    ready, *composer = launched.stdout.splitlines()
+    marker, pid = ready.split()
+    assert marker == f"INERT-{provider}-READY"
     assert (run_tmp / LAUNCH_LOG).read_text(encoding="utf-8").split() == [pid]
+    # The Codex spawn types its prompt only once the pane shows the "›" composer.
+    assert composer == (["› "] if provider == "codex" else []), launched.stdout

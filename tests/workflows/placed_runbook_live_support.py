@@ -99,7 +99,9 @@ _STANDIN = """\
 # It does no model or planning work: it answers a version probe, records its pid
 # as a launch marker in the run's TMPDIR, prints one ready line and holds its
 # terminal until the terminal closes. The marker log stays open on fd 3 so the
-# fixture can find it: macOS hides a platform shell's environment.
+# fixture can find it: macOS hides a platform shell's environment. The Codex
+# stand-in also renders the composer marker the spawn waits for before typing
+# its prompt, which the read loop then swallows.
 # The daemon's capability refresh probes (`codex ... app-server`, `grok agent ...
 # stdio`) fail at once and leave no marker; the fixture seeds the seat catalog.
 for arg in "$@"; do
@@ -114,8 +116,11 @@ if {{ printf '%s\\n' "$$" >>"$log"; }} 2>/dev/null; then
   exec 3<"$log"
 fi
 printf 'INERT-%s-READY %s\\n' "{provider}" "$$"
+printf '%s' '{composer}'
 while IFS= read -r _line; do :; done
 """
+# Codex prompt delivery types into the pane only once it shows this composer.
+_COMPOSERS = {"codex": "› "}
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -275,7 +280,10 @@ class Barrier:
 
 def write_standin(directory: Path, provider: str) -> Path:
     path = directory / provider
-    path.write_text(_STANDIN.format(provider=provider, launch_log=LAUNCH_LOG), encoding="utf-8")
+    script = _STANDIN.format(
+        provider=provider, launch_log=LAUNCH_LOG, composer=_COMPOSERS.get(provider, "")
+    )
+    path.write_text(script, encoding="utf-8")
     path.chmod(0o755)
     return path
 
