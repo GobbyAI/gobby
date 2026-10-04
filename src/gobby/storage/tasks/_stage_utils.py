@@ -164,19 +164,41 @@ def _close_eligible_ancestors(
     closed_ancestors: list[str] | None,
 ) -> None:
     """Close each ancestor that now has zero open children."""
-    current_id = task_id
+    current = conn.execute(
+        "SELECT parent_task_id FROM tasks WHERE id = %s",
+        (task_id,),
+    ).fetchone()
+    close_eligible_parent_chain(
+        conn,
+        current["parent_task_id"] if current else None,
+        db=db,
+        reason=reason,
+        closed_at=closed_at,
+        closed_in_session_id=closed_in_session_id,
+        closed_ancestors=closed_ancestors,
+    )
+
+
+def close_eligible_parent_chain(
+    conn: Transaction,
+    parent_id: str | None,
+    *,
+    db: HubDatabase | None,
+    reason: str | None,
+    closed_at: datetime | str,
+    closed_in_session_id: str | None,
+    closed_ancestors: list[str] | None,
+) -> None:
+    """Close ``parent_id``, then each ancestor above it, while each has zero open children.
+
+    A child's close enters at its parent; a reparent enters at the old parent, which
+    may have just lost its last open child (#23384).
+    """
     close_reason = reason or "completed"
-    while True:
-        current = conn.execute(
-            "SELECT parent_task_id FROM tasks WHERE id = %s",
-            (current_id,),
-        ).fetchone()
-        parent_id = current["parent_task_id"] if current else None
-        if not parent_id:
-            return
+    while parent_id:
         parent = conn.execute(
             """
-            SELECT id, seq_num, title, task_type, project_id, closed_at,
+            SELECT id, seq_num, title, task_type, project_id, closed_at, parent_task_id,
                    claimed_by_session_id, labels, validation_criteria
               FROM tasks
              WHERE id = %s
@@ -253,7 +275,7 @@ def _close_eligible_ancestors(
             task_type=parent["task_type"],
             reason=close_reason,
         )
-        current_id = parent_id
+        parent_id = parent["parent_task_id"]
 
 
 def _schedule_ancestor_epic_archive(
