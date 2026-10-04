@@ -270,6 +270,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "376fb752cd7f7184f43ba4136170b81e0928eeabe6d534b1c5dd8f80deb2a306",
         sql: include_str!("../../assets/schema/migrations/457_workspace_pane_role.sql"),
     },
+    EmbeddedMigration {
+        version: 458,
+        filename: "458_add_api_keys.sql",
+        checksum: "5252f4b282dd302cd629af2d7a7782bd08fe1b232b3bf55e606a02f911e9be7a",
+        sql: include_str!("../../assets/schema/migrations/458_add_api_keys.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

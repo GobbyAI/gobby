@@ -293,6 +293,42 @@
       "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
     },
     {
+      "name": "api_keys.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "api_keys.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "api_keys.key_hash",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "api_keys.key_hint",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "api_keys.label",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "api_keys.last_used_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "api_keys.machine_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "api_keys.revoked_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "api_keys.user_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
       "name": "attention_states.attention_id",
       "definition": "text|text|NO||NEVER"
     },
@@ -2137,8 +2173,16 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "machines.last_heartbeat_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
       "name": "machines.last_seen",
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "machines.node_version",
+      "definition": "text|text|YES||NEVER"
     },
     {
       "name": "machines.os",
@@ -5839,6 +5883,22 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
+      "name": "api_keys.api_keys_key_hash_key",
+      "definition": "UNIQUE (key_hash)"
+    },
+    {
+      "name": "api_keys.api_keys_machine_id_fkey",
+      "definition": "FOREIGN KEY (machine_id) REFERENCES machines(id) ON DELETE CASCADE"
+    },
+    {
+      "name": "api_keys.api_keys_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "api_keys.api_keys_user_id_fkey",
+      "definition": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+    },
+    {
       "name": "attention_states.attention_states_check",
       "definition": "CHECK (state IS NULL OR attention_id IS NOT NULL AND reason IS NOT NULL AND kind IS NOT NULL AND fingerprint IS NOT NULL AND since IS NOT NULL)"
     },
@@ -7895,6 +7955,14 @@
       "definition": "CREATE UNIQUE INDEX agent_step_workflows_pkey ON $schema.agent_step_workflows USING btree (id)"
     },
     {
+      "name": "api_keys_key_hash_key",
+      "definition": "CREATE UNIQUE INDEX api_keys_key_hash_key ON $schema.api_keys USING btree (key_hash)"
+    },
+    {
+      "name": "api_keys_pkey",
+      "definition": "CREATE UNIQUE INDEX api_keys_pkey ON $schema.api_keys USING btree (id)"
+    },
+    {
       "name": "attention_states_pkey",
       "definition": "CREATE UNIQUE INDEX attention_states_pkey ON $schema.attention_states USING btree (entry_id)"
     },
@@ -8181,6 +8249,10 @@
     {
       "name": "idx_agent_runs_task_id",
       "definition": "CREATE INDEX idx_agent_runs_task_id ON $schema.agent_runs USING btree (task_id)"
+    },
+    {
+      "name": "idx_api_keys_machine",
+      "definition": "CREATE INDEX idx_api_keys_machine ON $schema.api_keys USING btree (machine_id)"
     },
     {
       "name": "idx_asi_step_workflow",

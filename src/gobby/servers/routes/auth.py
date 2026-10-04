@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from gobby.config.ui import is_loopback_bind_host
+from gobby.config.ui import effective_ui_host, is_loopback_bind_host
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes._database import require_hub_database
 from gobby.storage.auth import AuthStore
@@ -42,7 +42,7 @@ class _FailedLoginState:
     locked_until: float
 
 
-class _LoginRateLimiter:
+class LoginRateLimiter:
     """Bound failed-login tracking by client address."""
 
     def __init__(self) -> None:
@@ -96,22 +96,40 @@ def _get_auth_store(server: "HTTPServer") -> AuthStore:
 
 
 def _login_client_id(server: "HTTPServer", request: Request) -> str:
+    """Key the login throttle on the observed peer.
+
+    The Tailscale identity header is trusted only from a loopback peer, and only
+    while the dev UI listens on loopback: a dev UI on a LAN host proxies every LAN
+    browser to the daemon from 127.0.0.1, where the header is client-supplied.
+    """
     peer = request.client.host if request.client else "unknown"
     tailscale_login = request.headers.get(_TAILSCALE_LOGIN_HEADER)
+    config = server.config
+    lan_dev_ui = config is not None and not is_loopback_bind_host(
+        effective_ui_host(config.ui.host, config.bind_host)
+    )
     if (
         server.bootstrap_config.ui_expose == "tailscale"
         and is_loopback_bind_host(peer)
         and tailscale_login
+        and not lan_dev_ui
     ):
         digest = hashlib.sha256(tailscale_login.strip().casefold().encode()).hexdigest()
         return f"tailscale:{digest}"
     return f"peer:{peer}"
 
 
-def create_auth_router(server: "HTTPServer") -> APIRouter:
+def login_lockout_response(retry_after: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"ok": False, "error": "Too many failed login attempts"},
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def create_auth_router(server: "HTTPServer", login_rate_limiter: LoginRateLimiter) -> APIRouter:
     """Create the authentication API router."""
     router = APIRouter(prefix="/api/auth", tags=["auth"])
-    login_rate_limiter = _LoginRateLimiter()
 
     @router.post("/login")
     async def login(req: LoginRequest, request: Request) -> JSONResponse:
@@ -119,11 +137,7 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
         client_id = _login_client_id(server, request)
         retry_after = login_rate_limiter.retry_after(client_id)
         if retry_after is not None:
-            return JSONResponse(
-                status_code=429,
-                content={"ok": False, "error": "Too many failed login attempts"},
-                headers={"Retry-After": str(retry_after)},
-            )
+            return login_lockout_response(retry_after)
 
         user = await server.run_db(server.auth_service.verify_password, req.email, req.password)
         if user is None:

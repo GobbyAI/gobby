@@ -270,6 +270,20 @@ class TestAuthStoreValidateSession:
         assert auth_store.validate_session("") is False
 
 
+def test_session_user_id_resolves_only_unexpired_sessions(db: HubDatabase) -> None:
+    auth_store = AuthStore(db)
+    token, _ = auth_store.create_session(TEST_USER_ID)
+    assert auth_store.session_user_id(token) == TEST_USER_ID
+    assert auth_store.session_user_id("not-a-session") is None
+    assert auth_store.session_user_id("") is None
+
+    db.execute(
+        "UPDATE auth_sessions SET expires_at = '2000-01-01T00:00:00+00:00' WHERE token_hash = %s",
+        (hash_token(token),),
+    )
+    assert auth_store.session_user_id(token) is None
+
+
 class TestAuthStoreDeleteSession:
     def test_delete_invalidates(self, auth_store: AuthStore) -> None:
         token, _ = auth_store.create_session(TEST_USER_ID)

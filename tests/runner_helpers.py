@@ -320,6 +320,7 @@ def create_base_patches(
         patch("gobby.config.runtime.ConfigRuntime", return_value=config_runtime),
         patch("gobby.storage.config_notifications.ConfigNotificationListener", return_value=None),
         patch("gobby.runner_init.storage.ensure_local_api_token"),
+        patch("gobby.runner_init.storage.ensure_local_api_key"),
         patch("gobby.runner_init.storage.DatabaseSaturationWatchdog"),
         patch("gobby.utils.dev.is_dev_mode", return_value=False),
         patch(

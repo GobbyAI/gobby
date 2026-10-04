@@ -111,6 +111,9 @@ class BootstrapConfig:
     files_home: str | None = None
     hub_daemon_url: str | None = None
     front_door: FrontDoorConfig = FrontDoorConfig()
+    api_key: str | None = None
+    api_key_id: str | None = None
+    hub_cert: str | None = None
 
     def run_mode(self) -> RunMode:
         """Derive the run mode from the ``datastore_mode``/``hub`` pair."""
@@ -137,6 +140,22 @@ class BootstrapConfig:
         return data
 
 
+def resolve_bootstrap_path(config_path: str | None) -> Path:
+    """Return the bootstrap file a daemon launched with ``config_path`` reads.
+
+    A non-bootstrap path (e.g. legacy config.yaml) resolves to its sibling
+    bootstrap.yaml when that exists, otherwise to itself.
+    """
+    if config_path is None:
+        return default_bootstrap_path()
+    path = Path(config_path).expanduser()
+    if path.name != "bootstrap.yaml":
+        candidate = path.parent / "bootstrap.yaml"
+        if candidate.exists():
+            return candidate
+    return path
+
+
 def load_bootstrap(
     path: str | None = None, *, resolve_database_url: bool = False
 ) -> BootstrapConfig:
@@ -151,20 +170,7 @@ def load_bootstrap(
     Returns:
         BootstrapConfig with values from file or defaults.
     """
-    bootstrap_path = default_bootstrap_path() if path is None else Path(path).expanduser()
-
-    # If caller passed a non-bootstrap path (e.g. legacy config.yaml path),
-    # try bootstrap.yaml in the same directory first.
-    if bootstrap_path.name != "bootstrap.yaml":
-        candidate = bootstrap_path.parent / "bootstrap.yaml"
-        if candidate.exists():
-            bootstrap_path = candidate
-        elif not bootstrap_path.exists():
-            # Neither file exists — use defaults plus supported env overrides.
-            if resolve_database_url:
-                raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
-            return _default_bootstrap_config()
-
+    bootstrap_path = resolve_bootstrap_path(path)
     if not bootstrap_path.exists():
         if resolve_database_url:
             raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
@@ -242,6 +248,9 @@ def bootstrap_from_mapping(
         files_home=files_home,
         hub_daemon_url=hub_daemon_url,
         front_door=_parse_front_door(data.get("front_door"), bind_host),
+        api_key=_parse_optional_str(data.get("api_key"), "api_key"),
+        api_key_id=_parse_optional_str(data.get("api_key_id"), "api_key_id"),
+        hub_cert=_parse_optional_str(data.get("hub_cert"), "hub_cert"),
     )
 
 

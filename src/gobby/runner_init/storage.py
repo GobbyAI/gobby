@@ -12,7 +12,7 @@ from uuid import UUID
 
 from gobby.config._loading import bootstrap_overlaid_config as bootstrap_overlaid_config
 from gobby.config.app import DaemonConfig
-from gobby.config.bootstrap import load_bootstrap
+from gobby.config.bootstrap import load_bootstrap, resolve_bootstrap_path
 from gobby.paths import get_gobby_home
 from gobby.runner_init.helpers import (
     _ensure_headless_settings,
@@ -20,6 +20,7 @@ from gobby.runner_init.helpers import (
     init_hub_database,
 )
 from gobby.shutdown_intent import ShutdownIntent
+from gobby.storage.api_keys import ensure_local_api_key
 from gobby.storage.auth import AuthStore, ensure_local_api_token
 from gobby.storage.concurrency import CoverageExecutor, resolve_database_concurrency
 from gobby.storage.concurrency_watchdog import DatabaseSaturationWatchdog
@@ -185,6 +186,13 @@ def open_storage_and_config(
     if runner.machine_id is None:
         raise RuntimeError("local machine identity is unavailable")
     runner.machine_id = ensure_machine_identity(runner.database, runner.machine_id)
+    try:
+        ensure_local_api_key(
+            runner.database, runner.machine_id, resolve_bootstrap_path(runner._config_file)
+        )
+    except Exception as exc:
+        # Non-fatal: the next start retries; gobby install reports the failure.
+        logger.warning("Local API key adoption failed: %s", exc, exc_info=True)
     ensure_system_session(runner.database)
     from gobby.storage.managed_credentials import ManagedCredentialManager
 

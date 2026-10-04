@@ -21,6 +21,8 @@ from gobby.cli.install_files_home import (
     resolve_install_files_home,
 )
 from gobby.config.bootstrap import BootstrapConfigError, DatastoreMode, load_bootstrap
+from gobby.config.bootstrap_io import bootstrap_path
+from gobby.storage.api_keys import ensure_local_api_key
 from gobby.storage.auth import AuthStore, ensure_local_api_token
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.projects import ensure_personal_project_identity
@@ -32,6 +34,7 @@ from gobby.ui_exposure import (
     resolve_installer_ui_exposure,
 )
 from gobby.utils.local_token import local_token_path, read_local_api_token
+from gobby.utils.machine_id import require_machine_id
 
 from ._detectors import (
     _is_agy_cli_installed,
@@ -156,6 +159,7 @@ def _provision_local_api_token(auth_store: AuthStore | None) -> None:
     """Provision the local token with or without a reachable hub database."""
     if auth_store is not None:
         ensure_local_api_token(auth_store)
+        ensure_local_api_key(auth_store.db, require_machine_id(), bootstrap_path())
         return
     if read_local_api_token() is not None:
         return

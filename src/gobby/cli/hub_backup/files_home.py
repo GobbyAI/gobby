@@ -33,6 +33,7 @@ FILES_ARCHIVE_RELPATH = "files/files_home.tar"
 FILES_STORE_KEY = "files"
 FILES_ARCHIVE_METHOD = "files-home-prewalk+sha256"
 _DESTINATION_CREDENTIAL_KEYS = ("database_url", "credential_rotation")
+_MACHINE_BOUND_KEYS = ("api_key", "api_key_id")
 
 
 class FilesHomeArchiveError(Exception):
@@ -522,12 +523,18 @@ def _publish_member(
 
 
 def archived_bootstrap(
-    destination: dict[str, Any], archived: bytes, dest_files_home: Path
+    destination: dict[str, Any],
+    archived: bytes,
+    dest_files_home: Path,
+    *,
+    restore_identity: bool,
 ) -> dict[str, Any]:
     """Adopt an archived bootstrap.yaml while the destination keeps what it owns.
 
     The destination keeps its files_home and its PostgreSQL credentials
     (database_url and any pending credential_rotation); the rest comes from the archive.
+    The machine-bound API key pair survives only with restore_identity, which also
+    restores the archived machine_id it is bound to.
     """
     import yaml
 
@@ -547,6 +554,9 @@ def archived_bootstrap(
         data.pop(key, None)
         if key in destination:
             data[key] = destination[key]
+    if not restore_identity:
+        for key in _MACHINE_BOUND_KEYS:
+            data.pop(key, None)
     data["files_home"] = str(dest_files_home)
     data.setdefault("datastore_mode", "local")
     return data
@@ -556,12 +566,16 @@ def merge_bootstrap_preserving_files_home(
     dest_bootstrap: Path,
     archived: bytes,
     dest_files_home: Path,
+    *,
+    restore_identity: bool,
 ) -> None:
     """Replace the destination bootstrap with the archived one under the bootstrap lock."""
     from gobby.config.bootstrap_io import update_bootstrap_yaml
 
     def adopt(data: dict[str, Any]) -> None:
-        merged = archived_bootstrap(data, archived, dest_files_home)
+        merged = archived_bootstrap(
+            data, archived, dest_files_home, restore_identity=restore_identity
+        )
         data.clear()
         data.update(merged)
 

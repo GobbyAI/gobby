@@ -1016,3 +1016,109 @@ class TestUnpackDestinationOwnership:
         services.start_daemon.assert_not_called()
         assert "the daemon and the managed Docker services are still stopped" in result.output
         assert "gobby start" in result.output
+
+
+_ARCHIVED_MACHINE_ID = "11111111-1111-4111-8111-111111111111"
+_DESTINATION_MACHINE_ID = "22222222-2222-4222-8222-222222222222"
+_ARCHIVED_KEY = {"api_key": "gobby_archived-key", "api_key_id": "archived-key-id"}
+_REENROLL_LINE = "gobby auth login"
+_REMOTE_ARCHIVE = {"datastore_mode": "remote", "hub_daemon_url": "https://hub.example:60887"}
+
+
+def _seed_destination_identity(pack_env: PackEnv) -> None:
+    update_bootstrap_yaml(
+        pack_env.home / "bootstrap.yaml",
+        lambda data: data.update(api_key="gobby_destination-key", api_key_id="destination-id"),
+    )
+    (pack_env.home / "machine_id").write_text(_DESTINATION_MACHINE_ID)
+
+
+@pytest.mark.parametrize(
+    ("archived_mode", "reenrolls"),
+    [
+        pytest.param({}, False, id="local"),
+        pytest.param(_REMOTE_ARCHIVE, True, id="remote"),
+    ],
+)
+def test_unpack_drops_machine_bound_api_key(
+    pack_env: PackEnv,
+    services: ServiceCalls,
+    tmp_path: Path,
+    runner: CliRunner,
+    archived_mode: dict[str, str],
+    reenrolls: bool,
+) -> None:
+    _seed_destination_identity(pack_env)
+    archive = _unpack_archive(
+        tmp_path,
+        {
+            "gobby/bootstrap.yaml": _archived_bootstrap(**_ARCHIVED_KEY, **archived_mode),
+            "gobby/machine_id": _ARCHIVED_MACHINE_ID.encode(),
+        },
+    )
+
+    result = runner.invoke(unpack, [str(archive), "--force"])
+
+    assert result.exit_code == 0, result.output
+    restored = yaml.safe_load((pack_env.home / "bootstrap.yaml").read_text())
+    assert "api_key" not in restored
+    assert "api_key_id" not in restored
+    assert restored["datastore_mode"] == archived_mode.get("datastore_mode", "local")
+    assert (pack_env.home / "machine_id").read_text() == _DESTINATION_MACHINE_ID
+    assert (_REENROLL_LINE in result.output) is reenrolls
+
+
+def test_unpack_restore_identity_keeps_api_key_pair(
+    pack_env: PackEnv,
+    services: ServiceCalls,
+    tmp_path: Path,
+    runner: CliRunner,
+) -> None:
+    _seed_destination_identity(pack_env)
+    archive = _unpack_archive(
+        tmp_path,
+        {
+            "gobby/bootstrap.yaml": _archived_bootstrap(**_ARCHIVED_KEY, **_REMOTE_ARCHIVE),
+            "gobby/machine_id": _ARCHIVED_MACHINE_ID.encode(),
+        },
+    )
+
+    result = runner.invoke(unpack, [str(archive), "--restore-identity", "--force"])
+
+    assert result.exit_code == 0, result.output
+    restored = yaml.safe_load((pack_env.home / "bootstrap.yaml").read_text())
+    assert {key: restored.get(key) for key in _ARCHIVED_KEY} == _ARCHIVED_KEY
+    assert (pack_env.home / "machine_id").read_text() == _ARCHIVED_MACHINE_ID
+    assert _REENROLL_LINE not in result.output
+
+
+@pytest.mark.parametrize(
+    "machine_member",
+    [
+        pytest.param({}, id="absent"),
+        pytest.param({"gobby/machine_id": b"not-a-uuid"}, id="malformed"),
+    ],
+)
+def test_unpack_restore_identity_refuses_key_without_archived_machine_id(
+    pack_env: PackEnv,
+    services: ServiceCalls,
+    tmp_path: Path,
+    runner: CliRunner,
+    machine_member: dict[str, bytes],
+) -> None:
+    _seed_destination_identity(pack_env)
+    bootstrap = pack_env.home / "bootstrap.yaml"
+    before = bootstrap.read_bytes()
+    archive = _unpack_archive(
+        tmp_path,
+        {"gobby/bootstrap.yaml": _archived_bootstrap(**_ARCHIVED_KEY), **machine_member},
+    )
+
+    result = runner.invoke(unpack, [str(archive), "--restore-identity", "--force"])
+
+    assert result.exit_code != 0
+    assert "requires the archived machine_id" in result.output
+    services.stop_daemon.assert_not_called()
+    services.stop_docker.assert_not_called()
+    assert bootstrap.read_bytes() == before
+    assert (pack_env.home / "machine_id").read_text() == _DESTINATION_MACHINE_ID
