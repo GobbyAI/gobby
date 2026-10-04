@@ -595,6 +595,7 @@ async def spawn_agent_impl(
 
     agent_display_name = requested_agent_name
     base_commit_sha = isolation_ctx.extra.get("base_commit_sha")
+    prewarm_pre_commit_store = agent_body.prewarm_pre_commit_store if agent_body else True
     effective_initial_variables, resume_metadata = await build_spawn_context(
         spawn_config=spawn_config,
         isolation_ctx=isolation_ctx,
@@ -610,6 +611,7 @@ async def spawn_agent_impl(
         effective_sandbox_config=effective_sandbox_config,
         effective_workflow=effective_workflow,
         agent_display_name=agent_display_name,
+        prewarm_pre_commit_store=prewarm_pre_commit_store,
         placement=placement_snapshot(placed.resolved) if placed is not None else None,
     )
 
@@ -814,9 +816,7 @@ async def spawn_agent_impl(
                 code_index_mode=code_index_mode,
                 code_index_api_token=await run_thread_to_completion(read_local_api_token),
                 phase_timings_ms=phase_timings_ms,
-                prewarm_pre_commit_store=(
-                    agent_body.prewarm_pre_commit_store if agent_body else True
-                ),
+                prewarm_pre_commit_store=prewarm_pre_commit_store,
                 terminal_backend=resolved_terminal_backend,
                 droid_mode=droid_mode,
             )

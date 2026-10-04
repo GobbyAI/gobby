@@ -251,6 +251,33 @@ async def test_srt_codex_resume_keeps_tui_and_composer_prompt(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("persisted", "expected"), [(False, False), (None, True)])
+async def test_resumed_opt_out_run_skips_pre_commit_prewarm(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_codex_prompt_delivery: MagicMock,
+    persisted: bool | None,
+    expected: bool,
+) -> None:
+    _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
+    prepare_sandbox = AsyncMock(return_value=SandboxLaunch(backend="srt", enforced=True))
+    monkeypatch.setattr(resume_executor, "prepare_sandbox_launch", prepare_sandbox)
+    metadata = _resume_metadata()
+    metadata["sandbox_config"] = {"enabled": True, "backend": "srt"}
+    if persisted is not None:
+        metadata["prewarm_pre_commit_store"] = persisted
+
+    await resume_executor.resume_agent_run(
+        _original_run(),
+        resume_metadata=metadata,
+        runner=_runner(),
+        session_manager=MagicMock(),
+    )
+
+    assert prepare_sandbox.await_args is not None
+    assert prepare_sandbox.await_args.kwargs["prewarm_pre_commit_store"] is expected
+
+
+@pytest.mark.asyncio
 async def test_claude_resume_keeps_prompt_in_argv(
     monkeypatch: pytest.MonkeyPatch,
     mock_codex_prompt_delivery: MagicMock,

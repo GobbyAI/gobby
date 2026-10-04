@@ -96,19 +96,32 @@ export function buildAgentDefinitionBody(
   return body;
 }
 
+// Stored-definition keys the create API refuses: response-only is_local plus the
+// body fields the server keeps immutable (endpoint credentials, sync-owned
+// network, spawn/message authority).
+const CREATE_REFUSED_KEYS = new Set([
+  "is_local",
+  "api_base",
+  "api_token",
+  "network",
+  "spawnable_agents",
+  "send_message_targets",
+]);
+
 export function buildDuplicateAgentBody(
   agent: AgentDefInfo,
   newName: string,
   projectId?: string | null,
 ): Record<string, unknown> {
-  // Build through the same request shape as create/edit: the API rejects
-  // response-only keys (is_local, network) that a spread of the definition carries.
+  // Copy every stored body flag the form does not edit, then apply the form.
+  const stored = Object.fromEntries(
+    Object.entries(agent.definition).filter(
+      ([key]) => !CREATE_REFUSED_KEYS.has(key),
+    ),
+  );
   const draft = agentToDraft(agent);
   draft.form.name = newName;
-  const body = buildAgentDefinitionBody(draft, projectId);
-  if (agent.definition.sources) body.sources = agent.definition.sources;
-  if (agent.definition.version) body.version = agent.definition.version;
-  return body;
+  return { ...stored, ...buildAgentDefinitionBody(draft, projectId) };
 }
 
 async function sendJson(

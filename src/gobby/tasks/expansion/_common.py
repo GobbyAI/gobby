@@ -155,9 +155,11 @@ def list_agent_definitions(
     surface_filter: str | None = None,
 ) -> dict[str, Any]:
     """List agent definitions for expansion without importing the MCP tool layer."""
-    rows = def_manager.list_all(enabled=enabled, project_id=project_id)
+    rows = def_manager.list_resolved(project_id=project_id)
     agents: list[dict[str, Any]] = []
     for row in rows:
+        if enabled is not None and row.enabled is not enabled:
+            continue
         body = row.definition_json
         if isinstance(body, str):
             try:

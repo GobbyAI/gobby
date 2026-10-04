@@ -45,6 +45,10 @@ function agentDefinition(): AgentDefInfo {
       },
       blocked_tools: ["Write"],
       blocked_mcp_tools: ["dangerous-tool"],
+      prewarm_pre_commit_store: false,
+      network: "trusted",
+      spawnable_agents: ["developer"],
+      send_message_targets: ["parent", "session"],
     },
     source: "installed",
     source_path: null,
@@ -127,6 +131,7 @@ describe("AgentsTabActions", () => {
       },
       blocked_tools: ["Write"],
       blocked_mcp_tools: ["dangerous-tool"],
+      prewarm_pre_commit_store: false,
       workflows: expect.objectContaining({
         custom_workflow_key: { enabled: true },
       }),
@@ -134,6 +139,10 @@ describe("AgentsTabActions", () => {
     // The create API forbids unknown keys, so response-only fields must not leak.
     expect(body).not.toHaveProperty("is_local");
     expect(body).not.toHaveProperty("mode");
+    // Sync-owned network and spawn/message authority never ride a UI copy.
+    expect(body).not.toHaveProperty("network");
+    expect(body).not.toHaveProperty("spawnable_agents");
+    expect(body).not.toHaveProperty("send_message_targets");
   });
 
   it("round-trips nested step_workflow through draft and save body", () => {

@@ -52,6 +52,8 @@ export interface AgentDefInfo {
     } | null;
     blocked_tools?: string[] | null;
     blocked_mcp_tools?: string[] | null;
+    // The full stored body: flags the editor does not surface still round-trip.
+    [key: string]: unknown;
   };
   source: string;
   source_path: string | null;

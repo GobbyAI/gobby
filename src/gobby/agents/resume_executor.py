@@ -359,6 +359,7 @@ async def resume_agent_run(
             api_base=_resume_api_base(provider, env),
             env=env,
             allow_run_unix_sockets=True,
+            prewarm_pre_commit_store=resume_metadata.get("prewarm_pre_commit_store") is not False,
         )
     except (OSError, ValueError, SrtRuntimeError) as exc:
         error = f"resume_sandbox_failed_closed:{type(exc).__name__}:{exc}"

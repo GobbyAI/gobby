@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -21,6 +21,7 @@ from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.definitions._shared import DefinitionSource
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.utils.local_token import AgentApiTokenClaims
+from gobby.utils.project_context import reset_project_context, set_project_context
 from gobby.utils.session_context import reset_request_principal, set_request_principal
 from tests.fixtures.agent_definitions import make_agent_definition
 
@@ -196,7 +197,7 @@ class TestListAgentDefinitions:
 
     def test_malformed_json_does_not_abort_list(self) -> None:
         class _Manager:
-            def list_all(self, **_kwargs: object) -> list[SimpleNamespace]:
+            def list_resolved(self, **_kwargs: object) -> list[SimpleNamespace]:
                 return [
                     SimpleNamespace(
                         id="1",
@@ -511,3 +512,75 @@ class TestUpdateAgentStepWorkflow:
         )
         assert cleared["success"] is True
         assert get_agent_definition(mgr, "coder")["agent"]["step_workflow"] is None
+
+
+class TestProjectScopedResolution:
+    """Agent-definition tools resolve the caller's project row first, as spawn does."""
+
+    _PROJECT = "6c1f7a52-3b0e-4d4a-9a55-2f0b8f1d9e01"
+
+    def _seed(self, mgr: AgentDefinitionManager) -> None:
+        _insert_agent(mgr, "reviewer", model="global-model")
+        project_body = make_agent_definition(
+            name="reviewer",
+            model="project-model",
+            prompts={"agent": "Run the assigned task."},
+        )
+        mgr.create(
+            "reviewer",
+            project_body.model_dump(mode="json"),
+            project_id=self._PROJECT,
+        )
+
+    async def _call(
+        self, db: PostgresHubDatabase, tool: str, args: dict[str, object]
+    ) -> dict[str, Any]:
+        registry = create_workflows_registry(db=db)
+        token = set_project_context({"id": self._PROJECT})
+        try:
+            return cast(dict[str, Any], await registry.call(tool, args))
+        finally:
+            reset_project_context(token)
+
+    async def test_get_resolves_project_row(self, definition_db: PostgresHubDatabase) -> None:
+        mgr = _setup(definition_db)
+        self._seed(mgr)
+
+        result = await self._call(definition_db, "get_agent_definition", {"name": "reviewer"})
+
+        assert result["agent"]["model"] == "project-model"
+        assert result["agent"]["project_id"] == self._PROJECT
+        assert get_agent_definition(mgr, "reviewer")["agent"]["model"] == "global-model"
+
+    async def test_list_shows_project_row_once(self, definition_db: PostgresHubDatabase) -> None:
+        mgr = _setup(definition_db)
+        self._seed(mgr)
+
+        result = await self._call(definition_db, "list_agent_definitions", {})
+
+        reviewers = [a for a in result["agents"] if a["name"] == "reviewer"]
+        assert [(a["model"], a["project_id"]) for a in reviewers] == [
+            ("project-model", self._PROJECT)
+        ]
+
+    async def test_mutations_target_project_row(self, definition_db: PostgresHubDatabase) -> None:
+        mgr = _setup(definition_db)
+        self._seed(mgr)
+
+        toggled = await self._call(
+            definition_db, "toggle_agent_definition", {"name": "reviewer", "enabled": False}
+        )
+        ruled = await self._call(
+            definition_db, "update_agent_rules", {"name": "reviewer", "add": ["extra-rule"]}
+        )
+
+        assert toggled["success"] is True
+        assert ruled["success"] is True
+        project_row = mgr.get_by_name("reviewer", project_id=self._PROJECT)
+        global_row = mgr.get_by_name("reviewer")
+        assert project_row is not None
+        assert global_row is not None
+        assert project_row.enabled is False
+        assert project_row.definition_json["workflows"]["rules"] == ["extra-rule"]
+        assert global_row.enabled is True
+        assert "extra-rule" not in global_row.definition_json["workflows"].get("rules", [])

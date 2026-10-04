@@ -83,8 +83,8 @@ def list_agent_definitions(
     Returns:
         Dict with success, agents list, and count
     """
-    rows = def_manager.list_all(enabled=enabled, project_id=project_id)
-    agents = [_agent_summary(r) for r in rows]
+    rows = def_manager.list_resolved(project_id=project_id)
+    agents = [_agent_summary(r) for r in rows if enabled is None or r.enabled is enabled]
     if surface_filter:
         agents = [agent for agent in agents if surface_filter in agent.get("surfaces", ["spawn"])]
     return {"success": True, "agents": agents, "count": len(agents)}
@@ -93,6 +93,8 @@ def list_agent_definitions(
 def get_agent_definition(
     def_manager: AgentDefinitionManager,
     name: str,
+    *,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Get an agent definition by name via direct DB lookup.
@@ -104,7 +106,7 @@ def get_agent_definition(
     Returns:
         Dict with success and full agent detail, or error if not found
     """
-    row = def_manager.get_by_name(name)
+    row = def_manager.get_by_name(name, project_id=project_id)
     if row is None:
         return {"success": False, "error": f"Agent definition '{name}' not found"}
 
@@ -189,6 +191,8 @@ def toggle_agent_definition(
     def_manager: AgentDefinitionManager,
     name: str,
     enabled: bool,
+    *,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Toggle an agent definition's enabled state.
@@ -201,7 +205,7 @@ def toggle_agent_definition(
     Returns:
         Dict with success and updated agent, or error if not found
     """
-    row = def_manager.get_by_name(name)
+    row = def_manager.get_by_name(name, project_id=project_id)
     if row is None:
         return {"success": False, "error": f"Agent definition '{name}' not found"}
 
@@ -217,6 +221,7 @@ def delete_agent_definition(
     force: bool = False,
     *,
     project_path: Path | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Delete an agent definition by name (soft-delete).
@@ -231,7 +236,7 @@ def delete_agent_definition(
     Returns:
         Dict with success, or error if not found/protected
     """
-    row = def_manager.get_by_name(name)
+    row = def_manager.get_by_name(name, project_id=project_id)
     if row is None:
         return {"success": False, "error": f"Agent definition '{name}' not found"}
 
@@ -269,6 +274,7 @@ def update_agent_rules(
     *,
     project_path: Path | None = None,
     make_global_template: bool = False,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Add or remove rules from an agent definition's workflows.rules list.
@@ -284,7 +290,7 @@ def update_agent_rules(
     Returns:
         Dict with success and updated rules list
     """
-    row = def_manager.get_by_name(name)
+    row = def_manager.get_by_name(name, project_id=project_id)
     if row is None:
         return {"success": False, "error": f"Agent definition '{name}' not found"}
 
@@ -325,6 +331,7 @@ def update_agent_variables(
     *,
     project_path: Path | None = None,
     make_global_template: bool = False,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Set or remove variables from an agent definition's workflows.variables dict.
@@ -340,7 +347,7 @@ def update_agent_variables(
     Returns:
         Dict with success and updated variables dict
     """
-    row = def_manager.get_by_name(name)
+    row = def_manager.get_by_name(name, project_id=project_id)
     if row is None:
         return {"success": False, "error": f"Agent definition '{name}' not found"}
 
@@ -379,9 +386,10 @@ def update_agent_step_workflow(
     *,
     project_path: Path | None = None,
     make_global_template: bool = False,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """Replace an agent's nested step workflow, or clear it when None."""
-    row = def_manager.get_by_name(name)
+    row = def_manager.get_by_name(name, project_id=project_id)
     if row is None:
         return {"success": False, "error": f"Agent definition '{name}' not found"}
 

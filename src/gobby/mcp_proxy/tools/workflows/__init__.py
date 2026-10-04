@@ -463,7 +463,9 @@ def create_workflows_registry(
     ) -> dict[str, Any]:
         if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
-        return list_agent_definitions(_agent_manager, enabled, project_id, surface_filter)
+        return list_agent_definitions(
+            _agent_manager, enabled, project_id or _caller_project_id(), surface_filter
+        )
 
     @registry.tool(
         name="get_agent_definition",
@@ -473,7 +475,7 @@ def create_workflows_registry(
     def _get_agent_definition(name: str) -> dict[str, Any]:
         if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
-        return get_agent_definition(_agent_manager, name)
+        return get_agent_definition(_agent_manager, name, project_id=_caller_project_id())
 
     @registry.tool(
         name="create_agent_definition",
@@ -508,7 +510,9 @@ def create_workflows_registry(
             return forbidden_agent_write
         if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
-        return await asyncio.to_thread(toggle_agent_definition, _agent_manager, name, enabled)
+        return await asyncio.to_thread(
+            toggle_agent_definition, _agent_manager, name, enabled, project_id=_caller_project_id()
+        )
 
     @registry.tool(
         name="delete_agent_definition",
@@ -522,7 +526,9 @@ def create_workflows_registry(
             return forbidden_agent_write
         if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
-        return await asyncio.to_thread(delete_agent_definition, _agent_manager, name, force)
+        return await asyncio.to_thread(
+            delete_agent_definition, _agent_manager, name, force, project_id=_caller_project_id()
+        )
 
     @registry.tool(
         name="update_agent_rules",
@@ -547,6 +553,7 @@ def create_workflows_registry(
             add,
             remove,
             project_path=pp,
+            project_id=_caller_project_id(),
             make_global_template=make_template,
         )
 
@@ -573,6 +580,7 @@ def create_workflows_registry(
             set_vars,
             remove,
             project_path=pp,
+            project_id=_caller_project_id(),
             make_global_template=make_template,
         )
 
@@ -603,16 +611,20 @@ def create_workflows_registry(
                 name,
                 None,
                 project_path=pp,
+                project_id=_caller_project_id(),
                 make_global_template=make_template,
             )
         if step_workflow is None:
-            return await asyncio.to_thread(get_agent_definition, _agent_manager, name)
+            return await asyncio.to_thread(
+                get_agent_definition, _agent_manager, name, project_id=_caller_project_id()
+            )
         return await asyncio.to_thread(
             update_agent_step_workflow,
             _agent_manager,
             name,
             step_workflow,
             project_path=pp,
+            project_id=_caller_project_id(),
             make_global_template=make_template,
         )
 
@@ -663,6 +675,12 @@ def create_workflows_registry(
     )
 
     return registry
+
+
+def _caller_project_id() -> str | None:
+    """The calling session's project, used to resolve agent definitions as spawn does."""
+    ctx = get_project_context()
+    return str(ctx["id"]) if isinstance(ctx, dict) and ctx.get("id") else None
 
 
 def _session_project_id() -> str:

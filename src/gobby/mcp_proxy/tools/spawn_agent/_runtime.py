@@ -34,6 +34,7 @@ async def build_spawn_context(
     effective_sandbox_config: SandboxConfig,
     effective_workflow: str | None,
     agent_display_name: str | None,
+    prewarm_pre_commit_store: bool,
     placement: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build workflow variables and the matching durable launch snapshot."""
@@ -124,6 +125,7 @@ async def build_spawn_context(
         agent_slug=agent_display_name,
         workflow=effective_workflow,
         initial_variables=effective_initial_variables,
+        prewarm_pre_commit_store=prewarm_pre_commit_store,
         placement=placement,
     )
     resume_metadata.update(context_updates)

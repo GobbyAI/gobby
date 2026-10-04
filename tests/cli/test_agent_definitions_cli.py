@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -12,6 +14,7 @@ from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.storage.definitions.agents import AgentDefinitionRow
+from gobby.utils.project_context import get_project_context as real_get_project_context
 from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
@@ -20,6 +23,12 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def no_project_context() -> Iterator[MagicMock]:
+    with patch("gobby.cli.agents.get_project_context", return_value=None) as mock_context:
+        yield mock_context
 
 
 def _agent_row(
@@ -31,6 +40,7 @@ def _agent_row(
     model: str | None = None,
     surfaces: list[str] | None = None,
     step_workflow: dict[str, Any] | None = None,
+    project_id: str | None = None,
 ) -> AgentDefinitionRow:
     body = make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
@@ -44,13 +54,14 @@ def _agent_row(
         step_workflow=step_workflow,
     )
     return AgentDefinitionRow(
-        id=f"wf-{name}",
+        id=f"wf-{name}-{project_id or 'global'}",
         name=name,
         description=description,
         enabled=enabled,
         enabled_pinned=False,
         definition_json=body.model_dump(mode="json"),
         source="installed",
+        project_id=project_id,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         step_workflow_id="sw-1" if step_workflow is not None else None,
@@ -70,7 +81,7 @@ class TestAgentDefinitionsList:
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_lists_agent_definitions(self, mock_get_manager: MagicMock, runner: CliRunner) -> None:
         manager = MagicMock()
-        manager.list_all.return_value = [_agent_row("developer", description="Build features")]
+        manager.list_resolved.return_value = [_agent_row("developer", description="Build features")]
         mock_get_manager.return_value = manager
 
         result = runner.invoke(cli, ["agents", "list"])
@@ -79,14 +90,37 @@ class TestAgentDefinitionsList:
         assert "Found 1 agent definition" in result.output
         assert "developer" in result.output
         assert "Build features" in result.output
-        manager.list_all.assert_called_once_with(enabled=None)
+        manager.list_resolved.assert_called_once_with(project_id=None)
+
+    @patch("gobby.cli.agents.get_agent_definition_manager")
+    def test_lists_rows_resolved_for_current_project_like_spawn(
+        self,
+        mock_get_manager: MagicMock,
+        no_project_context: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        manager = MagicMock()
+        manager.list_resolved.return_value = [
+            _agent_row("developer", model="project-model", project_id="proj-1"),
+        ]
+        mock_get_manager.return_value = manager
+        no_project_context.return_value = {"id": "proj-1"}
+
+        result = runner.invoke(cli, ["agents", "list", "--json"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert [(a["name"], a["model"], a["project_id"]) for a in data["agents"]] == [
+            ("developer", "project-model", "proj-1"),
+        ]
+        manager.list_resolved.assert_called_once_with(project_id="proj-1")
 
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_filters_by_enabled_and_surface(
         self, mock_get_manager: MagicMock, runner: CliRunner
     ) -> None:
         manager = MagicMock()
-        manager.list_all.return_value = [
+        manager.list_resolved.return_value = [
             _agent_row("spawn-only", surfaces=["spawn"]),
             _agent_row("persona-ready", surfaces=["spawn", "persona"]),
         ]
@@ -97,12 +131,25 @@ class TestAgentDefinitionsList:
         assert result.exit_code == 0
         assert "persona-ready" in result.output
         assert "spawn-only" not in result.output
-        manager.list_all.assert_called_once_with(enabled=True)
+        manager.list_resolved.assert_called_once_with(project_id=None)
+
+    @patch("gobby.cli.agents.get_agent_definition_manager")
+    def test_enabled_filter_applies_after_shadowing(
+        self, mock_get_manager: MagicMock, runner: CliRunner
+    ) -> None:
+        manager = MagicMock()
+        manager.list_resolved.return_value = [_agent_row("on"), _agent_row("off", enabled=False)]
+        mock_get_manager.return_value = manager
+
+        result = runner.invoke(cli, ["agents", "list", "--disabled", "--json"])
+
+        assert result.exit_code == 0
+        assert [a["name"] for a in json.loads(result.output)["agents"]] == ["off"]
 
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_json_output(self, mock_get_manager: MagicMock, runner: CliRunner) -> None:
         manager = MagicMock()
-        manager.list_all.return_value = [_agent_row("developer", model="opus")]
+        manager.list_resolved.return_value = [_agent_row("developer", model="opus")]
         mock_get_manager.return_value = manager
 
         result = runner.invoke(cli, ["agents", "list", "--json"])
@@ -120,7 +167,7 @@ class TestAgentDefinitionsList:
         broken = _agent_row("broken")
         cast(Any, broken).definition_json = "{not-json"
         manager = MagicMock()
-        manager.list_all.return_value = [_agent_row("developer"), broken]
+        manager.list_resolved.return_value = [_agent_row("developer"), broken]
         mock_get_manager.return_value = manager
 
         result = runner.invoke(cli, ["agents", "list", "--json"])
@@ -172,6 +219,50 @@ class TestAgentDefinitionsShow:
         assert data["step_workflow"] is None
         assert "max_turns" not in data
         assert data["prewarm_pre_commit_store"] is True
+
+    @patch("gobby.cli.agents.get_agent_definition_manager")
+    def test_show_resolves_current_project_like_spawn(
+        self,
+        mock_get_manager: MagicMock,
+        no_project_context: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        manager = MagicMock()
+        manager.get_by_name.return_value = _agent_row("developer")
+        mock_get_manager.return_value = manager
+        no_project_context.return_value = {"id": "proj-1"}
+
+        result = runner.invoke(cli, ["agents", "show", "developer", "--json"])
+
+        assert result.exit_code == 0
+        manager.get_by_name.assert_called_once_with("developer", project_id="proj-1")
+
+    @patch("gobby.cli.agents.get_agent_definition_manager")
+    def test_show_resolves_project_from_working_directory(
+        self,
+        mock_get_manager: MagicMock,
+        no_project_context: MagicMock,
+        runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+        no_project_context.side_effect = real_get_project_context
+        override = _agent_row("developer", model="override-model", project_id="proj-cwd")
+        global_row = _agent_row("developer", model="global-model")
+        manager = MagicMock()
+        manager.get_by_name.side_effect = lambda name, project_id=None: (
+            override if project_id == "proj-cwd" else global_row
+        )
+        mock_get_manager.return_value = manager
+
+        with runner.isolated_filesystem():
+            Path(".gobby").mkdir()
+            Path(".gobby/project.json").write_text(json.dumps({"id": "proj-cwd"}))
+            result = runner.invoke(cli, ["agents", "show", "developer", "--json"])
+
+        assert result.exit_code == 0
+        assert "override-model" in result.output
+        assert "global-model" not in result.output
 
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_show_json_emits_nested_step_workflow(
