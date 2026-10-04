@@ -147,6 +147,35 @@ def test_agents_check_wraps_evaluate_agent_definition(runner: CliRunner) -> None
     mock_eval.assert_awaited()
 
 
+def test_agents_check_resolves_project_from_working_directory(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+    project_agent = MagicMock()
+    project_agent.name = "analyst"
+
+    def resolve_project_only(name: str, db: object, project_id: str | None = None) -> object:
+        return project_agent if project_id == "proj-cwd" else None
+
+    with (
+        patch("gobby.cli.agents_steps.require_cli_database", return_value=MagicMock()),
+        patch("gobby.cli.agents_steps.resolve_agent", side_effect=resolve_project_only),
+        patch(
+            "gobby.cli.agents_steps.evaluate_agent_definition",
+            new_callable=AsyncMock,
+            return_value=WorkflowEvaluation(valid=True, workflow_name="analyst"),
+        ),
+        runner.isolated_filesystem(),
+    ):
+        Path(".gobby").mkdir()
+        Path(".gobby/project.json").write_text(json.dumps({"id": "proj-cwd"}))
+        result = runner.invoke(cli, ["agents", "check", "analyst"])
+
+    assert result.exit_code == 0
+    assert "VALID" in result.output
+    assert "AGENT_NOT_FOUND" not in result.output
+
+
 def test_pipelines_check_wraps_evaluate_pipeline_definition(runner: CliRunner) -> None:
     evaluation = WorkflowEvaluation(valid=True, workflow_name="deploy")
     evaluation.items.append(

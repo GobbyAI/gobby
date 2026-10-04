@@ -15,6 +15,7 @@ Commands for managing subagent runs:
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, cast
 
 import click
@@ -30,6 +31,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.local_token import daemon_auth_headers
+from gobby.utils.project_context import get_project_context
 from gobby.utils.uuid_validation import is_full_uuid
 from gobby.workflows.agent_detail import agent_definition_detail
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -61,6 +63,11 @@ def get_agent_definition_manager() -> AgentDefinitionManager:
 def agent_definition_manager_context() -> Iterator[AgentDefinitionManager]:
     """Yield an agent definition manager borrowing the CLI database."""
     yield get_agent_definition_manager()
+
+
+def _current_project_id() -> str | None:
+    context = get_project_context(cwd=Path.cwd())
+    return str(context["id"]) if context and context.get("id") else None
 
 
 def _escape_like_prefix(prefix: str) -> str:
@@ -317,7 +324,9 @@ def list_agent_definitions(
 ) -> None:
     """List agent definitions."""
     with agent_definition_manager_context() as manager:
-        rows = manager.list_all(enabled=enabled_flag)
+        rows = manager.list_resolved(project_id=_current_project_id())
+    if enabled_flag is not None:
+        rows = [row for row in rows if row.enabled is enabled_flag]
     summaries: list[dict[str, Any]] = []
     for row in rows:
         try:
@@ -356,7 +365,7 @@ def list_agent_definitions(
 def show_agent_definition(name: str, json_format: bool) -> None:
     """Show details for an agent definition."""
     with agent_definition_manager_context() as manager:
-        row = manager.get_by_name(name)
+        row = manager.get_by_name(name, project_id=_current_project_id())
     if row is None:
         click.echo(f"Agent definition not found: {name}", err=True)
         raise SystemExit(1)

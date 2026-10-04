@@ -560,6 +560,16 @@ class AgentDefinitionManager:
             )
         ]
 
+    def list_resolved(self, project_id: str | None = None) -> list[AgentDefinitionRow]:
+        """One row per name, chosen as ``get_by_name`` would: project row over global."""
+        resolved: dict[str, AgentDefinitionRow] = {}
+        for row in self.list_all(project_id=project_id):
+            if row.project_id not in (None, project_id):
+                continue
+            if row.name not in resolved or row.project_id is not None:
+                resolved[row.name] = row
+        return list(resolved.values())
+
     def move_to_project(self, definition_id: str, project_id: str) -> AgentDefinitionRow:
         with self.db.transaction() as txn:
             _refuse_locked_network(txn, definition_id)

@@ -125,6 +125,7 @@ class CreateAgentDefinitionRequest(BaseModel):
     isolation: str | None = "inherit"
     base_branch: str = "inherit"
     timeout: float = 0
+    prewarm_pre_commit_store: bool = True
     workflows: dict[str, Any] | None = None
     blocked_tools: list[str] | None = None
     blocked_mcp_tools: list[str] | None = None
@@ -164,6 +165,7 @@ class UpdateAgentDefinitionRequest(BaseModel):
     isolation: str | None = None
     base_branch: str | None = None
     timeout: float | None = None
+    prewarm_pre_commit_store: bool | None = None
     workflows: dict[str, Any] | None = None
     step_workflow: dict[str, Any] | None = None
     enabled: bool | None = None
@@ -426,6 +428,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 isolation=request.isolation,
                 base_branch=request.base_branch,
                 timeout=request.timeout,
+                prewarm_pre_commit_store=request.prewarm_pre_commit_store,
                 enabled=request.enabled,
                 workflows=workflows,
                 blocked_tools=request.blocked_tools or [],
@@ -501,6 +504,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     "isolation",
                     "base_branch",
                     "timeout",
+                    "prewarm_pre_commit_store",
                 ):
                     if key in fields:
                         body_dict[key] = fields[key]

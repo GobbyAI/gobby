@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import click
@@ -100,7 +101,7 @@ def list_agent_steps(session_id: str | None, json_format: bool) -> None:
 def check_agent(name: str, json_format: bool) -> None:
     """Validate an agent definition without executing it."""
     db = require_cli_database()
-    project_ctx = get_project_context()
+    project_ctx = get_project_context(cwd=Path.cwd())
     project_id = str(project_ctx["id"]) if project_ctx and project_ctx.get("id") else None
     agent = resolve_agent(name, db, project_id=project_id)
     if agent is None:

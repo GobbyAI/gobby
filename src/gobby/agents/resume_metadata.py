@@ -145,6 +145,7 @@ def build_resume_metadata(
     agent_slug: str | None,
     workflow: str | None,
     initial_variables: Mapping[str, Any],
+    prewarm_pre_commit_store: bool,
     placement: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the normalized launch snapshot persisted on agent_runs.
@@ -186,6 +187,7 @@ def build_resume_metadata(
                 "agent_slug": agent_slug,
                 "workflow": workflow,
                 "initial_variables": dict(initial_variables),
+                "prewarm_pre_commit_store": prewarm_pre_commit_store,
                 "provider_native_session_id": None,
                 "env": {},
                 "sandbox_args": [],

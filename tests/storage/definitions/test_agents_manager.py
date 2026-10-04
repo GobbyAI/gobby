@@ -470,3 +470,31 @@ def test_pinned_sync_keeps_body_on_the_pinned_scalar(
         row.id, enabled=True, definition_json=_body("pinned", {"enabled": True})
     )
     _assert_body_agrees(updated, False)
+
+
+def test_list_resolved_matches_get_by_name_shadowing(definition_db: PostgresHubDatabase) -> None:
+    manager = _mgr(definition_db)
+    other_project = str(uuid4())
+    global_reviewer = manager.create("reviewer", _body("reviewer"))
+    project_reviewer = manager.create("reviewer", _body("reviewer"), project_id=_PROJECT)
+    manager.create("coder", _body("coder"))
+    manager.create("coder", _body("coder"), project_id=other_project)
+
+    in_project = manager.list_resolved(project_id=_PROJECT)
+    no_project = manager.list_resolved()
+
+    assert [(row.name, row.project_id) for row in in_project] == [
+        ("coder", None),
+        ("reviewer", _PROJECT),
+    ]
+    assert [(row.name, row.project_id) for row in no_project] == [
+        ("coder", None),
+        ("reviewer", None),
+    ]
+    for rows, project_id in ((in_project, _PROJECT), (no_project, None)):
+        for row in rows:
+            resolved = manager.get_by_name(row.name, project_id=project_id)
+            assert resolved is not None
+            assert resolved.id == row.id
+    assert in_project[1].id == project_reviewer.id
+    assert no_project[1].id == global_reviewer.id

@@ -19,11 +19,16 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import yaml
 from fastapi.routing import APIRoute
+from pydantic import BaseModel
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
+from gobby.servers.routes.agents import (
+    CreateAgentDefinitionRequest,
+    UpdateAgentDefinitionRequest,
+)
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.definitions import AgentDefinitionManager
@@ -1558,6 +1563,44 @@ class TestListDefinitionsSourceFilter:
 
 
 class TestUpdateDefinitionNestedFields:
+    # Endpoint credentials, spawn/message authority and the sync-owned sandbox
+    # network are not editable through PUT.
+    IMMUTABLE_BODY_FIELDS = frozenset(
+        {"api_base", "api_token", "network", "send_message_targets", "spawnable_agents"}
+    )
+    # Row columns the requests carry that the body does not store.
+    ROW_ONLY_FIELDS = frozenset({"tags", "project_id"})
+
+    @pytest.mark.parametrize(
+        "request_model", [CreateAgentDefinitionRequest, UpdateAgentDefinitionRequest]
+    )
+    def test_editable_fields_are_body_fields_minus_immutable(
+        self, request_model: type[BaseModel]
+    ) -> None:
+        editable = set(request_model.model_fields) - self.ROW_ONLY_FIELDS
+        assert editable == set(AgentDefinitionBody.model_fields) - self.IMMUTABLE_BODY_FIELDS
+
+    def test_create_stores_pre_commit_prewarm_opt_out(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/agents/definitions",
+            json=_agent_request("prewarm-create", prewarm_pre_commit_store=False),
+        )
+        assert response.status_code == 200
+        stored = client.get("/api/agents/definitions/prewarm-create").json()["definition"]
+        assert stored["definition"]["prewarm_pre_commit_store"] is False
+
+    def test_update_round_trips_pre_commit_prewarm(self, client: TestClient) -> None:
+        created = client.post(
+            "/api/agents/definitions", json=_agent_request("prewarm-update")
+        ).json()["definition"]
+        response = client.put(
+            f"/api/agents/definitions/{created['id']}",
+            json={"prewarm_pre_commit_store": False},
+        )
+        assert response.status_code == 200
+        stored = client.get("/api/agents/definitions/prewarm-update").json()["definition"]
+        assert stored["definition"]["prewarm_pre_commit_store"] is False
+
     def test_update_workflows(self, client: TestClient) -> None:
         """Update workflows field replaces it wholesale."""
         created = client.post("/api/agents/definitions", json=_agent_request("wf-update")).json()[
