@@ -7,6 +7,7 @@ Keep quote provenance until executable contexts have been identified.
 from __future__ import annotations
 
 import re
+from collections.abc import Container
 from typing import Any
 
 from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect
@@ -213,6 +214,23 @@ def _separator(token: ShellToken) -> bool:
     return not token.quoted and token.value in {";", "|", "&", "&&", "||", "\n"}
 
 
+def option_word_count(option: str, value_options: Container[str]) -> int:
+    """Words a leading option occupies, read as getopt reads it.
+
+    A value option takes the next word unless its value is attached
+    (``--chdir=/x``, ``-D/x``). In a short cluster (``-nD``) the first value
+    option takes the rest of the cluster, or the next word when it ends it.
+    """
+    if option in value_options:
+        return 2
+    if option.startswith("--"):
+        return 1
+    for index in range(1, len(option)):
+        if "-" + option[index] in value_options:
+            return 2 if index == len(option) - 1 else 1
+    return 1
+
+
 def _unwrap(words: list[str]) -> list[str]:
     """Common literal execution wrappers; never treat query operands as launches."""
     while words:
@@ -255,12 +273,19 @@ def _unwrap(words: list[str]) -> list[str]:
                     "-h",
                     "-p",
                     "-C",
+                    "-D",
+                    "-R",
                     "-T",
+                    "-U",
                     "--user",
                     "--group",
                     "--host",
                     "--prompt",
                     "--chdir",
+                    "--chroot",
+                    "--close-from",
+                    "--command-timeout",
+                    "--other-user",
                 },
                 "time": {"-f", "-o", "--format", "--output"},
                 "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
@@ -290,7 +315,7 @@ def _unwrap(words: list[str]) -> list[str]:
                     return ["sh", "-c", " ".join(words[1:])]
                 if name == "env" and option.startswith("--split-string="):
                     return ["sh", "-c", " ".join([option.split("=", 1)[1], *words[1:]])]
-                words = words[2:] if option in takes_value else words[1:]
+                words = words[option_word_count(option, takes_value) :]
             if name == "timeout" and words:
                 words = words[1:]
         elif name == "eval":

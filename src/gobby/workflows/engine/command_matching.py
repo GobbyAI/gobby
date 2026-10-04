@@ -53,6 +53,7 @@ from gobby.hooks.provider_launch_guard import (
     _SHELLS,
     _prepare,
     _unwrap,
+    option_word_count,
 )
 
 # Commands whose standard input is never interpreted as code. Every other
@@ -120,39 +121,79 @@ _SSH_VALUE_OPTIONS = frozenset(
         "-B",
         "-I",
         "-Q",
+        "-E",
+        "-O",
+        "-P",
     }
 )
-
-
-_UV_RUN_VALUE_OPTIONS = frozenset(
+# uv 0.12 global options, accepted before the subcommand and after it.
+_UV_GLOBAL_VALUE_OPTIONS = frozenset(
     {
+        "--cache-dir",
+        "--color",
+        "--allow-insecure-host",
+        "--directory",
+        "--project",
+        "--config-file",
+    }
+)
+# Every value-taking option `uv run --help` lists.
+_UV_RUN_VALUE_OPTIONS = _UV_GLOBAL_VALUE_OPTIONS | frozenset(
+    {
+        "--extra",
+        "--no-extra",
+        "--group",
+        "--no-group",
+        "--only-group",
+        "--no-editable-package",
+        "--env-file",
+        "-w",
         "--with",
         "--with-editable",
         "--with-requirements",
-        "--project",
-        "--directory",
-        "--python",
-        "-p",
         "--package",
-        "--extra",
-        "--group",
-        "--only-group",
-        "--no-group",
-        "--env-file",
+        "--python-platform",
         "--index",
-        "--find-links",
+        "--default-index",
+        "-i",
+        "--index-url",
+        "--extra-index-url",
         "-f",
-        "--config-file",
-        "--cache-dir",
+        "--find-links",
+        "--index-strategy",
+        "--keyring-provider",
+        "-P",
+        "--upgrade-package",
+        "--upgrade-group",
+        "--resolution",
+        "--prerelease",
+        "--prerelease-package",
+        "--fork-strategy",
+        "--exclude-newer",
+        "--exclude-newer-package",
+        "--no-sources-package",
+        "--reinstall-package",
+        "--link-mode",
+        "-C",
+        "--config-setting",
+        "--config-settings-package",
+        "--no-build-isolation-package",
+        "--no-build-package",
+        "--no-binary-package",
+        "--refresh-package",
+        "-p",
+        "--python",
     }
 )
 
 
 def _after_options(words: list[str], value_options: frozenset[str]) -> list[str]:
-    """Drop leading options (and a known value option's operand)."""
+    """Drop leading options (and a value option's operand) through ``--``."""
     index = 0
     while index < len(words) and words[index].startswith("-"):
-        index += 2 if words[index] in value_options else 1
+        if words[index] == "--":
+            return words[index + 1 :]
+        index += option_word_count(words[index], value_options)
     return words[index:]
 
 
@@ -217,8 +258,9 @@ def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) ->
                 scripts.append(" ".join(rest[1:]))
             continue
         # These exec their argv directly, so each word stays one word.
-        if name == "uv" and unwrapped[1:2] == ["run"]:
-            rest = _after_options(unwrapped[2:], _UV_RUN_VALUE_OPTIONS)
+        subcommand = _after_options(unwrapped[1:], _UV_GLOBAL_VALUE_OPTIONS) if name == "uv" else []
+        if subcommand[:1] == ["run"]:
+            rest = _after_options(subcommand[1:], _UV_RUN_VALUE_OPTIONS)
             if rest and resolve_uv_run:
                 scripts.append(shlex.join(rest))
             continue
@@ -254,14 +296,16 @@ def command_patterns_match(
         # stage's decoded words too, re-quoted so a word holding spaces stays data.
         stages = _decoded_stages(text)
         pattern_subjects.extend(mask_one(shlex.join(words)) for words in stages)
-        if depth >= _WRAPPER_DEPTH:
-            continue
         # A literal execution wrapper (``bash -c``, ``eval``, ``xargs``,
         # ``timeout``, ``watch``, ``ssh``) runs a further command string that the
         # scanner reads as one segment's words. Resolve it through these same
         # rules, to a bounded depth, so a nested wrapped invocation such as
         # ``bash -c "bash -c '…'"`` still matches (#23134).
-        for script in _wrapper_scripts(stages, resolve_uv_run=resolve_uv_run):
+        scripts = _wrapper_scripts(stages, resolve_uv_run=resolve_uv_run)
+        if scripts and depth >= _WRAPPER_DEPTH:
+            # Code nested past the bound is unread, so the selector fails closed.
+            return True
+        for script in scripts:
             pending.extend((inner, depth + 1) for inner in executable_command_subjects(script))
     if not any(re.search(pattern, subject) for subject in pattern_subjects):
         return False

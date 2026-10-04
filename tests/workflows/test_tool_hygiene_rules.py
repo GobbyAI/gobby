@@ -393,6 +393,7 @@ class TestRequireUvShouldBlock:
             "uv run pytest tests/ -v",
             "uv pip install requests",
             "uv run python -m pip install requests",
+            "uv -q run --with pyyaml python -m pip install requests",
         ],
     )
     def test_allows_uv_managed_commands(self, db, command: str) -> None:

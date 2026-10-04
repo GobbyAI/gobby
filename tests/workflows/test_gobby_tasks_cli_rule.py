@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from datetime import UTC, datetime
 
 import pytest
@@ -222,6 +223,30 @@ def test_allows_ansi_c_quoted_data(db: HubDatabase, effect: RuleEffect, command:
         "sh -c -- '" + _MUTATION + "'",
         "uv run --with pyyaml " + _MUTATION,
         "uv run --project . --frozen " + _MUTATION,
+        # Every value option uv run, ssh and sudo accept consumes its operand,
+        # in long, short, attached and clustered forms (#23134).
+        "uv run -w pyyaml " + _MUTATION,
+        "uv run --link-mode copy " + _MUTATION,
+        "uv run --color never " + _MUTATION,
+        "uv run -i https://pypi.org/simple " + _MUTATION,
+        "uv run -P pyyaml " + _MUTATION,
+        "uv run -C key=value " + _MUTATION,
+        "uv run --with=pyyaml " + _MUTATION,
+        "uv run -wpyyaml " + _MUTATION,
+        "uv run -qw pyyaml " + _MUTATION,
+        "uv run --quiet -- " + _MUTATION,
+        # uv's global options may precede the subcommand.
+        "uv -q run " + _MUTATION,
+        "uv --directory . run " + _MUTATION,
+        "uv --color never --cache-dir /tmp/c run --with pyyaml " + _MUTATION,
+        "ssh -E /tmp/ssh.log host " + _MUTATION,
+        "ssh -P tag host " + _MUTATION,
+        "ssh -O check host " + _MUTATION,
+        "ssh -vp 22 host " + _MUTATION,
+        "ssh -p22 host " + _MUTATION,
+        "ssh -v -- host " + _MUTATION,
+        "sudo -D . " + _MUTATION,
+        "sudo -nD . " + _MUTATION,
         # bash decodes C escapes inside `$'...'`, so each spells a separator or name.
         "bash -c $'echo hi\\n" + _MUTATION + "'",
         "bash -c $'true;\\t" + _MUTATION + "'",
@@ -276,6 +301,36 @@ def test_blocks_nested_wrapped_mutating_script(
     event = _shell_event("Bash", command)
 
     assert RuleEngine(db)._should_block(effect, event) is True
+
+
+@pytest.mark.parametrize("depth", [8, 9, 12])
+def test_wrapper_depth_exhaustion_fails_closed(
+    db: HubDatabase, effect: RuleEffect, depth: int
+) -> None:
+    """Wrappers nested past the resolution bound still block (#23134)."""
+    command = _MUTATION
+    for _ in range(depth):
+        command = "sh -c " + shlex.quote(command)
+
+    assert RuleEngine(db)._should_block(effect, _shell_event("Bash", command)) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo " + _MUTATION,
+        "uv run --quiet echo " + _MUTATION,
+        "uv -q run --with pyyaml echo " + _MUTATION,
+        "ssh -v host echo " + _MUTATION,
+        "ssh -E /tmp/ssh.log host echo " + _MUTATION,
+        "sudo -D . echo " + _MUTATION,
+    ],
+)
+def test_allows_mutation_words_as_wrapped_command_data(
+    db: HubDatabase, effect: RuleEffect, command: str
+) -> None:
+    """Resolving a wrapper's options must not turn its command's arguments into code."""
+    assert RuleEngine(db)._should_block(effect, _shell_event("Bash", command)) is False
 
 
 @pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
