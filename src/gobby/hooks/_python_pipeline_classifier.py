@@ -768,6 +768,19 @@ def _has_trusted_mutation_scope(
         | {"pathlib", "os", "shutil", "zipfile", "xml.etree.ElementTree"}
     )
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    # `with open(...) as fh` handles that nothing else binds stay trusted writers.
+    binding_counts = _binding_counts(tree)
+    open_handles = {
+        item.optional_vars.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.With)
+        for item in node.items
+        if isinstance(item.optional_vars, ast.Name)
+        and isinstance(item.context_expr, ast.Call)
+        and _call_name(item.context_expr, imported_bindings) == "open"
+        and binding_counts[item.optional_vars.id] == 1
+        and item.optional_vars.id not in imported_bindings
+    }
     for node in ast.walk(tree):
         if isinstance(node, (*_PYTHON_PIPELINE_BLOCKED_NODES, ast.FunctionDef, ast.Lambda)):
             return False
@@ -816,8 +829,13 @@ def _has_trusted_mutation_scope(
                     )
                     or (
                         node.func.attr in {"write", "writelines", "close"}
-                        and isinstance(receiver, ast.Call)
-                        and _call_name(receiver, imported_bindings) == "open"
+                        and (
+                            (
+                                isinstance(receiver, ast.Call)
+                                and _call_name(receiver, imported_bindings) == "open"
+                            )
+                            or (isinstance(receiver, ast.Name) and receiver.id in open_handles)
+                        )
                     )
                 )
             if not known_call or not _has_safe_python_pipeline_callbacks(

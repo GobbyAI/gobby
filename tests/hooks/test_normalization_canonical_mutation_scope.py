@@ -639,6 +639,33 @@ def test_python_heredoc_trusted_stdlib_keeps_literal_scratch_scope(tmp_path: Pat
     assert data.get("canonical_repo_mutation_scope_unknown", False) is False
 
 
+def test_python_heredoc_with_open_handle_keeps_literal_scratch_scope(tmp_path: Path) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        f"python3 - <<'EOF'\nwith open('{scratch}/safe.txt', 'w') as fh:\n    fh.write('x')\nEOF\n"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is False
+    assert data.get("canonical_repo_mutation_scope_unknown", False) is False
+
+
+def test_python_heredoc_aliased_open_handle_keeps_scope_unknown(tmp_path: Path) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        f"python3 - <<'EOF'\nwith open('{scratch}/safe.txt', 'w') as fh:\n"
+        "    g = fh\n    g.write('x')\nEOF\n"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
 def test_python_heredoc_loop_rebinding_a_scratch_path_name_keeps_scope_unknown(
     tmp_path: Path,
 ) -> None:

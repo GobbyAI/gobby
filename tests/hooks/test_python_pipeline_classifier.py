@@ -720,6 +720,37 @@ def test_trusted_stdlib_execution_preserves_literal_write_scope() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "body",
+    ["fh.write('x')", "fh.writelines(['x'])", "fh.write('x')\n    fh.close()"],
+    ids=["write", "writelines", "close"],
+)
+def test_with_open_handle_write_keeps_literal_write_scope(body: str) -> None:
+    script = f"with open('/tmp/safe.txt', 'w') as fh:\n    {body}\n"
+
+    assert _classify_python_source_with_targets(script) == (
+        _PythonExecutionClassification.MUTATION,
+        ("/tmp/safe.txt",),
+    )
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "with open('/tmp/safe.txt', 'w') as fh:\n    fh = redirect\n    fh.write('x')",
+        "with open('/tmp/safe.txt', 'w') as fh:\n    g = fh\n    g.write('x')",
+        "with open('/tmp/safe.txt', 'w') as fh:\n    pass\nfor fh in []:\n    fh.write('x')",
+        "from os import sep as fh\nwith open('/tmp/safe.txt', 'w') as fh:\n    fh.write('x')",
+        "with redirect('/tmp/safe.txt') as fh:\n    fh.write('x')",
+    ],
+    ids=["rebound", "aliased", "loop-rebound", "import-shadowed", "opaque-context"],
+)
+def test_untrusted_handle_write_has_unknown_write_scope(script: str) -> None:
+    _, targets = _classify_python_source_with_targets(script)
+
+    assert targets == ()
+
+
 def test_python_source_read_only_and_indeterminate_have_no_targets() -> None:
     assert _classify_python_source_with_targets("print(open('a.md').read())") == (
         _PythonExecutionClassification.READ_ONLY,
