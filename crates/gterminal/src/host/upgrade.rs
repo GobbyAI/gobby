@@ -624,9 +624,10 @@ impl Attempt {
                 Err(_) => {
                     // Abort prevents a queued job starting. A running blocking
                     // job must finish before rollback can resume its panes;
-                    // its private masters are dropped with its result.
+                    // its private masters are dropped with its result. Keep
+                    // the rollback reserve intact while waiting for the job.
                     capture_job.abort();
-                    if tokio::time::timeout(remaining(self.deadline_ns), capture_job)
+                    if tokio::time::timeout(until_soft_cutoff(self.deadline_ns), capture_job)
                         .await
                         .is_err()
                     {
