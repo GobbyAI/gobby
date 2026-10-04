@@ -925,3 +925,6 @@ mod tests {
         assert_eq!(seen, vec!["first", "second", "third"]);
     }
 }
+#[cfg(test)]
+#[path = "symbols/attribute_ranges_tests.rs"]
+mod attribute_ranges_tests;

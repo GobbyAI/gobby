@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::models::Symbol;
 
 use super::text::{is_identifier_continue, is_identifier_start};
@@ -9,15 +11,30 @@ pub(in crate::index::parser) enum CallSyntaxKind {
     Other,
 }
 
+/// Original AST start for lexical scope; retrieval starts may include metadata.
+pub(super) fn definition_start(
+    symbol: &Symbol,
+    definition_starts: &HashMap<String, usize>,
+) -> usize {
+    definition_starts
+        .get(&symbol.id)
+        .copied()
+        .unwrap_or(symbol.byte_start)
+}
+
 /// Return the deepest symbol enclosing `byte_offset`.
 ///
 /// Parser output is ordered by byte range, with nested symbols following their
 /// parents, so `rfind` picks the innermost match. Tree-sitter byte ranges are
 /// end-exclusive.
-pub(super) fn enclosing_symbol(symbols: &[Symbol], byte_offset: usize) -> Option<&Symbol> {
-    symbols
-        .iter()
-        .rfind(|s| s.byte_start <= byte_offset && byte_offset < s.byte_end)
+pub(super) fn enclosing_symbol<'a>(
+    symbols: &'a [Symbol],
+    definition_starts: &HashMap<String, usize>,
+    byte_offset: usize,
+) -> Option<&'a Symbol> {
+    symbols.iter().rfind(|s| {
+        definition_start(s, definition_starts) <= byte_offset && byte_offset < s.byte_end
+    })
 }
 
 pub(super) fn call_syntax_kind(

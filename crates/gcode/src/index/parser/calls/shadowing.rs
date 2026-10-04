@@ -1,11 +1,9 @@
-use crate::models::Symbol;
-
 use super::resolution::CallSyntaxKind;
 use super::text::{is_identifier_start, trim_identifier_token};
 
 pub(super) fn external_call_is_shadowed(
     source: &[u8],
-    caller_symbol: Option<&Symbol>,
+    caller_definition_start: Option<usize>,
     call_byte: usize,
     callee_name: &str,
     root_alias: Option<&str>,
@@ -19,23 +17,23 @@ pub(super) fn external_call_is_shadowed(
     let Some(shadow_name) = shadow_name.filter(|name| !name.is_empty()) else {
         return false;
     };
-    local_name_in_scope_before_call(source, caller_symbol, call_byte, shadow_name)
+    local_name_in_scope_before_call(source, caller_definition_start, call_byte, shadow_name)
 }
 
 fn local_name_in_scope_before_call(
     source: &[u8],
-    caller_symbol: Option<&Symbol>,
+    caller_definition_start: Option<usize>,
     call_byte: usize,
     name: &str,
 ) -> bool {
-    let start = caller_symbol.map(|symbol| symbol.byte_start).unwrap_or(0);
+    let start = caller_definition_start.unwrap_or(0);
     if start >= source.len() || start >= call_byte {
         return false;
     }
     let end = call_byte.min(source.len());
     let prefix = String::from_utf8_lossy(&source[start..end]);
     let prefix_without_block_comments = remove_block_comments(&prefix);
-    caller_symbol
+    caller_definition_start
         .is_some_and(|_| parameter_list_contains_name(&prefix_without_block_comments, name))
         || prefix_without_block_comments
             .lines()

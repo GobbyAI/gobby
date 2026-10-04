@@ -1,3 +1,4 @@
+mod attribute_ranges;
 mod bash;
 mod common;
 mod go_rust_java_csharp;
