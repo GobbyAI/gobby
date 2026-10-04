@@ -210,5 +210,12 @@ The controller releases the source's command/newline and separate Enter unchange
 Canonical storage, actual caller settlement, provider lifecycle, continuation
 submission and durable message readback determine acceptance. Failed or incomplete
 cases preserve unresolved owned state for recovery. Artifacts report criterion 6
-PASSED only after every real race case and cleanup pass. Until an admitted run
-proves those outcomes, criteria 5 and 6 remain PENDING and #22915 stays open.
+PASSED only after every real race case and cleanup pass.
+
+Closure of #22915 does not wait for an admitted run. On 2026-10-03 Josh amended
+criteria 5 and 6 to accept post-landing evidence instead of the live Claude
+proof, which would use or refresh credentials. That evidence is: acee28196a is an
+ancestor of 0.5.0 and live since activation; a scoped rerun of the landed
+deterministic race and composer regression tests passes; and no draft-overwrite,
+concatenation or lost-message incident has been reported since it went live. The
+harness above remains the procedure for any later live proof.
