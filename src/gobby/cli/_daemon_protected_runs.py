@@ -106,7 +106,8 @@ def clear_protected_runs(
         + ", ".join(describe_protected_run(run) for run in runs)
     )
     while runs:
-        if time.monotonic() > deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             for run in runs:
                 step(f"Protected cron run still active: {describe_protected_run(run)}", error=True)
             step(
@@ -115,7 +116,7 @@ def clear_protected_runs(
                 error=True,
             )
             return False
-        time.sleep(PROTECTED_RUN_POLL_INTERVAL_SECONDS)
+        time.sleep(min(PROTECTED_RUN_POLL_INTERVAL_SECONDS, remaining))
         runs = fetch(http_port)
     step("Protected cron run(s) finished")
     return True

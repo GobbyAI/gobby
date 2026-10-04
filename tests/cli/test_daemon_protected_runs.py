@@ -180,23 +180,44 @@ def test_clear_protected_runs_wait_is_bounded_and_names_the_run_on_expiry() -> N
     ]
 
 
+def test_clear_protected_runs_wait_refuses_at_the_exact_deadline_without_another_poll() -> None:
+    """Reaching the cap exactly refuses at once instead of sleeping one more interval."""
+    steps = _Steps()
+    fetch = MagicMock(return_value=[RUN])
+
+    with (
+        patch("gobby.cli._daemon_protected_runs.time.sleep") as sleep,
+        patch(
+            "gobby.cli._daemon_protected_runs.time.monotonic",
+            side_effect=[0.0, PROTECTED_RUN_MAX_WAIT_SECONDS, PROTECTED_RUN_MAX_WAIT_SECONDS + 1.0],
+        ),
+    ):
+        proceed = clear_protected_runs(1, force=False, wait=True, step=steps, fetch=fetch)
+
+    assert proceed is False
+    sleep.assert_not_called()
+    assert fetch.call_count == 1
+    assert steps.errors[-1].startswith("Refusing to stop the daemon after waiting 10m")
+
+
 def test_clear_protected_runs_wait_gives_up_past_a_shorter_own_timeout() -> None:
-    """A run whose own timeout is inside the cap bounds the wait by that timeout."""
+    """A run whose own timeout is inside the cap bounds the wait, and the last poll is clipped."""
     steps = _Steps()
     short = {**RUN, "remaining_seconds": 30.0}
     fetch = MagicMock(return_value=[short])
     own_deadline = 30.0 + PROTECTED_RUN_POLL_INTERVAL_SECONDS
 
     with (
-        patch("gobby.cli._daemon_protected_runs.time.sleep"),
+        patch("gobby.cli._daemon_protected_runs.time.sleep") as sleep,
         patch(
             "gobby.cli._daemon_protected_runs.time.monotonic",
-            side_effect=[0.0, own_deadline, own_deadline + 1.0],
+            side_effect=[0.0, own_deadline - 5.0, own_deadline, own_deadline + 1.0],
         ),
     ):
         proceed = clear_protected_runs(1, force=False, wait=True, step=steps, fetch=fetch)
 
     assert proceed is False
+    assert sleep.call_args_list == [((5.0,),)]
     assert fetch.call_count == 2
     assert steps.errors[-1] == (
         "Refusing to stop the daemon after waiting 45s; "
