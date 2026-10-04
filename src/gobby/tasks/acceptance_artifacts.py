@@ -85,6 +85,18 @@ class AcceptanceArtifactResult:
         }
 
 
+def _trim_bare_reference(value: str) -> str:
+    """Drop the ':', '.' or unbalanced ')' an unbackticked reference picks up from prose."""
+    while value:
+        if value[-1] in ".:":
+            value = value[:-1]
+        elif value[-1] == ")" and value.count(")") > value.count("("):
+            value = value[:-1]
+        else:
+            break
+    return value
+
+
 def extract_artifact_references(criteria: str, kind: str) -> tuple[str, ...]:
     """Extract stable, deduplicated test or file references from criteria."""
     references: list[str] = []
@@ -105,7 +117,7 @@ def extract_artifact_references(criteria: str, kind: str) -> tuple[str, ...]:
             continue
         value = (match.group("quoted") or match.group("bare") or "").strip().rstrip(".")
         if match.group("quoted") is None:
-            value = value.rstrip("`")
+            value = _trim_bare_reference(value.rstrip("`"))
             if not _BARE_REF_SHAPE_RE.search(value):
                 continue
         if value and value not in references:
