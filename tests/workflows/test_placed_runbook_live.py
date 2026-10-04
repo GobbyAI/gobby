@@ -63,6 +63,7 @@ from tests.workflows.placed_runbook_live_support import (
     Barrier,
     FixtureHost,
     Standin,
+    bound_panes,
     curated_path,
     find_standin,
     fixture_host,
@@ -562,12 +563,14 @@ def _pane(db: HubDatabase, place: Place, terminal_id: str) -> WorkspacePane | No
     return next((pane for pane in panes if pane.terminal_id == terminal_id), None)
 
 
-def _bound_panes(db: HubDatabase, terminal_id: str) -> int:
-    row = db.fetchone(
-        "SELECT count(*) AS n FROM workspace_panes WHERE terminal_id = %s", (terminal_id,)
-    )
-    assert row is not None
-    return int(row["n"])
+def _bound_panes(live: Live, terminal_id: str) -> int:
+    return bound_panes(live.db, terminal_id, partial(_read_workspace, live))
+
+
+def _read_workspace(live: Live, workspace_id: str) -> None:
+    """Read the workspace through the daemon, whose snapshot prunes dead panes."""
+    reply = _tool(live, "gobby-workspaces", "get_workspace", workspace=workspace_id)
+    assert reply["success"] is True, reply
 
 
 def _standin_paths(rig: Rig) -> frozenset[str]:
@@ -633,7 +636,7 @@ def _assert_live(live: Live, seats: list[Seat]) -> None:
         terminal = _terminal(live.db, seat.terminal_id)
         assert run is not None and run["status"] in ACTIVE_RUNS, (seat, run)
         assert terminal is not None and terminal["state"] == "live", (seat, terminal)
-        assert _bound_panes(live.db, seat.terminal_id) == 1, seat
+        assert _bound_panes(live, seat.terminal_id) == 1, seat
         assert _alive(seat.pid, seat.created), f"{seat.step_id} provider died"
         # No second launch reused this seat's run.
         assert launch_markers(psutil.Process(seat.pid)) == seat.launches, seat
@@ -665,7 +668,7 @@ def _run_settled(live: Live, run_id: str) -> bool:
         return True
     terminal = _terminal(live.db, str(run["terminal_id"]))
     return (terminal is None or terminal["state"] not in UNSETTLED_TERMINALS) and (
-        _bound_panes(live.db, str(run["terminal_id"])) == 0
+        _bound_panes(live, str(run["terminal_id"])) == 0
     )
 
 
@@ -686,7 +689,7 @@ def _unsettled(live: Live, run_ids: list[str]) -> dict[str, Any]:
             "status": None if run is None else run["status"],
             "terminal_id": terminal_id,
             "terminal_state": None if terminal is None else terminal["state"],
-            "bound_panes": _bound_panes(live.db, str(terminal_id)) if terminal_id else 0,
+            "bound_panes": _bound_panes(live, str(terminal_id)) if terminal_id else 0,
         }
     return {"runs": runs, "standins": live_standins(_standin_paths(live.rig))}
 

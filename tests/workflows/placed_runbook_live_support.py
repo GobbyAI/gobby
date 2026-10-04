@@ -413,6 +413,26 @@ def live_standins(standins: Collection[str]) -> list[int]:
     return sorted(found)
 
 
+def bound_panes(db: HubDatabase, terminal_id: str, read_workspace: Callable[[str], object]) -> int:
+    """Panes still bound to ``terminal_id`` once each workspace holding one is read.
+
+    The product prunes a dead terminal's pane when its workspace is read
+    (``sweep_dead_panes`` in the workspace snapshot), never when the terminal
+    exits, so a raw row count of a killed seat never drops to zero.
+    """
+    for holder in db.fetchall(
+        "SELECT DISTINCT t.workspace_id FROM workspace_panes p "
+        "JOIN workspace_tabs t ON t.id = p.tab_id WHERE p.terminal_id = %s",
+        (terminal_id,),
+    ):
+        read_workspace(str(holder["workspace_id"]))
+    row = db.fetchone(
+        "SELECT count(*) AS n FROM workspace_panes WHERE terminal_id = %s", (terminal_id,)
+    )
+    assert row is not None
+    return int(row["n"])
+
+
 def set_executable(path: Path, executable: bool) -> None:
     """The deliberate failure mode: a stand-in without execute bits is not resolvable."""
     mode = stat.S_IMODE(path.stat().st_mode)

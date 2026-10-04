@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -26,11 +27,16 @@ from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.seed import apply_seed
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.model_metadata import ModelMetadataStore
+from gobby.storage.terminals import TerminalManager, native_locator_key
+from gobby.storage.workspaces import WorkspaceManager
 from gobby.terminals.host_protocol import control_socket_path, pidfile_path, read_pidfile
+from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 from tests.workflows.placed_runbook_live_support import (
     LAUNCH_LOG,
     Attempts,
+    bound_panes,
     find_standin,
     fixture_host,
     host_socket_dir,
@@ -250,3 +256,44 @@ def test_standin_refuses_capability_probes(
     assert (run_tmp / LAUNCH_LOG).read_text(encoding="utf-8").split() == [pid]
     # The Codex spawn types its prompt only once the pane shows the "›" composer.
     assert composer == (["› "] if provider == "codex" else []), launched.stdout
+
+
+def test_bound_panes_frees_an_exited_seat_pane_through_the_workspace_read(
+    postgres_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    # The product prunes a dead pane when its workspace is read, never on terminal
+    # exit, so a killed seat's pane row stays until a read (v3: every _kill timed out).
+    machine_id = f"{TEST_MACHINE_ID_PREFIX}000000023335"
+    LocalMachineManager(postgres_db).upsert_seen(machine_id, TEST_USER_ID, hostname="runbook")
+    workspaces, terminals = WorkspaceManager(postgres_db), TerminalManager(postgres_db)
+    workspace, _created = workspaces.create(machine_id, "runbook-stop")
+    pane_id = str(uuid.uuid4())
+    workspaces.create_tab(workspace.id, pane_id=pane_id, project_id=sample_project["id"])
+    terminal_id, host_terminal_id = str(uuid.uuid4()), str(uuid.uuid4())
+    terminals.create_pending(
+        terminal_id=terminal_id,
+        project_id=sample_project["id"],
+        backend="native",
+        ownership="gobby",
+        spawn_key=terminal_id,
+        machine_id=machine_id,
+    )
+    promoted = terminals.promote_to_live(
+        terminal_id,
+        locator={"host_terminal_id": host_terminal_id},
+        locator_key=native_locator_key("epoch", host_terminal_id),
+        host_epoch="epoch",
+    )
+    assert promoted is not None
+    workspaces.set_pane_terminal(pane_id, terminal_id, owns_terminal=True)
+    reads: list[str] = []
+
+    def read_workspace(workspace_id: str) -> None:
+        reads.append(workspace_id)
+        workspaces.sweep_dead_panes(workspace_id)
+
+    assert bound_panes(postgres_db, terminal_id, read_workspace) == 1
+    terminals.mark_exited(terminal_id)
+    assert bound_panes(postgres_db, terminal_id, read_workspace) == 0
+    assert reads == [workspace.id, workspace.id]
+    assert workspaces.list_tabs(workspace.id) == []
