@@ -452,24 +452,33 @@ were not examined further.
 
 ### Retrieval
 
-- **Arm A used evidence only to read files.** Neither A run made a search,
-  symbol-read or graph request.
-- **A1:** 29 range reads in 13 Bash calls: 3 direct requests and 26 through an
-  `rd` shell helper.
-  - It hit one error, `--max-bytes` passed as a CLI flag.
-  - It requested an `end_line` past the end of the file on purpose, and got 4 clamp
-    warnings.
+- **Arm A used evidence only to read files.** Neither A run sent an evidence
+  search, symbol-read or graph request. Both arms also had the regular gcode
+  commands; A1 used `gcode grep`, `search-symbol` and `symbol-at` alongside evidence.
+- **A1:** 13 Bash calls wrote 29 range reads: 3 direct requests and 26 through an
+  `rd` shell helper. 26 ran, and 25 returned source.
+  - One direct request failed with a usage error: `--max-bytes` passed as a CLI
+    flag.
+  - One call stopped at `echo =====STORE`, which zsh treats as `=` expansion
+    (`(eval):8: ====STORE not found`). Only its first read ran; the 3 reads after
+    it never executed.
+  - 7 reads asked for an `end_line` past the end of the file and got
+    `range_clamped_to_end_of_file` warnings.
   - It printed `excerpt` and numbered the lines itself from `line_start`. It never
     used `numbered_excerpt`.
-- **A2:** 20 range reads with no errors and one clamp warning.
+- **A2:** 20 range reads with no errors and one visible clamp warning.
   - 19 of them went through an `rd` helper that piped `.items[0].numbered_excerpt`
-    through `jq`.
+    through `jq`. That output drops warnings, so the visible warning comes from the
+    one direct read, and helper reads may have clamped unseen.
 - **Arm B made no evidence attempts**, so the block rule never fired.
   - B1 used `gcode grep`, `outline` and Read.
-  - B2 relied on `gcode symbol-at` and `search-symbol`. 22 Bash calls involve
-    `symbol-at` (including the helper definition and help), many of them batching several lookups through an `sa` helper, so
-    the 22 counts calls rather than lookups and is not comparable to arm A's
-    range-read counts. `search-symbol` ran 9 times.
+  - B2 relied on `gcode symbol-at` and `search-symbol`. 18 Bash calls contain
+    `symbol-at`; one of them is `symbol-at --help`. They wrote 58 source lookups:
+    52 through an `sa` shell helper and 6 direct. The same zsh `=====` error
+    stopped one call after its first lookup, so 4 direct lookups never ran and 54
+    executed. These lookup counts, not the call counts, are the ones to compare
+    with arm A's range reads.
+  - `search-symbol` ran 9 times in 4 Bash calls.
 - **Read redirects.** The hooks redirected 12 Read calls to gcode: A1 1, A2 1, B1 4
   and B2 6. Each redirect came from `require-code-index-skill` or
   `prefer-gcode-for-source-read`.
