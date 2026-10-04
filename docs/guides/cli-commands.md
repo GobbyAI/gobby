@@ -165,8 +165,10 @@ restart.
 A restart-protected cron run (the nightly `gobby:memory-dream` sweep, which
 runs for hours) holds a lease while it is active: `gobby stop` refuses and
 prints the job name and elapsed time. `--wait` defers the stop until the run
-reaches a terminal state, bounded by the run's own timeout; `--force`
-interrupts it now. An interrupted run is recorded as `interrupted` (never
+reaches a terminal state, for at most 10 minutes (or the run's own timeout, if
+that is sooner). When the wait expires, the command refuses without stopping
+anything and names each run with its remaining time, so a deferred stop never
+fires hours later. `--force` interrupts it now. An interrupted run is recorded as `interrupted` (never
 `failed`, no backoff), and the scheduler re-queues the job about a minute
 after the next start so checkpointed work resumes.
 

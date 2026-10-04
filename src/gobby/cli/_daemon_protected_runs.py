@@ -18,6 +18,9 @@ from gobby.utils.local_token import daemon_auth_headers
 from .utils_process import format_uptime
 
 PROTECTED_RUN_POLL_INTERVAL_SECONDS = 15.0
+# The same bound as the handoff half of --wait: a deferred stop must not fire
+# hours later (the dream runs for hours), so the wait gives up and refuses.
+PROTECTED_RUN_MAX_WAIT_SECONDS = 600.0
 _FETCH_TIMEOUT_SECONDS = 3.0
 
 StepFn = Callable[..., None]
@@ -72,7 +75,8 @@ def clear_protected_runs(
 
     ``force`` proceeds after naming what it interrupts; ``wait`` polls until
     every protected run reaches a terminal state, bounded by the runs' own
-    remaining timeouts; otherwise an active protected run refuses the stop.
+    remaining timeouts and by ``PROTECTED_RUN_MAX_WAIT_SECONDS``; otherwise an
+    active protected run refuses the stop. Every refusal happens before any stop.
     """
     runs = fetch(http_port)
     if not runs:
@@ -95,15 +99,19 @@ def clear_protected_runs(
         return False
 
     longest = max(float(run.get("remaining_seconds") or 0.0) for run in runs)
-    deadline = time.monotonic() + longest + PROTECTED_RUN_POLL_INTERVAL_SECONDS
+    budget = min(longest + PROTECTED_RUN_POLL_INTERVAL_SECONDS, PROTECTED_RUN_MAX_WAIT_SECONDS)
+    deadline = time.monotonic() + budget
     step(
         "Waiting for protected cron run(s) to finish: "
         + ", ".join(describe_protected_run(run) for run in runs)
     )
     while runs:
         if time.monotonic() > deadline:
+            for run in runs:
+                step(f"Protected cron run still active: {describe_protected_run(run)}", error=True)
             step(
-                "Protected cron run(s) still active past their own timeout; refusing to stop",
+                f"Refusing to stop the daemon after waiting {format_uptime(budget)}; "
+                "re-run with --wait later or --force to interrupt it now",
                 error=True,
             )
             return False
@@ -114,6 +122,7 @@ def clear_protected_runs(
 
 
 __all__ = [
+    "PROTECTED_RUN_MAX_WAIT_SECONDS",
     "PROTECTED_RUN_POLL_INTERVAL_SECONDS",
     "clear_protected_runs",
     "describe_protected_run",
