@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -18,7 +19,7 @@ from gobby.agents.spawn_models import SpawnRequest
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.agents import AgentRun
-from gobby.storage.terminals import AttachLocator
+from gobby.storage.terminals import AttachLocator, mint_terminal_id
 from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.host_client import (
     CommitTransportError,
@@ -684,6 +685,65 @@ async def test_observer_bound_before_spawn_commit() -> None:
     row = fail_manager.get(failed.terminal_id or "")
     assert row is not None
     assert row.state != "live"
+
+
+def _live_pane(store: MemoryTerminalStore, *, session_id: str, host_terminal_id: str) -> None:
+    terminal_id = mint_terminal_id()
+    store.create_pending(
+        terminal_id, "project", "native", "gobby", terminal_id, session_id=session_id
+    )
+    store.promote_to_live(
+        terminal_id,
+        locator={"host_terminal_id": host_terminal_id},
+        locator_key=f"native:{host_terminal_id}",
+        host_epoch=FakeHostClient.host_epoch,
+    )
+
+
+async def _bind_nothing(terminal_id: str) -> None:
+    del terminal_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("binder", [None, _bind_nothing], ids=["unplaced", "placed"])
+async def test_agent_spawn_starts_on_its_spawners_pane_ground(
+    binder: Callable[[str], Awaitable[None]] | None,
+) -> None:
+    """The child seeds from the spawning session's pane, never another session's (#23286)."""
+    store = MemoryTerminalStore()
+    _live_pane(store, session_id="other", host_terminal_id="ht-laptop")
+    _live_pane(store, session_id="parent", host_terminal_id="ht-parent")
+    host = ObservingHost()
+    request, _runtime, _manager = _native_request(
+        host=host, frame=RecordingFrameClient(), manager=store, placement_binder=binder
+    )
+    with patch(
+        "gobby.agents.spawn_executor.prepare_claude_spawn",
+        new=AsyncMock(return_value=_plan()),
+    ):
+        result = await execute_spawn(request)
+
+    assert result.success is True
+    assert host.spawns[0]["theme_from"] == "ht-parent"
+
+
+@pytest.mark.asyncio
+async def test_paneless_spawner_leaves_the_agent_spawn_unset() -> None:
+    """Cron, pipelines and other paneless spawners name no pane to seed from."""
+    store = MemoryTerminalStore()
+    _live_pane(store, session_id="other", host_terminal_id="ht-laptop")
+    host = ObservingHost()
+    request, _runtime, _manager = _native_request(
+        host=host, frame=RecordingFrameClient(), manager=store
+    )
+    with patch(
+        "gobby.agents.spawn_executor.prepare_claude_spawn",
+        new=AsyncMock(return_value=_plan()),
+    ):
+        result = await execute_spawn(request)
+
+    assert result.success is True
+    assert host.spawns[0]["theme_from"] is None
 
 
 @pytest.mark.asyncio

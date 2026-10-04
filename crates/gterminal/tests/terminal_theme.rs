@@ -443,7 +443,9 @@ fn theme_from_seeds_a_spawn_with_its_parents_ground_alone() {
 #[test]
 fn theme_from_an_unknown_pane_leaves_the_spawn_unset() {
     let mut host = Host::start("theme-from-unknown");
-    let child = host.spawn_with("theme_from", json!("no-such-pane")).unwrap();
+    let child = host
+        .spawn_with("theme_from", json!("no-such-pane"))
+        .unwrap();
     let screen = host.wait_for(&child, "a first answer", |s| {
         s.lines()
             .any(|line| line.contains("A<") && line.contains('>'))

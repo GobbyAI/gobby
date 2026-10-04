@@ -453,6 +453,10 @@ impl PaneTerminal {
         self.ghostty.visible_hyperlinks(area)
     }
 
+    pub fn host_terminal_theme(&self) -> crate::terminal_theme::TerminalTheme {
+        self.ghostty.host_terminal_theme()
+    }
+
     pub fn apply_host_terminal_theme(&self, theme: crate::terminal_theme::TerminalTheme) {
         self.ghostty.apply_host_terminal_theme(theme);
     }

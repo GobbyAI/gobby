@@ -185,7 +185,11 @@ class _PlacedAttempt:
         existing: Terminal | None,
     ) -> SpawnResult:
         from gobby.agents.spawn_executor import _settle_native_spawn_failure
-        from gobby.agents.spawn_executor_runtime import _deferred_failure_code, _promote_prepared
+        from gobby.agents.spawn_executor_runtime import (
+            _deferred_failure_code,
+            _promote_prepared,
+            spawner_theme_source,
+        )
 
         attempt, request, plan = self.attempt, self.request, self.plan
         manager, runtime, backend = attempt.manager, attempt.runtime, attempt.backend
@@ -243,6 +247,9 @@ class _PlacedAttempt:
             env=plan.env,
             title=plan.title,
             auth_cli=plan.auth_cli,
+            theme_from=await asyncio.to_thread(
+                spawner_theme_source, manager, request.parent_session_id
+            ),
         )
         self.stage = "reserve"
         if not can_reserve_observer(runtime):

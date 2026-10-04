@@ -382,8 +382,10 @@ impl HostState {
         let fingerprint = spawn_fingerprint(&argv, &env, &cwd, dims, &reservation_id, &reserve_key);
         // The child waits at the gate until commit, so the theme resolved here
         // answers its first OSC 10/11 query: the spawning client's own theme,
-        // else the unset theme, which gives no reply. Another client's
-        // declaration never seeds it.
+        // else the current ground of the `theme_from` pane (the daemon names
+        // the spawning session's own pane), else the unset theme, which gives
+        // no reply. Another client's declaration never seeds it.
+        let theme_from = s(extra, "theme_from");
         let spawn_theme = {
             let inner = self.inner.lock().await;
             if let Some(existing) = inner.terminals.get(&identity) {
@@ -414,7 +416,7 @@ impl HostState {
             if res.key != reserve_key || res.terminal_id != terminal_id {
                 return err("invalid_reservation");
             }
-            explicit_theme
+            explicit_theme.or_else(|| super::theme::slot_theme(&inner, &theme_from))
         };
         #[cfg(not(feature = "vt-engine"))]
         {

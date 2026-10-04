@@ -7,7 +7,8 @@
 //! undo the controlling client's newer theme. When the daemon moves the grant,
 //! the new holder's declaration applies. A declaration only ever reaches its
 //! own attachment's pane: a spawn starts with the theme its request carries,
-//! never another client's.
+//! or with the current ground of the pane its `theme_from` names (a daemon
+//! spawn's spawner), never another client's.
 
 use super::state::{HostState, Inner, TerminalSlot};
 use crate::terminal_theme::ThemeDeclaration;
@@ -73,6 +74,20 @@ fn native_slot<'a>(inner: &'a Inner, host_terminal_id: &str) -> Option<&'a Termi
         .terminals
         .get(identity)
         .filter(|slot| slot.locator.is_none())
+}
+
+/// The ground a live native pane answers OSC 10/11 with, as a declaration a
+/// spawn can start from. `None` when the pane is gone or its theme is unset.
+#[cfg(feature = "vt-engine")]
+pub(crate) fn slot_theme(inner: &Inner, host_terminal_id: &str) -> Option<ThemeDeclaration> {
+    let child = native_slot(inner, host_terminal_id)?.child.as_ref()?;
+    let theme = child.runtime.host_terminal_theme();
+    (!theme.is_empty()).then(|| ThemeDeclaration::from(&theme))
+}
+
+#[cfg(not(feature = "vt-engine"))]
+pub(crate) fn slot_theme(_inner: &Inner, _host_terminal_id: &str) -> Option<ThemeDeclaration> {
+    None
 }
 
 #[cfg(feature = "vt-engine")]

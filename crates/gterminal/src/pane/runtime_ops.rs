@@ -72,6 +72,10 @@ impl PaneRuntime {
         self.io.begin_handoff(timeout)
     }
 
+    pub fn host_terminal_theme(&self) -> crate::terminal_theme::TerminalTheme {
+        self.terminal.host_terminal_theme()
+    }
+
     pub fn apply_host_terminal_theme(&self, theme: crate::terminal_theme::TerminalTheme) {
         self.terminal.apply_host_terminal_theme(theme);
     }
