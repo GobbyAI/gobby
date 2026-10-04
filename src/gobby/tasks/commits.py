@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.commit_graph import CommitGraph
 from gobby.tasks.diff_manifest import ManifestItem, ManifestParser
 from gobby.tasks.diff_paging import (
     MAX_COMMITS_LIMIT,
@@ -220,45 +221,16 @@ async def collect_commit_rename_aliases_async(
     return aliases
 
 
-async def _is_merge(sha: str, *, cwd: str | Path) -> bool:
-    return await _git_bytes(["rev-parse", "--verify", "--quiet", f"{sha}^2"], cwd=cwd) is not None
-
-
-async def _is_ancestor(ancestor: str, descendant: str, *, cwd: str | Path) -> bool:
-    return (
-        await _git_bytes(["merge-base", "--is-ancestor", ancestor, descendant], cwd=cwd) is not None
-    )
-
-
-async def _is_sync_merge(sha: str, ordered: list[str], *, cwd: str | Path) -> bool:
-    """Prove a sync from linked first-parent work without second-parent-only delivery.
-
-    They were already on that parent, or they were committed there after the
-    merge. A landing merge's other commits are reachable only through its
-    second parent. Unrelated historical links supply neither proof nor a veto.
-    """
-    if not await _is_merge(sha, cwd=cwd):
-        return False
-    others = [other for other in ordered if other != sha]
-    if not others:
-        return False
-    first_parent_work = False
-    for other in others:
-        on_first_parent = await _is_ancestor(other, f"{sha}^1", cwd=cwd)
-        committed_after = await _is_ancestor(sha, other, cwd=cwd)
-        if not on_first_parent and await _is_ancestor(other, f"{sha}^2", cwd=cwd):
-            return False
-        first_parent_work |= on_first_parent or committed_after
-    return first_parent_work
-
-
 async def _show_one_commit(
-    sha: str, ordered: list[str], *, cwd: str | Path, output: tuple[str, ...] = _PATCH_OUTPUT
+    sha: str,
+    ordered: list[str],
+    *,
+    cwd: str | Path,
+    graph: CommitGraph,
+    output: tuple[str, ...] = _PATCH_OUTPUT,
 ) -> str | None:
     merges = (
-        ["--remerge-diff"]
-        if await _is_sync_merge(sha, ordered, cwd=cwd)
-        else ["--diff-merges=first-parent"]
+        ["--remerge-diff"] if graph.is_sync_merge(sha, ordered) else ["--diff-merges=first-parent"]
     )
     raw = await _git_bytes(
         ["show", *merges, "--format=", "--find-renames", "--find-copies", *output, sha],
@@ -275,13 +247,17 @@ async def _stream_commit_patches(
     cwd: str | Path,
     classify_against: list[str] | None = None,
     output: tuple[str, ...] = _PATCH_OUTPUT,
+    graph: CommitGraph | None = None,
 ) -> str | None:
     # A one-commit subset is not a lone merge. Classify against the full linked
     # set so a sync merge still shows its remerge diff.
     basis = shas if classify_against is None else classify_against
+    graph = graph or await CommitGraph.load(basis, cwd=cwd, timeout=_NET_PATCH_GIT_TIMEOUT_SECONDS)
+    if graph is None:
+        return None
     parts: list[str] = []
     for sha in shas:
-        patch = await _show_one_commit(sha, basis, cwd=cwd, output=output)
+        patch = await _show_one_commit(sha, basis, cwd=cwd, graph=graph, output=output)
         if patch is None:
             return None
         if patch.strip():
@@ -290,7 +266,11 @@ async def _stream_commit_patches(
 
 
 async def _landing_merge_patch(
-    ordered: list[str], *, cwd: str | Path, output: tuple[str, ...] = _PATCH_OUTPUT
+    ordered: list[str],
+    *,
+    cwd: str | Path,
+    graph: CommitGraph,
+    output: tuple[str, ...] = _PATCH_OUTPUT,
 ) -> bytes | None:
     """First-parent patch of a merge that lands every other linked commit.
 
@@ -299,12 +279,13 @@ async def _landing_merge_patch(
     those commits again on top of it cannot apply.
     """
     tip = ordered[-1]
-    if not await _is_merge(tip, cwd=cwd):
+    if not graph.is_merge(tip):
         return None
+    first, second = graph.parents[tip][:2]
     for sha in ordered[:-1]:
-        if await _git_bytes(["merge-base", "--is-ancestor", sha, f"{tip}^2"], cwd=cwd) is None:
+        if not graph.is_ancestor(sha, second):
             return None
-        if await _git_bytes(["merge-base", "--is-ancestor", sha, f"{tip}^1"], cwd=cwd) is not None:
+        if graph.is_ancestor(sha, first):
             return None
     return await _git_bytes(
         ["diff", "--find-renames", "--find-copies", *output, f"{tip}^1", tip],
@@ -322,24 +303,29 @@ async def _net_commit_patch(
     ordered = await ancestry_order(commit_shas, cwd=cwd)
     if not ordered:
         return None
-    landing = await _landing_merge_patch(ordered, cwd=cwd, output=output)
+    graph = await CommitGraph.load(ordered, cwd=cwd, timeout=_NET_PATCH_GIT_TIMEOUT_SECONDS)
+    if graph is None:
+        return None
+    landing = await _landing_merge_patch(ordered, cwd=cwd, graph=graph, output=output)
     if landing is not None:
         return landing.decode("utf-8", errors="replace").strip()
-    syncs = [sha for sha in ordered if await _is_sync_merge(sha, ordered, cwd=cwd)]
+    syncs = [sha for sha in ordered if graph.is_sync_merge(sha, ordered)]
     replayable = [sha for sha in ordered if sha not in syncs]
     # A merge replays as its first-parent diff, which already carries every
     # linked commit it reaches only through another parent (#23314).
-    merges = {sha for sha in replayable if await _is_merge(sha, cwd=cwd)}
+    merges = {sha for sha in replayable if graph.is_merge(sha)}
     absorbed: set[str] = set()
     for merge in merges:
-        carried = await _git_bytes(["rev-list", merge, f"^{merge}^1"], cwd=cwd)
-        if carried is None:
-            return None
-        absorbed.update(set(carried.decode("ascii", errors="replace").split()) - {merge})
+        first = graph.parents[merge][0]
+        absorbed.update(
+            sha
+            for sha in ordered
+            if sha != merge and graph.is_ancestor(sha, merge) and not graph.is_ancestor(sha, first)
+        )
     replayable = [sha for sha in replayable if sha not in absorbed]
     syncs = [sha for sha in syncs if sha not in absorbed]
     if not replayable:
-        return await _stream_commit_patches(ordered, cwd=cwd, output=output)
+        return await _stream_commit_patches(ordered, cwd=cwd, graph=graph, output=output)
     parent = await _git_bytes(["rev-parse", "--verify", "--quiet", f"{replayable[0]}^"], cwd=cwd)
     base = parent.decode("ascii", errors="replace").strip() if parent else _EMPTY_TREE_SHA
     with tempfile.TemporaryDirectory(prefix="gobby-close-index-") as scratch:
@@ -376,7 +362,9 @@ async def _net_commit_patch(
     text = net.decode("utf-8", errors="replace").strip()
     if not syncs:
         return text
-    authored = await _stream_commit_patches(syncs, cwd=cwd, classify_against=ordered, output=output)
+    authored = await _stream_commit_patches(
+        syncs, cwd=cwd, classify_against=ordered, graph=graph, output=output
+    )
     if authored is None:
         return None
     return "\n".join(part for part in (text, authored.strip()) if part)

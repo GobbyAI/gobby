@@ -18,8 +18,9 @@ from gobby.plans.semantic_lint import collect_description_target_inventory
 from gobby.storage.project_checkouts import resolve_operation_root
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.tasks.acceptance_artifacts import extract_artifact_references
+from gobby.tasks.commit_graph import CommitGraph
 from gobby.tasks.commits import ancestry_order, collect_net_name_status_async
-from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git
+from gobby.utils.daemon_git import GitOk, daemon_git
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -291,18 +292,20 @@ async def _partition_delivered_commits(
     """
     if candidate is None:
         return list(commit_shas), []
+    if not commit_shas:
+        return [], []
+    graph = await CommitGraph.load([*commit_shas, candidate], cwd=repo_path, timeout=10)
+    if graph is None:
+        raise RuntimeError(
+            "Cannot check whether the close candidate delivers commits " + ", ".join(commit_shas)
+        )
     delivered: list[str] = []
     undelivered: list[str] = []
     for sha in commit_shas:
-        result = await daemon_git.run(
-            ["merge-base", "--is-ancestor", sha, candidate], cwd=repo_path, timeout=10
-        )
-        if isinstance(result, GitOk):
+        if graph.is_ancestor(sha, candidate):
             delivered.append(sha)
-        elif isinstance(result, GitFailed) and result.returncode == 1:
-            undelivered.append(sha)
         else:
-            raise RuntimeError(f"Cannot check whether the close candidate delivers commit {sha}.")
+            undelivered.append(sha)
     return delivered, undelivered
 
 
