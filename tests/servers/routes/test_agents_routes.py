@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -1579,6 +1580,18 @@ class TestUpdateDefinitionNestedFields:
     ) -> None:
         editable = set(request_model.model_fields) - self.ROW_ONLY_FIELDS
         assert editable == set(AgentDefinitionBody.model_fields) - self.IMMUTABLE_BODY_FIELDS
+
+    def test_web_duplicate_refuses_exactly_immutable_and_response_only_keys(self) -> None:
+        # Web Duplicate posts the stored definition minus CREATE_REFUSED_KEYS; the
+        # create request forbids unknown keys, so the set must match this contract.
+        actions = (
+            Path(__file__).resolve().parents[3]
+            / "web/src/components/activity/agents/AgentsTabActions.ts"
+        ).read_text()
+        match = re.search(r"CREATE_REFUSED_KEYS = new Set\(\[(.*?)\]\)", actions, re.S)
+        assert match is not None
+        refused = set(re.findall(r'"([a-z_]+)"', match.group(1)))
+        assert refused == self.IMMUTABLE_BODY_FIELDS | {"is_local"}
 
     def test_create_stores_pre_commit_prewarm_opt_out(self, client: TestClient) -> None:
         response = client.post(

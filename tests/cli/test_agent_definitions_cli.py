@@ -247,8 +247,12 @@ class TestAgentDefinitionsShow:
     ) -> None:
         monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
         no_project_context.side_effect = real_get_project_context
+        override = _agent_row("developer", model="override-model", project_id="proj-cwd")
+        global_row = _agent_row("developer", model="global-model")
         manager = MagicMock()
-        manager.get_by_name.return_value = _agent_row("developer")
+        manager.get_by_name.side_effect = lambda name, project_id=None: (
+            override if project_id == "proj-cwd" else global_row
+        )
         mock_get_manager.return_value = manager
 
         with runner.isolated_filesystem():
@@ -257,7 +261,8 @@ class TestAgentDefinitionsShow:
             result = runner.invoke(cli, ["agents", "show", "developer", "--json"])
 
         assert result.exit_code == 0
-        manager.get_by_name.assert_called_once_with("developer", project_id="proj-cwd")
+        assert "override-model" in result.output
+        assert "global-model" not in result.output
 
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_show_json_emits_nested_step_workflow(
