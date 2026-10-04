@@ -18,8 +18,8 @@ def register_cwd_marker_checkout(
     project_context: dict[str, Any],
     *,
     logger: logging.Logger | None = None,
-) -> None:
-    """Register or skip a cwd-marker checkout. Typed refusals propagate."""
+) -> bool:
+    """Return whether this cwd-marker checkout may be indexed. Typed refusals propagate."""
     from gobby.storage.project_checkouts import (
         CheckoutConflictError,
         CheckoutRootTakenError,
@@ -36,11 +36,11 @@ def register_cwd_marker_checkout(
 
     project_id = str(project_context["id"])
     if project_id in CHECKOUT_FREE_PROJECT_IDS:
-        return
+        return False
 
     cwd = project_context.get("project_path")
     if not isinstance(cwd, str) or not cwd:
-        return
+        return False
 
     manager = LocalProjectManager(db)
     project = manager.get(project_id)
@@ -61,7 +61,7 @@ def register_cwd_marker_checkout(
     if manager._repo_path_write_is_blocked(cwd, machine_id=machine_id):
         # Overlay, isolation, and worktree cwds carry a tracked marker:
         # registration is refused and the marker is left untouched.
-        return
+        return True
 
     root = validate_checkout_root(
         db,
@@ -86,18 +86,28 @@ def register_cwd_marker_checkout(
         # A second clone of a registered project, or a root owned by another
         # project, must not break every hook in that clone: the session still
         # starts and the operator rebinds explicitly.
-        (logger or _logger).warning(
-            "Checkout for project %s was not registered at %s: %s. "
-            "Rebind explicitly with `gobby projects rebind %s %s`.",
-            project.name,
-            root,
-            exc,
-            project.name,
-            root,
-        )
-        return
+        if not (Path(root) / ".git").exists():
+            (logger or _logger).warning(
+                "Unregistered copy for project %s at %s has no .git and is being ignored "
+                "for code indexing: %s.",
+                project.name,
+                root,
+                exc,
+            )
+        else:
+            (logger or _logger).warning(
+                "Checkout for project %s was not registered at %s: %s. "
+                "Rebind explicitly with `gobby projects rebind %s %s`.",
+                project.name,
+                root,
+                exc,
+                project.name,
+                root,
+            )
+        return False
     link_checkout_cargo_target(Path(root), project_id)
     _refresh_stale_marker(cwd, project, project_context, logger)
+    return True
 
 
 def _refresh_stale_marker(

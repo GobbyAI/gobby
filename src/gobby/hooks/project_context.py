@@ -74,15 +74,27 @@ class ProjectIdResolver:
             return
         self.ensure_project_in_db(project_context)
 
-    def ensure_project_in_db(self, project_context: dict[str, Any]) -> None:
+    def resolve_for_index(self, cwd: str) -> str | None:
+        """Resolve a marker project only when its checkout is admitted for indexing."""
+        from gobby.utils.project_context import get_project_context
+
+        context = get_project_context(Path(cwd))
+        if context is None:
+            return None
+        project_id = _as_nonempty_str(context.get("id"))
+        if project_id and self.ensure_project_in_db(context):
+            return project_id
+        return None
+
+    def ensure_project_in_db(self, project_context: dict[str, Any]) -> bool:
         """Register a cwd-marker checkout. Typed checkout refusals propagate."""
         if self.session_manager is None:
-            return
+            return False
 
         from gobby.hooks.project_checkout_ingress import register_cwd_marker_checkout
 
         try:
-            register_cwd_marker_checkout(
+            return register_cwd_marker_checkout(
                 self.session_manager.db,
                 project_context,
                 logger=self.logger,
@@ -90,6 +102,7 @@ class ProjectIdResolver:
         except psycopg.Error as exc:
             if self.logger:
                 self.logger.warning("Failed to ensure project in database: %s", exc)
+            return False
 
 
 def is_unusable_hook_cwd(cwd: str | None) -> bool:

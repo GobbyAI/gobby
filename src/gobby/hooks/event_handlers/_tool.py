@@ -420,8 +420,12 @@ class ToolEventHandlerMixin(EventHandlersBase):
         if self._code_index_trigger is None:
             return
         try:
+            from gobby.hooks.project_context import ProjectIdResolver
+
             root_path = os.fspath(repo_root)
-            project_id = self._resolve_project_id(None, root_path)
+            project_id = ProjectIdResolver(
+                session_manager=self._session_manager, logger=self.logger
+            ).resolve_for_index(root_path)
             if project_id:
                 self._code_index_trigger.notify_file_changed(
                     file_path=repo_relative_path,
