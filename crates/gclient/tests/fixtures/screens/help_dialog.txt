@@ -4,20 +4,20 @@
 00 : bar_ink/bar+bd*120
 01 |  ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  |
 01 : text/panel_bg+d*2 accent/panel_bg*116 text/panel_bg+d*2
-02 | M│keybinds                                                                                                esc close │  |
-02 : text/panel_bg+d*1 text/panel_bg+bd*1 accent/panel_bg*1 text/panel_bg+b*8 text/panel_bg*95 panel_bg/accent+b*11 accent/panel_bg*1 text/surface0+d*2
+02 | M│Keybinds                                                                                                esc Close │  |
+02 : text/surface_dim+d*1 text/surface_dim+bd*1 accent/panel_bg*1 text/panel_bg+b*8 text/panel_bg*95 panel_bg/accent+b*11 accent/panel_bg*1 text/surface0+d*2
 03 | ⍾│ press / to filter by command or shortcut                                                                         │─┐|
 03 : text/surface0+d*1 yellow/surface0+d*1 accent/panel_bg*1 overlay0/panel_bg*41 text/panel_bg*73 accent/panel_bg*1 accent/panel_bg+d*2
 04 |  │                                                                                                                  │ │|
 04 : text/panel_bg+d*2 accent/panel_bg*1 text/panel_bg*114 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 05 | P│ Legend                                                                                                          ▐│ │|
-05 : text/panel_bg+d*1 text/panel_bg+bd*1 accent/panel_bg*1 text/panel_bg+b*7 text/panel_bg*106 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
+05 : text/surface_dim+d*1 text/surface_dim+bd*1 accent/panel_bg*1 text/panel_bg+b*7 text/panel_bg*106 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 06 | ⍾│   state          counts as  means                                                                               ▐│ │|
 06 : text/surface0+d*1 yellow/surface0+d*1 accent/panel_bg*1 overlay1/panel_bg*34 text/panel_bg*79 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 07 |  │ ⍾ needs you      need you   waiting on you: an approval, a question, an error it cannot pass                    ▐│ │|
 07 : text/panel_bg+d*2 accent/panel_bg*1 text/panel_bg*1 yellow/panel_bg*2 text/panel_bg*15 subtext0/panel_bg*75 text/panel_bg*20 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 08 | A│ ▶ active         active     running a turn                                                                      ▐│ │|
-08 : text/panel_bg+d*1 text/panel_bg+bd*1 accent/panel_bg*1 text/panel_bg*1 accent/panel_bg*2 text/panel_bg*15 subtext0/panel_bg*25 text/panel_bg*70 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
+08 : text/surface_dim+d*1 text/surface_dim+bd*1 accent/panel_bg*1 text/panel_bg*1 accent/panel_bg*2 text/panel_bg*15 subtext0/panel_bg*25 text/panel_bg*70 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 09 | ⍾│ ○ idle           idle       at its prompt, nothing pending                                                      ▐│ │|
 09 : text/panel_bg+d*1 yellow/panel_bg+d*1 accent/panel_bg*1 text/panel_bg*1 overlay0/panel_bg*2 text/panel_bg*15 subtext0/panel_bg*41 text/panel_bg*54 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 10 |  │ ◆ output unseen  idle       finished since you last looked; clears when its pane is focused                     ▐│ │|
@@ -49,7 +49,7 @@
 23 |  │ prefix+g           Open the navigator (goto)                                                                    ▐│ │|
 23 : text/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*18 overlay1/panel_bg*7 text/panel_bg*68 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 24 | T│ up                 Select the previous sidebar row (navigate_up)                                                ▐│ │|
-24 : text/panel_bg+d*1 text/panel_bg+bd*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*31 overlay1/panel_bg*14 text/panel_bg*48 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
+24 : text/surface_dim+d*1 text/surface_dim+bd*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*31 overlay1/panel_bg*14 text/panel_bg*48 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 25 | ○│ down               Select the next sidebar row (navigate_down)                                                  ▐│ │|
 25 : text/surface0+d*1 overlay0/surface0+d*1 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*27 overlay1/panel_bg*16 text/panel_bg*50 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 26 |  │ h                  Focus the pane to the left (navigate_pane_left)                                              ▐│ │|

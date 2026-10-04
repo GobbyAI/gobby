@@ -20,7 +20,7 @@ CANONICAL_PLAN_HEADING_REGEX = (
 PLAN_DRAFT = Path("docs/contracts/plan-coverage.md")
 PLAN_REVIEW = Path("src/gobby/install/shared/skills/gobby/references/plan/review.md")
 PLANNER = Path("src/gobby/install/shared/workflows/agents/planner.yaml")
-ADVERSARY = Path("src/gobby/install/shared/workflows/agents/plan-adversary.yaml")
+ADVERSARY = Path("src/gobby/install/shared/workflows/agents/plan-adversary-old.yaml")
 
 
 def _skill_bundle(path: Path) -> str:
@@ -91,7 +91,7 @@ def test_table_row_decomposition_rule_documented() -> None:
         "plan-draft": _skill_bundle(PLAN_DRAFT),
         "plan-review": _skill_bundle(PLAN_REVIEW) + _skill_bundle(PLAN_DRAFT),
         "planner": _agent_prompt(PLANNER),
-        "plan-adversary": _agent_prompt(ADVERSARY),
+        "plan-adversary-old": _agent_prompt(ADVERSARY),
     }
     for name, body in surfaces.items():
         lowered = body.lower()

@@ -31,7 +31,7 @@ Usage: gclient [--project PROJECT] [--node NODE] [--workspace WORKSPACE] [--daem
 | `--daemon-url URL` | Daemon endpoint. Defaults to the local daemon's configured URL. |
 | `--token-file PATH` | Bearer token file. Defaults to `~/.gobby/local_cli_token`. |
 | `--frame-delivery auto\|direct\|proxy` | How terminal frames arrive, and with them your keystrokes. `auto` tries the local frame socket first and falls back to the daemon's WebSocket proxy per pane. Forcing `proxy` puts typing back on the daemon for every pane. |
-| `--no-mouse` | Leave mouse events to your terminal emulator. Same as turning off `mouse capture` in settings, for this run only. |
+| `--no-mouse` | Leave mouse events to your terminal emulator. Same as turning off `Mouse capture` in settings, for this run only. |
 | `--version`, `-V` | Print the version and exit. |
 | `--help`, `-h` | Print the usage line and exit. |
 
@@ -109,7 +109,7 @@ it, and `esc` closes them all. **View › Theme** holds Dark, Light, and System.
 A `✓` marks the value or toggle in force. The attention legend lives in
 **Help › Keys**, where it opens first.
 
-**Monochrome.** **View › Monochrome**, or `monochrome` in settings, draws the
+**Monochrome.** **View › Monochrome**, or `Monochrome` in settings, draws the
 client's own chrome in grays: every theme token keeps its lightness and drops
 its hue. Pane contents keep their own colours. The choice is saved as
 `monochrome = true` under `[ui]` in `~/.gobby/client/prefs.toml`. The glyph
@@ -237,7 +237,7 @@ the last tab. When the tabs overflow, each shows whole or not at all, the
 new-tab button stays at the right end, and each edge counts the tabs hidden
 beyond it (`‹ 3`, `2 ›`). A count takes `⍾` and the needs-you colour when one of
 those tabs needs you, and a click on it pages the bar one screen. The bar hides
-when only one tab is open if you turn on `hide tab bar with one tab` in
+when only one tab is open if you turn on `Hide tab bar with one tab` in
 settings.
 
 **Panes.** A tab holds one or more terminals in nested splits; each pane is a
@@ -269,7 +269,7 @@ colour setting. A provider's own sandbox settings never lock a pane. The lock
 is a Nerd Font symbol, which Ghostty's default font includes; set
 `nerd_glyphs = false` under `[ui]` in `~/.gobby/client/prefs.toml` to draw
 `sbx` instead. Add `sandbox` to `[status] left` or `right` to name the
-focused pane's state in words: `sandboxed` or `unrestricted`. With `pane gaps` off, a pane above
+focused pane's state in words: `sandboxed` or `unrestricted`. With `Pane gaps` off, a pane above
 another shares that pane's top line and has no bottom edge of its own; its
 address moves to the top-right of its own title row, unless that would leave the
 title fewer than four cells. A pane that has not yet received
@@ -541,7 +541,7 @@ yourself (the sidebar lists it because the daemon found it, ownership
 `external`) is never killed by `close_pane` or `close tab`: the pane leaves the
 tab, its control lease is released, and the session stays in the sidebar to
 reopen later. Only `close_terminal` kills an external session. Closing a tab
-kills every gobby-owned pane in it. With `confirm close` on (the default),
+kills every gobby-owned pane in it. With `Confirm close` on (the default),
 closing a tab first opens a dialog that names the tab and counts its panes; `y`
 or `enter` confirms, `n` or `esc` cancels. If the daemon refuses a kill, that
 pane stays, and so does its tab.
@@ -645,7 +645,7 @@ offers either its options or a free-text field:
 - With no options, type your answer, `backspace` edits, `enter` submits.
 - `esc` cancels.
 
-The `send` and `cancel` buttons act as `enter` and `esc`.
+The `Send` and `Cancel` buttons act as `enter` and `esc`.
 
 `mark seen` in the agent menu acknowledges the row's attention entry without
 opening the terminal.
@@ -683,36 +683,36 @@ worktree; `esc` returns to the terminal.
 **Keybinding help (`prefix+?`).** The attention legend, then the live keymap
 with names. A search hides the legend. `j` / `k`, the
 arrows, and `PageUp` / `PageDown` scroll, `/` searches by key, description, or
-name, `enter` or `esc` closes. The `close` button closes too; while the search
-has focus it reads `back` and returns to the list, as `esc` does.
+name, `enter` or `esc` closes. The `Close` button closes too; while the search
+has focus it reads `Back` and returns to the list, as `esc` does.
 
 **Settings (`prefix+s`).** See below.
 
 **Rename dialogs.** Type, `enter` commits, `ctrl+c` clears the name, `esc`
-cancels. The `save`, `clear`, and `cancel` buttons do the same.
+cancels. The `Save`, `Clear`, and `Cancel` buttons do the same.
 
 ## Settings
 
 `prefix+s` opens the settings popup. `j` / `k` or the arrows move, `space`
 toggles the row, `left` / `right` steps a value, `enter` or `esc` closes, as do
-the `done` and `close` buttons. Rows are clickable. Every change is written to
+the `Done` and `Close` buttons. Rows are clickable. Every change is written to
 `~/.gobby/client/prefs.toml` at once; there is nothing to apply.
 
 | Row | Default | Effect |
 | --- | --- | --- |
-| theme | `dark` | `dark`, `light`, or `system`; system follows OS appearance while the client is open (dark if the OS does not specify one); also changed by **View › Theme** |
-| monochrome | off | Draw the client's chrome in grays; states keep their glyphs; also changed by **View › Monochrome** |
-| mouse capture | on | Off leaves selection and scrolling to your terminal emulator |
-| pane scrollbars | on | Draw a scrollbar lane beside scrolled panes; its thumb is dim at rest and brightens while the pane is focused or for a second after it scrolls |
-| pane gaps | on | Leave a gap between split panes |
-| confirm close | on | Ask before closing a pane, terminal, tab, or project |
-| hide tab bar with one tab | off | Hide the tab bar when a project has a single tab |
-| sidebar width | 26 | Columns; also set by dragging the sidebar edge |
-| sidebar side | `left` | Put the overlay or pinned sidebar on the left or right |
-| sidebar pinned | on | Keep the sidebar in its own column; also changed by **View › Sidebar › Pin sidebar** |
-| right-click passthrough | none | Modifier that sends a right-click to the pane's application instead of opening the pane menu (`shift`, `alt`, `ctrl`, or none) |
-| agent sort | `grouped` | `grouped` or `priority` order in the Agents section |
-| title scrolling | `left` | `off`, `left`, or `right`: which way over-long session titles and pane headers scroll, on one shared ticker |
+| Theme | `dark` | `dark`, `light`, or `system`; system follows OS appearance while the client is open (dark if the OS does not specify one); also changed by **View › Theme** |
+| Monochrome | off | Draw the client's chrome in grays; states keep their glyphs; also changed by **View › Monochrome** |
+| Mouse capture | on | Off leaves selection and scrolling to your terminal emulator |
+| Pane scrollbars | on | Draw a scrollbar lane beside scrolled panes; its thumb is dim at rest and brightens while the pane is focused or for a second after it scrolls |
+| Pane gaps | on | Leave a gap between split panes |
+| Confirm close | on | Ask before closing a pane, terminal, tab, or project |
+| Hide tab bar with one tab | off | Hide the tab bar when a project has a single tab |
+| Sidebar width | 26 | Columns; also set by dragging the sidebar edge |
+| Sidebar side | `left` | Put the overlay or pinned sidebar on the left or right |
+| Sidebar pinned | on | Keep the sidebar in its own column; also changed by **View › Sidebar › Pin sidebar** |
+| Right-click passthrough | none | Modifier that sends a right-click to the pane's application instead of opening the pane menu (`shift`, `alt`, `ctrl`, or none) |
+| Agent sort | `grouped` | `grouped` or `priority` order in the Agents section |
+| Title scrolling | `left` | `off`, `left`, or `right`: which way over-long session titles and pane headers scroll, on one shared ticker |
 
 The file is optional and every key in it is optional; an unknown key is a
 startup error that names the line. The retired keys `pane_borders` and
@@ -774,7 +774,7 @@ zoom = ["prefix+z", "prefix+f"]
 ## Mouse
 
 Mouse support is on by default; turn it off with `--no-mouse` or the
-`mouse capture` setting to use your terminal emulator's own selection.
+`Mouse capture` setting to use your terminal emulator's own selection.
 
 | Gesture | Effect |
 | --- | --- |
@@ -824,7 +824,7 @@ close.
 | **Help** on the menu bar (click) | Keys, Alerts…, Daemon, About Gobby |
 
 `Send right-clicks to pane` flips a per-pane flag so the pane's application gets
-right-clicks; the `right-click passthrough` setting does the same for every pane
+right-clicks; the `Right-click passthrough` setting does the same for every pane
 while its modifier is held. `Close terminal` acts on the row you right-clicked
 rather than on the focused pane, and on an external terminal (a tmux pane
 `gclient` never created) it releases the lease and drops the pane instead of
@@ -864,7 +864,11 @@ the restarted daemon adopts the surviving host. `gobby stop --terminals` and
 
 The client rides through the gap. When the daemon's connection drops:
 
-1. The pane contents stay visible but frozen while the daemon is unreachable.
+1. A direct native pane keeps receiving frames from its gterm host. If you
+   already hold its host input grant, you can keep typing while the daemon is
+   unreachable; host refusal still ends that authority. Taking control of an
+   ungranted pane waits for the daemon to return. Panes that use the daemon's
+   proxy keep their last visible frame frozen.
    A toast names the URL and cause (`Daemon unreachable at <url>: <error>`),
    while the status bar's left slot shows
    `× Daemon unreachable · retrying in <n> s` and counts down to the next attempt.

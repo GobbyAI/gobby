@@ -22,7 +22,7 @@ def test_subcommand_help_does_not_open_runtime_database(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     open_database = MagicMock()
-    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", open_database)
 
     result = CliRunner().invoke(cli, ["skills", "--help"])
 
@@ -91,7 +91,7 @@ def test_runtime_memoizes_database_and_closes_once(monkeypatch: pytest.MonkeyPat
     def open_database(*args: object, **kwargs: object) -> object:
         return _database_context(database)
 
-    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", open_database)
     runtime = CliRuntime(config_file="custom.yaml")
 
     assert runtime.require_database() is database
@@ -137,7 +137,7 @@ def test_click_teardown_closes_database_for_all_exit_paths(
     def open_database(*args: object, **kwargs: object) -> object:
         return _database_context(database)
 
-    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", open_database)
 
     @click.command()
     @click.pass_context
@@ -170,7 +170,7 @@ def test_failed_lazy_acquisition_can_retry(monkeypatch: pytest.MonkeyPatch) -> N
             raise RuntimeError("database unavailable")
         yield database
 
-    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", open_database)
     runtime = CliRuntime(config_file=None)
 
     with pytest.raises(RuntimeError, match="database unavailable"):
@@ -217,7 +217,7 @@ def test_tasks_list_reuses_one_runtime_database(monkeypatch: pytest.MonkeyPatch)
         seen.append(kwargs["db"])
         return "rendered"
 
-    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", open_database)
     monkeypatch.setattr(tasks_main, "check_tasks_enabled", lambda: None)
     monkeypatch.setattr(task_config, "LocalTaskManager", task_manager)
     monkeypatch.setattr(crud, "resolve_project_ref", lambda ref: None)

@@ -1,0 +1,128 @@
+name: planning
+type: pipeline
+version: "1.0"
+description: |
+  Planning runbook: launches the Plan Writer, Plan Enhancer and Plan Adversary
+  seats into one workspace. Each seat runs its own agent definition.
+
+  Placement: the writer opens a tab, the adversary splits right of the writer
+  and the enhancer splits below it. A seat requested without the writer opens
+  its own tab. Relaunch missing seats with a fresh run that names them in
+  `seats`; a failed runbook execution is never resumed.
+tags: [runbook]
+resume_on_restart: true
+
+inputs:
+  workspace:
+    type: string
+    required: true
+    description: "Workspace that receives the seats"
+  writer_title:
+    type: string
+    default: "Plan Writer"
+  enhancer_title:
+    type: string
+    default: "Plan Enhancer"
+  adversary_title:
+    type: string
+    default: "Plan Adversary"
+  seats:
+    type: string
+    default: "writer,enhancer,adversary"
+    description: "Comma-separated seats to launch; any non-empty subset relaunches only those"
+
+outputs:
+  writer: "${{ steps.writer.output }}"
+  adversary: "${{ steps.adversary_split.output or steps.adversary_tab.output }}"
+  enhancer: "${{ steps.enhancer_split.output or steps.enhancer_tab.output }}"
+
+steps:
+  - id: guard
+    mcp:
+      server: gobby-agents
+      tool: check_runbook_seats
+      arguments:
+        workspace: "${{ inputs.workspace }}"
+        requested: "${{ inputs.seats }}"
+        catalogue:
+          - name: writer
+            title: "${{ inputs.writer_title }}"
+            agent: plan-writer
+          - name: enhancer
+            title: "${{ inputs.enhancer_title }}"
+            agent: plan-enhancer
+          - name: adversary
+            title: "${{ inputs.adversary_title }}"
+            agent: plan-adversary
+
+  - id: writer
+    condition: "${{ 'writer' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: plan-writer
+        prompt: "You are ${{ inputs.writer_title }} in workspace ${{ inputs.workspace }}."
+        reserved_run_id: "${{ invocation_id }}"
+        placement:
+          tab:
+            workspace: "${{ inputs.workspace }}"
+            title: "${{ inputs.writer_title }}"
+
+  - id: adversary_split
+    condition: "${{ 'writer' in inputs.seats.split(',') and 'adversary' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: plan-adversary
+        prompt: "You are ${{ inputs.adversary_title }} in workspace ${{ inputs.workspace }}."
+        reserved_run_id: "${{ invocation_id }}"
+        placement:
+          split:
+            pane: "${{ steps.writer.output.pane_ref }}"
+            axis: right
+            title: "${{ inputs.adversary_title }}"
+
+  - id: adversary_tab
+    condition: "${{ 'writer' not in inputs.seats.split(',') and 'adversary' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: plan-adversary
+        prompt: "You are ${{ inputs.adversary_title }} in workspace ${{ inputs.workspace }}."
+        reserved_run_id: "${{ invocation_id }}"
+        placement:
+          tab:
+            workspace: "${{ inputs.workspace }}"
+            title: "${{ inputs.adversary_title }}"
+
+  - id: enhancer_split
+    condition: "${{ 'writer' in inputs.seats.split(',') and 'enhancer' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: plan-enhancer
+        prompt: "You are ${{ inputs.enhancer_title }} in workspace ${{ inputs.workspace }}."
+        reserved_run_id: "${{ invocation_id }}"
+        placement:
+          split:
+            pane: "${{ steps.writer.output.pane_ref }}"
+            axis: down
+            title: "${{ inputs.enhancer_title }}"
+
+  - id: enhancer_tab
+    condition: "${{ 'writer' not in inputs.seats.split(',') and 'enhancer' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: plan-enhancer
+        prompt: "You are ${{ inputs.enhancer_title }} in workspace ${{ inputs.workspace }}."
+        reserved_run_id: "${{ invocation_id }}"
+        placement:
+          tab:
+            workspace: "${{ inputs.workspace }}"
+            title: "${{ inputs.enhancer_title }}"

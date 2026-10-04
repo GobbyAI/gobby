@@ -18,7 +18,6 @@ from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_models import SpawnRequest
 from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError
-from gobby.agents.tmux.spawner import _infer_auth_cli
 from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
@@ -77,22 +76,6 @@ def test_every_managed_provider_wraps_the_completed_command_once(spawn_name: str
     assert len(runtime_wraps) == 1
 
 
-def test_auth_cli_inference_looks_through_srt_wrapper() -> None:
-    command = [
-        "/managed/node",
-        "/managed/runner.mjs",
-        "--settings",
-        "/policy/settings.json",
-        "--violations",
-        "/policy/violations.jsonl",
-        "--",
-        "/usr/local/bin/codex",
-        "exec",
-    ]
-
-    assert _infer_auth_cli(command) == "codex"
-
-
 @pytest.mark.asyncio
 async def test_pane_pid_identity_accepts_provider_inside_srt_argv() -> None:
     process = MagicMock()
@@ -131,7 +114,7 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
         run_manager=run_manager,
         sandbox_config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
     spawn_context = SimpleNamespace(
         session_id="child",
@@ -148,17 +131,6 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
         provider_executable="/opt/droid/versions/0.48.0",
         node_path="/managed/node",
         runner_path="/managed/runner.mjs",
-    )
-    spawner = MagicMock()
-    spawner.spawn.return_value = SimpleNamespace(
-        success=True,
-        pid=123,
-        terminal_type="tmux",
-        terminal_id="gobby-agent",
-        tmux_socket_name="gobby",
-        tmux_socket_path="/tmp/gobby.sock",
-        error=None,
-        message=None,
     )
 
     with (
@@ -215,7 +187,7 @@ async def test_srt_preflight_failure_prevents_tmux_spawn() -> None:
             agent_run_id="actual-run",
             env_vars={"GOBBY_SESSION_ID": "child"},
         ),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
     spawn_context = SimpleNamespace(
         session_id="child",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import io
 import os
 import tokenize
@@ -135,11 +136,47 @@ def python_keyword_stub(old: str, new: str) -> tuple[str, tuple[str, ...]] | Non
     return ("" if partial_header else before.name), added
 
 
-def python_noop_module(source: str) -> dict[str, frozenset[str] | None] | None:
-    """Recognize a new API module containing declarations and inert class bodies only."""
+def python_added_source(old: str, new: str) -> str | None:
+    """Return inert module declarations an edit added before or after its intact anchor."""
+    if not old.strip():
+        return None
+    if new.startswith(old):
+        added = new[len(old) :]
+    elif new.endswith(old):
+        added = new[: -len(old)]
+    else:
+        return None
+    return added if python_noop_module(added) is not None else None
+
+
+PythonModuleCache = dict[str, ast.Module | None]
+
+
+def parse_python_module(source: str, cache: PythonModuleCache | None = None) -> ast.Module | None:
+    """Reuse read-only module trees within one evidence evaluation, including invalid source."""
+    if cache is not None and source in cache:
+        return cache[source]
     try:
         module = ast.parse(source)
     except (SyntaxError, ValueError):
+        module = None
+    if cache is not None:
+        cache[source] = module
+    return module
+
+
+def python_noop_module(
+    source: str,
+    *,
+    context_source: str | None = None,
+    parse_cache: PythonModuleCache | None = None,
+) -> dict[str, frozenset[str] | None] | None:
+    """Recognize a new API module containing declarations and inert class bodies only."""
+    module = parse_python_module(source, parse_cache)
+    context = (
+        parse_python_module(context_source, parse_cache) if context_source is not None else module
+    )
+    if module is None or context is None:
         return None
     classes: dict[str, frozenset[str] | None] = {}
     for statement in module.body:
@@ -159,8 +196,13 @@ def python_noop_module(source: str) -> dict[str, frozenset[str] | None] | None:
                 return None
             classes[statement.name] = frozenset()
             continue
-        if not isinstance(statement, ast.ClassDef) or statement.bases or statement.keywords:
+        if not isinstance(statement, ast.ClassDef) or statement.keywords:
             return None
+        if statement.bases:
+            if not _exception_declaration(statement, context):
+                return None
+            classes[statement.name] = None
+            continue
         if any(
             not isinstance(item, ast.Name) or item.id != "dataclass"
             for item in statement.decorator_list
@@ -181,6 +223,39 @@ def python_noop_module(source: str) -> dict[str, frozenset[str] | None] | None:
             methods.add(member.name)
         classes[statement.name] = frozenset(methods)
     return classes or None
+
+
+def _exception_declaration(statement: ast.ClassDef, module: ast.Module) -> bool:
+    """Allow only inert declarations inheriting one unshadowed builtin exception."""
+    if len(statement.bases) != 1 or statement.decorator_list:
+        return False
+    base = statement.bases[0]
+    if not isinstance(base, ast.Name):
+        return False
+    exception = getattr(builtins, base.id, None)
+    if not isinstance(exception, type) or not issubclass(exception, BaseException):
+        return False
+    for item in ast.walk(module):
+        # Adding the binding activates existing uses, including assigned aliases.
+        # A declaration-only proof must not exempt that behavioral change.
+        if (
+            isinstance(item, ast.Name)
+            and item.id == statement.name
+            or isinstance(item, ast.Attribute)
+            and item.attr == statement.name
+        ):
+            return False
+        if (
+            isinstance(item, ast.Name)
+            and isinstance(item.ctx, ast.Store)
+            and item.id == base.id
+            or isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+            and item.name == base.id
+            or isinstance(item, ast.alias)
+            and (item.asname or item.name.split(".")[0]) == base.id
+        ):
+            return False
+    return all(_is_docstring(member) or isinstance(member, ast.Pass) for member in statement.body)
 
 
 def _is_docstring(node: ast.stmt) -> bool:

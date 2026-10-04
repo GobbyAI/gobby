@@ -12,7 +12,7 @@ from uuid import UUID
 
 import pytest
 
-from gobby.agents.idle_detector import ComposerRead, IdleDetector
+from gobby.agents.idle_detector import IdleDetector
 from gobby.events.live_wake import ActivityProbe, TerminalActivity, composer_occupied_result
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.runner_init.orchestration import _send_tmux_session_wake
@@ -20,7 +20,7 @@ from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.storage.terminals import Terminal
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.leases import TerminalLeaseRegistry
-from gobby.terminals.runtime import Delivered, IndeterminateWrite
+from gobby.terminals.runtime import Delivered, IndeterminateWrite, UnregisteredBackendError
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.events.wake_test_support import PendingWakeLedger
@@ -140,6 +140,41 @@ async def test_native_backed_interactive_session_wakes_through_its_terminal_row(
     # FakeRuntime ignores Terminal.backend, so the tmux runtime staying untouched
     # is the only thing separating a routed write from a bound one.
     assert managed_chain.tmux.write_log == []
+
+
+@pytest.mark.parametrize("backend", ["native", "tmux"])
+async def test_wake_requires_backend_registered_by_native_only_runner(
+    managed_chain: ManagedChain,
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+) -> None:
+    row = replace(managed_chain.row, backend=backend)
+    managed_chain.store.rows[row.id] = row
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, managed_chain.store),
+        runtime_registry(managed_chain.native),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="native-only-test"),
+    )
+    monkeypatch.setattr(
+        "gobby.runner_init.orchestration.wake_write_services",
+        lambda: (managed_chain.store, coordinator),
+    )
+    dispatcher = WakeDispatcher(
+        session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        terminal_manager=managed_chain.store,
+    )
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+    if backend == "native":
+        assert result["delivered"] is True
+        assert managed_chain.native.write_log == WAKE_SEQUENCE
+    else:
+        assert result["delivered"] is False
+        assert result["error_code"] == "terminal_wake_failed"
+        with pytest.raises(UnregisteredBackendError):
+            coordinator.runtime_for(row)
+        assert managed_chain.native.write_log == []
 
 
 @pytest.mark.asyncio
@@ -787,40 +822,9 @@ async def test_managed_terminal_wake_is_withheld_for_a_draft(
 
     assert result == composer_occupied_result(WAKE_SESSION_ID, method="terminal")
     assert managed_chain.native.write_log == []
-    assert any(
-        record.levelno >= logging.INFO and "hello draft" in record.getMessage()
-        for record in caplog.records
-    )
-
-
-@pytest.mark.asyncio
-async def test_composer_occupied_log_truncates_a_long_draft(
-    managed_chain: ManagedChain,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    long_line = "word " * 50
-
-    async def _long(_session: object, _terminal: object) -> TerminalActivity:
-        return TerminalActivity(ComposerRead("draft", long_line.strip()))
-
-    dispatcher = WakeDispatcher(
-        session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
-        ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
-        terminal_manager=managed_chain.store,
-        activity_probe=_long,
-    )
-
-    with caplog.at_level(logging.WARNING, logger="gobby.events.wake"):
-        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
-
-    assert result == composer_occupied_result(WAKE_SESSION_ID, method="terminal")
-    messages = [
-        record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING
-    ]
-    assert len(messages) == 1
-    assert long_line.strip() not in messages[0]
-    assert messages[0].endswith("...")
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("operator draft (11 chars)" in message for message in messages)
+    assert not any("hello draft" in message for message in messages)
 
 
 def _batch_dispatcher(probe: ActivityProbe) -> tuple[WakeDispatcher, AsyncMock]:

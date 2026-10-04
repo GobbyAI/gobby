@@ -161,6 +161,42 @@ def test_composition_roots_give_the_coordinator_the_registry() -> None:
     assert "build_terminal_services(" in monitor_source
 
 
+def test_wiring_registers_the_external_tmux_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """External tmux rows resolve a runtime, so send_keys and wake reach them."""
+    from gobby.config.terminals import TerminalConfig
+    from gobby.config.tmux import TmuxConfig
+    from gobby.runner_init import terminal_wiring
+    from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+
+    for target in (
+        "gobby.storage.terminals.TerminalManager",
+        "gobby.terminals.host_manager.TerminalHostManager",
+        "gobby.storage.agents.LocalAgentRunManager",
+        "gobby.storage.workspaces.WorkspaceManager",
+        "gobby.terminals.composer_lock.bind_composer_coordinator",
+        "gobby.runner_init.terminal_wiring.bind_wake_write_services",
+    ):
+        monkeypatch.setattr(target, MagicMock())
+    monkeypatch.setattr("gobby.utils.machine_id.require_machine_id", lambda: "machine-1")
+    native = FakeRuntime(backend="native")
+    monkeypatch.setattr(
+        "gobby.terminals.native_runtime.NativeTerminalRuntime",
+        lambda *args, **kwargs: native,
+    )
+    runner = MagicMock()
+    runner.agent_runner = None
+    config = MagicMock()
+    config.tmux = TmuxConfig()
+    config.terminals = TerminalConfig()
+    config.terminal_host = None
+
+    terminal_wiring.init_terminal_wiring(cast(Any, runner), cast(Any, config))
+
+    registry = runner.terminal_runtime_registry
+    assert registry.resolve("native") is native
+    assert isinstance(registry.resolve("tmux"), TmuxTerminalRuntime)
+
+
 def test_wiring_sweeps_orphans_before_accepting_writes() -> None:
     from gobby.runner_init import terminal_wiring
 
@@ -294,3 +330,68 @@ async def test_configure_terminals_installs_input_activity_sink() -> None:
     assert coordinator.observed == ["t-1", "t-1", "t-2"]
     assert all(thread != threading.get_ident() for thread in observer.threads)
     assert all(thread == threading.get_ident() for thread in coordinator.threads)
+
+
+def test_configure_terminals_builds_one_agent_pane_reserver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reserver shares WorkspaceOps' services and exists only beside it."""
+    from gobby.servers.websocket import server as server_module
+    from gobby.storage.workspaces import WorkspaceManager
+    from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.workspace_agent_panes import AgentPaneReserver
+
+    built: list[AgentPaneReserver] = []
+
+    def recording_reserver(**kwargs: Any) -> AgentPaneReserver:
+        reserver = AgentPaneReserver(**kwargs)
+        built.append(reserver)
+        return reserver
+
+    monkeypatch.setattr(server_module, "AgentPaneReserver", recording_reserver, raising=False)
+    ws_config = MagicMock(spec=WebSocketConfig)
+    ws_config.host = "localhost"
+    ws_config.port = 60888
+    ws_config.ping_interval = 30
+    ws_config.ping_timeout = 10
+    ws_config.max_message_size = 1024
+
+    def configured(
+        *, sessions: SessionManager | None, workspace_manager: WorkspaceManager | None
+    ) -> WebSocketServer:
+        server = WebSocketServer(ws_config, MagicMock(), AsyncMock(return_value="test-user"))
+        server.session_manager = sessions
+        server.configure_terminals(
+            MagicMock(),
+            TerminalRuntimeRegistry(),
+            lease_registry=MagicMock(),
+            write_coordinator=MagicMock(),
+            workspace_manager=workspace_manager,
+        )
+        return server
+
+    server = configured(
+        sessions=MagicMock(spec=SessionManager),
+        workspace_manager=WorkspaceManager(MagicMock(spec=HubDatabase)),
+    )
+    ops = server.workspace_ops
+    reserver = server.agent_pane_reserver
+    assert ops is not None
+    assert reserver is not None
+    assert built == [reserver]
+    assert reserver._workspaces is ops._workspaces
+    assert reserver._terminals is ops._terminals
+    assert reserver._registry is ops._registry
+    assert reserver._sessions is ops._sessions
+    assert reserver._publish == server.broadcast_workspace_event
+    assert reserver._publish == ops._publish
+
+    no_workspaces = configured(sessions=MagicMock(spec=SessionManager), workspace_manager=None)
+    no_sessions = configured(
+        sessions=None, workspace_manager=WorkspaceManager(MagicMock(spec=HubDatabase))
+    )
+    assert no_workspaces.workspace_ops is None
+    assert no_workspaces.agent_pane_reserver is None
+    assert no_sessions.workspace_ops is None
+    assert no_sessions.agent_pane_reserver is None
+    assert len(built) == 1

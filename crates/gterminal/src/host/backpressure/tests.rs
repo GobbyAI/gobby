@@ -12,7 +12,7 @@ use tokio::time::timeout;
 
 use super::{
     encoded_message_bytes, enqueue_control, send_control, write_outbound, ControlClose,
-    FrameMailbox, PushResult,
+    ControlOutbound, FrameMailbox, PushResult,
 };
 use crate::host::config::HostConfig;
 use crate::host::helpers::push_terminal_ansi;
@@ -201,23 +201,27 @@ async fn control_deadline_and_event_overflow() {
         "the host must send exactly one response per request, got {extra:?}"
     );
 
-    // A peer that takes the socket slower than the host fills it is closed at
-    // control_deadline, and the host names the reason on the wire first. The
-    // deadline is tiny on purpose: nextest runs this beside hundreds of other
-    // test processes, and the shorter the window the less of the machine's
-    // scheduling noise lands inside it.
+    // Event subscribers still have a write deadline. A large event fills a
+    // small socket buffer while the peer drains too slowly to keep up.
     let slow_state = test_state(HostConfig {
         control_deadline_ms: 20,
         control_queue_entries: 4,
         ..HostConfig::default()
     });
     let deadline = slow_state.config.control_deadline();
-    // 4 KiB of in-flight bytes, so the host blocks almost immediately and the
-    // peer is left with only a buffer's worth to read once the host gives up.
     let mut slow = ControlPeer::connect_with_send_buffer(&slow_state, Some(4096)).await;
-    let huge_id = "x".repeat(1024 * 1024);
+    slow.send(json!({"id": "subscribe", "method": "subscribe_events"}))
+        .await;
+    assert_eq!(
+        slow.next_response().await.expect("subscribe ack")["subscribed"],
+        true
+    );
+    let event_terminal_id = "x".repeat(200 * 1024);
     let started = Instant::now();
-    slow.send(json!({"id": huge_id, "method": "ping"})).await;
+    slow_state
+        .events
+        .emit_terminal_exited(event_terminal_id.clone(), "host-term".into(), None)
+        .await;
     let (received, closed) = slow.drain_slowly(Duration::from_secs(5)).await;
     let closed_after = started.elapsed();
     assert!(
@@ -229,21 +233,15 @@ async fn control_deadline_and_event_overflow() {
         closed_after >= deadline,
         "the host must hold the response for the whole deadline, closed after {closed_after:?}"
     );
-    assert!(
-        received.len() < huge_id.len() / 2,
-        "the deadline must cut the oversized response short, peer read {} of {} bytes",
-        received.len(),
-        huge_id.len()
-    );
+    assert!(received.len() < event_terminal_id.len() / 2);
     let tail = String::from_utf8_lossy(&received[received.len().saturating_sub(64)..]).into_owned();
     assert!(
         tail.ends_with(DEADLINE_LINE),
         "the host must name control_deadline before closing; tail={tail:?}"
     );
 
-    // A real event subscriber that does not drain is told event_overflow on its
-    // own socket. Only the `vt-engine` build has an emit path to overflow it
-    // with, so the default-feature build compiles this test without the block.
+    // A subscriber that does not drain is told event_overflow on its own
+    // socket. Exercise this under the feature set used by the gterm binary.
     #[cfg(feature = "vt-engine")]
     {
         let event_state = test_state(HostConfig {
@@ -292,6 +290,40 @@ async fn control_deadline_and_event_overflow() {
 }
 
 #[tokio::test]
+async fn rpc_reply_survives_recoverable_reader_stall() {
+    let state = test_state(HostConfig {
+        control_deadline_ms: 20,
+        control_queue_entries: 1,
+        ..HostConfig::default()
+    });
+    let mut peer = ControlPeer::connect_with_send_buffer(&state, Some(4096)).await;
+    let huge_id = "x".repeat(1024 * 1024);
+    peer.send(json!({"id": huge_id, "method": "ping"})).await;
+    let first_bytes = timeout(Duration::from_secs(5), peer.reader.fill_buf())
+        .await
+        .expect("reply write must begin")
+        .expect("control peer read");
+    assert!(!first_bytes.is_empty());
+
+    tokio::time::sleep(state.config.control_deadline() * 3).await;
+    let reply = timeout(Duration::from_secs(5), peer.next_response())
+        .await
+        .expect("stalled reply must complete after reads resume")
+        .expect("control connection must stay open");
+    assert_eq!(reply["id"].as_str(), Some(huge_id.as_str()));
+    assert_eq!(reply["ok"], true);
+
+    peer.send(json!({"id": "after-stall", "method": "ping"}))
+        .await;
+    let next = timeout(Duration::from_secs(5), peer.next_response())
+        .await
+        .expect("next request must complete")
+        .expect("control connection must remain usable");
+    assert_eq!(next["id"], "after-stall");
+    assert_eq!(next["ok"], true);
+}
+
+#[tokio::test]
 async fn completed_rpc_reply_waits_for_outbound_capacity() {
     let (tx, mut rx) = mpsc::channel(1);
     enqueue_control(&tx, json!({"id": "held"})).expect("fill");
@@ -302,9 +334,15 @@ async fn completed_rpc_reply_waits_for_outbound_capacity() {
         !wait.is_finished(),
         "a completed RPC reply must wait for outbound capacity instead of dropping"
     );
-    assert_eq!(rx.recv().await.expect("held")["id"], "held");
+    let ControlOutbound::Bounded(held) = rx.recv().await.expect("held") else {
+        panic!("immediate control response must stay bounded");
+    };
+    assert_eq!(held["id"], "held");
     wait.await.expect("join").expect("rpc enqueued");
-    assert_eq!(rx.recv().await.expect("rpc")["id"], "rpc");
+    let ControlOutbound::Reply(rpc) = rx.recv().await.expect("rpc") else {
+        panic!("completed RPC reply must be reliable");
+    };
+    assert_eq!(rpc["id"], "rpc");
 }
 
 fn error_msg(code: &str) -> ServerMessage {
@@ -455,7 +493,8 @@ fn force_push_never_exceeds_cap() {
 #[test]
 fn enqueue_control_returns_overflow_at_cap() {
     let (tx, _rx) = mpsc::channel(1);
-    tx.try_send(json!({"n": 1})).expect("fill control queue");
+    tx.try_send(ControlOutbound::Bounded(json!({"n": 1})))
+        .expect("fill control queue");
     assert_eq!(
         enqueue_control(&tx, json!({"n": 2})),
         Err(ControlClose::Overflow)
@@ -620,7 +659,8 @@ async fn write_outbound_distinguishes_disconnect_from_peer_error() {
     assert_eq!(closed, ControlClose::Disconnected);
 
     let (tx, rx) = mpsc::channel(4);
-    tx.try_send(json!({"ok": true})).expect("enqueue");
+    tx.try_send(ControlOutbound::Bounded(json!({"ok": true})))
+        .expect("enqueue");
     drop(tx);
     let errored = write_outbound(FailingWriter, rx, Duration::from_millis(50)).await;
     assert_eq!(errored, ControlClose::Io);
@@ -629,7 +669,8 @@ async fn write_outbound_distinguishes_disconnect_from_peer_error() {
 #[tokio::test]
 async fn write_outbound_bounds_flush_by_control_deadline() {
     let (tx, rx) = mpsc::channel(1);
-    tx.try_send(json!({"ok": true})).expect("enqueue");
+    tx.try_send(ControlOutbound::Bounded(json!({"ok": true})))
+        .expect("enqueue");
     drop(tx);
     let closed = timeout(
         Duration::from_secs(1),
@@ -637,6 +678,24 @@ async fn write_outbound_bounds_flush_by_control_deadline() {
     )
     .await
     .expect("control close is bounded");
+    assert_eq!(closed, ControlClose::Deadline);
+}
+
+#[tokio::test]
+async fn id_bearing_handshake_error_still_has_write_deadline() {
+    let (tx, rx) = mpsc::channel(1);
+    enqueue_control(
+        &tx,
+        json!({"id": "hello", "ok": false, "error": "invalid_token"}),
+    )
+    .expect("enqueue handshake error");
+    drop(tx);
+    let closed = timeout(
+        Duration::from_secs(1),
+        write_outbound(StalledFlushWriter, rx, Duration::from_millis(10)),
+    )
+    .await
+    .expect("unauthenticated peer must not hold the writer indefinitely");
     assert_eq!(closed, ControlClose::Deadline);
 }
 

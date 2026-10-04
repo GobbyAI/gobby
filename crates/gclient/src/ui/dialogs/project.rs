@@ -22,7 +22,7 @@ use crate::ui::widgets::{
 use super::{input_line, primary_button_style, secondary_button_style, WorktreeChoice};
 
 /// herdr's overlay title for registering a checkout.
-pub const NEW_PROJECT_TITLE: &str = "new workspace";
+pub const NEW_PROJECT_TITLE: &str = "New workspace";
 const POPUP_WIDTH: u16 = 64;
 const NEW_PROJECT_HEIGHT: u16 = 8;
 const NEW_WORKTREE_HEIGHT: u16 = 10;
@@ -66,11 +66,11 @@ fn buttons(
     }];
     specs.extend(hints.iter().map(|hint| ActionButtonSpec {
         hint: Some(hint),
-        label: "complete",
+        label: "Complete",
     }));
     specs.push(ActionButtonSpec {
         hint: Some("esc"),
-        label: "cancel",
+        label: "Cancel",
     });
     let rects = action_button_row_rects(inner, &specs, 2, inner.height.saturating_sub(1));
     for (index, (spec, rect)) in specs.iter().zip(&rects).enumerate() {
@@ -116,7 +116,7 @@ pub fn render_new_project(
     );
     input(frame, rows[2], chrome, path, Some(cursor));
     error_line(frame, rows[3], chrome, error);
-    buttons(frame, inner, chrome, "open", &["tab"])
+    buttons(frame, inner, chrome, "Open", &["tab"])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -147,7 +147,7 @@ pub fn render_new_worktree(
         Constraint::Min(0),
     ])
     .areas::<7>(inner);
-    render_modal_header(frame, rows[0], "new worktree", p);
+    render_modal_header(frame, rows[0], "New worktree", p);
     let label = Style::default().fg(p.subtext0);
     render_modal_description(frame, rows[1], "branch", label);
     input(
@@ -160,7 +160,7 @@ pub fn render_new_worktree(
     render_modal_description(frame, rows[3], "base", label);
     input(frame, rows[4], chrome, base, base_focused.then_some(cursor));
     error_line(frame, rows[5], chrome, error);
-    buttons(frame, inner, chrome, "create", &[])
+    buttons(frame, inner, chrome, "Create", &[])
 }
 
 pub fn render_open_worktree(
@@ -191,7 +191,7 @@ pub fn render_open_worktree(
         Constraint::Min(0),
     ])
     .areas::<4>(inner);
-    render_modal_header(frame, rows[0], "open worktree", p);
+    render_modal_header(frame, rows[0], "Open worktree", p);
     if choices.is_empty() {
         render_modal_description(
             frame,
@@ -220,7 +220,7 @@ pub fn render_open_worktree(
             rect,
         );
     }
-    buttons(frame, inner, chrome, "open", &[])
+    buttons(frame, inner, chrome, "Open", &[])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -254,7 +254,7 @@ pub fn render_remove_worktree(
     .areas::<5>(inner);
     let warn = Style::default().fg(p.red).add_modifier(Modifier::BOLD);
     frame.render_widget(
-        Paragraph::new(Line::styled(" delete worktree checkout?", warn)),
+        Paragraph::new(Line::styled(" Delete worktree checkout?", warn)),
         rows[0],
     );
     render_modal_description(
@@ -279,11 +279,11 @@ pub fn render_remove_worktree(
         &[
             ActionButtonSpec {
                 hint: Some("↵"),
-                label: "delete",
+                label: "Delete",
             },
             ActionButtonSpec {
                 hint: Some("esc"),
-                label: "cancel",
+                label: "Cancel",
             },
         ],
         2,
@@ -294,14 +294,14 @@ pub fn render_remove_worktree(
             frame,
             delete_rect,
             Some("↵"),
-            "delete",
+            "Delete",
             primary_button_style(chrome, p.red),
         );
         render_action_button(
             frame,
             cancel_rect,
             Some("esc"),
-            "cancel",
+            "Cancel",
             secondary_button_style(chrome),
         );
     }

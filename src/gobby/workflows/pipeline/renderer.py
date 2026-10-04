@@ -78,6 +78,7 @@ _RESERVED_CONTEXT_KEYS = frozenset(
         "project_id",
         "project_path",
         "current_branch",
+        "invocation_id",
     }
 )
 
@@ -112,6 +113,7 @@ class StepRenderer:
             "project_id": context.get("project_id"),
             "project_path": context.get("project_path"),
             "current_branch": context.get("current_branch"),
+            "invocation_id": context.get("invocation_id"),
         }
         # Flatten step outputs as top-level names for direct template access
         for step_id, step_data in steps.items():
@@ -351,6 +353,7 @@ class StepRenderer:
                 "project_id": context.get("project_id"),
                 "project_path": context.get("project_path"),
                 "current_branch": context.get("current_branch"),
+                "invocation_id": context.get("invocation_id"),
             }
             # Flatten step outputs as top-level names for condition evaluation
             for step_id, step_data in steps.items():

@@ -1243,7 +1243,7 @@ fn agent_sort_pref_round_trips() {
         .iter()
         .map(|cell| cell.symbol())
         .collect();
-    assert!(screen.contains("agent sort"), "settings dialog: {screen:?}");
+    assert!(screen.contains("Agent sort"), "settings dialog: {screen:?}");
     assert!(screen.contains("priority"), "settings dialog: {screen:?}");
 
     std::fs::write(&path, "[ui]\nagent_sort = \"sideways\"\n").expect("write malformed prefs");

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import shlex
+import subprocess
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -972,6 +975,208 @@ class TestCrossTreeCover:
         assert facts.terminal_validation_failures == (_BASE_RED,)
 
 
+_GONE = "tests/unit/test_gone.py"
+_ALIVE = "tests/unit/test_alive.py"
+_MISSING_PATH_RED = f"uv run pytest {_GONE} {_ALIVE} -q"
+_SURVIVING_GREEN = f"uv run pytest {_ALIVE} -q"
+_MISSING_PATH_OUTPUT = (
+    "collected 0 items\n\n"
+    "========================= no tests collected in 0.01s ==========================\n\n"
+    f"ERROR: file or directory not found: {_GONE}\n"
+)
+
+
+def _commit(repo: Path) -> None:
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+        cwd=repo,
+        check=True,
+    )
+
+
+class TestMissingPathSupersession:
+    """A red that collected nothing because a named path is gone narrows to the survivors."""
+
+    @pytest.fixture
+    def project(self, tmp_path: Path) -> str:
+        """A repository whose HEAD tracks the surviving test and never tracked the gone one."""
+        (tmp_path / _ALIVE).parent.mkdir(parents=True)
+        (tmp_path / _ALIVE).write_text("")
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        _commit(tmp_path)
+        return str(tmp_path)
+
+    def test_uncommitted_deletion_of_tracked_path_still_blocks(self, project: str) -> None:
+        (Path(project) / _GONE).write_text("")
+        _commit(Path(project))
+        (Path(project) / _GONE).unlink()
+        runs = [
+            _run(1, "failure", _MISSING_PATH_RED, output=_MISSING_PATH_OUTPUT),
+            _run(2, "success", _SURVIVING_GREEN),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False, project_path=project) == (
+            runs[0],
+        )
+
+    def test_unanswered_head_lookup_still_blocks(self, tmp_path: Path) -> None:
+        (tmp_path / _ALIVE).parent.mkdir(parents=True)
+        (tmp_path / _ALIVE).write_text("")
+        runs = [
+            _run(1, "failure", _MISSING_PATH_RED, output=_MISSING_PATH_OUTPUT),
+            _run(2, "success", _SURVIVING_GREEN),
+        ]
+        assert unresolved_validation_failures(
+            runs, owner_handoff=False, project_path=str(tmp_path)
+        ) == (runs[0],)
+
+    @pytest.mark.parametrize("history", ["never_tracked", "committed_deletion", "committed_rename"])
+    def test_missing_path_failure_is_superseded_by_green_over_surviving_paths(
+        self, project: str, history: str
+    ) -> None:
+        repo = Path(project)
+        if history != "never_tracked":
+            (repo / _GONE).write_text("")
+            _commit(repo)
+            if history == "committed_deletion":
+                (repo / _GONE).unlink()
+            else:
+                (repo / _GONE).rename(repo / "tests/unit/test_renamed.py")
+            _commit(repo)
+        runs = [
+            _run(1, "failure", _MISSING_PATH_RED, output=_MISSING_PATH_OUTPUT),
+            _run(2, "success", _SURVIVING_GREEN),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False, project_path=project) == ()
+
+    @pytest.mark.parametrize(
+        "output",
+        [
+            "collected 3 items\n\nFAILED tests/unit/test_alive.py::test_case\n1 failed, 2 passed",
+            "collected 1 item\n\nFAILED tests/unit/test_alive.py::test_case\n1 failed\n"
+            + _MISSING_PATH_OUTPUT,
+        ],
+        ids=["collected_only", "collected_then_missing_path"],
+    )
+    def test_collected_failure_still_requires_full_coverage(
+        self, project: str, output: str
+    ) -> None:
+        runs = [
+            _run(1, "failure", _MISSING_PATH_RED, output=output),
+            _run(2, "success", _SURVIVING_GREEN),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False, project_path=project) == (
+            runs[0],
+        )
+
+    @pytest.mark.parametrize(
+        ("red_order", "output", "present", "use_project"),
+        [
+            (2, _MISSING_PATH_OUTPUT, False, True),
+            (1, _MISSING_PATH_OUTPUT, True, True),
+            (1, _MISSING_PATH_OUTPUT + "ERROR: usage: pytest [options]\n", False, True),
+            (1, _MISSING_PATH_OUTPUT, False, False),
+        ],
+        ids=["green_before_red", "path_still_present", "other_error", "no_project_path"],
+    )
+    def test_missing_path_red_still_blocks(
+        self, project: str, red_order: int, output: str, present: bool, use_project: bool
+    ) -> None:
+        if present:
+            (Path(project) / _GONE).write_text("")
+        runs = [
+            _run(red_order, "failure", _MISSING_PATH_RED, output=output),
+            _run(3 - red_order, "success", _SURVIVING_GREEN),
+        ]
+        project_path = project if use_project else None
+        assert unresolved_validation_failures(
+            runs, owner_handoff=False, project_path=project_path
+        ) == (runs[0],)
+
+
+class TestStopCoverCost:
+    """A long session's Stop must not pay per failure-green pair, or block the event loop."""
+
+    def test_cover_check_parses_each_command_a_bounded_number_of_times(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Unique paths keep commands parsed by earlier tests out of this count.
+        tag = id(self)
+        failures = [
+            _run(index, "failure", f"uv run pytest tests/cost/test_red_{index}_{tag}.py")
+            for index in range(40)
+        ]
+        greens = [
+            _run(100 + index, "success", f"uv run pytest tests/cost/test_green_{index}_{tag}.py")
+            for index in range(40)
+        ]
+        parses = 0
+        split = shlex.split
+
+        def counting_split(command: str) -> list[str]:
+            nonlocal parses
+            parses += 1
+            return split(command)
+
+        monkeypatch.setattr(shlex, "split", counting_split)
+
+        unresolved = unresolved_validation_failures(
+            [*failures, *greens], owner_handoff=False, project_path="/repo"
+        )
+
+        assert unresolved == tuple(failures)
+        # Two parsers per distinct command, not two per failure-green pair (3,200).
+        assert parses <= 2 * (len(failures) + len(greens))
+
+    @pytest.mark.asyncio
+    async def test_cover_check_runs_off_the_event_loop(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        derive = AsyncMock(return_value=TranscriptEvidence(validation_runs=(_run(1, "failure"),)))
+        monkeypatch.setattr("gobby.workflows.found_work_gate.derive_transcript_evidence", derive)
+        threads: list[int] = []
+
+        def recording_unresolved(*args: Any, **kwargs: Any) -> tuple[TranscriptValidationRun, ...]:
+            threads.append(threading.get_ident())
+            return unresolved_validation_failures(*args, **kwargs)
+
+        monkeypatch.setattr(
+            "gobby.workflows.found_work_gate.unresolved_validation_failures", recording_unresolved
+        )
+        session = SimpleNamespace(created_at=datetime.now(UTC))
+        analyzer = FoundWorkStopAnalyzer(
+            llm_service_resolver=lambda: None,
+            config_resolver=_Config,
+            session_manager=SimpleNamespace(get=lambda _session_id: session),
+            session_task_manager=None,
+        )
+
+        facts = await analyzer.analyze(
+            event=_event(HookEventType.STOP),
+            session_id=SESSION_ID,
+            variables={},
+            project_path=str(tmp_path),
+        )
+
+        assert facts.terminal_validation_failures == ("pytest tests/unit/test_widget.py",)
+        assert threads
+        assert threading.get_ident() not in threads
+
+
 def _claimed_task_link() -> dict[str, Any]:
     """Mirror a ``get_session_tasks`` link for a task this session holds open."""
     task = SimpleNamespace(
@@ -1161,7 +1366,9 @@ async def test_two_sessions_owner_filed_disposition_survives_later_turn(
         source="codex",
         project_id=sample_project["id"],
     )
-    failed_at = datetime.now(UTC)
+    # The task's created_at comes from the database clock, which can trail this
+    # process's clock by a fraction of a millisecond; the red ran well before filing.
+    failed_at = datetime.now(UTC) - timedelta(seconds=5)
     _window_bound_derive(
         monkeypatch,
         _run(

@@ -7,7 +7,7 @@ import errno
 import logging
 import os
 import signal
-import subprocess  # nosec B404 - argv-only Git process boundary
+import subprocess  # nosec B404 # argv-only Git process boundary
 import tempfile
 import threading
 import time
@@ -113,7 +113,7 @@ def _spawn_git(
             stdout_file=stdout_file,
             stderr_file=stderr_file,
         )
-    return subprocess.Popen(  # nosec B603 B607 - fixed executable, argv-only args
+    return subprocess.Popen(  # nosec B603 B607 # fixed executable, argv-only args
         argv,
         cwd=cwd,
         stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,

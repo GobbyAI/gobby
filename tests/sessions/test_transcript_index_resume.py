@@ -67,12 +67,13 @@ def test_resume_leaves_no_permanently_pending_stubs() -> None:
 
     state = appender._state
     assert state.pending_tool_calls == {}
-    assert len(state.resolved_tool_call_ids) == TOOL_CALLS
-    # The record the ids moved into is the one deepcopy shares, so the
-    # per-batch clone pays nothing for remembering them.
+    assert state.resolved_tool_call_ids == set()
+    assert state.is_pre_window_tool_call("toolu_0")
+    # The historical lookup is shared, so hydration and clone don't walk it.
     cloned = appender.clone()
     assert cloned._state.pending_tool_calls == {}
     assert cloned._state.resolved_tool_call_ids is state.resolved_tool_call_ids
+    assert cloned._state.pre_window_tool_first_open is state.pre_window_tool_first_open
 
 
 def test_a_tool_call_at_the_resume_point_is_not_marked_resolved() -> None:

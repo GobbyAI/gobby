@@ -1,12 +1,11 @@
 """Terminal spawning for agent execution.
 
-This module provides PreparedSpawn helpers for spawning CLI agents.
-The actual terminal spawning is handled by :class:`TmuxSpawner`.
+This module provides PreparedSpawn helpers for spawning CLI agents. The
+native terminal runtime places the terminal (see spawn_executor).
 
 Implementation is split across submodules:
 - spawners/prompt_manager.py: Prompt file creation and cleanup
 - spawners/command_builder.py: CLI command construction
-- agents/tmux/spawner.py: TmuxSpawner (sole terminal backend)
 """
 
 from __future__ import annotations
@@ -22,12 +21,9 @@ from gobby.agents.constants import get_terminal_env_vars
 from gobby.agents.session import ChildSessionConfig, ChildSessionManager
 from gobby.agents.spawners import (
     MAX_ENV_PROMPT_LENGTH,
-    SpawnResult,
-    TerminalSpawnerBase,
     build_cli_command,
     create_prompt_file,
 )
-from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.utils.local_token import read_local_api_token
@@ -37,12 +33,6 @@ if TYPE_CHECKING:
     from gobby.storage.managed_credentials import ManagedCredential, ManagedCredentialManager
 
 __all__ = [
-    # Result dataclasses
-    "SpawnResult",
-    # Base class
-    "TerminalSpawnerBase",
-    # Spawner (tmux-only)
-    "TmuxSpawner",
     # Helpers
     "PreparedSpawn",
     "cleanup_unlaunched_spawn",
@@ -330,6 +320,7 @@ def prepare_terminal_spawn(
             prepared,
             timeout_seconds=timeout_seconds,
             credential_manager=credential_manager,
+            workspace_path=workspace_path,
         )
     except Exception:
         cleanup_unlaunched_spawn(
@@ -452,6 +443,7 @@ def prepare_terminal_resume(
         prepared,
         timeout_seconds=timeout_seconds,
         credential_manager=credential_manager,
+        workspace_path=workspace_path,
     )
 
 
@@ -461,8 +453,14 @@ def _issue_prelaunch_credential(
     *,
     timeout_seconds: float | None,
     credential_manager: ManagedCredentialManager | None,
+    workspace_path: str | None = None,
 ) -> PreparedSpawn:
-    """Issue a scoped role and a signed grant file before provider launch."""
+    """Issue a scoped role and a signed grant file before provider launch.
+
+    ``workspace_path`` is the run's checkout. When it is a registered worktree of
+    the run's project, the issuer binds that worktree's code-index overlay, so a
+    run without its own isolation workspace (a close reviewer) can still index it.
+    """
     from gobby.agents.code_index import (
         _active_deployment_grant_context,
         _signed_grant_from_credential,
@@ -491,6 +489,7 @@ def _issue_prelaunch_credential(
         session_id=uuid.UUID(prepared.session_id),
         agent_run_id=uuid.UUID(prepared.agent_run_id),
         expires_at=datetime.now(UTC) + timedelta(seconds=lifetime_seconds),
+        requested_project_path=workspace_path,
     )
     prepared.managed_credential = credential
     grant = _signed_grant_from_credential(

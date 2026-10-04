@@ -316,16 +316,6 @@ def _check_hooks_in_file(path: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def get_tmux_version() -> str | None:
-    """Get tmux version."""
-    output = _run_cmd(["tmux", "-V"])
-    if output:
-        # "tmux 3.4" → "3.4"
-        match = re.search(r"(\d+\.\d+[a-z]?)", output)
-        return match.group(1) if match else output
-    return None
-
-
 def get_docker_version() -> str | None:
     """Get Docker version."""
     output = _run_cmd(["docker", "--version"])

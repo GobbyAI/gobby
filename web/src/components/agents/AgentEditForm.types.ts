@@ -11,7 +11,6 @@ export interface AgentFormData {
   model: string;
   reasoning_effort: string;
   reasoning_required: boolean;
-  mode: string;
   isolation: string;
   base_branch: string;
   timeout: number;
@@ -33,12 +32,9 @@ export interface AgentItemForPanel {
     reasoning_effort?: string | null;
     reasoning_required?: boolean | null;
     fallback_agent: string | null;
-    mode: string;
     isolation: string | null;
     base_branch: string;
     timeout: number;
-    default_workflow: string | null;
-    sandbox: Record<string, unknown> | null;
     workflows: {
       pipeline?: string;
       rules?: string[];
@@ -46,8 +42,6 @@ export interface AgentItemForPanel {
       variables?: Record<string, unknown>;
       [key: string]: unknown;
     } | null;
-    lifecycle_variables: Record<string, unknown>;
-    default_variables: Record<string, unknown>;
     step_workflow?: {
       steps?: WorkflowStep[] | null;
       variables?: Record<string, unknown> | null;

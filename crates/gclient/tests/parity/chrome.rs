@@ -441,7 +441,7 @@ parity_tests! {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            assert!(screen.contains("new workspace"), "{screen}");
+            assert!(screen.contains("New workspace"), "{screen}");
             assert!(screen.contains("project"), "{screen}");
         }
 
@@ -1237,12 +1237,14 @@ switch_project = "ctrl+1..9"
                     // left these records-free panes unmarked (`gclient` alone,
                     // #23096), then section headings went bold with no fill
                     // or selector and a rule set `+` apart from the last tab
-                    // (#23120): 4.1.3
+                    // (#23120), then the Terminals address took subtext0
+                    // (#23280 Option B) and section headings regained a
+                    // surface_dim band (#23280): 4.1.3
                     // requires a glyph change to fail here, so this digest
                     // moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "57be67f52df824ed897bd52d1b8325b684b5748d2f1a5c437bd96146fb4e965e",
+                        "e61b97928b91e57e158a694645d418455c9b676e203c5baea709111823bc3f1a",
                         "the frame moved; read it against the boards before pinning:\n{}",
                         rect_rows(&terminal, frame).join("\n")
                     );
@@ -1681,19 +1683,19 @@ fn rendered_settings_hits_match_drawn_rows() {
     assert_eq!(view.settings_dialog_area, popup);
     assert_eq!(view.settings_row_hit_areas.len(), SettingsRow::ALL.len());
     let labels = [
-        "theme",
-        "monochrome",
-        "mouse capture",
-        "pane scrollbars",
-        "pane gaps",
-        "confirm close",
-        "hide tab bar with one tab",
-        "sidebar width",
-        "sidebar side",
-        "sidebar pinned",
-        "right-click passthrough",
-        "agent sort",
-        "title scrolling",
+        "Theme",
+        "Monochrome",
+        "Mouse capture",
+        "Pane scrollbars",
+        "Pane gaps",
+        "Confirm close",
+        "Hide tab bar with one tab",
+        "Sidebar width",
+        "Sidebar side",
+        "Sidebar pinned",
+        "Right-click passthrough",
+        "Agent sort",
+        "Title scrolling",
     ];
     for (index, rect) in &view.settings_row_hit_areas {
         let text = hit_text(&terminal, *rect);

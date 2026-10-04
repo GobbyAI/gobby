@@ -742,6 +742,7 @@ async def _retry_parked_non_task_resumes(runner: GobbyRunner) -> int:
                 session_manager=runner.session_manager,
                 daemon_config=config,
                 completion_registry=runner.completion_registry,
+                agent_pane_reserver=getattr(runner.websocket_server, "agent_pane_reserver", None),
             )
         except Exception:
             logger.warning("Non-task parked resume raised for run %s", run.id, exc_info=True)

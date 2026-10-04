@@ -43,9 +43,12 @@ const VERBS: &[Verb] = &[
     Verb {
         name: "select",
         usage: "select [REF] [--workspace REF] [--tab-ref TAB]",
-        summary: "Set focus hints",
-        detail: "select derives workspace from a full REF, otherwise from --workspace or \
-                 GOBBY_WORKSPACE_ID.\nA pane UUID needs its tab: --tab-ref TAB or GOBBY_TAB_ID.",
+        summary: "Show a tab or pane in every running window",
+        detail: "select stores REF as the workspace's focus and switches every running gclient \
+                 window\non that workspace to its tab and pane; a tab REF keeps that tab's own \
+                 focused pane.\nselect derives workspace from a full REF, otherwise from \
+                 --workspace or GOBBY_WORKSPACE_ID.\nA pane UUID needs its tab: --tab-ref TAB or \
+                 GOBBY_TAB_ID.",
     },
     Verb {
         name: "send-keys",

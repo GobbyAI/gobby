@@ -67,7 +67,7 @@ fn marks_at(
     chrome: &Chrome,
 ) -> Terminal<TestBackend> {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
-    let palette = MarkPalette::normal(&chrome.palette);
+    let palette = MarkPalette::normal(&chrome.palette, chrome.prefs.monochrome);
     terminal
         .draw(|frame| {
             for (mark, origin) in placed {
@@ -83,12 +83,13 @@ fn goblin_and_wordmark_stand_alone_centred_and_drop_as_the_area_shrinks() {
     let chrome = waiting_chrome();
     let (goblin, wordmark) = (marks::goblin_large(), marks::wordmark());
 
-    // Both: the wordmark 37 columns right of the goblin and 4 rows down.
+    // Both: the wordmark 45 columns right of the haloed goblin and 6 rows
+    // down.
     let full = draw(120, 40, Rect::new(0, 0, 120, 40), &chrome);
     let both = marks_at(
         120,
         40,
-        &[(goblin, (14, 12)), (wordmark, (51, 16))],
+        &[(goblin, (10, 11)), (wordmark, (55, 17))],
         &chrome,
     );
     assert_eq!(full.backend().buffer(), both.backend().buffer());
@@ -99,8 +100,8 @@ fn goblin_and_wordmark_stand_alone_centred_and_drop_as_the_area_shrinks() {
     assert_eq!(narrow.backend().buffer(), alone.backend().buffer());
 
     // Too narrow for the wordmark: the goblin alone, inside its area.
-    let compact = draw(50, 20, Rect::new(5, 2, 40, 16), &chrome);
-    let goblin_only = marks_at(50, 20, &[(goblin, (8, 2))], &chrome);
+    let compact = draw(50, 20, Rect::new(5, 1, 43, 19), &chrome);
+    let goblin_only = marks_at(50, 20, &[(goblin, (6, 1))], &chrome);
     assert_eq!(compact.backend().buffer(), goblin_only.backend().buffer());
 
     // Too small for either: nothing at all.
@@ -127,8 +128,8 @@ fn the_splash_is_the_whole_frame_until_a_failed_first_connect_falls_through() {
         120,
         40,
         &[
-            (marks::goblin_large(), (14, 12)),
-            (marks::wordmark(), (51, 16)),
+            (marks::goblin_large(), (10, 11)),
+            (marks::wordmark(), (55, 17)),
         ],
         &chrome,
     );

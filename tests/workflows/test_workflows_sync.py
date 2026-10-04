@@ -22,6 +22,38 @@ from gobby.workflows.pipeline.renderer import StepRenderer
 pytestmark = pytest.mark.integration
 
 
+def test_bundled_pipeline_tags_merge_with_gobby(temp_db: HubDatabase, tmp_path: Path) -> None:
+    from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+
+    payload: dict[str, Any] = {
+        "name": "tagged-bundle",
+        "type": "pipeline",
+        "tags": ["runbook", "gobby", "runbook"],
+        "steps": [{"id": "work", "exec": "true"}],
+    }
+    (tmp_path / "tagged.yaml").write_text(yaml.safe_dump(payload), encoding="utf-8")
+    manager = PipelineDefinitionManager(temp_db)
+    with patch("gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=tmp_path):
+        assert sync_bundled_pipelines(temp_db)["synced"] == 1
+        row = manager.get_by_name("tagged-bundle")
+        assert row is not None
+        assert row.tags == ["gobby", "runbook"]
+
+        manager.update(row.id, tags=["gobby", "custom"])
+        assert sync_bundled_pipelines(temp_db)["updated"] == 1
+        assert manager.get(row.id).tags == ["gobby", "runbook"]
+
+        payload["tags"] = ["release"]
+        (tmp_path / "tagged.yaml").write_text(yaml.safe_dump(payload), encoding="utf-8")
+        assert sync_bundled_pipelines(temp_db)["updated"] == 1
+        assert manager.get(row.id).tags == ["gobby", "release"]
+
+        payload.pop("tags")
+        (tmp_path / "tagged.yaml").write_text(yaml.safe_dump(payload), encoding="utf-8")
+        assert sync_bundled_pipelines(temp_db)["updated"] == 1
+        assert manager.get(row.id).tags == ["gobby"]
+
+
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
     """Create a temporary database for sync tests."""
@@ -563,7 +595,7 @@ class TestSyncBundledPipelines:
 
         rows = pipeline_manager.list_all()
         names = [row.name for row in rows]
-        assert set(names) == {"expand-task", "gobby-merge", "review"}
+        assert set(names) == {"expand-task", "gobby-merge", "planning", "review"}
 
         expand_task = pipeline_manager.get_by_name("expand-task")
         gobby_merge = pipeline_manager.get_by_name("gobby-merge")
@@ -1365,3 +1397,40 @@ class TestBundledPaths:
         result = get_bundled_variables_path()
         assert isinstance(result, Path)
         assert str(result).endswith("variables")
+
+
+def test_imported_agent_yaml_cannot_widen_network(
+    db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.storage.definitions import AgentDefinitionManager
+    from gobby.workflows.imports import sync_imported_workflows
+
+    project_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    db.execute(
+        "INSERT INTO projects (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+        (project_id, "network-import"),
+    )
+    agent = {
+        "type": "agent",
+        "provider": "claude",
+        "network": "trusted",
+        "prompts": {"agent": "Run the assigned task."},
+        "workflows": {"rule_selectors": {"include": []}},
+    }
+    global_dir = tmp_path / "global"
+    (global_dir / "agents").mkdir(parents=True)
+    (global_dir / "agents" / "g.yaml").write_text(yaml.safe_dump({**agent, "name": "global-wide"}))
+    project_root = tmp_path / "project"
+    project_agents = project_root / ".gobby" / "workflows" / "agents"
+    project_agents.mkdir(parents=True)
+    (project_agents / "p.yaml").write_text(yaml.safe_dump({**agent, "name": "project-wide"}))
+    monkeypatch.setattr("gobby.workflows.imports.get_global_workflows_dir", lambda: global_dir)
+
+    result = sync_imported_workflows(db, project_path=project_root, project_id=project_id)
+
+    assert result["synced"] == 0
+    assert len(result["errors"]) == 2
+    assert all("network is sync-owned" in error for error in result["errors"])
+    manager = AgentDefinitionManager(db)
+    assert manager.get_by_name("global-wide") is None
+    assert manager.get_by_name("project-wide", project_id=project_id) is None

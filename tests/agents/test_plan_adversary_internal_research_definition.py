@@ -13,8 +13,8 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = REPO_ROOT / "src/gobby/install/shared/workflows/agents"
 REMOVED_RESEARCHER = "plan-review-researcher-taskless"
-ADVERSARIES = ("plan-adversary", "plan-adversary-taskless")
-PLAN_AGENTS = (*ADVERSARIES, "plan-enhancer", "plan-enhancer-taskless")
+ADVERSARIES = ("plan-adversary-old", "plan-adversary-taskless-old")
+PLAN_AGENTS = (*ADVERSARIES, "plan-enhancer-old", "plan-enhancer-taskless-old")
 LANES = (
     "requirements_traceability",
     "repository_blast_radius",
@@ -34,10 +34,10 @@ def _review(agent: dict[str, Any]) -> dict[str, Any]:
 
 def test_adversary_agents_pin_the_reviewer_model() -> None:
     """The agent definition owns the reviewer model, not the coordinator skill."""
-    tasked = _agent("plan-adversary")
+    tasked = _agent("plan-adversary-old")
     assert tasked["provider"] == "codex"
     assert tasked["model"] == "gpt-5.6-sol"
-    taskless = _agent("plan-adversary-taskless")
+    taskless = _agent("plan-adversary-taskless-old")
     assert taskless["provider"] == "grok"
     assert taskless["model"] == "grok-4.7"
     for agent in (tasked, taskless):
@@ -155,7 +155,7 @@ def test_parent_adversary_retains_evidence_and_verdict_ownership() -> None:
 
 
 def test_taskless_review_status_allows_protocol_failure_without_verdict() -> None:
-    status = _review(_agent("plan-adversary-taskless"))["status_message"]
+    status = _review(_agent("plan-adversary-taskless-old"))["status_message"]
     normalized = " ".join(status.split())
 
     assert "When validate_plan_review_coverage succeeds" in normalized
@@ -188,7 +188,7 @@ def test_adversaries_remove_gobby_worker_state_and_spawn_hooks() -> None:
 
 
 def test_enhancers_remain_single_agent_better_bigger_advisers() -> None:
-    for name in ("plan-enhancer", "plan-enhancer-taskless"):
+    for name in ("plan-enhancer-old", "plan-enhancer-taskless-old"):
         agent = _agent(name)
         instructions = agent["prompts"]["agent"]
         assert "Better" in instructions

@@ -43,8 +43,8 @@ fn about_dialog_is_72_by_15_with_the_goblin_and_the_stated_rows() {
             .map(|x| buffer[(x, y)].symbol())
             .collect::<String>()
     };
-    assert!(row(8).contains("about gobby"));
-    assert!(row(8).contains("esc close"));
+    assert!(row(8).contains("About gobby"));
+    assert!(row(8).contains("esc Close"));
     let body: String = (9..21).map(row).collect();
     for expected in [
         "Gobby",
@@ -89,8 +89,8 @@ fn daemon_dialog_shows_url_versions_health_and_last_roster_refresh() {
         .flat_map(|y| (13..67).map(move |x| buffer[(x, y)].symbol()))
         .collect();
     for expected in [
-        "daemon",
-        "esc close",
+        "Daemon",
+        "esc Close",
         "url",
         "http://127.0.0.1:60887",
         "gclient",

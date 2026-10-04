@@ -15,13 +15,6 @@ from gobby.hooks.effect_deadline import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.fifo_lock import CrossLoopFifoLock
-from gobby.hooks.phase_timing import (
-    add_hook_phase,
-    measure_hook_phase,
-    note_hook_session,
-    timed_await,
-    timed_to_thread,
-)
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, record_worker_staging
 from gobby.storage.hub.operation_deadline import (
     DatabaseOperationDeadlineExceeded,
@@ -30,14 +23,16 @@ from gobby.storage.hub.operation_deadline import (
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 from gobby.workflows.block_audit import audit_source_block, audit_source_block_sync
 from gobby.workflows.engine.event_utils import _get_tool_identity, _target_task_id_for_event
-from gobby.workflows.evaluation_runtime import WorkflowEvaluationTimeout
+from gobby.workflows.evaluation_runtime import (
+    ChildEvaluationCancelled,
+    WorkflowEvaluationTimeout,
+)
 from gobby.workflows.found_work_gate import (
     FOUND_WORK_GATE_ARMED_AT_VARIABLE,
     FoundWorkStopAnalyzer,
-    capture_found_work_handoff,
-    capture_turn_prompt,
     is_found_work_deferral,
 )
+from gobby.workflows.observer_dispatch import run_observers as _dispatch_observers
 from gobby.workflows.step_context import get_active_step_workflow_context
 from gobby.workflows.tool_context import WorkflowToolContextMixin
 
@@ -262,7 +257,12 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
             if controlled_shutdown and event.event_type != HookEventType.STOP
             else logger.warning
         )
-        log_cancelled("Workflow evaluation cancelled for %s", event.event_type)
+        log_cancelled(
+            "Workflow evaluation cancelled for %s session=%s source=%s",
+            event.event_type,
+            event.metadata.get("_platform_session_id") or event.session_id or "unknown",
+            getattr(event.source, "value", event.source) or "unknown",
+        )
         if event.event_type == HookEventType.STOP:
             response = HookResponse(
                 decision="block",
@@ -286,122 +286,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         """Run built-in observer functions to populate tracking variables.
 
         Must run BEFORE rule evaluation so conditions have current data.
+        Delegates to ``observer_dispatch.run_observers`` so the dispatch and
+        its per-observer error handling stay a cohesive unit outside this module.
         """
         event.metadata.pop("_observed_claim_task_id", None)
-        from .observer_context_usage import (
-            detect_context_compact_guidance,
-            detect_mid_turn_context_compact_guidance,
-        )
-        from .observer_plan_mode import reconcile_native_mode, resolve_plan_mode
-        from .observers import (
-            detect_bash_commit,
-            detect_commit_link,
-            detect_mcp_call,
-            detect_task_claim,
-            detect_turn_interrupt,
-            reconcile_claimed_tasks,
-        )
-
-        failures: set[str] = set()
-
-        def run_observer(
-            name: str,
-            observer: Callable[..., object],
-            *args: Any,
-            **kwargs: Any,
-        ) -> None:
-            try:
-                observer(*args, **kwargs)
-            except _DATABASE_TIMEOUTS:
-                raise
-            except Exception:
-                failures.add(name)
-                logger.warning(
-                    "Observer %s failed for session=%s event=%s",
-                    name,
-                    session_id,
-                    event.event_type,
-                    exc_info=True,
-                )
-
-        run_observer("detect_turn_interrupt", detect_turn_interrupt, event, variables)
-
-        # Tool and stop payloads carry the provider's live permission mode;
-        # turn-start events (e.g. Claude UserPromptSubmit) omit it and manual
-        # plan-mode toggles fire no hook, so these events are the only
-        # authoritative correction point for a stale plan_mode.
-        if event.event_type in (
-            HookEventType.BEFORE_TOOL,
-            HookEventType.AFTER_TOOL,
-        ) or _is_turn_end_event(event.event_type):
-            run_observer(
-                "reconcile_native_mode",
-                reconcile_native_mode,
-                event,
-                variables,
-                session_id,
-            )
-
-        # SessionStart is the hydration boundary after resume/compaction. Reconcile
-        # there so the first tool gate sees authoritative DB claims.
-        if event.event_type == HookEventType.SESSION_START or _is_turn_end_event(event.event_type):
-            run_observer(
-                "reconcile_claimed_tasks",
-                reconcile_claimed_tasks,
-                variables,
-                session_id,
-                task_manager=self._task_manager,
-                session_manager=self._session_manager,
-                session_task_manager=self._session_task_manager,
-            )
-
-        # Task claim/release tracking (AFTER_TOOL for gobby-tasks calls)
-        if event.event_type == HookEventType.AFTER_TOOL:
-            run_observer(
-                "detect_task_claim",
-                detect_task_claim,
-                event,
-                variables,
-                session_id,
-                session_task_manager=self._session_task_manager,
-                task_manager=self._task_manager,
-                project_id=event.project_id,
-            )
-            run_observer("detect_commit_link", detect_commit_link, event, variables, session_id)
-            run_observer("detect_bash_commit", detect_bash_commit, event, variables, session_id)
-            run_observer("detect_mcp_call", detect_mcp_call, event, variables, session_id)
-            run_observer("capture_found_work_handoff", capture_found_work_handoff, event, variables)
-            run_observer(
-                "detect_mid_turn_context_compact_guidance",
-                detect_mid_turn_context_compact_guidance,
-                event,
-                variables,
-                session_id,
-                self._session_manager,
-                config=getattr(self._config_resolver(), "context_handoff", None),
-            )
-
-        # Plan mode detection on the semantic start-of-turn boundary
-        if _is_turn_start_event(event.event_type):
-            run_observer("capture_turn_prompt", capture_turn_prompt, event, variables)
-            run_observer(
-                "resolve_plan_mode",
-                resolve_plan_mode,
-                event,
-                variables,
-                session_id,
-                self._session_manager,
-            )
-            run_observer(
-                "detect_context_compact_guidance",
-                detect_context_compact_guidance,
-                variables,
-                session_id,
-                self._session_manager,
-                config=getattr(self._config_resolver(), "context_handoff", None),
-            )
-
-        return failures
+        return _dispatch_observers(self, event, session_id, variables)
 
     async def _evaluate_rules(
         self,
@@ -427,17 +316,12 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
             try:
                 if eval_lock_state:
-                    note_hook_session(session_id)
                     lock_wait_started = monotonic()
                     await eval_lock_state.lock.acquire()
                     eval_lock_acquired = True
                     lock_wait = monotonic() - lock_wait_started
-                    add_hook_phase("rule_eval_lock_wait", lock_wait)
                     if blocking_deadline is not None:
                         blocking_deadline.extend(lock_wait)
-                # Sub-phases split a slow rule_evaluation into the work the per-rule
-                # audit cannot see (#22708 criterion 7).
-                prelude_started = monotonic()
 
                 self._sync_tool_context(event, session_id)
                 if isinstance(event.data, dict) and not event.metadata.get(
@@ -455,8 +339,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 if self._session_var_manager and session_id:
                     try:
                         variables = dict(
-                            await timed_to_thread(
-                                "prelude_session_variables",
+                            await asyncio.to_thread(
                                 self._session_var_manager.get_variables,
                                 session_id,
                             )
@@ -474,14 +357,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                                 decision="block",
                                 reason="Could not load session state. Try again.",
                             )
-                            await timed_await(
-                                "prelude_variable_failure_audit",
-                                audit_source_block(
-                                    self,
-                                    event,
-                                    rule_id="variable-load-failure",
-                                    reason=response.reason or "",
-                                ),
+                            await audit_source_block(
+                                self,
+                                event,
+                                rule_id="variable-load-failure",
+                                reason=response.reason or "",
                             )
                             return response
                         variable_load_failed = True
@@ -497,8 +377,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 # lifecycle instructions.
                 if variables.get("is_spawned_agent"):
                     try:
-                        step_context = await timed_to_thread(
-                            "prelude_step_context",
+                        step_context = await asyncio.to_thread(
                             get_active_step_workflow_context,
                             self.rule_engine.db,
                             session_id,
@@ -533,8 +412,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                             merge_unloaded_variable_defaults,
                         )
 
-                        defaults = await timed_to_thread(
-                            "prelude_variable_defaults",
+                        defaults = await asyncio.to_thread(
                             merge_unloaded_variable_defaults,
                             self.rule_engine.db,
                             session_id,
@@ -547,8 +425,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                                 and session_id
                                 and not variable_load_failed
                             ):
-                                await timed_to_thread(
-                                    "prelude_store_variable_defaults",
+                                await asyncio.to_thread(
                                     self._session_var_manager.merge_variables,
                                     session_id,
                                     defaults,
@@ -567,14 +444,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 from gobby.workflows.git_utils import resolve_git_worktree_root_async
 
                 metadata_path = event.metadata.get("project_path")
-                worktree_root = await timed_await(
-                    "prelude_git_worktree_root",
-                    resolve_git_worktree_root_async(
-                        event.cwd, metadata_path if isinstance(metadata_path, str) else None
-                    ),
+                worktree_root = await resolve_git_worktree_root_async(
+                    event.cwd, metadata_path if isinstance(metadata_path, str) else None
                 )
-                project_path = await timed_to_thread(
-                    "prelude_project_path", self._resolve_project_path, event, worktree_root
+                project_path = await asyncio.to_thread(
+                    self._resolve_project_path, event, worktree_root
                 )
                 if not project_path:
                     message = (
@@ -631,8 +505,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     }
                 ):
                     try:
-                        task = await timed_to_thread(
-                            "prelude_target_task_commits",
+                        task = await asyncio.to_thread(
                             self._task_manager.get_task,
                             target_task_id,
                         )
@@ -657,29 +530,27 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         foreign_staged_commit_conflict,
                     )
 
-                    eval_context["foreign_staged_commit_conflict"] = await timed_await(
-                        "prelude_foreign_staged_commit",
-                        foreign_staged_commit_conflict(
-                            self.rule_engine.db,
-                            event,
-                            session_id=session_id,
-                            project_id=event.project_id,
-                            project_path=project_path,
-                        ),
+                    eval_context[
+                        "foreign_staged_commit_conflict"
+                    ] = await foreign_staged_commit_conflict(
+                        self.rule_engine.db,
+                        event,
+                        session_id=session_id,
+                        project_id=event.project_id,
+                        project_path=project_path,
                     )
                     canonical_paths = event_data.get("canonical_file_paths") or event_data.get(
                         "canonical_file_path"
                     )
                     if event_data.get("canonical_repo_mutation") is True and canonical_paths:
-                        eval_context["foreign_dirty_edit_conflict"] = await timed_await(
-                            "prelude_foreign_dirty_edit",
-                            foreign_dirty_edit_conflict(
-                                self.rule_engine.db,
-                                event,
-                                session_id=session_id,
-                                project_id=event.project_id,
-                                project_path=project_path,
-                            ),
+                        eval_context[
+                            "foreign_dirty_edit_conflict"
+                        ] = await foreign_dirty_edit_conflict(
+                            self.rule_engine.db,
+                            event,
+                            session_id=session_id,
+                            project_id=event.project_id,
+                            project_path=project_path,
                         )
                 else:
                     eval_context["foreign_staged_commit_conflict"] = ""
@@ -691,10 +562,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 if event.event_type == HookEventType.BEFORE_TOOL and project_path:
                     from gobby.workflows.code_review_scope import inspect_commit_review_scope
 
-                    review_scope = await timed_await(
-                        "prelude_commit_review_scope",
-                        inspect_commit_review_scope(event, project_path, variables),
-                    )
+                    review_scope = await inspect_commit_review_scope(event, project_path, variables)
                     eval_context["commit_has_reviewable_paths"] = review_scope.has_reviewable_paths
                     owned_paths = review_scope.session_owned_reviewable_paths
                     eval_context["session_owned_reviewable_paths"] = (
@@ -705,8 +573,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     from gobby.workflows.code_review_freshness import is_foreign_landing_merge
                     from gobby.workflows.observer_utils import _extract_shell_command
 
-                    eval_context["foreign_landing_merge"] = await timed_to_thread(
-                        "prelude_foreign_landing_merge",
+                    eval_context["foreign_landing_merge"] = await asyncio.to_thread(
                         is_foreign_landing_merge,
                         self.rule_engine.db,
                         _extract_shell_command(event),
@@ -718,8 +585,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 pre_eval = deepcopy(variables)
 
                 # Run built-in observers BEFORE rule evaluation
-                observer_failures = await timed_to_thread(
-                    "prelude_observers",
+                observer_failures = await asyncio.to_thread(
                     self._run_observers,
                     event,
                     session_id,
@@ -733,15 +599,12 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         decision="block",
                         reason="Could not reconcile claimed tasks. Try again.",
                     )
-                    await timed_await(
-                        "prelude_reconciliation_failure_audit",
-                        audit_source_block(
-                            self,
-                            event,
-                            rule_id="reconciliation-failure",
-                            reason=response.reason or "",
-                            variables=variables,
-                        ),
+                    await audit_source_block(
+                        self,
+                        event,
+                        rule_id="reconciliation-failure",
+                        reason=response.reason or "",
+                        variables=variables,
                     )
                     return response
 
@@ -755,14 +618,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     and not variable_load_failed
                     and git_activity_detected(event)
                 ):
-                    released = await timed_await(
-                        "prelude_edit_ledger_reconcile",
-                        reconcile_edit_ledgers(
-                            variables,
-                            session_id,
-                            variable_manager=self._session_var_manager,
-                            project_path=project_path,
-                        ),
+                    released = await reconcile_edit_ledgers(
+                        variables,
+                        session_id,
+                        variable_manager=self._session_var_manager,
+                        project_path=project_path,
                     )
                     if released:
                         logger.debug(
@@ -793,14 +653,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     and not variables.get("plan_mode")
                     and not variables.get("is_spawned_agent")
                 ):
-                    facts = await timed_await(
-                        "prelude_found_work_analyze",
-                        self._found_work_analyzer.analyze(
-                            event=event,
-                            session_id=session_id,
-                            variables=variables,
-                            project_path=project_path,
-                        ),
+                    facts = await self._found_work_analyzer.analyze(
+                        event=event,
+                        session_id=session_id,
+                        variables=variables,
+                        project_path=project_path,
                     )
                     eval_context["found_work_shirk"] = facts.shirk
                     eval_context["found_work_shirk_confirmed"] = facts.shirk_confirmed
@@ -817,8 +674,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         for ref in (variables.get("_found_work_deferred_tasks") or ())
                         if isinstance(ref, str)
                     }
-                    unclaimed_tasks = await timed_to_thread(
-                        "prelude_unclaimed_found_work",
+                    unclaimed_tasks = await asyncio.to_thread(
                         self._found_work_analyzer.unclaimed_found_work,
                         session_id,
                         armed_at=variables.get(FOUND_WORK_GATE_ARMED_AT_VARIABLE),
@@ -836,15 +692,13 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     eval_context["unclaimed_found_work"] = bool(unclaimed_tasks)
                     eval_context["unclaimed_found_work_tasks"] = list(unclaimed_tasks)
 
-                add_hook_phase("rule_prelude", monotonic() - prelude_started)
-                with measure_hook_phase("rule_engine"):
-                    response = await self.rule_engine.evaluate(
-                        event=event,
-                        session_id=session_id,
-                        variables=variables,
-                        eval_context=eval_context,
-                        blocking_deadline=blocking_deadline,
-                    )
+                response = await self.rule_engine.evaluate(
+                    event=event,
+                    session_id=session_id,
+                    variables=variables,
+                    eval_context=eval_context,
+                    blocking_deadline=blocking_deadline,
+                )
 
                 staged_payload = response.metadata.get(STAGED_EFFECTS_FIELD)
                 staged_keys: set[str] = set()
@@ -864,8 +718,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         if k not in staged_keys and (k not in pre_eval or pre_eval[k] != v)
                     }
                     if changed:
-                        await timed_to_thread(
-                            "rule_persist_variables",
+                        await asyncio.to_thread(
                             self._session_var_manager.merge_variables,
                             session_id,
                             changed,
@@ -895,11 +748,8 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         event: HookEvent,
         *,
         blocking_deadline: BlockingEffectDeadline | None = None,
-        submitted_at: float | None = None,
     ) -> HookResponse:
         """Evaluate rules asynchronously for callers that already own the loop."""
-        if submitted_at is not None:
-            add_hook_phase("rule_runtime_queue", monotonic() - submitted_at)
         enabled, timeout = self._resolve_policy()
         if not enabled:
             return HookResponse(decision="allow")
@@ -947,9 +797,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         "Synchronous workflow evaluation requires a runtime"
                     ) from None
                 response = self._evaluation_runtime.run(
-                    self.evaluate_async(
-                        event, blocking_deadline=blocking_deadline, submitted_at=monotonic()
-                    ),
+                    self.evaluate_async(event, blocking_deadline=blocking_deadline),
                     timeout=runtime_wait,
                 )
                 # The runtime evaluates on its own "gobby-workflow-runtime"
@@ -964,6 +812,14 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     record_worker_staging(staged)
                 return response
 
+        except ChildEvaluationCancelled:
+            # An in-band child of the evaluation cancelled; the evaluation
+            # task itself was never cancelled, so this is an ordinary
+            # failure, not a canceller of the evaluation (#22706). Do not
+            # route it to _handle_cancelled, which would both drop the
+            # turn-start work the cancellation is blamed for and mislabel
+            # the source.
+            raise
         except (asyncio.CancelledError, concurrent.futures.CancelledError):
             return self._handle_cancelled(event)
         except WorkflowEvaluationTimeout:

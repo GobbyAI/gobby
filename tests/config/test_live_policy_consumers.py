@@ -19,7 +19,6 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.voice import create_voice_registry
 from gobby.servers.models import WebChatSessionRequest
 from gobby.servers.routes.agent_spawn import create_agent_spawn_router
-from gobby.servers.routes.attention import _run_tmux_payload
 from gobby.servers.routes.configuration_tool_approvals import register_tool_approval_routes
 from gobby.servers.routes.configuration_ui_settings import register_ui_setting_routes
 from gobby.servers.routes.configuration_validation_detection import (
@@ -29,7 +28,6 @@ from gobby.servers.routes.configuration_validation_detection import (
 from gobby.servers.routes.rules import create_rules_router
 from gobby.servers.routes.sessions.core import register_core_routes
 from gobby.servers.tool_approvals import get_global_approval_rules
-from gobby.storage.attention import AttentionRosterRow, AttentionRosterTerminal
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
@@ -194,7 +192,7 @@ class RecordingConfigService:
 @pytest.mark.asyncio
 async def test_voice_and_route_consumers_use_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     active_config = DaemonConfig(
-        tmux={"socket_path": "/tmp/live-policy.sock"},
+        tmux={"attach_history_lines": 700},
         voice={"whisper_vocabulary": ["Gobby"], "whisper_prompt": "Live prompt"},
     )
     runtime = CountingRuntime(_snapshot(config=active_config, revision=7))
@@ -209,51 +207,7 @@ async def test_voice_and_route_consumers_use_runtime(monkeypatch: pytest.MonkeyP
     assert service.patches == [(7, {"voice.whisper_vocabulary": ["Gobby", "PostgreSQL"]})]
     assert runtime.snapshot_reads == 1
 
-    runtime.snapshot_reads = 0
-    stale_config = DaemonConfig(tmux={"socket_path": "/tmp/stale.sock"})
-    run = AttentionRosterRow(
-        kind="run",
-        source_id="agent-run",
-        session_id=None,
-        lifecycle_status="running",
-        task_id=None,
-        task_ref=None,
-        task_stage=None,
-        provider="codex",
-        model=None,
-        pid=42,
-        updated_at=None,
-        terminal_context={},
-        terminal_id="agent-session",
-        terminal=AttentionRosterTerminal(
-            id="agent-session",
-            backend="tmux",
-            state="live",
-            machine_id="machine",
-            host_epoch=None,
-            session_name="gobby-agent-session",
-            locator=None,
-        ),
-    )
-    attention_server = cast(
-        Any,
-        SimpleNamespace(
-            services=SimpleNamespace(
-                config=stale_config,
-                config_runtime=runtime,
-            )
-        ),
-    )
-    payload = _run_tmux_payload(attention_server, run)
-
-    assert payload == {
-        "socket_path": "/tmp/live-policy.sock",
-        "session_name": "gobby-agent-session",
-        "pane_pid": 42,
-        "terminal_id": "agent-session",
-    }
-    assert runtime.snapshot_reads == 1
-
+    stale_config = DaemonConfig(tmux={"attach_history_lines": 300})
     captured: dict[str, Any] = {}
 
     class SessionManager:
@@ -280,7 +234,7 @@ async def test_voice_and_route_consumers_use_runtime(monkeypatch: pytest.MonkeyP
     )
     monkeypatch.setattr(
         "gobby.servers.routes.sessions.core.web_chat_sandbox_policy_hash",
-        lambda config: config.tmux.socket_path,
+        lambda config: str(config.tmux.attach_history_lines),
     )
     sessions_router = APIRouter(prefix="/api/sessions")
 
@@ -294,7 +248,7 @@ async def test_voice_and_route_consumers_use_runtime(monkeypatch: pytest.MonkeyP
     response = await create_session(WebChatSessionRequest(project_id="project-id"))
 
     assert response["status"] == "created"
-    assert captured["sandbox_policy_hash"] == "/tmp/live-policy.sock"
+    assert captured["sandbox_policy_hash"] == "700"
     assert runtime.snapshot_reads == 1
 
 

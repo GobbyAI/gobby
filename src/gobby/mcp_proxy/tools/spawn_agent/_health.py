@@ -11,7 +11,6 @@ from typing import Any, Protocol
 import psycopg
 
 from gobby.agents.capture import _capture_marker, _capture_slot
-from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals.runtime import TerminalRuntimeRegistry
 from gobby.utils.terminal_output import redact_terminal_output
@@ -155,13 +154,13 @@ async def _terminal_is_live(
                 runtime.snapshot(row, lines=50),
                 timeout=_TMUX_HEALTH_CHECK_TIMEOUT_SECONDS,
             )
-        except (TimeoutError, OSError, TmuxNotFoundError, TmuxSessionError):
+        except (TimeoutError, OSError):
             return False, None
         output = snapshot.text
         if not output or not output.strip():
             return False, None
         return False, _bounded_redacted_pane_output(output)
-    except (TimeoutError, OSError, TmuxNotFoundError, TmuxSessionError):
+    except (TimeoutError, OSError):
         return True, None  # Timed out, assume alive
     except asyncio.CancelledError:
         raise
@@ -222,7 +221,7 @@ async def _deferred_tmux_health_check(
                 logger.warning("Failed to mark agent_run %s as failed: %s", run_id, e)
     except asyncio.CancelledError:
         pass
-    except (TimeoutError, OSError, TmuxNotFoundError, TmuxSessionError, psycopg.Error) as e:
+    except (TimeoutError, OSError, psycopg.Error) as e:
         logger.warning("Deferred health check for %s failed: %s", run_id, e)
 
 

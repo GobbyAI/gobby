@@ -19,21 +19,16 @@ candidates in the order the Orchestrator (seat named in `roster.md`) sets.
 - Run validation scoped to the net landing diff and its concrete risks. Use
   isolated test state. Record commands and results in the landing task; do not
   run the full pytest suite without Josh's explicit instruction.
-- CodeRabbit pass (Josh, 2026-10-01): before each package landing, run one pass
-  of the existing local CodeRabbit CLI over the package's batched diff, from base
-  to assembled tip. One pass per package, rather than one per source, keeps us
-  under the Essentials plan's hourly review limit. The CLI caps a run at 150
-  changed files, so split a larger package into runs of at most 150. Findings
-  gate landings (Josh, 2026-10-01: "The findings should gate landings."), with
-  no severity cutoff. Attribute each finding to the source whose commit
-  introduced the flagged hunk (blame against the package base); a hunk touched by
-  two sources goes to both sources' reviewers. Send findings to the Orchestrator
-  and to the reviewer who LANDed each affected source,
-  who resolves each finding: fixed, or dismissed with a recorded reason. Never
-  land a source while any finding on it is unresolved; hold it out of the
-  package, and it goes back to its author under the bounded review loop. Land
-  the rest. Record each run, its file count and the finding resolutions in the
-  landing report.
+- CodeRabbit reviews pushed work (Josh, 2026-10-01; memory `f5537d2c`).
+  Agents never push; Josh decides when to push. Do not gate a local landing,
+  package or daemon restart on a prelanding CodeRabbit run. Keep every batch
+  intended for a post-push pass below 150 reviewable changed files, preserving
+  checkpoint refs and actual range manifests before the push. Attribute each
+  post-push finding to the source whose commit introduced the hunk; a hunk
+  touched by two sources goes to both reviewers. Send findings to the
+  Orchestrator and the reviewers who LANDed those sources for a fix or a
+  dismissal with a recorded reason under the bounded review loop. Record
+  post-push runs, file counts and finding resolutions in the landing report.
 - Commit the landing, confirm ancestry and the resulting tracked/untracked
   state, and close the landing task with its commit SHA after its gates pass.
   Use `git commit --only` for ordinary commits. A merge commit cannot use

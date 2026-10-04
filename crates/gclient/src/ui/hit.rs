@@ -58,6 +58,8 @@ pub enum Hit {
     Project(String),
     /// Worktree row under a project card, by worktree id.
     Worktree(String),
+    /// The state dot of a worktree row with an agent bound, by worktree id.
+    WorktreeGlyph(String),
     /// Session, agent run or bare terminal row, by entry id.
     Agent(String),
     /// Machine row, by machine id.
@@ -220,6 +222,10 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
     // The toggle cell sits inside its card's rect, so it is tested first.
     if let Some((id, _)) = find_at(&view.group_toggle_hit_areas, at) {
         return Hit::GroupToggle(id.clone());
+    }
+    // The dot sits inside its row's rect, so it is tested first too.
+    if let Some((id, _)) = find_at(&view.worktree_glyph_hit_areas, at) {
+        return Hit::WorktreeGlyph(id.clone());
     }
     if let Some((id, _)) = find_at(&view.worktree_hit_areas, at) {
         return Hit::Worktree(id.clone());

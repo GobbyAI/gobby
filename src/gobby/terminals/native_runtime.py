@@ -37,6 +37,7 @@ from gobby.terminals.host_protocol import control_socket_path, frames_socket_pat
 from gobby.terminals.host_reap import reap_recorded_process, recorded_process_group_is_alive
 from gobby.terminals.host_reconcile import reconcile_host_inventory
 from gobby.terminals.key_bytes import encode_named_key
+from gobby.terminals.native_env_policy import apply_native_env_policy
 from gobby.terminals.native_host_probe import NativeHostProbeMixin
 from gobby.terminals.runtime import (
     MAX_INPUT_PAYLOAD_BYTES,
@@ -418,6 +419,7 @@ class NativeTerminalRuntime(NativeHostProbeMixin):
             reserve_key = request.reserve_key
             if not reservation_id or not reserve_key:
                 raise HostCommandError("invalid_reservation")
+            argv, env = apply_native_env_policy(request.command, request.env, request.auth_cli)
             payload = await self._client.spawn(
                 # None: the host starts the child on its latest client declaration.
                 terminal_theme=request.terminal_theme,
@@ -425,9 +427,9 @@ class NativeTerminalRuntime(NativeHostProbeMixin):
                 spawn_key=request.spawn_key,
                 reservation_id=reservation_id,
                 reserve_key=reserve_key,
-                argv=list(request.command),
+                argv=argv,
                 # After the caller env so nothing shadows the minted identity.
-                env={**(request.env or {}), GOBBY_TERMINAL_ID: str(request.terminal_id)},
+                env={**env, GOBBY_TERMINAL_ID: str(request.terminal_id)},
                 cwd=request.cwd,
                 rows=request.rows or 24,
                 cols=request.cols or 80,

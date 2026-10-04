@@ -66,6 +66,8 @@ export default defineConfig({
     globals: true,
     // One jsdom worker per core starves component tests into 5s timeouts here (#22640).
     maxWorkers: 4,
+    // Fleet load (5-min load 20-30) still pushes full-App mounts past 5s (#23315).
+    testTimeout: 15000,
     setupFiles: ["src/test/setup.ts"],
     coverage: {
       provider: "v8",

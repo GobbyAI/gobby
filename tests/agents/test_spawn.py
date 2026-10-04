@@ -19,6 +19,7 @@ from gobby.agents.session import ChildSessionConfig
 from gobby.agents.spawn import (
     PreparedSpawn,
     _issue_prelaunch_credential,
+    prepare_terminal_resume,
     prepare_terminal_spawn,
 )
 from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, managed_tool_bin_dir
@@ -200,6 +201,7 @@ class TestPrepareTerminalSpawnMetadata:
                 machine_id=str(uuid.uuid4()),
                 agent_run_id=run_id,
                 timeout_seconds=timeout_seconds,
+                workspace_path="/work/reviewed-worktree",
                 credential_manager=credential_manager,
                 config_snapshot=MagicMock(),
             )
@@ -210,6 +212,7 @@ class TestPrepareTerminalSpawnMetadata:
             session_id=uuid.UUID(session_id),
             agent_run_id=uuid.UUID(run_id),
             expires_at=issued_at + timedelta(seconds=expected_lifetime_seconds),
+            requested_project_path="/work/reviewed-worktree",
         )
         assert result.env_vars["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == (
             "/private/runtime/grant.json"
@@ -628,3 +631,85 @@ class TestIssuePrelaunchCredential:
 
         assert result is prepared
         assert MANAGED_EXECUTION_BOOTSTRAP_ENV not in result.env_vars
+
+
+class TestPrepareTerminalResumeCredential:
+    """A resumed run's credential requests the overlay of the checkout it resumes in."""
+
+    def test_resume_credential_requests_the_resume_workspace(self) -> None:
+        child = MagicMock(
+            id="child-1",
+            status="active",
+            parent_session_id="parent-1",
+            project_id="proj-1",
+            agent_run_id="run-0",
+            agent_depth=1,
+            seq_num=4,
+            machine_id="21000000-0000-4000-8000-000000000001",
+        )
+        sm = MagicMock()
+        sm._storage.get.return_value = child
+        run_id = str(uuid.uuid4())
+        prepared = PreparedSpawn(
+            session_id=str(uuid.uuid4()),
+            agent_run_id=run_id,
+            parent_session_id="parent-1",
+            project_id="proj-1",
+            workflow_name=None,
+            agent_depth=1,
+            env_vars={},
+        )
+        credential_manager = MagicMock()
+        credential = credential_manager.issue.return_value
+        credential.bootstrap_path = Path("/private/runtime/bootstrap.json")
+        credential.expires_at = datetime.now(UTC) + timedelta(hours=1)
+        launch = MagicMock()
+        launch.grant_path = Path("/private/runtime/grant.json")
+
+        with (
+            patch("gobby.agents.spawn._prepare_run_for_session", return_value=prepared),
+            patch("gobby.agents.spawn.read_local_api_token", return_value="op-token"),
+            patch("gobby.agents.code_index._active_deployment_grant_context"),
+            patch("gobby.agents.code_index._signed_grant_from_credential"),
+            patch(
+                "gobby.runtime_grants.launch.materialize_managed_launch",
+                return_value=launch,
+            ),
+        ):
+            result = prepare_terminal_resume(
+                sm,
+                existing_session_id="child-1",
+                original_run_id="run-0",
+                parent_session_id="parent-1",
+                project_id="proj-1",
+                source="codex",
+                workflow_name=None,
+                agent_name=None,
+                initial_variables=None,
+                git_branch=None,
+                prompt="Continue",
+                model=None,
+                is_local=False,
+                max_agent_depth=3,
+                agent_run_id=run_id,
+                task_id=None,
+                claimed_session_id=None,
+                timeout_seconds=None,
+                sandbox_enabled=False,
+                requested_reasoning_effort=None,
+                effective_reasoning_effort=None,
+                reasoning_required=False,
+                reasoning_status="not_requested",
+                reasoning_message=None,
+                resume_metadata_json={},
+                worktree_id=None,
+                clone_id=None,
+                workspace_path="/work/reviewed-worktree",
+                credential_manager=credential_manager,
+                config_snapshot=MagicMock(),
+            )
+
+        assert result.managed_credential is credential
+        issue_kwargs = credential_manager.issue.call_args.kwargs
+        assert issue_kwargs["agent_run_id"] == uuid.UUID(run_id)
+        assert issue_kwargs["requested_project_path"] == "/work/reviewed-worktree"

@@ -111,6 +111,22 @@ def _clear_service_launch_marker(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _clear_provider_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test without the runner's provider credentials.
+
+    Native spawns pass allowlisted provider env through from os.environ, so a real
+    key would land in recorded spawn fakes and print in any failing diff. Tests that
+    need one set a dummy explicitly.
+    """
+    from gobby.agents.credential_inventory import CLI_DENIED_AMBIENT_KEYS
+    from gobby.agents.spawners.auth_env import CLI_ENV_ALLOWLIST
+
+    for keys in (*CLI_ENV_ALLOWLIST.values(), *CLI_DENIED_AMBIENT_KEYS.values()):
+        for key in keys:
+            monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _clear_invoking_agent_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     """Start every test outside the invoking agent's identity, as CI runs.
 
@@ -119,6 +135,7 @@ def _clear_invoking_agent_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     need one set it explicitly.
     """
     from gobby.agents import constants
+    from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
     from gobby.utils.local_token import GOBBY_MANAGED_EXECUTION_ID_ENV
 
     for name in (
@@ -127,6 +144,7 @@ def _clear_invoking_agent_identity(monkeypatch: pytest.MonkeyPatch) -> None:
         constants.GOBBY_AGENT_RUN_ID,
         constants.GOBBY_AGENT_API_TOKEN,
         GOBBY_MANAGED_EXECUTION_ID_ENV,
+        MANAGED_EXECUTION_BOOTSTRAP_ENV,
         constants.GOBBY_WORKFLOW_NAME,
         constants.GOBBY_PROJECT_ID,
         constants.GOBBY_AGENT_DEPTH,
@@ -203,7 +221,6 @@ def _reset_process_global_state() -> None:
     from opentelemetry.util._once import Once
 
     from gobby.agents import terminal_delivery
-    from gobby.agents.tmux import reset_tmux_globals
     from gobby.storage import schema_contract
     from gobby.telemetry import providers as telemetry_providers
 
@@ -230,10 +247,6 @@ def _reset_process_global_state() -> None:
     terminal_delivery.detach_shielded_terminal_deliveries()
     terminal_delivery.reset_terminal_delivery_offload()
     terminal_delivery.reopen_terminal_delivery_admission()
-
-    # configure_tmux (runner init, agent tests) sets a process-global config that
-    # session_end reads to decide whether a terminal session ends paused or expired.
-    reset_tmux_globals()
 
     # The gdaemon schema-identity probe is cached per installed binary; a probe a
     # test faked must not answer for a later test's binary.
@@ -311,6 +324,13 @@ def temp_dir() -> Iterator[Path]:
     """Create a temporary directory for test files."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
+
+
+@pytest.fixture
+def stub_srt_verifier() -> Iterator[MagicMock]:
+    """Pass the managed-SRT gate without the pinned install; unit spawn modules opt in."""
+    with patch("gobby.agents.sandbox_gate.verify_srt_installation") as verifier:
+        yield verifier
 
 
 @pytest.fixture(scope="session")

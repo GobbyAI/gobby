@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import shutil
 import uuid
@@ -29,7 +30,13 @@ from gobby.agents.local_model import (
     ensure_local_model,
     refresh_local_model_context,
 )
-from gobby.agents.provider_capabilities import codex_launches_headless
+from gobby.agents.resume_executor_settlement import (
+    _fire_resume_started,
+    _park_unlaunched_successor,
+    _persist_resume_runtime,
+    _ResumeRunner,
+    _rollback_prepared_resume,
+)
 from gobby.agents.resume_finalization import (
     finalize_resume_handoff_async,
     notify_parent_of_recovery,
@@ -38,19 +45,15 @@ from gobby.agents.resume_metadata import (
     filter_resume_config_overrides,
     merge_resume_metadata_env,
 )
-from gobby.agents.sandbox import coerce_sandbox_config
-from gobby.agents.sandbox_resolvers import get_sandbox_resolver
+from gobby.agents.resume_placement import launch_resume
+from gobby.agents.sandbox_gate import SandboxRequiredError, resolve_resume_sandbox
 from gobby.agents.spawn import prepare_terminal_resume
 from gobby.agents.spawn_executor_support import (
     _codex_runtime_config_overrides,
     schedule_codex_prompt_delivery,
 )
 from gobby.agents.spawners.command_builder import build_cli_command
-from gobby.agents.srt_runtime import (
-    SandboxLaunch,
-    SrtRuntimeError,
-    prepare_sandbox_launch,
-)
+from gobby.agents.srt_runtime import SrtRuntimeError, prepare_sandbox_launch
 from gobby.agents.trust import pre_approve_directory
 from gobby.ai.codex_endpoint import (
     codex_endpoint_config_overrides,
@@ -62,6 +65,7 @@ from gobby.sessions.context_usage import local_context_variable_updates
 from gobby.storage import daemon_resume_keys
 from gobby.storage.agents import AgentRun
 from gobby.storage.terminals import Terminal
+from gobby.utils.git import run_to_completion
 from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
@@ -90,14 +94,6 @@ DAEMON_STOP_CONTINUATION_PROMPT = (
 )
 
 
-class _ResumeRunner(Protocol):
-    @property
-    def child_session_manager(self) -> Any: ...
-
-    @property
-    def run_storage(self) -> LocalAgentRunManager: ...
-
-
 class _SessionLookup(Protocol):
     def get(self, session_id: str) -> Any: ...
 
@@ -118,6 +114,7 @@ async def resume_agent_run(
     session_manager: _SessionLookup,
     daemon_config: Any | None = None,
     completion_registry: CompletionEventRegistry | None = None,
+    agent_pane_reserver: AgentPaneReserver | None = None,
 ) -> ResumeAgentResult:
     """Start a provider-native resume process for a daemon-stop run.
 
@@ -127,7 +124,14 @@ async def resume_agent_run(
         runner: Agent runner exposing child session creation and run storage.
         session_manager: Session lookup used to recover provider-native IDs.
         daemon_config: Optional daemon config used for tmux spawn settings.
+        agent_pane_reserver: Daemon pane reserver; a placed snapshot is refused without it.
     """
+    from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
+
+    if original_run.agent_name == TASK_CLOSE_REVIEWER_AGENT:
+        # Its close review stays bound to this run, so a successor could never
+        # submit a verdict; close-review reconciliation retries the review instead.
+        return ResumeAgentResult(False, error="resume_task_close_reviewer_unsupported")
     provider = _metadata_str(resume_metadata, "provider") or original_run.provider
     try:
         await asyncio.to_thread(revalidate_write_grant, resume_metadata)
@@ -322,47 +326,49 @@ async def resume_agent_run(
         env["GOBBY_MACHINE_ID"] = ""
     if not env["GOBBY_MACHINE_ID"]:
         env.pop("GOBBY_MACHINE_ID")
-    sandbox_config = coerce_sandbox_config(resume_metadata.get("sandbox_config"))
-    launch = SandboxLaunch(backend="provider-native", enforced=False)
-    if sandbox_config is not None:
-        resolver = None
-        if sandbox_config.enabled and sandbox_config.backend == "provider-native":
-            try:
-                resolver = get_sandbox_resolver(provider)
-            except ValueError:
-                error = f"resume_sandbox_unsupported:{provider}"
-                await _rollback_prepared_resume(
-                    runner,
-                    original_run_id=original_run.id,
-                    successor_run_id=run_id,
-                    child_session_id=spawn_context.session_id,
-                )
-                return ResumeAgentResult(False, run_id=run_id, error=error)
-        daemon_port = int(getattr(daemon_config, "daemon_port", 60887))
-        websocket = getattr(daemon_config, "websocket", None)
-        websocket_port = int(getattr(websocket, "port", 60888))
-        try:
-            launch = await prepare_sandbox_launch(
-                config=sandbox_config,
-                provider=provider,
-                workspace_path=cwd,
-                run_id=run_id,
-                resolver=resolver,
-                daemon_port=daemon_port,
-                websocket_port=websocket_port,
-                api_base=_resume_api_base(provider, env),
-                env=env,
-                allow_run_unix_sockets=True,
-            )
-        except (OSError, ValueError, SrtRuntimeError) as exc:
-            error = f"resume_sandbox_failed_closed:{type(exc).__name__}:{exc}"
-            await _rollback_prepared_resume(
-                runner,
-                original_run_id=original_run.id,
-                successor_run_id=run_id,
-                child_session_id=spawn_context.session_id,
-            )
-            return ResumeAgentResult(False, run_id=run_id, error=error)
+    park = functools.partial(
+        _park_unlaunched_successor,
+        runner,
+        original_run=original_run,
+        successor_run_id=run_id,
+        child_session_id=spawn_context.session_id,
+        completion_registry=completion_registry,
+    )
+    # The successor already exists: a refusal or a cancellation parks it exactly once.
+    # A cancelled verifier thread finishes on its own; it reads only the SRT install.
+    try:
+        sandbox_config = await asyncio.to_thread(resolve_resume_sandbox, resume_metadata)
+    except asyncio.CancelledError:
+        await run_to_completion(park())
+        raise
+    except SandboxRequiredError:
+        await run_to_completion(park())
+        return ResumeAgentResult(False, run_id=run_id, error="sandbox_required")
+    daemon_port = int(getattr(daemon_config, "daemon_port", 60887))
+    websocket = getattr(daemon_config, "websocket", None)
+    websocket_port = int(getattr(websocket, "port", 60888))
+    try:
+        launch = await prepare_sandbox_launch(
+            config=sandbox_config,
+            provider=provider,
+            workspace_path=cwd,
+            run_id=run_id,
+            resolver=None,
+            daemon_port=daemon_port,
+            websocket_port=websocket_port,
+            api_base=_resume_api_base(provider, env),
+            env=env,
+            allow_run_unix_sockets=True,
+        )
+    except (OSError, ValueError, SrtRuntimeError) as exc:
+        error = f"resume_sandbox_failed_closed:{type(exc).__name__}:{exc}"
+        await _rollback_prepared_resume(
+            runner,
+            original_run_id=original_run.id,
+            successor_run_id=run_id,
+            child_session_id=spawn_context.session_id,
+        )
+        return ResumeAgentResult(False, run_id=run_id, error=error)
     env.update(launch.provider_env)
     update_sandbox_enabled = getattr(runner.child_session_manager, "update_sandbox_enabled", None)
     if callable(update_sandbox_enabled):
@@ -404,18 +410,11 @@ async def resume_agent_run(
         config_overrides.extend(
             _codex_runtime_config_overrides(launch.provider_env.get("TMPDIR"), env)
         )
-    headless_reviewer = provider == "codex" and codex_launches_headless(
-        original_run.agent_name, sandbox_enforced=launch.enforced, sandbox_backend=launch.backend
-    )
     command, _cmd_env = build_cli_command(
         cli=provider,
         # Claude appends its prompt after MCP flags below. Codex TUI receives
-        # a post-launch composer paste; headless exec takes a positional prompt.
-        prompt=(
-            None
-            if provider == "claude" or (provider == "codex" and not headless_reviewer)
-            else prompt
-        ),
+        # a post-launch composer paste.
+        prompt=None if provider in {"claude", "codex"} else prompt,
         resume_session_id=native_session_id,
         auto_approve=bool(resume_metadata.get("auto_approve", True)),
         working_directory=cwd if provider in {"agy", "codex", "droid", "grok"} else None,
@@ -424,8 +423,6 @@ async def resume_agent_run(
         codex_oss_provider=codex_oss_provider,
         reasoning_effort=_metadata_str(resume_metadata, "effective_reasoning_effort"),
         config_overrides=config_overrides,
-        mode="headless" if headless_reviewer else "agent",
-        external_sandbox_enforced=headless_reviewer,
     )
     launch_updates: dict[str, Any] = {}
     if provider == "claude":
@@ -493,7 +490,7 @@ async def resume_agent_run(
         child_session_id=spawn_context.session_id,
         agent_run_id=run_id,
         title=f"gobby-resume-{run_id}",
-        codex_prompt=prompt if provider == "codex" and not headless_reviewer else None,
+        codex_prompt=prompt if provider == "codex" else None,
     )
     spawn_request = SpawnRequest(
         prompt=prompt,
@@ -515,26 +512,25 @@ async def resume_agent_run(
         terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
     )
     try:
-        terminal_result = await _runtime_spawn(spawn_request, plan)
+        terminal_result = await launch_resume(
+            spawn_request,
+            plan,
+            runtime_spawn=_runtime_spawn,
+            snapshot=resume_metadata.get("placement"),
+            reserver=agent_pane_reserver,
+            sessions=session_manager,
+            parent_session_id=parent_session_id,
+            project_id=project_id,
+            worktree_id=_metadata_str(resume_metadata, "worktree_id"),
+            park=park,
+        )
     except Exception as exc:
         error = f"resume_spawn_failed:{type(exc).__name__}:{exc}"
-        await _park_unlaunched_successor(
-            runner,
-            original_run=original_run,
-            successor_run_id=run_id,
-            child_session_id=spawn_context.session_id,
-            completion_registry=completion_registry,
-        )
+        await park()
         return ResumeAgentResult(False, run_id=run_id, error=error)
     if not terminal_result.success:
         error = terminal_result.error or terminal_result.message or "resume_spawn_failed"
-        await _park_unlaunched_successor(
-            runner,
-            original_run=original_run,
-            successor_run_id=run_id,
-            child_session_id=spawn_context.session_id,
-            completion_registry=completion_registry,
-        )
+        await park()
         return ResumeAgentResult(False, run_id=run_id, error=error)
 
     terminal: Terminal | None = None
@@ -543,7 +539,7 @@ async def resume_agent_run(
         if manager is not None:
             terminal = await asyncio.to_thread(manager.get, terminal_result.terminal_id)
 
-    if provider == "codex" and not headless_reviewer and terminal is not None:
+    if provider == "codex" and terminal is not None:
         coordinator = getattr(runner, "write_coordinator", None)
         if coordinator is not None:
             schedule_codex_prompt_delivery(
@@ -672,141 +668,6 @@ def _provider_native_session_id(
     return value
 
 
-def _persist_resume_runtime(
-    runner: _ResumeRunner,
-    run_id: str,
-    *,
-    pid: int | None,
-    terminal_id: str | None,
-    worktree_id: str | None,
-    clone_id: str | None,
-) -> AgentRun | None:
-    runner.run_storage.update_runtime(
-        run_id,
-        pid=pid,
-        terminal_id=terminal_id,
-        worktree_id=worktree_id,
-        clone_id=clone_id,
-    )
-    transitioned = runner.run_storage.transition_resume_phase(
-        run_id,
-        expected_phase="launch_requested",
-        new_phase="runtime_persisted",
-    )
-    if transitioned is None:
-        current = runner.run_storage.get(run_id)
-        if current is not None and (
-            current.status in {"running", "success", "error", "timeout", "cancelled"}
-            or (current.resume_metadata_json or {}).get("daemon_stop_resume_phase") == "finalized"
-        ):
-            return current
-        return None
-    started = runner.run_storage.start(run_id)
-    if started is not None:
-        return started
-    current = runner.run_storage.get(run_id)
-    return current if current is not None and current.status == "running" else None
-
-
-async def _rollback_prepared_resume(
-    runner: _ResumeRunner,
-    *,
-    original_run_id: str,
-    successor_run_id: str,
-    child_session_id: str,
-) -> bool:
-    from gobby.storage.agent_resume import rollback_prepared_daemon_resume
-
-    return await asyncio.to_thread(
-        rollback_prepared_daemon_resume,
-        runner.run_storage.db,
-        original_run_id=original_run_id,
-        successor_run_id=successor_run_id,
-        child_session_id=child_session_id,
-    )
-
-
-async def _park_unlaunched_successor(
-    runner: _ResumeRunner,
-    *,
-    original_run: AgentRun,
-    successor_run_id: str,
-    child_session_id: str,
-    completion_registry: CompletionEventRegistry | None,
-) -> None:
-    """Park a spawned-but-failed successor, containing every step.
-
-    Runs inside the dispatcher's failure path: a raise here would leak the
-    dispatch mutex and leave the successor provisional, so each step logs
-    and continues instead of propagating.
-    """
-    from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
-
-    try:
-        await finalize_resume_handoff_async(
-            runner.run_storage.db,
-            original_run_id=original_run.id,
-            successor_run_id=successor_run_id,
-            child_session_id=child_session_id,
-            completion_registry=completion_registry,
-        )
-    except Exception:
-        logger.warning(
-            "Failed to finalize handoff while parking unlaunched successor %s",
-            successor_run_id,
-            exc_info=True,
-        )
-    try:
-        runner.run_storage.cancel(successor_run_id, terminal_reason="daemon_stop")
-    except Exception:
-        logger.warning(
-            "Failed to park unlaunched successor %s",
-            successor_run_id,
-            exc_info=True,
-        )
-    try:
-        await asyncio.to_thread(
-            cleanup_agent_runtime_state,
-            runner.run_storage.db,
-            run_id=successor_run_id,
-            child_session_id=child_session_id,
-            terminal_reason="daemon_stop",
-        )
-    except Exception:
-        logger.warning(
-            "Failed runtime cleanup while parking unlaunched successor %s",
-            successor_run_id,
-            exc_info=True,
-        )
-
-
-def _fire_resume_started(
-    original_run: AgentRun,
-    run_id: str,
-    provider: str,
-    terminal_result: Any,
-    terminal: Terminal | None,
-    parent_session_id: str,
-) -> None:
-    try:
-        from gobby.runner_broadcasting import fire_agent_event
-
-        fire_agent_event(
-            "agent_started",
-            run_id,
-            {
-                daemon_resume_keys.RESUMED_FROM_RUN_ID_KEY: original_run.id,
-                "parent_session_id": parent_session_id,
-                "provider": provider,
-                "pid": terminal_result.pid,
-                "terminal_id": terminal.id if terminal is not None else None,
-                "backend": terminal.backend if terminal is not None else None,
-            },
-        )
-    except Exception as exc:
-        logger.warning("Failed to fire resumed agent_started event for %s: %s", run_id, exc)
-
-
 def _metadata_str(metadata: dict[str, Any], key: str) -> str | None:
     value = metadata.get(key)
     return value if isinstance(value, str) and value else None
@@ -846,4 +707,4 @@ def _sandbox_enabled(metadata: dict[str, Any]) -> bool:
 
 if TYPE_CHECKING:
     from gobby.events.completion_registry import CompletionEventRegistry
-    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.terminals.workspace_agent_panes import AgentPaneReserver

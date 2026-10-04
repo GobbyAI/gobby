@@ -300,3 +300,27 @@ class TestPreserveContextOnCompact:
         assert assignments["_memory_surface_seq"] == 0
         assert assignments["injected_review_lesson_ids"] == []
         assert "injected_memory_ids" not in assignments
+
+
+class TestClearHandoffGateOnCompactStart:
+    """The compact hydration boundary releases the staged gate (#22706)."""
+
+    def test_rule_is_installed_enabled_and_scoped_to_compact(self, db: HubDatabase) -> None:
+        row = RuleDefinitionManager(db).get_by_name("clear-handoff-gate-on-context-loss")
+        assert row is not None
+        assert row.source == "installed"
+        assert row.enabled is True
+        assert row.priority == 9
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.event.value == "session_start"
+        when = body.when or ""
+        assert "== 'compact'" in when
+        assert "'clear'" not in when
+        effects = body.resolved_effects
+        assert len(effects) == 1
+        assert effects[0].type == "set_variable"
+        assert effects[0].variable == "context_compact_handoff_result"
+        assert effects[0].value is None
+        # Only the pending states release, so a failed delivery keeps its retry gate.
+        assert "delivery_pending" in when
+        assert "attempt_pending" in when

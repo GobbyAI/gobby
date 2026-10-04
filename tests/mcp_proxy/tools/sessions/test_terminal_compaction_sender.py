@@ -157,13 +157,13 @@ async def test_confirmed_interrupt_drains_then_submits_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_codex_uses_ctrl_c_and_the_line_drain() -> None:
+async def test_codex_uses_escape_and_the_line_drain() -> None:
     pane = _ComposerPane()
 
     result, _mark, _clear = await _send(pane, lambda: True, cli_source="codex")
 
     assert result == (True, None, True, {"submit_unverified": True})
-    assert pane.keys == ["ctrl_c", *composer_clear_sequence("codex"), "enter"]
+    assert pane.keys == ["escape", *composer_clear_sequence("codex"), "enter"]
     assert pane.typed == ["/clear\n"]
 
 
@@ -513,7 +513,7 @@ async def test_seat_leaving_after_the_command_write_gets_no_enter(command: str) 
     clear.assert_called_once()
 
 
-async def test_codex_quitting_under_its_one_press_is_a_departed_seat() -> None:
+async def test_codex_departing_during_its_one_press_stops_delivery() -> None:
     pane = _ComposerPane()
 
     ok, _reason, _pending, detail = await _send_terminal_compaction_command(
@@ -526,16 +526,16 @@ async def test_codex_quitting_under_its_one_press_is_a_departed_seat() -> None:
         observe_interrupt=lambda: False,
         settle_seconds=_SETTLE,
         turn_settled=lambda: False,
-        seat_left=lambda: "ctrl_c" in pane.keys,
+        seat_left=lambda: "escape" in pane.keys,
     )
 
     assert ok is False
     assert detail == {"error_code": NO_TERMINAL_TARGET_ERROR_CODE, "continuation_pending": False}
-    assert pane.keys == ["ctrl_c"]
+    assert pane.keys == ["escape"]
     assert pane.typed == []
 
 
-async def test_codex_gets_one_interrupt_press_when_none_is_confirmed() -> None:
+async def test_codex_gets_one_safe_interrupt_press_when_none_is_confirmed() -> None:
     pane = _ComposerPane()
     clear = MagicMock(return_value=True)
 
@@ -555,9 +555,32 @@ async def test_codex_gets_one_interrupt_press_when_none_is_confirmed() -> None:
     assert reason == "CLI did not confirm interruption after 1 attempts"
     assert detail is not None
     assert detail["error_code"] == _INTERRUPT_UNCONFIRMED_ERROR_CODE
-    assert pane.keys == ["ctrl_c"]
+    assert pane.keys == ["escape"]
     assert pane.typed == []
     clear.assert_called_once()
+
+
+async def test_settled_codex_with_no_interrupt_observation_never_interrupts() -> None:
+    pane = _ComposerPane()
+    observe = MagicMock(return_value=False)
+
+    ok, reason, _pending, _detail = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source="codex",
+        mark_continuation_pending=MagicMock(return_value=True),
+        clear_continuation_pending=MagicMock(),
+        observe_interrupt=observe,
+        turn_settled=lambda: True,
+        settle_seconds=0,
+    )
+
+    assert ok is True
+    assert reason is None
+    assert pane.typed == ["/compact\n"]
+    assert pane.keys == [*composer_clear_sequence("codex"), "enter"]
+    observe.assert_not_called()
 
 
 async def test_codex_turn_ending_under_its_one_press_proceeds_to_the_command() -> None:
@@ -574,11 +597,11 @@ async def test_codex_turn_ending_under_its_one_press_proceeds_to_the_command() -
         clear_continuation_pending=MagicMock(return_value=True),
         observe_interrupt=lambda: False,
         settle_seconds=_SETTLE,
-        turn_settled=lambda: "ctrl_c" in pane.keys,
+        turn_settled=lambda: "escape" in pane.keys,
     )
 
     assert ok is True
-    assert pane.keys.count("ctrl_c") == 1
+    assert pane.keys.count("escape") == 1
     assert pane.typed == ["/compact\n"]
 
 

@@ -16,8 +16,10 @@ def verify_setup(home: Path, project: Path) -> None:
     marker = json.loads((project / ".gobby" / "project.json").read_text())
     if not isinstance(marker, dict) or marker.get("id") != "00000000-0000-0000-0000-000000000e2e":
         raise ProofRefused("isolated project marker required")
-    if home.resolve(strict=True) != (project / ".gobby-home").resolve(strict=True):
-        raise ProofRefused("isolated project home required")
+    # e2e_config pins this synthetic machine identity in the home it configures.
+    machine = home / "machine_id"
+    if not machine.is_file() or machine.read_text() != "21000000-0000-4000-8000-000000000002":
+        raise ProofRefused("isolated e2e home required")
     require_private_root(home)
 
 

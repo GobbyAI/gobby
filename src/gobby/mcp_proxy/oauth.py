@@ -214,15 +214,16 @@ class PersistentOAuthProvider(OAuthClientProvider):
         async def no_callback() -> AuthorizationCodeResult:
             raise OAuthFlowError("Interactive OAuth is only available through mcp-proxy auth")
 
+        client_metadata = OAuthClientMetadata(  # nosec B106 # RFC 7591 public value.
+            client_name="Gobby",
+            redirect_uris=[AnyUrl(redirect_uri)],
+            grant_types=["authorization_code", "refresh_token"],
+            response_types=["code"],
+            token_endpoint_auth_method="none",
+        )
         super().__init__(
             server_url=config.url,
-            client_metadata=OAuthClientMetadata(
-                client_name="Gobby",
-                redirect_uris=[AnyUrl(redirect_uri)],
-                grant_types=["authorization_code", "refresh_token"],
-                response_types=["code"],
-                token_endpoint_auth_method="none",  # nosec B106 # RFC 7591 public value.
-            ),
+            client_metadata=client_metadata,
             storage=storage,
             redirect_handler=redirect_handler or needs_login,
             callback_handler=callback_handler or no_callback,

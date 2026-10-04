@@ -24,7 +24,7 @@ from gobby.workflows.definitions import (
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.fixtures.agent_definitions import make_agent_definition
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 
 async def _drain_spawn_background_tasks() -> None:
@@ -1050,15 +1050,11 @@ class TestSpawnAgentSandbox:
             )
             await _drain_spawn_background_tasks()
 
-            assert result["success"] is True
-            spawn_request = mock_execute.call_args[0][0]
-            assert spawn_request.sandbox_config is not None
-            assert spawn_request.sandbox_config.enabled is False
-            assert spawn_request.sandbox_config.backend == "srt"
-            assert spawn_request.sandbox_config.mode == "restrictive"
-            assert spawn_request.sandbox_config.allow_network is False
-            assert spawn_request.sandbox_config.extra_read_paths == ["/tmp/agent-read"]
-            assert spawn_request.sandbox_config.extra_write_paths == ["/tmp/agent-write"]
+            # The resolver's disabled sandbox reaches the managed-SRT gate and is refused.
+            assert result["success"] is False
+            assert result["error_code"] == "sandbox_required"
+            mock_get_handler.assert_not_called()
+            mock_execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_spawn_agent_schema_no_longer_exposes_sandbox_knobs(

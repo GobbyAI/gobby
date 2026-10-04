@@ -624,7 +624,7 @@ def _run_epoch_compose_up(
     command.extend(["up", "-d", "--remove-orphans", "--wait"])
     ensure_docker_allowed("hub backup epoch compose up", runner=subprocess.run)
     try:
-        result = subprocess.run(  # nosec B603 - fixed Docker Compose arguments
+        result = subprocess.run(  # nosec B603 # fixed Docker Compose arguments
             command,
             input=_EPOCH_COMPOSE_OVERRIDE,
             capture_output=True,

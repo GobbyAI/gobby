@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import psycopg
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.workflows.claimed_task_extra_skills import (
     _load_task,
@@ -318,6 +319,18 @@ def test_load_task_swallows_expected_lookup_errors(error: Exception) -> None:
     manager.get_task.side_effect = error
 
     assert _load_task(manager, "task-1") is None
+
+
+@pytest.mark.integration
+def test_load_task_failure_leaves_ambient_transaction_usable(hub_db: HubDatabase) -> None:
+    """A swallowed lookup error must not abort the caller's transaction (#23296)."""
+    manager = MagicMock()
+    manager.db = hub_db
+    manager.get_task.side_effect = lambda _task_id: hub_db.execute("SELECT 1 / 0")
+
+    with hub_db.transaction() as txn:
+        assert _load_task(manager, "task-1") is None
+        assert txn.execute("SELECT 1 AS value").fetchone() == {"value": 1}
 
 
 def test_load_task_propagates_unexpected_errors() -> None:

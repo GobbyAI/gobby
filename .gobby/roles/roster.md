@@ -21,13 +21,14 @@
 | lane-9-memory.md | gobby#14948 |
 | lane-10-openrouter.md | gobby#14979 |
 | lane-manager.md | gobby#14930 |
-| code-reviewer.md | gobby#14641 |
+| researcher.md | gobby#14641 |
 | code-reviewer.md | gobby#14680 |
 | code-reviewer.md | gobby#14681 |
 | code-reviewer.md | gobby#14944 |
 | code-reviewer.md | gobby#14945 |
 | code-reviewer.md | gobby#15009 |
 | code-reviewer.md | gobby#15010 |
+| code-reviewer.md | gobby#15242 |
 | researcher.md | gobby#14550 |
 | researcher.md | gobby#14640 |
 | archivist.md | gobby#14949 |

@@ -1,6 +1,7 @@
 """Tests for bundled skill synchronization on daemon startup."""
 
 from pathlib import Path
+from typing import Literal
 from unittest.mock import patch
 
 import pytest
@@ -8,7 +9,7 @@ import pytest
 from gobby.storage.config_mutations import ConfigPatch
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase, Transaction
-from gobby.storage.skills import LocalSkillManager, SkillFile, SkillScopeConflictError
+from gobby.storage.skills import LocalSkillManager, Skill, SkillFile, SkillScopeConflictError
 
 
 def _write_bundled_router(root: Path) -> None:
@@ -39,6 +40,111 @@ def _write_bundled_skill(root: Path, *, scripts: dict[str, str]) -> Path:
     for name, content in scripts.items():
         (scripts_dir / name).write_text(content)
     return skill_dir
+
+
+@pytest.mark.parametrize("source_type", ["filesystem", "local"])
+@pytest.mark.parametrize("change_entrypoint", [True, False], ids=["entrypoint", "reference-only"])
+@pytest.mark.parametrize("relative_path", [False, True], ids=["absolute", "relative"])
+def test_sync_repairs_markerless_installed_bundle_by_exact_provenance(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_type: Literal["filesystem", "local"],
+    change_entrypoint: bool,
+    relative_path: bool,
+) -> None:
+    from gobby.skills.sync import sync_bundled_skills
+
+    skill_dir = _write_bundled_skill(tmp_path, scripts={})
+    entrypoint = skill_dir / "SKILL.md"
+    entrypoint.write_text(
+        "---\nname: scriptful\ndescription: Fixture\nversion: 1.0.0\n"
+        "metadata: {category: development}\n---\nOriginal body\n"
+    )
+    references = skill_dir / "references"
+    references.mkdir()
+    reference = references / "testing.md"
+    reference.write_text("Old reference\n")
+    monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+    storage = LocalSkillManager(temp_db)
+    assert sync_bundled_skills(temp_db)["synced"] == 2
+    original = storage.get_by_name("scriptful")
+    assert original is not None
+    if relative_path:
+        monkeypatch.chdir(tmp_path)
+    source_path = "scriptful/SKILL.md" if relative_path else str(entrypoint)
+    storage.update_skill(
+        original.id, enabled=False, source_type=source_type, source_path=source_path
+    )
+    before = storage.get_skill(original.id)
+
+    if change_entrypoint:
+        entrypoint.write_text(
+            entrypoint.read_text().replace("1.0.0", "1.1.0").replace("Original", "Repaired")
+        )
+    reference.write_text("Updated reference with current guidance\n")
+
+    result = sync_bundled_skills(temp_db)
+
+    assert result["success"] is True, result["errors"]
+    assert result["updated"] == 1
+    repaired = storage.get_skill(original.id)
+    assert repaired.content == ("Repaired body" if change_entrypoint else "Original body")
+    assert repaired.version == ("1.1.0" if change_entrypoint else "1.0.0")
+    assert repaired.metadata == {"category": "development"}
+    assert repaired.enabled is False
+    assert repaired.source_type == source_type
+    assert repaired.source_path == before.source_path
+    stored_reference = storage.get_skill_file(original.id, "references/testing.md")
+    assert stored_reference is not None
+    assert stored_reference.content == reference.read_text()
+    assert stored_reference.size_bytes == len(reference.read_bytes())
+
+    assert sync_bundled_skills(temp_db)["updated"] == 0
+    unchanged = storage.get_skill(original.id)
+    unchanged_reference = storage.get_skill_file(original.id, "references/testing.md")
+    assert unchanged.updated_at == repaired.updated_at
+    assert unchanged_reference is not None
+    assert unchanged_reference.updated_at == stored_reference.updated_at
+
+
+@pytest.mark.parametrize(
+    "collision",
+    ["project", "user", "external", "wrong-path", "wrong-name", "traversal-name", "missing-path"],
+)
+def test_markerless_bundle_ownership_rejects_foreign_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, collision: str
+) -> None:
+    from gobby.skills.sync import _is_gobby_owned
+
+    monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+    skill = Skill(
+        id="unmanaged-fixture",
+        name="c",
+        description="User-authored C guidance",
+        content="Keep this content",
+        metadata={"category": "development"},
+        source="installed",
+        source_type="filesystem",
+        source_path=str(tmp_path / "c" / "SKILL.md"),
+    )
+    if collision == "project":
+        skill.project_id = TEST_PROJECT_ID
+    elif collision == "user":
+        skill.source = "project"
+    elif collision == "external":
+        skill.source_type = "github"
+    elif collision == "wrong-path":
+        skill.source_path = str(tmp_path / "custom" / "c" / "SKILL.md")
+    elif collision == "wrong-name":
+        skill.name = "cpp"
+    elif collision == "traversal-name":
+        skill.name = "../foreign"
+        skill.source_path = str(tmp_path.parent / "foreign" / "SKILL.md")
+    else:
+        skill.source_path = None
+
+    assert _is_gobby_owned(skill) is False
 
 
 pytestmark = pytest.mark.unit

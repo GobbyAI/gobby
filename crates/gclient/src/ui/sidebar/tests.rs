@@ -1,7 +1,9 @@
 use super::*;
 use crate::app::Workspace;
 use crate::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow};
+use crate::theme::ThemeKind;
 use ratatui::backend::TestBackend;
+use ratatui::style::Modifier;
 use ratatui::Terminal;
 use serde_json::json;
 
@@ -213,6 +215,44 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
         ]
     );
     assert_eq!(hits.scrollbars, [None; 4]);
+}
+
+#[test]
+fn section_headings_sit_on_a_band_between_the_ground_and_the_row_fills() {
+    // Josh (#23280): every heading row is a full-width band darker than the
+    // row selection fills and lighter than the panel ground, its title bold
+    // `text`.
+    let ws = scripted_workspace();
+    for kind in [ThemeKind::Dark, ThemeKind::Light] {
+        let mut chrome = Chrome::dark();
+        chrome.set_theme(kind);
+        let p = chrome.palette;
+        let mut terminal = Terminal::new(TestBackend::new(26, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_sidebar(frame, Rect::new(0, 0, 26, 40), &ws, &chrome);
+            })
+            .unwrap();
+        let n = &chrome.theme.neutrals;
+        let ratio = crate::theme::contrast_ratio(n.text.rgb(), n.surface_dim.rgb());
+        assert!(ratio >= 4.5, "{kind:?} heading title contrast {ratio:.2}");
+        let cells = terminal.backend().buffer();
+        for (y, title) in [
+            (0, "Machines"),
+            (3, "Projects"),
+            (6, "Agents"),
+            (23, "Terminals"),
+        ] {
+            for x in 0..25 {
+                assert_eq!(cells[(x, y)].bg, p.surface_dim, "{kind:?} {title} x={x}");
+            }
+            for x in 1..=title.len() as u16 {
+                let cell = &cells[(x, y)];
+                assert_eq!(cell.fg, p.text, "{kind:?} {title} x={x}");
+                assert!(cell.modifier.contains(Modifier::BOLD), "{kind:?} {title}");
+            }
+        }
+    }
 }
 
 #[test]

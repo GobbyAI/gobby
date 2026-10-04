@@ -8,7 +8,6 @@ import math
 import threading
 import time
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, Literal
 from unittest.mock import MagicMock, patch
 
@@ -16,17 +15,12 @@ import pytest
 
 from gobby.hooks.adapter_execution import run_adapter_hook
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.hooks.phase_timing import HOOK_PHASES, HookPhaseTimings, hook_phase_timing_scope
-from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
+from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, worker_staging_scope
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import SessionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
-from gobby.workflows.hooks import WorkflowHookHandler
-from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -484,21 +478,24 @@ async def _evaluate_claude_hook(
     data: dict[str, Any] | None = None,
     variables: dict[str, Any] | None = None,
 ) -> Any:
-    return await engine.evaluate(
-        HookEvent(
-            event_type=event_type,
+    # One delivery's staging scope, as run_adapter binds it, so offloaded staging
+    # reaches this hook's response whatever earlier tests left in the context.
+    with worker_staging_scope():
+        return await engine.evaluate(
+            HookEvent(
+                event_type=event_type,
+                session_id=session_id,
+                source=SessionSource.CLAUDE,
+                timestamp=datetime.now(UTC),
+                data=data or {},
+                metadata={
+                    "_platform_session_id": session_id,
+                    "_native_hook_type": native_hook_type,
+                },
+            ),
             session_id=session_id,
-            source=SessionSource.CLAUDE,
-            timestamp=datetime.now(UTC),
-            data=data or {},
-            metadata={
-                "_platform_session_id": session_id,
-                "_native_hook_type": native_hook_type,
-            },
-        ),
-        session_id=session_id,
-        variables=variables or {"project": {"id": "isolated-hub", "path": "/tmp"}},
-    )
+            variables=variables or {"project": {"id": "isolated-hub", "path": "/tmp"}},
+        )
 
 
 async def _prompt(engine: RuleEngine, session_id: str) -> Any:
@@ -605,8 +602,10 @@ async def test_late_delivery_sets_the_rule_success_variable(
     assert STAGED_EFFECTS_FIELD not in timed_out.metadata
     assert _late_recall_count(delivered) == 1
     assert delivering_variables["late_recall_shown"] is True
+    # The late memory index renders on this hook, so it stages the #22844 sequence bump.
     assert delivered.metadata[STAGED_EFFECTS_FIELD]["session_variables"] == {
-        "late_recall_shown": True
+        "late_recall_shown": True,
+        "_memory_surface_seq": 1,
     }
 
 
@@ -1000,59 +999,14 @@ async def test_isolated_hub_two_codex_one_grok_hook_p95_under_one_second(
     with capsys.disabled():
         print(f"hook-saturation-measurement={report}")
 
-    assert all(response == {"continue": True} for response in responses)
+    assert [response["continue"] for response in responses] == [True] * len(hook_specs)
+    # Post-tool memory surfacing stages its sequence bump for the hook's own session.
+    for (session_id, _source, _event_type), response in zip(hook_specs, responses, strict=True):
+        staged = response.get(STAGED_EFFECTS_FIELD)
+        assert staged is None or staged["session_id"] == session_id
     assert dispatch_count == 6
     assert len(durations) == 6
     assert p95_seconds < 1.0
     assert all(
         latency_ms < 1_000 for values in measured_rule_timings.values() for latency_ms in values
     )
-
-
-def test_rule_evaluation_breakdown_names_each_subphase_and_session(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # #22708 criterion 7: a slow rule_evaluation phase must say where its time went, and
-    # which session, so each slow hook joins its rule-allow-audit rows.
-    machine_id = insert_isolated_machine(temp_db)
-    patch_local_machine_id(monkeypatch, machine_id)
-    project = LocalProjectManager(temp_db).create(name="rule-breakdown", repo_path=None)
-    session_id = SessionManager(temp_db).register_session(
-        external_id="rule-breakdown",
-        machine_id=machine_id,
-        source="claude",
-        project_id=project.id,
-    )
-    assert session_id
-    event = HookEvent(
-        event_type=HookEventType.BEFORE_TOOL,
-        session_id=session_id,
-        source=SessionSource.CLAUDE,
-        timestamp=datetime.now(UTC),
-        data={"tool_name": "Read"},
-        metadata={"_platform_session_id": session_id},
-        cwd=str(tmp_path),
-    )
-    handler = WorkflowHookHandler(
-        rule_engine=RuleEngine(temp_db),
-        evaluation_runtime=WorkflowEvaluationRuntime(max_workers=2),
-    )
-    timings = HookPhaseTimings()
-    try:
-        with hook_phase_timing_scope(timings):
-            response = handler.evaluate(event)
-    finally:
-        handler.shutdown()
-
-    assert response.decision == "allow"
-    assert set(timings.breakdown()) >= {
-        "rule_runtime_queue",
-        "rule_eval_lock_wait",
-        "rule_prelude",
-        "rule_engine",
-        "rule_engine_db_reads",
-    }
-    assert set(timings.snapshot()) == set(HOOK_PHASES)
-    assert timings.session_id == session_id

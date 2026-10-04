@@ -2,6 +2,7 @@
   "schema_version": 1,
   "name": "config_schema",
   "family": "config",
+  "backend": "up",
   "credential": "operator",
   "request": {
     "method": "GET",
@@ -1931,7 +1932,7 @@
           "machineExport": false,
           "default": [
             {
-              "candidate": "codex/gpt-5.6-terra",
+              "candidate": "codex/gpt-6-luna",
               "reasoning_effort": null
             },
             {
@@ -2760,7 +2761,7 @@
           "machineExport": false,
           "default": [
             {
-              "candidate": "codex/gpt-5.6-terra",
+              "candidate": "codex/gpt-6-luna",
               "reasoning_effort": null
             },
             {
@@ -3192,7 +3193,7 @@
           "machineExport": false,
           "default": [
             {
-              "candidate": "codex/gpt-5.6-terra",
+              "candidate": "codex/gpt-6-luna",
               "reasoning_effort": null
             },
             {
@@ -3324,7 +3325,7 @@
           "machineExport": false,
           "default": [
             {
-              "candidate": "codex/gpt-5.6-terra",
+              "candidate": "codex/gpt-6-luna",
               "reasoning_effort": null
             },
             {
@@ -3365,7 +3366,7 @@
           "machineExport": false,
           "default": [
             {
-              "candidate": "codex/gpt-5.6-terra",
+              "candidate": "codex/gpt-6-luna",
               "reasoning_effort": null
             },
             {
@@ -3503,7 +3504,7 @@
           "machineExport": false,
           "default": [
             {
-              "candidate": "codex/gpt-5.6-terra",
+              "candidate": "codex/gpt-6-luna",
               "reasoning_effort": null
             },
             {
@@ -4272,7 +4273,7 @@
           "activation": "live",
           "machineExport": false,
           "default": "native",
-          "description": "Default TerminalRuntime backend for new Gobby-owned terminals."
+          "description": "TerminalRuntime backend for new Gobby-owned terminals; only native spawns."
         },
         "terminals.hook_write_shutdown_timeout_seconds": {
           "type": "number",
@@ -4302,7 +4303,7 @@
           "activation": "live",
           "machineExport": false,
           "default": 150.0,
-          "description": "Age below which a pending spawn is in doubt, not dead. Defaults to the tmux init timeout (120s) plus a 30s margin."
+          "description": "Age below which a pending spawn is in doubt, not dead."
         },
         "terminals.stop_host_on_shutdown": {
           "type": "boolean",
@@ -4383,49 +4384,6 @@
           "machineExport": false,
           "default": true,
           "description": "Automatically send Enter for spawned-agent approval prompts."
-        },
-        "tmux.command": {
-          "type": "string",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": "tmux",
-          "description": "Path or name of the tmux binary."
-        },
-        "tmux.config_file": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": null,
-          "description": "Optional tmux config file (passed as -f <path>)."
-        },
-        "tmux.enabled": {
-          "type": "boolean",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": true,
-          "description": "Enable tmux as first-class agent spawning backend."
-        },
-        "tmux.history_limit": {
-          "type": "integer",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 10000,
-          "description": "Scrollback buffer size for spawned sessions and maximum post-mortem full-capture history."
         },
         "tmux.idle_check_enabled": {
           "type": "boolean",
@@ -4537,49 +4495,6 @@
           "default": 0.2,
           "description": "Seconds to wait after Ctrl-C before sending the watchdog continuation prompt."
         },
-        "tmux.registration_timeout_seconds": {
-          "type": "number",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 30.0,
-          "description": "Seconds to wait after tmux live-pane verification for the spawned runtime to register its child session."
-        },
-        "tmux.session_prefix": {
-          "type": "string",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": "gobby",
-          "description": "Prefix for auto-generated session names."
-        },
-        "tmux.socket_name": {
-          "type": "string",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": "gobby",
-          "description": "Isolated tmux socket name (passed as -L <socket_name>)."
-        },
-        "tmux.socket_path": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": null,
-          "description": "Exact tmux socket path (passed as -S <socket_path>). When set, this takes precedence over socket_name."
-        },
         "tmux.system_memory_critical_available_percent": {
           "type": "number",
           "namespace": "tmux",
@@ -4599,19 +4514,6 @@
           "machineExport": false,
           "default": 8.0,
           "description": "Warn with system-wide top consumers when available memory drops below this %."
-        },
-        "tmux.wsl_distribution": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": null,
-          "description": "WSL distribution for Windows (e.g., 'Ubuntu'). None uses default."
         },
         "tool_approval.default_policy": {
           "type": "string",

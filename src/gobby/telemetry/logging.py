@@ -187,6 +187,54 @@ class _PrimarySurfaceFilter(logging.Filter):
         return _routed_primary_surface(record.name) == self.surface
 
 
+_PSYCOPG_POOL_NAMESPACES = ("psycopg.pool", "psycopg_pool")
+_SANITIZED_POOL_MESSAGE = "psycopg pool warning: %s pool=%s error=%s sqlstate=%s"
+
+
+class _PsycopgPoolRecordSanitizer(logging.Filter):
+    """Rewrite each psycopg pool record before a handler formats it.
+
+    psycopg_pool interpolates raw exceptions and connections into its warnings,
+    and those can carry the DSN. The rewrite keeps the static message template,
+    the pool name, the exception class and its SQLSTATE, and drops every
+    original argument and any traceback. It runs as a handler filter because a
+    parent logger's filters never see records created on child loggers such as
+    psycopg_pool.sched; records outside the pool namespaces pass unchanged.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # A record reaches several handlers; rewrite it only on the first.
+        if record.msg == _SANITIZED_POOL_MESSAGE or not any(
+            _in_namespace(record.name, namespace) for namespace in _PSYCOPG_POOL_NAMESPACES
+        ):
+            return True
+        template = str(record.msg)
+        args = record.args if isinstance(record.args, tuple) else ()
+        # psycopg_pool formats only the pool name with %r.
+        pool_name = None
+        if "%r" in template:
+            index = template.split("%r", 1)[0].count("%")
+            if index < len(args) and isinstance(args[index], str):
+                pool_name = args[index]
+        error = next((arg for arg in args if isinstance(arg, BaseException)), None)
+        if error is None and record.exc_info:
+            error = record.exc_info[1]
+        record.msg = _SANITIZED_POOL_MESSAGE
+        record.args = (
+            template,
+            pool_name,
+            type(error).__name__ if error is not None else None,
+            getattr(error, "sqlstate", None),
+        )
+        record.exc_info = None
+        record.exc_text = None
+        record.stack_info = None
+        return True
+
+
+_PSYCOPG_POOL_SANITIZER = _PsycopgPoolRecordSanitizer()
+
+
 class OTelTraceFormatter(logging.Formatter):
     """
     Formatter that injects OpenTelemetry trace ID into log records.
@@ -492,6 +540,16 @@ def setup_file_logging(config: LoggingSettings, verbose: bool = False) -> None:
 
     for logger_name in ("websockets", "websockets.server"):
         logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+    # psycopg_pool warns when the pool cannot grow or a scheduled task fails; route
+    # it beside Gobby records, sanitized, and never let it fall through to stderr.
+    for handler in handlers:
+        handler.addFilter(_PSYCOPG_POOL_SANITIZER)
+    for logger_name in _PSYCOPG_POOL_NAMESPACES:
+        pool_logger = logging.getLogger(logger_name)
+        pool_logger.setLevel(logging.WARNING)
+        pool_logger.propagate = False
+        _replace_handlers(pool_logger, handlers)
 
     from gobby.telemetry.rule_allow_audit import configure_rule_allow_audit
 

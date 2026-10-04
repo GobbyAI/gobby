@@ -15,6 +15,7 @@ Each case is one JSON file at `schema_version` 1:
   "schema_version": 1,
   "name": "health_ok",
   "family": "health",
+  "backend": "up",
   "credential": "none",
   "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
   "response": {"status": 200, "headers": {"content-type": "application/json"}, "body": {"status": "@mask@"}},
@@ -23,6 +24,8 @@ Each case is one JSON file at `schema_version` 1:
 ```
 
 - `name` matches the file stem.
+- `backend` is the state of the Python backend behind the front door while the
+  case runs: `up` or `down` (see [Backend state](#backend-state)).
 - `request` is an executable recipe: the exact method, path, query, headers, and
   JSON body Python sends. It never holds an `Authorization` or runtime-grant
   header, and every value in it is a fixed non-secret constant.
@@ -30,7 +33,8 @@ Each case is one JSON file at `schema_version` 1:
   and the body after secret redaction and masking.
 - `mask` lists the RFC 6901 JSON pointers of volatile fields.
 
-The loader rejects any case whose `schema_version` differs from the manifest's.
+The loader rejects any case whose `schema_version` differs from the manifest's,
+or whose `backend` is missing or neither `up` nor `down`.
 A `schema_version` bump re-records every case.
 
 ## Manifest
@@ -43,11 +47,27 @@ A `schema_version` bump re-records every case.
   - `parity` is the route backend the Rust harness replays the family under.
     `health` is `native`, because gdaemon implements it; every other family here
     is `proxy`.
-  - `origin: python` cases are recorded from the live e2e daemon and replayed by
-    both harnesses.
-  - `origin: gdaemon` cases are authored from a gdaemon contract, such as the
+  - `origin: python` families are recorded from the live e2e daemon. Their `up`
+    cases are replayed by both harnesses.
+  - `origin: gdaemon` families are authored from a gdaemon contract, such as the
     typed 503 the front door returns while the backend is down. Python neither
     records nor replays them.
+
+## Backend state
+
+Every case declares `backend`, and each harness replays a case only in that
+state:
+
+- Python replays and records only `up` cases of `origin: python` families,
+  against the isolated front-door e2e daemon, whose backend is always up.
+- Rust replays every case. An `up` case runs against a stub backend that serves
+  the recorded response. A `down` case runs against a bound, non-listening
+  loopback address that refuses connections.
+
+Python cannot produce a `down` response, so `down` cases are authored by hand
+from the gdaemon contract and never recorded. `front_door_backend_down` is the
+typed 503 for a path the front door proxies. `health_backend_down` is the same 503 from
+gdaemon's native `health` handler, which also sets `x-gobby-served-by: gdaemon`.
 
 ## Credential recipes
 
@@ -90,8 +110,8 @@ Masked fields in the first corpus:
 - `health_ok`: `status` and `hook_runtime` depend on the host's services,
   `install_dir` on the checkout path, and `gterm_host` on the terminal host
   process.
-- `config_values`: the per-fixture temporary `terminal_host/socket_dir` and
-  `tmux/socket_path`, under both `desired` and `active`.
+- `config_values`: the per-fixture temporary `terminal_host/socket_dir`, under
+  both `desired` and `active`.
 - `runtime_handshake`: both `fencing_epoch` fields; the grant's `issued_at` and
   `expires_at`; and each capability's `valid_until` and `credential_generation`.
   It also masks `capabilities/postgres/role_name`, which the database derives

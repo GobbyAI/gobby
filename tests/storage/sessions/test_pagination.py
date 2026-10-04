@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -156,3 +157,54 @@ class TestSessionCursorPagination:
             cursor_id="some-id",
         )
         assert len(results_partial_id) == 3
+
+
+class TestNewestCreatedPagination:
+    """Keyset pages over (created_at, id) DESC survive writes between pages."""
+
+    def test_pages_visit_every_session_once_while_sessions_are_updated(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        ids = []
+        for index in range(120):
+            session_id = _register(
+                session_manager,
+                sample_project,
+                external_id=f"created-{index}",
+                updated_at="2026-04-29T10:00:00+00:00",
+            )
+            # Pairs share a created_at so the id tie-break is exercised.
+            session_manager.db.execute(
+                "UPDATE sessions SET created_at = %s WHERE id = %s",
+                (f"2026-04-29T09:{index // 2:02d}:00+00:00", session_id),
+            )
+            ids.append(session_id)
+        rows = session_manager.list_newest_created(project_id=sample_project["id"], limit=200)
+        expected = [row.id for row in rows]
+
+        visited: list[str] = []
+        anchor = None
+        while True:
+            page = session_manager.list_newest_created(
+                project_id=sample_project["id"],
+                limit=51,
+                from_created_at=anchor.created_at if anchor else None,
+                from_id=anchor.id if anchor else None,
+            )
+            visited.extend(row.id for row in page[:50])
+            if len(page) <= 50:
+                break
+            anchor = page[50]
+            # A write moves the oldest unvisited session to the top of updated_at order.
+            session_manager.db.execute(
+                "UPDATE sessions SET updated_at = %s WHERE id = %s",
+                ("2026-04-30T00:00:00+00:00", expected[-1]),
+            )
+
+        assert sorted(expected) == sorted(ids)
+        assert [(r.created_at, r.id) for r in rows] == sorted(
+            ((r.created_at, r.id) for r in rows), reverse=True
+        )
+        assert visited == expected

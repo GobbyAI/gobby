@@ -112,10 +112,15 @@ backend on loopback:
 
 ```yaml
 front_door:
-  enabled: true            # default; false keeps Python on the public ports
+  enabled: true            # default; false keeps Python on the public ports (loopback-only)
   routes:                  # route family -> proxy | native | compare; absent = proxy
     health: native
     terminal_ws: proxy
+  tls:
+    mode: self-signed      # off | self-signed | files; off is refused on a non-loopback bind_host
+    cert: ~/.gobby/tls/front_door.crt
+    key: ~/.gobby/tls/front_door.key
+    sans: [hub.tailnet.example, 100.64.0.10]
 ```
 
 `enabled` defaults to `true`. It takes a boolean or, in either quoting, one of
@@ -123,9 +128,30 @@ front_door:
 name to `proxy` (forward to Python), `native` (served by gdaemon), or `compare`
 (run both, log differences, return the proxied response). Any other value is a
 parse error. Unknown family names are accepted, so a newer family can be
-configured before this daemon serves it. Keys other than `enabled` and `routes`
-are rejected, so a typo such as `enable: false` cannot silently leave the front
-door on. The block is parsed identically by `src/gobby/config/bootstrap.py` and
+configured before this daemon serves it. Keys other than `enabled`, `routes`, and
+`tls` are rejected, so a typo such as `enable: false` cannot silently leave the
+front door on.
+
+A disabled front door is loopback-only: `enabled: false` on a non-loopback
+`bind_host` (including the wildcards `0.0.0.0` and `::`) is refused at parse
+whatever `tls.mode` says, because Python then binds the public ports itself and
+never reads the TLS block.
+
+The `tls` block applies only with the front door enabled. `mode` defaults to
+`off`, which serves plaintext and is refused on a non-loopback `bind_host`.
+`self-signed` generates an ECDSA P-256 certificate and key at `cert` and `key`
+(mode `0600`) on first start and never regenerates over existing files; `sans`
+lists the DNS names and IP literals peers dial (the unspecified address is
+rejected). `files` serves an operator-supplied PEM pair from `cert` and `key`.
+gdaemon prints the certificate fingerprint (`sha256:` plus 64 hex digits) at
+start so a remote peer can pin it.
+
+One public port serves both audiences. gdaemon peeks the first byte of each
+connection: a TLS ClientHello is served over TLS from any peer, and anything
+else is served in plaintext only to a loopback peer. Local clients always dial
+loopback (`127.0.0.1`, or `[::1]` for an IPv6 `bind_host`) unless `daemon_url`
+is set. A concrete non-loopback `bind_host` gains a companion loopback listener
+on the same port so that local dial always has a listener. The block is parsed identically by `src/gobby/config/bootstrap.py` and
 `crates/gcore/src/bootstrap.rs`. It stays bootstrap-only and is never copied into
 `DaemonConfig` or `config_store`.
 

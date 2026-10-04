@@ -62,10 +62,13 @@ def _build_pipeline_update_fields(
     description: str,
     version: str,
     enabled: bool,
+    tags: list[str],
     restore: bool = False,
 ) -> dict[str, Any]:
     """Build changed fields for a managed bundled pipeline row."""
     fields: dict[str, Any] = {}
+    if existing.tags != tags:
+        fields["tags"] = tags
     if existing.definition_json != definition_json:
         fields["definition_json"] = definition_json
         fields["description"] = description
@@ -81,7 +84,6 @@ def _build_pipeline_update_fields(
             },
         )
         fields["source"] = "installed"
-        fields["tags"] = ["gobby"]
         if not existing.enabled_pinned:
             fields["enabled"] = enabled
     elif restore:
@@ -152,7 +154,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
                 continue
 
             try:
-                PipelineDefinition(**data)
+                definition = PipelineDefinition(**data)
             except ValidationError as ve:
                 logger.warning(
                     "Skipping invalid workflow",
@@ -166,6 +168,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
             description = data.get("description", "")
             version = str(data.get("version", "1.0"))
             enabled = normalize_workflow_definition_enabled(data)
+            tags = sorted({"gobby", *definition.tags})
 
             existing = manager.get_by_name(name, include_deleted=True)
 
@@ -181,6 +184,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
                             description=description,
                             version=version,
                             enabled=enabled,
+                            tags=tags,
                             restore=True,
                         )
                         if update_fields.pop("source", None) is not None:
@@ -199,6 +203,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
                         description=description,
                         version=version,
                         enabled=enabled,
+                        tags=tags,
                     )
                     if update_fields:
                         if update_fields.pop("source", None) is not None:
@@ -218,7 +223,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
                 version=version,
                 enabled=enabled,
                 source="installed",
-                tags=["gobby"],
+                tags=tags,
             )
             logger.debug("Synced bundled workflow definition", extra={"workflow": name})
             result["synced"] += 1

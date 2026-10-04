@@ -59,6 +59,8 @@ _BACKEND_SIGNAL_RE = re.compile(
     r"queue|schema|server|service|storage|worker)\b",
     flags=re.IGNORECASE,
 )
+_FRONTEND_TARGET_PREFIXES = ("web/", "crates/gclient/")
+_BACKEND_TARGET_PREFIXES = ("src/gobby/",)
 _DEFAULT_CATEGORY = "code"
 _AGENT_BY_CATEGORY: dict[str, str] = {
     "code": "backend-developer",
@@ -118,6 +120,7 @@ def derive_manifest_entries(
             )
         entry = _synthesize_entry(
             plan_id,
+            document,
             section,
             dependencies_by_section[section.section_id],
         )
@@ -167,6 +170,7 @@ def derive_manifest_entries(
             domain = decision.get("implementation_domain")
             if domain is None:
                 domain = _implementation_domain_for(
+                    document,
                     section,
                     str(entry["title"]),
                     str(entry["validation_criteria"]),
@@ -186,6 +190,7 @@ def derive_manifest_entries(
             if agent is None:
                 agent = _agent_for(
                     category,
+                    document,
                     section,
                     str(entry["title"]),
                     str(entry["validation_criteria"]),
@@ -384,7 +389,7 @@ def _emit_fresh(
 
 
 def _synthesize_entry(
-    plan_id: str, section: PlanSection, dependencies: tuple[str, ...]
+    plan_id: str, document: PlanDocument, section: PlanSection, dependencies: tuple[str, ...]
 ) -> dict[str, object]:
     category = _extract_category(section.title)
     title = _clean_title(section.title) or section.section_id
@@ -407,10 +412,10 @@ def _synthesize_entry(
         "source_section": section.section_id,
     }
     if category == "code":
-        domain = _implementation_domain_for(section, title, validation)
+        domain = _implementation_domain_for(document, section, title, validation)
         entry["implementation_domain"] = domain
     else:
-        entry["assigned_agent"] = _agent_for(category, section, title, validation)
+        entry["assigned_agent"] = _agent_for(category, document, section, title, validation)
     return entry
 
 
@@ -544,28 +549,39 @@ def _phase_parent_id(
 
 def _agent_for(
     category: str,
+    document: PlanDocument,
     section: PlanSection,
     title: str,
     validation: str,
 ) -> str:
     if category == "code":
         return AGENT_BY_IMPLEMENTATION_DOMAIN[
-            _implementation_domain_for(section, title, validation)
+            _implementation_domain_for(document, section, title, validation)
         ]
     return _AGENT_BY_CATEGORY.get(category, _DEFAULT_AGENT_FALLBACK)
 
 
-def _implementation_domain_for(section: PlanSection, title: str, validation: str) -> str:
-    signal_text = " ".join(
-        [
-            section.title,
-            title,
-            validation,
-            *[item.artifact_ref for item in section.acceptance_items],
-        ]
-    )
-    frontend = _FRONTEND_SIGNAL_RE.search(signal_text) is not None
-    backend = _BACKEND_SIGNAL_RE.search(signal_text) is not None
+def _implementation_domain_for(
+    document: PlanDocument, section: PlanSection, title: str, validation: str
+) -> str:
+    """Classify by Targets paths; the keyword regexes decide only when no Target classifies."""
+    # semantic_lint imports this module, so its inventory reader loads at call time.
+    from gobby.plans.semantic_lint import collect_target_inventory
+
+    targets = collect_target_inventory(document, section)
+    frontend = any(path.startswith(_FRONTEND_TARGET_PREFIXES) for path in targets)
+    backend = any(path.startswith(_BACKEND_TARGET_PREFIXES) for path in targets)
+    if not (frontend or backend):
+        signal_text = " ".join(
+            [
+                section.title,
+                title,
+                validation,
+                *[item.artifact_ref for item in section.acceptance_items],
+            ]
+        )
+        frontend = _FRONTEND_SIGNAL_RE.search(signal_text) is not None
+        backend = _BACKEND_SIGNAL_RE.search(signal_text) is not None
     if frontend and backend:
         return "fullstack"
     if frontend:

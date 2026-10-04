@@ -21,25 +21,21 @@ DISCOVERY_AGENTS = {
     "analyst": {
         "stage": "ideation",
         "skill": "ideate",
-        "skills": ["ideate"],
         "section": "Discovery Brief",
     },
     "researcher": {
         "stage": "research",
         "skill": "research",
-        "skills": ["research"],
         "section": "Research Findings",
     },
     "architect": {
         "stage": "architecture",
         "skill": "architecture",
-        "skills": ["architecture"],
         "section": "Architecture Brief",
     },
     "product-manager": {
         "stage": "prd",
         "skill": "prd",
-        "skills": ["prd"],
         "section": "Product Reference Document",
     },
 }
@@ -100,7 +96,7 @@ def test_discovery_agent_yaml_validates_and_is_enabled(slug: str, spec: dict[str
     assert agent.isolation == "none"
     assert len(agent.surfaces) == len(set(agent.surfaces))
     assert set(agent.surfaces) == {"spawn", "persona"}
-    assert raw["skills"]["methodology"] == spec["skills"]
+    assert "skills" not in raw
     assert f"Gobby acting as {slug.replace('-', ' ')}" in (agent.prompts.agent or "")
 
 
@@ -208,8 +204,8 @@ def test_discovery_agents_include_task_skill_gates(slug: str) -> None:
 
 
 def test_plan_adversary_documents_task_skill_gate_exclusion() -> None:
-    raw_text = _agent_path("plan-adversary").read_text(encoding="utf-8")
-    selectors = _raw_agent("plan-adversary")["workflows"]["rule_selectors"]
+    raw_text = _agent_path("plan-adversary-old").read_text(encoding="utf-8")
+    selectors = _raw_agent("plan-adversary-old")["workflows"]["rule_selectors"]
 
     assert "tag:task-skill-gates" in selectors["exclude"]
     assert "Review/orchestration agents deliberately exclude task-skill gates" in raw_text

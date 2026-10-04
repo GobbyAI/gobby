@@ -23,8 +23,8 @@ from gobby.tasks.acceptance_artifacts import (
 from gobby.tasks.tdd_evidence import (
     TddEvidenceResult,
     evaluate_tdd_evidence,
-    is_test_convention_path,
 )
+from gobby.tasks.tdd_paths import is_test_convention_path
 from gobby.tasks.transcript_evidence import merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
@@ -786,6 +786,129 @@ def test_native_backend_evidence_regression_fails_on_local_contradictions() -> N
     assert any("89f7b404" in finding and "newer" in finding for finding in findings)
     assert any("c62e4bae" in finding and "newer" in finding for finding in findings)
     assert any("89f7b404" in finding and "producer workflow" in finding for finding in findings)
+
+
+def _fixture_tdd_cycle(
+    implementation_path: str, test_path: str = "tests/fixtures/test_binary.py"
+) -> tuple[AcceptanceTest, TranscriptEvidence]:
+    started = datetime(2026, 8, 21, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference=f"{test_path}::test_feature",
+        path=test_path,
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit(test.path, started, 1),
+            _edit(implementation_path, started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=1),
+                "failure",
+                f"FAILED {test.reference}\nE assert 0 == 1",
+                2,
+            ),
+            _run(test, started + timedelta(minutes=3), "success", "1 passed", 4),
+        ),
+    )
+    return test, evidence
+
+
+@pytest.mark.parametrize("renamed", [False, True])
+def test_tdd_named_module_and_rename_alias_never_count_as_implementation(renamed: bool) -> None:
+    path = "src/checks.py"
+    test, evidence = _fixture_tdd_cycle(path, "src/new_checks.py" if renamed else path)
+    aliases = {test.path: (path,)} if renamed else None
+
+    result = evaluate_tdd_evidence((test,), evidence, renamed_test_paths=aliases)
+
+    assert result.passed is False
+    assert any("no production edit" in finding for finding in result.findings)
+
+
+@pytest.mark.parametrize("path", ["conftest.py", "src/conftest.py", "tests/conftest.py"])
+def test_tdd_conftest_never_counts_as_implementation(path: str) -> None:
+    test, evidence = _fixture_tdd_cycle(path)
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is False
+    assert any("no production edit" in finding for finding in result.findings)
+
+
+def test_tdd_other_named_module_never_counts_as_implementation() -> None:
+    path = "src/other_checks.py"
+    test, evidence = _fixture_tdd_cycle(path)
+    other = replace(test, reference=f"{path}::test_feature", path=path)
+    evidence = replace(
+        evidence,
+        validation_runs=(
+            *evidence.validation_runs,
+            _run(other, evidence.validation_runs[-1].completed_at, "success", "1 passed", 5),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test, other), evidence)
+
+    assert result.passed is False
+    assert any("no production edit" in finding for finding in result.findings)
+
+
+def test_tdd_fixture_deliverable_counts_as_implementation_for_test_task() -> None:
+    path = "tests/fixtures/gdaemon_binary.py"
+    test, evidence = _fixture_tdd_cycle(path)
+
+    result = evaluate_tdd_evidence(
+        (test,), evidence, task_category="test", implementation_paths={path}
+    )
+
+    assert result.passed is True
+    assert result.red_runs == (f"pytest {test.reference}",)
+    assert result.green_runs == (f"pytest {test.reference}",)
+
+
+@pytest.mark.parametrize(
+    "category,delivered", [("code", True), ("refactor", True), (None, True), ("test", False)]
+)
+def test_tdd_production_task_cannot_use_test_side_edit_alone(
+    category: str | None, delivered: bool
+) -> None:
+    path = "tests/fixtures/gdaemon_binary.py"
+    test, evidence = _fixture_tdd_cycle(path)
+
+    result = evaluate_tdd_evidence(
+        (test,), evidence, task_category=category, implementation_paths={path} if delivered else ()
+    )
+
+    assert result.passed is False
+    assert any("no production edit" in finding for finding in result.findings)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "tests/fixtures/test_support.py",
+        "tests/fixtures/helper_test.py",
+        "tests/fixtures/helper.test.ts",
+        "tests/fixtures/helper.spec.js",
+        "tests/fixtures/tests.rs",
+        "tests/fixtures/helper_tests.rs",
+        "tests/fixtures/conftest.py",
+        "tests/fixtures/data.json",
+    ],
+)
+def test_tdd_test_files_and_data_cannot_be_opted_in_as_fixture_modules(path: str) -> None:
+    test, evidence = _fixture_tdd_cycle(path)
+
+    result = evaluate_tdd_evidence(
+        (test,), evidence, task_category="test", implementation_paths={path}
+    )
+
+    assert result.passed is False
+    assert any("no production edit" in finding for finding in result.findings)
 
 
 def test_tdd_evidence_requires_assertion_red_before_source_edit() -> None:

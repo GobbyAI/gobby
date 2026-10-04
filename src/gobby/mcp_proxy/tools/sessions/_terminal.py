@@ -135,16 +135,11 @@ def _resolve_pane_io(
 ) -> tuple[PaneIO | None, str | None]:
     """Route through the session's managed terminal row or context identity."""
     pane = live_runtime_pane(session_id, terminal_manager, terminal_runtime_registry)
+    if pane is None:
+        session = session_manager.get(session_id)
+        pane = context_runtime_pane(session, terminal_manager, terminal_runtime_registry)
     if pane is not None:
-        if pane.backend == "native":
-            return pane, None
-        return None, f"Unsupported terminal backend: {pane.backend}"
-    session = session_manager.get(session_id)
-    pane = context_runtime_pane(session, terminal_manager, terminal_runtime_registry)
-    if pane is not None:
-        if pane.backend == "native":
-            return pane, None
-        return None, f"Unsupported terminal backend: {pane.backend}"
+        return pane, None
     return None, f"No live managed terminal for session {session_id}"
 
 
@@ -340,9 +335,14 @@ def register_terminal_tools(
                     )
                 )
                 and isinstance(gate.get("attempt_id"), str)
-                and isinstance(failed, Mapping)
-                and failed.get("attempt_id") == gate.get("attempt_id")
-                and PENDING_HANDOFF_VARIABLE not in variables
+                and (
+                    gate.get("readiness_unconfirmed") is True
+                    or (
+                        isinstance(failed, Mapping)
+                        and failed.get("attempt_id") == gate.get("attempt_id")
+                        and PENDING_HANDOFF_VARIABLE not in variables
+                    )
+                )
             ):
                 return {
                     "success": False,
@@ -749,7 +749,7 @@ def register_terminal_tools(
     ) -> dict[str, Any]:
         if terminal_manager is not None and terminal_runtime_registry is not None:
             terminal = terminal_manager.get_live_for_session(session_id)
-            if terminal is not None and terminal.backend == "native":
+            if terminal is not None:
                 runtime = terminal_runtime_registry.resolve(terminal.backend)
                 snapshot = await runtime.snapshot(terminal, lines)
                 return {
@@ -762,7 +762,7 @@ def register_terminal_tools(
                 }
             session = session_manager.get(session_id)
             pane = context_runtime_pane(session, terminal_manager, terminal_runtime_registry)
-            if pane is not None and pane.backend == "native":
+            if pane is not None:
                 text = await pane.snapshot(lines)
                 if text is not None:
                     return {"success": True, "output": text, "via": pane.backend}

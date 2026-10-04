@@ -27,8 +27,6 @@ async def probe_terminal_activity(
     # real probe too; an unregistered backend raises below and stays unconfirmed.
     if not source or registry is None or terminal is None:
         return unknown
-    probeable = IdleDetector(registry, str(source)).reads_composer()
-    unknown = TerminalActivity(ComposerRead("unknown"), composer_probeable=probeable)
     try:
         services = runner.terminal_services
         if services is None:
@@ -43,7 +41,6 @@ async def probe_terminal_activity(
         return TerminalActivity(
             composer=detector.composer_read(text),
             turn_in_flight_fingerprint=detector.turn_in_flight_fingerprint(text or ""),
-            composer_probeable=probeable,
         )
     except Exception:
         logger.debug(

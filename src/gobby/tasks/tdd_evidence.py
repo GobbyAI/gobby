@@ -7,7 +7,6 @@ import builtins
 import re
 import shlex
 import sys
-import textwrap
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
@@ -18,12 +17,21 @@ from gobby.tasks.acceptance_artifacts import (
     validation_run_covers_test,
     validation_run_names_test,
 )
+from gobby.tasks.tdd_paths import is_implementation_edit_path
+from gobby.tasks.tdd_python_evidence import (
+    PythonBindingCache,
+    _has_python_keyword_stub,
+    _has_python_module_stub,
+    _has_python_unchanged_api,
+    _original_test_module,
+    _original_test_node,
+)
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptValidationRun,
 )
-from gobby.tasks.transcript_tool_arguments import python_noop_module
+from gobby.tasks.transcript_tool_arguments import PythonModuleCache
 
 _ASSERTION_DETAIL_RE = re.compile(
     r"AssertionError|assertion failed|\bassert\b|panicked at|Failed:\s+DID NOT RAISE",
@@ -55,24 +63,6 @@ _FAILURE_SECTION_BOUNDARY_RE = re.compile(
 _NON_EXECUTION_TEST_MATCHERS = frozenset({"gobby-test-quality-audit"})
 
 
-def is_test_convention_path(path: str) -> bool:
-    """A test module in any language or any file under a test directory."""
-    pure = PurePosixPath(path)
-    name = pure.name.casefold()
-    if (name == "tests.rs" or name.endswith("_tests.rs")) and any(
-        part.casefold() == "src" for part in pure.parts[:-1]
-    ):
-        # Rust module tests: <module>/tests.rs or <module>_tests.rs under src/.
-        return True
-    return (
-        any(part.casefold() in {"test", "tests", "__tests__"} for part in pure.parts[:-1])
-        or name.startswith("test_")
-        or "_test." in name
-        or ".test." in name
-        or ".spec." in name
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class TddEvidenceResult:
     """TDD evidence outcome for a close attempt."""
@@ -91,8 +81,6 @@ class TddEvidenceResult:
         }
 
 
-_DOCUMENTATION_ROOTS = frozenset({"docs", ".gobby"})
-_INSTRUCTION_FILES = frozenset({"agents.md", "claude.md", "readme.md", "changelog.md"})
 TDD_SKILL = "test-driven-development"
 TDD_REQUIRED_LABEL = "tdd:required"
 _TDD_EVIDENCE_PHRASE = "tdd evidence"
@@ -121,16 +109,6 @@ def task_requires_tdd(
     return _TDD_FAILING_TEST_PHRASE in lowered and _TDD_BEFORE_IMPLEMENTATION_PHRASE in lowered
 
 
-def _is_production_edit_path(path: str) -> bool:
-    """Implementation edits only: neither test convention, docs, nor repo instructions."""
-    if is_test_convention_path(path):
-        return False
-    pure = PurePosixPath(path)
-    if pure.parts and pure.parts[0].casefold() in _DOCUMENTATION_ROOTS:
-        return False
-    return pure.name.casefold() not in _INSTRUCTION_FILES
-
-
 def _contains_word(value: str, word: str) -> bool:
     return re.search(rf"\b{re.escape(word)}\b", value) is not None
 
@@ -140,13 +118,31 @@ def evaluate_tdd_evidence(
     evidence: TranscriptEvidence,
     *,
     renamed_test_paths: Mapping[str, tuple[str, ...]] | None = None,
+    task_category: str | None = None,
+    implementation_paths: Iterable[str] = (),
 ) -> TddEvidenceResult:
-    """Require one assertion-backed cycle and later coverage of every named test."""
+    """Require one assertion-backed cycle and later coverage of every named test.
+
+    The caller supplies implementation_paths from the task's linked patch. Only
+    test-category tasks may count non-test fixture modules under tests/ as code.
+    """
     if not tests:
         return TddEvidenceResult(
             False, False, ("TDD is required but no named test reference resolved.",)
         )
 
+    named_test_paths = frozenset(
+        path
+        for test in tests
+        for path in (test.path, *(renamed_test_paths or {}).get(test.path, ()))
+    )
+    infrastructure_paths = (
+        frozenset(implementation_paths) if task_category == "test" else frozenset()
+    )
+
+    parse_cache: PythonModuleCache = {}
+    binding_cache: PythonBindingCache = {}
+    red_cache: dict[tuple[str, str, str, int, bool], tuple[bool, str | None]] = {}
     findings: list[str] = []
     cycle: tuple[TranscriptValidationRun, TranscriptEdit] | None = None
     for test in tests:
@@ -176,7 +172,12 @@ def evaluate_tdd_evidence(
                 (
                     edit
                     for edit in evidence.edits
-                    if edit.order > test_edit.order and _is_production_edit_path(edit.path)
+                    if edit.order > test_edit.order
+                    and is_implementation_edit_path(
+                        edit.path,
+                        named_test_paths=named_test_paths,
+                        test_infrastructure_paths=infrastructure_paths,
+                    )
                 ),
                 key=lambda edit: edit.order,
             )
@@ -185,7 +186,13 @@ def evaluate_tdd_evidence(
             production_edit_seen = True
             production_edit = production_edits[0]
             window_red, window_rejection = _find_red_run(
-                red_test, evidence, test_edit.order, production_edit
+                red_test,
+                evidence,
+                test_edit.order,
+                production_edit,
+                parse_cache=parse_cache,
+                binding_cache=binding_cache,
+                red_cache=red_cache,
             )
             red_rejection = window_rejection or red_rejection
             if window_red is None:
@@ -196,6 +203,9 @@ def evaluate_tdd_evidence(
                         production_edit.order,
                         later_production_edit,
                         require_not_implemented=not test.path.endswith(".rs"),
+                        parse_cache=parse_cache,
+                        binding_cache=binding_cache,
+                        red_cache=red_cache,
                     )
                     red_rejection = window_rejection or red_rejection
                     if window_red is not None:
@@ -271,6 +281,9 @@ def _find_red_run(
     first_non_test_edit: TranscriptEdit | None,
     *,
     require_not_implemented: bool = False,
+    parse_cache: PythonModuleCache | None = None,
+    binding_cache: PythonBindingCache | None = None,
+    red_cache: dict[tuple[str, str, str, int, bool], tuple[bool, str | None]] | None = None,
 ) -> tuple[TranscriptValidationRun | None, str | None]:
     rejection = None
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
@@ -285,38 +298,73 @@ def _find_red_run(
         core_command = run.core_command
         if core_command is None:
             continue
-        source_failure = _has_original_source_failure(test, evidence, run)
-        if not source_failure and not validation_run_names_test(core_command, run.output, test):
-            continue
-        matched, reason = _has_named_red_failure(core_command, run.output, test)
-        matched = matched or source_failure
+        key = (test.path, test.symbol, run.session_id, run.order, require_not_implemented)
+        cached = red_cache.get(key) if red_cache is not None else None
+        if cached is None:
+            cached = _red_run_proof(
+                test,
+                evidence,
+                run,
+                core_command,
+                require_not_implemented,
+                parse_cache,
+                binding_cache,
+            )
+            if red_cache is not None:
+                red_cache[key] = cached
+        matched, reason = cached
         if matched:
-            if _has_pytest_fail_placeholder(test, evidence, run):
-                reason = "test body is an unconditional pytest.fail placeholder"
-            elif not require_not_implemented or (
-                _has_python_keyword_stub(test, evidence, run)
-                or _has_python_module_stub(test, evidence, run)
-            ):
-                return run, None
-            else:
-                reason = (
-                    "post-production red has no attributable NotImplementedError or proven API stub"
-                )
+            return run, None
+        if reason is None:
+            continue
         rejection = f"run {run.command!r} rejected: {reason}"
     return None, rejection
 
 
+def _red_run_proof(
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    core_command: str,
+    require_not_implemented: bool,
+    parse_cache: PythonModuleCache | None,
+    binding_cache: PythonBindingCache | None,
+) -> tuple[bool, str | None]:
+    source_failure = _has_original_source_failure(test, evidence, run, parse_cache=parse_cache)
+    if not source_failure and not validation_run_names_test(core_command, run.output, test):
+        return False, None
+    matched, reason = _has_named_red_failure(core_command, run.output, test)
+    matched = matched or source_failure
+    if matched:
+        if _has_pytest_fail_placeholder(test, evidence, run, parse_cache):
+            reason = "test body is an unconditional pytest.fail placeholder"
+        elif not require_not_implemented or (
+            _has_python_keyword_stub(test, evidence, run, parse_cache)
+            or _has_python_module_stub(test, evidence, run, parse_cache)
+            or _has_python_unchanged_api(test, evidence, run, parse_cache, binding_cache)
+        ):
+            return True, None
+        else:
+            reason = (
+                "post-production red has no attributable NotImplementedError or proven API stub"
+            )
+    return False, reason
+
+
 def _has_pytest_fail_placeholder(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    parse_cache: PythonModuleCache | None = None,
 ) -> bool:
     """Reject fail reached before control flow or a call into application code."""
-    node = _original_test_node(test, evidence, run)
+    node = _original_test_node(test, evidence, run, parse_cache)
     if node is None:
         return False
     # Builtins, stdlib and test-framework setup are not calls into code under test.
     setup_roots = {"pytest", "unittest", "builtins"}
     fail_calls = {"pytest.fail"}
-    module = _original_test_module(test, evidence, run)
+    module = _original_test_module(test, evidence, run, parse_cache)
     for item in [*(module.body if module is not None else ()), *node.body]:
         if isinstance(item, ast.Import):
             fail_calls.update(
@@ -436,92 +484,16 @@ def _decorator_applications(decorators: list[ast.expr]) -> list[ast.Call]:
     return [ast.Call(func=decorator, args=[], keywords=[]) for decorator in reversed(decorators)]
 
 
-def _source_confirmed_before(edit: TranscriptEdit, run: TranscriptValidationRun) -> bool:
-    return (
-        edit.source_confirmed
-        and edit.source_confirmed_at is not None
-        and edit.source_confirmed_at < run.started_at
-    )
-
-
-def _original_test_module(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
-) -> ast.Module | None:
-    edits = [
-        edit
-        for edit in evidence.edits
-        if edit.session_id == run.session_id
-        and edit.path == test.path
-        and edit.timestamp < run.started_at
-        and edit.order < run.order
-    ]
-    latest = max(edits, key=lambda edit: edit.order, default=None)
-    if latest is None or not _source_confirmed_before(latest, run):
-        return None
-    source = latest.source_after or latest.source_fragment
-    if source is None:
-        return None
-    try:
-        node = ast.parse(textwrap.dedent(source))
-    except (SyntaxError, ValueError):
-        if latest.source_after is not None:
-            return None
-        # Appended tests may follow the tail of the preceding function in an
-        # Edit payload. Only complete module-level definitions carry body proof.
-        start = re.search(r"(?m)^(?:(?:async )?def |class |@)", source)
-        if start is None:
-            return None
-        try:
-            node = ast.parse(source[start.start() :])
-        except (SyntaxError, ValueError):
-            return None
-    return node
-
-
-def _original_test_node(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
-) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    node: ast.AST | None = _original_test_module(test, evidence, run)
-    for name in test.symbol.replace("::", ".").split("."):
-        body = getattr(node, "body", ())
-        matches = [child for child in body if getattr(child, "name", None) == name]
-        if len(matches) != 1:
-            return None
-        node = matches[0]
-    return node if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) else None
-
-
-def _reachable_python_nodes(module: ast.Module, node: ast.AST) -> tuple[ast.AST, ...]:
-    """Follow only helpers and globals referenced by the original named test."""
-    bindings: dict[str, ast.AST] = {}
-    for statement in module.body:
-        if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
-            bindings[statement.name] = statement
-        elif isinstance(statement, ast.Assign):
-            for target in statement.targets:
-                if isinstance(target, ast.Name):
-                    bindings[target.id] = statement.value
-    pending = [node]
-    visited: set[str] = set()
-    result: list[ast.AST] = []
-    while pending:
-        for item in ast.walk(pending.pop()):
-            result.append(item)
-            if isinstance(item, ast.Name) and item.id in bindings and item.id not in visited:
-                visited.add(item.id)
-                pending.append(bindings[item.id])
-    return tuple(result)
-
-
 def _has_original_source_failure(
     test: AcceptanceTest,
     evidence: TranscriptEvidence,
     run: TranscriptValidationRun,
     *,
     require_not_implemented: bool = False,
+    parse_cache: PythonModuleCache | None = None,
 ) -> bool:
     """Bind a location-only failure to the test source that existed when RED started."""
-    node = _original_test_node(test, evidence, run)
+    node = _original_test_node(test, evidence, run, parse_cache)
     if node is None or not validation_run_covers_test(run.core_command, run.output, test):
         return False
     latest = max(
@@ -553,152 +525,6 @@ def _has_original_source_failure(
             and (not require_not_implemented or "NotImplementedError" in section)
         ):
             return True
-    return False
-
-
-def _has_python_keyword_stub(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
-) -> bool:
-    node = _original_test_node(test, evidence, run)
-    module = _original_test_module(test, evidence, run)
-    if node is None or module is None:
-        return False
-    edits = sorted(
-        (
-            edit
-            for edit in evidence.edits
-            if edit.session_id == run.session_id
-            and edit.timestamp < run.started_at
-            and edit.order < run.order
-            and _is_production_edit_path(edit.path)
-        ),
-        key=lambda edit: edit.order,
-    )
-    for edit in edits:
-        if not _source_confirmed_before(edit, run) or edit.python_stub is None:
-            continue
-        if any(
-            later.path == edit.path
-            and later.order > edit.order
-            and not later.source_unchanged
-            and (later.python_stub is None or not _source_confirmed_before(later, run))
-            for later in edits
-        ):
-            continue
-        name, keywords = edit.python_stub
-        for call in _reachable_python_nodes(module, node):
-            if not isinstance(call, ast.Call):
-                continue
-            called = getattr(call.func, "attr", None) or getattr(call.func, "id", None)
-            if called == name and any(keyword.arg in keywords for keyword in call.keywords):
-                return True
-    return False
-
-
-def _has_python_module_stub(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
-) -> bool:
-    node = _original_test_node(test, evidence, run)
-    original_module = _original_test_module(test, evidence, run)
-    if node is None or original_module is None:
-        return False
-    reachable = _reachable_python_nodes(original_module, node)
-    latest_by_path: dict[str, TranscriptEdit] = {}
-    for edit in sorted(evidence.edits, key=lambda item: item.order):
-        if (
-            edit.session_id == run.session_id
-            and edit.timestamp < run.started_at
-            and edit.order < run.order
-            and _is_production_edit_path(edit.path)
-            and not edit.source_unchanged
-        ):
-            latest_by_path[edit.path] = edit
-    for edit in latest_by_path.values():
-        if (
-            not edit.source_created
-            or not _source_confirmed_before(edit, run)
-            or edit.source_after is None
-        ):
-            continue
-        classes = python_noop_module(edit.source_after)
-        if classes is None:
-            continue
-        module_name = edit.path.removeprefix("src/").removesuffix(".py").replace("/", ".")
-        aliases = {
-            alias.asname or alias.name: classes[alias.name]
-            for statement in original_module.body
-            if isinstance(statement, ast.ImportFrom) and statement.module == module_name
-            for alias in statement.names
-            if alias.name in classes
-        }
-        if any(
-            isinstance(item, ast.Name) and item.id in aliases and aliases[item.id] is None
-            for item in reachable
-        ):
-            return True
-        constructed = {
-            call.func.id
-            for call in reachable
-            if isinstance(call, ast.Call)
-            and isinstance(call.func, ast.Name)
-            and call.func.id in aliases
-        }
-        members = set().union(*(aliases[name] or frozenset() for name in constructed))
-        if any(
-            isinstance(item, ast.Attribute)
-            and item.attr in members
-            or isinstance(item, ast.Call)
-            and isinstance(item.func, ast.Name)
-            and item.func.id in constructed
-            for item in reachable
-        ):
-            return True
-        for bridge in latest_by_path.values():
-            if bridge.source_after is None or not _source_confirmed_before(bridge, run):
-                continue
-            bridge_name = bridge.path.removeprefix("src/").removesuffix(".py").replace("/", ".")
-            imported = {
-                alias.asname or alias.name: alias.name
-                for statement in original_module.body
-                if isinstance(statement, ast.ImportFrom) and statement.module == bridge_name
-                for alias in statement.names
-            }
-            invoked = {
-                imported[item.func.id]
-                for item in reachable
-                if isinstance(item, ast.Call)
-                and isinstance(item.func, ast.Name)
-                and item.func.id in imported
-            }
-            if not invoked:
-                continue
-            try:
-                bridge_module = ast.parse(bridge.source_after)
-            except (SyntaxError, ValueError):
-                continue
-            bridge_aliases = {
-                alias.asname or alias.name
-                for statement in bridge_module.body
-                if isinstance(statement, ast.ImportFrom) and statement.module == module_name
-                for alias in statement.names
-                if alias.name in classes
-            }
-            for declaration in bridge_module.body:
-                if not isinstance(declaration, ast.ClassDef) or declaration.name not in invoked:
-                    continue
-                constructors = [
-                    member
-                    for member in declaration.body
-                    if isinstance(member, ast.FunctionDef) and member.name == "__init__"
-                ]
-                if any(
-                    isinstance(item, ast.Call)
-                    and isinstance(item.func, ast.Name)
-                    and item.func.id in bridge_aliases
-                    for constructor in constructors
-                    for item in ast.walk(constructor)
-                ):
-                    return True
     return False
 
 

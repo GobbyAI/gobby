@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import subprocess
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, fields, replace
@@ -281,6 +282,17 @@ async def derive_close_transcript_evidence(
                 ctx.session_task_manager.get_session_tasks, session_id
             )
             window_end = _moved_on_epoch(task_links, task_id, effective_window)
+            if not task_checkout_paths and not variables.get(
+                "task_edited_file_checkouts_history_started_at"
+            ):
+                task_checkout_paths, effective_window = await _legacy_task_checkout_proof(
+                    ctx,
+                    session,
+                    task_id,
+                    effective_window,
+                    window_end,
+                    repo_path,
+                )
         if (
             session_id == owner_session_id
             and owner_used_commit_fallback
@@ -476,6 +488,83 @@ def _legacy_closed_other_tasks(
         if history_epoch is None or link_epoch is None or link_epoch <= history_epoch:
             closed[other_id] = task
     return tuple(closed.values())
+
+
+async def _legacy_task_checkout_proof(
+    ctx: RegistryContext,
+    session: Session,
+    task_id: str,
+    window_start: str | datetime | None,
+    window_end: float | None,
+    repo_path: str,
+) -> tuple[frozenset[tuple[str, str]], str | datetime | None]:
+    """Recover pre-ledger edits only in one original, registered task checkout.
+
+    A task commit alone cannot attribute another session's edits in the closing
+    checkout. The registered worktree adds the exact root and its creation time;
+    the claim and moved-on window still bound that session's original work.
+    """
+    denied: tuple[frozenset[tuple[str, str]], str | datetime | None] = (frozenset(), window_start)
+    start = _evidence_epoch(window_start)
+    if start is None:
+        return denied
+    worktrees = await asyncio.to_thread(
+        ctx.worktree_manager.list_worktrees, task_id=task_id, limit=None
+    )
+    if not isinstance(worktrees, list):
+        return denied
+    roots: dict[str, float] = {}
+    for worktree in worktrees:
+        if (
+            worktree.task_id != task_id
+            or worktree.project_id != session.project_id
+            or worktree.machine_id != session.machine_id
+            or not isinstance(worktree.worktree_path, str)
+        ):
+            return denied
+        created = _evidence_epoch(worktree.created_at)
+        if created is None or created < start or (window_end is not None and created >= window_end):
+            continue
+        root = os.path.realpath(worktree.worktree_path)
+        roots[root] = max(roots.get(root, created), created)
+    if len(roots) != 1:
+        return denied
+    root, created = next(iter(roots.items()))
+    if not await asyncio.to_thread(_same_git_checkout, root, repo_path):
+        return denied
+    task = await asyncio.to_thread(ctx.task_manager.get_task, task_id)
+    commits = getattr(task, "commits", None)
+    if (
+        not isinstance(commits, list)
+        or not commits
+        or not all(isinstance(sha, str) for sha in commits)
+    ):
+        return denied
+    try:
+        paths = await collect_commit_paths_async(commits, root)
+    except RuntimeError:
+        return denied
+    paths = await committable_task_paths_async(paths, root)
+    return frozenset((root, path) for path in paths), datetime.fromtimestamp(created, UTC)
+
+
+def _same_git_checkout(root: str, repo_path: str) -> bool:
+    """A registered root must still name a checkout of this repository."""
+    common: list[str] = []
+    for checkout in (root, repo_path):
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        common.append(os.path.realpath(result.stdout.strip()))
+    return common[0] == common[1]
 
 
 async def _without_closed_task_paths(

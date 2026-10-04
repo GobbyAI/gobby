@@ -35,7 +35,7 @@ def build_spawn_request(
     code_index_mode: str | None,
     code_index_api_token: str | None,
     phase_timings_ms: dict[str, float],
-    terminal_backend: Literal["tmux", "native"],
+    terminal_backend: Literal["native"],
     droid_mode: Literal["exec", "interactive"],
 ) -> SpawnRequest:
     """Keep request construction separate from allocation and launch scheduling."""

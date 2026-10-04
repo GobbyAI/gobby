@@ -10,7 +10,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 
-from gobby.storage.terminals import AttachLocator, Terminal, TerminalManager
+from gobby.agents.tmux.session_manager import TmuxPaneInfo, TmuxSessionManager
+from gobby.storage.terminals import AttachLocator, Terminal, TerminalManager, tmux_locator_key
 from gobby.terminals.foreground import (
     foreground_commands,
     process_shell,
@@ -32,6 +33,9 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 DEFAULT_STATES = ("pending", "live")
+
+# A hung tmux server must not hold the list; past this its rows report null.
+TMUX_PANE_PROBE_SECONDS = 2.0
 
 
 def create_terminals_router(server: HTTPServer) -> APIRouter:
@@ -80,9 +84,8 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
             if created_at is None and cursor_id is None
             else None
         )
-        return await asyncio.to_thread(
-            _serve_page,
-            manager,
+        items, has_more = await asyncio.to_thread(
+            manager.list_page,
             [project_id],
             machine_id=machine_id,
             states=parsed_states,
@@ -90,29 +93,34 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
             cursor_created_at=created_at,
             cursor_id=cursor_id,
             limit=page_size,
-            snapshot=snapshot,
+        )
+        panes = await _tmux_panes(items)
+        return await asyncio.to_thread(
+            _serve_page, manager, items, has_more, panes, snapshot=snapshot
         )
 
     def _serve_page(
         manager: TerminalManager,
-        project_ids: list[str],
+        items: list[Terminal],
+        has_more: bool,
+        panes: dict[str, TmuxPaneInfo],
         *,
         snapshot: Any,
-        **page_query: Any,
     ) -> dict[str, Any]:
-        items, has_more = manager.list_page(project_ids, **page_query)
         pids = _shell_pids(items)
         commands = foreground_commands(pids)
         cwds = shell_cwds(pids)
         registry = _lease_registry()
         serialized = []
         for row in items:
+            # A native row is probed from its shell pid; a tmux row reads its pane.
+            pane = panes.get(row.locator_key or "")
             serialized.append(
                 _row_json(
                     row,
                     _attach(server, manager, row),
-                    commands.get(row.id),
-                    cwds.get(row.id),
+                    commands.get(row.id) or (pane.pane_command if pane else None),
+                    cwds.get(row.id) or (pane.pane_path if pane else None),
                     registry.holder_info(row.id),
                 )
             )
@@ -178,8 +186,44 @@ def _socket_dir(server: HTTPServer) -> Path:
     return Path.home() / ".gobby"
 
 
+async def _tmux_panes(rows: list[Terminal]) -> dict[str, TmuxPaneInfo]:
+    """The panes behind this page's tmux rows, keyed by tmux locator key.
+
+    A hand-started tmux pane has no shell pid to probe, so its command and
+    directory come from its own server. A server that fails or outlives the
+    budget contributes nothing; the list never fails on it.
+    """
+    sockets: list[str] = []
+    for row in rows:
+        if row.backend != "tmux":
+            continue
+        socket_path = (row.locator or {}).get("socket_path")
+        if isinstance(socket_path, str) and socket_path and socket_path not in sockets:
+            sockets.append(socket_path)
+    results = await asyncio.gather(
+        *(
+            TmuxSessionManager(socket_path).list_panes(timeout=TMUX_PANE_PROBE_SECONDS)
+            for socket_path in sockets
+        ),
+        return_exceptions=True,
+    )
+    panes: dict[str, TmuxPaneInfo] = {}
+    for socket_path, result in zip(sockets, results, strict=True):
+        if not isinstance(result, list):
+            continue
+        for pane in result:
+            key = tmux_locator_key(
+                socket_path=socket_path,
+                server_pid=pane.server_pid,
+                server_start_time=pane.server_start_time,
+                pane_id=pane.pane_id,
+            )
+            panes[key] = pane
+    return panes
+
+
 def _attach(server: HTTPServer, manager: TerminalManager, row: Terminal) -> AttachLocator | None:
-    if row.backend != "native" or row.state not in {"pending", "live"}:
+    if row.state not in {"pending", "live"}:
         return None
     try:
         return manager.attach_locator(

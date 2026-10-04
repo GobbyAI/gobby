@@ -10,13 +10,13 @@
 //! whole before the name truncates.
 
 use crate::app::sidebar_model::ProjectEntry;
-use crate::theme::Palette;
+use crate::theme::{Palette, ThemeKind};
 use crate::ui::chrome::{terminal_address, Chrome, RowState, WorkspaceView};
 use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar::machine_admits;
 use crate::ui::status::{control_indicator, state_dot};
 use crate::ui::text::{display_width, truncate_end};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthChar;
 
@@ -262,6 +262,18 @@ fn worktree_name_budget(row: &SidebarRow, width: u16) -> usize {
     usize::from(width).saturating_sub(5 + display_width(nest_prefix(row)))
 }
 
+/// A worktree row's lead after the marker: two cells so the branch sits
+/// under the card's name (marker, dot, space, name), then the nest prefix.
+fn worktree_prefix(row: &SidebarRow) -> String {
+    format!("  {}", nest_prefix(row))
+}
+
+/// The column of a worktree row's state dot, from the row's left edge: the
+/// one cell its click focuses the most urgent bound agent through (#23280).
+pub(crate) fn worktree_glyph_offset(row: &SidebarRow) -> u16 {
+    u16::try_from(1 + display_width(&worktree_prefix(row))).unwrap_or(u16::MAX)
+}
+
 /// The first rendered line of `row` at `width` columns. A project card is
 /// `{marker}{dot} {name} ({branch} ↑a ↓b)` with the group toggle at the
 /// right edge; a worktree row is `{marker}  ├─ {dot} {branch} · {task}`
@@ -269,8 +281,8 @@ fn worktree_name_budget(row: &SidebarRow, width: u16) -> usize {
 /// a machine row is the same shape without the indent; an agent row shows
 /// the state glyph, definition and pinned reference; a terminal row shows
 /// the state glyph and foreground app, with the pane's address at the
-/// right edge while the name leaves it room. A group row is the dim
-/// project name and a rule. Agent task titles scroll on the second line;
+/// right edge while the name leaves it room. A group row is the project
+/// name in bold accent and a rule. Agent task titles scroll on the second line;
 /// a worktree name too long for its row drops its task and scrolls.
 pub fn row_line<'a>(
     row: &'a SidebarRow,
@@ -296,13 +308,28 @@ pub(crate) fn row_line_with_scrolling<'a>(
     } else {
         Style::default()
     };
-    let title_style = if row.selected || row.active {
-        Style::default().fg(p.text).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(p.subtext0)
+    // Josh's Option B board (#23280): names are text, refs and branches
+    // the identifier hue, everything secondary subtext0. overlay0 is left
+    // to rules and idle glyphs, which do not need AA.
+    let emphasis = |style: Style| {
+        if row.selected || row.active {
+            style.add_modifier(Modifier::BOLD)
+        } else {
+            style
+        }
     };
-    // Worktree and machine details retain the quiet token color.
-    let detail_style = Style::default().fg(if row.selected { p.mauve } else { p.overlay0 });
+    let title_style = emphasis(Style::default().fg(p.text));
+    let identifier_style = Style::default().fg(p.identifier);
+    let secondary_style = Style::default().fg(p.subtext0);
+    // Project names are bold accent. Light accent on the selection fill is
+    // 4.02:1, under AA, so a selected one falls back to text there.
+    let project_style = Style::default()
+        .fg(if row.selected && chrome.theme.kind == ThemeKind::Light {
+            p.text
+        } else {
+            p.accent
+        })
+        .add_modifier(Modifier::BOLD);
     let prefix_style = Style::default().fg(p.overlay0);
     let marker = if row.selected { "▸" } else { " " };
     let mut spans = vec![Span::styled(marker, marker_style)];
@@ -311,7 +338,7 @@ pub(crate) fn row_line_with_scrolling<'a>(
         RowKind::Project => {
             let toggle = row.group.map(|expanded| if expanded { "▾" } else { "▸" });
             let name_budget = budget.saturating_sub(if toggle.is_some() { 2 } else { 0 });
-            spans.extend(card_spans(row, glyph, title_style, p, name_budget));
+            spans.extend(card_spans(row, glyph, project_style, p, name_budget));
             if let Some(toggle) = toggle {
                 let used: usize = spans.iter().map(|span| display_width(&span.content)).sum();
                 let pad = usize::from(width).saturating_sub(used + 1);
@@ -320,9 +347,7 @@ pub(crate) fn row_line_with_scrolling<'a>(
             }
         }
         RowKind::Worktree => {
-            // Two cells after the marker so the branch sits under the card's
-            // name (marker, dot, space, name).
-            let prefix = format!("  {}", nest_prefix(row));
+            let prefix = worktree_prefix(row);
             let prefix_width = display_width(&prefix);
             spans.push(Span::styled(prefix, prefix_style));
             // No agent bound, no state: a blank keeps the branch aligned.
@@ -348,13 +373,13 @@ pub(crate) fn row_line_with_scrolling<'a>(
                         max_travel,
                         title_scrolling,
                     ),
-                    title_style,
+                    emphasis(identifier_style),
                 ));
             } else {
                 spans.extend(fitted_spans(
                     glyph,
-                    (&row.label, title_style),
-                    &[(row.detail.as_str(), detail_style)],
+                    (&row.label, emphasis(identifier_style)),
+                    &[(row.detail.as_str(), identifier_style)],
                     p,
                     budget.saturating_sub(prefix_width),
                 ));
@@ -366,7 +391,7 @@ pub(crate) fn row_line_with_scrolling<'a>(
             spans.extend(fitted_spans(
                 glyph,
                 (&row.label, title_style),
-                &[(row.detail.as_str(), detail_style)],
+                &[(row.detail.as_str(), secondary_style)],
                 p,
                 budget.saturating_sub(display_width(prefix)),
             ));
@@ -388,7 +413,7 @@ pub(crate) fn row_line_with_scrolling<'a>(
             if !row.address.is_empty() && used + 1 + address_width <= usize::from(width) {
                 let pad = usize::from(width) - used - address_width;
                 spans.push(Span::raw(" ".repeat(pad)));
-                spans.push(Span::styled(row.address.as_str(), detail_style));
+                spans.push(Span::styled(row.address.as_str(), secondary_style));
             }
         }
         RowKind::Agent => {
@@ -398,20 +423,25 @@ pub(crate) fn row_line_with_scrolling<'a>(
             spans.push(Span::styled(glyph.0.to_string(), glyph.1));
             if budget > 1 {
                 spans.push(Span::raw(" "));
-                let name = if row.reference.is_empty() {
-                    row.definition.clone()
+                let definition = (row.definition.as_str(), title_style);
+                let segments = if row.reference.is_empty() {
+                    vec![definition]
                 } else {
-                    format!("{}: {}", row.reference, row.definition)
+                    vec![
+                        (row.reference.as_str(), identifier_style),
+                        (": ", secondary_style),
+                        definition,
+                    ]
                 };
-                spans.push(Span::styled(truncate_end(&name, budget - 2), title_style));
+                let name: String = segments.iter().map(|(text, _)| *text).collect();
+                spans.extend(split_segments(&truncate_end(&name, budget - 2), &segments));
             }
         }
         RowKind::Group => {
-            let style = Style::default().fg(p.overlay0);
             let name = truncate_end(&row.label, budget.saturating_sub(2));
             let rule = budget.saturating_sub(display_width(&name) + 1);
-            spans.push(Span::styled(name, style));
-            spans.push(Span::styled(format!(" {}", "─".repeat(rule)), style));
+            spans.push(Span::styled(name, project_style));
+            spans.push(Span::styled(format!(" {}", "─".repeat(rule)), prefix_style));
         }
     }
     Line::from(spans)
@@ -430,7 +460,7 @@ fn card_spans(
     max_width: usize,
 ) -> Vec<Span<'static>> {
     let paren_style = Style::default().fg(p.subtext0);
-    let branch_style = Style::default().fg(if row.active { p.mauve } else { p.overlay0 });
+    let branch_style = Style::default().fg(p.identifier);
     let mut paren = vec![
         Span::styled(" (", paren_style),
         Span::styled(
@@ -467,8 +497,8 @@ fn card_spans(
 pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
     let (text_width, budget) = match row.kind {
         RowKind::Agent => match task_line(row) {
-            Some(task) => (
-                display_width(&task),
+            Some((lead, title)) => (
+                display_width(&lead) + display_width(&title),
                 usize::from(width).saturating_sub(3 + display_width(nest_prefix(row))),
             ),
             None => return 0,
@@ -482,12 +512,13 @@ pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
     text_width.saturating_sub(budget)
 }
 
-/// An agent's second line, `Working task 22944 Title`: the number is the
-/// task ref after its last `#`, and the whole line tickers as one string.
-fn task_line(row: &SidebarRow) -> Option<String> {
+/// An agent's second line, `Working task 22944` then ` Title`: the number
+/// is the task ref after its last `#`. The whole line tickers as one string
+/// and each part keeps its own role.
+fn task_line(row: &SidebarRow) -> Option<(String, String)> {
     let (reference, title) = row.task.as_ref()?;
     let number = reference.rsplit('#').next().unwrap_or(reference);
-    Some(format!("Working task {number} {title}"))
+    Some((format!("Working task {number}"), format!(" {title}")))
 }
 
 /// The `budget`-cell window of `text` the marquee shows at `ticker`: the
@@ -507,9 +538,32 @@ pub fn ticker_window(
     max_travel: usize,
     direction: TitleScrolling,
 ) -> String {
-    let width = display_width(text);
+    ticker_spans(
+        &[(text, Style::default())],
+        budget,
+        ticker,
+        max_travel,
+        direction,
+    )
+    .into_iter()
+    .map(|span| span.content)
+    .collect()
+}
+
+/// `ticker_window` over styled segments joined into one string: every cell
+/// the window shows keeps its own segment's style, so a scrolling line
+/// keeps its roles.
+pub(crate) fn ticker_spans(
+    segments: &[(&str, Style)],
+    budget: usize,
+    ticker: u64,
+    max_travel: usize,
+    direction: TitleScrolling,
+) -> Vec<Span<'static>> {
+    let text: String = segments.iter().map(|(segment, _)| *segment).collect();
+    let width = display_width(&text);
     if width <= budget || budget < TICKER_MIN_WINDOW || direction == TitleScrolling::Off {
-        return truncate_end(text, budget);
+        return split_segments(&truncate_end(&text, budget), segments);
     }
     let travel = (width - budget) as u64;
     let step = ticker / TICKER_STEP;
@@ -528,8 +582,11 @@ pub fn ticker_window(
     } as usize;
     let mut skipped = 0;
     let mut taken = 0;
-    let mut window = String::new();
-    for ch in text.chars() {
+    let mut window: Vec<Span<'static>> = Vec::new();
+    let cells = segments
+        .iter()
+        .flat_map(|(segment, style)| segment.chars().map(move |ch| (ch, *style)));
+    for (ch, style) in cells {
         let cell = ch.width().unwrap_or(0);
         // A zero-width mark belongs to the character before it, so one
         // after a character left of the window stays out with it.
@@ -539,16 +596,49 @@ pub fn ticker_window(
         }
         if window.is_empty() && skipped > offset {
             taken = skipped - offset;
-            window.push_str(&" ".repeat(taken));
+            push_styled(&mut window, &" ".repeat(taken), style);
         }
         if taken + cell > budget {
             break;
         }
         taken += cell;
-        window.push(ch);
+        push_styled(&mut window, ch.encode_utf8(&mut [0; 4]), style);
     }
-    window.push_str(&" ".repeat(budget - taken));
+    let trailing = window.last().map_or(Style::default(), |span| span.style);
+    push_styled(&mut window, &" ".repeat(budget - taken), trailing);
     window
+}
+
+/// Append `text` to the last span when it shares `style`, else open a span.
+fn push_styled(spans: &mut Vec<Span<'static>>, text: &str, style: Style) {
+    if text.is_empty() {
+        return;
+    }
+    match spans.last_mut() {
+        Some(last) if last.style == style => last.content.to_mut().push_str(text),
+        _ => spans.push(Span::styled(text.to_string(), style)),
+    }
+}
+
+/// `text`, the joined `segments` cut down from the end (an ellipsis may
+/// close it), split back into one span per segment in that segment's style.
+/// A cut segment keeps the ellipsis; the segments after it drop out.
+fn split_segments(text: &str, segments: &[(&str, Style)]) -> Vec<Span<'static>> {
+    let mut rest = text;
+    let mut spans = Vec::new();
+    for (index, (segment, style)) in segments.iter().enumerate() {
+        let take = if index + 1 == segments.len() {
+            rest.len()
+        } else {
+            rest.char_indices()
+                .nth(segment.chars().count())
+                .map_or(rest.len(), |(at, _)| at)
+        };
+        let (head, tail) = rest.split_at(take);
+        push_styled(&mut spans, head, *style);
+        rest = tail;
+    }
+    spans
 }
 
 /// The fixed task reference and scrolling title, or dim empty-task label,
@@ -569,21 +659,21 @@ pub(crate) fn row_second_line_with_travel<'a>(
     let style = Style::default().fg(chrome.palette.subtext0);
     match row.kind {
         RowKind::Agent => {
-            if let Some(task) = task_line(row) {
-                spans.push(Span::styled(
-                    ticker_window(
-                        &task,
-                        budget,
-                        chrome.ticker,
-                        max_travel,
-                        chrome.prefs.title_scrolling,
-                    ),
-                    style,
+            if let Some((lead, title)) = task_line(row) {
+                spans.extend(ticker_spans(
+                    &[
+                        (&lead, Style::default().fg(chrome.palette.text)),
+                        (&title, style),
+                    ],
+                    budget,
+                    chrome.ticker,
+                    max_travel,
+                    chrome.prefs.title_scrolling,
                 ));
             } else {
                 spans.push(Span::styled(
                     truncate_end("No assigned task", budget),
-                    Style::default().fg(quiet_fg(row, &chrome.palette)),
+                    style,
                 ));
             }
         }
@@ -605,20 +695,9 @@ pub fn row_third_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> L
         // it sits a neutral tier below the title so no state hue is borrowed.
         Span::styled(
             truncate_end(&row.model_slug, budget),
-            Style::default().fg(quiet_fg(row, &chrome.palette)),
+            Style::default().fg(chrome.palette.subtext0),
         ),
     ])
-}
-
-/// A row's quiet text: `overlay1` on the sidebar ground, `subtext0` on an
-/// active (`surface0`) or selected (`surface1`) fill, where `overlay1` falls
-/// under AA.
-fn quiet_fg(row: &SidebarRow, p: &Palette) -> Color {
-    if row.selected || row.active {
-        p.subtext0
-    } else {
-        p.overlay1
-    }
 }
 
 /// herdr `resolved_token_spans`, reduced to the glyph + title + trailing
@@ -635,8 +714,8 @@ pub fn fitted_spans(
     p: &Palette,
     max_width: usize,
 ) -> Vec<Span<'static>> {
-    let separator_style = Style::default().fg(p.overlay0);
-    let spacer_style = separator_style.add_modifier(Modifier::DIM);
+    let separator_style = Style::default().fg(p.subtext0);
+    let spacer_style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
     let mut spans = vec![Span::styled(glyph.0.to_string(), glyph.1)];
     let remaining = max_width.saturating_sub(display_width(glyph.0));
     if remaining < 2 || title.0.is_empty() {

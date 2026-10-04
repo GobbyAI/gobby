@@ -156,6 +156,7 @@ class InboundCommunications:
                         and callback_session_id
                     ):
                         message.session_id = callback_session_id
+                        message.metadata_json["session_route"] = "callback"
 
                 reply_id = message.metadata_json.get("reply_to_message_id")
                 chat_id = message.metadata_json.get("chat_id")
@@ -175,6 +176,7 @@ class InboundCommunications:
                     )
                     if source is not None and source.direction == "outbound" and source.session_id:
                         message.session_id = source.session_id
+                        message.metadata_json["session_route"] = "reply"
                         reply_routed = True
 
                 if (
@@ -191,6 +193,7 @@ class InboundCommunications:
                         )
                         if attached is not None:
                             message.session_id = attached
+                            message.metadata_json["session_route"] = "attached"
 
                 if message.session_id and message.platform_thread_id:
                     manager._track_thread(

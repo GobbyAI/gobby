@@ -257,6 +257,36 @@
     },
     {
       "surface": "cli",
+      "command": "gobby feedback list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/feedback.md",
+      "implementation": {
+        "path": "src/gobby/cli/feedback.py",
+        "symbol": "feedback_list"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review",
+        "cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby feedback status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/feedback.md",
+      "implementation": {
+        "path": "src/gobby/cli/feedback.py",
+        "symbol": "feedback_status"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review",
+        "cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
       "command": "gobby test-quality audit",
       "reference": "src/gobby/install/shared/skills/gobby/references/review/evidence.md",
       "implementation": {
@@ -344,10 +374,55 @@
         "focused-review"
       ],
       "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/feedback/entries",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/feedback.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/feedback.py",
+        "symbol": "feedback_entries"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/feedback/runs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/feedback.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/feedback.py",
+        "symbol": "feedback_runs"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/feedback/status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/feedback.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/feedback.py",
+        "symbol": "feedback_status"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review"
+      ],
+      "audience": "operator"
     }
   ],
   "scope_notes": [
-    "All three public gobby-feedback tools are mapped. Nine MCP mappings include six shared task/session operations; five CLI leaves and five HTTP endpoints bring total mapped operations to 19.",
+    "All three public gobby-feedback tools are mapped. Nine MCP mappings include six shared task/session operations; seven CLI leaves and eight HTTP endpoints bring total mapped operations to 24.",
     "Task lifecycle, artifacts and discovery retain primary coverage in tasks; agent definition/persona/spawn and pipeline execution retain primary coverage in agents/pipelines. Review references link their operation guidance rather than duplicating schemas.",
     "Review learning is owned by memory; this leaf preserves the epic-specific confirmed qa-miss/validation-miss attribution contract. There is no dedicated test-quality MCP or HTTP API.",
     "Mutating verification uses isolated test hub fixtures and temporary reports; live reads inspect installed definitions only."
@@ -357,7 +432,7 @@
       "id": "registration-inventory",
       "kind": "inspection",
       "command": "list_tools(gobby-feedback); get_tool_schema for three feedback tools, sessions.feedback, tasks-ops.complete_stage and fail_stage; inspect Click and APIRouter decorators",
-      "result": "Three public feedback tools, four feedback CLI leaves, five feedback HTTP routes; shared stage/session tools and test-quality audit mapped by actual behavior."
+      "result": "Three public feedback tools, six feedback CLI leaves, eight feedback HTTP routes; shared stage/session tools and test-quality audit mapped by actual behavior."
     },
     {
       "id": "source-audit",

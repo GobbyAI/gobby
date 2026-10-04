@@ -25,9 +25,10 @@ from gobby.sessions.context_usage import (
     LOCAL_CONTEXT_ROUTE_VARIABLE,
 )
 from gobby.storage.agents import AgentRun
+from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from tests.terminals.fakes import bind_spawn_runtime
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 _SUCCESSOR_ID = UUID("8d3579d5-f8ac-4db8-8ea6-b29027e8514f")
 
@@ -69,6 +70,7 @@ def _resume_metadata() -> dict[str, Any]:
         "project_id": "f963cb16-3802-4fcf-b202-0198bb4d271c",
         "parent_session_id": "7d307ae2-5834-43d0-8d59-c385ab37885f",
         "machine_id": "21000000-0000-4000-8000-000000000001",
+        "sandbox_config": {"enabled": True, "backend": "srt"},
         "env": {
             "UV_CACHE_DIR": "/cache/uv",
             "OPENAI_API_KEY": "must-not-survive",
@@ -107,8 +109,6 @@ def _spawn_result(*, success: bool = True) -> SimpleNamespace:
         success=success,
         pid=123,
         terminal_id="gobby-resume-successor",
-        tmux_socket_name="gobby",
-        tmux_socket_path="/tmp/gobby.sock",
         error=None if success else "spawn failed",
         message=None,
     )
@@ -132,6 +132,21 @@ def _patch_common(
     monkeypatch.setattr(uuid, "uuid4", lambda: _SUCCESSOR_ID)
     monkeypatch.setattr(resume_executor, "prepare_terminal_resume", prepare)
     monkeypatch.setattr(resume_executor, "pre_approve_directory", lambda *_args: None)
+    monkeypatch.setattr(
+        resume_executor,
+        "prepare_sandbox_launch",
+        AsyncMock(
+            return_value=SandboxLaunch(
+                backend="srt",
+                enforced=True,
+                provider_executable="/managed/provider",
+                policy_path="/policy/settings.json",
+                violation_path="/policy/violations.jsonl",
+                node_path="/managed/node",
+                runner_path="/managed/runner.mjs",
+            )
+        ),
+    )
     monkeypatch.setattr(resume_executor, "finalize_resume_handoff_async", finalize)
     monkeypatch.setattr(
         "gobby.agents.resume_finalization.finalize_resume_handoff_async",
@@ -162,8 +177,9 @@ async def test_codex_resume_delivers_prompt_via_composer_not_argv(
     )
 
     assert result.success is True
-    command = runner._test_runtime.last_request.command
-    assert command[0:2] == ["codex", "resume"]
+    wrapped = runner._test_runtime.last_request.command
+    command = wrapped[wrapped.index("--") + 1 :]
+    assert command[0:2] == ["/managed/provider", "resume"]
     assert command[-1] == "native-123"
     assert "Continue" not in command
     mock_codex_prompt_delivery.assert_called_once()
@@ -176,13 +192,29 @@ async def test_codex_resume_delivers_prompt_via_composer_not_argv(
 
 
 @pytest.mark.asyncio
-async def test_srt_codex_close_reviewer_resumes_headless_with_prompt(
+async def test_resume_refuses_task_close_reviewer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Its review stays bound to the original run, so a successor could never submit."""
+    prepare = _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(agent_name=TASK_CLOSE_REVIEWER_AGENT),
+        resume_metadata=_resume_metadata(),
+        runner=_runner(),
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is False
+    assert result.error == "resume_task_close_reviewer_unsupported"
+    prepare.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_srt_codex_resume_keeps_tui_and_composer_prompt(
     monkeypatch: pytest.MonkeyPatch,
     mock_codex_prompt_delivery: MagicMock,
 ) -> None:
     runner = _runner()
-    finalize = AsyncMock()
-    _patch_common(monkeypatch, spawner=MagicMock(), finalize=finalize)
+    _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
     prepare_sandbox = AsyncMock(
         return_value=SandboxLaunch(
             backend="srt",
@@ -197,14 +229,10 @@ async def test_srt_codex_close_reviewer_resumes_headless_with_prompt(
     monkeypatch.setattr(resume_executor, "prepare_sandbox_launch", prepare_sandbox)
     metadata = _resume_metadata()
     metadata["sandbox_config"] = {"enabled": True, "backend": "srt"}
-    metadata["config_overrides"] = [
-        "features.plugins=false",
-        "features.remote_plugin=false",
-        'sandbox_mode="danger-full-access"',
-    ]
+    metadata["config_overrides"] = ["features.plugins=false", "features.remote_plugin=false"]
 
     result = await resume_executor.resume_agent_run(
-        _original_run(agent_name="task-close-reviewer"),
+        _original_run(),
         resume_metadata=metadata,
         runner=runner,
         session_manager=MagicMock(),
@@ -213,12 +241,12 @@ async def test_srt_codex_close_reviewer_resumes_headless_with_prompt(
     assert result.success is True
     command = runner._test_runtime.last_request.command
     provider_argv = command[command.index("--") + 1 :]
-    assert provider_argv[:2] == ["/opt/codex/versions/0.157.0", "exec"]
-    assert "--dangerously-bypass-approvals-and-sandbox" in provider_argv
-    assert provider_argv[-3:] == ["resume", "native-123", "Continue"]
+    assert provider_argv[:2] == ["/opt/codex/versions/0.157.0", "resume"]
+    assert "exec" not in provider_argv
+    assert "Continue" not in provider_argv
     assert "features.plugins=false" in provider_argv
     assert "features.remote_plugin=false" in provider_argv
-    mock_codex_prompt_delivery.assert_not_called()
+    mock_codex_prompt_delivery.assert_called_once()
     prepare_sandbox.assert_awaited_once()
 
 
@@ -810,8 +838,9 @@ async def test_resume_reuses_persisted_claude_mcp_config(
     )
 
     assert result.success is True
-    command = runner._test_runtime.last_request.command
-    assert command[0:3] == ["claude", "--resume", "native-123"]
+    wrapped = runner._test_runtime.last_request.command
+    command = wrapped[wrapped.index("--") + 1 :]
+    assert command[0:3] == ["/managed/provider", "--resume", "native-123"]
     assert command[command.index("--mcp-config") + 1] == "/persisted/.mcp.json"
     assert command.index("--strict-mcp-config") == command.index("--mcp-config") + 2
     assert command.index("--strict-mcp-config") < command.index("Continue")
@@ -859,8 +888,9 @@ async def test_resume_discovers_workspace_mcp_config_for_claude(
     )
 
     assert result.success is True
-    command = runner._test_runtime.last_request.command
-    assert command[0:3] == ["claude", "--resume", "native-123"]
+    wrapped = runner._test_runtime.last_request.command
+    command = wrapped[wrapped.index("--") + 1 :]
+    assert command[0:3] == ["/managed/provider", "--resume", "native-123"]
     assert command[command.index("--mcp-config") + 1] == str(mcp_config)
     assert command.index("--strict-mcp-config") < command.index("Continue")
     assert command[-1] == "Continue"

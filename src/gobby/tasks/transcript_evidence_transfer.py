@@ -4,15 +4,25 @@ A long transcript derives thousands of frozen run and edit records. Unpickling t
 in one ``pickle.loads`` rebuilds every record in C without running bytecode, so the
 GIL is held until the last record exists and the daemon event loop stalls for tens
 of milliseconds, far longer when the host preempts the holder. This codec moves
-those records out of band into small chunks. The loop encodes and decodes one chunk
-at a time and yields between chunks, so no single GIL hold outlasts one chunk.
+every record sequence out of band into small chunks. The loop encodes and decodes
+one chunk at a time and yields between chunks, so no single GIL hold outlasts one
+chunk. The envelope left behind holds one reference per sequence, not per record, so
+pickling it before the first chunk and unpickling it after the last stay bounded
+at any transcript length (#23256). The only step that still scales with record
+count is the final copy of each decoded list into its tuple, a C copy that runs
+no Python code. Record identity is not preserved; decoded values are equal and in
+order.
 """
 
 from __future__ import annotations
 
 import asyncio
 import io
-import pickle
+
+# Bandit B403/B301 are excluded on these two lines only, temporarily, until #23370 retires
+# this codec. Every chunk is bytes this daemon's own same-host transcript-evidence process
+# pool pickled (or encode() below); no other process, file, or network peer supplies them.
+import pickle  # nosec B403
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -30,69 +40,104 @@ _RECORD_TYPES = (TranscriptValidationRun, TranscriptEdit)
 
 @dataclass(frozen=True)
 class ChunkedPayload:
-    """A pickled shell whose records travel separately in ordered chunks."""
+    """A pickled envelope whose record sequences travel separately in ordered chunks.
 
-    shell: bytes
+    Each chunk pickles ``(sequence index, records)``; the envelope refers to sequence
+    ``index`` by the persistent id ``(index, is_tuple)``.
+    """
+
+    envelope: bytes
     chunks: tuple[bytes, ...]
     record_count: int
 
 
-class _RecordPickler(pickle.Pickler):
+def _is_records(part: object) -> bool:
+    return isinstance(part, list) and all(type(record) in _RECORD_TYPES for record in part)
+
+
+class _SequencePickler(pickle.Pickler):
     def __init__(self, file: io.BytesIO) -> None:
         super().__init__(file, protocol=pickle.HIGHEST_PROTOCOL)
-        self.records: list[object] = []
-        self._indices: dict[int, int] = {}
+        self.sequences: list[tuple[object, ...] | list[object]] = []
+        self._ids: dict[int, tuple[int, bool]] = {}
 
-    def persistent_id(self, obj: Any) -> int | None:
-        if type(obj) not in _RECORD_TYPES:
+    def persistent_id(self, obj: Any) -> tuple[int, bool] | None:
+        # The first element decides, in constant time; each chunk checks the rest.
+        kind = type(obj)
+        if (kind is not tuple and kind is not list) or not obj:
             return None
-        # Identity, not equality: a record referenced twice decodes as one object, as
-        # pickle would preserve it; equal but distinct records stay distinct.
-        index = self._indices.get(id(obj))
-        if index is None:
-            index = self._indices[id(obj)] = len(self.records)
-            self.records.append(obj)
-        return index
+        if type(obj[0]) not in _RECORD_TYPES:
+            return None
+        pid = self._ids.get(id(obj))
+        if pid is None:
+            pid = self._ids[id(obj)] = (len(self.sequences), kind is tuple)
+            self.sequences.append(obj)
+        return pid
 
 
-class _RecordUnpickler(pickle.Unpickler):
-    def __init__(self, file: io.BytesIO, records: list[object]) -> None:
+class _SequenceUnpickler(pickle.Unpickler):
+    def __init__(self, file: io.BytesIO, sequences: dict[int, list[object]]) -> None:
         super().__init__(file)
-        self._records = records
+        self._sequences = sequences
+        self._loaded: dict[Any, object] = {}
 
     def persistent_load(self, pid: Any) -> object:
-        if not isinstance(pid, int) or not 0 <= pid < len(self._records):
+        loaded = self._loaded.get(pid)
+        if loaded is not None:
+            return loaded
+        if not (
+            isinstance(pid, tuple)
+            and len(pid) == 2
+            and isinstance(pid[1], bool)
+            and pid[0] in self._sequences
+        ):
             raise pickle.UnpicklingError(f"invalid transcript record reference: {pid!r}")
-        return self._records[pid]
+        records = self._sequences[pid[0]]
+        loaded = self._loaded[pid] = tuple(records) if pid[1] else records
+        return loaded
 
 
 def _encode_steps(value: object) -> Iterator[ChunkedPayload | None]:
     """Yield None after each chunk, then the finished payload."""
-    shell = io.BytesIO()
-    pickler = _RecordPickler(shell)
+    envelope = io.BytesIO()
+    pickler = _SequencePickler(envelope)
     pickler.dump(value)
-    records = pickler.records
     chunks: list[bytes] = []
-    for start in range(0, len(records), CHUNK_RECORDS):
-        chunks.append(pickle.dumps(records[start : start + CHUNK_RECORDS], pickle.HIGHEST_PROTOCOL))
-        yield None
-    yield ChunkedPayload(shell=shell.getvalue(), chunks=tuple(chunks), record_count=len(records))
+    record_count = 0
+    for index, sequence in enumerate(pickler.sequences):
+        for start in range(0, len(sequence), CHUNK_RECORDS):
+            part = list(sequence[start : start + CHUNK_RECORDS])
+            if not _is_records(part):
+                raise TypeError("a transcript record sequence holds a non-record value")
+            chunks.append(pickle.dumps((index, part), pickle.HIGHEST_PROTOCOL))
+            record_count += len(part)
+            yield None
+    yield ChunkedPayload(
+        envelope=envelope.getvalue(), chunks=tuple(chunks), record_count=record_count
+    )
 
 
 def _decode_steps(payload: ChunkedPayload) -> Iterator[object]:
     """Yield None after each chunk, then the decoded value; any invalid chunk raises."""
-    records: list[object] = []
+    sequences: dict[int, list[object]] = {}
+    record_count = 0
     for chunk in payload.chunks:
-        decoded = pickle.loads(chunk)
-        if not isinstance(decoded, list) or not all(type(r) in _RECORD_TYPES for r in decoded):
+        decoded = pickle.loads(chunk)  # nosec B301 # same-host pool bytes, see the import
+        if not (
+            isinstance(decoded, tuple)
+            and len(decoded) == 2
+            and isinstance(decoded[0], int)
+            and _is_records(decoded[1])
+        ):
             raise pickle.UnpicklingError("invalid transcript record chunk")
-        records.extend(decoded)
+        sequences.setdefault(decoded[0], []).extend(decoded[1])
+        record_count += len(decoded[1])
         yield None
-    if len(records) != payload.record_count:
+    if record_count != payload.record_count:
         raise pickle.UnpicklingError(
-            f"transcript record chunks hold {len(records)} records, expected {payload.record_count}"
+            f"transcript record chunks hold {record_count} records, expected {payload.record_count}"
         )
-    yield _RecordUnpickler(io.BytesIO(payload.shell), records).load()
+    yield _SequenceUnpickler(io.BytesIO(payload.envelope), sequences).load()
 
 
 def encode(value: object) -> ChunkedPayload:

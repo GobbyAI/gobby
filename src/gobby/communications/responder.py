@@ -218,6 +218,18 @@ class CommunicationsResponder:
             return
         await self.handle_message(message)
 
+    def will_respond(self, message: CommsMessage) -> bool:
+        """Whether ``handle_message`` would answer this ordinary message with a turn or command."""
+        if (
+            self._backend is None
+            or message.content_type == "reaction"
+            or message.answer_delivery is not None
+            or not message.content.strip()
+        ):
+            return False
+        channel = self._manager.get_channel(message.channel_id)
+        return channel is not None and self._build_context(channel, message) is not None
+
     async def handle_message(self, message: CommsMessage) -> asyncio.Task[None] | None:
         """Apply policy and route one inbound message."""
         if message.content_type == "reaction":

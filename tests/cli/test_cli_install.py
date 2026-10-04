@@ -123,7 +123,7 @@ def _mock_ext_services_and_prompts() -> Iterator[None]:
         patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
         patch("gobby.cli.install._maybe_start_daemon_after_install"),
         patch(
-            "gobby.cli.runtime.runtime_hub_database",
+            "gobby.storage.hub.runtime.runtime_hub_database",
             return_value=nullcontext(MagicMock()),
         ),
         patch("gobby.cli.runtime.CliRuntime.require_config", return_value=MagicMock()),
@@ -390,7 +390,7 @@ class TestInstallCommand:
         assert result is expected
         assert "Cursor, Antigravity" in capsys.readouterr().out
         mock_confirm.assert_called_once_with(
-            "Configure detected VS Code-family IDE terminals to use tmux and Gobby session titles?",
+            "Configure detected VS Code-family IDE terminals to show Gobby session titles?",
             default=True,
         )
 
@@ -1161,8 +1161,10 @@ def test_remote_mode_preflight_deadlines(monkeypatch: pytest.MonkeyPatch) -> Non
             await checkpoint()
             return config
 
-        monkeypatch.setattr(remote_preflight, "CONNECT_TIMEOUT_SECONDS", 0.05)
-        monkeypatch.setattr(remote_preflight, "OPERATION_TIMEOUT_SECONDS", 0.05)
+        # Slow-but-successful cases get a budget a loaded host cannot exhaust in one
+        # checkpoint; only the stall cases above and below depend on a tiny deadline.
+        monkeypatch.setattr(remote_preflight, "CONNECT_TIMEOUT_SECONDS", 1)
+        monkeypatch.setattr(remote_preflight, "OPERATION_TIMEOUT_SECONDS", 1)
         monkeypatch.setattr(remote_preflight, "_connect_postgres", slow_connect)
         monkeypatch.setattr(remote_preflight, "_read_remote_config", slow_config_read)
         assert await remote_preflight._probe_postgres("postgresql://slow", Path("/tmp")) == config
@@ -1207,7 +1209,7 @@ def test_remote_mode_preflight_deadlines(monkeypatch: pytest.MonkeyPatch) -> Non
 
         slow_qdrant = FakeQdrant()
         slow_falkor = FakeFalkor()
-        monkeypatch.setattr(remote_preflight, "OPERATION_TIMEOUT_SECONDS", 0.05)
+        monkeypatch.setattr(remote_preflight, "OPERATION_TIMEOUT_SECONDS", 1)
         monkeypatch.setattr(remote_preflight, "_create_qdrant_client", lambda _url: slow_qdrant)
         monkeypatch.setattr(
             remote_preflight,

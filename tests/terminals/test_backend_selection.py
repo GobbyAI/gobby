@@ -6,7 +6,7 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
@@ -20,6 +20,7 @@ from gobby.terminals.discovery import seed_external_terminal
 from gobby.terminals.host_client import HostCommandError, HostUnavailableError
 from gobby.terminals.native_runtime import HostManagerControl, NativeTerminalRuntime
 from gobby.terminals.runtime import PreparedSpawn, TerminalRuntime, TerminalSpawnRequest
+from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from gobby.terminals.web_spawn import spawn_web_terminal
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _manager
 
@@ -44,18 +45,16 @@ async def test_explicit_and_external_selection_under_native_default(
     assert loaded["terminals"]["default_backend"] == "native"
     guide = _GUIDE.read_text(encoding="utf-8")
     assert "## Backend status" in guide
-    assert "`native` is the default backend" in guide
-    assert "`tmux` remains supported" in guide
+    assert "`native` is the only spawn backend" in guide
+    assert "spawn-less adapter for externally discovered sessions" in guide
     assert "`host_unavailable`" in guide
 
     assert resolve_terminal_backend(None, daemon) == "native"
     assert resolve_terminal_backend(None, None) == "native"
-    assert resolve_terminal_backend("tmux", daemon) == "tmux"
     assert resolve_terminal_backend("native", daemon) == "native"
-    rolled_back = DaemonConfig.model_validate({"terminals": {"default_backend": "tmux"}})
-    assert resolve_terminal_backend(None, rolled_back) == "tmux"
-    with pytest.raises(ValueError, match="invalid terminal_backend"):
-        resolve_terminal_backend("ssh", daemon)
+    for refused_backend in ("tmux", "ssh"):
+        with pytest.raises(ValueError, match="invalid terminal_backend"):
+            resolve_terminal_backend(refused_backend, daemon)
 
     monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID)
     manager = _manager(temp_db)
@@ -201,29 +200,11 @@ async def test_explicit_and_external_selection_under_native_default(
     assert "native" not in literals
     assert "tmux" not in literals
 
-    tmux_runtime = MagicMock()
-    tmux_runtime.backend = "tmux"
-    tmux_runtime.prepare_spawn = AsyncMock(
-        return_value=MagicMock(
-            stored_locator={
-                "socket_path": "/tmp/tmux/default",
-                "server_pid": 1,
-                "server_start_time": 2,
-                "pane_id": "%1",
-            },
-            locator_key="tmux:/tmp/tmux/default:1:2:%1",
-            process=None,
-            rows=24,
-            cols=80,
-            acknowledge_persist=MagicMock(),
-        )
-    )
-    tmux_runtime.commit_spawn = AsyncMock(
-        return_value=MagicMock(locator=MagicMock(frame_host_epoch=None))
-    )
+    # An explicit tmux runtime refuses to spawn: tmux terminals are external only,
+    # so the pending row fails and no live tmux row appears.
     explicit = await spawn_web_terminal(
         manager=manager,
-        runtime=cast(TerminalRuntime, tmux_runtime),
+        runtime=TmuxTerminalRuntime(),
         project_id=sample_project["id"],
         session_id=None,
         rows=24,
@@ -231,8 +212,10 @@ async def test_explicit_and_external_selection_under_native_default(
         cwd="/tmp",
         command=["zsh"],
     )
-    assert explicit.success is True
+    assert explicit.success is False
+    assert explicit.error == "tmux backend does not spawn terminals"
     row = manager.get(explicit.terminal_id)
     assert row is not None
     assert row.backend == "tmux"
-    assert row.ownership == "gobby"
+    assert row.state == "exited"
+    assert row.locator is None

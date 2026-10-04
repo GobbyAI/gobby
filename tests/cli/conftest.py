@@ -18,7 +18,6 @@ def isolate_cli_runtime_database(monkeypatch: pytest.MonkeyPatch) -> None:
     def open_database(*_args: object, **_kwargs: object) -> Iterator[MagicMock]:
         yield database
 
-    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
     monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", open_database)
 
 

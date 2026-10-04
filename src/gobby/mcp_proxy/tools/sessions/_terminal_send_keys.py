@@ -43,7 +43,11 @@ def _authorize_send_keys_target(
     session_ref: str,
     session_manager: SessionManager,
 ) -> tuple[str | None, dict[str, Any] | None]:
-    """Resolve a send_keys target and verify it is within the caller's scope."""
+    """Resolve the send_keys caller and target.
+
+    Whether the target is in the caller's scope is the bundled
+    ``block-cross-project-send-keys`` rule's decision, made before dispatch.
+    """
     from gobby.utils.session_context import get_current_session_id
 
     caller_ref = get_current_session_id()
@@ -91,24 +95,13 @@ def _authorize_send_keys_target(
             "error_code": "send_keys_target_not_found",
         }
 
-    target = session_manager.get(target_id)
-    if target is None:
+    if session_manager.get(target_id) is None:
         return None, {
             "success": False,
             "error": f"Session {session_ref} not found",
             "error_code": "send_keys_target_not_found",
         }
-
-    if scope.admits(project_id=target.project_id, session_id=target_id):
-        return target_id, None
-
-    return None, {
-        "success": False,
-        "error": "send_keys target is outside the caller's project and agent tree",
-        "error_code": "send_keys_target_forbidden",
-        "caller_session_id": caller.id,
-        "target_session_id": target_id,
-    }
+    return target_id, None
 
 
 def register_send_keys_tool(
@@ -177,13 +170,6 @@ def register_send_keys_tool(
                 terminal_manager,
             ).managed_terminal
             if terminal is not None:
-                if terminal.backend != "native":
-                    return {
-                        "success": False,
-                        "error": f"Unsupported terminal backend: {terminal.backend}",
-                        "error_code": "unsupported_terminal_backend",
-                        "idempotency_key": resolved_key,
-                    }
                 kind: Literal["text", "key", "paste"] = "text"
                 payload = keys
                 submit = False

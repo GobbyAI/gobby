@@ -339,6 +339,35 @@ def test_unknown_residual_row_fails_closed(revision_db: HubDatabase) -> None:
         ConfigRepository(revision_db).reconcile_registry()
 
 
+def test_retired_tmux_spawn_rows_are_swept_at_startup(revision_db: HubDatabase) -> None:
+    # Rows saved while Gobby still spawned tmux must not refuse the next start.
+    retired = {
+        "tmux.enabled": "true",
+        "tmux.command": '"tmux"',
+        "tmux.socket_name": '"gobby"',
+        "tmux.socket_path": '"/tmp/gobby.sock"',
+        "tmux.config_file": '"/tmp/tmux.conf"',
+        "tmux.session_prefix": '"gobby"',
+        "tmux.history_limit": "10000",
+        "tmux.wsl_distribution": '"Ubuntu"',
+        "tmux.registration_timeout_seconds": "30",
+        "terminals.default_backend": '"tmux"',
+    }
+    rows = {**retired, "tmux.idle_timeout_seconds": "90"}
+    for key, value in rows.items():
+        revision_db.execute(
+            """INSERT INTO config_store (key, value, source, is_secret, revision)
+               VALUES (%s, %s, %s, %s, %s)""",
+            (key, value, "test", False, 0),
+        )
+
+    ConfigRepository(revision_db).reconcile_registry()
+
+    assert revision_db.fetchall("SELECT key FROM config_store") == [
+        {"key": "tmux.idle_timeout_seconds"}
+    ]
+
+
 def test_unknown_residual_row_is_skipped_only_when_asked(revision_db: HubDatabase) -> None:
     """A read-only reader survives the row until the migration that drops it lands."""
     revision_db.execute(

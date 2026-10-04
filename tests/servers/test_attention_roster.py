@@ -402,7 +402,7 @@ def test_interactive_entry_end_to_end(
         async def capture() -> str:
             return QUESTION_PROMPT
 
-        return AttentionPane(target="%42", tmux_cmd=("tmux",), capture=capture)
+        return AttentionPane(target="%42", capture=capture)
 
     async def inject(_pane: AttentionPane, answer: AttentionAnswer) -> None:
         injected.append(answer)
@@ -461,7 +461,7 @@ def test_interactive_entry_end_to_end(
         "session_name": "interactive-shell",
         "parent_pid": 4242,
     }
-    assert run_entry["tmux"]["pane_pid"] == 4343
+    assert run_entry["tmux"] is None
     assert run_entry["terminal"]["terminal_id"] == "term-run-2"
     assert run_entry["terminal"]["state"] == "orphaned"
     assert seen.status_code == 200 and responded.status_code == 200

@@ -98,8 +98,8 @@ def test_optional_phases_and_implementation_require_distinct_authority() -> None
 @pytest.mark.parametrize(
     "topic, agent",
     [
-        ("review", "plan-adversary-taskless"),
-        ("enhancement", "plan-enhancer-taskless"),
+        ("review", "plan-adversary-taskless-old"),
+        ("enhancement", "plan-enhancer-taskless-old"),
     ],
 )
 def test_taskless_launch_checkpoints_before_waiting(topic: str, agent: str) -> None:

@@ -79,7 +79,7 @@ def test_plan_review_resolves_symbol_targets_before_blast_radius() -> None:
     assert "[coverage](coverage.md)" in body
 
 
-@pytest.mark.parametrize("name", ["plan-adversary", "plan-adversary-taskless"])
+@pytest.mark.parametrize("name", ["plan-adversary-old", "plan-adversary-taskless-old"])
 def test_review_prompts_have_direct_repository_and_task_access(name: str) -> None:
     body = (AGENTS / f"{name}.yaml").read_text()
     assert "gobby-tasks:get_task" in body
@@ -96,7 +96,8 @@ def test_repair_class_section() -> None:
         "gobby-format all three",
         "Other categories remain prose",
         "Every referenced section must exist in evidence",
-        "Only coordinator apply_plan_review_repairs writes accepted repairs after a finalized rejection",
+        "Only the coordinator, or the Writer seat in a static-seat round, writes accepted "
+        "repairs through apply_plan_review_repairs after a finalized rejection",
         "fresh reviewer re-runs its check",
     ):
         assert term in body

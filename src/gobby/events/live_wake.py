@@ -19,9 +19,6 @@ class TerminalActivity:
 
     composer: ComposerRead
     turn_in_flight_fingerprint: str | None = None
-    # False when this provider's manifest cannot classify a composer at all, so
-    # an ``unknown`` read is a capability gap rather than an unreadable frame.
-    composer_probeable: bool = True
 
 
 # (session, managed terminal row or None) -> one shared terminal activity read.

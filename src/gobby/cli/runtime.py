@@ -8,18 +8,28 @@ from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
-from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import load_bootstrap
-from gobby.storage.config_repository import ConfigRepository, UnknownKeyPolicy
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.hub.runtime import runtime_hub_database
 from gobby.storage.projects import LocalProjectManager
 from gobby.utils.project_context import get_project_context
 
+if TYPE_CHECKING:
+    from gobby.config.app import DaemonConfig
+    from gobby.storage.config_repository import ConfigRepository, UnknownKeyPolicy
+    from gobby.storage.hub.protocol import HubDatabase
+
 logger = logging.getLogger(__name__)
+
+
+# Config, repository and hub imports are deferred to first use: they cost seconds
+# under load, and the stdio bridge imports this module before answering initialize.
+def _config_repository(database: HubDatabase) -> ConfigRepository:
+    from gobby.storage.config_repository import ConfigRepository
+
+    return ConfigRepository(database)
 
 
 @dataclass(init=False)
@@ -27,7 +37,7 @@ class CliRuntime:
     """Own resources shared by one top-level CLI invocation."""
 
     config_file: str | None
-    config_repository_factory: Callable[[HubDatabase], ConfigRepository] = ConfigRepository
+    config_repository_factory: Callable[[HubDatabase], ConfigRepository] = _config_repository
     exit_stack: ExitStack = field(default_factory=ExitStack)
     _config: DaemonConfig | None = field(default=None, init=False, repr=False)
     _database: HubDatabase | None = field(default=None, init=False, repr=False)
@@ -37,7 +47,7 @@ class CliRuntime:
         self,
         config_file: str | None,
         config: DaemonConfig | None = None,
-        config_repository_factory: Callable[[HubDatabase], ConfigRepository] = ConfigRepository,
+        config_repository_factory: Callable[[HubDatabase], ConfigRepository] = _config_repository,
         exit_stack: ExitStack | None = None,
     ) -> None:
         self.config_file = config_file
@@ -120,6 +130,8 @@ class CliRuntime:
         if self._closed:
             raise RuntimeError("CLI runtime is already closed")
         if self._database is None:
+            from gobby.storage.hub.runtime import runtime_hub_database
+
             self._database = self.exit_stack.enter_context(
                 runtime_hub_database(self.config_file, apply_migrations=apply_migrations)
             )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
@@ -58,6 +59,11 @@ __all__ = [
     "execute_mcp_step",
     "execute_prompt_step",
 ]
+
+
+def step_invocation_id(execution_id: str, step_id: str) -> str:
+    """A step's ``invocation_id``: stable across restarts, distinct per step."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby-pipeline:{execution_id}:{step_id}"))
 
 
 def _best_effort_child_session_setup(action: Callable[[], Any], warning: str) -> None:
@@ -447,9 +453,21 @@ class PipelineExecutor(
 
                 if _depth == 0 and self.session_manager:
                     try:
+                        child_external_id = f"pipeline-{execution.id}"
+                        if prior_status is not None:
+                            # Resume callers pass execution.session_id, which is this
+                            # child itself; keep the parent it was launched under.
+                            reused = await self._run_db(
+                                self.session_manager.find_by_external_id,
+                                external_id=child_external_id,
+                                project_id=project_id,
+                                source="pipeline",
+                            )
+                            if reused is not None and reused.id == caller_session_id:
+                                caller_session_id = reused.parent_session_id or system_session_id()
                         child_session = await self._run_db(
                             self.session_manager.register,
-                            external_id=f"pipeline-{execution.id}",
+                            external_id=child_external_id,
                             machine_id=None,
                             source="pipeline",
                             project_id=project_id,
@@ -563,6 +581,7 @@ class PipelineExecutor(
 
                 # 4. Iterate through steps in order
                 for step in pipeline.steps:
+                    context["invocation_id"] = step_invocation_id(execution.id, step.id)
                     cancelled = await self._run_db(self._get_cancelled_execution, execution.id)
                     if cancelled:
                         self._close_pipeline_session(pipeline_session_id, caller_session_id)
@@ -689,7 +708,8 @@ class PipelineExecutor(
                             f"Step '{step.id}' failed with exit code {step_output['exit_code']}"
                         )
 
-                    if isinstance(step_output, dict) and "error" in step_output:
+                    # A null error is no error: spawn_agent's success reply carries one.
+                    if isinstance(step_output, dict) and step_output.get("error") is not None:
                         error_msg = str(step_output["error"])
                         context["steps"][step.id] = {"output": step_output}
                         await self._run_db(

@@ -771,6 +771,67 @@ class TerminalManager(TerminalSettlementMixin):
         )
         return [Terminal.from_row(row) for row in rows]
 
+    def record_native_input_handoff(self, terminal: Terminal, attachment_id: str) -> bool:
+        """Persist existing authority only while the captured live identity still matches."""
+        host_terminal_id = (terminal.locator or {}).get("host_terminal_id")
+        if (
+            terminal.backend != "native"
+            or terminal.state != "live"
+            or not terminal.host_epoch
+            or not isinstance(host_terminal_id, str)
+            or not host_terminal_id
+            or not attachment_id
+        ):
+            return False
+        handoff = {
+            "attachment_id": attachment_id,
+            "host_epoch": terminal.host_epoch,
+            "host_terminal_id": host_terminal_id,
+        }
+        row = self.db.fetchone(
+            """
+            UPDATE terminals
+            SET process = COALESCE(process, '{}'::jsonb) || %s, updated_at = now()
+            WHERE id = %s AND machine_id = %s AND backend = 'native' AND state = 'live'
+                AND host_epoch = %s AND locator->>'host_terminal_id' = %s
+            RETURNING id
+            """,
+            (
+                Jsonb({"native_input_handoff": handoff}),
+                str(UUID(terminal.id)),
+                str(UUID(terminal.machine_id)),
+                terminal.host_epoch,
+                host_terminal_id,
+            ),
+        )
+        return row is not None
+
+    def list_native_input_handoffs(self, machine_id: str) -> list[Terminal]:
+        """Load daemon-shutdown grants, including rows settled since preservation."""
+        rows = self.db.fetchall(
+            """
+            SELECT * FROM terminals
+            WHERE machine_id = %s AND backend = 'native' AND process ? 'native_input_handoff'
+            """,
+            (str(UUID(machine_id)),),
+        )
+        return [Terminal.from_row(row) for row in rows]
+
+    def clear_native_input_handoff(
+        self, terminal_id: str, expected_attachment_id: str | None = None
+    ) -> None:
+        """Retire a handoff without removing another attachment's newer record."""
+        self.db.execute(
+            """
+            UPDATE terminals
+            SET process = process - 'native_input_handoff', updated_at = now()
+            WHERE id = %s AND backend = 'native' AND process ? 'native_input_handoff'
+                AND (%s::text IS NULL
+                    OR process->'native_input_handoff'->>'attachment_id' = %s)
+            """,
+            (str(UUID(terminal_id)), expected_attachment_id, expected_attachment_id),
+        )
+
     def list_reconcilable_by_machine(self, machine_id: str) -> list[Terminal]:
         """Pending, live, and orphaned native-host candidates on a machine."""
         rows = self.db.fetchall(

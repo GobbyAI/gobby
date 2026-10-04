@@ -45,6 +45,9 @@ from gobby.storage.tasks._transitions import (
     reconcile_task_state as _reconcile_task_state,
 )
 from gobby.storage.tasks._transitions import (
+    release_escalated_task_claim as _release_escalated_task_claim,
+)
+from gobby.storage.tasks._transitions import (
     release_task_claim as _release_task_claim,
 )
 
@@ -174,6 +177,13 @@ class TaskTransitionsMixin:
             escalation_reason=escalation_reason,
         )
         self._notify_listeners()
+        return task
+
+    def release_escalated_task_claim(self, task_id: str, *, expected_owner: str) -> Task | None:
+        """Clear the owner's claim on an escalated task, keeping its escalation metadata."""
+        task = _release_escalated_task_claim(self.db, task_id, expected_owner=expected_owner)
+        if task is not None:
+            self._notify_listeners()
         return task
 
     def close_task(

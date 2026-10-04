@@ -222,6 +222,8 @@ pub struct ViewState {
     pub project_hit_areas: Vec<(String, Rect)>,
     /// Worktree rows drawn under their cards, by worktree id.
     pub worktree_hit_areas: Vec<(String, Rect)>,
+    /// The state dot of each worktree row with an agent bound, by worktree id.
+    pub worktree_glyph_hit_areas: Vec<(String, Rect)>,
     /// The `▸`/`▾` cell of each card that has worktrees, by project id.
     pub group_toggle_hit_areas: Vec<(String, Rect)>,
     /// Session, agent run and bare terminal rows drawn in the sidebar, by
@@ -279,6 +281,7 @@ impl ViewState {
         self.new_tab_hit_area = tab_bar.new_tab;
         self.project_hit_areas = sidebar.projects;
         self.worktree_hit_areas = sidebar.worktrees;
+        self.worktree_glyph_hit_areas = sidebar.worktree_glyphs;
         self.group_toggle_hit_areas = sidebar.group_toggles;
         self.agent_hit_areas = sidebar.agents;
         self.machine_hit_areas = sidebar.machines;

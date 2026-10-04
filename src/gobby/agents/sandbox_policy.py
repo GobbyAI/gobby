@@ -29,7 +29,6 @@ from gobby.agents.zig_packages import (
     materialize_zig_packages,
     vendored_libghostty_vt,
 )
-from gobby.config.tmux import socket_root
 from gobby.paths import get_gobby_home
 from gobby.utils import spawn
 from gobby.utils.dev import linked_worktree_root
@@ -87,7 +86,7 @@ _PROVIDER_CREDENTIAL_ENV: dict[str, tuple[str, ...]] = {
     "qwen": ("DASHSCOPE_API_KEY", "QWEN_API_KEY"),
     "droid": ("FACTORY_API_KEY",),
     "grok": ("XAI_API_KEY",),
-    # AGY never accepts env auth; the tmux spawner strips these same keys.
+    # AGY never accepts env auth; the spawner strips these same keys.
     "agy": denied_ambient_keys("agy"),
 }
 
@@ -436,18 +435,6 @@ def provider_read_exceptions(
         if package_root is not None:
             paths.append(str(package_root))
     return canonical_paths(paths)
-
-
-def tmux_socket_roots() -> list[str]:
-    """Return the tmux server socket directory for agent coordination IPC.
-
-    Gobby runs agents inside a dedicated tmux server; in-sandbox tools that
-    coordinate through it (statusline, pane messaging) connect to sockets
-    under this per-uid directory.
-    """
-    if not hasattr(os, "getuid"):
-        return []
-    return canonical_paths([socket_root()])
 
 
 def provider_write_exceptions(provider: str) -> list[str]:

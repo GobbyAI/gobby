@@ -18,7 +18,7 @@ use crate::ui::widgets::{
 
 use super::secondary_button_style;
 
-pub const ALERTS_TITLE: &str = "alerts";
+pub const ALERTS_TITLE: &str = "Alerts";
 const POPUP_WIDTH: u16 = 72;
 /// Header, gap, hint, gap and the button row.
 const BASE_HEIGHT: u16 = 7;
@@ -81,7 +81,7 @@ pub fn render_alerts(frame: &mut Frame, area: Rect, chrome: &Chrome, scroll: usi
     render_modal_description(frame, areas[4], &hint, Style::default().fg(p.overlay0));
     let specs = [ActionButtonSpec {
         hint: Some("esc"),
-        label: "close",
+        label: "Close",
     }];
     let rects = action_button_row_rects(inner, &specs, 2, inner.height.saturating_sub(1));
     if let [close_rect] = rects[..] {
@@ -89,7 +89,7 @@ pub fn render_alerts(frame: &mut Frame, area: Rect, chrome: &Chrome, scroll: usi
             frame,
             close_rect,
             Some("esc"),
-            "close",
+            "Close",
             secondary_button_style(chrome),
         );
     }

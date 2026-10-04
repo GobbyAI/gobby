@@ -97,15 +97,15 @@ async def collect_commit_diff_text_async(
     A landing merge, which reaches every other linked commit only through its
     second parent, is the set's net patch on its own. A sync merge, whose other
     linked commits live on the first-parent line, contributes only its remerge
-    diff. Any other merge-containing set skips the replay and streams each
-    commit.
+    diff. Any other merge replays as its first-parent diff, and the linked
+    commits it reaches only through another parent are not replayed again.
     """
     if not commit_shas:
         return ""
     net = await _net_commit_patch(commit_shas, cwd=cwd)
     if net is not None:
         return net
-    ordered = await _ancestry_order(commit_shas, cwd=cwd)
+    ordered = await ancestry_order(commit_shas, cwd=cwd)
     if ordered is None:
         raise RuntimeError("git show failed while assembling the close criteria-review diff")
     streamed = await _stream_commit_patches(ordered, cwd=cwd)
@@ -154,7 +154,7 @@ async def _git_bytes(
     return result.stdout.encode("utf-8", errors="surrogateescape")
 
 
-async def _ancestry_order(commit_shas: list[str], *, cwd: str | Path) -> list[str] | None:
+async def ancestry_order(commit_shas: list[str], *, cwd: str | Path) -> list[str] | None:
     """Canonicalize the linked commits and order them oldest-first by topology.
 
     Commit timestamps cannot order commits made within one second, so the walk
@@ -185,7 +185,7 @@ async def collect_commit_rename_aliases_async(
     """Collect prior test paths for files renamed by linked commits."""
     if not commit_shas:
         return {}
-    ordered = await _ancestry_order(commit_shas, cwd=cwd)
+    ordered = await ancestry_order(commit_shas, cwd=cwd)
     if ordered is None:
         return {}
     aliases: dict[str, tuple[str, ...]] = {}
@@ -231,23 +231,25 @@ async def _is_ancestor(ancestor: str, descendant: str, *, cwd: str | Path) -> bo
 
 
 async def _is_sync_merge(sha: str, ordered: list[str], *, cwd: str | Path) -> bool:
-    """True when the other linked commits live on this merge's first-parent line.
+    """Prove a sync from linked first-parent work without second-parent-only delivery.
 
     They were already on that parent, or they were committed there after the
     merge. A landing merge's other commits are reachable only through its
-    second parent, so this returns false and the first-parent diff stands.
+    second parent. Unrelated historical links supply neither proof nor a veto.
     """
     if not await _is_merge(sha, cwd=cwd):
         return False
     others = [other for other in ordered if other != sha]
     if not others:
         return False
+    first_parent_work = False
     for other in others:
         on_first_parent = await _is_ancestor(other, f"{sha}^1", cwd=cwd)
         committed_after = await _is_ancestor(sha, other, cwd=cwd)
-        if not on_first_parent and not committed_after:
+        if not on_first_parent and await _is_ancestor(other, f"{sha}^2", cwd=cwd):
             return False
-    return True
+        first_parent_work |= on_first_parent or committed_after
+    return first_parent_work
 
 
 async def _show_one_commit(
@@ -317,7 +319,7 @@ async def _net_commit_patch(
 
     ``output`` selects the diff format; the replay itself always applies binary patches.
     """
-    ordered = await _ancestry_order(commit_shas, cwd=cwd)
+    ordered = await ancestry_order(commit_shas, cwd=cwd)
     if not ordered:
         return None
     landing = await _landing_merge_patch(ordered, cwd=cwd, output=output)
@@ -325,8 +327,17 @@ async def _net_commit_patch(
         return landing.decode("utf-8", errors="replace").strip()
     syncs = [sha for sha in ordered if await _is_sync_merge(sha, ordered, cwd=cwd)]
     replayable = [sha for sha in ordered if sha not in syncs]
-    if any([await _is_merge(sha, cwd=cwd) for sha in replayable]):
-        return None
+    # A merge replays as its first-parent diff, which already carries every
+    # linked commit it reaches only through another parent (#23314).
+    merges = {sha for sha in replayable if await _is_merge(sha, cwd=cwd)}
+    absorbed: set[str] = set()
+    for merge in merges:
+        carried = await _git_bytes(["rev-list", merge, f"^{merge}^1"], cwd=cwd)
+        if carried is None:
+            return None
+        absorbed.update(set(carried.decode("ascii", errors="replace").split()) - {merge})
+    replayable = [sha for sha in replayable if sha not in absorbed]
+    syncs = [sha for sha in syncs if sha not in absorbed]
     if not replayable:
         return await _stream_commit_patches(ordered, cwd=cwd, output=output)
     parent = await _git_bytes(["rev-parse", "--verify", "--quiet", f"{replayable[0]}^"], cwd=cwd)
@@ -336,10 +347,13 @@ async def _net_commit_patch(
         if await _git_bytes(["read-tree", base], cwd=cwd, env=env) is None:
             return None
         for sha in replayable:
-            patch = await _git_bytes(
-                ["show", "--format=", "--find-renames", "--find-copies", "--binary", sha],
-                cwd=cwd,
+            options = ["--find-renames", "--find-copies", "--binary"]
+            command = (
+                ["diff", *options, f"{sha}^1", sha]
+                if sha in merges
+                else ["show", "--format=", *options, sha]
             )
+            patch = await _git_bytes(command, cwd=cwd)
             if patch is None:
                 return None
             if not patch.strip():

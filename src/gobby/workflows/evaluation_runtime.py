@@ -20,6 +20,26 @@ _TASK_CANCELLATION_TIMEOUT_SECONDS = 0.1
 T = TypeVar("T")
 
 
+class ChildEvaluationCancelled(RuntimeError):
+    """An in-band child cancelled before the evaluation task cancelled itself.
+
+    ``evaluate()`` runs the evaluation on the isolated runtime loop. A child
+    awaited inside that evaluation can surface an ``asyncio.CancelledError``
+    that did not come from cancelling the evaluation task itself. ``wait_for``
+    and ``run_coroutine_threadsafe`` propagate that unchanged, so the adapter
+    thread sees an indistinguishable ``concurrent.futures.CancelledError``.
+
+    Inline effect failures are handled inside the live rule pass. This exception
+    diagnoses child cancellation that escapes another evaluation boundary. It
+    carries no claim about who initiated the cancellation; propagation through
+    ``wait_for`` or ``wrap_future`` alone cannot establish that cause.
+
+    ``run()`` raises this instead when the coroutine itself was never
+    cancelled, so ``_handle_cancelled`` represents only a genuine task
+    cancellation and an in-band child cancel no longer masquerades as one.
+    """
+
+
 class WorkflowEvaluationTimeout(TimeoutError):
     """Raised when one workflow evaluation exceeds its internal budget."""
 
@@ -82,6 +102,16 @@ class WorkflowEvaluationRuntime:
         that has already started is not cancellable. On expiry the submitted
         coroutine is cancelled and ``TimeoutError`` propagates.
         """
+        task_holder: list[asyncio.Task[Any]] = []
+
+        async def _as_task() -> T:
+            # Hold the concrete task so an in-band child cancel can be told
+            # apart from a cancellation of this evaluation task itself.
+            current = asyncio.current_task()
+            if current is not None:
+                task_holder.append(current)
+            return await coroutine
+
         with self._lock:
             loop = self._loop
             if self._closing or loop is None or not loop.is_running():
@@ -89,7 +119,7 @@ class WorkflowEvaluationRuntime:
                 raise RuntimeError("Workflow evaluation runtime is not running")
 
             try:
-                future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+                future = asyncio.run_coroutine_threadsafe(_as_task(), loop)
             except BaseException:
                 coroutine.close()
                 raise
@@ -102,6 +132,16 @@ class WorkflowEvaluationRuntime:
             if not future.done():
                 future.cancel()
             raise
+        except concurrent.futures.CancelledError:
+            if _evaluation_task_was_cancelled(task_holder):
+                raise
+            # The evaluation task itself was never cancelled, so the
+            # ``CancelledError`` came from a child awaited inside it. Surface it
+            # as an ordinary failure so callers do not misattribute it to a
+            # canceller of the evaluation (#22706).
+            raise ChildEvaluationCancelled(
+                "Workflow evaluation interrupted by an in-band child cancellation"
+            ) from None
 
     @property
     def is_closing(self) -> bool:
@@ -147,6 +187,12 @@ class WorkflowEvaluationRuntime:
             self._ready.set()
             logger.exception("Workflow evaluation runtime stopped unexpectedly")
         finally:
+            with self._lock:
+                # The loop has stopped (or is stopping). Any task cancelled
+                # below is a teardown cancellation, so it is attributed to
+                # shutdown even when shutdown() did not set the flag first and
+                # the loop exited on its own (#22706).
+                self._closing = True
             if loop is not None:
                 self._cancel_pending_tasks(loop)
             if executor is not None:
@@ -171,3 +217,18 @@ class WorkflowEvaluationRuntime:
                 "Workflow evaluation runtime closed with %d pending task(s)",
                 len(still_pending),
             )
+
+
+def _evaluation_task_was_cancelled(task_holder: list[asyncio.Task[Any]]) -> bool:
+    """Return whether the evaluation task itself was cancelled.
+
+    ``asyncio.Task.cancelling()`` is non-zero once ``cancel()`` has been
+    requested and resets to zero while the task suppresses cancellation, so it
+    distinguishes a genuine cancellation of the evaluation task from a child's
+    in-band ``CancelledError``. With no captured task the ordinary
+    ``CancelledError`` path is preserved.
+    """
+    task = task_holder[0] if task_holder else None
+    if task is None:
+        return True
+    return task.cancelling() > 0

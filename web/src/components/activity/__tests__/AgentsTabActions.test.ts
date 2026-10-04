@@ -22,12 +22,12 @@ function agentDefinition(): AgentDefInfo {
       reasoning_effort: null,
       reasoning_required: false,
       fallback_agent: null,
-      mode: "autonomous",
+      is_local: false,
+      sources: ["https://example.com/reviewer.yaml"],
+      version: "1.2.0",
       isolation: "worktree",
       base_branch: "0.5.0",
       timeout: 120,
-      default_workflow: "review",
-      sandbox: { filesystem: "workspace-write" },
       workflows: {
         rules: ["review-rules"],
         rule_selectors: { include: ["tag:review"], exclude: [] },
@@ -38,8 +38,6 @@ function agentDefinition(): AgentDefInfo {
         skill_format: "full",
         custom_workflow_key: { enabled: true },
       },
-      lifecycle_variables: { task_claimed: false },
-      default_variables: { review_depth: "full" },
       step_workflow: {
         steps: [{ name: "review", description: "Review the change" }],
         variables: { current_step: "review" },
@@ -120,9 +118,8 @@ describe("AgentsTabActions", () => {
     expect(body).toMatchObject({
       name: "reviewer-copy",
       project_id: "project-1",
-      sandbox_config: { filesystem: "workspace-write" },
-      lifecycle_variables: { task_claimed: false },
-      default_variables: { review_depth: "full" },
+      sources: ["https://example.com/reviewer.yaml"],
+      version: "1.2.0",
       step_workflow: {
         steps: [{ name: "review", description: "Review the change" }],
         variables: { current_step: "review" },
@@ -134,7 +131,9 @@ describe("AgentsTabActions", () => {
         custom_workflow_key: { enabled: true },
       }),
     });
-    expect(body).not.toHaveProperty("sandbox");
+    // The create API forbids unknown keys, so response-only fields must not leak.
+    expect(body).not.toHaveProperty("is_local");
+    expect(body).not.toHaveProperty("mode");
   });
 
   it("round-trips nested step_workflow through draft and save body", () => {

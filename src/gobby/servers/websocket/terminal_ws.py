@@ -215,12 +215,10 @@ class TerminalWsMixin(TerminalWriteMixin):
             )
             log_slow("terminal_gone", None, row_loaded, row_loaded, row_loaded)
             return
-        if row.state in {"exited", "orphaned"} or row.backend != "native":
-            code = (
-                f"terminal_{row.state}"
-                if row.state in {"exited", "orphaned"}
-                else "unsupported_terminal_backend"
-            )
+        # Any live backend attaches; one with no registered runtime is refused
+        # later as runtime_unavailable, once the lease is taken.
+        if row.state in {"exited", "orphaned"}:
+            code = f"terminal_{row.state}"
             await self._send_json(
                 websocket,
                 {
@@ -228,11 +226,7 @@ class TerminalWsMixin(TerminalWriteMixin):
                     "request_id": request_id,
                     "success": False,
                     "code": code,
-                    "reason": (
-                        "terminal row is exited or orphaned; nothing to attach"
-                        if code != "unsupported_terminal_backend"
-                        else "live terminal backend is unsupported for web attachment"
-                    ),
+                    "reason": "terminal row is exited or orphaned; nothing to attach",
                     "terminal_id": terminal_id,
                 },
             )
@@ -590,7 +584,12 @@ class TerminalWsMixin(TerminalWriteMixin):
         return hub
 
     async def _cleanup_terminal_client(self, websocket: Any) -> None:
-        events = await self._leases().finalize_websocket(websocket, "ws_close")
+        reason = (
+            "daemon_shutdown"
+            if getattr(self, "_terminal_shutdown_in_progress", False)
+            else "ws_close"
+        )
+        events = await self._leases().finalize_websocket(websocket, reason)
         for event in events:
             await self._apply_terminal_sizing(event.terminal_id, event.sizing)
         hub = getattr(self, "_proxy_hub", None)

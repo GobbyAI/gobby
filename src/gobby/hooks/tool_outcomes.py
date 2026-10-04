@@ -419,9 +419,25 @@ def tool_outcome_from_data(data: Mapping[str, Any] | None) -> ToolOutcome:
     return ToolOutcome(status, exit_code=exit_code, provenance=provenance)
 
 
+def hook_event_tool_outcome(data: object, metadata: object) -> ToolOutcome:
+    """Canonical outcome of an after-tool event.
+
+    A boolean ``is_failure`` from the provider's hook is the provider contract and
+    outranks result-body signals, including a stale legacy ``is_error`` alias.
+    """
+    is_failure = metadata.get("is_failure") if isinstance(metadata, Mapping) else None
+    explicit_success = not is_failure if isinstance(is_failure, bool) else None
+    return normalize_tool_outcome(
+        data if isinstance(data, dict) else {},
+        explicit_success=explicit_success,
+        provenance="hook_event.metadata.is_failure" if explicit_success is not None else None,
+    )
+
+
 __all__ = [
     "ToolOutcome",
     "ToolOutcomeStatus",
+    "hook_event_tool_outcome",
     "normalize_tool_outcome",
     "tool_outcome_from_data",
 ]

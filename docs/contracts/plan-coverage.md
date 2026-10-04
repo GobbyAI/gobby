@@ -587,7 +587,7 @@ in `expansion` mode. A staged conversational draft cannot enter this sequence.
 
 ### Manifest-on-Approval Contract
 
-First drafts are narrative-only. An approving `plan-adversary-taskless` run
+First drafts are narrative-only. An approving `plan-adversary-taskless-old` run
 returns server-derived manifest entries; the coordinator writes
 `## M1 Task Manifest` through the review-evidence apply path. When the user
 skips that optional review, the interactive coordinator uses the explicit
@@ -635,7 +635,7 @@ and after. Design-class findings stay prose; the planner owns those edits.
 
 ### Enhancement And Over-Engineering Vocabulary
 
-A constructive `plan-enhancer` pass is recommended and optional for interactive
+A constructive `plan-enhancer-old` pass is recommended and optional for interactive
 planning; autonomous `gobby build` controls it with
 `--plan-enhancement-rounds`. It loads `gobby:references/plan/enhancement.md` and `proportionality` and
 emits ranked Better/Bigger suggestions. The enhancer is advisory only: it never

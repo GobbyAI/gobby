@@ -216,9 +216,21 @@ class TaskAlreadyClaimedError(ValueError):
 class AgentTaskClaimConflictError(ValueError):
     """Raised when an agent session already owns a different open task."""
 
-    def __init__(self, claimed_task_id: str, claimed_task_ref: str) -> None:
+    def __init__(
+        self, claimed_task_id: str, claimed_task_ref: str, *, escalated: bool = False
+    ) -> None:
         self.claimed_task_id = claimed_task_id
         self.claimed_task_ref = claimed_task_ref
+        if escalated:
+            super().__init__(
+                f"Session already owns open claimed task {claimed_task_ref}, which is "
+                "already escalated. Release it with "
+                f'escalate_task(task_id="{claimed_task_ref}", reason="<concrete reason>"), '
+                "which keeps the escalation, or close it deliberately with "
+                f'close_task(task_id="{claimed_task_ref}", '
+                'override_justification="<why it is done>").'
+            )
+            return
         super().__init__(
             f"Session already owns open claimed task {claimed_task_ref}. "
             "Finish and close it, or for a genuine blocker or explicitly directed recovery use "

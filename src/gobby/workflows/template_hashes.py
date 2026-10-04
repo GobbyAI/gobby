@@ -21,6 +21,9 @@ from gobby.storage.definitions._shared import compute_definition_hash
 
 logger = logging.getLogger(__name__)
 
+# An agent body stores its row's enabled scalar, so a user toggle is not drift.
+_AGENT_HASH_EXCLUDE = {"enabled"}
+
 
 class TemplateHashCache:
     """Cache of hashes for bundled template YAML files.
@@ -154,7 +157,9 @@ class TemplateHashCache:
                 body = AgentDefinitionBody.model_validate(data)
                 body_json = body.model_dump_json()
                 key = ("agent", name)
-                self._hashes[key] = compute_definition_hash(body_json)
+                self._hashes[key] = compute_definition_hash(
+                    body.model_dump_json(exclude=_AGENT_HASH_EXCLUDE)
+                )
                 self._json_cache[key] = body_json
             except Exception as e:
                 logger.warning("Failed to hash agent template %s: %s", yaml_path, e)
@@ -232,9 +237,10 @@ class TemplateHashCache:
             from gobby.workflows.definitions import AgentDefinitionBody
 
             if isinstance(payload, str):
-                payload = AgentDefinitionBody.model_validate_json(payload).model_dump_json()
+                agent_body = AgentDefinitionBody.model_validate_json(payload)
             else:
-                payload = AgentDefinitionBody.model_validate(payload).model_dump_json()
+                agent_body = AgentDefinitionBody.model_validate(payload)
+            payload = agent_body.model_dump_json(exclude=_AGENT_HASH_EXCLUDE)
         elif not isinstance(payload, str):
             payload = json.dumps(payload)
         installed_hash = compute_definition_hash(payload)

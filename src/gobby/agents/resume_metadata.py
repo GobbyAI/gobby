@@ -145,9 +145,13 @@ def build_resume_metadata(
     agent_slug: str | None,
     workflow: str | None,
     initial_variables: Mapping[str, Any],
+    placement: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build the normalized launch snapshot persisted on agent_runs."""
-    return cast(
+    """Build the normalized launch snapshot persisted on agent_runs.
+
+    ``placement`` is the validated placement of a placed launch; resume replays it.
+    """
+    snapshot = cast(
         dict[str, Any],
         json_safe(
             {
@@ -190,3 +194,6 @@ def build_resume_metadata(
             },
         ),
     )
+    if placement is not None:
+        snapshot["placement"] = json_safe(dict(placement))
+    return snapshot

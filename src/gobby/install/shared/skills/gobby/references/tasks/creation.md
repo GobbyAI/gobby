@@ -13,7 +13,10 @@ docs, research, and planning. `category="code"` also requires
 `implementation_domain` (`backend`, `frontend`, or `fullstack`). Choose the
 schema's task type and category for the deliverable; priority defaults to 2.
 Write observable, specific, complete criteria. Use `test: path::test_symbol`
-for named tests and `file: path` for evidence artifacts.
+for named tests and `file: path` for evidence artifacts. When an
+agent-authored description rests on specific source behavior, cite it as
+[evidence](../code-index/evidence.md) describes. User-authored text needs no
+citations, and the task tools take no citation field.
 
 ```python
 call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={
@@ -63,4 +66,4 @@ requested scope. Use closing guidance for no-work dispositions.
 
 Guide: [Create and Claim](../../../../../../../../docs/guides/tasks.md#create-and-claim).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-02_

@@ -15,16 +15,76 @@ from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.cli.pipelines import _try_daemon_catalog
+from gobby.storage.definitions.pipelines import PipelineDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.loader_cache import DiscoveredWorkflow
+from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.pipeline_state import (
     ExecutionStatus,
     PipelineExecution,
     StepExecution,
     StepStatus,
 )
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("daemon", [True, False], ids=["daemon", "fallback"])
+@pytest.mark.parametrize("json_format", [True, False], ids=["json", "text"])
+def test_list_filters_by_tag(
+    runner: CliRunner,
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    daemon: bool,
+    json_format: bool,
+) -> None:
+    project = isolated_checkout_factory(temp_db, "cli-tag-filter").project
+    manager = PipelineDefinitionManager(temp_db)
+    for name, tags, enabled in (
+        ("tagged-only", ["runbook"], True),
+        ("ordinary-only", [], True),
+        ("disabled-only", ["runbook"], False),
+    ):
+        manager.create(
+            name,
+            {"name": name, "steps": [{"id": "work", "exec": "true"}]},
+            project_id=project.id,
+            tags=tags,
+            enabled=enabled,
+        )
+    manager.create(
+        "shadowed-only",
+        {"name": "shadowed-only", "steps": [{"id": "work", "exec": "true"}]},
+        tags=["runbook"],
+    )
+    manager.create(
+        "shadowed-only",
+        {"name": "shadowed-only", "steps": [{"id": "work", "exec": "true"}]},
+        project_id=project.id,
+    )
+    rows = [row.__dict__ for row in manager.list_all(project_id=project.id)] if daemon else None
+    loader = PipelineLoader(temp_db)
+    with (
+        patch("gobby.cli.pipelines._try_daemon_catalog", return_value=rows),
+        patch("gobby.cli.pipelines._get_project_id", return_value=project.id),
+        patch("gobby.cli.pipelines.get_workflow_loader", return_value=loader),
+    ):
+        result = runner.invoke(
+            cli, ["pipelines", "list", "--tag", "runbook"] + (["--json"] if json_format else [])
+        )
+    assert result.exit_code == 0, result.output
+    if json_format:
+        parsed = json.loads(result.output)
+        assert parsed["count"] == 1
+        assert [item["name"] for item in parsed["pipelines"]] == ["tagged-only"]
+    else:
+        assert "tagged-only" in result.output
+        assert "ordinary-only" not in result.output
+        assert "disabled-only" not in result.output
+        assert "shadowed-only" not in result.output
 
 
 @pytest.fixture
@@ -537,6 +597,28 @@ class TestPipelinesRun:
             assert inputs.get("env") == "prod"
             assert inputs.get("version") == "1.0"
 
+    def test_run_passes_seats_input_as_string(
+        self,
+        runner: CliRunner,
+        mock_pipeline: PipelineDefinition,
+        mock_execution: PipelineExecution,
+    ) -> None:
+        """A runbook seat relaunch reaches the executor as the literal string."""
+        mock_loader = MagicMock()
+        mock_loader.load_pipeline_sync.return_value = mock_pipeline
+
+        mock_executor = MagicMock()
+        mock_executor.execute = AsyncMock(return_value=mock_execution)
+
+        with (
+            patch("gobby.cli.pipelines.get_workflow_loader", return_value=mock_loader),
+            patch("gobby.cli.pipelines.get_pipeline_executor", return_value=mock_executor),
+        ):
+            result = runner.invoke(cli, ["pipelines", "run", "planning", "-i", "seats=adversary"])
+
+            assert result.exit_code == 0
+            assert mock_executor.execute.call_args.kwargs["inputs"] == {"seats": "adversary"}
+
     def test_run_outputs_execution_id(
         self,
         runner: CliRunner,
@@ -775,6 +857,68 @@ class TestPipelineRunsShow:
             assert data["execution"]["id"] == "pe-abc123"
             assert data["execution"]["status"] == "running"
             assert len(data["steps"]) == 2
+
+    @pytest.mark.parametrize(
+        ("status", "adversary"),
+        [
+            (ExecutionStatus.COMPLETED, StepStatus.COMPLETED),
+            (ExecutionStatus.FAILED, StepStatus.FAILED),
+        ],
+    )
+    def test_runs_show_includes_step_outputs(
+        self, runner: CliRunner, status: ExecutionStatus, adversary: StepStatus
+    ) -> None:
+        """Each launched runbook seat's run_id is visible in --json and in the text view."""
+        adversary_output = (
+            {"success": True, "run_id": "run-3", "pane_ref": "pane-3"}
+            if adversary == StepStatus.COMPLETED
+            else {"success": False, "error": "not_found"}
+        )
+        steps = [
+            StepExecution(
+                id=1,
+                execution_id="pe-run",
+                step_id="guard",
+                status=StepStatus.COMPLETED,
+                output_json=json.dumps({"success": True}),
+            ),
+            StepExecution(
+                id=2,
+                execution_id="pe-run",
+                step_id="writer",
+                status=StepStatus.COMPLETED,
+                output_json=json.dumps({"success": True, "run_id": "run-2", "pane_ref": "pane-2"}),
+            ),
+            StepExecution(
+                id=3,
+                execution_id="pe-run",
+                step_id="adversary_split",
+                status=adversary,
+                output_json=json.dumps(adversary_output),
+            ),
+        ]
+        mock_manager = MagicMock()
+        mock_manager.get_execution.return_value = PipelineExecution(
+            id="pe-run",
+            pipeline_name="planning",
+            project_id="proj-1",
+            status=status,
+            created_at=datetime(2026, 10, 3, tzinfo=UTC),
+            updated_at=datetime(2026, 10, 3, tzinfo=UTC),
+        )
+        mock_manager.get_steps_for_execution.return_value = steps
+
+        with patch("gobby.cli.pipelines.get_execution_manager", return_value=mock_manager):
+            shown = runner.invoke(cli, ["pipelines", "runs", "show", "pe-run", "--json"])
+            text = runner.invoke(cli, ["pipelines", "runs", "show", "pe-run"])
+
+        assert shown.exit_code == 0
+        outputs = {step["step_id"]: step["output"] for step in json.loads(shown.output)["steps"]}
+        assert outputs["writer"]["run_id"] == "run-2"
+        assert outputs["adversary_split"] == adversary_output
+        assert text.exit_code == 0
+        assert "run_id: run-2" in text.output
+        assert ("run_id: run-3" in text.output) is (adversary == StepStatus.COMPLETED)
 
 
 class TestPipelinesDaemonApproval:

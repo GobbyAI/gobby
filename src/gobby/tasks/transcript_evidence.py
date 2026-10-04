@@ -36,6 +36,7 @@ from gobby.sessions.transcripts.base import (
     raw_lines_from_texts,
 )
 from gobby.storage.session_models import Session
+from gobby.tasks.transcript_background import pending_background_run, recover_background_receipt
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -74,8 +75,14 @@ from gobby.tasks.transcript_outcomes import (
 from gobby.tasks.transcript_outcomes import (
     is_unexecuted_tool_result as _is_unexecuted_tool_result,
 )
+from gobby.tasks.transcript_output_retention import (
+    _RTK_RECALL_RE,
+    _drop_settled_command_output,
+    _retained_output,
+)
 from gobby.tasks.transcript_tool_arguments import (
     edited_source,
+    python_added_source,
     python_edit_tokens,
     python_keyword_stub,
 )
@@ -111,8 +118,6 @@ WINDOW_LOOKBACK = timedelta(hours=2)
 _UTC_LINE_TIMESTAMP_RE = re.compile(
     r'"timestamp"\s*:\s*"(\d{4}-\d{2}-\d{2}T[0-9:.]{8,})(?:Z|\+00:00)"'
 )
-# The general exit-preserving normalizer strips the `rtk` executable itself.
-_RTK_RECALL_RE = re.compile(r"(?:uv run )?rtk recall ([0-9a-f]{12,64})")
 
 _SHELL_TOOLS = {
     "bash",
@@ -167,7 +172,7 @@ def _derivation_fingerprint(
     """Fingerprint every input the derived records are a function of."""
     payload = json.dumps(
         {
-            "derivation_version": 10,
+            "derivation_version": 11,
             "session": session.id,
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,
@@ -476,6 +481,7 @@ def _derive_transcript_path_evidence(
             elif isinstance(record, ParsedToolEvent):
                 _observe_record_time(state, record.timestamp)
                 _consume_tool_event(state, record)
+    state.runs = _drop_settled_command_output(state.runs)
 
     snapshot = None
     if read is not None and not read.has_partial_tail:
@@ -568,11 +574,13 @@ def _consume_message(state: _DerivationState, message: ParsedMessage) -> None:
         return
     order = state.next_order()
     call_id = message.tool_use_id
+    if state.session.source == "claude":
+        recover_background_receipt(state.runs, message, state.pending.get(call_id or ""), order)
     if message.content_type == "tool_use":
         name = message.tool_name or ""
         arguments = message.tool_input or {}
         if call_id:
-            state.pending[call_id] = PendingTool(name, arguments, timestamp, order)
+            state.pending[call_id] = PendingTool(name, arguments, timestamp, order, call_id)
         _record_edit(state, name, arguments, timestamp, order)
         return
     if message.content_type != "tool_result" or not call_id:
@@ -599,7 +607,7 @@ def _consume_tool_event(state: _DerivationState, event: ParsedToolEvent) -> None
     if event.phase == "begin":
         name = event.tool or ""
         if call_id:
-            state.pending[call_id] = PendingTool(name, event.arguments, timestamp, order)
+            state.pending[call_id] = PendingTool(name, event.arguments, timestamp, order, call_id)
         _record_edit(state, name, event.arguments, timestamp, order)
         return
     if event.phase != "end" or not call_id:
@@ -816,23 +824,9 @@ def _record_validation_run(
             validation_segments=segments,
         )
     )
+    if state.session.source == "claude":
+        state.runs[-1] = pending_background_run(state.runs[-1], pending.call_id)
     _recover_rtk_output(state, result)
-
-
-def _retained_output(
-    command: str,
-    segments: tuple[TranscriptValidationSegment, ...],
-    output: str | None,
-    output_truncated: bool,
-) -> tuple[str | None, bool]:
-    """Keep output only where a gate reads it: validation runs and recall receipts.
-
-    Review-only shell output is never read after outcome extraction, and every
-    retained byte is unpickled from the derivation pool while holding the GIL.
-    """
-    if segments or _RTK_RECALL_RE.fullmatch(command.strip()):
-        return output, output_truncated
-    return None, False
 
 
 def _recover_rtk_output(state: _DerivationState, result: Any) -> None:
@@ -933,10 +927,12 @@ def _record_edit(
         python_edit = basename == "edit" and task_file.endswith(".py")
         fragment: str | None = None
         stub: tuple[str, tuple[str, ...]] | None = None
+        added: str | None = None
         unchanged = False
         if python_edit and isinstance(old, str) and isinstance(new, str):
             fragment = new
             stub = python_keyword_stub(old, new)
+            added = python_added_source(old, new)
             old_tokens = python_edit_tokens(old)
             unchanged = bool(old_tokens and old_tokens == python_edit_tokens(new))
         state.edits.append(
@@ -950,6 +946,7 @@ def _record_edit(
                 source_after=source_after,
                 source_fragment=fragment,
                 python_stub=stub,
+                python_added_source=added,
                 source_unchanged=unchanged,
             )
         )

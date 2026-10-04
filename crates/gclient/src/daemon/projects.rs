@@ -75,6 +75,9 @@ pub struct SessionRow {
     /// Whether an OS sandbox wraps the session's process; absent when the
     /// daemon has no evidence either way.
     pub sandbox_enabled: Option<bool>,
+    /// The worktree the session's workspace resolves into, as the session's
+    /// own machine's daemon resolves it; another machine's rows carry none.
+    pub worktree_id: Option<String>,
 }
 
 impl SessionRow {

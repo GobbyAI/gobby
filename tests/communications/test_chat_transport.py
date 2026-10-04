@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.communications.adapters.base import MessageEditNotApplied
 from gobby.communications.chat_backend import ChatSessionCommsBackend
 from gobby.communications.chat_transport import CommunicationsChatStreamTransport
 from gobby.communications.models import ChannelConfig, CommsAttachment, CommsMessage
@@ -297,6 +298,38 @@ async def test_transport_throttles_edits_and_flushes_latest_text() -> None:
 
     assert transport.text == "ABCD"
     assert manager.edited[-1] == ("telegram", "platform-1", "ABCD", "chat-42")
+
+
+class _RejectingEditManager(_FakeManager):
+    async def edit_message(
+        self,
+        channel_name: str,
+        platform_message_id: str,
+        content: str,
+        conversation_id: str,
+    ) -> None:
+        self.edited.append((channel_name, platform_message_id, content, conversation_id))
+        raise MessageEditNotApplied("Bad Request: can't parse entities")
+
+
+@pytest.mark.asyncio
+async def test_transport_delivers_the_answer_when_the_platform_rejects_its_edits() -> None:
+    """A rejected edit never reaches the turn as an error; the answer goes out anew (#23292)."""
+    manager = _RejectingEditManager(supports_edit=True)
+    clock = _Clock()
+    transport = CommunicationsChatStreamTransport(
+        manager, _context(), edit_interval=1.5, clock=clock
+    )
+
+    await transport.safe_send({"type": "chat_stream", "content": "A", "done": False})
+    clock.now = 1.5
+    await transport.safe_send({"type": "chat_stream", "content": "B", "done": False})
+    clock.now = 3.0
+    await transport.safe_send({"type": "chat_stream", "content": "C", "done": True})
+
+    assert [edit[2] for edit in manager.edited] == ["AB", "ABC"]
+    assert [sent[1] for sent in manager.sent] == ["Thinking…", "ABC"]
+    assert transport.has_delivered_text
 
 
 @pytest.mark.asyncio

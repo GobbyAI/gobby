@@ -33,12 +33,12 @@ pub fn render_daemon(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect
     render_modal_header(
         frame,
         Rect::new(inner.x + 1, inner.y, inner.width - 2, 1),
-        "daemon",
+        "Daemon",
         p,
     );
     let close = Rect::new(inner.right().saturating_sub(10), inner.y, 9, 1);
     frame.render_widget(
-        Paragraph::new("esc close").style(Style::default().fg(p.accent)),
+        Paragraph::new("esc Close").style(Style::default().fg(p.accent)),
         close,
     );
     let roster = last_roster_refresh
@@ -86,7 +86,7 @@ pub fn render_about(
             frame,
             (inner.x + 1, inner.y),
             marks::goblin_small(),
-            &MarkPalette::normal(p),
+            &MarkPalette::normal(p, chrome.prefs.monochrome),
         );
         // The 14-row asset reaches the panel's final row; keep its frame intact.
         for x in inner.x + 1..inner.x + 30 {
@@ -98,12 +98,12 @@ pub fn render_about(
     render_modal_header(
         frame,
         Rect::new(inner.x + 1, inner.y, inner.width - 2, 1),
-        "about gobby",
+        "About gobby",
         p,
     );
     let close = Rect::new(inner.right().saturating_sub(10), inner.y, 9, 1);
     frame.render_widget(
-        Paragraph::new("esc close").style(Style::default().fg(p.accent)),
+        Paragraph::new("esc Close").style(Style::default().fg(p.accent)),
         close,
     );
 

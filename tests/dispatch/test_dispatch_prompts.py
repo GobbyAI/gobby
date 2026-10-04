@@ -35,9 +35,9 @@ def test_dispatch_prompt_builder_keys_present() -> None:
         "epic-reviewer",
         "merge-orchestrator",
         "plan-adversary",
-        "plan-adversary-taskless",
-        "plan-enhancer",
-        "plan-enhancer-taskless",
+        "plan-adversary-taskless-old",
+        "plan-enhancer-old",
+        "plan-enhancer-taskless-old",
         "planner",
         "product-manager",
         "qa-reviewer",
@@ -48,7 +48,7 @@ def test_dispatch_prompt_builder_keys_present() -> None:
 def test_plan_enhancer_prompt_builder_renders_round_and_plan_path() -> None:
     from gobby.dispatch.prompts import PROMPT_BUILDERS
 
-    builder = PROMPT_BUILDERS["plan-enhancer"]
+    builder = PROMPT_BUILDERS["plan-enhancer-old"]
     task = SimpleNamespace(ref="#42", title="Ship the widget")
     artifacts = SimpleNamespace(plan_file_path=".gobby/plans/widget.md")
     prompt = builder(
@@ -72,9 +72,9 @@ def test_plan_enhancer_prompt_builder_renders_round_and_plan_path() -> None:
 def test_plan_enhancer_taskless_shares_builder_and_omits_round_when_absent() -> None:
     from gobby.dispatch.prompts import PROMPT_BUILDERS
 
-    assert PROMPT_BUILDERS["plan-enhancer-taskless"] is PROMPT_BUILDERS["plan-enhancer"]
+    assert PROMPT_BUILDERS["plan-enhancer-taskless-old"] is PROMPT_BUILDERS["plan-enhancer-old"]
 
-    builder = PROMPT_BUILDERS["plan-enhancer-taskless"]
+    builder = PROMPT_BUILDERS["plan-enhancer-taskless-old"]
     task = SimpleNamespace(ref="#7", title="Thin draft")
     prompt = builder(task, {"reason": "stage"})
 

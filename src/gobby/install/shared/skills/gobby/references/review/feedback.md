@@ -57,5 +57,7 @@ The operator can trigger `gobby feedback review [--dry-run]` or
 `POST /api/feedback/review`. Dry runs still create review/report evidence but file
 no tasks and mark no observations reviewed; they are not read-only probes. Test
 these examples only with isolated state. CLI readers are `feedback observations`,
-`feedback results` and `feedback digest`; details are in the
+`feedback results` and `feedback digest`. `feedback list` shows submitted rows and
+`feedback status` the unreviewed backlog, latest run and review schedule, backed by
+`GET /api/feedback/entries`, `/runs` and `/status`; details are in the
 [CLI guide](../../../../../../../../docs/guides/cli-commands.md#feedback-review).

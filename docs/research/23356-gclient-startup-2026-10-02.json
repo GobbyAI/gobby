@@ -1,0 +1,115 @@
+{
+  "task": "#23356 gclient startup research",
+  "method": "Three most recent complete startup sequences in existing gclient.log.20728; read-only. No new launches.",
+  "source_log": "/Users/josh/.gobby/logs/gclient.log.20728",
+  "per_launch_version": "not present in existing startup spans",
+  "timing_boundary": "StartupStages begin through mark_done FirstFrame; process prelude and final terminal flush are outside the clock",
+  "pane_count": {
+    "reported_current": 29,
+    "measured_per_launch": null
+  },
+  "gterm_handshake_milliseconds": null,
+  "per_tab_attach_milliseconds": null,
+  "launches": [
+    {
+      "estimated_stage_clock_start_utc": "2026-10-02T15:07:32.523114+00:00",
+      "complete_utc": "2026-10-02T15:07:41.405971Z",
+      "stages": [
+        {
+          "end_utc": "2026-10-02T15:07:32.548114Z",
+          "stage": "daemon health",
+          "milliseconds": 25,
+          "raw": "2026-10-02T15:07:32.548114Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"daemon health\" took_ms=25"
+        },
+        {
+          "end_utc": "2026-10-02T15:07:32.573640Z",
+          "stage": "workspace attach",
+          "milliseconds": 25,
+          "raw": "2026-10-02T15:07:32.573640Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"workspace attach\" took_ms=25"
+        },
+        {
+          "end_utc": "2026-10-02T15:07:41.329072Z",
+          "stage": "roster",
+          "milliseconds": 8755,
+          "raw": "2026-10-02T15:07:41.329072Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"roster\" took_ms=8755"
+        },
+        {
+          "end_utc": "2026-10-02T15:07:41.405892Z",
+          "stage": "first frame",
+          "milliseconds": 76,
+          "raw": "2026-10-02T15:07:41.405892Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"first frame\" took_ms=76"
+        }
+      ],
+      "logged_total_seconds": 8.88,
+      "roster_share_percent": 98.58,
+      "raw_summary": "2026-10-02T15:07:41.405971Z  INFO gobby_client::app::live_loop::startup: gclient startup complete summary=health=0.03s attach=0.03s roster=8.76s first_frame=0.08s total=8.88s"
+    },
+    {
+      "estimated_stage_clock_start_utc": "2026-10-02T23:50:39.449335+00:00",
+      "complete_utc": "2026-10-02T23:51:05.829592Z",
+      "stages": [
+        {
+          "end_utc": "2026-10-02T23:50:40.028335Z",
+          "stage": "daemon health",
+          "milliseconds": 579,
+          "raw": "2026-10-02T23:50:40.028335Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"daemon health\" took_ms=579"
+        },
+        {
+          "end_utc": "2026-10-02T23:50:40.349028Z",
+          "stage": "workspace attach",
+          "milliseconds": 320,
+          "raw": "2026-10-02T23:50:40.349028Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"workspace attach\" took_ms=320"
+        },
+        {
+          "end_utc": "2026-10-02T23:51:05.630297Z",
+          "stage": "roster",
+          "milliseconds": 25281,
+          "raw": "2026-10-02T23:51:05.630297Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"roster\" took_ms=25281"
+        },
+        {
+          "end_utc": "2026-10-02T23:51:05.829370Z",
+          "stage": "first frame",
+          "milliseconds": 199,
+          "raw": "2026-10-02T23:51:05.829370Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"first frame\" took_ms=199"
+        }
+      ],
+      "logged_total_seconds": 26.38,
+      "roster_share_percent": 95.84,
+      "raw_summary": "2026-10-02T23:51:05.829592Z  INFO gobby_client::app::live_loop::startup: gclient startup complete summary=health=0.58s attach=0.32s roster=25.28s first_frame=0.20s total=26.38s"
+    },
+    {
+      "estimated_stage_clock_start_utc": "2026-10-02T23:57:31.254604+00:00",
+      "complete_utc": "2026-10-02T23:57:47.947460Z",
+      "stages": [
+        {
+          "end_utc": "2026-10-02T23:57:31.326604Z",
+          "stage": "daemon health",
+          "milliseconds": 72,
+          "raw": "2026-10-02T23:57:31.326604Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"daemon health\" took_ms=72"
+        },
+        {
+          "end_utc": "2026-10-02T23:57:31.609417Z",
+          "stage": "workspace attach",
+          "milliseconds": 282,
+          "raw": "2026-10-02T23:57:31.609417Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"workspace attach\" took_ms=282"
+        },
+        {
+          "end_utc": "2026-10-02T23:57:47.857183Z",
+          "stage": "roster",
+          "milliseconds": 16247,
+          "raw": "2026-10-02T23:57:47.857183Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"roster\" took_ms=16247"
+        },
+        {
+          "end_utc": "2026-10-02T23:57:47.947406Z",
+          "stage": "first frame",
+          "milliseconds": 90,
+          "raw": "2026-10-02T23:57:47.947406Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"first frame\" took_ms=90"
+        }
+      ],
+      "logged_total_seconds": 16.69,
+      "roster_share_percent": 97.34,
+      "raw_summary": "2026-10-02T23:57:47.947460Z  INFO gobby_client::app::live_loop::startup: gclient startup complete summary=health=0.07s attach=0.28s roster=16.25s first_frame=0.09s total=16.69s"
+    }
+  ],
+  "isolated_follow_up_artifact": "23356-gclient-isolated-2026-10-02.json"
+}

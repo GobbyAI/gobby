@@ -190,6 +190,39 @@ async def test_blank_attachment_content_does_not_start_responder_turn() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("channel_config", "message", "with_backend", "expected"),
+    [
+        (None, make_message(), True, True),
+        (None, make_message(content="/status"), True, True),
+        ({"responder": {"enabled": False}, "allow_from": ["owner"]}, make_message(), True, False),
+        (None, make_message(sender_id="stranger"), True, False),
+        (None, make_message(content="   "), True, False),
+        (None, make_message(), False, False),
+    ],
+    ids=["turn", "command", "disabled", "stranger", "blank", "no-backend"],
+)
+async def test_will_respond_matches_whether_handle_message_answers(
+    channel_config: dict[str, Any] | None,
+    message: CommsMessage,
+    with_backend: bool,
+    expected: bool,
+) -> None:
+    """The Telegram controller's expired-session reply relies on this prediction (#23292)."""
+    backend = RecordingBackend()
+    responder = CommunicationsResponder(
+        FakeManager(make_channel(config=channel_config)),
+        backend=backend if with_backend else None,
+    )
+
+    assert responder.will_respond(message) is expected
+    task = await responder.handle_message(message)
+    if task is not None:
+        await task
+    answered = bool(backend.turns or backend.commands)
+    assert answered is expected
+
+
 async def test_access_gate_rejects_sender_outside_allowlist(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

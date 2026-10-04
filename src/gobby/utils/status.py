@@ -638,7 +638,6 @@ def format_status_message(
     # ---- Dependencies ----
     required_dependencies, optional_dependencies, _ = _dependency_sections(deps_info)
     labels = {
-        "tmux": "tmux",
         "git": "git",
         "node": "node",
         "srt": "SRT",

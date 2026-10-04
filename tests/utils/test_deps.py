@@ -508,8 +508,6 @@ def test_check_hooks_in_file(tmp_path: Path) -> None:
 
 
 def test_external_tools() -> None:
-    with patch("gobby.utils.deps._run_cmd", return_value="tmux 3.4"):
-        assert deps.get_tmux_version() == "3.4"
     with patch("gobby.utils.deps._run_cmd", return_value="Docker version 27.1.1, build"):
         assert deps.get_docker_version() == "27.1.1"
     with patch("gobby.utils.deps._run_cmd", return_value="info"):
@@ -1140,7 +1138,6 @@ def test_file_read_exceptions(tmp_path: Path) -> None:
 
 def test_regex_exceptions() -> None:
     with patch("gobby.utils.deps._run_cmd", return_value="weirdformat"):
-        assert deps.get_tmux_version() == "weirdformat"
         assert deps.get_docker_version() == "weirdformat"
         assert deps.get_git_version() == "weirdformat"
     with patch("gobby.utils.deps._run_cmd", return_value="   "):

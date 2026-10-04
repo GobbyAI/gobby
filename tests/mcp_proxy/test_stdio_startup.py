@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import subprocess
+import sys
+import threading
 from collections.abc import AsyncIterator, Iterator
 from typing import Any, NoReturn
 from unittest.mock import AsyncMock, MagicMock
@@ -124,6 +127,32 @@ async def test_initialize_answered_before_daemon_health(
     await run_stdio_bridge(deps=deps, create_server=create_server)
 
     assert initialize_answered.is_set()
+
+
+@pytest.mark.asyncio
+async def test_daemon_process_scan_leaves_the_event_loop_serving() -> None:
+    # The process scan reads every process's cmdline; stdio must keep serving (#23343).
+    loop_served = threading.Event()
+    scan_saw_loop_serving: list[bool] = []
+
+    def scan_processes() -> bool:
+        scan_saw_loop_serving.append(loop_served.wait(timeout=2))
+        return True
+
+    deps = DaemonStartupDependencies(
+        bootstrap=BRIDGE_BOOTSTRAP,
+        is_daemon_running=scan_processes,
+        get_daemon_pid=lambda: None,
+        check_daemon_http_health=AsyncMock(return_value=True),
+        start_daemon_process=AsyncMock(return_value={"success": True}),
+        logger=logging.getLogger(__name__),
+    )
+    startup = asyncio.create_task(ensure_stdio_daemon_running(deps=deps))
+    await asyncio.sleep(0)
+    loop_served.set()
+    await startup
+
+    assert scan_saw_loop_serving == [True]
 
 
 @pytest.mark.asyncio
@@ -321,3 +350,49 @@ async def test_first_tool_call_reports_structured_daemon_unavailable(
     payload = _tool_payload(result.structured_content)
     assert payload["success"] is False
     assert payload["error_code"] == "DAEMON_UNAVAILABLE"
+
+
+# Each of these cost seconds of import time under load, before the bridge could
+# answer initialize (#23343): config.app with telemetry, the CLI utility facade,
+# and the hub/psycopg storage layer.
+BRIDGE_DEFERRED_MODULES = (
+    "gobby.config.app",
+    "gobby.telemetry",
+    "gobby.cli.utils",
+    "gobby.storage.hub.runtime",
+    "psycopg",
+)
+
+
+def _fresh_interpreter(code: str) -> str:
+    completed = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=120
+    )
+    return completed.stdout.strip()
+
+
+def test_bridge_import_defers_config_and_storage_layers() -> None:
+    """Importing the stdio bridge and the CLI root leaves the heavy layers unloaded."""
+    loaded = _fresh_interpreter(
+        "import sys, gobby.cli, gobby.mcp_proxy.stdio; "
+        f"print(','.join(m for m in {BRIDGE_DEFERRED_MODULES!r} if m in sys.modules))"
+    )
+
+    assert loaded == ""
+
+
+def test_config_package_exports_resolve_on_first_access() -> None:
+    """The lazy config package still serves every exported name from its owning module."""
+    resolved = _fresh_interpreter(
+        "import gobby.config as c; "
+        "from gobby.config import app, bootstrap, indexing; "
+        "owners = {'BootstrapConfig': bootstrap, 'IndexingConfig': indexing, "
+        "'load_bootstrap': bootstrap}; "
+        "print(','.join(n for n in sorted(c.__all__) "
+        "if getattr(c, n) is getattr(owners.get(n, app), n)))"
+    )
+
+    assert resolved == (
+        "BootstrapConfig,DaemonConfig,IndexingConfig,expand_env_vars,"
+        "export_config_to_yaml,load_bootstrap,load_yaml"
+    )

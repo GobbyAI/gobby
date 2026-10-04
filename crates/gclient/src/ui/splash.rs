@@ -9,11 +9,11 @@ use super::marks::{self, MarkPalette};
 use super::Chrome;
 
 /// The wordmark starts this many columns right of the goblin's origin: the
-/// goblin's thirty-three, then a gap of four.
-const WORDMARK_X: u16 = 37;
+/// haloed goblin's forty-one, then a gap of four.
+const WORDMARK_X: u16 = 45;
 /// The wordmark sits this many rows below the goblin's origin, on the
-/// goblin's middle.
-const WORDMARK_Y: u16 = 4;
+/// middle of the goblin under its halo.
+const WORDMARK_Y: u16 = 6;
 
 /// Draw the goblin and the wordmark centred in `area`; too narrow for both,
 /// the wordmark alone, then the goblin alone, then nothing. Nothing else is
@@ -21,7 +21,7 @@ const WORDMARK_Y: u16 = 4;
 pub fn render_splash(frame: &mut Frame, area: Rect, chrome: &Chrome) {
     let goblin = marks::goblin_large();
     let wordmark = marks::wordmark();
-    let palette = MarkPalette::normal(&chrome.palette);
+    let palette = MarkPalette::normal(&chrome.palette, chrome.prefs.monochrome);
     let centred = |cols: u16, rows: u16| {
         (area.width >= cols && area.height >= rows).then(|| {
             (

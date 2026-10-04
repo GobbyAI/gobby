@@ -26,15 +26,41 @@ Import from this package for app-level items:
     from gobby.config import BootstrapConfig, DaemonConfig, load_bootstrap
 """
 
-# Core configuration and utilities from app.py
-from gobby.config.app import (
-    DaemonConfig,
-    expand_env_vars,
-    export_config_to_yaml,
-    load_yaml,
-)
-from gobby.config.bootstrap import BootstrapConfig, load_bootstrap
-from gobby.config.indexing import IndexingConfig
+import importlib
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from gobby.config.app import (
+        DaemonConfig,
+        expand_env_vars,
+        export_config_to_yaml,
+        load_yaml,
+    )
+    from gobby.config.bootstrap import BootstrapConfig, load_bootstrap
+    from gobby.config.indexing import IndexingConfig
+
+# Exports resolve on first access: importing a light submodule such as
+# gobby.config.bootstrap runs this init, and app.py pulls in every config model
+# plus telemetry. The stdio bridge must answer initialize without paying for it.
+_EXPORT_MODULES = {
+    "BootstrapConfig": "gobby.config.bootstrap",
+    "DaemonConfig": "gobby.config.app",
+    "IndexingConfig": "gobby.config.indexing",
+    "expand_env_vars": "gobby.config.app",
+    "export_config_to_yaml": "gobby.config.app",
+    "load_bootstrap": "gobby.config.bootstrap",
+    "load_yaml": "gobby.config.app",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _EXPORT_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(importlib.import_module(module_name), name)
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     # Core app-level exports only

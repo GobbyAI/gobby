@@ -722,7 +722,9 @@ class TestInstallCommand:
             patch("gobby.cli.install._run_git_hooks_install") as git_hooks,
             patch("gobby.cli.install._run_embedding_install"),
             patch("gobby.cli.install._run_voice_install"),
+            runner.isolated_filesystem(),
         ):
+            Path(".git").mkdir()
             result = runner.invoke(install, ["--no-interactive"])
 
         assert result.exit_code == 0
@@ -818,7 +820,9 @@ class TestInstallCommand:
                 "gobby.cli.install.apply_managed_service_restart_policy",
                 return_value={"success": True},
             ) as mock_restart_policy,
+            runner.isolated_filesystem(),
         ):
+            Path(".git").mkdir()
             result = runner.invoke(
                 install,
                 install_args,

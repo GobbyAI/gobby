@@ -1,0 +1,22 @@
+tags: [tool-hygiene, enforcement, gobby, default]
+
+rules:
+  scope-spawned-agent-send-message:
+    description: "Limit a spawned agent's send_message to the target modes its agent definition declares"
+    event: before_tool
+    enabled: true
+    priority: 10
+    # The tool guard comes first so an evaluation error, which fails closed,
+    # can only refuse send_message.
+    when: >
+      tool_input.get('server_name') == 'gobby-agents'
+      and tool_input.get('tool_name') == 'send_message'
+      and not send_message_target_allowed(
+        event.metadata.get('_platform_session_id'),
+        variables.get('_agent_type'), tool_input.get('target'))
+    effects:
+      - type: block
+        mcp_tools: ["gobby-agents:send_message"]
+        reason: >-
+          A spawned agent may use only the send_message targets its agent definition
+          lists in send_message_targets; the default is target='parent'.

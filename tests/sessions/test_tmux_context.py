@@ -5,69 +5,13 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.config.tmux import TmuxConfig
 from gobby.sessions.tmux_context import (
     get_tmux_window_id,
-    is_configured_tmux_socket,
     query_tmux_generation,
     query_tmux_identity,
 )
 
 pytestmark = pytest.mark.unit
-
-
-def test_configured_socket_classifies_path_basename() -> None:
-    config = TmuxConfig(socket_name="agent-socket")
-
-    assert (
-        is_configured_tmux_socket(
-            {"tmux_socket_path": "/tmp/tmux-501/agent-socket"},
-            config=config,
-        )
-        is True
-    )
-    assert (
-        is_configured_tmux_socket(
-            {"tmux_socket_path": "/tmp/tmux-501/default"},
-            config=config,
-        )
-        is False
-    )
-
-
-def test_configured_socket_uses_exact_configured_path() -> None:
-    config = TmuxConfig(socket_name="ignored", socket_path="/tmp/gobby.sock")
-
-    assert (
-        is_configured_tmux_socket(
-            {"tmux_socket_path": "/tmp/gobby.sock"},
-            config=config,
-        )
-        is True
-    )
-    assert (
-        is_configured_tmux_socket(
-            {"tmux_socket_path": "/tmp/other/gobby.sock"},
-            config=config,
-        )
-        is False
-    )
-
-
-def test_configured_socket_is_conservative_for_missing_or_conflicting_identity() -> None:
-    config = TmuxConfig(socket_name="agent-socket")
-
-    assert is_configured_tmux_socket({}, config=config) is None
-    assert (
-        is_configured_tmux_socket(
-            {
-                "tmux_socket_name": "agent-socket",
-                "tmux_socket_path": "/tmp/tmux-501/default",
-            },
-            config=config,
-        )
-        is None
-    )
 
 
 @pytest.mark.parametrize(

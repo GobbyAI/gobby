@@ -40,7 +40,7 @@ class TestFeatureProfile:
             "claude/haiku",
         )
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID]) == (
-            "codex/gpt-5.6-terra",
+            "codex/gpt-6-luna",
             "claude/sonnet",
         )
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH]) == (

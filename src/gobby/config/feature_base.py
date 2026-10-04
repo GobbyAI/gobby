@@ -60,7 +60,7 @@ class FeatureCandidateConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     candidate: str = Field(
-        description="Provider/model candidate label, for example 'codex/gpt-5.6-terra'.",
+        description="Provider/model candidate label, for example 'codex/gpt-6-luna'.",
     )
     reasoning_effort: str | None = Field(
         default=None,
@@ -100,7 +100,7 @@ DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[FeatureCandidateConfig, .
         FeatureCandidateConfig(candidate="claude/haiku"),
     ),
     FeatureProfile.MID: (
-        FeatureCandidateConfig(candidate="codex/gpt-5.6-terra"),
+        FeatureCandidateConfig(candidate="codex/gpt-6-luna"),
         FeatureCandidateConfig(candidate="claude/sonnet"),
     ),
     FeatureProfile.HIGH: (

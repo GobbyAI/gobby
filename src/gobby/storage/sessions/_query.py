@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.storage.session_models import Session
@@ -18,6 +19,7 @@ class _ManagerState(Protocol):
 # Type alias defined outside the class so `list` resolves to the builtin
 # rather than _QueryMixin.list (which shadows it inside the class body).
 _TaskRefsByRole = dict[str, list[int]]
+_Sessions = list[Session]
 
 
 _TASK_REF_ROLE_COLUMNS: dict[str, str] = {
@@ -221,6 +223,39 @@ class _QueryMixin:
             SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
             WHERE {where_clause}
             ORDER BY updated_at DESC, id DESC
+            LIMIT %s
+            """,  # nosec B608
+            tuple(params),
+        )
+        return [Session.from_row(row) for row in rows]
+
+    def list_newest_created(
+        self: _ManagerState,
+        project_id: str | None = None,
+        status: str | None = None,
+        source: str | None = None,
+        limit: int = 100,
+        from_created_at: datetime | None = None,
+        from_id: str | None = None,
+    ) -> _Sessions:
+        """List sessions in (created_at, id) DESC order, a key writes never move.
+
+        With ``from_created_at`` and ``from_id`` the page starts at that row,
+        inclusive, so a paging caller resumes where it stopped even as other
+        sessions are updated or created between pages.
+        """
+        conditions, params = _build_session_filters(project_id, status, source)
+        if from_created_at is not None and from_id is not None:
+            conditions.append("(created_at < %s OR (created_at = %s AND id <= %s))")
+            params.extend([from_created_at, from_created_at, from_id])
+        where_clause = " AND ".join(conditions)
+        params.append(limit)
+
+        rows = self.db.fetchall(
+            f"""
+            SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
+            WHERE {where_clause}
+            ORDER BY created_at DESC, id DESC
             LIMIT %s
             """,  # nosec B608
             tuple(params),

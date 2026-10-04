@@ -12,13 +12,12 @@
 //!    normalization applied.
 //!
 //! The Gobby daemon advertises a listen address in `bootstrap.yaml`, but
-//! clients need a *dial* address. `0.0.0.0` and `::` are wildcard listen
-//! addresses — you cannot `connect(2)` to them — so a user who sets
-//! `bind_host: 0.0.0.0` (to expose the daemon on their LAN) must still
-//! dial `127.0.0.1` from a local client. This module applies that
-//! normalization uniformly; [`crate::bootstrap`] returns the raw endpoint.
+//! clients need a *dial* address. A local client always dials loopback:
+//! wildcard addresses cannot be dialed, and the front door serves plaintext
+//! only to loopback peers (a concrete non-loopback bind gets a same-port
+//! loopback companion listener). This module applies that normalization
+//! uniformly; [`crate::bootstrap`] returns the raw endpoint.
 
-use std::borrow::Cow;
 use std::path::Path;
 
 use crate::bootstrap::{DaemonEndpoint, read_daemon_endpoint, read_daemon_endpoint_at};
@@ -79,18 +78,24 @@ fn endpoint_to_url(endpoint: &DaemonEndpoint) -> String {
     format!("http://{host}:{}", endpoint.port)
 }
 
-/// Map a listen host to a dial host.
+/// Map a listen host to a dial host, always loopback.
 ///
-/// Wildcard listen addresses (`0.0.0.0`, `::`, `::0`, `[::]`) and empty
-/// hosts are rewritten to `127.0.0.1`. Bare IPv6 literals are bracketed
-/// for URL embedding. Everything else passes through unchanged —
-/// hostnames, named interfaces, explicit IPv4 literals.
-fn dial_host(host: &str) -> Cow<'_, str> {
+/// Local clients dial the front door over loopback whatever `bind_host`
+/// names, because only loopback peers are served in plaintext. A concrete
+/// IPv6 bind dials `[::1]`. A loopback IPv4 bind gets no companion listener,
+/// so it dials its own address. Wildcards (`::`, `::0`, `[::]`), other IPv4,
+/// hostnames and empty hosts dial `127.0.0.1`.
+fn dial_host(host: &str) -> String {
     match host.trim() {
-        "" | "0.0.0.0" | "::" | "::0" | "[::]" => Cow::Borrowed("127.0.0.1"),
-        host if host.eq_ignore_ascii_case("localhost") => Cow::Borrowed("127.0.0.1"),
-        host if host.contains(':') && !host.starts_with('[') => Cow::Owned(format!("[{host}]")),
-        host => Cow::Borrowed(host),
+        "::" | "::0" | "[::]" => "127.0.0.1".to_owned(),
+        host if host.contains(':') => "[::1]".to_owned(),
+        host if host
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|ip| ip.is_loopback()) =>
+        {
+            host.to_owned()
+        }
+        _ => "127.0.0.1".to_owned(),
     }
 }
 
@@ -147,10 +152,33 @@ bind_host: "::0"
         assert_eq!(dial_host("LOCALHOST"), "127.0.0.1");
     }
 
+    /// Mirrors `tests/utils/test_daemon_url.py::test_dial_host_is_always_loopback`.
     #[test]
-    fn custom_port_and_host_compose() {
-        let (_dir, path) = write_bootstrap("daemon_port: 61234\nbind_host: 10.0.0.5\n");
-        assert_eq!(daemon_url_at(&path), "http://10.0.0.5:61234");
+    fn dial_host_is_always_loopback() {
+        for (host, expected) in [
+            ("0.0.0.0", "127.0.0.1"),
+            ("localhost", "127.0.0.1"),
+            ("127.0.0.1", "127.0.0.1"),
+            ("127.0.0.2", "127.0.0.2"),
+            ("10.0.0.5", "127.0.0.1"),
+            ("hub.example.test", "127.0.0.1"),
+            ("2001:db8::1", "[::1]"),
+            ("[2001:db8::1]", "[::1]"),
+            ("::1", "[::1]"),
+        ] {
+            assert_eq!(dial_host(host), expected, "{host}");
+            let (_dir, path) =
+                write_bootstrap(&format!("daemon_port: 61234\nbind_host: \"{host}\"\n"));
+            assert_eq!(
+                daemon_url_at(&path),
+                format!("http://{expected}:61234"),
+                "{host}"
+            );
+            let (_dir, explicit) = write_bootstrap(&format!(
+                "daemon_url: https://hub.example.test:7443\nbind_host: \"{host}\"\n"
+            ));
+            assert_eq!(daemon_url_at(&explicit), "https://hub.example.test:7443");
+        }
     }
 
     #[test]

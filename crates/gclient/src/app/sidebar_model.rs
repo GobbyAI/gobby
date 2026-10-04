@@ -4,6 +4,7 @@
 //! join; the `Workspace` methods below own the cached inputs and the refetch
 //! bookkeeping around it.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -365,7 +366,9 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 context_percent: entry.context_percent,
                 tokens_used: entry.tokens_used,
                 managed,
-                worktree_id: run.and_then(|(_, run)| run.worktree_id.clone()),
+                worktree_id: run
+                    .and_then(|(_, run)| run.worktree_id.clone())
+                    .or_else(|| session.and_then(|(_, session)| session.worktree_id.clone())),
                 lifecycle_status: entry.lifecycle_status.clone(),
                 terminal_state: terminal.state.clone(),
                 state: agent_state(entry, pane),
@@ -430,6 +433,19 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
     }
 }
 
+/// The bound agent a click on `worktree_id`'s state dot shows: the one
+/// whose state the dot draws, the first in roster order on a tie (#23280).
+pub fn worktree_focus_target<'a>(
+    model: &'a SidebarModel,
+    worktree_id: &str,
+) -> Option<&'a AgentEntry> {
+    model
+        .agents
+        .iter()
+        .filter(|agent| agent.worktree_id.as_deref() == Some(worktree_id))
+        .min_by_key(|agent| Reverse(urgency(rollup_class(agent.state))))
+}
+
 /// herdr `status_priority`: blocked over unseen over working over idle.
 pub fn urgency(state: RowState) -> u8 {
     match state {
@@ -459,12 +475,17 @@ pub fn state_class(state: RowState) -> RowState {
 pub fn rollup(states: impl IntoIterator<Item = RowState>) -> RowState {
     states
         .into_iter()
-        .map(|state| match state {
-            RowState::Paused => state,
-            other => state_class(other),
-        })
+        .map(rollup_class)
         .max_by_key(|state| urgency(*state))
         .unwrap_or(RowState::Idle)
+}
+
+/// The class `rollup` ranks a member by: held keeps its own state.
+fn rollup_class(state: RowState) -> RowState {
+    match state {
+        RowState::Paused => state,
+        other => state_class(other),
+    }
 }
 
 /// herdr's `AgentState` for one roster entry, given the pane that shows it.

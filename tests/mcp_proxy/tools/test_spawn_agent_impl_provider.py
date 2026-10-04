@@ -20,7 +20,7 @@ from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.fixtures.agent_definitions import make_agent_definition
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 
 async def test_invalid_external_grant_rejects_before_allocation() -> None:
@@ -34,7 +34,7 @@ async def test_invalid_external_grant_rejects_before_allocation() -> None:
             prompt="work",
             runner=runner,
             parent_session_id="parent",
-            terminal_backend="tmux",
+            terminal_backend="native",
             extra_write_paths=["/"],
             write_paths_reason="authorized",
         )
@@ -95,7 +95,7 @@ class TestProviderResolution:
                 surfaces=["persona"],
                 prompts={"persona": "Coordinate interactively."},
             ),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         await asyncio.gather(*_spawn_background_tasks.values())
 
@@ -142,7 +142,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="tmux",
+                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -196,7 +196,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="tmux",
+                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -247,7 +247,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="tmux",
+                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -285,7 +285,7 @@ class TestProviderResolution:
             mock_ctx.return_value = {"id": "proj-abc", "project_path": "/repo"}
 
             result = await spawn_agent_impl(
-                terminal_backend="tmux",
+                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -307,7 +307,7 @@ class TestProviderResolution:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="expansion-qa",
             provider="inherit",
-            model="gpt-5.6-terra",
+            model="gpt-6-luna",
         )
         runner = _make_runner()
 
@@ -336,7 +336,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="tmux",
+                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -389,7 +389,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="tmux",
+                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -440,7 +440,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="tmux",
+                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -491,7 +491,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="tmux",
+                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -547,7 +547,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="tmux",
+                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 provider="codex",
@@ -582,55 +582,6 @@ class TestProviderResolution:
         assert grant["canonical_roots"] == [str(tmp_path.resolve())]
         assert grant["asserting_session_id"] == "caller"
         assert spawn_request.resume_metadata_json["external_write_grant"] == grant
-
-    @pytest.mark.asyncio
-    async def test_agent_sandbox_can_be_disabled_via_daemon_config(self) -> None:
-        """Daemon config can explicitly opt agents out of sandboxing."""
-        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
-
-        runner = _make_runner()
-
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
-            ) as mock_ctx,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
-            ) as mock_get_handler,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
-            ) as mock_execute,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
-                return_value="21000000-0000-4000-8000-000000000001",
-            ),
-        ):
-            mock_ctx.return_value = {
-                "id": "proj-abc",
-                "project_path": "/repo",
-            }
-            mock_handler = MagicMock()
-            mock_handler.prepare_environment = AsyncMock(return_value=IsolationContext(cwd="/repo"))
-            mock_handler.cleanup_environment = AsyncMock()
-            mock_handler.build_context_prompt.return_value = "Do the thing"
-            mock_get_handler.return_value = mock_handler
-
-            mock_execute.return_value = _make_execute_spawn_result()
-
-            result = await spawn_agent_impl(
-                terminal_backend="tmux",
-                prompt="Do the thing",
-                runner=runner,
-                provider="codex",
-                parent_session_id="parent-session-xyz",
-                daemon_config=DaemonConfig(agent_sandbox={"enabled": False}),
-            )
-            await asyncio.gather(*_spawn_background_tasks.values())
-
-        assert result["success"] is True
-        spawn_request = mock_execute.call_args[0][0]
-        assert spawn_request.sandbox_config is not None
-        assert spawn_request.sandbox_config.enabled is False
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -687,7 +638,7 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="tmux",
+                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -747,7 +698,7 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="tmux",
+                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -809,7 +760,7 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="tmux",
+                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -869,7 +820,7 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="tmux",
+                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,

@@ -1,8 +1,9 @@
 use super::*;
 use crate::app::Workspace;
 use crate::daemon::{Checkout, ProjectRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow};
-use crate::theme::ThemeKind;
+use crate::theme::{Theme, ThemeKind};
 use crate::ui::sidebar::agent_rows;
+use ratatui::style::Color;
 use serde_json::json;
 
 fn scripted_workspace() -> Workspace {
@@ -202,8 +203,8 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
         .spans
         .iter()
         .all(|span| !span.style.add_modifier.contains(Modifier::DIM)));
-    // The model sits a neutral tier below either title tier in every
-    // palette, grays included, and never takes a state hue.
+    // The model is secondary text in every palette, grays included, and
+    // never takes a state hue (#23280 Option B).
     let mut mono = Chrome::dark();
     mono.prefs.monochrome = true;
     mono.set_theme(ThemeKind::Dark);
@@ -212,8 +213,8 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
     for chrome in [Chrome::dark(), light, mono] {
         let p = &chrome.palette;
         let model = row_third_line(&rows[0], 34, &chrome).spans[1].style.fg;
-        assert_eq!(model, Some(p.overlay1));
-        assert!(model != Some(p.text) && model != Some(p.subtext0));
+        assert_eq!(model, Some(p.subtext0));
+        assert!(model != Some(p.text) && model != Some(p.overlay1));
     }
     assert_eq!(rows[1].model_slug, "gpt-5");
     let fable = SidebarRow {
@@ -655,4 +656,236 @@ fn a_manual_session_title_takes_the_definition_slot_on_line_one() {
         "another project's prefix is not this session's ref"
     );
     assert_eq!(line_one("sess-ref"), " ○ #82: Ship");
+}
+
+/// The style of the one span in `line` whose text is exactly `text`.
+fn span_style(line: &Line<'_>, text: &str) -> Style {
+    let mut matches = line.spans.iter().filter(|span| span.content == text);
+    let span = matches
+        .next()
+        .unwrap_or_else(|| panic!("no span {text:?} in {:?}", line.spans));
+    assert!(
+        matches.next().is_none(),
+        "two spans {text:?} in {:?}",
+        line.spans
+    );
+    span.style
+}
+
+fn assert_role(line: &Line<'_>, text: &str, fg: Color, bold: bool, case: &str) {
+    let style = span_style(line, text);
+    assert_eq!(style.fg, Some(fg), "{case}: {text:?} colour");
+    assert_eq!(
+        style.add_modifier.contains(Modifier::BOLD),
+        bold,
+        "{case}: {text:?} bold"
+    );
+}
+
+/// Dark, light, and both in monochrome: the board's roles hold in each, with
+/// the colours each chrome actually paints.
+fn option_b_chromes() -> Vec<(&'static str, Chrome)> {
+    let mut chromes = Vec::new();
+    for (name, kind) in [("dark", ThemeKind::Dark), ("light", ThemeKind::Light)] {
+        let chrome = Chrome::new(Theme::new(kind));
+        let mut mono = Chrome::new(Theme::new(kind));
+        mono.palette = Palette::monochrome(&mono.theme);
+        chromes.push((name, chrome));
+        chromes.push((
+            if kind == ThemeKind::Dark {
+                "dark mono"
+            } else {
+                "light mono"
+            },
+            mono,
+        ));
+    }
+    chromes
+}
+
+/// #23280 item 4, Josh's approved Option B board: project names are bold
+/// accent, refs and branches take the identifier hue, names and the live
+/// task are text, and everything secondary is subtext0. No text is drawn in
+/// overlay0 or overlay1, which fail AA on the sidebar's grounds.
+#[test]
+fn sidebar_rows_paint_the_option_b_roles() {
+    for (case, chrome) in option_b_chromes() {
+        let p = chrome.palette;
+        let light = chrome.theme.kind == ThemeKind::Light;
+        let project = SidebarRow {
+            id: "proj-gobby".into(),
+            label: "gobby".into(),
+            branch: Some("0.5.0".into()),
+            ahead: 3,
+            behind: 1,
+            group: Some(true),
+            active: true,
+            ..SidebarRow::default()
+        };
+        let line = row_line(&project, 30, &chrome, 0);
+        assert_role(&line, "gobby", p.accent, true, case);
+        assert_role(&line, " (", p.subtext0, false, case);
+        assert_role(&line, "0.5.0", p.identifier, false, case);
+        assert_role(&line, " ↑3", p.green, false, case);
+        assert_role(&line, " ↓1", p.subtext0, false, case);
+        assert_role(&line, ")", p.subtext0, false, case);
+
+        // Light accent on the selection fill is 4.02:1, under AA, so a
+        // selected project name falls back to bold text in light only.
+        let selected = SidebarRow {
+            id: "proj-site".into(),
+            label: "gobby-site".into(),
+            branch: Some("main".into()),
+            selected: true,
+            active: false,
+            ..project.clone()
+        };
+        let line = row_line(&selected, 30, &chrome, 0);
+        let selected_name = if light { p.text } else { p.accent };
+        assert_role(&line, "gobby-site", selected_name, true, case);
+        assert_role(&line, "main", p.identifier, false, case);
+        let quiet = SidebarRow {
+            selected: false,
+            ..selected
+        };
+        assert_role(
+            &row_line(&quiet, 30, &chrome, 0),
+            "gobby-site",
+            p.accent,
+            true,
+            case,
+        );
+
+        let worktree = SidebarRow {
+            id: "wt-chrome".into(),
+            label: "chrome".into(),
+            kind: RowKind::Worktree,
+            detail: "#23280".into(),
+            nested: true,
+            ..SidebarRow::default()
+        };
+        let line = row_line(&worktree, 30, &chrome, 0);
+        assert_role(&line, "chrome", p.identifier, false, case);
+        assert_role(&line, " · ", p.subtext0, false, case);
+        assert_role(&line, "#23280", p.identifier, false, case);
+
+        let agent = SidebarRow {
+            id: "session:one".into(),
+            kind: RowKind::Agent,
+            reference: "#12217".into(),
+            definition: "Claude Code".into(),
+            task: Some(("#23280".into(), "gclient".into())),
+            model_slug: "claude-opus-5.5-high".into(),
+            active: true,
+            ..SidebarRow::default()
+        };
+        let line = row_line(&agent, 30, &chrome, 0);
+        assert_role(&line, "#12217", p.identifier, false, case);
+        assert_role(&line, ": ", p.subtext0, false, case);
+        assert_role(&line, "Claude Code", p.text, true, case);
+        let second = row_second_line(&agent, 30, &chrome);
+        assert_role(&second, "Working task 23280", p.text, false, case);
+        assert_role(&second, " gclient", p.subtext0, false, case);
+        let third = row_third_line(&agent, 30, &chrome);
+        assert_role(&third, "claude-opus-5.5-high", p.subtext0, false, case);
+
+        let idle = SidebarRow {
+            definition: "Codex".into(),
+            task: None,
+            model_slug: "gpt-5-codex-high".into(),
+            active: false,
+            ..agent
+        };
+        assert_role(
+            &row_line(&idle, 30, &chrome, 0),
+            "Codex",
+            p.text,
+            false,
+            case,
+        );
+        let second = row_second_line(&idle, 30, &chrome);
+        assert_role(&second, "No assigned task", p.subtext0, false, case);
+        let third = row_third_line(&idle, 30, &chrome);
+        assert_role(&third, "gpt-5-codex-high", p.subtext0, false, case);
+
+        let machine = SidebarRow {
+            kind: RowKind::Machine,
+            label: "mbp".into(),
+            detail: "local".into(),
+            ..SidebarRow::default()
+        };
+        let line = row_line(&machine, 30, &chrome, 0);
+        assert_role(&line, "mbp", p.text, false, case);
+        assert_role(&line, "local", p.subtext0, false, case);
+
+        let terminal = SidebarRow {
+            kind: RowKind::Terminal,
+            label: "zsh".into(),
+            address: "tmux %16".into(),
+            detail: "~/Projects/gobby".into(),
+            ..SidebarRow::default()
+        };
+        let line = row_line(&terminal, 30, &chrome, 0);
+        assert_role(&line, "zsh", p.text, false, case);
+        assert_role(&line, "tmux %16", p.subtext0, false, case);
+        let second = row_second_line(&terminal, 30, &chrome);
+        assert_role(&second, "~/Projects/gobby", p.subtext0, false, case);
+
+        let group = SidebarRow {
+            id: "group:proj-gobby".into(),
+            label: "gobby".into(),
+            kind: RowKind::Group,
+            ..SidebarRow::default()
+        };
+        let line = row_line(&group, 12, &chrome, 0);
+        assert_role(&line, "gobby", p.accent, true, case);
+        assert_eq!(
+            line.spans[2].style.fg,
+            Some(p.overlay0),
+            "{case}: group rule"
+        );
+
+        // overlay0 and overlay1 are rules and idle glyphs, never text.
+        for line in [
+            row_line(&project, 30, &chrome, 0),
+            row_line(&worktree, 30, &chrome, 0),
+            row_line(&machine, 30, &chrome, 0),
+            row_line(&terminal, 30, &chrome, 0),
+            row_second_line(&idle, 30, &chrome),
+            row_third_line(&idle, 30, &chrome),
+        ] {
+            for span in &line.spans {
+                let text = span.content.trim();
+                if text.is_empty() || text.chars().all(|ch| "○├└─▾▸".contains(ch)) {
+                    continue;
+                }
+                assert!(
+                    span.style.fg != Some(p.overlay0) && span.style.fg != Some(p.overlay1),
+                    "{case}: text {:?} in an overlay",
+                    span.content
+                );
+            }
+        }
+    }
+}
+
+/// The task line keeps its two roles while it scrolls: the cells from
+/// `Working task N` stay text and the title's cells stay subtext0.
+#[test]
+fn a_scrolling_task_line_keeps_text_and_subtext_roles() {
+    let mut chrome = Chrome::dark();
+    let p = chrome.palette;
+    let row = SidebarRow {
+        id: "session:one".into(),
+        definition: "Codex".into(),
+        reference: "#77".into(),
+        task: Some(("#13936".into(), "修复 workspace chrome".into())),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
+    let line = row_second_line(&row, 24, &chrome);
+    assert_eq!(line_text(&line), "   rking task 13936 修复");
+    assert_role(&line, "rking task 13936", p.text, false, "scrolled");
+    assert_role(&line, " 修复", p.subtext0, false, "scrolled");
 }

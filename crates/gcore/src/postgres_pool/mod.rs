@@ -7,6 +7,11 @@
 //! deadpool's own timeouts do not enclose its hooks.
 
 mod config;
+mod row;
+mod transaction;
+
+pub use row::{FromRow, RowError};
+pub use transaction::{LockTarget, Transaction, TransactionError};
 
 use std::sync::Arc;
 #[cfg(test)]
@@ -70,6 +75,10 @@ pub struct Pool {
     create_stall: Arc<AtomicBool>,
     #[cfg(test)]
     recycle_stall: Arc<AtomicBool>,
+    /// One-shot gate: the next rollback signals it once its guard is armed,
+    /// then suspends before `ROLLBACK`, so a test can cancel it there.
+    #[cfg(test)]
+    rollback_gate: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
 
 impl Pool {
@@ -121,7 +130,14 @@ impl Pool {
             create_stall,
             #[cfg(test)]
             recycle_stall,
+            #[cfg(test)]
+            rollback_gate: Default::default(),
         })
+    }
+
+    /// Pool size and idle connections, for observation.
+    pub fn status(&self) -> deadpool_postgres::Status {
+        self.inner.status()
     }
 
     /// Check out a verified connection within `acquire_timeout`. Expiry, or
@@ -148,6 +164,23 @@ impl Pool {
                 | deadpool_postgres::PoolError::NoRuntimeSpecified,
             ) => Err(PoolError::Closed),
         }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid SQL identifier: {0:?}")]
+pub struct IdentifierError(pub String);
+
+/// Double-quote `name` for SQL text; only `^[A-Za-z_][A-Za-z0-9_]*$` is
+/// accepted, as the Python daemon's `validate_identifier` does.
+pub fn quote_identifier(name: &str) -> Result<String, IdentifierError> {
+    let mut bytes = name.bytes();
+    let valid = matches!(bytes.next(), Some(byte) if byte.is_ascii_alphabetic() || byte == b'_')
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+    if valid {
+        Ok(format!("\"{name}\""))
+    } else {
+        Err(IdentifierError(name.to_owned()))
     }
 }
 
