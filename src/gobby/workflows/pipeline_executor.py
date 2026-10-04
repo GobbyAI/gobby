@@ -453,9 +453,21 @@ class PipelineExecutor(
 
                 if _depth == 0 and self.session_manager:
                     try:
+                        child_external_id = f"pipeline-{execution.id}"
+                        if prior_status is not None:
+                            # Resume callers pass execution.session_id, which is this
+                            # child itself; keep the parent it was launched under.
+                            reused = await self._run_db(
+                                self.session_manager.find_by_external_id,
+                                external_id=child_external_id,
+                                project_id=project_id,
+                                source="pipeline",
+                            )
+                            if reused is not None and reused.id == caller_session_id:
+                                caller_session_id = reused.parent_session_id or system_session_id()
                         child_session = await self._run_db(
                             self.session_manager.register,
-                            external_id=f"pipeline-{execution.id}",
+                            external_id=child_external_id,
                             machine_id=None,
                             source="pipeline",
                             project_id=project_id,
