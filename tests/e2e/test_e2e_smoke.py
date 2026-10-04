@@ -45,6 +45,16 @@ def test_production_daemon_gcode_runtime_grant_is_external_write_exempt() -> Non
     assert _is_production_daemon_artifact("config.yaml") is False
 
 
+def test_production_daemon_comms_attachment_is_external_write_exempt() -> None:
+    # The live daemon saves each inbound chat photo under comms_attachments/
+    # (src/gobby/communications/attachments.py); one arriving during an e2e
+    # test is that daemon's write, not a sandbox escape by the test daemon.
+    assert _is_production_daemon_artifact(
+        "comms_attachments/1791125785349_photo_AQADqAxrG3aBGEZ-.jpg"
+    )
+    assert _is_production_daemon_artifact("comms_attachments") is False
+
+
 class TestE2EInfrastructure:
     """Tests verifying E2E fixtures work correctly."""
 

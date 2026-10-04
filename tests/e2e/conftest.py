@@ -1923,6 +1923,10 @@ def _production_daemon_running() -> bool:
 _DAEMON_ARTIFACTS = {"gobby.pid", "ui.pid", "shutdown_intent_active.json"}
 _PRODUCTION_DAEMON_ARTIFACT_PREFIXES = (
     "cache/transcript-indexes/",
+    # Inbound chat attachments (communications/attachments.py) resolve under
+    # Path.home(), which the test daemon overrides, so only the live daemon
+    # writes here.
+    "comms_attachments/",
     "gcode-runtime/",
     "grants/",
     "logs/",
