@@ -171,8 +171,11 @@ prompts:
     Correct any malformed-verdict response while the review remains running.
     After a terminal closed, invalid, external_pending, stale, or error response,
     call end_agent_run with current_state summarizing that result and next_steps
-    naming the originating coordinator's action. Gobby delivers the persisted
-    terminal payload to the originating session automatically.
+    naming the originating coordinator's action. A `pending: true` response means
+    the verdict was accepted and the daemon is still finalizing it: call
+    end_agent_run with current_state saying so, without resubmitting. Gobby
+    delivers the persisted terminal payload to the originating session
+    automatically.
 
     Lifecycle model:
     - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.

@@ -117,9 +117,15 @@ async def _cleanup_terminal_agent_completion_subscribers(runner: GobbyRunner) ->
         acknowledged: list[str] = []
         payload = {"status": run.status, "run_id": run.id}
         message = f"Agent {run.id} reached terminal status {run.status}"
-        from gobby.tasks.close_review_delivery import terminal_review_delivery
+        from gobby.tasks.close_review_delivery import (
+            DELIVERY_DEFERRED,
+            terminal_review_delivery,
+        )
 
         review_delivery = await _run_db(runner, terminal_review_delivery, db, run.id)
+        if review_delivery == DELIVERY_DEFERRED:
+            # The review is still finalizing; its persisted result is delivered later.
+            continue
         if review_delivery is not None:
             payload, message = review_delivery
         for session_id in subscribers:
@@ -271,7 +277,7 @@ async def _reconcile_task_close_reviews(
                 if review.status == "finalizing" and review.agent_run_id
                 else None
             )
-            if reconstructed is not None:
+            if isinstance(reconstructed, tuple):
                 current = await _run_db(runner, store.get, review.id) or review
             else:
                 message = "Persisted task-close reviewer run is missing."
@@ -324,9 +330,15 @@ async def _reconcile_task_close_reviews(
                     if current.agent_run_id
                     else None
                 )
-                payload, message = delivery or (
-                    current.result_payload,
-                    str(current.result_payload.get("message") or "Task-close review completed."),
+                payload, message = (
+                    delivery
+                    if isinstance(delivery, tuple)
+                    else (
+                        current.result_payload,
+                        str(
+                            current.result_payload.get("message") or "Task-close review completed."
+                        ),
+                    )
                 )
                 outcome = await wake(
                     current.caller_session_id,

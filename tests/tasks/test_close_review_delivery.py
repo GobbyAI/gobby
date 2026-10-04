@@ -84,7 +84,7 @@ def test_completed_review_reports_sandbox_denials_without_changing_verdict(
 
     delivered = delivery.terminal_review_delivery(cast(Any, object()), "run")
 
-    assert delivered is not None
+    assert isinstance(delivered, tuple)
     payload, message = delivered
     assert payload["status"] == "closed"
     assert original_payload == {
@@ -138,7 +138,7 @@ async def test_managed_live_denials_reach_owner_completion_notification(
     )
     _install(monkeypatch, store=store, run=run, task=None)
     projected = delivery.terminal_review_delivery(cast(Any, object()), "run")
-    assert projected is not None
+    assert isinstance(projected, tuple)
     payload, message = projected
 
     created: list[dict[str, Any]] = []
@@ -192,7 +192,7 @@ def test_failed_reviewer_run_terminalizes_review_and_clears_lock(
 
     resolved = delivery.terminal_review_delivery(cast(Any, object()), "run")
 
-    assert resolved is not None
+    assert isinstance(resolved, tuple)
     payload, message = resolved
     assert payload["status"] == "error"
     assert payload["closed"] is False
@@ -212,7 +212,7 @@ def test_interrupted_finalization_recovers_closed_task(
 
     resolved = delivery.terminal_review_delivery(cast(Any, object()), "run")
 
-    assert resolved is not None
+    assert isinstance(resolved, tuple)
     payload, _message = resolved
     assert payload["status"] == "closed"
     assert payload["closed"] is True
@@ -230,7 +230,8 @@ def test_run_end_leaves_finalizing_review_untouched(
 
     resolved = delivery.terminal_review_delivery(cast(Any, object()), "run")
 
-    assert resolved is None
+    # The finalization owns the outcome, so the run's end delivers nothing yet (#23393).
+    assert resolved == delivery.DELIVERY_DEFERRED
     assert store.finished_status is None
     assert store.review.status == "finalizing"
 

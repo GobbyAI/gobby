@@ -25,7 +25,9 @@ from fastapi import FastAPI
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration as orchestration
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_tool as close_tool
+from gobby.agents import terminal_delivery
 from gobby.config.tasks import TaskValidationConfig
+from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
@@ -51,12 +53,13 @@ from gobby.storage.task_close_reviews import (
     TaskCloseReviewBusyError,
     TaskCloseReviewStatus,
     TaskCloseReviewStore,
+    finalizing_in_process,
 )
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks import agentic_close_review as agentic_close_review_module
 from gobby.tasks.close_review_delivery import terminal_review_delivery
 from gobby.utils.machine_id import require_machine_id
-from tests._timing import wait_for_awaitable_or_background_task
+from tests._timing import wait_for_awaitable_or_background_task, wait_for_awaited_condition
 
 pytestmark = pytest.mark.unit
 
@@ -1566,6 +1569,161 @@ async def test_late_verdict_after_run_end_is_applied(
     assert result["review_status"] == "closed"
     assert result["terminal_payload"]["status"] == "closed"
     assert result["terminal_payload"] != prior_payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("gate_error", "expected_status"),
+    [("validation_failed", "invalid"), ("agentic_review_malformed", "error")],
+    ids=["verdict", "malformed-after-pending"],
+)
+async def test_slow_finalization_answers_pending_within_budget_and_persists_verdict(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    gate_error: str,
+    expected_status: str,
+) -> None:
+    """A gate slower than the response budget must not outlive the reviewer's request.
+
+    The client gives up at 300s while the daemon keeps finalizing, so a submit
+    that blocks on the gates tells the reviewer nothing while a verdict still
+    persists (#23393). The submit answers pending within its budget, and the
+    finalization it leaves running is the one that persists the outcome. A
+    verdict found malformed after that answer is terminal: the reviewer that
+    could have corrected it was told to end.
+    """
+    store = TaskCloseReviewStore(temp_db)
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Finalize a close review slower than the response budget",
+        validation_criteria="The reviewer is told what the daemon persists.",
+    )
+    caller = SessionManager(temp_db).register(
+        external_id=f"slow-close-review-{uuid4()}",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    review, _created = store.create_or_get_active(
+        **_persisted_review_intent(task, caller_session_id=caller.id)
+    )
+    review = _promote_persisted(store, task, review)
+    assert store.bind_run(review.id, review.agent_run_id or "") is not None
+    monkeypatch.setattr(orchestration, "_authenticate_submission", lambda _ctx, _review: None)
+    monkeypatch.setattr(orchestration, "SUBMIT_RESPONSE_BUDGET_SECONDS", 0.05, raising=False)
+    gate_entered = asyncio.Event()
+    gate_released = asyncio.Event()
+
+    async def slow_evaluate_close(_ctx: RegistryContext, **kwargs: Any) -> CloseEvaluation:
+        gate_entered.set()
+        await gate_released.wait()
+        submitted = kwargs["submitted_review"]
+        assert isinstance(submitted, SubmittedCloseReview)
+        evaluation = CloseEvaluation(review.task_ref)
+        evaluation.task_id = review.task_id
+        evaluation.error = gate_error
+        evaluation.message = "The close evidence is incomplete."
+        if gate_error == "validation_failed":
+            evaluation.validation_status = "invalid"
+        evaluation.verdict = dict(submitted.verdict)
+        return evaluation
+
+    ctx = cast(RegistryContext, SimpleNamespace(task_manager=SimpleNamespace(db=temp_db)))
+    submit = asyncio.create_task(
+        submit_close_review(
+            ctx,
+            review_id=review.id,
+            verdict=_verdict("invalid"),
+            evaluate_close=slow_evaluate_close,
+            commit_close=AsyncMock(),
+        )
+    )
+    try:
+        done, _pending = await asyncio.wait({submit}, timeout=2.0)
+        assert gate_entered.is_set()
+        assert submit in done, "submit_close_review blocked on the slow gate past its budget"
+    finally:
+        gate_released.set()
+    result = submit.result()
+
+    assert result == {
+        "success": True,
+        "pending": True,
+        "review_id": review.id,
+        "review_status": "finalizing",
+        "closed": False,
+        "message": orchestration.FINALIZATION_PENDING_MESSAGE,
+    }
+
+    async def persisted_terminal() -> TaskCloseReview | None:
+        current = await asyncio.to_thread(store.get, review.id)
+        return current if current is not None and current.terminal else None
+
+    finished = await wait_for_awaited_condition(
+        persisted_terminal, timeout=5.0, description="the finalization's persisted verdict"
+    )
+    assert finished is not None
+    assert finished.status == expected_status
+    assert finished.result_payload is not None
+    assert finished.result_payload["status"] == expected_status
+
+
+@pytest.mark.asyncio
+async def test_reviewer_exit_during_finalization_defers_caller_delivery(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """A reviewer that ends on a pending answer must not hand the caller its bare run status.
+
+    The finalization still owns the review, so the caller's delivery waits for
+    the verdict it persists rather than consuming the subscription with the
+    run's bare terminal status (#23393).
+    """
+    store = TaskCloseReviewStore(temp_db)
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Defer delivery behind a live finalization",
+        validation_criteria="The caller receives the persisted verdict.",
+    )
+    caller = SessionManager(temp_db).register(
+        external_id=f"deferred-close-review-{uuid4()}",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    review, _created = store.create_or_get_active(
+        **_persisted_review_intent(task, caller_session_id=caller.id)
+    )
+    review = _promote_persisted(store, task, review)
+    run_id = review.agent_run_id
+    assert run_id is not None
+    assert store.bind_run(review.id, run_id) is not None
+    assert store.claim_finalizing(review.id, run_id, verdict=_verdict("valid")) is not None
+    assert LocalAgentRunManager(temp_db).fail(run_id, "reviewer ended on a pending answer")
+    registry = SimpleNamespace(
+        notify=AsyncMock(return_value={caller.id: True}), cleanup=MagicMock()
+    )
+
+    async def run_db(function: Any, *args: Any, **kwargs: Any) -> Any:
+        return await asyncio.to_thread(function, *args, **kwargs)
+
+    with finalizing_in_process(review.id):
+        delivery = await terminal_delivery.deliver_and_cleanup_terminal_run(
+            db=temp_db,
+            completion_registry=cast(CompletionEventRegistry, registry),
+            run_id=run_id,
+            result={"status": "error", "run_id": run_id},
+            message=f"Agent {run_id} error",
+            run_db=run_db,
+        )
+
+    assert delivery is None
+    registry.notify.assert_not_awaited()
+    current = store.get(review.id)
+    assert current is not None
+    assert current.status == "finalizing"
+    assert current.delivered_at is None
 
 
 @pytest.mark.asyncio

@@ -36,6 +36,17 @@ from gobby.utils.session_context import get_current_agent_run_id, get_current_se
 
 logger = logging.getLogger(__name__)
 
+#: The reviewer's daemon client abandons a request at 300s while the daemon
+#: keeps working; a submit answers well inside that, leaving room for the
+#: reviewer's own ``end_agent_run``.
+SUBMIT_RESPONSE_BUDGET_SECONDS = 240.0
+FINALIZATION_PENDING_MESSAGE = (
+    "Verdict accepted. The close gates are still finalizing it; Gobby persists the "
+    "result and delivers it to the originating session. Call end_agent_run now."
+)
+# Strong references: the event loop holds tasks only weakly.
+_finalizations: set[asyncio.Task[dict[str, Any]]] = set()
+
 
 type CloseEvaluator = Callable[..., Awaitable[CloseEvaluation]]
 type CloseCommitter = Callable[..., Awaitable[dict[str, Any]]]
@@ -574,15 +585,20 @@ async def submit_close_review(
     evaluate_close: CloseEvaluator,
     commit_close: CloseCommitter,
 ) -> dict[str, Any]:
-    """Authenticate a reviewer, rerun close gates, and persist one terminal result."""
+    """Authenticate a reviewer and answer within the response budget.
+
+    The gates finalize in a daemon-owned task. A finalization that outlasts
+    the budget answers ``pending`` and still persists its result, which Gobby
+    delivers to the originating session, so the reviewer is never told less
+    than what the daemon goes on to do (#23393).
+    """
     store = TaskCloseReviewStore(ctx.task_manager.db)
     review = store.get(review_id)
     authenticated = _authenticate_submission(ctx, review)
     if authenticated is not None:
         return authenticated
     assert review is not None and review.agent_run_id is not None
-    run_id = review.agent_run_id
-    claimed = store.claim_finalizing(review.id, run_id, verdict=verdict)
+    claimed = store.claim_finalizing(review.id, review.agent_run_id, verdict=verdict)
     if claimed is None:
         current = store.get(review.id)
         if current is not None and current.terminal and current.result_payload is not None:
@@ -601,6 +617,49 @@ async def submit_close_review(
             "review_status": current.status if current is not None else review.status,
         }
 
+    answered_pending = asyncio.Event()
+    finalization = asyncio.create_task(
+        _finalize_claimed(
+            ctx,
+            claimed,
+            verdict=verdict,
+            evaluate_close=evaluate_close,
+            commit_close=commit_close,
+            answered_pending=answered_pending,
+        )
+    )
+    _finalizations.add(finalization)
+    finalization.add_done_callback(_reap_finalization)
+    # asyncio.wait, unlike wait_for, never cancels the finalization: the gates
+    # keep running in the daemon however long they take, and only the answer
+    # to the reviewer is bounded.
+    done, _pending = await asyncio.wait({finalization}, timeout=SUBMIT_RESPONSE_BUDGET_SECONDS)
+    if finalization in done:
+        return finalization.result()
+    answered_pending.set()
+    return {
+        "success": True,
+        "pending": True,
+        "review_id": claimed.id,
+        "review_status": "finalizing",
+        "closed": False,
+        "message": FINALIZATION_PENDING_MESSAGE,
+    }
+
+
+async def _finalize_claimed(
+    ctx: RegistryContext,
+    claimed: TaskCloseReview,
+    *,
+    verdict: Mapping[str, object],
+    evaluate_close: CloseEvaluator,
+    commit_close: CloseCommitter,
+    answered_pending: asyncio.Event,
+) -> dict[str, Any]:
+    """Rerun the close gates on a claimed verdict and persist one terminal result."""
+    store = TaskCloseReviewStore(ctx.task_manager.db)
+    assert claimed.agent_run_id is not None
+    run_id = claimed.agent_run_id
     # The set entry is this daemon's proof of liveness for the row: the
     # reconciler leaves a `finalizing` review alone while a submission here
     # holds it, and sweeps it once this block exits by any path.
@@ -633,6 +692,15 @@ async def submit_close_review(
             await promote_close_reviews(ctx, evaluate_close=evaluate_close)
             return result
 
+        if evaluation.error == "agentic_review_malformed" and answered_pending.is_set():
+            # The reviewer was told its verdict is accepted and has ended, so
+            # nobody is left to correct it; the malformed verdict is the outcome.
+            message = evaluation.message or "Background close-review verdict is invalid."
+            payload = build_terminal_review_payload(claimed, status="error", message=message)
+            store.finish(claimed.id, status="error", result_payload=payload, error=message)
+            result = _submission_result(claimed, payload)
+            await promote_close_reviews(ctx, evaluate_close=evaluate_close)
+            return result
         if evaluation.error == "agentic_review_malformed":
             message = evaluation.message or "Background close-review verdict is invalid."
             store.restore_running(claimed.id, run_id, error=message)
@@ -700,6 +768,14 @@ async def submit_close_review(
         result = _submission_result(claimed, payload)
         await promote_close_reviews(ctx, evaluate_close=evaluate_close)
         return result
+
+
+def _reap_finalization(finalization: asyncio.Task[dict[str, Any]]) -> None:
+    _finalizations.discard(finalization)
+    if not finalization.cancelled():
+        # An unanswered failure is the orphan sweep's to terminalize; retrieving
+        # it here only keeps asyncio from reporting it as never retrieved.
+        finalization.exception()
 
 
 def pending_review_response(review: TaskCloseReview) -> dict[str, Any]:
