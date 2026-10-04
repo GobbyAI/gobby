@@ -74,6 +74,9 @@ class SandboxRunPaths:
         # zsh uses TMPPREFIX for heredocs independently of TMPDIR.
         values["TMPPREFIX"] = str(self.tmp / "zsh")
         values["GOBBY_LOG_DIR"] = str(self.logs)
+        # ocr's update check writes ~/.opencodereview/last-update-check, which
+        # the policy denies, on every reviewer invocation.
+        values["OCR_NO_UPDATE"] = "1"
         if self.zig_system_dir is not None:
             values["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] = str(self.zig_system_dir)
         return values

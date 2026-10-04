@@ -563,6 +563,8 @@ def _codex_runtime_config_overrides(
             f"shell_environment_policy.set.TMPPREFIX={json.dumps(sandbox_temp_dir + '/zsh')}"
         )
         overrides.append(f"mcp_servers.gobby.env.TMPDIR={json.dumps(sandbox_temp_dir)}")
+        # Mirrors SandboxRunPaths.environment for the rebuilt shell env.
+        overrides.append('shell_environment_policy.set.OCR_NO_UPDATE="1"')
     if managed_identity_env:
         from gobby.paths import get_gobby_home
 

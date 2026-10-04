@@ -116,6 +116,11 @@ def test_render_settings_ignores_only_benign_violation_noise() -> None:
             "sysctl-read kern.iossupportversion",
             "system-info vfs.disk-space",
             "mach-lookup com.apple.SystemConfiguration.configd",
+            "system-info net.link.addr",
+            "mach-lookup com.apple.FSEvents",
+            "mach-lookup com.apple.DiskArbitration.diskarbitrationd",
+            "sysctl-read hw.optional.",
+            "sysctl-read hw.cpusubfamily",
         ]
     }
     # SRT drops a violation when its log line contains any "*" pattern
@@ -124,18 +129,21 @@ def test_render_settings_ignores_only_benign_violation_noise() -> None:
         "bash(3482) deny(1) sysctl-read kern.iossupportversion",
         "rustc(812) deny(1) system-info vfs.disk-space",
         "codex(77) deny(1) mach-lookup com.apple.SystemConfiguration.configd",
+        "gcode(55) deny(1) system-info net.link.addr",
+        "node(60) deny(1) mach-lookup com.apple.FSEvents",
+        "python3.14(91) deny(1) mach-lookup com.apple.DiskArbitration.diskarbitrationd",
+        "node(60) deny(1) sysctl-read hw.optional.arm.FEAT_SHA3",
+        "codex(77) deny(1) sysctl-read hw.cpusubfamily",
     ]
     true_positives = [
         "python3.14(91) deny(1) file-read-metadata /Users/x/.gobby/bootstrap.yaml",
         "python3.14(91) deny(1) file-write-mode /Users/x/.gobby/machine_id",
         "codex(77) deny(1) network-outbound 203.0.113.7:443",
     ]
-    assert [any(p in line for p in ignored["*"]) for line in noise] == [True, True, True]
-    assert [any(p in line for p in ignored["*"]) for line in true_positives] == [
-        False,
-        False,
-        False,
-    ]
+    assert all(any(p in line for p in ignored["*"]) for line in noise)
+    assert not any(any(p in line for p in ignored["*"]) for line in true_positives)
+    # The failed-DNS fallback carries no target; it must stay recorded.
+    assert not any("network-outbound" in p for p in ignored["*"])
 
 
 async def test_package_root_discovery_preserves_worktree_carveout(

@@ -540,11 +540,20 @@ def render_srt_settings(paths: ResolvedSandboxPaths) -> dict[str, Any]:
         # libsystem reads kern.iossupportversion at every exec, compilers query
         # free disk space, codex probes configd reachability. Enforcement is
         # unchanged; SRT only stops recording lines containing these substrings.
+        # Also: getaddrinfo's AI_ADDRCONFIG getifaddrs probes (net.link.addr),
+        # file watchers' FSEvents and DiskArbitration lookups, and CPU feature
+        # sysctls. Never add network-outbound: the failed-DNS fallback that
+        # follows net.link.addr has no target, and egress denials must stay visible.
         "ignoreViolations": {
             "*": [
                 "sysctl-read kern.iossupportversion",
                 "system-info vfs.disk-space",
                 "mach-lookup com.apple.SystemConfiguration.configd",
+                "system-info net.link.addr",
+                "mach-lookup com.apple.FSEvents",
+                "mach-lookup com.apple.DiskArbitration.diskarbitrationd",
+                "sysctl-read hw.optional.",
+                "sysctl-read hw.cpusubfamily",
             ]
         },
     }
