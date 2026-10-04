@@ -15,7 +15,11 @@ from pydantic import TypeAdapter
 from pydantic_core import PydanticSerializationError
 
 from gobby.tasks.transcript_evidence_cache import clear_snapshots, read_snapshot, write_snapshot
-from gobby.tasks.transcript_evidence_models import TranscriptEdit, TranscriptValidationRun
+from gobby.tasks.transcript_evidence_models import (
+    TranscriptEdit,
+    TranscriptTaskClaim,
+    TranscriptValidationRun,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +89,7 @@ class EvidenceSnapshot:
     degraded: tuple[str, ...]
     parsed_from_offset: int = 0
     latest_record_at: datetime | None = None
+    claims: tuple[TranscriptTaskClaim, ...] = ()
     #: Per-path snapshots of the session's supplemental transcripts (Claude
     #: subagents), carried in the primary's record so one session keeps one
     #: cache slot. Subagent files are append-only, so after one full parse

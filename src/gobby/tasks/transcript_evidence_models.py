@@ -94,12 +94,23 @@ class TranscriptEdit:
 
 
 @dataclass(frozen=True)
+class TranscriptTaskClaim:
+    """One successful task claim a session made, as its transcript recorded it."""
+
+    #: The reference the session passed (``#N``, a path, or a UUID), resolved by the caller.
+    task_ref: str
+    claimed_at: datetime
+
+
+@dataclass(frozen=True)
 class TranscriptEvidence:
     """Validation runs and task edits derived from one or more sessions."""
 
     validation_runs: tuple[TranscriptValidationRun, ...] = ()
     command_runs: tuple[TranscriptValidationRun, ...] = ()
     edits: tuple[TranscriptEdit, ...] = ()
+    #: Task claims in transcript order. They bound a linked session's work per task.
+    task_claims: tuple[TranscriptTaskClaim, ...] = ()
     attempted_paths: tuple[str, ...] = ()
     sessions: tuple[str, ...] = ()
     degraded_capabilities: tuple[str, ...] = ()
