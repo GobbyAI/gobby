@@ -19,6 +19,15 @@ an authorized fresh run; idempotency is required wherever a step can repeat.
 of running executions. Completed/skipped steps are retained; unfinished work can
 repeat. Non-recovered running executions become interrupted.
 
+A runbook resumed after restart re-runs each unfinished seat step, which
+reconciles by its invocation id. `seat_launch_unsettled` means the step's run
+exists but never started; `invocation_conflict` means that run id belongs to
+another pipeline invocation. Neither launches anything, and the execution
+fails. Find the unsettled seat by the run id in the step error or
+`get_pipeline_status`, stop or settle it, then relaunch the missing seats with a
+fresh run that names them in `seats`; a failed runbook is never resumed. Title
+collisions no longer refuse placement, so `seat_live` is not a runbook failure.
+
 `cancel_pipeline(execution_id=...)` cancels the tracked background task and
 attempts to kill agents owned by the pipeline child session. It does not undo
 completed operations. Inspect remaining children, external processes and effects

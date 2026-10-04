@@ -386,6 +386,74 @@ attempts to terminate agents owned by the pipeline child session. It does not
 roll back completed effects. Inspect remaining children, external commands and
 step output before declaring cleanup complete.
 
+## Runbooks
+
+A runbook is an ordinary pipeline whose `tags` include `runbook`. It uses only
+the existing step kinds and `resume_on_restart`; there is no runbook schema,
+service, table or tool family. Find runbooks with
+`list_pipelines(tag="runbook")` or `gobby pipelines list --tag runbook`.
+
+The bundled `planning` runbook syncs with the `gobby` and `runbook` tags. Its
+inputs are `workspace` (required), `writer_title`, `enhancer_title`,
+`adversary_title` and `seats` (default `writer,enhancer,adversary`). `seats` is
+one comma-separated string, so `gobby pipelines run planning -i
+workspace=<name> -i seats=adversary` hands the executor `adversary` unchanged.
+Every project-specific value is an input, and each seat names a bundled agent
+definition (`plan-writer`, `plan-enhancer`, `plan-adversary`).
+
+**Guard.** The first step calls `gobby-agents:check_runbook_seats(workspace,
+requested, catalogue)`. It refuses an empty, unknown, padded or repeated seat
+name; another `pending`, `running` or `waiting_approval` execution of the same
+runbook in the same project, workspace and machine; a seat whose agent
+definition is not installed or is disabled; and any failed or truncated lookup.
+It checks no slot capacity and no pane title. The same runbook may run at once
+on other machines, in other workspaces and for other projects, and a second
+launch in the same place starts once the first execution has ended.
+
+**Seats.** Each seat is one `mcp` step that calls `gobby-agents:spawn_agent`
+with the seat's `agent`, a `prompt`, a `placement` and
+`reserved_run_id: ${{ invocation_id }}`, so it inherits every spawn guard,
+including the slot cap, lease, isolation and managed SRT sandbox. The reply,
+returned once the terminal is bound, carries `run_id`, `terminal_id`,
+`workspace`, `tab_ref` and `pane_ref`, and becomes the step's output. A seat is
+identified by its session as `project#session_ref: pane_title`; the title is a
+display label, and nothing refuses two live seats with one title. Runbooks never
+call `wait_for_agent`, which waits for completion that a standing seat does
+not reach.
+
+**Entrypoints and parent chain.** A runbook launches through MCP `run_pipeline`,
+`gobby pipelines run`, the web run route or a cron `pipeline` job. The pipeline
+registers a child session (`source="pipeline"`) whose parent is the calling
+session for MCP, the system session for the CLI and web routes, and the cron
+session for cron. That child is the `parent_session_id` of every seat. When cron
+cannot create its session, the pipeline does not start. Agent seats are blocked
+from `run_pipeline`, the exposed `pipeline:<name>` tools and a shell
+`gobby pipelines run` by the `seat-no-pipeline-launch` and `seat-no-launch-cli`
+rules, so runbooks launch from operator CLI, web or gclient surfaces or an
+authorized cron job.
+
+**Restart.** On daemon startup, an opted-in running execution resumes from the
+definition snapshot taken at launch, so a sync during the restart cannot change
+its steps. An execution whose snapshot cannot be read fails with
+`definition_snapshot_unusable`. Completed steps keep their outputs and the guard
+is not re-run. A re-run seat step reconciles by its invocation id before
+placement: a run that started is adopted and keeps its original `run_id`, even
+if it ended or its pane moved; a run that never started refuses
+`seat_launch_unsettled`; and a run held by another pipeline invocation refuses
+`invocation_conflict`. Neither refusal launches anything.
+
+**Failed runs and relaunch.** `resume_pipeline` refuses a `failed` execution
+whose launch snapshot is tagged `runbook` with `runbook_resume_refused`, whatever
+the current definition says, because public resume resets every step from the
+failed one. Relaunch missing seats with a fresh run that names only them in
+`seats`. The launched seats of a partial deploy keep running.
+
+**Stop.** Seats outlive their pipeline, and `cancel_pipeline` kills only agents
+whose parent is the still-active pipeline child. To stop a seat, read its
+`run_id` from the step output in `gobby pipelines runs show <execution-id>
+--json` or `get_pipeline_status`, then call `gobby-agents:kill_agent` with that
+run id. This touches only the runbook's own runs and their panes.
+
 ## Installation And Operator Boundaries
 
 Runtime loading reads `pipeline_definitions` in PostgreSQL. Files under

@@ -15,6 +15,7 @@ from gobby.config.tasks import TaskValidationConfig
 from gobby.mcp_proxy.services.result_offload import _WRAPPER_MUTATION_RESERVE
 from gobby.mcp_proxy.tools.config import create_config_registry
 from gobby.mcp_proxy.tools.results import create_results_registry
+from gobby.mcp_proxy.tools.skills import create_skills_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import launch_close_review
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import resume_pipeline
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
@@ -24,6 +25,8 @@ from gobby.sessions.handoff import (
     stage_handoff_attempt,
 )
 from gobby.sessions.handoff_records import build_handoff_payload, record_handoff_delivery
+from gobby.skills.capability_catalog import load_capability_catalog
+from gobby.skills.sync import sync_bundled_skills
 from gobby.storage.config_mutations import ConfigConflictError, ConfigMutationResult
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -720,3 +723,24 @@ def test_reference_contract_5_2_3() -> None:
                     action["path"],
                 )
     assert migrated == 21
+
+
+async def test_pipelines_runbooks_topic_is_registered(temp_db: HubDatabase) -> None:
+    pipelines = next(
+        capability
+        for capability in load_capability_catalog().capabilities
+        if capability.name == "pipelines"
+    )
+    topics = {topic.name: topic.path for topic in pipelines.topics}
+    assert topics.get("runbooks") == "references/pipelines/runbooks.md"
+
+    assert sync_bundled_skills(temp_db)["success"] is True
+    tool = create_skills_registry(temp_db).get_tool("get_skill_file")
+    assert tool is not None
+    response = await tool(name="gobby", path="references/pipelines/runbooks.md")
+    content = response["file"]["content"]
+    while response["page"]["next_cursor"] is not None:
+        response = await tool(cursor=response["page"]["next_cursor"])
+        content += response["file"]["content"]
+    for operation in ("check_runbook_seats", "kill_agent", "runs show"):
+        assert operation in content

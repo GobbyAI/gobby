@@ -21,6 +21,7 @@ it and yield. Menus, validation and history inspection do not authorize executio
 | `execution` | Starting pipelines or composing steps |
 | `approvals` | Inspecting or resolving approval gates |
 | `recovery` | Handling failure, cancellation or restart |
+| `runbooks` | Launching, relaunching or stopping runbook seats |
 | `history` | Finding runs, outputs or deleting retained history |
 | `scheduling` | Creating, changing or diagnosing cron jobs |
 

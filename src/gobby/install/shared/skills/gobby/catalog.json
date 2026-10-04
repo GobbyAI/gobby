@@ -562,6 +562,12 @@
           "when": "Handling failure, cancellation or restart"
         },
         {
+          "name": "runbooks",
+          "description": "Launch, recover and stop runbook seats",
+          "path": "references/pipelines/runbooks.md",
+          "when": "Launching, relaunching or stopping runbook seats"
+        },
+        {
           "name": "history",
           "description": "Inspect executions and retained evidence",
           "path": "references/pipelines/history.md",
