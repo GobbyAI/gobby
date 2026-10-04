@@ -540,7 +540,15 @@ def _extract_braced_test_body(source: str, symbol: str, path: str) -> str:
         rf"(?m)^[ \t]*(?:const|let|var)\s+{escaped}\s*=.*?=>",
         rf"""(?m)^[ \t]*(?:it|test)(?:\.[A-Za-z]+)?\(\s*(['"]){escaped}\1""",
     )
-    matches = [match for pattern in patterns for match in re.finditer(pattern, source)]
+    # A declaration that starts inside a comment or literal is text, not code.
+    literal_re = _RUST_LITERAL_RE if _is_rust(path) else _TEXT_LITERAL_RE
+    text_spans = [literal.span() for literal in literal_re.finditer(source)]
+    matches = [
+        match
+        for pattern in patterns
+        for match in re.finditer(pattern, source)
+        if not any(start <= match.start() < end for start, end in text_spans)
+    ]
     if len(matches) != 1:
         raise RuntimeError(f"expected one matching symbol, found {len(matches)}")
     declaration_start = matches[0].start()
