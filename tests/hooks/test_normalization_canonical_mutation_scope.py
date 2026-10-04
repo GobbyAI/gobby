@@ -11,6 +11,7 @@ from gobby.hooks._normalization_canonical import (
     _merge_shell_segment_metadata,
     _set_canonical_tool_metadata,
 )
+from gobby.hooks._normalization_operands import _resolve_long_option
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 
 pytestmark = pytest.mark.unit
@@ -875,11 +876,38 @@ def test_mkdir_mode_value_is_not_a_write_target(tmp_path: Path, options: str) ->
     assert data["canonical_repo_mutation"] is False
 
 
-@pytest.mark.parametrize("cmd", ["cp", "install"])
-def test_copy_target_directory_option_is_the_write_target(tmp_path: Path, cmd: str) -> None:
+@pytest.mark.parametrize(
+    "template",
+    [
+        pytest.param("cp -t {project}/dest {scratch}/src", id="cp-short"),
+        pytest.param("install -t {project}/dest {scratch}/src", id="install-short"),
+        pytest.param("cp --target {project}/dest {scratch}/src", id="cp-abbreviated"),
+        pytest.param("cp --target-dir={project}/dest {scratch}/src", id="cp-abbreviated-equals"),
+        pytest.param("install --target-directory {project}/dest {scratch}/src", id="install-long"),
+    ],
+)
+def test_copy_target_directory_option_is_the_write_target(tmp_path: Path, template: str) -> None:
     project, scratch = tmp_path / "project", tmp_path / "scratch"
 
-    data = _shell_write_metadata(f"{cmd} -t {project}/dest {scratch}/src", project)
+    data = _shell_write_metadata(template.format(project=project, scratch=scratch), project)
 
     assert data["canonical_file_paths"] == [f"{project}/dest"]
     assert data["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize("options", ["-d", "-dm 755", "--directory", "--dir"])
+def test_install_directory_mode_writes_every_operand(tmp_path: Path, options: str) -> None:
+    project, scratch = tmp_path / "project", tmp_path / "scratch"
+
+    data = _shell_write_metadata(f"install {options} {project}/a {scratch}/b", project)
+
+    assert data["canonical_file_paths"] == [f"{project}/a", f"{scratch}/b"]
+    assert data["canonical_repo_mutation"] is True
+
+
+def test_exact_long_flag_is_not_read_as_a_value_option_abbreviation() -> None:
+    names = frozenset({"--strip-program", "--suffix"})
+
+    assert _resolve_long_option("--strip", names) is None
+    assert _resolve_long_option("--strip-p", names) == "--strip-program"
+    assert _resolve_long_option("--s", names) is None

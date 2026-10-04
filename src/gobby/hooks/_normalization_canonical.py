@@ -847,7 +847,7 @@ def _classify_shell_segment_without_redirection(
         )
 
     if cmd == "touch":
-        operands, _ = _file_command_operands(cmd, parts)
+        operands, _, _ = _file_command_operands(cmd, parts)
         paths = [candidate for candidate in operands if _looks_path_target(candidate)]
         rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
         return _ShellSegmentMetadata(
@@ -858,7 +858,7 @@ def _classify_shell_segment_without_redirection(
         )
 
     if cmd in {"rm", "mkdir", "rmdir"}:
-        operands, _ = _file_command_operands(cmd, parts)
+        operands, _, _ = _file_command_operands(cmd, parts)
         paths = [candidate for candidate in operands if _looks_path_target(candidate)]
         return _ShellSegmentMetadata(
             "write",
@@ -867,9 +867,10 @@ def _classify_shell_segment_without_redirection(
         )
 
     if cmd in {"cp", "install"}:
-        operands, target_directory = _file_command_operands(cmd, parts)
-        candidate = target_directory or (operands[-1] if operands else None)
-        paths = [candidate] if candidate and _looks_path_target(candidate) else []
+        operands, target_directory, creates_directories = _file_command_operands(cmd, parts)
+        if not creates_directories:
+            operands = [target_directory or operands[-1]] if target_directory or operands else []
+        paths = [candidate for candidate in operands if _looks_path_target(candidate)]
         rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
         return _ShellSegmentMetadata(
             "write",
@@ -879,7 +880,7 @@ def _classify_shell_segment_without_redirection(
         )
 
     if cmd == "mv":
-        operands, target_directory = _file_command_operands(cmd, parts)
+        operands, target_directory, _ = _file_command_operands(cmd, parts)
         operands += [target_directory] if target_directory else []
         paths = [candidate for candidate in operands if _looks_path_target(candidate)]
         return _ShellSegmentMetadata(
