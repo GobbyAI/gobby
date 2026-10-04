@@ -150,6 +150,7 @@ pub async fn run_live_loop<B: Backend>(
     let mut system_theme_watcher = None;
     let mut system_theme_watch_attempted = false;
     let mut host_colors_due = true;
+    let mut host_colors_asked_at = None;
     let mut prefix_armed = false;
     let mut reconnect_job = None;
     let mut startup_job = if launch_pending {
@@ -495,7 +496,8 @@ pub async fn run_live_loop<B: Backend>(
             }
             _ = render_tick.tick() => {
                 // System's ground is the hosting terminal's own colours: ask
-                // for them on entering System and after each appearance flip.
+                // for them on entering System, after each appearance flip,
+                // and again whenever the last answer has aged out.
                 host_colors_due |= !chrome.prefs.follows_system();
                 if chrome.prefs.follows_system() {
                     if !system_theme_watch_attempted {
@@ -512,10 +514,13 @@ pub async fn run_live_loop<B: Backend>(
                             host_colors_due = true;
                         }
                     }
-                    if std::mem::take(&mut host_colors_due) {
-                        let arm = &chrome.host_color_query;
-                        super::theme_sync::query_host_colors(arm, &mut std::io::stdout())?;
-                    }
+                    super::theme_sync::query_host_colors_when_due(
+                        &chrome.host_color_query,
+                        &mut host_colors_asked_at,
+                        std::mem::take(&mut host_colors_due),
+                        std::time::Instant::now(),
+                        &mut std::io::stdout(),
+                    )?;
                 } else if let Some(watcher) = &system_theme_watcher {
                     for _ in watcher.try_iter() {}
                 }

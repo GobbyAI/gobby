@@ -17,6 +17,7 @@ use gobby_terminal::protocol::ClientMessage;
 use gobby_terminal::raw_input::HostColorQueryArm;
 use gobby_terminal::terminal_theme::{ThemeDeclaration, HOST_COLOR_QUERY_SEQUENCE};
 use std::io::Write;
+use std::time::{Duration, Instant};
 
 use super::attach::AttachState;
 use super::pane::Pane;
@@ -40,6 +41,32 @@ pub(crate) fn query_host_colors(
     arm.query_sent();
     output.write_all(HOST_COLOR_QUERY_SEQUENCE.as_bytes())?;
     output.flush()
+}
+
+/// How old System mode lets its last host colour answer get before asking
+/// again. A terminal can answer before it repaints after an appearance flip,
+/// and its theme can change with no flip at all, so one ask per flip could
+/// leave panes declaring a stale ground for good.
+pub(crate) const HOST_COLOR_REQUERY_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Ask the hosting terminal for its colours when `due` (entering System or an
+/// appearance flip) or when the last ask, stamped in `asked_at`, is
+/// `HOST_COLOR_REQUERY_INTERVAL` old. Returns whether it asked. An unchanged
+/// answer reaches no pane: theme sync declares only a theme that changed.
+pub(crate) fn query_host_colors_when_due(
+    arm: &HostColorQueryArm,
+    asked_at: &mut Option<Instant>,
+    due: bool,
+    now: Instant,
+    output: &mut impl Write,
+) -> std::io::Result<bool> {
+    let stale = asked_at.is_none_or(|at| now.duration_since(at) >= HOST_COLOR_REQUERY_INTERVAL);
+    if !due && !stale {
+        return Ok(false);
+    }
+    query_host_colors(arm, output)?;
+    *asked_at = Some(now);
+    Ok(true)
 }
 
 /// Whether an attach reply's `host_capabilities` include terminal themes.

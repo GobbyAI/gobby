@@ -158,9 +158,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OSC 10/11 answers match the ground** (#23286) — panes are declared the
   colours their default cells actually sit on. Dark and Light declare the
   painted palette's text and `panel_bg`, monochrome grays included. System
-  queries the hosting terminal's own colours (OSC 10/11) on entering System
-  and after each appearance flip, and declares those, or nothing until they
-  are known, instead of the theme's `panel_bg` on a ground it never paints.
+  queries the hosting terminal's own colours (OSC 10/11) on entering System,
+  after each appearance flip, and again once the last answer is 5 s old, and
+  declares those, or nothing until they are known, instead of the theme's
+  `panel_bg` on a ground it never paints. The re-ask replaces an answer the
+  terminal gave before repainting, and follows a terminal theme change that
+  came with no appearance flip.
   Each query re-arms the input reader through
   `gobby_terminal::raw_input::HostColorQueryArm`, so a reply split at its ESC
   is stitched rather than sent to the focused pane as an Escape key.
