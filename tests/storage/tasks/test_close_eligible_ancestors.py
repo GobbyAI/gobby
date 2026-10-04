@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +12,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._automation import HOLD_LABELS
+from gobby.storage.tasks._stage_utils import close_eligible_parent_chain
 from gobby.storage.tasks._transitions import claim_task
 from gobby.utils.machine_id import get_machine_id
 from tests.storage.tasks._stage_test_helpers import (
@@ -300,3 +303,41 @@ def test_reparent_keeps_a_guarded_old_parent_open(
     manager.update_task(moved.id, parent_task_id=new_parent.id)
 
     assert _open(manager, old_parent.id)
+
+
+def test_inverse_concurrent_reparents_do_not_deadlock(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two moves in opposite directions both reach the old-parent walk together.
+
+    Run inside the move's transaction, each walk waited on the old parent row while
+    holding its proposed parent row, which the other move held the other way round.
+    """
+    manager, project_id = _manager(temp_db, tmp_path)
+    left = _create(manager, project_id, "Left epic", task_type="epic")
+    right = _create(manager, project_id, "Right epic", task_type="epic")
+    from_left = _create(manager, project_id, "From left", parent_task_id=left.id)
+    from_right = _create(manager, project_id, "From right", parent_task_id=right.id)
+
+    both_at_walk = threading.Barrier(2, timeout=10.0)
+
+    def walk_together(*args: Any, **kwargs: Any) -> None:
+        both_at_walk.wait()
+        close_eligible_parent_chain(*args, **kwargs)
+
+    monkeypatch.setattr("gobby.storage.tasks._manager.close_eligible_parent_chain", walk_together)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        moves = [
+            executor.submit(manager.update_task, from_left.id, parent_task_id=right.id),
+            executor.submit(manager.update_task, from_right.id, parent_task_id=left.id),
+        ]
+        for move in moves:
+            move.result(timeout=30.0)
+
+    moved_right = manager.get_task(from_left.id)
+    moved_left = manager.get_task(from_right.id)
+    assert moved_right is not None and moved_right.parent_task_id == right.id
+    assert moved_left is not None and moved_left.parent_task_id == left.id
+    assert _open(manager, left.id)
+    assert _open(manager, right.id)

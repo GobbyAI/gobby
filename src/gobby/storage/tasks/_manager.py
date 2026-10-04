@@ -401,6 +401,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             if validation_criteria is not UNSET:
                 validation_criteria = effective_criteria
 
+        vacated_parent_id: str | None = None
         with self.db.transaction() as conn:
             moved_from = (
                 None
@@ -454,22 +455,28 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
                     and moved_from["closed_at"] is None
                     and moved_from["parent_task_id"] != parent_task_id
                 ):
-                    # Moving an open child out can leave the old parent with none,
-                    # and no child close will ever arrive to close it (#23384).
-                    close_eligible_parent_chain(
-                        conn,
-                        moved_from["parent_task_id"],
-                        db=self.db,
-                        reason=None,
-                        closed_at=utc_now(),
-                        closed_in_session_id=None,
-                        closed_ancestors=None,
-                    )
+                    vacated_parent_id = moved_from["parent_task_id"]
 
             if affected_files is not UNSET:
                 TaskAffectedFileManager(self.db).replace_declared_files(
                     task_id,
                     cast(list[str], affected_files),
+                )
+
+        if vacated_parent_id is not None:
+            # Moving an open child out can leave the old parent with none, and no
+            # child close will ever arrive to close it (#23384). The walk runs after
+            # the move commits: inside it, the walk waited on the old parent row while
+            # holding the proposed parent row, and an inverse move deadlocked on them.
+            with self.db.transaction() as conn:
+                close_eligible_parent_chain(
+                    conn,
+                    vacated_parent_id,
+                    db=self.db,
+                    reason=None,
+                    closed_at=utc_now(),
+                    closed_in_session_id=None,
+                    closed_ancestors=None,
                 )
 
         self._notify_listeners()
