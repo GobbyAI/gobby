@@ -259,6 +259,12 @@ impl Workspace<LiveDaemon> {
         if !pane.is_live() {
             return;
         }
+        // A host-recovered pane stays live on its host stream while it takes
+        // a fresh daemon attachment; the one it holds died with the old
+        // generation, so the request waits for the new one (#23419).
+        if pane.attached_generation() != Some(self.daemon.generation()) {
+            return;
+        }
         self.pending_control = None;
         self.next_control_seq += 1;
         let request = self.next_control_seq;

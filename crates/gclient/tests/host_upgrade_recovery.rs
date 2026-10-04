@@ -843,6 +843,103 @@ async fn host_recovered_pane_reattaches_after_daemon_generation_change() {
     mock.shutdown().await;
 }
 
+/// A take-control action while a host-recovered pane re-registers with the
+/// daemon waits for the fresh attachment: it is never sent under the
+/// attachment that died with the old generation (#23419).
+#[tokio::test]
+async fn take_control_during_host_reregister_waits_for_the_fresh_attachment() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.finalize_attachments_on_close();
+    let terminal_id = "terminal-control-during-reregister";
+    let host = DirectHost::start("epoch-1").await;
+    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("direct pane");
+    let attachment_before = workspace.pane(pane_id).attachment_id().to_string();
+
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    chrome.keymap = gobby_client::ui::keymap::Keymap::from_toml(
+        "prefix = \"ctrl+b\"\n[bindings]\ntake_control = \"prefix+t\"\n",
+        "ctrl+b",
+    )
+    .expect("take-control keymap");
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        host.disconnect();
+        host.expect_attaches(2).await;
+        settle().await;
+        // The fresh attachment's reply is held, so the take-control lands
+        // while the pane still holds the dead generation's attachment.
+        let release_attach = mock.hold_ws("terminal_attach", |_| true);
+        mock.close_websockets_going_away();
+        wait_until("the daemon to reconnect", || {
+            mock.websocket_handshakes() >= 2
+        })
+        .await;
+        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('t'), KeyModifiers::NONE).await;
+        settle().await;
+        release_attach.notify_one();
+        wait_until("control under the fresh attachment", || {
+            websocket_requests(&mock, "terminal_take_control")
+                .iter()
+                .any(|request| {
+                    request["attachment_id"]
+                        .as_str()
+                        .is_some_and(|id| id != attachment_before)
+                })
+        })
+        .await;
+        settle().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("take-control during a host-recovered pane's re-registration");
+    assert!(
+        chrome
+            .alert_log
+            .iter()
+            .all(|toast| toast.title
+                != "The attachment's control scope has an indeterminate result."),
+        "take-control during re-registration waits for the fresh attachment"
+    );
+    let stale_takes: Vec<_> = websocket_requests(&mock, "terminal_take_control")
+        .into_iter()
+        .skip(1)
+        .filter(|request| request["attachment_id"] == json!(attachment_before))
+        .collect();
+    assert!(
+        stale_takes.is_empty(),
+        "no control request names the dead attachment: {stale_takes:?}"
+    );
+    assert_ne!(workspace.pane(pane_id).attachment_id(), attachment_before);
+    assert_eq!(
+        host.attaches(),
+        2,
+        "the restored host stream is kept while control waits"
+    );
+    host.shutdown().await;
+    mock.shutdown().await;
+}
+
 /// 2.3.3: repeated failed daemon reconnect attempts and a daemon generation
 /// change overlapping the host restore do not cancel the host-local recovery,
 /// which succeeds. The restored pane's attachment died with the old daemon
