@@ -931,6 +931,15 @@ async fn take_control_during_host_reregister_waits_for_the_fresh_attachment() {
         "no control request names the dead attachment: {stale_takes:?}"
     );
     assert_ne!(workspace.pane(pane_id).attachment_id(), attachment_before);
+    let fresh_take = websocket_requests(&mock, "terminal_take_control")
+        .into_iter()
+        .find(|request| request["attachment_id"] == workspace.pane(pane_id).attachment_id())
+        .expect("control request under the fresh attachment");
+    assert_eq!(
+        fresh_take["takeover"],
+        json!(true),
+        "the explicit take-control takeover intent survives re-registration"
+    );
     assert_eq!(
         host.attaches(),
         2,

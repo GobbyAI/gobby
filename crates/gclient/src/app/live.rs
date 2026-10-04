@@ -216,6 +216,10 @@ impl Workspace<LiveDaemon> {
             .get(&pane_id)
             .is_some_and(|pane| pane.control_request.is_none());
         if idle {
+            let takeover = takeover
+                || self
+                    .pending_control
+                    .is_some_and(|pending| pending.pane_id == pane_id && pending.takeover);
             self.pending_control = Some(PendingControl { pane_id, takeover });
         }
     }
