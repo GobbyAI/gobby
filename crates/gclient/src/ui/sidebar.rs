@@ -14,21 +14,21 @@ pub mod projects;
 pub mod terminals;
 
 use crate::theme::Palette;
-use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
+use crate::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::scrollbar::{render_scrollbar, scrolled_recently, should_show_scrollbar};
 use crate::ui::settings::SidebarSide;
 use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar_rows::{
     project_rows, row_line_with_scrolling, row_second_line_with_travel, row_third_line, row_travel,
-    RowKind, SidebarRow,
+    worktree_glyph_offset, RowKind, SidebarRow,
 };
 use crate::ui::text::{display_width_u16, truncate_end};
 use gobby_terminal::layout::ScrollMetrics;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
 
 pub use agents::{
@@ -57,6 +57,8 @@ pub struct SidebarHits {
     pub projects: Vec<(String, Rect)>,
     /// Worktree rows, by worktree id.
     pub worktrees: Vec<(String, Rect)>,
+    /// The state dot of each worktree row with an agent bound, by worktree id.
+    pub worktree_glyphs: Vec<(String, Rect)>,
     /// The `▾`/`▸` cell of each card that has worktrees, by project id.
     pub group_toggles: Vec<(String, Rect)>,
     /// Session, agent run and bare terminal rows, by entry id (both lines).
@@ -225,19 +227,24 @@ pub fn section_metrics<W: WorkspaceView>(
     )
 }
 
-/// Draw a section heading into `rect`'s first row: the title at column 1,
-/// bold in the body text colour on the sidebar's own ground. Rows mark
-/// selection and activity with a fill; a heading never has one, so the two
-/// stay apart in every theme, monochrome included.
+/// Draw a section heading into `rect`'s first row: a full-width
+/// `surface_dim` band, between the ground and the `surface0`/`surface1` row
+/// fills in either theme, with the title at column 1 in bold body text
+/// (#23280).
 pub(super) fn render_band(frame: &mut Frame, rect: Rect, title: &str, palette: &Palette) {
     let rect = Rect::new(rect.x, rect.y, rect.width, rect.height.min(BAND_ROWS));
     if rect.width < 3 || rect.height == 0 {
         return;
     }
+    frame.render_widget(
+        Block::default().style(Style::default().bg(palette.surface_dim)),
+        rect,
+    );
     let title = truncate_end(title, usize::from(rect.width) - 2);
     let title_rect = Rect::new(rect.x + 1, rect.y, display_width_u16(&title), 1);
     let style = Style::default()
         .fg(palette.text)
+        .bg(palette.surface_dim)
         .add_modifier(Modifier::BOLD);
     frame.render_widget(Paragraph::new(Span::styled(title, style)), title_rect);
 }
@@ -318,7 +325,15 @@ pub(super) fn render_section_rows(
                         ));
                     }
                 }
-                RowKind::Worktree => hits.worktrees.push((row.id.clone(), rect)),
+                RowKind::Worktree => {
+                    hits.worktrees.push((row.id.clone(), rect));
+                    // An unbound worktree draws no dot, so it has no dot hit.
+                    let x = body.x.saturating_add(worktree_glyph_offset(row));
+                    if row.state != RowState::Unknown && x < body.right() {
+                        hits.worktree_glyphs
+                            .push((row.id.clone(), Rect::new(x, y, 1, 1)));
+                    }
+                }
                 RowKind::Agent | RowKind::Terminal => hits.agents.push((row.id.clone(), rect)),
                 RowKind::Machine => hits.machines.push((row.id.clone(), rect)),
                 RowKind::Group => {}

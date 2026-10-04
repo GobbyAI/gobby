@@ -6,7 +6,7 @@ use ratatui::Frame;
 use std::fmt;
 use std::sync::OnceLock;
 
-const GOBLIN_LARGE: &str = include_str!("../../assets/marks/goblin-33x16.grid");
+const GOBLIN_LARGE: &str = include_str!("../../assets/marks/goblin-41x18.grid");
 const GOBLIN_SMALL: &str = include_str!("../../assets/marks/goblin-29x14.grid");
 const WORDMARK: &str = include_str!("../../assets/marks/wordmark-braille-54x8.txt");
 const WORDMARK_SHADOW: &str = include_str!("../../assets/marks/wordmark-shadow-49x9.grid");
@@ -24,6 +24,8 @@ enum Role {
     Ink,
     Glint,
     Dim,
+    Node,
+    Edge,
     Transparent,
 }
 
@@ -35,6 +37,8 @@ impl Role {
             'i' => Ok(Self::Ink),
             'g' => Ok(Self::Glint),
             'd' => Ok(Self::Dim),
+            'n' => Ok(Self::Node),
+            'e' => Ok(Self::Edge),
             '.' => Ok(Self::Transparent),
             _ => Err(MarkError::new(
                 line,
@@ -209,39 +213,66 @@ pub struct MarkPalette {
     pub ink: Option<Color>,
     pub glint: Option<Color>,
     pub dim: Option<Color>,
+    /// The halo's network nodes and the edges between them.
+    pub node: Option<Color>,
+    pub edge: Option<Color>,
     pub braille: Color,
 }
 
 impl MarkPalette {
-    pub fn normal(palette: &Palette) -> Self {
+    /// Halo nodes are info blue and edges `overlay0`; in monochrome, where
+    /// info is only a grey, nodes take `dim` and edges `surface1`.
+    pub fn normal(palette: &Palette, monochrome: bool) -> Self {
+        let (node, edge) = if monochrome {
+            (palette.dim, palette.surface1)
+        } else {
+            (palette.blue, palette.overlay0)
+        };
         Self {
             accent: Some(palette.accent),
             overlay1: Some(palette.overlay1),
             ink: Some(palette.ink),
             glint: Some(palette.glint),
             dim: Some(palette.dim),
+            node: Some(node),
+            edge: Some(edge),
             braille: palette.wordmark,
         }
     }
 
-    pub fn shadow(palette: &Palette) -> Self {
+    pub fn shadow(palette: &Palette, monochrome: bool) -> Self {
         Self {
             braille: palette.dim,
-            ..Self::normal(palette)
+            ..Self::normal(palette, monochrome)
         }
     }
 
+    /// Every role keeps its own colour, and the eye glint stays the
+    /// splash's white, so the dimmed goblin still has both eyes (#23280).
+    /// The halo's nodes take the dimmed fill and its edges the dimmed tablet.
     pub fn dimmed(palette: &Palette, kind: ThemeKind) -> Self {
-        let (fill, lines) = match kind {
-            ThemeKind::Dark => (palette.overlay0, palette.panel_bg),
-            ThemeKind::Light => (palette.surface1, palette.overlay0),
+        let (accent, overlay1, ink, dim) = match kind {
+            ThemeKind::Dark => (
+                palette.overlay0,
+                palette.dim,
+                palette.panel_bg,
+                palette.panel_bg,
+            ),
+            ThemeKind::Light => (
+                palette.surface1,
+                palette.overlay0,
+                palette.subtext0,
+                palette.overlay0,
+            ),
         };
         Self {
-            accent: Some(fill),
-            overlay1: Some(lines),
-            ink: Some(lines),
-            glint: None,
-            dim: Some(lines),
+            accent: Some(accent),
+            overlay1: Some(overlay1),
+            ink: Some(ink),
+            glint: Some(palette.glint),
+            dim: Some(dim),
+            node: Some(accent),
+            edge: Some(overlay1),
             braille: palette.wordmark,
         }
     }
@@ -253,6 +284,8 @@ impl MarkPalette {
             Role::Ink => self.ink,
             Role::Glint => self.glint,
             Role::Dim => self.dim,
+            Role::Node => self.node,
+            Role::Edge => self.edge,
             Role::Transparent => None,
         }
     }

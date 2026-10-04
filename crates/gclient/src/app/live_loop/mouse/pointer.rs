@@ -4,6 +4,7 @@ use crossterm::event::{KeyModifiers, MouseButton, MouseEvent};
 use gobby_terminal::layout::{self, Node, ScrollMetrics};
 use ratatui::layout::{Direction, Rect};
 
+use crate::app::sidebar_model::worktree_focus_target;
 use crate::app::PaneId;
 use crate::ui::chrome::Tab;
 use crate::ui::hit::{Hit, SidebarSection};
@@ -165,7 +166,9 @@ pub(super) fn down<W: WorkspaceView>(
             );
             MouseOutcome::Handled
         }
-        Hit::Worktree(worktree_id) if button == MouseButton::Right => {
+        Hit::Worktree(worktree_id) | Hit::WorktreeGlyph(worktree_id)
+            if button == MouseButton::Right =>
+        {
             open_menu(
                 ws,
                 chrome,
@@ -221,6 +224,12 @@ pub(super) fn down<W: WorkspaceView>(
             MouseOutcome::FocusProject(project_id)
         }
         Hit::Worktree(worktree_id) => MouseOutcome::OpenWorktree(worktree_id),
+        // The dot shows the agent whose state it draws. A frame drawn before
+        // the agent left falls back to the row's own click.
+        Hit::WorktreeGlyph(worktree_id) => worktree_focus_target(ws.sidebar(), &worktree_id)
+            .map_or(MouseOutcome::OpenWorktree(worktree_id), |agent| {
+                MouseOutcome::FocusAgent(agent.entry_id.clone())
+            }),
         Hit::GroupToggle(project_id) => {
             chrome.sidebar.toggle_group(&project_id);
             MouseOutcome::Handled

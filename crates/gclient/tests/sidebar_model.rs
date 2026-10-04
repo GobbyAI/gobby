@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use gobby_client::app::sidebar_model::{
-    agent_state, build, provider_label, rollup, AgentEntry, SandboxState, SidebarInputs,
-    SidebarModel,
+    agent_state, build, provider_label, rollup, worktree_focus_target, AgentEntry, SandboxState,
+    SidebarInputs, SidebarModel,
 };
 use gobby_client::app::{Backend, Pane, PaneId};
 use gobby_client::daemon::{
@@ -731,4 +731,161 @@ fn agy_sessions_are_labelled_antigravity() {
     assert_eq!(provider_label("agy"), "Antigravity");
     assert_eq!(provider_label(" AGY "), "Antigravity");
     assert_eq!(provider_label("codex"), "Codex");
+}
+
+/// Rows for one project with the given worktrees (path `/w/<id>`) and
+/// sessions, each session carrying the `worktree_id` its daemon resolved and
+/// sitting on its own roster entry `session:<id>` and terminal `term-<id>`.
+fn workspace_rows(
+    worktrees: &[&str],
+    sessions: &[(&str, Option<&str>)],
+) -> (SidebarRows, Vec<RosterEntry>) {
+    let rows = SidebarRows {
+        projects: vec![ProjectRow {
+            id: PROJECT.to_string(),
+            name: "gobby".to_string(),
+            ..Default::default()
+        }],
+        worktrees: worktrees
+            .iter()
+            .map(|id| WorktreeRow {
+                id: id.to_string(),
+                project_id: PROJECT.to_string(),
+                worktree_path: format!("/w/{id}"),
+                status: "active".to_string(),
+                workspace_role: "task".to_string(),
+                ..Default::default()
+            })
+            .collect(),
+        sessions: BTreeMap::from([(
+            PROJECT.to_string(),
+            sessions
+                .iter()
+                .map(|(id, worktree)| SessionRow {
+                    id: id.to_string(),
+                    status: "active".to_string(),
+                    machine_id: Some(LOCAL_MACHINE.to_string()),
+                    worktree_id: worktree.map(str::to_owned),
+                    ..Default::default()
+                })
+                .collect(),
+        )]),
+        ..Default::default()
+    };
+    let roster = sessions
+        .iter()
+        .map(|(id, _)| {
+            let mut agent = entry(&format!("session:{id}"), Some(&format!("term-{id}")));
+            agent.session_id = Some(id.to_string());
+            agent
+        })
+        .collect();
+    (rows, roster)
+}
+
+/// #23280 item 5: the worktree indicator only knew spawned runs
+/// (`run.worktree_id`), so an interactive or root session working in a
+/// worktree never lit it. A session now binds through the `worktree_id` its
+/// own machine's daemon resolves (symlinks and `..` included, never by the
+/// client comparing paths), and the worktree rolls up its bound sessions.
+#[test]
+fn sessions_bind_through_the_daemon_resolved_worktree_id() {
+    let (rows, roster) = workspace_rows(
+        &["wt-1", "wt-10", "wt-idle"],
+        &[("a", Some("wt-1")), ("b", Some("wt-10")), ("c", None)],
+    );
+
+    let model = model(&rows, &roster, &[]);
+
+    let bound: Vec<(&str, Option<&str>)> = model
+        .agents
+        .iter()
+        .map(|agent| (agent.entry_id.as_str(), agent.worktree_id.as_deref()))
+        .collect();
+    assert_eq!(
+        bound,
+        [
+            ("session:a", Some("wt-1")),
+            ("session:b", Some("wt-10")),
+            ("session:c", None),
+        ]
+    );
+    let states: Vec<(&str, Option<RowState>)> = model.projects[0]
+        .worktrees
+        .iter()
+        .map(|worktree| (worktree.worktree_id.as_str(), worktree.state))
+        .collect();
+    assert_eq!(
+        states,
+        [
+            ("wt-1", Some(RowState::Working)),
+            ("wt-10", Some(RowState::Working)),
+            ("wt-idle", None),
+        ],
+        "a bound worktree rolls up its sessions; an unbound one has no state"
+    );
+}
+
+/// #23280 item 5 review: lexical containment bound `/w/wt-1/link/src` to
+/// `wt-1` even when `link` points outside it. The client no longer compares
+/// paths at all: a session row whose daemon resolved no worktree binds
+/// nothing, whatever its workspace path says.
+#[test]
+fn a_workspace_path_without_a_resolved_worktree_binds_nothing() {
+    let (mut rows, roster) = workspace_rows(&["wt-1"], &[]);
+    let session: SessionRow = serde_json::from_value(serde_json::json!({
+        "id": "a",
+        "status": "active",
+        "machine_id": LOCAL_MACHINE,
+        "workspace_path": "/w/wt-1/link/src",
+        "worktree_id": null,
+    }))
+    .expect("session row");
+    rows.sessions.insert(PROJECT.to_string(), vec![session]);
+    let mut roster = roster;
+    let mut agent = entry("session:a", Some("term-a"));
+    agent.session_id = Some("a".to_string());
+    roster.push(agent);
+
+    let model = model(&rows, &roster, &[]);
+
+    assert_eq!(model.agents[0].worktree_id, None);
+    assert_eq!(model.projects[0].worktrees[0].state, None);
+}
+
+/// #23280 item 5: a click on the worktree glyph shows the agent whose state
+/// the glyph draws, the first in roster order on a tie. An unseen agent
+/// counts as idle in the rollup, so a working one outranks it.
+#[test]
+fn worktree_focus_target_is_the_agent_behind_the_rolled_up_glyph() {
+    let (rows, mut roster) = workspace_rows(
+        &["wt-1", "wt-idle"],
+        &[
+            ("unseen", Some("wt-1")),
+            ("first", Some("wt-1")),
+            ("second", Some("wt-1")),
+            ("blocked", Some("wt-1")),
+        ],
+    );
+    roster[0].lifecycle_status = None;
+    let panes = [pane(1, "term-unseen", true, false)];
+
+    let calm = model(&rows, &roster[..3], &panes);
+    assert_eq!(calm.projects[0].worktrees[0].state, Some(RowState::Working));
+    assert_eq!(
+        worktree_focus_target(&calm, "wt-1").map(|agent| agent.entry_id.as_str()),
+        Some("session:first")
+    );
+    assert_eq!(worktree_focus_target(&calm, "wt-idle"), None);
+
+    roster[3].attention = blocked();
+    let urgent = model(&rows, &roster, &panes);
+    assert_eq!(
+        urgent.projects[0].worktrees[0].state,
+        Some(RowState::Attention)
+    );
+    assert_eq!(
+        worktree_focus_target(&urgent, "wt-1").map(|agent| agent.entry_id.as_str()),
+        Some("session:blocked")
+    );
 }

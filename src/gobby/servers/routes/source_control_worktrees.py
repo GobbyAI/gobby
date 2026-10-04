@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException
@@ -14,6 +13,7 @@ from gobby.mcp_proxy.tools.clones import create_clones_registry
 from gobby.servers.routes import source_control_git
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.worktrees import git as worktree_git
+from gobby.worktrees.containment import path_is_within
 from gobby.worktrees.creation import create_worktree as create_worktree_record
 from gobby.worktrees.deletion import (
     DeletionSurface,
@@ -307,19 +307,10 @@ async def _live_client_terminal_ids(server: HTTPServer, worktree: Any) -> list[s
                 continue
             session = session_manager.get(terminal.session_id)
             workspace_path = getattr(session, "workspace_path", None)
-            if isinstance(workspace_path, str) and _path_is_within(
+            if isinstance(workspace_path, str) and path_is_within(
                 workspace_path, worktree.worktree_path
             ):
                 terminal_ids.append(terminal.id)
         return terminal_ids
 
     return cast(list[str], await server.run_db(find_ids))
-
-
-def _path_is_within(path: str, root: str) -> bool:
-    """Return whether path is root or one of its descendants."""
-    try:
-        Path(path).expanduser().resolve().relative_to(Path(root).expanduser().resolve())
-    except (OSError, ValueError):
-        return False
-    return True

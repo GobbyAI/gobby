@@ -86,7 +86,7 @@ pub fn render_about(
             frame,
             (inner.x + 1, inner.y),
             marks::goblin_small(),
-            &MarkPalette::normal(p),
+            &MarkPalette::normal(p, chrome.prefs.monochrome),
         );
         // The 14-row asset reaches the panel's final row; keep its frame intact.
         for x in inner.x + 1..inner.x + 30 {

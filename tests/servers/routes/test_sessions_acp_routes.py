@@ -7,15 +7,19 @@ and single-broadcast behavior through a TestClient with in-memory fakes.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.servers.routes.sessions import create_sessions_router
+
+if TYPE_CHECKING:
+    from gobby.servers.http import HTTPServer
 
 pytestmark = pytest.mark.unit
 
@@ -74,7 +78,7 @@ class _SM:
     def list(self, **_kwargs: Any) -> list[_Session]:
         return list(self.rows.values())
 
-    def fetch_task_refs_by_session(self, _ids: list[str]) -> dict[str, Any]:
+    def fetch_task_refs_by_session(self, _ids: Sequence[str]) -> dict[str, Any]:
         return {}
 
     # -- lifecycle path ------------------------------------------------
@@ -253,7 +257,7 @@ def _server(sm: _SM, rm: _RM | None) -> SimpleNamespace:
 
     return SimpleNamespace(
         session_manager=sm,
-        services=SimpleNamespace(web_chat_runtime_manager=rm),
+        services=SimpleNamespace(web_chat_runtime_manager=rm, worktree_storage=None),
         resolve_project_id=_resolve_project_id,
         run_db=run_db,
     )
@@ -261,7 +265,7 @@ def _server(sm: _SM, rm: _RM | None) -> SimpleNamespace:
 
 def _client(sm: _SM, rm: _RM | None) -> TestClient:
     app = FastAPI()
-    app.include_router(create_sessions_router(_server(sm, rm)))
+    app.include_router(create_sessions_router(cast("HTTPServer", _server(sm, rm))))
     return TestClient(app)
 
 

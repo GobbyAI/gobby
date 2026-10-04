@@ -6,6 +6,7 @@
 //! carry a faint hue-125 tint; state colours are info 250 / warning 75 /
 //! destructive 350 / success 125 by lightness. State is never carried by
 //! hue alone: every indicator pairs a glyph or position cue with its colour.
+//! One non-state identifier hue, 315, marks refs and branches as text.
 
 use gobby_terminal::terminal_theme::{DefaultColorKind, RgbColor, TerminalTheme};
 use ratatui::style::Color;
@@ -79,6 +80,9 @@ pub const BRAND_HUE: u16 = 125;
 pub const INFO_HUE: u16 = 250;
 pub const WARNING_HUE: u16 = 75;
 pub const DESTRUCTIVE_HUE: u16 = 350;
+/// Refs and branches in the sidebar: a text role, never a state, at least
+/// 35 degrees from every state hue.
+pub const IDENTIFIER_HUE: u16 = 315;
 /// Neutrals tint toward the brand hue at chroma 0.005-0.008.
 pub const NEUTRAL_CHROMA: f32 = 0.006;
 
@@ -140,6 +144,7 @@ pub struct Theme {
     pub warning: Token,
     pub destructive: Token,
     pub success: Token,
+    pub identifier: Token,
     pub neutrals: Neutrals,
 }
 
@@ -160,6 +165,7 @@ impl Theme {
                     Some("leading"),
                 ),
                 success: Token::state("success", BRAND_HUE, 0.78, 0.10, "ok", Some("trailing")),
+                identifier: Token::state("identifier", IDENTIFIER_HUE, 0.85, 0.10, "", None),
                 neutrals: Neutrals {
                     panel_bg: Token::neutral("panel_bg", 0.16),
                     surface_dim: Token::neutral("surface_dim", 0.20),
@@ -186,6 +192,7 @@ impl Theme {
                     Some("leading"),
                 ),
                 success: Token::state("success", BRAND_HUE, 0.44, 0.10, "ok", Some("trailing")),
+                identifier: Token::state("identifier", IDENTIFIER_HUE, 0.50, 0.12, "", None),
                 neutrals: Neutrals {
                     panel_bg: Token::neutral("panel_bg", 0.985),
                     surface_dim: Token::neutral("surface_dim", 0.955),
@@ -284,6 +291,8 @@ pub struct Palette {
     pub ink: Color,
     pub glint: Color,
     pub dim: Color,
+    /// Refs and branches: the one non-state hue.
+    pub identifier: Color,
     /// The menu bar's ground: the light theme's accent in both themes.
     pub bar: Color,
     /// The menu bar's ink: the light theme's `panel_bg` in both themes.
@@ -297,15 +306,18 @@ pub struct Palette {
     pub wordmark: Color,
 }
 
+/// The menu bar's underline and tab rule, and the light theme's mark ink.
+const LINE: Token = Token::neutral("line", 0.08);
+
 impl Palette {
     /// Every herdr palette name paired with the token it resolves to.
-    /// `mauve` is a neutral (no purple in the contract); `red` is the
+    /// `mauve` is a neutral (the violet is `identifier`); `red` is the
     /// magenta-pink destructive token; `teal` and `blue` are both info.
-    pub fn entries(theme: &Theme) -> [(&'static str, Token); 19] {
+    pub fn entries(theme: &Theme) -> [(&'static str, Token); 20] {
         let n = &theme.neutrals;
         let (ink, glint) = match theme.kind {
             ThemeKind::Dark => (n.panel_bg, n.text),
-            ThemeKind::Light => (n.text, n.panel_bg),
+            ThemeKind::Light => (LINE, n.panel_bg),
         };
         [
             ("accent", theme.accent),
@@ -327,6 +339,7 @@ impl Palette {
             ("ink", ink),
             ("glint", glint),
             ("dim", n.dim),
+            ("identifier", theme.identifier),
         ]
     }
 
@@ -351,7 +364,7 @@ impl Palette {
         let n = &theme.neutrals;
         let (ink, glint) = match theme.kind {
             ThemeKind::Dark => (n.panel_bg, n.text),
-            ThemeKind::Light => (n.text, n.panel_bg),
+            ThemeKind::Light => (LINE, n.panel_bg),
         };
         // The menu bar is the light version whatever the theme.
         let light = Theme::new(ThemeKind::Light);
@@ -379,10 +392,11 @@ impl Palette {
             ink: paint(ink),
             glint: paint(glint),
             dim: paint(n.dim),
+            identifier: paint(theme.identifier),
             bar: paint(light.accent),
             bar_ink: paint(light.neutrals.panel_bg),
             bar_open_ink: paint(light.neutrals.text),
-            line: paint(Token::neutral("line", 0.08)),
+            line: paint(LINE),
             wordmark: paint(wordmark),
         }
     }
