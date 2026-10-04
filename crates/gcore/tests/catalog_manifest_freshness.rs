@@ -536,7 +536,10 @@ fn migration_adds_api_keys_and_machine_liveness_columns() -> anyhow::Result<()> 
         ]
     );
     let index: Option<String> = client
-        .query_one("SELECT to_regclass('public.idx_api_keys_machine')::text", &[])?
+        .query_one(
+            "SELECT to_regclass('public.idx_api_keys_machine')::text",
+            &[],
+        )?
         .get(0);
     assert_eq!(index.as_deref(), Some("idx_api_keys_machine"));
     let machine_columns: i64 = client
