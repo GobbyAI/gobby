@@ -326,3 +326,42 @@ def test_allows_dequoted_words_in_data_position(
     event = _shell_event("Bash", command)
 
     assert RuleEngine(db)._should_block(effect, event) is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # An unquoted word-initial `#` starts a comment, so its apostrophe opens
+        # no quote and the quoted command word is still dequoted (#23134 R4 F1).
+        "'gob'by" + _MUTATION[5:] + " # it's",
+        "true # it's\n'gob'by" + _MUTATION[5:],
+        "g\\obby" + _MUTATION[5:] + " # don't",
+        # A `#` inside a word or a quoted word starts no comment.
+        "echo 'a # b' && 'gob'by" + _MUTATION[5:],
+        "echo a#'b' && 'gob'by" + _MUTATION[5:],
+        # Inside backticks the closing backtick also ends the comment.
+        "echo `true # x` ; " + _MUTATION,
+        "x=`echo # it's` ; 'gob'by" + _MUTATION[5:],
+    ],
+)
+def test_blocks_quoted_command_word_beside_apostrophe_comment(
+    db: HubDatabase, effect: RuleEffect, command: str
+) -> None:
+    event = _shell_event("Bash", command)
+
+    assert RuleEngine(db)._should_block(effect, event) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "true # it's fine\necho '" + _MUTATION + "'",
+        "echo '" + _MUTATION + "' # don't run it",
+    ],
+)
+def test_allows_quoted_data_beside_apostrophe_comment(
+    db: HubDatabase, effect: RuleEffect, command: str
+) -> None:
+    event = _shell_event("Bash", command)
+
+    assert RuleEngine(db)._should_block(effect, event) is False

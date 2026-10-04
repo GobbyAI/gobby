@@ -146,6 +146,7 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
     heredoc_operator: str | None = None
     logical_continuation = False
     comparison_operators: set[int] = set()
+    in_backtick = False
     # Output redirects of substitutions inside the current double-quoted word.
     quoted_substitution_redirects: list[tuple[ShellToken, tuple[int, int]]] = []
 
@@ -228,6 +229,21 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
             escaped = False
             index += 1
             continue
+
+        if char == "#" and token_start is None:
+            # An unquoted word-initial ``#`` comments out the rest of the line; a
+            # quote inside it opens nothing. The newline still ends the command,
+            # and inside unquoted backticks so does the closing backtick.
+            end = command.find("\n", index)
+            end = len(command) if end == -1 else end
+            if in_backtick:
+                closing = command.find("`", index, end)
+                end = end if closing == -1 else closing
+            index = end
+            continue
+
+        if char == "`":
+            in_backtick = not in_backtick
 
         if char == "\\":
             if index + 1 < len(command) and command[index + 1] == "\n":

@@ -2161,6 +2161,27 @@ class TestHeredocTokenization:
         ]
         assert scan.heredocs == [HeredocBody("body", quoted=True, terminated=True, opener=2)]
 
+    def test_scan_skips_word_initial_comments_and_keeps_heredoc_input(self) -> None:
+        command = "cat <<'EOF' # it's\n# don't\nEOF\necho a#b 'c # d' # e's"
+
+        scan = scan_shell_command(command)
+
+        assert shell_token_values(scan.tokens) == [
+            "cat",
+            "<<",
+            "EOF",
+            "\n",
+            "echo",
+            "a#b",
+            "c # d",
+        ]
+        assert scan.heredocs == [HeredocBody("# don't", quoted=True, terminated=True, opener=2)]
+
+    def test_scan_ends_a_backtick_comment_at_the_closing_backtick(self) -> None:
+        scan = scan_shell_command("echo `true # it's` ; ls # `x`")
+
+        assert shell_token_values(scan.tokens) == ["echo", "`true", "`", ";", "ls"]
+
 
 class TestToolErrorDetection:
     """Tests for Phase 3: structured tool outcome normalization."""
