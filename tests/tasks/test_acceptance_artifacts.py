@@ -663,6 +663,18 @@ fn schema_contract() {
 """,
             "contains no executable assertion or panic expectation",
         ),
+        (
+            "crates/gcore/tests/schema_contract.rs",
+            "commented_contract",
+            """
+#[test]
+fn commented_contract() {
+    // assert_eq!(compute(), 2);
+    compute();
+}
+""",
+            "contains no executable assertion or panic expectation",
+        ),
     ],
 )
 def test_delegation_only_body_still_requires_an_executable_assertion(
@@ -740,6 +752,13 @@ fn check_declaration(path: &str, source: &str, name: &str) -> anyhow::Result<()>
             '    assert_ne!(source.find(name), None, "{path}");\n    Ok(())\n}\n',
             id="helper-chain",
         ),
+        pytest.param(
+            "fn check_declaration(path: &str, source: &str, name: &str)"
+            " -> anyhow::Result<()> {\n"
+            '    let note = "assert!(true)";\n'
+            '    assert_ne!(source.find(name), None, "{path}: {note}");\n    Ok(())\n}\n',
+            id="placebo-text-inside-a-string",
+        ),
     ],
 )
 def test_rust_test_asserting_through_same_file_helper_is_accepted(
@@ -771,6 +790,29 @@ def test_rust_test_asserting_through_same_file_helper_is_accepted(
             ' -> anyhow::Result<()> {\n    let _ = "unrelated()";\n    Ok(())\n}\n',
             "contains no executable assertion or panic expectation",
             id="asserting-function-named-only-in-a-string",
+        ),
+        pytest.param(
+            "fn check(x: u32) {\n    assert_eq!(x, 1);\n}\n\n"
+            "fn check_declaration(path: &str, source: &str, name: &str)"
+            " -> anyhow::Result<()> {\n"
+            "    let q = '\"'; let s = \"check(1)\"; let r = '\"';\n    Ok(())\n}\n",
+            "contains no executable assertion or panic expectation",
+            id="call-hidden-between-char-literals",
+        ),
+        pytest.param(
+            "fn check(x: u32) {\n    assert_eq!(x, 1);\n}\n\n"
+            "fn check_declaration(path: &str, source: &str, name: &str)"
+            " -> anyhow::Result<()> {\n"
+            '    let s = r#"a" check(1) "b"#;\n    Ok(())\n}\n',
+            "contains no executable assertion or panic expectation",
+            id="call-inside-a-raw-string",
+        ),
+        pytest.param(
+            "fn check_declaration(path: &str, source: &str, name: &str)"
+            " -> anyhow::Result<()> {\n"
+            "    // assert_eq!(name, path);\n    let _ = (path, source, name);\n    Ok(())\n}\n",
+            "contains no executable assertion or panic expectation",
+            id="commented-out-helper-assertion",
         ),
         pytest.param(
             "fn check_declaration(path: &str, source: &str, name: &str)"

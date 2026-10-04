@@ -58,10 +58,21 @@ _NON_ASSERTION_FAILURE_RE = re.compile(
 )
 
 _TEXT_ASSERTION_RE = re.compile(r"\b(?:assert|debug_assert)(?:_eq|_ne)?!\s*\(|\bshould_panic\b")
-# Calls a same-file helper can answer: no method, path or macro calls, and no
-# name that appears only inside a string literal or comment.
+# Calls a same-file helper can answer: no method, path or macro calls.
 _BARE_CALL_RE = re.compile(r"(?<![\w.:])([A-Za-z_]\w*)\s*\(")
-_STRING_OR_COMMENT_RE = re.compile(r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/', re.DOTALL)
+# Comments, then literals. Rust takes raw strings and char literals (a lifetime
+# such as 'a has no closing quote); other braced languages take '...' and `...`.
+_COMMENT_PATTERN = r"//[^\n]*|/\*.*?\*/"
+_DOUBLE_QUOTED_PATTERN = r'"(?:\\.|[^"\\])*"'
+_RUST_LITERAL_RE = re.compile(
+    rf"{_COMMENT_PATTERN}|(?<!\w)b?r(#*)\".*?\"\1|{_DOUBLE_QUOTED_PATTERN}"
+    r"|'(?:\\(?:u\{[0-9A-Fa-f]+\}|.)|[^'\\])'",
+    re.DOTALL,
+)
+_TEXT_LITERAL_RE = re.compile(
+    rf"{_COMMENT_PATTERN}|{_DOUBLE_QUOTED_PATTERN}|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`",
+    re.DOTALL,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -433,16 +444,33 @@ async def _resolve_test_body(
     if Path(path).suffix.casefold() == ".py":
         return _extract_python_test_body(source, symbol), ()
     body = _extract_braced_test_body(source, symbol)
-    return body, _same_file_helper_bodies(source, symbol, body)
+    return body, _same_file_helper_bodies(source, path, symbol, body)
 
 
-def _same_file_helper_bodies(source: str, symbol: str, body: str) -> tuple[str, ...]:
+def _mask_code(code: str, path: str) -> str:
+    """Drop comments and replace each literal with a token naming its text.
+
+    Equal literals share a token, so placebo checks still see `assert_eq!("a", "a")`.
+    """
+    literal_re = _RUST_LITERAL_RE if Path(path).suffix.casefold() == ".rs" else _TEXT_LITERAL_RE
+    tokens: dict[str, str] = {}
+
+    def replace(match: re.Match[str]) -> str:
+        text = match.group(0)
+        if text.startswith(("//", "/*")):
+            return " "
+        return tokens.setdefault(text, f'"s{len(tokens)}"')
+
+    return literal_re.sub(replace, code)
+
+
+def _same_file_helper_bodies(source: str, path: str, symbol: str, body: str) -> tuple[str, ...]:
     """Bodies of same-file functions reachable from the test through bare calls."""
     seen = {symbol.rsplit("::", 1)[-1].rsplit(".", 1)[-1]}
     helpers: list[str] = []
     pending = [body]
     while pending:
-        code = _STRING_OR_COMMENT_RE.sub("", pending.pop())
+        code = _mask_code(pending.pop(), path)
         for name in _BARE_CALL_RE.findall(code):
             if name in seen:
                 continue
@@ -603,8 +631,9 @@ def _python_test_findings(test: AcceptanceTest) -> list[str]:
 
 
 def _text_test_findings(test: AcceptanceTest) -> list[str]:
-    credited = [helper for helper in test.helpers if _TEXT_ASSERTION_RE.search(helper)]
-    body = "\n".join((test.body, *credited))
+    helpers = (_mask_code(helper, test.path) for helper in test.helpers)
+    credited = [helper for helper in helpers if _TEXT_ASSERTION_RE.search(helper)]
+    body = "\n".join((_mask_code(test.body, test.path), *credited))
     findings: list[str] = []
     placebo_patterns = (
         r"assert!\s*\(\s*true\s*\)",
