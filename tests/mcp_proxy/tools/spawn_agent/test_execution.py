@@ -1595,7 +1595,7 @@ class TestSpawnAgentPreRegistration:
                 return_value=(True, None),
             ) as mock_health,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._execution.schedule_tmux_health_check"
+                "gobby.mcp_proxy.tools.spawn_agent._execution.schedule_spawn_health_check"
             ) as schedule_health,
         ):
             mock_ctx.return_value = {
@@ -1687,7 +1687,7 @@ class TestSpawnAgentPreRegistration:
                 new_callable=AsyncMock,
                 return_value=health_result,
             ),
-            patch("gobby.mcp_proxy.tools.spawn_agent._execution.schedule_tmux_health_check"),
+            patch("gobby.mcp_proxy.tools.spawn_agent._execution.schedule_spawn_health_check"),
         ):
             mock_ctx.return_value = {
                 "id": "11111111-1111-4111-8111-111111110123",

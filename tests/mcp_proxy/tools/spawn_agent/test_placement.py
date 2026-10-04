@@ -324,7 +324,7 @@ def _build(
     monkeypatch.setattr(_failure_cleanup, "_cleanup_failed_spawn", counting_cleanup)
     monkeypatch.setattr(spawn_executor, "wrap_provider_command", lambda launch, command: command)
     monkeypatch.setattr(
-        "gobby.mcp_proxy.tools.spawn_agent._execution.schedule_tmux_health_check",
+        "gobby.mcp_proxy.tools.spawn_agent._execution.schedule_spawn_health_check",
         lambda *a, **k: None,
     )
     monkeypatch.setattr("gobby.runner_broadcasting.fire_agent_event", lambda *a, **k: None)

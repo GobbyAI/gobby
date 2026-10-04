@@ -14,7 +14,7 @@ from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import (
 )
 from gobby.mcp_proxy.tools.spawn_agent._health import (
     _terminal_is_live,
-    schedule_tmux_health_check,
+    schedule_spawn_health_check,
 )
 from gobby.mcp_proxy.tools.spawn_agent._response import build_spawn_response
 from gobby.mcp_proxy.tools.spawn_agent._runtime import _persist_spawn_runtime
@@ -322,7 +322,7 @@ async def finalize_executed_spawn(
                 }
 
         if terminal is not None:
-            schedule_tmux_health_check(
+            schedule_spawn_health_check(
                 runner,
                 run_id,
                 terminal.id,
