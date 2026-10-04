@@ -810,3 +810,76 @@ def test_python_heredoc_bound_path_receiver_escape_keeps_scope_unknown(
     assert data["canonical_tool_kind"] == "write"
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        pytest.param("-t 202601010000", id="stamp"),
+        pytest.param("-t202601010000", id="attached-stamp"),
+        pytest.param("-mt 202601010000", id="clustered-stamp"),
+        pytest.param("-d 2026-01-01", id="date"),
+        pytest.param("--date 2026-01-01", id="long-date"),
+        pytest.param("--date=2026-01-01", id="long-date-equals"),
+        pytest.param("-r ref.txt", id="reference"),
+        pytest.param("--reference ref.txt", id="long-reference"),
+        pytest.param("-A -01", id="adjust"),
+        pytest.param("--time atime", id="long-time"),
+    ],
+)
+def test_touch_option_values_are_not_write_targets(tmp_path: Path, options: str) -> None:
+    project, scratch = tmp_path / "project", tmp_path / "scratch"
+
+    data = _shell_write_metadata(f"touch {options} {scratch}/a", project)
+
+    assert data["canonical_file_paths"] == [f"{scratch}/a"]
+    assert data["canonical_repo_mutation"] is False
+
+
+def test_scratchpad_touch_t_mv_chain_is_not_repo_mutation(tmp_path: Path) -> None:
+    project, d = tmp_path / "project", tmp_path / "scratch" / "dry2"
+    command = (
+        f"mkdir -p {d}/oldspare {d}/run/cache && touch -t 202601010000 {d}/oldspare"
+        f" && touch {d}/marker && sleep 1 && mkdir {d}/run/cache/xdg-cache-home"
+        f" && mv {d}/oldspare {d}/run/cache/xdg-cache-home/pre-commit"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is False
+    assert "canonical_repo_mutation_scope_unknown" not in data
+
+
+def test_touch_with_option_value_still_attributes_a_repo_path(tmp_path: Path) -> None:
+    data = _shell_write_metadata("touch -t 202601010000 out.txt", tmp_path)
+
+    assert data["canonical_file_paths"] == ["out.txt"]
+    assert data["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        pytest.param("-m 755", id="mode"),
+        pytest.param("-pm 755", id="clustered-mode"),
+        pytest.param("--mode 755", id="long-mode"),
+    ],
+)
+def test_mkdir_mode_value_is_not_a_write_target(tmp_path: Path, options: str) -> None:
+    project, scratch = tmp_path / "project", tmp_path / "scratch"
+
+    data = _shell_write_metadata(f"mkdir {options} {scratch}/d", project)
+
+    assert data["canonical_file_paths"] == [f"{scratch}/d"]
+    assert data["canonical_repo_mutation"] is False
+
+
+@pytest.mark.parametrize("cmd", ["cp", "install"])
+def test_copy_target_directory_option_is_the_write_target(tmp_path: Path, cmd: str) -> None:
+    project, scratch = tmp_path / "project", tmp_path / "scratch"
+
+    data = _shell_write_metadata(f"{cmd} -t {project}/dest {scratch}/src", project)
+
+    assert data["canonical_file_paths"] == [f"{project}/dest"]
+    assert data["canonical_repo_mutation"] is True

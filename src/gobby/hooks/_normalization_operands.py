@@ -14,6 +14,64 @@ from gobby.hooks._normalization_shell import (
 )
 
 _CURL_SHORT_OPTIONS_WITH_VALUES = frozenset("AbcCdDeEFHKmoPQrTtuwxXYz")
+# Options whose value is the next word (or attached) for file-mutation commands.
+# Values are timestamps, modes, owners, suffixes, or read-only references, except
+# the -t/--target-directory destination, which _file_command_operands returns.
+_FILE_COMMAND_VALUE_OPTIONS: dict[str, tuple[str, frozenset[str]]] = {
+    "touch": ("Adrt", frozenset({"--date", "--reference", "--time"})),
+    "mkdir": ("m", frozenset({"--mode"})),
+    "mv": ("St", frozenset({"--suffix", "--target-directory"})),
+    "cp": ("St", frozenset({"--no-preserve", "--sparse", "--suffix", "--target-directory"})),
+    "install": (
+        "gmoSt",
+        frozenset(
+            {"--group", "--mode", "--owner", "--strip-program", "--suffix", "--target-directory"}
+        ),
+    ),
+}
+
+
+def _file_command_operands(cmd: str, parts: list[str]) -> tuple[list[str], str | None]:
+    """Return a file command's operands and its ``-t``/``--target-directory`` value.
+
+    Option values never become operands, including clustered short options
+    (``touch -mt STAMP``) and long options given a separate value.
+    """
+    short_values, long_values = _FILE_COMMAND_VALUE_OPTIONS.get(cmd, ("", frozenset()))
+    operands: list[str] = []
+    target_directory: str | None = None
+    after_options = False
+    index = 1
+    while index < len(parts):
+        part = parts[index]
+        index += 1
+        if not part or part in _SHELL_CONTROL_TOKENS:
+            continue
+        if after_options or part == "-" or not part.startswith("-"):
+            operands.append(part)
+            continue
+        if part == "--":
+            after_options = True
+            continue
+        option, value = part, None
+        if part.startswith("--"):
+            option, has_value, attached = part.partition("=")
+            if option not in long_values:
+                continue
+            value = attached if has_value else None
+        else:
+            for offset, flag in enumerate(part[1:], start=2):
+                if flag in short_values:
+                    option, value = f"-{flag}", part[offset:] or None
+                    break
+            else:
+                continue
+        if value is None:
+            value = parts[index] if index < len(parts) else ""
+            index += 1
+        if option in {"-t", "--target-directory"} and cmd != "touch":
+            target_directory = value
+    return operands, target_directory
 
 
 def _truncate_positional_paths(parts: list[str]) -> list[str]:
