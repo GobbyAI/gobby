@@ -1243,6 +1243,102 @@ class TestStopCommand:
             timeout=SERVICE_MANAGED_STOP_TIMEOUT_SECONDS,
         )
 
+    @patch("gobby.cli.daemon._wait_for_service_stop")
+    @patch("gobby.cli.daemon.service_stop", return_value={"success": True})
+    @patch(
+        "gobby.cli.daemon.get_service_status",
+        return_value={"installed": True, "enabled": True, "running": False, "platform": "macos"},
+    )
+    @patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
+    def test_stop_unloads_a_loaded_service_with_no_running_daemon(
+        self,
+        mock_load_config: MagicMock,
+        mock_stop_daemon: MagicMock,
+        mock_get_service_status: MagicMock,
+        mock_service_stop: MagicMock,
+        mock_wait_for_service_stop: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """A crash-looping job between relaunches is unloaded so launchd cannot revive it."""
+        mock_load_config.return_value = MagicMock()
+
+        result = runner.invoke(cli, ["stop"])
+
+        assert result.exit_code == 0, result.output
+        assert "Unloading the macos service so it cannot relaunch" in result.output
+        mock_service_stop.assert_called_once_with(
+            shutdown_intent="stop",
+            shutdown_source="cli_stop",
+            drain_terminals=False,
+        )
+        mock_stop_daemon.assert_called_once_with(
+            quiet=False,
+            shutdown_intent="stop",
+            shutdown_source="cli_stop",
+            drain_terminals=False,
+        )
+        mock_wait_for_service_stop.assert_not_called()
+
+    @patch(
+        "gobby.cli.daemon.service_stop",
+        return_value={"success": False, "error": "launchctl bootout failed: exit code 5"},
+    )
+    @patch(
+        "gobby.cli.daemon.get_service_status",
+        return_value={"installed": True, "enabled": True, "running": False, "platform": "macos"},
+    )
+    @patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
+    def test_stop_fails_when_the_loaded_service_cannot_be_unloaded(
+        self,
+        mock_load_config: MagicMock,
+        mock_stop_daemon: MagicMock,
+        mock_get_service_status: MagicMock,
+        mock_service_stop: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """A job left loaded is a failed stop even when no daemon process was found."""
+        mock_load_config.return_value = MagicMock()
+
+        result = runner.invoke(cli, ["stop"])
+
+        assert result.exit_code == 1
+        assert "Service unload failed: launchctl bootout failed: exit code 5" in result.output
+        mock_stop_daemon.assert_called_once()
+
+    @patch("gobby.cli.daemon.service_stop", return_value={"success": True})
+    @patch(
+        "gobby.cli.daemon.get_service_status",
+        return_value={"installed": True, "enabled": True, "running": False, "platform": "macos"},
+    )
+    @patch("gobby.cli.daemon.stop_daemon_util")
+    @patch("gobby.cli.daemon.stop_singleton_gate", return_value=("cancelled", None))
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
+    def test_stop_that_cancels_a_reservation_unloads_the_loaded_service(
+        self,
+        mock_gate: MagicMock,
+        mock_stop_daemon: MagicMock,
+        mock_get_service_status: MagicMock,
+        mock_service_stop: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Cancelling a pending service start also unloads the job that would relaunch it."""
+        result = runner.invoke(cli, ["stop"])
+
+        assert result.exit_code == 0, result.output
+        assert "Unloading the macos service so it cannot relaunch" in result.output
+        mock_gate.assert_called_once()
+        mock_get_service_status.assert_called_once_with()
+        mock_service_stop.assert_called_once_with(
+            shutdown_intent="stop",
+            shutdown_source="cli_stop",
+            drain_terminals=False,
+        )
+        mock_stop_daemon.assert_not_called()
+
     @pytest.mark.parametrize(
         ("marker", "exit_code"),
         [(None, 0), ("other-home", 1)],

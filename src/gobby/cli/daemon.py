@@ -194,6 +194,25 @@ def _wait_for_service_stop(
     return None
 
 
+def _unload_service_job(
+    svc: dict[str, Any],
+    shutdown_intent: str,
+    shutdown_source: str,
+    drain_terminals: bool,
+) -> bool:
+    """Unload a service job with no running daemon so its manager cannot revive one."""
+    click.echo(f"Unloading the {svc.get('platform', 'OS')} service so it cannot relaunch...")
+    result = service_stop(
+        shutdown_intent=shutdown_intent,
+        shutdown_source=shutdown_source,
+        drain_terminals=drain_terminals,
+    )
+    if result.get("success"):
+        return True
+    _step(f"Service unload failed: {result.get('error')}", error=True)
+    return False
+
+
 def _do_stop(
     ctx: click.Context,
     docker_flag: bool,
@@ -213,12 +232,17 @@ def _do_stop(
     if force and wait:
         raise click.UsageError("--force and --wait are mutually exclusive")
 
+    shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
     pid_file = get_gobby_home() / "gobby.pid"
     gate, gate_error = stop_singleton_gate(pid_file)
     if gate == "refuse":
         click.echo(gate_error or "Refusing to stop a non-daemon singleton holder", err=True)
         return False
     if gate == "cancelled":
+        # The cancelled start's job stays loaded and would relaunch the runner.
+        svc = {} if is_test_protect_enabled() else get_service_status()
+        if svc.get("installed") and svc.get("enabled"):
+            return _unload_service_job(svc, shutdown_intent, shutdown_source, drain_terminals)
         return True
 
     config = get_cli_runtime(ctx).read_only_operational_config()
@@ -234,13 +258,19 @@ def _do_stop(
         return False
     try:
         with protect_pending_handoffs(get_cli_runtime(ctx), force=force, wait=wait, report=_step):
-            shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
             # If OS service is installed and running, delegate to it. The service
             # manager is user-global, so test protection never drives it.
             docker_stopped = False
             docker_stop_succeeded = True
+            unloaded = True
             svc = {} if is_test_protect_enabled() else get_service_status()
-            if svc.get("installed") and svc.get("running"):
+            if svc.get("installed") and svc.get("enabled") and not svc.get("running"):
+                # A crash-looping job reports loaded but not running between
+                # relaunches; unload it, then stop any direct-started daemon below.
+                unloaded = _unload_service_job(
+                    svc, shutdown_intent, shutdown_source, drain_terminals
+                )
+            elif svc.get("installed") and svc.get("running"):
                 previous_pid = _get_running_daemon_pid(svc)
                 click.echo("Stopping via OS service manager...")
                 result = service_stop(
@@ -295,7 +325,7 @@ def _do_stop(
                 click.echo("Stopping Docker containers...")
                 docker_stop_succeeded = _services_stop(get_gobby_home())
 
-            return bool(success and docker_stop_succeeded)
+            return bool(success and docker_stop_succeeded and unloaded)
     except HandoffShutdownBlocked as exc:
         _step(f"Refusing to stop: {exc}", error=True)
         return False
