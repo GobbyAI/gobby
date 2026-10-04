@@ -2301,6 +2301,8 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
         .await
         .expect_err("pre-write cancelled control")
         .is_cancelled());
+    // Cancelling one control request leaves its in-flight sibling pending.
+    assert_eq!(daemon.pending_counts().2, 1);
     mid_send.abort();
     assert!(mid_send
         .await
