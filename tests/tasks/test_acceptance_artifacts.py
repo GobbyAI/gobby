@@ -313,11 +313,15 @@ describe("settings", () => {
   })
 })
 """
-    body = artifacts_module._extract_braced_test_body(source, "renders the empty state")
+    body = artifacts_module._extract_braced_test_body(
+        source, "renders the empty state", "sections.test.ts"
+    )
     assert 'it("renders the empty state"' in body
     assert "toBeTruthy()" in body
     assert "renders the filled state" not in body
-    single = artifacts_module._extract_braced_test_body(source, "renders the filled state")
+    single = artifacts_module._extract_braced_test_body(
+        source, "renders the filled state", "sections.test.ts"
+    )
     assert "it('renders the filled state'" in single
     assert "toBeFalsy()" in single
 
@@ -772,6 +776,59 @@ def test_rust_test_asserting_through_same_file_helper_is_accepted(
     assert any("fn check_declaration" in helper for helper in test.helpers)
     rendered = artifacts_module.render_acceptance_test_bodies(result.tests)
     assert "assert" in rendered.split("fn check_declaration", 1)[1]
+
+
+_RUST_CHAR_LITERAL_TEST = """\
+#[test]
+fn splits_on_quote_and_brace_chars() {
+    let quote = '"';
+    let (open, close, escaped) = ('{', '}', '\\'');
+    let raw = r#"{ "unbalanced"#;
+    assert_eq!(split_pair(raw, quote), (open, close, escaped));
+}
+"""
+
+
+def test_rust_char_literals_do_not_break_braced_body_extraction(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    test_file = repo / "crates" / "gcode" / "src" / "split_tests.rs"
+    test_file.parent.mkdir(parents=True)
+    trailing = "fn longest<'a>(left: &'a str, right: &'a str) -> &'a str {\n    left\n}\n"
+    test_file.write_text(f"{_RUST_CHAR_LITERAL_TEST}\n{trailing}", encoding="utf-8")
+    linked_sha = _commit(repo, "committed Rust char literal test")
+
+    result = evaluate_acceptance_artifacts(
+        criteria=(
+            "Quotes split.\ntest: crates/gcode/src/split_tests.rs::splits_on_quote_and_brace_chars"
+        ),
+        repo_path=str(repo),
+        commit_shas=[linked_sha],
+    )
+
+    assert result.findings == ()
+    assert result.passed is True
+    (test,) = result.tests
+    assert test.body == _RUST_CHAR_LITERAL_TEST.rstrip("\n")
+    lifetime_body = artifacts_module._extract_braced_test_body(
+        test_file.read_text(encoding="utf-8"), "longest", "crates/gcode/src/split_tests.rs"
+    )
+    assert lifetime_body == trailing.rstrip("\n")
+
+
+def test_single_quoted_braces_do_not_end_a_typescript_test_body() -> None:
+    source = """
+it("keeps braces in strings", () => {
+  const close = '}'
+  expect(close).toBe('}')
+})
+it("next", () => {})
+"""
+
+    body = artifacts_module._extract_braced_test_body(
+        source, "keeps braces in strings", "web/src/braces.test.ts"
+    )
+
+    assert body.endswith("expect(close).toBe('}')\n}")
 
 
 @pytest.mark.parametrize(
