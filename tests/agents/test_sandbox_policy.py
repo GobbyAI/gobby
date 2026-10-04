@@ -18,6 +18,7 @@ from gobby.agents.sandbox_run_environment import SandboxRunPaths
 from gobby.utils.daemon_git import GitFailed
 
 pytestmark = pytest.mark.unit
+pytest_plugins = ["pytester"]
 
 
 @pytest.fixture(autouse=True)
@@ -40,21 +41,39 @@ def _restore_user_write(root: Path) -> None:
         )
 
 
-def test_read_only_operator_stores_are_writable_after_teardown(tmp_path: Path) -> None:
-    source = _operator_store(tmp_path / "operator-pre-commit", "teardown")
-    (source / "repoabc" / "hook.py").chmod(0o400)
-    (source / "repoabc").chmod(0o500)
-    source.chmod(0o500)
-
-    _restore_user_write(tmp_path)
-
-    assert all(
-        path.stat().st_mode & stat.S_IWUSR
-        for path in (tmp_path, *tmp_path.rglob("*"))
-        if path.is_dir()
+def test_read_only_operator_stores_are_writable_after_teardown(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Fixture teardown runs after the test body, so an inner session drives it.
+    monkeypatch.setattr(sandbox_policy, "shutdown_pre_commit_store_spare", lambda: None)
+    pytester.makeconftest(
+        "from tests.agents.test_sandbox_policy import _cleanup_pre_commit_store_spare\n"
     )
-    shutil.rmtree(source)
-    assert not source.exists()
+    pytester.makepyfile(
+        """
+        from pathlib import Path
+
+        def test_leaves_read_only_store(tmp_path: Path) -> None:
+            repo = tmp_path / "operator-pre-commit" / "repoabc"
+            repo.mkdir(parents=True)
+            (repo / "hook.py").write_text("", encoding="utf-8")
+            (repo / "hook.py").chmod(0o400)
+            repo.chmod(0o500)
+            repo.parent.chmod(0o500)
+            Path(__file__).with_name("tree.txt").write_text(str(tmp_path), encoding="utf-8")
+        """
+    )
+
+    pytester.runpytest_inprocess("-p", "no:cacheprovider", "-p", "no:asyncio").assert_outcomes(
+        passed=1
+    )
+
+    tree = Path((pytester.path / "tree.txt").read_text(encoding="utf-8"))
+    assert all(
+        path.stat().st_mode & stat.S_IWUSR for path in (tree, *tree.rglob("*")) if path.is_dir()
+    )
+    shutil.rmtree(tree)
+    assert not tree.exists()
 
 
 def _workspace(tmp_path: Path, *, configured: bool = True) -> Path:
