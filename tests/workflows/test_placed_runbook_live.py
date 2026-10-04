@@ -9,6 +9,7 @@ CLIs are inert stand-ins on a curated PATH that holds no real provider.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -43,6 +44,7 @@ from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
 from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_executor import step_invocation_id
+from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 from tests.e2e.conftest import (
     CLIEventSimulator,
@@ -103,13 +105,21 @@ def e2e_home_dir(e2e_srt_spawn_home: Path) -> Path:
     return e2e_srt_spawn_home
 
 
-def _until[T](probe: Callable[[], T | None], timeout: float, what: str) -> T:
+def _until[T](
+    probe: Callable[[], T | None],
+    timeout: float,
+    what: str,
+    explain: Callable[[], object] | None = None,
+) -> T:
+    """Poll ``probe``; a timeout reports ``explain()``, the state still holding the wait."""
     deadline = time.monotonic() + timeout
     while True:
         value = probe()
         if value:
             return value
-        assert time.monotonic() < deadline, f"timed out after {timeout}s waiting for {what}"
+        if time.monotonic() >= deadline:
+            detail = "" if explain is None else f": {explain()}"
+            raise AssertionError(f"timed out after {timeout}s waiting for {what}{detail}")
         time.sleep(0.2)
 
 
@@ -296,9 +306,11 @@ def live(
 
 
 def _installed_runbook(db: HubDatabase) -> PipelineDefinition:
+    """The runbook as a launch resolves it: the loader projects the row's tags on."""
     row = PipelineDefinitionManager(db).get_by_name(PIPELINE)
     assert row is not None and row.enabled, "the bundled planning runbook is not installed"
-    definition = PipelineDefinition(**row.definition_json)
+    definition = asyncio.run(PipelineLoader(db).load_pipeline(PIPELINE))
+    assert definition is not None, PIPELINE
     assert "runbook" in definition.tags
     # No optional-enhancer, role-file or superseded agent-name inputs remain.
     assert set(definition.inputs) == RUNBOOK_INPUTS, sorted(definition.inputs)
@@ -491,8 +503,10 @@ def _runs_show(live: Live, execution_id: str) -> dict[str, Any]:
     """Seat outputs as an operator reads them: the runs-show JSON CLI."""
     cli = shutil.which("gobby", path=str(Path(sys.executable).parent))
     assert cli is not None, "the gobby console script is not installed beside this interpreter"
+    # The CLI scopes executions to the project its working directory names.
     shown = subprocess.run(
         [cli, "pipelines", "runs", "show", execution_id, "--json"],
+        cwd=live.daemon.project_dir,
         env=live.daemon.env,
         capture_output=True,
         text=True,
@@ -626,10 +640,15 @@ def _assert_live(live: Live, seats: list[Seat]) -> None:
 
 
 def _tool(live: Live, server: str, tool: str, **arguments: Any) -> dict[str, Any]:
+    """The tool's payload, carrying the HTTP envelope's success flag.
+
+    A successful internal result arrives wrapped under ``result`` with its own
+    ``success`` stripped; a failure arrives flat with ``success`` false.
+    """
     raw = live.mcp.call_tool(server, tool, arguments)
     result = raw.get("result", raw)
     assert isinstance(result, dict), raw
-    return result
+    return {**result, "success": raw.get("success")}
 
 
 def _roster(live: Live) -> dict[str, dict[str, Any]]:
@@ -654,11 +673,34 @@ def _settled(live: Live, seat: Seat) -> bool:
     return _run_settled(live, seat.run_id) and not _alive(seat.pid, seat.created)
 
 
+def _unsettled(live: Live, run_ids: list[str]) -> dict[str, Any]:
+    """Each unsettled run's status, terminal state and bound panes, and every live stand-in."""
+    runs: dict[str, Any] = {}
+    for run_id in run_ids:
+        if _run_settled(live, run_id):
+            continue
+        run = _run(live.db, run_id)
+        terminal_id = None if run is None else run["terminal_id"]
+        terminal = _terminal(live.db, str(terminal_id)) if terminal_id else None
+        runs[run_id] = {
+            "status": None if run is None else run["status"],
+            "terminal_id": terminal_id,
+            "terminal_state": None if terminal is None else terminal["state"],
+            "bound_panes": _bound_panes(live.db, str(terminal_id)) if terminal_id else 0,
+        }
+    return {"runs": runs, "standins": live_standins(_standin_paths(live.rig))}
+
+
 def _kill(live: Live, seats: list[Seat]) -> list[dict[str, Any]]:
     """kill_agent each recorded run, then prove the process, terminal and pane are gone."""
     results = [_tool(live, "gobby-agents", "kill_agent", run_id=seat.run_id) for seat in seats]
     assert all(result.get("success") is True for result in results), results
-    _until(lambda: all(_settled(live, seat) for seat in seats), 90, "killed seats settle")
+    _until(
+        lambda: all(_settled(live, seat) for seat in seats),
+        90,
+        "killed seats settle",
+        partial(_unsettled, live, [seat.run_id for seat in seats]),
+    )
     return [{"run_id": seat.run_id, "settled": True} for seat in seats]
 
 
@@ -698,7 +740,8 @@ def _cleanup(live: Live, record: dict[str, Any]) -> None:
     for run_id in owned:
         attempts.run(f"kill {run_id}", partial(_kill_unsettled, live, run_id))
     settled = partial(_owned_settled, live, owned)
-    attempts.run("settled", partial(_until, settled, 90, "owned runs settle"))
+    explain = partial(_unsettled, live, owned)
+    attempts.run("settled", partial(_until, settled, 90, "owned runs settle", explain))
     for place in live.places:
         close = partial(_tool, live, "gobby-workspaces", "close_workspace", workspace=place.ref)
         attempts.run(f"close {place.ref}", close)
@@ -852,7 +895,7 @@ def test_live_crash_window_adopts_seat(live: Live, seat_name: str, renamed: bool
         renaming = _tool(
             live, "gobby-workspaces", "rename_workspace_item", ref=pane_ref, name=label
         )
-        assert renaming.get("success", True) is not False, renaming
+        assert renaming["success"] is True, renaming
         moved = _pane(live.db, place, seats[-1].terminal_id)
         assert moved is not None and moved.id == pane.id and moved.label == label
     predecessors = {step.id: rows[step.id]["output_json"] for step in held[:-1]}
@@ -964,6 +1007,7 @@ def test_live_partial_redeploy(live: Live, failing: str) -> None:
 
     snapshot = _snapshot_steps(live, execution)
     resumed = _tool(live, "gobby-workflows", "resume_pipeline", execution_id=execution)
+    assert resumed["success"] is False, resumed
     assert resumed.get("error_code") == "runbook_resume_refused", resumed
     assert _snapshot_steps(live, execution) == snapshot
 
