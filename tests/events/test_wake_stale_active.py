@@ -225,25 +225,37 @@ async def _cancel_followups(dispatcher: WakeDispatcher) -> None:
 
 
 @pytest.mark.parametrize(
-    "send_read",
+    ("send_read", "skipped"),
     [
-        pytest.param(lambda: TerminalActivity(ComposerRead("unknown")), id="unknown"),
+        pytest.param(
+            lambda: TerminalActivity(ComposerRead("unknown")),
+            "composer_unconfirmed",
+            id="unknown",
+        ),
         pytest.param(
             lambda: TerminalActivity(ComposerRead("empty"), turn_in_flight_fingerprint="run-7"),
+            "composer_unconfirmed",
             id="turn_in_flight",
         ),
-        pytest.param(_probe_error, id="probe_error"),
+        pytest.param(_probe_error, "composer_unconfirmed", id="probe_error"),
+        pytest.param(
+            lambda: TerminalActivity(ComposerRead("draft", "half-typed reply")),
+            "composer_occupied",
+            id="draft",
+        ),
     ],
 )
-async def test_send_time_unconfirmed_composer_withholds_and_keeps_message_durable(
+async def test_send_time_blocked_composer_withholds_and_keeps_message_durable(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
     send_read: Callable[[], TerminalActivity],
+    skipped: str,
 ) -> None:
-    """#23102: after the reconcile pauses the row, an unconfirmed re-probe at the
-    send boundary must not reach the terminal sender or drop the durable message.
+    """#23102: after the reconcile pauses the row, a re-probe at the send boundary
+    that is unconfirmed or finds an operator draft must not reach the terminal
+    sender or drop the durable message.
     """
     caplog.set_level(logging.INFO, logger="gobby.events.wake")
     reads = 0
@@ -266,5 +278,5 @@ async def test_send_time_unconfirmed_composer_withholds_and_keeps_message_durabl
         "pending wake"
     ]
     line = _deferred_line(caplog, wake.session_id)
-    assert "skipped=composer_unconfirmed" in line
+    assert f"skipped={skipped}" in line
     await _cancel_followups(wake.dispatcher)
