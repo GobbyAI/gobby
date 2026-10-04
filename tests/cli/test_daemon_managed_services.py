@@ -29,7 +29,7 @@ def _hub_schema_apply(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     monkeypatch.setattr(
         datastores,
         "apply_hub_schema_contract",
-        lambda gobby_home: applied.append(gobby_home),
+        lambda gobby_home, *, require_owner: applied.append(gobby_home),
     )
     return applied
 
@@ -275,7 +275,7 @@ def test_schema_contract_applies_after_postgres_up_and_before_full_resolve(
     monkeypatch.setattr(
         datastores,
         "apply_hub_schema_contract",
-        lambda gobby_home: events.append("apply-schema"),
+        lambda gobby_home, *, require_owner: events.append("apply-schema"),
     )
     monkeypatch.setattr(daemon, "resolve_compose_runtime", _resolve)
     monkeypatch.setattr(subprocess, "run", _run)
@@ -310,7 +310,7 @@ def test_schema_contract_failure_fails_start_before_full_resolve(
         compose_calls.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    def _apply(gobby_home: Path) -> None:
+    def _apply(gobby_home: Path, *, require_owner: bool) -> None:
         raise RuntimeError("hub is unreachable")
 
     monkeypatch.setattr(datastores, "apply_hub_schema_contract", _apply)

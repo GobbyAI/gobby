@@ -17,14 +17,11 @@ import httpx
 from gobby.agents.spawners.auth_env import has_auth_env
 from gobby.cli.daemon_singleton import (
     admit_direct_start,
-    admit_service_start,
-    probe_start_blocker,
     service_backend_name,
 )
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.runner_front_door import PORT_REUSE_WAIT_SECONDS
-from gobby.runner_pid_file import probe_daemon_lock
 from gobby.ui_exposure import UiExposeError, reconcile_ui_exposure
 from gobby.utils.dependency_requirements import (
     collect_dependency_report,
@@ -322,40 +319,21 @@ def start(ctx: click.Context, verbose: bool) -> None:
     pid_file = gobby_dir / "gobby.pid"
     # The service manager is user-global, so test protection never drives it.
     svc = {} if is_test_protect_enabled() else get_service_status()
-    claim: PidFileClaim | None = adopt_inherited_claim(pid_file)
-    reserved = False
     platform = svc.get("platform")
     backend = service_backend_name(platform if isinstance(platform, str) else None)
-    if claim is not None and svc.get("installed"):
-        from gobby.runner_pid_file import SingletonReservationError
-
-        try:
-            convert_held_claim_to_reservation(claim, backend=backend)
-        except SingletonReservationError as exc:
-            _step(str(exc), error=True)
-            sys.exit(1)
-        claim = None
-        reserved = True
-    elif claim is not None:
-        pass
-    elif svc.get("installed"):
-        admission_error = admit_service_start(pid_file, backend=backend)
-        if admission_error:
-            _step(admission_error, error=True)
-            sys.exit(1)
-        reserved = True
-    else:
-        blocker = probe_start_blocker(probe_daemon_lock(pid_file))
-        if blocker:
-            _step(blocker, error=True)
-            sys.exit(1)
+    # Hold the singleton through dependency startup and the hub schema apply, so
+    # this start migrates under its own claim. A service start converts the claim
+    # to the launch reservation only when it hands off to the service manager.
+    claim: PidFileClaim | None = adopt_inherited_claim(pid_file)
+    if claim is None:
         claim, admission_error = admit_direct_start(pid_file)
         if admission_error or claim is None:
             _step(admission_error or "Could not claim the daemon singleton", error=True)
             sys.exit(1)
+    reserved = False
 
     try:
-        services_result = _services_start(gobby_dir)
+        services_result = _services_start(gobby_dir, require_schema_owner=True)
         if services_result.outcome == "failed":
             _step(services_result.detail, error=True)
             sys.exit(1)
@@ -377,6 +355,15 @@ def start(ctx: click.Context, verbose: bool) -> None:
                 sys.exit(1)
 
         if svc.get("installed"):
+            from gobby.runner_pid_file import SingletonReservationError
+
+            try:
+                convert_held_claim_to_reservation(claim, backend=backend)
+            except SingletonReservationError as exc:
+                _step(str(exc), error=True)
+                sys.exit(1)
+            claim = None
+            reserved = True
             _step("Starting via OS service manager...")
             result = service_start(reserved=True)
             if result.get("success"):

@@ -46,11 +46,31 @@ def hub_migration_claim(gobby_home: Path) -> Iterator[bool]:
         claim.release()
 
 
+class HubMigrationOwnershipError(RuntimeError):
+    """A required hub migration could not take the daemon singleton."""
+
+
+def _migration_owner_refusal(gobby_home: Path) -> HubMigrationOwnershipError:
+    from gobby.runner_pid_file import probe_daemon_lock
+
+    pid_file = gobby_home / "gobby.pid"
+    try:
+        probe = probe_daemon_lock(pid_file)
+        holder = f"{probe.state.value}, pid {probe.pid}"
+    except (OSError, SingletonError, SingletonRecordError) as exc:
+        holder = f"unreadable: {exc}"
+    return HubMigrationOwnershipError(
+        f"Hub schema apply needs the daemon singleton ({pid_file}.lock), but this "
+        f"process could not claim it ({holder}); pending migrations were not applied"
+    )
+
+
 @contextmanager
 def runtime_hub_database(
     config_file: str | None = None,
     *,
     apply_migrations: bool = True,
+    require_migration_owner: bool = False,
 ) -> Iterator[HubDatabase]:
     """Yield the active runtime hub database and close it afterwards.
 
@@ -60,6 +80,8 @@ def runtime_hub_database(
 
     ``apply_migrations`` is skipped while a running daemon serves the hub, so a
     newer installed gdaemon never moves the live schema ahead of that daemon.
+    ``require_migration_owner`` turns that skip into ``HubMigrationOwnershipError``
+    for callers that must migrate, such as the daemon start path.
     """
     grant_path = managed_grant_path()
     if grant_path is not None:
@@ -81,7 +103,10 @@ def runtime_hub_database(
     try:
         if apply_migrations:
             # The daemon singleton lives in GOBBY_HOME whatever bootstrap path was given.
-            with hub_migration_claim(get_gobby_home()) as owns_hub:
+            gobby_home = get_gobby_home()
+            with hub_migration_claim(gobby_home) as owns_hub:
+                if not owns_hub and require_migration_owner:
+                    raise _migration_owner_refusal(gobby_home)
                 if owns_hub:
                     db.apply_migrations()
                     from gobby.storage.projects import ensure_personal_project
