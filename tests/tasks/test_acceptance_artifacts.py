@@ -221,6 +221,43 @@ def test_bare_reference_never_keeps_trailing_backtick() -> None:
     assert artifacts_module.extract_artifact_references(criteria, "file") == ("docs/evidence.md",)
 
 
+@pytest.mark.parametrize(
+    "criteria",
+    [
+        "test: tests/x.py::test_x: a taskless reviewer is parked",
+        "test: tests/x.py::test_x)",
+        "1. A taskless reviewer is parked. test: tests/x.py::test_x: then reported",
+        "1. A taskless reviewer is parked (test: tests/x.py::test_x)",
+        "1. A taskless reviewer is parked (test: tests/x.py::test_x).",
+    ],
+)
+def test_bare_reference_drops_trailing_colon_and_unbalanced_paren(criteria: str) -> None:
+    assert artifacts_module.extract_artifact_references(criteria, "test") == ("tests/x.py::test_x",)
+
+
+@pytest.mark.parametrize("suffix", ["", ":", ".", ").", "):"])
+def test_bare_reference_keeps_parametrized_brackets(suffix: str) -> None:
+    criteria = f"test: tests/x.py::test_x[a-(1)]{suffix}"
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "tests/x.py::test_x[a-(1)]",
+    )
+
+
+def test_bare_reference_drops_sentence_ending_period() -> None:
+    criteria = "1. The gate resolves test: tests/x.py::test_x."
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == ("tests/x.py::test_x",)
+
+
+def test_backticked_reference_keeps_trailing_colon() -> None:
+    criteria = "test: `tests/x.py::test_x:`"
+
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "tests/x.py::test_x:",
+    )
+
+
 def test_backticked_test_reference_without_symbol_still_fails(tmp_path: Path) -> None:
     result = evaluate_acceptance_artifacts(
         criteria="test: `tests/tasks/test_validation.py`.",
