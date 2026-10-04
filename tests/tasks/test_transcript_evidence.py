@@ -1426,6 +1426,34 @@ async def test_unexecuted_edit_is_not_credit_but_later_same_path_edit_is(
 
 
 @pytest.mark.asyncio
+async def test_executed_edit_whose_file_quotes_a_denial_is_credited(tmp_path: Path) -> None:
+    """Claude's transport copy of an edited file is not the tool's own verdict (#23409)."""
+    transcript = tmp_path / "claude.jsonl"
+    path = str(tmp_path / "tests" / "test_denials.py")
+    records = _claude_edit_pair(
+        "Edit", {"file_path": path, "old_string": "old", "new_string": "new"}, "edit", 0
+    )
+    records[1]["message"]["content"][0]["content"] = f"The file {path} has been updated."
+    records[1]["toolUseResult"] = {
+        "filePath": path,
+        "originalFile": f"REJECTED = {_CLAUDE_USER_REJECTED!r}\nold\n",
+    }
+    _write_jsonl(transcript, records)
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {"tests/test_denials.py"},
+        str(tmp_path),
+    )
+
+    assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [
+        ("tests/test_denials.py", "Edit")
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "result",
     [

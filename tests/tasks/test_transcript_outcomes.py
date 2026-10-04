@@ -170,6 +170,30 @@ def test_executed_tool_result_is_not_unexecuted(result: object) -> None:
     assert is_unexecuted_tool_result(result) is False
 
 
+def _claude_edit_result(*, is_error: bool, content: str) -> dict[str, object]:
+    """A parsed Claude Edit result whose transport copy holds the edited file."""
+    return {
+        "tool_result": {"content": content, "is_error": is_error},
+        "raw_json": {
+            "toolUseResult": {
+                "filePath": "/repo/tests/test_denials.py",
+                "originalFile": f"REJECTED = {_CLAUDE_USER_REJECTED!r}\n",
+            }
+        },
+    }
+
+
+def test_executed_claude_result_quoting_denial_text_is_not_unexecuted() -> None:
+    """An edit ran when Claude did not flag it, whatever its file says (#23409)."""
+    executed = _claude_edit_result(
+        is_error=False, content="The file /repo/tests/test_denials.py has been updated."
+    )
+    rejected = _claude_edit_result(is_error=True, content=_CLAUDE_USER_REJECTED)
+
+    assert is_unexecuted_tool_result(executed) is False
+    assert is_unexecuted_tool_result(rejected) is True
+
+
 @pytest.mark.parametrize(
     ("command", "expected_reason"),
     [

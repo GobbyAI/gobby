@@ -198,6 +198,12 @@ def is_unexecuted_tool_result(result: Any) -> bool:
             return True
         if value.get("type") == _HOOK_BLOCKING_ATTACHMENT:
             return True
+    # Claude flags every rejection, hook block and permission denial with
+    # is_error. An unflagged result ran, and its transport copy (the edited
+    # file, the patch context) may quote denial text without being one.
+    tool_result = result.get("tool_result") if isinstance(result, dict) else None
+    if isinstance(tool_result, dict) and tool_result.get("is_error") is False:
+        return False
     output, _truncated = extract_output(result)
     if not output:
         return False
