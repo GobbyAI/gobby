@@ -71,6 +71,18 @@ def _row_body(row: Any) -> dict[str, Any]:
     return parsed if isinstance(raw, str) else dict(parsed)
 
 
+def _omit_prompt_echo(projection: dict[str, Any]) -> dict[str, Any]:
+    """Drop the spawn-time prompt copy so the detail carries the prompt once."""
+    metadata = projection.get("resume_metadata_json")
+    if not isinstance(metadata, dict):
+        return projection
+    initial_variables = metadata.get("initial_variables")
+    if not isinstance(initial_variables, dict) or "prompt" not in initial_variables:
+        return projection
+    trimmed = {key: value for key, value in initial_variables.items() if key != "prompt"}
+    return {**projection, "resume_metadata_json": {**metadata, "initial_variables": trimmed}}
+
+
 def _bundled_definition_path(agents_path: Path, name: str) -> Path:
     if not _SAFE_DEFINITION_NAME.fullmatch(name):
         raise HTTPException(status_code=400, detail="Invalid agent definition name")
@@ -819,7 +831,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             def load_run() -> tuple[AgentRun, dict[str, Any]] | None:
                 # The projection reads the run's violation log, so keep it off the loop.
                 run = LocalAgentRunManager(server.services.database).get(run_id)
-                return (run, run.to_dict()) if run else None
+                return (run, _omit_prompt_echo(run.to_dict())) if run else None
 
             loaded = await asyncio.to_thread(load_run)
             if loaded is None:
@@ -840,6 +852,25 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         except Exception as e:
             logger.exception("Error getting agent run detail: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
+
+    @router.get("/runs/{run_id}/name")
+    async def get_agent_run_name(run_id: str) -> dict[str, Any]:
+        """Resolve a run's display names without shipping its prompt, result or metadata."""
+        from gobby.storage.agents import LocalAgentRunManager
+
+        run = await server.run_db(
+            lambda: LocalAgentRunManager(server.services.database).get(run_id)
+        )
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Agent run '{run_id}' not found")
+        return {
+            "status": "success",
+            "run": {
+                "run_id": run.id,
+                "agent_name": run.agent_name,
+                "workflow_name": run.workflow_name,
+            },
+        }
 
     @router.post("/cleanup")
     async def cleanup_agent_runs(request: CleanupAgentRunsRequest) -> dict[str, Any]:

@@ -137,10 +137,15 @@ export function useSessionAttachmentState() {
         AGENT_NAME_RESOLVE_TIMEOUT_MS,
       );
       try {
-        const res = await fetch(`${baseUrl}/api/agents/runs/${agentRunId}`, {
-          credentials: "include",
-          signal: controller.signal,
-        });
+        // The name route projects only the names; the detail route ships the
+        // whole run (prompt, result, resume metadata).
+        const res = await fetch(
+          `${baseUrl}/api/agents/runs/${encodeURIComponent(agentRunId)}/name`,
+          {
+            credentials: "include",
+            signal: controller.signal,
+          },
+        );
         if (!res.ok) {
           console.warn("Failed to resolve agent name", {
             agentRunId,

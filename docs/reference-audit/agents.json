@@ -1003,6 +1003,20 @@
       "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
       "implementation": {
         "path": "src/gobby/servers/routes/agents.py",
+        "symbol": "create_agents_router.get_agent_run_name"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator/client",
+      "route": "GET /api/agents/runs/{run_id}/name"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/agents.py",
         "symbol": "create_agents_router.cleanup_agent_runs"
       },
       "verification": [

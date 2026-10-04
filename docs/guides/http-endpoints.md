@@ -494,6 +494,7 @@ exist.
 | `GET` | `/api/agents/running` | List running agents. |
 | `GET` | `/api/agents/runs` | List agent runs. |
 | `GET` | `/api/agents/runs/{run_id}` | Get one agent run. |
+| `GET` | `/api/agents/runs/{run_id}/name` | Get one agent run's agent and workflow names. |
 | `POST` | `/api/agents/runs/{run_id}/cancel` | Cancel an agent run. |
 | `POST` | `/api/agents/spawn` | Spawn one agent. |
 | `POST` | `/api/agents/spawn/batch` | Spawn multiple agents. |
