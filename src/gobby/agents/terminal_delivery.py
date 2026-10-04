@@ -505,9 +505,10 @@ async def _deliver_and_cleanup_terminal_run_once(
             type(error).__name__,
         )
         review_delivery = None
+    deferred = review_delivery == DELIVERY_DEFERRED
     if isinstance(review_delivery, tuple) and len(review_delivery) == 2:
         result, message = review_delivery
-    elif review_delivery == DELIVERY_DEFERRED:
+    elif deferred:
         # The review's finalization owns the outcome; the run's bare status is not it.
         result = None
     if completion_registry is None:
@@ -586,7 +587,9 @@ async def _deliver_and_cleanup_terminal_run_once(
                 run_id,
                 type(error).__name__,
             )
-    if notification_succeeded:
+    # A deferred review reaches its caller through the reconciler's durable wake,
+    # which never notifies this registry, so its run state would otherwise linger.
+    if notification_succeeded or deferred:
         completion_registry.cleanup(run_id)
     return _DeliveryAttempt(
         delivery,
