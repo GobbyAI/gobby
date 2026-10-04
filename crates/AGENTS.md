@@ -31,10 +31,11 @@ cargo test --doc -p <package>             # nextest does not run doctests
 # PostgreSQL-backed gcore schema tests need the postgres feature and a DB:
 GOBBY_SCHEMA_TEST_DATABASE_URL=<test-dsn> cargo nextest run -p gobby-core --features postgres
 
-# gcode serial-DB tests compile only when a `*_test` DSN is set at build time;
-# the fixture applies the schema and seeds this machine's row itself, so point
-# it at an empty database with pg_search (e.g. `gobby_gcode_test` on the
-# isolated test hub), never at gobby_test's pytest-managed schema:
+# gcode serial-DB tests compile only when GCODE_POSTGRES_TEST_DATABASE_URL is
+# set at build time (DATABASE_URL and GOBBY_POSTGRES_TEST_* are ignored); the
+# fixture applies the schema and seeds this machine's row itself, so it refuses
+# any database but the dedicated `gobby_gcode_test` (an empty database with
+# pg_search on the isolated test hub), never gobby_test's pytest-managed schema:
 GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test \
   cargo nextest run -p gobby-code -E 'test(serial_db)'
 ```

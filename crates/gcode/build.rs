@@ -1,16 +1,5 @@
 fn main() {
-    for name in [
-        "GCODE_POSTGRES_TEST_DATABASE_URL",
-        "GOBBY_POSTGRES_TEST_DATABASE_URL",
-        "DATABASE_URL",
-        "GOBBY_POSTGRES_TEST_DB",
-        "GOBBY_POSTGRES_TEST_USER",
-        "GOBBY_POSTGRES_TEST_PASSWORD",
-        "GOBBY_POSTGRES_TEST_HOST",
-        "GOBBY_POSTGRES_TEST_PORT",
-    ] {
-        println!("cargo:rerun-if-env-changed={name}");
-    }
+    println!("cargo:rerun-if-env-changed=GCODE_POSTGRES_TEST_DATABASE_URL");
     println!("cargo:rustc-check-cfg=cfg(gcode_postgres_tests)");
 
     if has_postgres_test_database() {
@@ -19,22 +8,10 @@ fn main() {
 }
 
 fn has_postgres_test_database() -> bool {
-    // Must match crates/gcode/src/test_env.rs: operator bootstrap.yaml is not a
-    // test DSN. Enabling this cfg from bootstrap compiles serial_db tests and
-    // then panics at runtime when the env resolver refuses that file.
-    [
-        "GCODE_POSTGRES_TEST_DATABASE_URL",
-        "GOBBY_POSTGRES_TEST_DATABASE_URL",
-        "DATABASE_URL",
-    ]
-    .iter()
-    .any(|name| non_empty_env(name))
-        || ["GOBBY_POSTGRES_TEST_DB", "GOBBY_POSTGRES_TEST_USER"]
-            .iter()
-            .all(|name| non_empty_env(name))
-}
-
-fn non_empty_env(name: &str) -> bool {
-    std::env::var_os(name)
+    // Must match crates/gcode/src/test_env.rs, which reads only this variable:
+    // the pytest stack's DATABASE_URL and GOBBY_POSTGRES_TEST_* point at
+    // gobby_test, and enabling this cfg from them compiles serial_db tests that
+    // then panic at runtime when the resolver finds no gcode DSN.
+    std::env::var_os("GCODE_POSTGRES_TEST_DATABASE_URL")
         .is_some_and(|value| value.to_str().is_some_and(|text| !text.trim().is_empty()))
 }
