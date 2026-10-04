@@ -35,6 +35,7 @@
         "waiting",
         "approval",
         "resume",
+        "runbooks",
         "installation-and-operator-boundaries",
         "dispatch-boundary",
         "related-guides"
