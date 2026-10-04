@@ -95,7 +95,8 @@ exhaustion (503d724862) and yields all 100,000 matches; its sha256 is
 `0f0fc811…ed24`.
 
 The six prefilter shards never reported. Each loads the 743 MB fixture
-and signs its share in its own interpreter. On a memory-starved host (about
+and signs all 200k groups in its own interpreter; sharding splits only the
+measured calls (call index modulo shard count). On a memory-starved host (about
 140 MB free, 5-minute load 20-27) each shard showed 15-22% of a CPU in
 instantaneous samples, but averaged only about 2m45s CPU over 2h41m (under 2%). The Orchestrator stopped the run gracefully at about
 09:00 CDT so that queued work could proceed. Prefilter timings from any sharded run
