@@ -271,8 +271,42 @@ def _resolve_git_hooks_dir(project_path: Path) -> Path | None:
     return git_dir / "hooks"
 
 
+def _foreign_hook_content(content: str) -> str:
+    """Return a hook's content outside the Gobby section, ignoring its shebang."""
+    lines = _remove_gobby_section(content).splitlines()
+    if lines and lines[0].startswith("#!"):
+        lines = lines[1:]
+    return "\n".join(lines).strip()
+
+
+def _latest_backup(hook_path: Path, hooks_dir: Path) -> Path | None:
+    """Return the newest timestamped backup of a hook, if any."""
+    stamped = []
+    for path in hooks_dir.glob(f"{hook_path.name}.*.backup"):
+        stamp = path.name[len(hook_path.name) + 1 : -len(".backup")]
+        if stamp.isdigit():
+            stamped.append((int(stamp), path))
+    return max(stamped)[1] if stamped else None
+
+
+def _backup_is_redundant(hook_path: Path, hooks_dir: Path) -> bool:
+    """Whether a backup would preserve nothing beyond Gobby's section or the newest backup."""
+    try:
+        foreign = _foreign_hook_content(hook_path.read_text())
+        if not foreign:
+            return True
+        latest = _latest_backup(hook_path, hooks_dir)
+        return latest is not None and _foreign_hook_content(latest.read_text()) == foreign
+    except (OSError, UnicodeDecodeError):
+        # Content that cannot be read cannot be proven redundant, so keep the backup.
+        return False
+
+
 def _backup_hook(hook_path: Path, hooks_dir: Path) -> str | None:
-    """Create a timestamped backup of an existing hook.
+    """Create a timestamped backup of an existing hook that holds non-Gobby content.
+
+    Gobby regenerates its own section, so a hook holding only that section is not
+    backed up, nor is one whose non-Gobby content matches the newest backup.
 
     Args:
         hook_path: Path to the hook file
@@ -281,7 +315,7 @@ def _backup_hook(hook_path: Path, hooks_dir: Path) -> str | None:
     Returns:
         Backup path if created, None otherwise
     """
-    if not hook_path.exists():
+    if not hook_path.exists() or _backup_is_redundant(hook_path, hooks_dir):
         return None
 
     timestamp = int(time.time())

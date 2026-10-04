@@ -5,6 +5,7 @@ import shlex
 import stat
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -244,7 +245,7 @@ class TestBackupHook:
         hooks_dir.mkdir()
 
         hook_path = hooks_dir / "pre-commit"
-        hook_path.write_text("#!/bin/bash")
+        hook_path.write_text("#!/bin/bash\necho 'original'\n")
         # Set specific permissions
         hook_path.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP)
 
@@ -421,7 +422,8 @@ class TestInstallGitHooks:
 
         assert result["success"] is True
         assert set(result["installed"]) == set(HOOK_TEMPLATES.keys())
-        assert len(result["backups"]) > 0
+        # Gobby-only hooks hold nothing a backup would preserve.
+        assert result["backups"] == []
 
     def test_chains_with_existing_hooks(self, tmp_path: Path) -> None:
         """Test that Gobby hooks chain with existing hooks."""
@@ -1268,3 +1270,59 @@ class TestGetStaleGitHooks:
         (git_dir / "commondir").write_text("../..\n", encoding="utf-8")
 
         assert get_stale_git_hooks(worktree) == ["post-commit"]
+
+
+def _hooks_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A bare .git/hooks layout whose backup timestamps advance one second per call."""
+    hooks_dir = tmp_path / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    clock = iter(range(1_700_000_000, 1_700_001_000))
+    fake_time = SimpleNamespace(time=lambda: float(next(clock)))
+    monkeypatch.setattr("gobby.cli.installers.git_hooks.time", fake_time)
+    return hooks_dir
+
+
+def test_install_git_hooks_skips_backup_for_gobby_only_hook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hooks_dir = _hooks_repo(tmp_path, monkeypatch)
+    stale = _wrap_gobby_section("echo 'old gobby section'")
+    (hooks_dir / "pre-commit").write_text(f"#!/usr/bin/env bash\n\n{stale}")
+
+    refreshed = install_git_hooks(tmp_path)
+    forced = install_git_hooks(tmp_path, force=True)
+
+    assert refreshed["backups"] == []
+    assert forced["backups"] == []
+    assert sorted(hooks_dir.glob("*.backup")) == []
+
+
+def test_install_git_hooks_skips_duplicate_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hooks_dir = _hooks_repo(tmp_path, monkeypatch)
+    original = "#!/bin/bash\necho 'mine'\n"
+    (hooks_dir / "pre-commit").write_text(original)
+
+    first = install_git_hooks(tmp_path)
+    again = install_git_hooks(tmp_path, force=True)
+
+    assert [Path(path).read_text() for path in first["backups"]] == [original]
+    assert again["backups"] == []
+    assert len(list(hooks_dir.glob("pre-commit.*.backup"))) == 1
+
+
+def test_install_git_hooks_backs_up_changed_foreign_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hooks_dir = _hooks_repo(tmp_path, monkeypatch)
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text("#!/bin/bash\necho 'mine'\n")
+    install_git_hooks(tmp_path)
+    changed = f"{hook_path.read_text()}echo 'changed'\n"
+    hook_path.write_text(changed)
+
+    result = install_git_hooks(tmp_path, force=True)
+
+    assert [Path(path).read_text() for path in result["backups"]] == [changed]
+    assert len(list(hooks_dir.glob("pre-commit.*.backup"))) == 2

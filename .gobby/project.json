@@ -21,6 +21,7 @@
       "frontend_lint": "cd web && npm run lint",
       "frontend_tests": "cd web && npm test",
       "node_tests": "npm test",
+      "pip_audit": "uv run pip-audit --cache-dir .cache/pip-audit",
       "ts_check": "cd web && npm run type-check"
     }
   },
@@ -71,7 +72,9 @@
         "format",
         "type_check",
         "ts_check",
-        "frontend_tests"
+        "frontend_tests",
+        "security",
+        "pip_audit"
       ],
       "fail_fast": false,
       "timeout": 1800
