@@ -466,7 +466,10 @@ were not examined further.
     through `jq`.
 - **Arm B made no evidence attempts**, so the block rule never fired.
   - B1 used `gcode grep`, `outline` and Read.
-  - B2 relied on `gcode symbol-at` (22 uses) and `search-symbol` (9 uses).
+  - B2 relied on `gcode symbol-at` and `search-symbol`. 22 Bash calls involve
+    `symbol-at` (including the helper definition and help), many of them batching several lookups through an `sa` helper, so
+    the 22 counts calls rather than lookups and is not comparable to arm A's
+    range-read counts. `search-symbol` ran 9 times.
 - **Read redirects.** The hooks redirected 12 Read calls to gcode: A1 1, A2 1, B1 4
   and B2 6. Each redirect came from `require-code-index-skill` or
   `prefer-gcode-for-source-read`.
