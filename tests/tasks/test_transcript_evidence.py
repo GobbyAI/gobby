@@ -1454,6 +1454,34 @@ async def test_executed_edit_whose_file_quotes_a_denial_is_credited(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_unflagged_droid_hook_denial_is_not_edit_credit(tmp_path: Path) -> None:
+    """Only Claude flags every denial; an unflagged Droid block never ran (#23410)."""
+    transcript = tmp_path / "droid.jsonl"
+    path = str(tmp_path / "src" / "changed.py")
+    result = _droid_tool_result(
+        timestamp=BASE_TIME + timedelta(seconds=1), call_id="droid-edit", content=_HOOK_BLOCKED
+    )
+    del result["message"]["content"][0]["is_error"]
+    edit = _droid_tool_record(
+        timestamp=BASE_TIME,
+        call_id="droid-edit",
+        name="Edit",
+        tool_input={"file_path": path, "old_string": "old", "new_string": "new"},
+    )
+    _write_jsonl(transcript, [edit, result])
+
+    evidence = await derive_transcript_evidence(
+        _session("droid", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {"src/changed.py"},
+        str(tmp_path),
+    )
+
+    assert evidence.edits == ()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "result",
     [
