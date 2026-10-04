@@ -43,15 +43,22 @@ from .utils import get_gobby_home
 _DNS_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\Z")
 
 
-def apply_hub_schema_contract(gobby_home: Path) -> None:
+def apply_hub_schema_contract(gobby_home: Path, *, require_owner: bool = False) -> None:
     """Bring the hub to the current schema contract before reading it.
+
+    ``require_owner`` raises when this process cannot own the migration instead
+    of opening the hub at its current schema.
 
     Lives in this CLI composition root because acquiring a PostgreSQL pool is
     reserved to composition roots (tests/storage/hub/test_pool_ownership_boundaries.py).
     """
     from gobby.storage.hub.runtime import runtime_hub_database
 
-    with runtime_hub_database(str(gobby_home / "bootstrap.yaml"), apply_migrations=True):
+    with runtime_hub_database(
+        str(gobby_home / "bootstrap.yaml"),
+        apply_migrations=True,
+        require_migration_owner=require_owner,
+    ):
         pass
 
 

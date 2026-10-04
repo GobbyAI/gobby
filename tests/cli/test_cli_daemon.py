@@ -24,6 +24,7 @@ from gobby.cli import cli
 from gobby.cli.daemon_start import _reconcile_ui_exposure, _start_dependency_errors
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.runner_front_door import PORT_REUSE_WAIT_SECONDS
+from gobby.runner_pid_file import PidFileClaim
 from gobby.ui_exposure import UiExposeError, UiExposeResult
 from gobby.utils.status import RichStatusProbe
 from tests.fixtures.fake_hub import FAKE_DATABASE_URL
@@ -128,7 +129,7 @@ def _mock_daemon_command_runtime(
     monkeypatch.setattr("gobby.cli.daemon_start._start_dependency_errors", lambda: [])
     monkeypatch.setattr(
         "gobby.cli.daemon_start._services_start",
-        lambda _home: ServiceStartResult("success", "Docker services started"),
+        lambda _home, **_kwargs: ServiceStartResult("success", "Docker services started"),
     )
 
 
@@ -396,8 +397,15 @@ class TestStartCommand:
 
     @pytest.fixture(autouse=True)
     def mock_service_admission(self) -> Generator[MagicMock]:
-        with patch("gobby.cli.daemon_start.admit_service_start", return_value=None) as admit:
-            yield admit
+        """Service starts hand their held claim to a reservation; stub the handoff."""
+
+        def _convert(claim: PidFileClaim, *, backend: str) -> None:
+            claim.release()
+
+        with patch(
+            "gobby.runner_pid_file.convert_held_claim_to_reservation", side_effect=_convert
+        ) as convert:
+            yield convert
 
     def test_start_help(self, runner: CliRunner) -> None:
         """Test start --help displays help text."""
@@ -592,7 +600,7 @@ class TestStartCommand:
         mock_load_config.return_value = mock_daemon_config
         call_order: list[str] = []
 
-        def start_services(_home: Path) -> object:
+        def start_services(_home: Path, **_kwargs: object) -> object:
             from gobby.cli._daemon_services import ServiceStartResult
 
             call_order.append("docker")
@@ -609,7 +617,7 @@ class TestStartCommand:
 
         assert result.exit_code == 0
         assert call_order == ["docker", "service"]
-        mock_services_start.assert_called_once_with(tmp_path)
+        mock_services_start.assert_called_once_with(tmp_path, require_schema_owner=True)
 
     def test_start_stops_before_service_manager_when_docker_start_fails(
         self,
@@ -1333,8 +1341,15 @@ class TestRestartCommand:
 
     @pytest.fixture(autouse=True)
     def mock_service_admission(self) -> Generator[MagicMock]:
-        with patch("gobby.cli.daemon_start.admit_service_start", return_value=None) as admit:
-            yield admit
+        """Service starts hand their held claim to a reservation; stub the handoff."""
+
+        def _convert(claim: PidFileClaim, *, backend: str) -> None:
+            claim.release()
+
+        with patch(
+            "gobby.runner_pid_file.convert_held_claim_to_reservation", side_effect=_convert
+        ) as convert:
+            yield convert
 
     @pytest.fixture(autouse=True)
     def start_reads_patched_service_status(self, monkeypatch: pytest.MonkeyPatch) -> None:

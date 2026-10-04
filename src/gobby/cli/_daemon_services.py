@@ -59,11 +59,20 @@ def start_managed_services(
     gobby_home: Path,
     *,
     resolve_runtime: ComposeRuntimeResolver,
+    require_schema_owner: bool = False,
 ) -> ServiceStartResult:
-    """Start the required managed Docker stack and wait for container health."""
+    """Start the required managed Docker stack and wait for container health.
+
+    ``require_schema_owner`` makes the hub schema apply fail instead of skipping
+    when this process cannot own the hub migration (the daemon start path).
+    """
     try:
         with managed_services_lock(gobby_home, operation="services start"):
-            return _start_managed_services_locked(gobby_home, resolve_runtime=resolve_runtime)
+            return _start_managed_services_locked(
+                gobby_home,
+                resolve_runtime=resolve_runtime,
+                require_schema_owner=require_schema_owner,
+            )
     except ManagedServicesLockError as exc:
         return ServiceStartResult("failed", str(exc))
 
@@ -72,6 +81,7 @@ def _start_managed_services_locked(
     gobby_home: Path,
     *,
     resolve_runtime: ComposeRuntimeResolver,
+    require_schema_owner: bool,
 ) -> ServiceStartResult:
     try:
         bootstrap = load_bootstrap(str(gobby_home / "bootstrap.yaml"))
@@ -121,7 +131,7 @@ def _start_managed_services_locked(
     try:
         from gobby.cli.datastores import apply_hub_schema_contract
 
-        apply_hub_schema_contract(gobby_home)
+        apply_hub_schema_contract(gobby_home, require_owner=require_schema_owner)
     except Exception as exc:
         return ServiceStartResult("failed", f"Could not apply the hub schema contract: {exc}")
 

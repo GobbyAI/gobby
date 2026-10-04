@@ -33,7 +33,7 @@ def test_start_skips_services_in_remote_mode(tmp_path: Path) -> None:
         patch("gobby.cli.daemon_start.required_dependency_errors", return_value=[]),
     ):
         assert _start_dependency_errors() == []
-    collect_dependencies.assert_called_once_with(managed_services=False, include_srt=True)
+    collect_dependencies.assert_called_once_with(managed_services=False, include_srt=False)
 
     with patch("shutil.which", side_effect=AssertionError("Docker must not be inspected")):
         result = _services_start(tmp_path)

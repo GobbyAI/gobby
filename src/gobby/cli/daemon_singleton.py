@@ -13,7 +13,6 @@ from gobby.runner_pid_file import (
     claim_pid_file,
     prepare_commanded_service_start,
     probe_daemon_lock,
-    reserve_service_start,
 )
 
 
@@ -63,14 +62,6 @@ def admit_direct_start(pid_file: Path) -> tuple[PidFileClaim | None, str | None]
         blocker = probe_start_blocker(probe_daemon_lock(pid_file))
         return None, blocker or "Could not claim the daemon singleton"
     return claim, None
-
-
-def admit_service_start(pid_file: Path, *, backend: str) -> str | None:
-    try:
-        reserve_service_start(pid_file, backend=backend)
-    except SingletonReservationError as exc:
-        return str(exc)
-    return None
 
 
 def service_backend_name(platform: str | None) -> str:
