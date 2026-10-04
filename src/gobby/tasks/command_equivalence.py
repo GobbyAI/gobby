@@ -461,9 +461,13 @@ _VITEST_LAUNCHERS = (
     ("npx", "--no"),
     ("npx",),
 )
-# Options that change only how vitest reports. Anything else -- a name filter, another
-# project or root, ``--passWithNoTests`` turning an empty selection green -- declines.
-_VITEST_RELATED_REPORTING_OPTIONS = frozenset({"--reporter", "--no-coverage", "--silent"})
+# Options that change only how vitest reports, plus ``--passWithNoTests``: a changed
+# type-only module, declaration or asset has no runtime importer, and the close gate
+# credits only changed paths that still exist, so an empty selection is a true answer.
+# Anything else -- a name filter, another project or root -- declines.
+_VITEST_RELATED_OPTIONS = frozenset(
+    {"--reporter", "--no-coverage", "--silent", "--passWithNoTests"}
+)
 _ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 
 
@@ -514,7 +518,7 @@ def vitest_related_targets(
         name = argument.split("=", 1)[0]
         if argument == "--run":
             has_run = True
-        elif name in _VITEST_RELATED_REPORTING_OPTIONS:
+        elif name in _VITEST_RELATED_OPTIONS:
             if name == "--reporter" and "=" not in argument and next(arguments, None) is None:
                 return None
         elif argument.startswith("-") or any(char in argument for char in "*?[]{}"):

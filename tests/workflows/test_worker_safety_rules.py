@@ -783,6 +783,7 @@ class TestNoFullVitestSuiteRule:
             "npx vitest run src/hooks/useMemory.spec.ts",
             "cd web && npx vitest related src/components/shared/MarkdownBody.tsx --run",
             "cd web && npx vitest related --run src/a.tsx src/b.ts",
+            "cd web && node_modules/.bin/vitest related src/vite-env.d.ts --run --passWithNoTests",
             "jest --runInBand --testPathPattern=SystemHealthCard",
             "jest -t 'renders FalkorDB status'",
         ],

@@ -300,7 +300,9 @@ def coverage_failure_message(
         return (
             "Changed web/src files have no credited fresh passing `vitest related` run. "
             f"Uncovered paths: {display}. Run `cd web && node_modules/.bin/vitest "
-            "related <each path relative to web/> --run` clean after the final task edit."
+            "related <each path relative to web/> --run` clean after the final task edit; "
+            "add `--passWithNoTests` when a path has no runtime importer (type-only "
+            "modules, declarations, assets)."
         )
     return None
 

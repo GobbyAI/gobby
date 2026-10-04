@@ -1079,8 +1079,38 @@ def test_changed_web_source_requires_vitest_related_coverage() -> None:
     assert focused.details["vitest_related_uncovered_paths"] == [_MARKDOWN_BODY]
     assert _MARKDOWN_BODY in focused.message
     assert "vitest related" in focused.message
+    assert "--passWithNoTests" in focused.message
     assert related.status == "passed", related.message
     assert related.details["vitest_related_uncovered_paths"] == []
+
+
+def test_type_only_and_test_paths_close_on_one_related_run() -> None:
+    # A type-only module has no runtime importer, so plain `related` selects nothing and
+    # exits 1; --passWithNoTests makes that empty answer green. vitest's own source filter
+    # matches a named test file itself, so the same run covers changed tests too.
+    types = "web/src/types/session.ts"
+    test = "web/src/components/activity/__tests__/SessionsTab.test.tsx"
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _run(
+                    1,
+                    command=(
+                        "cd web && node_modules/.bin/vitest related src/types/session.ts "
+                        "src/components/activity/__tests__/SessionsTab.test.tsx "
+                        "--run --passWithNoTests"
+                    ),
+                ),
+            ),
+        ),
+        has_attributed_edits=True,
+        changed_paths=(types, test),
+        close_root="/repo",
+    )
+
+    assert gate.status == "passed", gate.message
+    assert gate.details["vitest_related_uncovered_paths"] == []
 
 
 @pytest.mark.parametrize(
@@ -1149,7 +1179,7 @@ def test_tasks_without_web_source_changes_need_no_vitest_related_run() -> None:
         ("cd web && npx vitest related --run", None),
         ("cd web && npx vitest related src/a.tsx", None),
         ("cd web && npx vitest related 'src/**/*.tsx' --run", None),
-        ("cd web && npx vitest related src/a.tsx --run --passWithNoTests", None),
+        ("cd web && npx vitest related src/a.tsx --run --passWithNoTests", ("web/src/a.tsx",)),
         ("cd web && npx vitest related src/a.tsx --run -t sidebar", None),
         ("cd web && npx vitest run src/a.test.tsx", None),
         ("cd web && npx jest related src/a.tsx --run", None),
