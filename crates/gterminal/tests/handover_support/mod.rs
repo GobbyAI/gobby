@@ -465,7 +465,6 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
         control_listener_fd: control,
         frames_listener_fd: frames,
         next_host_id: spec.next_host_id,
-        latest_theme: None,
         events: spec.events.clone(),
         panes,
     };

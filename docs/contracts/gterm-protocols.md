@@ -37,8 +37,9 @@ Client → host:
   palette, which the host uses for the child's OSC 10/11 answers and mode-2031
   reports; the control `spawn` takes the same `terminal_theme` object.
   Only on a host advertising `terminal_theme`. It applies to a granted pane only
-  from the stream bound to the grant holder, and a spawn with no theme of its
-  own starts from the host's last applied declaration
+  from the stream bound to the grant holder. A declaration themes only its own
+  attachment's pane; a spawn with no theme of its own starts unset and leaves
+  OSC 10/11 unanswered
 - `Detach`
 
 Host → client:

@@ -291,6 +291,7 @@ mod tests {
     use super::*;
     use crate::theme::ThemeKind;
     use crate::ui::status::Toast;
+    use gobby_terminal::terminal_theme::{DefaultColorKind, RgbColor};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
@@ -390,5 +391,58 @@ mod tests {
 
         chrome.prefs.theme = "System".to_string();
         assert_eq!(grounded(&chrome), [(Color::Reset, Color::Reset), explicit]);
+    }
+
+    /// Panes answer OSC 10/11 with the colours their default cells end up
+    /// on, in every theme. Codex reads that answer once at startup and draws
+    /// its composer bands from it, so a wrong one stays wrong (#23286).
+    #[test]
+    fn panes_answer_osc_10_11_with_the_ground_they_sit_on() {
+        let rgb = |color: Option<RgbColor>| color.map(|c| Color::Rgb(c.r, c.g, c.b));
+        let declared = |chrome: &Chrome| {
+            let theme = chrome.terminal_theme();
+            (rgb(theme.foreground), rgb(theme.background))
+        };
+        let painted = |chrome: &Chrome| {
+            let [(fg, bg), _] = grounded(chrome);
+            (Some(fg), Some(bg))
+        };
+
+        let mut chrome = Chrome::dark();
+        assert_eq!(declared(&chrome), painted(&chrome), "dark");
+
+        chrome.prefs.theme = "light".to_string();
+        chrome.set_theme(ThemeKind::Light);
+        assert_eq!(declared(&chrome), painted(&chrome), "light");
+
+        chrome.prefs.monochrome = true;
+        chrome.set_theme(ThemeKind::Light);
+        assert_eq!(declared(&chrome), painted(&chrome), "monochrome light");
+        chrome.prefs.monochrome = false;
+
+        // System leaves default cells on the hosting terminal's own colours,
+        // which gclient knows only from that terminal's answer: until then
+        // panes answer nothing rather than the theme's guess.
+        chrome.prefs.theme = "System".to_string();
+        chrome.set_theme(ThemeKind::Dark);
+        assert_eq!(painted(&chrome), (Some(Color::Reset), Some(Color::Reset)));
+        assert_eq!(declared(&chrome), (None, None), "system before the answer");
+        let host_bg = RgbColor {
+            r: 0x1e,
+            g: 0x1e,
+            b: 0x2e,
+        };
+        let host_fg = RgbColor {
+            r: 0xcd,
+            g: 0xd6,
+            b: 0xf4,
+        };
+        chrome.record_host_color(DefaultColorKind::Background, host_bg);
+        chrome.record_host_color(DefaultColorKind::Foreground, host_fg);
+        assert_eq!(
+            declared(&chrome),
+            (rgb(Some(host_fg)), rgb(Some(host_bg))),
+            "system after the answer"
+        );
     }
 }

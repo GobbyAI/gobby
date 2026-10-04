@@ -1627,3 +1627,49 @@ fn stops_holding_lone_escape_after_host_color_reply_completes() {
     assert!(framer.push(b"\x1b").is_empty());
     assert_eq!(framer.flush_timeout(), vec![b"\x1b".to_vec()]);
 }
+
+/// The user's first Esc closes the startup reply window, so a reply split at
+/// its ESC leaks as an Escape keypress unless the runtime query re-arms the
+/// reader (#23286: gclient queries again on entering System).
+fn split_reply_after_disarm(arm: Option<&HostColorQueryArm>) -> Vec<RawInputEvent> {
+    let mut framer = RawInputFramer::for_host_input();
+    framer.host_color_query_sent();
+    assert!(framer.push(b"\x1b").is_empty());
+    assert!(framer.flush_timeout().is_empty());
+    assert!(matches!(
+        framer.flush_timeout().as_slice(),
+        [RawInputEvent::Key(_)]
+    ));
+
+    if let Some(arm) = arm {
+        arm.query_sent();
+        arm.rearm(&mut framer);
+    }
+    let mut events = framer.push(b"\x1b");
+    events.extend(framer.flush_timeout());
+    events.extend(framer.push(b"]11;rgb:2424/2727/3a3a\x1b\\"));
+    events
+}
+
+#[test]
+fn runtime_host_color_query_rearms_the_reader_after_a_lone_escape() {
+    let events = split_reply_after_disarm(Some(&HostColorQueryArm::default()));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [RawInputEvent::HostDefaultColor {
+                kind: DefaultColorKind::Background,
+                ..
+            }]
+        ),
+        "{events:?}"
+    );
+
+    let unarmed = split_reply_after_disarm(None);
+    assert!(
+        unarmed
+            .iter()
+            .any(|event| matches!(event, RawInputEvent::Key(_))),
+        "{unarmed:?}"
+    );
+}

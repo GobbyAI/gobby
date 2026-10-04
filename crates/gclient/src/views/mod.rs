@@ -78,7 +78,8 @@ pub fn run_ready(
                 now,
                 ..ConnectionView::default()
             };
-            let input = gobby_terminal::raw_input::spawn_input_reader();
+            let input =
+                gobby_terminal::raw_input::spawn_input_reader(chrome.host_color_query.clone());
             run_live_loop(&mut workspace, &mut terminal, &mut chrome, input, switch).await?;
             Ok(())
         })

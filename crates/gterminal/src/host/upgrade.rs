@@ -935,7 +935,6 @@ fn capture(
         control_listener_fd: context.control_fd,
         frames_listener_fd: context.frames_fd,
         next_host_id: inner.next_host_id,
-        latest_theme: inner.latest_theme.clone(),
         events: state.events.carried(),
         panes,
     })

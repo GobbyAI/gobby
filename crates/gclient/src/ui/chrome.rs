@@ -23,7 +23,9 @@ use crate::ui::sidebar;
 use crate::ui::sidebar_rows;
 use crate::ui::status::{ActiveToast, Toast};
 use gobby_terminal::layout::{self, Node, PaneInfo, SplitBorder, TileLayout};
+use gobby_terminal::raw_input::HostColorQueryArm;
 use gobby_terminal::selection::Selection;
+use gobby_terminal::terminal_theme::{DefaultColorKind, RgbColor, TerminalTheme};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use std::collections::HashMap;
 use std::path::Path;
@@ -348,6 +350,21 @@ pub struct Chrome {
     /// Render ticks so far; the sidebar's ticker scrolls the selected
     /// over-long row by it (`sidebar_rows::ticker_window`).
     pub ticker: u64,
+    /// The hosting terminal's own foreground and background, from its answer
+    /// to gclient's OSC 10/11 query; System mode leaves them as the ground.
+    pub host_colors: TerminalTheme,
+    /// Shared with the input reader so a runtime OSC 10/11 query's reply is
+    /// framed as a reply, never as keystrokes.
+    pub host_color_query: HostColorQueryArm,
+}
+
+/// A palette colour as the RGB a host declaration carries; palettes paint
+/// only `Color::Rgb`.
+fn painted_rgb(color: ratatui::style::Color) -> Option<RgbColor> {
+    match color {
+        ratatui::style::Color::Rgb(r, g, b) => Some(RgbColor { r, g, b }),
+        _ => None,
+    }
 }
 
 impl Chrome {
@@ -383,11 +400,35 @@ impl Chrome {
             pending_mouse_capture: None,
             menu: None,
             ticker: 0,
+            host_colors: TerminalTheme::default(),
+            host_color_query: HostColorQueryArm::default(),
         }
     }
 
     pub fn dark() -> Self {
         Self::new(Theme::new(ThemeKind::Dark))
+    }
+
+    /// The colours hosted panes answer OSC 10/11 with: the ground they sit
+    /// on. Dark and Light paint the palette's text on `panel_bg` (grays under
+    /// monochrome); System leaves the hosting terminal's own, which panes
+    /// answer only once that terminal has told gclient, never with the
+    /// theme's guess (#23286).
+    pub fn terminal_theme(&self) -> TerminalTheme {
+        let mut theme = self.theme.terminal_theme();
+        if self.prefs.follows_system() {
+            theme.foreground = self.host_colors.foreground;
+            theme.background = self.host_colors.background;
+        } else {
+            theme.foreground = painted_rgb(self.palette.text);
+            theme.background = painted_rgb(self.palette.panel_bg);
+        }
+        theme
+    }
+
+    /// Record the hosting terminal's answer to gclient's OSC 10/11 query.
+    pub fn record_host_color(&mut self, kind: DefaultColorKind, color: RgbColor) {
+        self.host_colors = self.host_colors.with_color(kind, color);
     }
 
     /// Draw in `kind`, in grays when `prefs.monochrome` is set.
