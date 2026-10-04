@@ -1278,7 +1278,7 @@ fn no_fault(_: &str) -> Value {
     Value::Null
 }
 
-fn rollback_case(case: &RollbackCase) {
+fn rollback_case(case: &RollbackCase) -> Value {
     let label = case.label;
     let mut host = live_host(&[]);
     let dir = host.socket_dir().to_path_buf();
@@ -1336,12 +1336,6 @@ fn rollback_case(case: &RollbackCase) {
     }
 
     let after = wait_outcome(&dir, UPGRADE_TOKEN, label, OUTCOME_WAIT);
-    if label == "soft-cutoff-in-capture" {
-        assert!(
-            accepted_at.elapsed() < remaining,
-            "{label}: capture rollback must finish inside the upgrade budget"
-        );
-    }
     if case.stalled_writer {
         std::fs::write(dir.join("stall-go"), b"").expect("release the stalled pane");
     }
@@ -1410,6 +1404,7 @@ fn rollback_case(case: &RollbackCase) {
         "{label}: the host answers"
     );
     shutdown(&mut host, &mut writer);
+    after
 }
 
 /// Plan gterm-host-handover 1.3.4. The cases run on their own hosts at once,
@@ -1474,19 +1469,6 @@ fn every_pre_exec_failure_rolls_back() {
             tamper_pin: false,
         },
         RollbackCase {
-            label: "soft-cutoff-in-capture",
-            // Deadline expiry wins before the next pane's encode fault. This
-            // also exercises rollback while the capture wait reaches cutoff.
-            fault: |id| json!({"soft_deadline_in_capture": true, "encode_error": id}),
-            outcome: "aborted",
-            reason: "soft_deadline",
-            errno: None,
-            stalled_writer: false,
-            block_state_file: false,
-            exiting_pane: false,
-            tamper_pin: false,
-        },
-        RollbackCase {
             // Every async check passes; the masked exec job reaches the soft
             // cutoff after entering `exec`, so only the commit gate refuses.
             label: "soft-cutoff-at-exec",
@@ -1533,6 +1515,66 @@ fn every_pre_exec_failure_rolls_back() {
             .collect();
         assert!(failed.is_empty(), "failed cases: {failed:?}");
     });
+}
+
+#[test]
+fn capture_finishing_inside_drain_rolls_back_with_live_panes() {
+    let after = rollback_case(&RollbackCase {
+        label: "soft-cutoff-in-capture",
+        // The worker finishes inside the drain slack; the deadline still
+        // wins before the next pane's encode fault, and rollback is safe.
+        fault: |id| {
+            json!({
+                "soft_deadline_in_capture": true,
+                "capture_cutoff_delay_ms": 500,
+                "encode_error": id,
+            })
+        },
+        outcome: "aborted",
+        reason: "soft_deadline",
+        errno: None,
+        stalled_writer: false,
+        block_state_file: false,
+        exiting_pane: false,
+        tamper_pin: false,
+    });
+    assert_eq!(after["upgrade"]["last_outcome"]["reason"], "soft_deadline");
+}
+
+#[test]
+fn overdue_capture_ends_the_host_inside_rollback_reserve() {
+    let mut host = live_host(&[]);
+    let dir = host.socket_dir().to_path_buf();
+    let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    let id = echo_panes(&mut host, &mut ctl, 1)
+        .remove(0)
+        .host_terminal_id;
+    let accepted = host_upgrade(
+        &mut ctl,
+        &gterm_bin(),
+        "attempt-capture-reserve",
+        json!({
+            "soft_deadline_in_capture": true,
+            "capture_cutoff_delay_ms": 2000,
+            "encode_error": id,
+        }),
+    );
+    let accepted_at = Instant::now();
+    assert_eq!(accepted["accepted"], true, "{accepted}");
+    let remaining = Duration::from_millis(accepted["remaining_ms"].as_u64().expect("remaining_ms"));
+    let (status, died_at) = wait_death(&mut host, remaining);
+    assert_eq!(status.signal(), Some(libc::SIGALRM), "{status:?}");
+    // Capture outlives the one-second drain slack. Fatal exit must leave both
+    // one-second rollback acknowledgements on the clock. Allow 500ms of
+    // observation skew, as in the existing hard-alarm tests.
+    assert!(
+        died_at + Duration::from_millis(500) >= accepted_at + remaining - Duration::from_secs(2),
+        "capture ended before exhausting its drain slack: {status:?}"
+    );
+    assert!(
+        died_at + Duration::from_millis(1500) < accepted_at + remaining,
+        "capture consumed the two-second rollback budget: {status:?}"
+    );
 }
 
 /// Plan gterm-host-handover 1.3.10.
