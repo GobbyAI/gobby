@@ -147,10 +147,6 @@ pub(crate) struct Inner {
     pub(crate) attachments: HashMap<u64, Attachment>,
     pub(crate) next_attachment: u64,
     control_owners: HashSet<u64>,
-    /// Most recent declaration from any stream: the theme a spawn without an
-    /// explicit `terminal_theme` starts with. `None` until a client declares,
-    /// in which case panes start with the unset theme.
-    pub(crate) latest_theme: Option<crate::terminal_theme::ThemeDeclaration>,
 }
 
 impl Inner {
@@ -160,7 +156,6 @@ impl Inner {
         terminals: HashMap<Identity, TerminalSlot>,
         next_host_id: u64,
         reservations: HashMap<String, Reservation>,
-        latest_theme: Option<ThemeDeclaration>,
     ) -> Self {
         let by_host_id = terminals
             .values()
@@ -174,7 +169,6 @@ impl Inner {
             attachments: HashMap::new(),
             next_attachment: 1,
             control_owners: HashSet::new(),
-            latest_theme,
         }
     }
 }
@@ -221,7 +215,7 @@ impl HostState {
         shutdown: watch::Sender<bool>,
     ) -> Arc<Self> {
         let events = HostEvents::new(host_epoch.clone(), config.event_queue_bytes as usize);
-        let inner = Inner::restored(HashMap::new(), 1, HashMap::new(), None);
+        let inner = Inner::restored(HashMap::new(), 1, HashMap::new());
         Arc::new(Self {
             config,
             token,
@@ -387,8 +381,9 @@ impl HostState {
         };
         let fingerprint = spawn_fingerprint(&argv, &env, &cwd, dims, &reservation_id, &reserve_key);
         // The child waits at the gate until commit, so the theme resolved here
-        // answers its first OSC 10/11 query: the request's own theme, else the
-        // latest client declaration, else the unset theme.
+        // answers its first OSC 10/11 query: the spawning client's own theme,
+        // else the unset theme, which gives no reply. Another client's
+        // declaration never seeds it.
         let spawn_theme = {
             let inner = self.inner.lock().await;
             if let Some(existing) = inner.terminals.get(&identity) {
@@ -419,7 +414,7 @@ impl HostState {
             if res.key != reserve_key || res.terminal_id != terminal_id {
                 return err("invalid_reservation");
             }
-            explicit_theme.or_else(|| inner.latest_theme.clone())
+            explicit_theme
         };
         #[cfg(not(feature = "vt-engine"))]
         {
@@ -649,7 +644,7 @@ impl HostState {
             .ok_or("terminal_gone")?;
         attachment.client_attachment_id = Some(client_attachment_id);
         let host_terminal_id = attachment.host_terminal_id.clone();
-        super::theme::apply_holder_theme(&mut inner, &host_terminal_id);
+        super::theme::apply_holder_theme(&inner, &host_terminal_id);
         Ok(())
     }
 

@@ -36,8 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Client terminal themes for native panes** (#22851) — the control hello
   advertises the `terminal_theme` capability. Spawn accepts an optional
-  `terminal_theme`, and a pane without one starts with the host's latest
-  applied declaration. Frame streams accept `SetTerminalTheme` (bincode tag 12). The
+  `terminal_theme`, and a pane without one starts unset (#23286 removed
+  seeding from the latest declaration). Frame streams accept `SetTerminalTheme` (bincode tag 12). The
   slot's input-grant holder decides, and an ungranted slot takes any
   declaration. So OSC 10/11 answers and the mode-2031 report follow the
   client's dark or light colours without a respawn. With no theme known, OSC
@@ -139,6 +139,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   statusline command and byte-exact stdin/stdout forwarding while leaving usage
   ingestion to transcript processing.
 - **Minor version bump** — `0.9.0`; requires `gobby-core 0.10.0`. Version: `0.9.0`.
+
+### Fixed
+
+#### gobby-terminal
+
+- **No cross-client theme seeding** (#23286) — a theme declaration themes
+  only its own attachment's pane. A spawn starts with the theme its request
+  carries, or unset with OSC 10/11 unanswered; it no longer inherits the
+  host's latest applied declaration, and handover state drops
+  `latest_theme`. A laptop client on Light had seeded a dark desktop's new
+  panes, so Codex read a light OSC 11 answer once at startup and drew light
+  composer bands for its lifetime. Holder-wins on a granted pane is
+  unchanged.
+
+#### gobby-client
+
+- **OSC 10/11 answers match the ground** (#23286) — panes are declared the
+  colours their default cells actually sit on. Dark and Light declare the
+  painted palette's text and `panel_bg`, monochrome grays included. System
+  queries the hosting terminal's own colours (OSC 10/11) on entering System
+  and after each appearance flip, and declares those, or nothing until they
+  are known, instead of the theme's `panel_bg` on a ground it never paints.
+  Each query re-arms the input reader through
+  `gobby_terminal::raw_input::HostColorQueryArm`, so a reply split at its ESC
+  is stitched rather than sent to the focused pane as an Escape key.
 
 ## [0.8.1] — gobby-core — 2026-07-14
 

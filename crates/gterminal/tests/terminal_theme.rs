@@ -373,36 +373,40 @@ fn only_the_input_grant_holder_themes_a_granted_pane() {
         answer.contains(LIGHT.fg_answer) && answer.contains(LIGHT.bg_answer),
         "{screen}"
     );
-    // Nor can it recolour the next spawn that brings no theme of its own.
-    let agent = host.spawn(None).unwrap();
-    host.wait_for(&agent, "the holder's theme on a new spawn", |s| {
-        LIGHT.shown_by(s)
-    });
 
     // Moving the grant applies the new holder's declaration.
     host.grant(&pane, "att-other");
     host.wait_for(&pane, "new holder theme", |s| DARK.shown_by(s));
-    // The applied declaration also seeds the next spawn, although the new
-    // holder's client never re-sends a theme it already declared.
-    let after_move = host.spawn(None).unwrap();
-    host.wait_for(&after_move, "the new holder's theme on a new spawn", |s| {
-        DARK.shown_by(s)
-    });
 }
 
+/// A declaration themes only its own attachment's pane (#23286). A laptop
+/// client on Light once seeded every later spawn, so a dark desktop's new
+/// Codex read a light OSC 11 answer and drew light bands for its lifetime.
 #[test]
-fn spawn_without_theme_starts_with_the_latest_declaration() {
-    let mut host = Host::start("theme-latest");
-    let first = host.spawn(None).unwrap();
-    let mut stream = host.attach(&first);
-    declare(&mut stream, &LIGHT);
-    host.wait_for(&first, "declared theme", |s| LIGHT.shown_by(s));
+fn a_declaration_never_seeds_another_clients_spawn() {
+    let mut host = Host::start("theme-no-seed");
+    let laptop_pane = host.spawn(None).unwrap();
+    let mut laptop = host.attach(&laptop_pane);
+    declare(&mut laptop, &LIGHT);
+    host.wait_for(&laptop_pane, "the laptop's theme", |s| LIGHT.shown_by(s));
 
-    let agent = host.spawn(None).unwrap();
-    host.wait_for(&agent, "inherited theme", |s| LIGHT.shown_by(s));
-    let screen = host.screen(&agent);
+    // A spawn that brings no theme leaves OSC 10/11 unanswered.
+    let unthemed = host.spawn(None).unwrap();
+    let screen = host.wait_for(&unthemed, "a first answer", |s| {
+        s.lines()
+            .any(|line| line.contains("A<") && line.contains('>'))
+    });
+    let answer = screen
+        .lines()
+        .find(|line| line.contains("A<") && line.contains('>'))
+        .unwrap();
+    assert_eq!(answer.trim(), "A<>", "{screen}");
+
+    // A spawn that brings its client's theme answers with that theme alone.
+    let desktop = host.spawn(Some(theme_json(&DARK))).unwrap();
+    let screen = host.wait_for(&desktop, "the desktop's theme", |s| DARK.shown_by(s));
     let first_answer = screen.lines().find(|line| line.contains("A<")).unwrap();
-    assert!(first_answer.contains(LIGHT.bg_answer), "{screen}");
+    assert!(first_answer.contains(DARK.bg_answer), "{screen}");
 }
 
 #[test]

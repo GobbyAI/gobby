@@ -132,7 +132,7 @@ pub async fn run_live_loop<B: Backend>(
 ) -> Result<(), FrameError> {
     let daemon = workspace.daemon().clone();
     // Before any spawn this launch requests; the render tick keeps it current.
-    daemon.set_terminal_theme(&(&chrome.theme.terminal_theme()).into());
+    daemon.set_terminal_theme(&(&chrome.terminal_theme()).into());
     let mut loop_error = None;
     let mut supervisor = ReconnectSupervisor::new();
     sync_live_chrome(workspace, chrome);
@@ -149,6 +149,7 @@ pub async fn run_live_loop<B: Backend>(
     let mut next_frame_render_at = Instant::now();
     let mut system_theme_watcher = None;
     let mut system_theme_watch_attempted = false;
+    let mut host_colors_due = true;
     let mut prefix_armed = false;
     let mut reconnect_job = None;
     let mut startup_job = if launch_pending {
@@ -493,6 +494,9 @@ pub async fn run_live_loop<B: Backend>(
                 }
             }
             _ = render_tick.tick() => {
+                // System's ground is the hosting terminal's own colours: ask
+                // for them on entering System and after each appearance flip.
+                host_colors_due |= !chrome.prefs.follows_system();
                 if chrome.prefs.follows_system() {
                     if !system_theme_watch_attempted {
                         system_theme_watcher = dark_light::subscribe().ok();
@@ -505,7 +509,12 @@ pub async fn run_live_loop<B: Backend>(
                             } else {
                                 crate::theme::ThemeKind::Dark
                             });
+                            host_colors_due = true;
                         }
+                    }
+                    if std::mem::take(&mut host_colors_due) {
+                        let arm = &chrome.host_color_query;
+                        super::theme_sync::query_host_colors(arm, &mut std::io::stdout())?;
                     }
                 } else if let Some(watcher) = &system_theme_watcher {
                     for _ in watcher.try_iter() {}
@@ -513,7 +522,7 @@ pub async fn run_live_loop<B: Backend>(
                 // New attachments and theme changes (toggle, menu, system)
                 // all reach the panes' hosts here, and the next spawn carries
                 // the same colours.
-                let terminal_theme = (&chrome.theme.terminal_theme()).into();
+                let terminal_theme = (&chrome.terminal_theme()).into();
                 workspace.daemon().set_terminal_theme(&terminal_theme);
                 workspace.sync_terminal_themes(&terminal_theme).await;
                 chrome.connection.now = std::time::Instant::now();
@@ -651,6 +660,10 @@ async fn route_live_input(
     event: &RawInputEvent,
     prefix_armed: &mut bool,
 ) -> Result<bool, FrameError> {
+    if let RawInputEvent::HostDefaultColor { kind, color } = event {
+        chrome.record_host_color(*kind, *color);
+        return Ok(false);
+    }
     if let RawInputEvent::Paste(text) = event {
         if let Some(pane_id) = chrome.focused_pane() {
             if text.len() > PASTE_MAX_BYTES {
