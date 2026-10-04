@@ -468,9 +468,12 @@ Graded against the same 15 facts as cohort 2, re-anchored at `468ac4bebd`; the
 key files are byte-identical at `4947fc5681`. Grading used the same rubric:
 correct 1, partial 0.5, missed 0, wrong -1. A fact gets full credit only when the
 answer states every component of it, and partial credit when exactly one is
-missing. The three facts with several components are:
+missing, and no credit when two or more are missing. A component counts only when
+the answer states it in its own text; a citation of the line that defines it does
+not. The three facts with several components are:
 
-- Fact 5: Argon2id parameters, `compare_digest`, and the dummy hash.
+- Fact 5: Argon2id parameters (`m=65536, t=3, p=4`), `compare_digest` for the
+  password check, and the dummy hash.
 - Fact 11: app-wide middleware installation, and the public paths.
 - Fact 14: the grant header, identity matching, and the lease 409.
 
@@ -478,8 +481,8 @@ missing. The three facts with several components are:
 | --- | --- | --- | --- | --- | --- | --- |
 | A1 | 14 | 14 | — | 10 | 1 (withdrawn by erratum) | 1 |
 | A2 | 12 | 13 | 5, 14 | 10 | 0 | 0 |
-| B1 | 13 | 14 | 5, 11 | — | 0 | 2 |
-| B2 | 13 | 13.5 | 14 | 10 | 0 | 0 |
+| B1 | 13 | 13.5 | 11 | 5 | 0 | 2 |
+| B2 | 12 | 13 | 5, 14 | 10 | 0 | 0 |
 
 Notes on individual runs:
 
@@ -495,6 +498,10 @@ Notes on individual runs:
   `missing_grant` without it. B2 labeled this as its own reading of the code.
 - **A2 marked one point unverified**: the final `compare_digest` step in
   `verify_password_hash`. That is why it has partial credit on fact 5.
+- **Arm B on fact 5.** B2 names Argon2id, `compare_digest` and the dummy hash but
+  only cites the parameter constants, so it has partial credit. B1 says "Argon2",
+  cites the constants without their values, and names `compare_digest` only for the
+  bearer token. With two components missing, fact 5 counts as missed for B1.
 
 **Did per-line numbering change arm A's bad-citation count?** Cohort 2's A1 and A2
 had 4 and 5 bad citations. All five of A2's sat in files it read only through
@@ -527,8 +534,8 @@ drop cannot be credited to #22400 alone. What the data does show:
 
 Evidence availability again made no measurable accuracy difference.
 
-- **Scores.** Arm A scored 14 and 12 strict, and arm B scored 13 and 13. With
-  partial credit, arm A has 14 and 13, and arm B has 14 and 13.5.
+- **Scores.** Arm A scored 14 and 12 strict, and arm B scored 13 and 12. With
+  partial credit, arm A has 14 and 13, and arm B has 13.5 and 13.
 - **Adoption.** Both arm A runs adopted evidence, but only as a file reader.
 - **Cost.** Research time overlapped across arms: arm A took 4.9 minutes for both
   runs, and arm B took 3.5 and 12.6.
