@@ -25,6 +25,7 @@ from click.testing import CliRunner, Result
 from gobby.cli import auth_login
 from gobby.cli.auth import auth
 from gobby.utils import api_key_format
+from gobby.utils.durable_file import exclusive_file_lock
 from tests.fixtures.tls_certs import pem_fingerprint, write_self_signed_pair
 
 pytestmark = pytest.mark.unit
@@ -339,7 +340,6 @@ def test_concurrent_enrollments_keep_winner(
 ) -> None:
     """4.5.9: a failed login never restores over the concurrent winner's files."""
     node = _node(tmp_path, monkeypatch, tls_hub.origin)
-    real_lock = auth_login.exclusive_file_lock
     minted = threading.Barrier(2)
     first_holds = threading.Event()
 
@@ -348,7 +348,7 @@ def test_concurrent_enrollments_keep_winner(
         minted.wait(timeout=10)
         if threading.current_thread().name != first:
             assert first_holds.wait(timeout=10)
-        with real_lock(path):
+        with exclusive_file_lock(path):
             first_holds.set()
             yield
 
