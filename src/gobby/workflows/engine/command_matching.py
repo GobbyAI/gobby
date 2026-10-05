@@ -5,8 +5,8 @@ each pipeline between unquoted ``&&``, ``||``, ``;``, ``&`` and newline
 separators, quotes, pipes and substitutions intact, so the segment-anchored
 bundled patterns keep their meaning and a ``curl … | sh`` shape still reads as
 one command. Heredoc bodies are stdin data and stay out of the subject unless
-something can run them: a body is re-attached to its opener segment (after a
-newline, so line-start anchors still see it) when its consumer is not a known
+something can run them: a body contributes its own subjects, with separate
+quote context and line-start anchors, when its consumer is not a known
 data sink, when the segment process-substitutes output, when a downstream
 pipeline stage is a shell or ``eval``, or when the heredoc never terminates. A
 data sink's body stays data even when its output pipes onward, and an unquoted
@@ -465,12 +465,12 @@ def _subjects(command: str, depth: int, *, heredoc_source: bool = False) -> list
         raw.append(
             command[min(start for start, _ in segment_spans) : max(end for _, end in segment_spans)]
         )
-    subjects = [
-        text
-        if _runs_substitution_output(scan.tokens[segment.first : segment.last + 1])
-        else _resolve_substitutions(text, depth)
-        for text, segment in zip(raw, segments, strict=True)
-    ]
+    subjects: list[str] = []
+    for text, segment in zip(raw, segments, strict=True):
+        if _runs_substitution_output(scan.tokens[segment.first : segment.last + 1]):
+            subjects.append(text)
+        else:
+            subjects.extend(_resolve_substitutions(text, depth))
     for heredoc in scan.heredocs:
         owner = next(
             index
@@ -480,25 +480,28 @@ def _subjects(command: str, depth: int, *, heredoc_source: bool = False) -> list
         segment = segments[owner]
         tokens = scan.tokens[segment.first : segment.last + 1]
         if _heredoc_may_execute(tokens, raw[owner], heredoc, heredoc.opener - segment.first):
-            # Nested stdin data may contain unmatched quotes. Remove that data
-            # through the existing consumer rules before quote masking sees it.
-            body = "\n".join(_subjects(heredoc.text, depth, heredoc_source=True))
-            subjects[owner] = f"{subjects[owner]}\n{body}"
+            # Each executed body has its own quote context. Joining it to the
+            # owner or a sibling lets an interpreter quote hide later commands.
+            subjects.extend(_subjects(heredoc.text, depth, heredoc_source=True))
         elif not heredoc.quoted:
-            subjects[owner] += "".join(f"\n{span}" for span in _substitution_spans(heredoc.text))
+            for span in _substitution_spans(heredoc.text):
+                subjects.extend(_subjects(span, depth + 1))
     return subjects
 
 
-def _resolve_substitutions(subject: str, depth: int) -> str:
-    """Replace each command substitution with the commands it actually runs.
+def _resolve_substitutions(subject: str, depth: int) -> list[str]:
+    """Extract each command substitution into independent executable subjects.
 
     The scanner reads ``"$(cat <<'EOF' … EOF)"`` as one quoted token, so a
     heredoc opened inside a substitution never reaches the data-sink check.
     Running the body through the same segment rules drops what it only prints
-    and keeps what it executes. A body that cannot be delimited stays whole,
-    and single quotes make a substitution literal text.
+    and keeps what it executes. Leave empty substitution delimiters in the owner
+    to preserve word boundaries without importing the body's quote context.
+    A body that cannot be delimited stays whole, and single quotes make a
+    substitution literal text.
     """
     out: list[str] = []
+    executed: list[str] = []
     quote = ""
     index = 0
     while index < len(subject):
@@ -513,16 +516,16 @@ def _resolve_substitutions(subject: str, depth: int) -> str:
             try:
                 end = _substitution_end(subject, start, tick, depth + 1)
             except ValueError:
-                return subject
-            body = "\n".join(_subjects(subject[start:end], depth + 1))
-            out.append(f"{subject[index:start]}{body}{subject[end]}")
+                return [subject]
+            executed.extend(_subjects(subject[start:end], depth + 1))
+            out.append(f"{subject[index:start]}{subject[end]}")
             index = end + 1
             continue
         if char in "\"'":
             quote = "" if quote == char else quote or char
         out.append(char)
         index += 1
-    return "".join(out)
+    return ["".join(out), *executed]
 
 
 def _runs_substitution_output(tokens: list[ShellToken]) -> bool:

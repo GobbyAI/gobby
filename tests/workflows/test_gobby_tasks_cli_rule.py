@@ -16,6 +16,8 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 
 pytestmark = pytest.mark.unit
 
+_ODD_PYTHON_SOURCE = "python3 - <<'PY'\nprint('it\\'s done')\nPY\n"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -103,6 +105,9 @@ def test_allows_read_only_task_cli_commands(
         # is one data argument, not a `;`-separated invocation.
         'timeout 5 python -c "x = 1; gobby tasks close 42"',
         'uv run --with pyyaml python -c "x = 1; gobby tasks close 42"',
+        # Isolated interpreter quotes must not turn literal task words into code.
+        "cat <<EOF\n$(" + _ODD_PYTHON_SOURCE + ")\n$(echo 'gobby tasks close 1')\nEOF",
+        "echo \"$(python3 - <<'PY'\nprint('say \"hi')\nPY\n)$(echo 'gobby tasks close 1')\"",
     ],
 )
 def test_allows_quoted_heredoc_and_string_data(
@@ -121,8 +126,33 @@ def test_allows_quoted_heredoc_and_string_data(
         "uv run python - <<PY\ngobby tasks close 1\nPY",
         # A quoted heredoc piped to a shell executes: keep blocking.
         "bash -s <<EOF\ngobby tasks close 1\nEOF",
+        # Each interpreter body has its own quote context. Python's escaped
+        # apostrophe cannot hide a later invocation in the enclosing shell.
+        "bash <<'EOF'\n" + _ODD_PYTHON_SOURCE + "gobby tasks close 1\nEOF",
+        "sh <<'EOF'\n" + _ODD_PYTHON_SOURCE + "gobby tasks close 1\nEOF",
+        "bash -s <<'EOF'\n" + _ODD_PYTHON_SOURCE + "gobby tasks close 1\nEOF",
+        "bash -s <<'EOF'\nuv run python - <<'PY'\nprint('it\\'s done')\nPY\ngobby tasks close 1\nEOF",
+        "sh <<'EOF'\nnode <<'JS'\nconsole.log('it\\'s')\nJS\ngobby tasks close 1\nEOF",
+        "ssh host <<'EOF'\n" + _ODD_PYTHON_SOURCE + "gobby tasks close 1\nEOF",
+        # Sibling bodies must not share quote context either.
+        "bash 3<<'A' <<'B'\nit's\nA\ngobby tasks close 1\nB",
+        "python3 - <<'A' | bash -s <<'B'\nprint('it\\'s done')\nA\ngobby tasks close 1\nB",
+        # Keep bare, compound, and substitution execution controls.
+        "bash <<'EOF'\ngobby tasks close 1\nEOF",
+        "sh <<'EOF'\n\"gobby\" tasks close 1\nEOF",
+        "bash <<'EOF' && echo done\n" + _ODD_PYTHON_SOURCE + "gobby tasks close 1\nEOF",
+        "echo $(bash <<'EOF'\n" + _ODD_PYTHON_SOURCE + "gobby tasks close 1\nEOF\n)",
+        "echo \"$(bash <<'EOF'\n" + _ODD_PYTHON_SOURCE + 'gobby tasks close 1\nEOF\n)"',
         # Command substitution inside double quotes still executes.
         'echo "$(gobby tasks close 42)"',
+        # Substitutions in stdin data and double-quoted arguments execute in
+        # separate quote contexts, including interpreter bodies with odd quotes.
+        "cat <<EOF\n$(" + _ODD_PYTHON_SOURCE + ")\n$(gobby tasks close 1)\nEOF",
+        "cat <<EOF\n$(python3 - <<'PY'\nprint('done')\nPY\n)\n$(gobby tasks close 1)\nEOF",
+        "echo \"$(python3 - <<'PY'\nprint('say \"hi')\nPY\n)\" | gobby tasks close 1",
+        "echo \"$(python3 - <<'PY'\nprint('done')\nPY\n)\" | gobby tasks close 1",
+        "echo \"$(python3 - <<'PY'\nprint('say \"hi')\nPY\n)$(gobby tasks close 1)\"",
+        "echo \"$(python3 - <<'PY'\nprint('done')\nPY\n)$(gobby tasks close 1)\"",
         # Known fail-closed residual: a backtick inside double quotes keeps the
         # span visible (it may execute), so this quoted documentation line still
         # blocks. Narrower than the reported false positive; kept fail-closed.

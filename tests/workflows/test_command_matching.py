@@ -34,7 +34,8 @@ class TestExecutableCommandSubjects:
         assert executable_command_subjects(command) == [
             "cd /repo",
             'echo "a; b" |\n  wc -l',
-            "ls $(pwd)",
+            "ls $()",
+            "pwd",
             "true",
         ]
 
@@ -42,7 +43,8 @@ class TestExecutableCommandSubjects:
         command = 'echo "$(printf x > out.txt)" && git status'
 
         assert executable_command_subjects(command) == [
-            'echo "$(printf x > out.txt)"',
+            'echo "$()"',
+            "printf x > out.txt",
             "git status",
         ]
 
@@ -75,16 +77,17 @@ class TestExecutableCommandSubjects:
             "xargs -0",
         ],
     )
-    def test_heredoc_to_an_interpreter_or_unknown_consumer_stays_attached(
+    def test_heredoc_to_an_interpreter_or_unknown_consumer_has_its_own_subject(
         self, opener: str
     ) -> None:
         command = f"{opener} <<'EOF'\n{PROSE_BODY}\nEOF"
 
-        assert executable_command_subjects(command) == [f"{opener} <<'EOF'\n{PROSE_BODY}"]
+        assert executable_command_subjects(command) == [f"{opener} <<'EOF'", PROSE_BODY]
 
-    def test_body_piped_onward_stays_attached_when_a_stage_can_run_it(self) -> None:
+    def test_body_piped_onward_has_its_own_subject_when_a_stage_can_run_it(self) -> None:
         assert executable_command_subjects("cat <<'EOF' | bash\nbody\nEOF") == [
-            "cat <<'EOF' | bash\nbody"
+            "cat <<'EOF' | bash",
+            "body",
         ]
         assert executable_command_subjects("cat <<'EOF' | tee out.txt\nbody\nEOF") == [
             "cat <<'EOF' | tee out.txt"
@@ -96,7 +99,8 @@ class TestExecutableCommandSubjects:
         # A pipeline continuation defers the body past the next stage; the
         # pipeline is still one segment and its downstream shell runs the body.
         assert executable_command_subjects("cat <<'EOF' |\n  bash\nbody\nEOF") == [
-            "cat <<'EOF' |\n  bash\nbody"
+            "cat <<'EOF' |\n  bash",
+            "body",
         ]
 
     def test_data_consumer_heredoc_stays_data_except_into_interpreters(self) -> None:
@@ -115,21 +119,23 @@ class TestExecutableCommandSubjects:
     def test_output_process_substitution_keeps_the_body(self) -> None:
         command = "cat <<'EOF' > >(bash)\nbody\nEOF"
 
-        assert executable_command_subjects(command) == ["cat <<'EOF' > >(bash)\nbody"]
+        assert executable_command_subjects(command) == ["cat <<'EOF' > >(bash)", "body"]
 
     def test_unquoted_delimiter_contributes_only_substitution_spans(self) -> None:
         assert executable_command_subjects("cat <<EOF\n$(git push --force)\nEOF") == [
-            "cat <<EOF\ngit push --force"
+            "cat <<EOF",
+            "git push --force",
         ]
         assert executable_command_subjects("cat <<EOF\n`git push --force`\nEOF") == [
-            "cat <<EOF\ngit push --force"
+            "cat <<EOF",
+            "git push --force",
         ]
         assert executable_command_subjects("cat <<EOF\nplain $HOME prose\nEOF") == ["cat <<EOF"]
 
     def test_unquoted_body_text_beside_a_substitution_stays_out(self) -> None:
         command = 'cat > notes.md <<EOF\n`git push --force`\npytest.importorskip("yaml")\nEOF'
 
-        assert executable_command_subjects(command) == ["cat > notes.md <<EOF\ngit push --force"]
+        assert executable_command_subjects(command) == ["cat > notes.md <<EOF", "git push --force"]
         assert not command_patterns_match(command, pattern=PYTEST_PATTERN)
         # A substitution span carrying a real invocation still selects a block.
         assert command_patterns_match("cat <<EOF\n`uv run pytest`\nEOF", pattern=PYTEST_PATTERN)
@@ -138,13 +144,13 @@ class TestExecutableCommandSubjects:
         """A commit message built from `cat <<'EOF'` is data one level in."""
         command = "git commit -m \"$(cat <<'EOF'\nfix: guard\n\npytest now passes\nEOF\n)\""
 
-        assert executable_command_subjects(command) == ["git commit -m \"$(cat <<'EOF')\""]
+        assert executable_command_subjects(command) == ['git commit -m "$()"', "cat <<'EOF'"]
         assert not command_patterns_match(command, pattern=PYTEST_PATTERN, mask_quoted=True)
 
     def test_substitution_that_runs_a_command_keeps_it(self) -> None:
         command = 'git commit -m "$(uv run pytest)"'
 
-        assert executable_command_subjects(command) == [command]
+        assert executable_command_subjects(command) == ['git commit -m "$()"', "uv run pytest"]
         assert command_patterns_match(command, pattern=PYTEST_PATTERN, mask_quoted=True)
 
     def test_a_shell_segment_keeps_its_substitution_body(self) -> None:
@@ -164,7 +170,7 @@ class TestExecutableCommandSubjects:
     def test_unterminated_heredoc_keeps_its_swallowed_text(self) -> None:
         command = "cat <<'EOF'\ngit push --force"
 
-        assert executable_command_subjects(command) == [command]
+        assert executable_command_subjects(command) == ["cat <<'EOF'", "git push --force"]
 
     def test_unparseable_or_empty_commands_are_matched_whole(self) -> None:
         assert executable_command_subjects("echo 'open") == ["echo 'open"]
