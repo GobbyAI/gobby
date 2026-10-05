@@ -171,9 +171,13 @@ stage rows.
   `<git-common-dir>/logs/refs/heads/<branch>` (`core.logAllRefUpdates`
   true; 1,740 entries for `0.5.0` on 2026-10-05). Probed in a throwaway
   repository: `merge --ff-only` to a SHA, to a prebuilt merge commit, and a
-  direct commit each add an entry whose old and new values can be
-  recovered, and linked worktrees read the same log. A fast-forward leaves
-  no other trace of the pre-landing tip.
+  direct commit each add an entry, and linked worktrees read the same log.
+  The log stores each entry's old and new OIDs, but
+  `git log -g --format='%H %gs'` exposes only the new OID and the action. A
+  fast-forward leaves no other trace of the pre-landing tip.
+  `GIT_REFLOG_ACTION` set on `merge --ff-only` becomes the entry's action
+  text (probed for both a SHA and a prebuilt merge: `gobby-land
+  candidate=<sha> mode=merge class=restart: Fast-forward`).
 - Commit discovery: `extract_task_ids_from_message` in
   `src/gobby/tasks/commits.py` links a commit whose message carries
   `[<project>-#N]` or `<project>-#N` to task N.
@@ -407,7 +411,8 @@ Consumers unchanged:
   `src/gobby/tasks/close_receipts.py`;
 - `landing_policy.classify_paths`, `read_freeze` (1.2);
 - `daemon_git.run` and `GitOk` in `src/gobby/utils/daemon_git.py`; pass
-  `env={**os.environ, "GOBBY_LAND_COMMIT": "1"}` to the ref-moving command;
+  `env={**os.environ, "GOBBY_LAND_COMMIT": "1", "GIT_REFLOG_ACTION":
+  "gobby-land ..."}` to the ref-moving command;
 - `InterSessionMessageManager(db).create_message(from_session, to_session,
   content)` in `src/gobby/storage/inter_session_messages.py`, the pattern
   `src/gobby/mcp_proxy/tools/tasks/_stage_review.py` uses;
@@ -435,27 +440,43 @@ target, so any lock taken inside nests correctly), exported in `__all__`, key
 3. Refuses `review_receipt_missing` unless the caller authored an
    `independent_review_approval` receipt on the task naming `commit_sha`, and
    refuses `caller_is_claimant` when the caller now claims the task. It also
-   refuses `candidate_not_linked` unless a commit linked to the task matches
-   `commit_sha` by prefix, the way `close_receipts.py` renders
-   `matches_linked_commit`. Review, landing and close then name the same
-   commit; the developer runs `link_commit` before requesting LAND.
+   refuses `candidate_not_linked` unless a commit linked to the task resolves
+   (`git rev-parse --verify <linked>^{commit}`) to exactly `commit_sha`, both
+   compared as full OIDs. `close_receipts.py`'s prefix-based
+   `matches_linked_commit` is a display fact and is not reused. Review,
+   landing and close then name the same commit; the developer runs
+   `link_commit` before requesting LAND.
 4. When `commit_sha` is already an ancestor of the branch tip, there is no git
    write. If the caller already holds a `landing` receipt for the SHA, the
    call returns that receipt's facts unchanged. Otherwise it recovers the
-   landing from the branch reflog (`git log -g --format=%H
-   refs/heads/<branch>` in the main checkout, shared by linked worktrees),
-   walking entries oldest to newest as (old, new) pairs:
-   - The landing event is the first pair where `new` contains `sha` and `old`
-     does not. Mode is `merge` when `new` has two parents and `old` is its
-     first parent, otherwise `ff`. `landed_tip` is `new`, `merge_commit` is
-     `new` for a merge, and `retest_required` is true for a merge.
-     `activation_class` comes from the candidate paths measured from
-     `merge-base(old, sha)` (step 5). This covers a landing whose receipt
-     write failed and a candidate landed inside a stacked descendant's merge.
-   - With no qualifying entry (expired or never logged), the receipt records
-     `provenance: unknown`, mode `already_landed`, `activation_class:
-     unknown` and `retest_required: true`. Rollout step 4 says what an
-     unknown class means for release.
+   landing from the branch reflog (`git log -g --format='%H %gs'
+   refs/heads/<branch>` in the main checkout, shared by linked worktrees).
+   Every ref write by `land_commit` sets `GIT_REFLOG_ACTION` to
+   `gobby-land candidate=<full sha> base=<full old tip> mode=<ff|merge>
+   class=<class>` (step 9, 1.4). The entry then names the operation and its
+   real old tip: `git log -g` yields each entry's new OID and action but not
+   its stored old OID, and commit topology alone cannot tell a generated
+   merge from a reviewed two-parent candidate that was fast-forwarded. The
+   recorded base is the tip the write started from, because `--ff-only`
+   from any other tip fails. Recovery reads only `gobby-land` entries, oldest
+   to newest, and never reconstructs an old value from neighboring entries:
+   - The landing event is the first `gobby-land` entry whose `new` is
+     contained in the current tip (so an event the branch was rewound past
+     never counts), whose `new` contains `sha`, and whose recorded `base`
+     resolves and does not contain `sha`. Mode is the recorded mode,
+     `landed_tip` is `new`, `merge_commit` is `new` for a merge, and
+     `retest_required` is true for a merge. `activation_class` is the
+     recorded class when the recorded candidate is `sha`; for a candidate
+     landed inside a stacked descendant's landing, it is computed from the
+     candidate paths measured from `merge-base(base, sha)` (step 5).
+     `provenance` is `reflog`.
+   - Unknown provenance: an unreadable or expired reflog, no qualifying
+     entry (a landing by any other writer leaves every later `gobby-land`
+     base already containing `sha`), a missing or zero `base`, a malformed
+     action, or a missing object. The receipt then records `provenance:
+     unknown`, mode `already_landed`, `activation_class: unknown` and
+     `retest_required: true`. No class, mode or base is inferred. Rollout
+     step 4 gives the repair path.
    It records that receipt and notifies. Closed tasks land like open ones.
 5. Computes the merge base with the tip and the candidate paths
    (`git diff -z --name-only --no-renames <base> <sha>`), then the activation
@@ -473,7 +494,8 @@ target, so any lock taken inside nests correctly), exported in `__all__`, key
    approver must name) and no git write.
 9. Otherwise re-reads `symbolic-ref HEAD` (changed since step 2: refuse
    `main_checkout_branch_changed`), runs `git merge --ff-only <sha>` in the
-   main checkout with the override variable, then reads the branch ref once
+   main checkout with the override variable and the `gobby-land`
+   `GIT_REFLOG_ACTION` (step 4), then reads the branch ref once
    as `observed_tip` and confirms the target is contained in it
    (`git merge-base --is-ancestor <target> <observed_tip>`). A permitted
    Markdown commit may already have advanced the branch past the target.
@@ -517,11 +539,14 @@ main checkout and real git; no test touches this checkout.
   or already on the tip, never count as overlap. test:
   `tests/tasks/test_land_commit.py::test_stacked_and_landed_candidates_never_overlap`.
 - 1.3.5 - A SHA already contained in the tip lands with no git write and one
-  `landing` receipt across repeated calls. A SHA fast-forwarded earlier
-  without a receipt recovers mode `ff`, its pre-landing base's class and
-  `provenance: reflog`. With its reflog entry expired, it records mode
-  `already_landed`, `activation_class: unknown`, `retest_required: true`.
-  test:
+  `landing` receipt across repeated calls. A SHA fast-forwarded earlier by
+  `land_commit` without a receipt recovers mode `ff`, the recorded class and
+  `provenance: reflog`. A reviewed two-parent candidate that was
+  fast-forwarded recovers mode `ff`. An expired or unreadable reflog, a
+  landing written without the `gobby-land` action, a branch-creation entry,
+  and an event the branch was rewound past each record `provenance:
+  unknown`, mode `already_landed`, `activation_class: unknown` and
+  `retest_required: true`. test:
   `tests/tasks/test_land_commit.py::test_already_landed_candidate_records_landing_once`.
 - 1.3.6 - `MainCheckoutLanding` maps to `main_checkout_landing:<project_id>`
   and has the lowest lock priority. test:
@@ -567,7 +592,10 @@ Implementation in `src/gobby/tasks/land_commit.py`:
 - Disjoint paths: build `TREE` with `git merge-tree --write-tree <tip> <sha>`
   (conflict exit: refuse `merge_conflict`), then
   `git commit-tree <TREE> -p <tip> -p <sha> -m "chore: land reviewed <short
-  sha> for #N"`, and fast-forward to that merge commit. The subject carries
+  sha> for #N"`, and fast-forward to that merge commit with
+  `GIT_REFLOG_ACTION` naming `candidate=<sha> base=<tip> mode=merge` (1.3
+  step 4). The
+  subject carries
   no task tag (Decision Record item 5). The `landing` receipt carries mode
   `merge`, `merge_commit` and `retest_required: true`. The response states
   the retest procedure: the reviewer takes the focused verification commands
@@ -637,9 +665,10 @@ Planned verification:
   `tests/tasks/test_land_commit.py::test_ref_moved_before_failure_reports_landing`.
 - 1.4.7 - A repeated call after a merge landing returns mode `merge` with
   `retest_required: true`. A retry after `receipt_pending` recovers the same
-  mode, `landed_tip` and class from the reflog. For stacked candidates A and
-  B where B lands by merge, A's later call records mode `merge` with
-  `retest_required: true` and A's own class. test:
+  mode, `landed_tip` and class from the `gobby-land` reflog entry. For
+  stacked candidates A and B where B lands by merge, A's later call records
+  mode `merge` with `retest_required: true` and A's own class; where B lands
+  by fast-forward, A records mode `ff`. test:
   `tests/tasks/test_land_commit.py::test_merge_landing_replay_preserves_retest_obligation`.
 
 **Granularity:** 1.4 has seven acceptance items and one lifecycle owner, the
@@ -785,8 +814,8 @@ Implementation:
 - `docs/guides/tasks.md`: a `### Landing` section after `### Close` covering
   the reviewer flow (the developer links the exact candidate with
   `link_commit` before requesting LAND), who may call each tool and grant
-  each approval, replay and `provenance` (an `unknown` class waits for the
-  Orchestrator's activation ruling), path
+  each approval, replay and `provenance` (the `gobby-land` reflog action,
+  and the Rollout step 4 repair path for `unknown`), path
   classes, approvals and freeze, moved-tip behavior with the retest
   procedure (1.4: commands from the task's validation evidence, the tested
   HEAD reported, a failed retest withholds the Lane Manager's close release
@@ -840,8 +869,12 @@ and a read-through against the shipped tool schemas.
    for a merge landing, a passing retest report before a close release; a
    failed or unavailable retest withholds the release and enters the
    found-work path, never a rollback; an `activation_class: unknown` receipt
-   withholds the release until the Orchestrator rules on activation; the
-   Orchestrator owns `set_landing_freeze` and approvals.
+   withholds the release until its repair path completes: the reviewer runs
+   the retest (`retest_required` is true), the Orchestrator classifies the
+   candidate's paths against its reviewed base with `classify_paths` and
+   messages the class to the Lane Manager, and the Lane Manager releases
+   once that activation is live and the retest passed; the Orchestrator
+   owns `set_landing_freeze` and approvals.
 5. The close-order rule (memory 283e9a81) keeps "code closes after landing".
    Its spacing of landings between close batches existed for the Merge
    Manager's index commands; whether to keep it is the Orchestrator's call.
@@ -872,6 +905,15 @@ and a read-through against the shipped tool schemas.
   `candidate_not_linked`, link before LAND). Nit: N-M3-primary-duty (the
   Merge Manager keeps the lane-primary merge duty). The Orchestrator took
   both role-file consequences at 12:46 CT.
+- 2026-10-05: Adversary refinements on f32f6f1: the linked-candidate check
+  compares full OIDs resolved by git; replay recovery reads a
+  `GIT_REFLOG_ACTION` `gobby-land` entry because topology cannot tell a
+  generated merge from a fast-forwarded two-parent candidate; rewound,
+  foreign, branch-creation, missing-object and unreadable history is
+  `provenance: unknown`, never inferred; Rollout step 4 gives the unknown
+  repair path. The action also records `base=<old tip>`, because
+  `git log -g` exposes no stored old OID; recovery never rebuilds an old
+  value from neighboring entries.
 
 ## V2: Verification
 `kind: verification`
