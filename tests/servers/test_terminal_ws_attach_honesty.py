@@ -29,6 +29,102 @@ from tests.storage.test_terminals import _create_pending
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delivery", ["direct", "proxy"])
+async def test_attach_before_placed_spawn_commit_is_not_reported_stale(
+    delivery: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Probe the actual placed-spawn row at bind, prepare, commit and promotion."""
+    from gobby.agents.spawn_executor_runtime import _runtime_spawn
+    from tests.agents.test_native_spawn import (
+        ObservingHost,
+        RecordingFrameClient,
+        _native_request,
+        _plan,
+    )
+
+    server = _ws_server()
+    ws = MockWebSocket()
+    server.clients[ws] = {"subscriptions": {"*"}}
+    observations: list[tuple[str, str, str | None]] = []
+    replies: list[dict[str, Any]] = []
+
+    async def binder(terminal_id: str) -> None:
+        row = store.get(terminal_id)
+        assert row is not None
+        observations.append(("bind", row.state, row.host_epoch))
+        await _send(
+            server,
+            ws,
+            {
+                "type": "terminal_attach",
+                "terminal_id": terminal_id,
+                "frame_delivery": delivery,
+            },
+        )
+        replies.append(ws.messages_of_type("terminal_attach_result")[-1])
+
+    class ProbeHost(ObservingHost):
+        async def spawn(self, **fields: Any) -> dict[str, Any]:
+            row = store.get(str(fields["terminal_id"]))
+            assert row is not None
+            observations.append(("prepare", row.state, row.host_epoch))
+            return await super().spawn(**fields)
+
+        async def spawn_commit(
+            self, terminal_id: str, spawn_key: str, commit_deadline_ms: int
+        ) -> None:
+            row = store.get(terminal_id)
+            assert row is not None
+            observations.append(("commit", row.state, row.host_epoch))
+            await super().spawn_commit(terminal_id, spawn_key, commit_deadline_ms)
+
+    host = ProbeHost()
+    request, runtime, store = _native_request(
+        host=host, frame=RecordingFrameClient(), placement_binder=binder
+    )
+    monkeypatch.setattr("gobby.agents.spawn_executor._persist_spawn_workspace", lambda *args: None)
+    monkeypatch.setattr(runtime, "_socket_dir", lambda: tmp_path)
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
+    manager = cast(TerminalManager, store)
+    leases = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    server.configure_terminals(
+        manager,
+        registry,
+        MagicMock(),
+        lease_registry=leases,
+        write_coordinator=WriteCoordinator(manager, registry, lease_registry=leases),
+    )
+    server.open_proxy_frame = _raising_opener
+    result = await _runtime_spawn(request, _plan())
+    assert result.success is True
+    assert observations == [
+        ("bind", "pending", None),
+        ("prepare", "pending", None),
+        ("commit", "pending", None),
+    ]
+    assert replies[0]["success"] is False
+    assert replies[0]["code"] == "host_not_ready"
+    assert result.terminal_id is not None
+    row = store.get(result.terminal_id)
+    assert row is not None
+    assert (row.state, row.host_epoch) == ("live", host.host_epoch)
+    await _send(
+        server,
+        ws,
+        {
+            "type": "terminal_attach",
+            "terminal_id": row.id,
+            "frame_delivery": "direct",
+        },
+    )
+    attached = ws.messages_of_type("terminal_attach_result")[-1]
+    assert attached["success"] is True
+    assert attached["direct"]["host_epoch"] == host.host_epoch
+
+
 _Kind = Literal[
     "no_runtime",
     "no_opener",
@@ -521,7 +617,7 @@ async def test_proxy_attach_waits_for_terminal_host_startup(
     else:
         assert runtime.resolved == 0
         assert result["code"] == "host_not_ready"
-        assert result["reason"] == "terminal host has not finished starting"
+        assert result["reason"] == "terminal host or terminal spawn is not ready"
 
 
 class _ThreadRecordingManager(TerminalManager):

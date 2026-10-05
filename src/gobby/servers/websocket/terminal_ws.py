@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from gobby.servers.websocket.terminal_ws_write import WRITE_FAULT_NAME as WRITE_FAULT_NAME
 from gobby.servers.websocket.terminal_ws_write import TerminalWriteMixin
 from gobby.storage.projects import GLOBAL_PROJECT_ID
-from gobby.storage.terminals import AttachLocator, HostEpochMismatchError
+from gobby.storage.terminals import AttachLocator, HostEpochMismatchError, TerminalNotReadyError
 from gobby.terminals.foreground import (
     foreground_commands,
     process_shell,
@@ -74,7 +74,7 @@ PROXY_START_SECONDS = 1.0
 PROXY_ATTACH_FAILURE_REASONS: dict[str, str] = {
     "terminal_exited": "terminal row is exited or orphaned; nothing to attach",
     "host_epoch_stale": "terminal belongs to an earlier gterm host incarnation",
-    "host_not_ready": "terminal host has not finished starting",
+    "host_not_ready": "terminal host or terminal spawn is not ready",
     "runtime_unavailable": "no terminal runtime for backend",
     "proxy_unavailable": "proxy frame opener is not available",
     "locator_failed": "attach_locator raised",
@@ -628,6 +628,8 @@ class TerminalWsMixin(TerminalWriteMixin):
             return None, _log_proxy_attach_failure(row.id, "runtime_unavailable")
         try:
             locator = await runtime.attach_locator(row)
+        except TerminalNotReadyError:
+            return None, _log_proxy_attach_failure(row.id, "host_not_ready")
         except HostEpochMismatchError:
             return None, _log_proxy_attach_failure(row.id, "host_epoch_stale")
         except Exception:
