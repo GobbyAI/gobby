@@ -54,6 +54,7 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
         self.token_event_store = TokenEventStore(db)
 
         self._running = False
+        self._machine_local_only = False
         self._expire_task: asyncio.Task[None] | None = None
         self._process_task: asyncio.Task[None] | None = None
         self._kg_queue_task: asyncio.Task[None] | None = None
@@ -88,14 +89,20 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
             return cast(T, result)
         return await asyncio.to_thread(func, *args, **kwargs)
 
-    async def start(self) -> None:
-        """Start background jobs."""
+    async def start(self, *, machine_local_only: bool = False) -> None:
+        """Start background jobs.
+
+        ``machine_local_only`` starts only this machine's work: transcript
+        processing for sessions it owns and local file maintenance. A node runner
+        uses it because the shared-row sweeps and the KG queue belong to the hub.
+        """
         if self._running:
             return
 
         self._running = True
+        self._machine_local_only = machine_local_only
 
-        # Start expire job
+        # Start expire job (local maintenance only when machine_local_only)
         self._expire_task = asyncio.create_task(
             self._expire_loop(),
             name="session-lifecycle-expire",
@@ -108,7 +115,11 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
         )
 
         # Start KG queue processing job (if memory manager has KG service)
-        if self.memory_manager and getattr(self.memory_manager, "kg_service", None):
+        if (
+            not machine_local_only
+            and self.memory_manager
+            and getattr(self.memory_manager, "kg_service", None)
+        ):
             self._kg_queue_task = asyncio.create_task(
                 self._kg_queue_loop(),
                 name="session-lifecycle-kg-queue",
@@ -162,21 +173,10 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
         """Background loop for expiring stale sessions."""
         while self._running:
             active = self._capture_active()
-            try:
-                await self._expire_stale_sessions(active.session_lifecycle)
-            except Exception as e:
-                logger.error("Error in expire loop: %s", e)
+            if not self._machine_local_only:
+                await self._sweep_shared_rows(active)
 
-            try:
-                await self._purge_soft_deleted_definitions()
-            except Exception as e:
-                logger.error("Error purging soft-deleted definitions: %s", e)
-
-            try:
-                await self._purge_dream_hidden_memories(active.memory.dream)
-            except Exception as e:
-                logger.error("Error purging dream-hidden memories: %s", e)
-
+            await asyncio.to_thread(self._cleanup_prompt_files)
             try:
                 removed = await asyncio.to_thread(purge_textgen_project_dirs)
                 if removed:
@@ -188,6 +188,23 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
                 await asyncio.sleep(active.session_lifecycle.expire_check_interval_minutes * 60)
             except asyncio.CancelledError:
                 break
+
+    async def _sweep_shared_rows(self, active: DaemonConfig) -> None:
+        """Expire and purge shared hub rows; hub-only because none is machine-scoped."""
+        try:
+            await self._expire_stale_sessions(active.session_lifecycle)
+        except Exception as e:
+            logger.error("Error in expire loop: %s", e)
+
+        try:
+            await self._purge_soft_deleted_definitions()
+        except Exception as e:
+            logger.error("Error purging soft-deleted definitions: %s", e)
+
+        try:
+            await self._purge_dream_hidden_memories(active.memory.dream)
+        except Exception as e:
+            logger.error("Error purging dream-hidden memories: %s", e)
 
     async def _process_loop(self) -> None:
         """Background loop for processing pending transcripts."""
@@ -330,9 +347,6 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
         # cleaned up much faster than the normal 24h stale-session sweep.
         fast_expired = self.session_manager.expire_empty_sessions(timeout_hours=2)
         pruned = self.session_manager.prune_empty_sessions(min_age_hours=1)
-
-        # Clean up stale prompt files (run in thread to avoid blocking)
-        await asyncio.to_thread(self._cleanup_prompt_files)
 
         return paused + orphaned + expired + fast_expired + pruned
 
