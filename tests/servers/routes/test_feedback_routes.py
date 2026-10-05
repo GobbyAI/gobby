@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -229,3 +230,79 @@ def test_status_reports_backlog_latest_run_and_schedule() -> None:
     empty = client.get("/api/feedback/status").json()
     assert empty["schedule"] is None
     assert empty["latest_run"] is None
+
+
+def _on_event_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+class _ThreadRecordingStore:
+    """Feedback store fake that records whether each call ran on the event loop."""
+
+    def __init__(self) -> None:
+        self.calls: dict[str, bool] = {}
+
+    def _record(self, name: str) -> None:
+        self.calls[name] = _on_event_loop()
+
+    def list_feedback(self, **_filters: object) -> list[FeedbackEntry]:
+        self._record("list_feedback")
+        return [_entry()]
+
+    def list_runs(self, *, limit: int) -> list[FeedbackReviewRun]:
+        self._record("list_runs")
+        return [_run()][:limit]
+
+    def backlog_count(self) -> int:
+        self._record("backlog_count")
+        return 3
+
+    def latest_run(self) -> FeedbackReviewRun:
+        self._record("latest_run")
+        return _run()
+
+    def get_run(self, run_id: str) -> FeedbackReviewRun:
+        self._record("get_run")
+        return _run(run_id)
+
+    def observations_page(self, run_id: str, *, offset: int, limit: int) -> dict[str, object]:
+        self._record("observations_page")
+        return {"success": True, "run_id": run_id, "offset": offset, "limit": limit}
+
+    def results_page(self, run_id: str, *, offset: int, limit: int) -> dict[str, object]:
+        self._record("results_page")
+        return {"success": True, "run_id": run_id, "offset": offset, "limit": limit}
+
+    def get_job_by_name(self, _name: str) -> None:
+        self._record("get_job_by_name")
+
+
+@pytest.mark.parametrize(
+    ("path", "expected_calls"),
+    [
+        ("/api/feedback/entries", {"list_feedback"}),
+        ("/api/feedback/runs", {"list_runs"}),
+        ("/api/feedback/status", {"list_runs", "backlog_count", "get_job_by_name"}),
+        ("/api/feedback/review/latest", {"latest_run"}),
+        ("/api/feedback/review/run-1", {"get_run"}),
+        ("/api/feedback/review/run-1/observations", {"observations_page"}),
+        ("/api/feedback/review/run-1/results", {"results_page"}),
+    ],
+)
+def test_storage_calls_run_off_the_event_loop(path: str, expected_calls: set[str]) -> None:
+    store = _ThreadRecordingStore()
+    server = MagicMock()
+    server.services = SimpleNamespace(
+        feedback_review_service=SimpleNamespace(store=store), cron_storage=store
+    )
+    app = FastAPI()
+    app.include_router(create_feedback_router(server))
+    client = TestClient(app, raise_server_exceptions=False)
+
+    assert client.get(path).status_code == 200
+    assert set(store.calls) == expected_calls
+    assert not any(store.calls.values()), f"storage ran on the event loop: {store.calls}"
