@@ -296,8 +296,9 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) and re-verified at
     context).
   - A spawned pane keeps its launch environment across `/clear`. Its hooks and
     its MCP proxy send `GOBBY_SESSION_ID`, the predecessor, as
-    `X-Gobby-Session-Id`, so the daemon attributes the successor's hook events
-    and tool calls to the expired predecessor (1.6 research context).
+    `X-Gobby-Session-Id`. After the take, the daemon refuses the successor's
+    MCP tool calls (403), and attributes its hook events, variable calls and
+    LLM calls to the expired predecessor (1.6 research context).
 - Spawned-run resume (`agents/resume_executor.py`) reuses the existing session
   (`existing_session_id`) and merges the spawn-time `initial_variables`.
 - Web chat:
@@ -687,10 +688,13 @@ Tests: `test_apply_agent_definition.py` uses the `HubDatabase` fixtures of
 
 Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/test_session_start_reactivation.py tests/workflows/test_step_snapshot_semantics.py tests/mcp_proxy/tools/skills/test_list_skills.py tests/workflows/test_session_defaults.py tests/servers/websocket/chat/test_servers_websocket_chat_session.py tests/hooks/test_agent_events_coverage.py tests/hooks/test_session_activation_reconciliation.py tests/hooks/event_handlers/test_session_variable_preservation.py -q`.
 Then run `uv run ruff check` and `uv run mypy` on the changed files, and
-`rg -w 'apply_persona|_persona_name|build_session_persona_changes' src tests --glob '!tests/mcp_proxy/tools/test_apply_agent_definition.py'`,
-which must print nothing. The one excluded file holds the retirement-absence
+`rg -w 'apply_persona|_persona_name|build_session_persona_changes' src tests --glob '!tests/mcp_proxy/tools/test_apply_agent_definition.py' --glob '!src/gobby/install/shared/workflows/rules' --glob '!tests/workflows/test_seat_rules.py' --glob '!src/gobby/install/shared/skills/gobby/references/agents/personas.md' --glob '!src/gobby/install/shared/skills/gobby/references/review/epic.md' --glob '!src/gobby/install/shared/workflows/review.yaml' --glob '!tests/skills/test_review_skill.py'`,
+which must print nothing. The first excluded file holds the retirement-absence
 assertion of 1.1.7, and `rg -w -c apply_persona tests/mcp_proxy/tools/test_apply_agent_definition.py`
-must print `1`.
+must print `1`. The other exclusions are paths that later leaves own. 1.5
+removes the rule clauses and the seat-rule fixtures, and 3.1 rewrites the two
+references, the review workflow and its test. The final-state `rg` in V1 covers
+all of them.
 
 Consumers unchanged:
 - `src/gobby/hooks/event_handlers/_base.py` — no-edit-reason: calls get_session_skill_exclusions by name; the signature and return type are unchanged, only the variable it reads changes.
@@ -1210,9 +1214,10 @@ and this deliverable makes requests follow it. It is split from 1.4 because it
 changes server ingress, while 1.4 changes the clear lifecycle.
 
 **Research context:** adversary finding F-clear-capability-continuity
-(gobby#15414) reported that the successor is refused. The source shows a
-different failure: the successor is accepted and attributed to the expired
-predecessor. Verified at 9e79ef1:
+(gobby#15414) reported that the successor is refused. The source shows that
+auth accepts the successor everywhere. After that, MCP ingress refuses it, and
+the other three ingress sites attribute it to the expired predecessor. Verified
+at 9e79ef1, and the MCP refusal at b9afc3b:
 - A spawned pane keeps its launch environment across `/clear`.
   - ghook sets `X-Gobby-Session-Id` from `GOBBY_SESSION_ID` before the payload
     session (`crates/ghook/src/dispatch.rs:402-413`).
@@ -1226,18 +1231,26 @@ predecessor. Verified at 9e79ef1:
 - Auth passes after the clear. `auth_service.py::_agent_identity_matches` checks
   the header session against `claims.session_id` (lines 170-174), and both still
   name the predecessor.
-- Attribution goes to the predecessor:
+- MCP ingress refuses after the take. `_set_context_for_request` seeds the
+  header session (the predecessor) as `tokens.resolved_session_id` and calls
+  `_bind_agent_run_context` (`request_context.py:312-363`, called at lines 230
+  and 288). That check compares the run's `child_session_id`, which is now the
+  successor, against the seeded session, and raises 403 "Invalid agent run
+  identity" (lines 330-334). Before the take, the two match and the call is
+  attributed to the predecessor.
+- The other three sites attribute to the predecessor:
   - hook ingress puts the header into `_platform_session_id` (`hooks.py:284`),
     and `SessionLookupService.resolve` returns an explicit platform session as
     it is (`hooks/session_lookup.py:155-160`). Revival of a cleared row is
     suppressed (`storage/sessions/_terminal_revival.py`), but the id is still
     returned;
-  - `_set_context_for_request` seeds the header session as the caller, and
-    `utils/session_context.py` follows no clear chain;
   - `routes/sessions/variables.py::_bound_session_id` returns
     `claims.session_id` (lines 24-38);
-  - `routes/llm.py::chat_completions` takes `claims.session_id` (line 308), and
-    the capability matrix admits run tokens on that route.
+  - `routes/llm.py::chat_completions` takes `claims.session_id` (line 308) and
+    passes it as `ToolChatRequest.session_id`. The route requires a `tool_chat`
+    runtime grant whose principal matches the bearer's issued session
+    (`auth_service.py:295`, `grant_auth.py::bearer_matches_grant`).
+  - `utils/session_context.py` follows no clear chain.
 - After 1.4's take, the run's `child_session_id` and the successor's
   `agent_run_id` name each other, and the predecessor's `agent_run_id` is null.
   Before the take, `child_session_id` is still the predecessor. That pair is the
@@ -1258,7 +1271,9 @@ Implementation:
   `project_id`):
   - `_set_context_for_request`: when `server.auth_service.verified_agent_claims(request)`
     returns claims, it seeds the returned session in place of the header
-    session. Auth has already bound the header to `claims.session_id`.
+    session. Auth has already bound the header to `claims.session_id`. The
+    swap happens before both `_bind_agent_run_context` calls, so the run check
+    compares the run's child with the successor and admits the call.
   - `execute_hook`: it stores the returned session as `_platform_session_id`.
   - `_bound_session_id`: it accepts a requested session that resolves to
     `claims.session_id` or to the returned session, and returns the returned
@@ -1281,20 +1296,25 @@ fixtures of `tests/servers/test_auth_service.py`. It seeds the post-take state
 of 1.4: an expired predecessor with a consumed clear marker, a live successor,
 and a `running` run whose `child_session_id` is the successor. It mints a token
 for (run, predecessor, project) with `issue_agent_api_token` and sends the
-headers a spawned pane sends.
+headers a spawned pane sends. The 1.6.4 case also issues a `tool_chat` grant
+for that principal through the fixture's grant service and stubs only the tool
+chat service.
 
 Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_managed_clear_identity.py tests/servers/test_auth_service.py tests/servers/test_grant_auth.py tests/servers/routes/mcp_endpoints/test_execution_context.py tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py tests/servers/test_mcp_execution_context.py tests/servers/routes/test_llm_routes.py tests/servers/routes/test_session_variables.py tests/servers/routes/mcp/test_hook_session_metadata.py -q`.
 Then run `uv run ruff check` and `uv run mypy` on the changed files.
 
 Consumers unchanged:
 - `src/gobby/servers/routes/mcp/endpoints/execution.py` — no-edit-reason: calls _set_context_for_request(server, arguments, request) at four sites; the signature and the returned tokens are unchanged.
+- `src/gobby/servers/routes/mcp/endpoints/bridge.py` — no-edit-reason: calls _set_context_for_request(server, {}, request) at line 27 and writes _mcp_proxy_ready to the returned resolved_session_id, which then names the successor with no edit.
+- `tests/servers/routes/mcp_endpoints/test_bridge.py` — no-edit-reason: replaces _set_context_for_request with an AsyncMock (lines 63, 82), so the helper body never runs.
+- `tests/mcp_proxy/services/test_scope_resolution_matrix.py` — no-edit-reason: patches _set_context_for_request by path with a seeding side effect (line 381), so the helper body never runs.
 
 **Acceptance:**
 
 - 1.6.1 - After a staged clear, a wrapper `call_tool` for a session-scoped tool
-  that carries the pane's frozen headers and token is attributed to the
-  successor: a `set_variable` through it lands on the successor's row, and the
-  predecessor's row is unchanged. test:
+  that carries the pane's frozen headers and token is admitted, where today it
+  is refused 403, and is attributed to the successor: a `set_variable` through
+  it lands on the successor's row, and the predecessor's row is unchanged. test:
   `tests/servers/test_managed_clear_identity.py::test_successor_tool_call_is_attributed_to_successor`.
 - 1.6.2 - A hook event with the frozen headers resolves `_platform_session_id`
   to the successor, and `POST /api/sessions/<predecessor>/variables/get`
@@ -1308,6 +1328,12 @@ Consumers unchanged:
 
   test:
   `tests/servers/test_managed_clear_identity.py::test_no_forwarding_without_live_run_binding`.
+- 1.6.4 - After a staged clear, `POST /api/llm/chat/completions` with the frozen
+  bearer and a valid `tool_chat` grant issued for the predecessor passes real
+  auth and grant checks, and the stubbed tool chat service receives
+  `ToolChatRequest.session_id` equal to the successor. Once the run ends, the
+  same request is refused `run_inactive`. test:
+  `tests/servers/test_managed_clear_identity.py::test_successor_chat_completion_keeps_issued_grant`.
 
 ## P2: Run Lifetime Declaration
 `kind: framing`
@@ -1637,7 +1663,8 @@ deferral:
 ## V1: Verification
 `kind: verification`
 
-Run after the final edit of each leaf and again after the last leaf lands:
+Each leaf runs its own planned verification after its final edit. Run this
+block after the last leaf lands:
 
 ```bash
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/test_session_start_reactivation.py tests/hooks/test_interactive_step_instance.py tests/hooks/test_clear_successor_seat.py tests/workflows/test_step_snapshot_semantics.py tests/workflows/test_step_runtime_transitions.py tests/workflows/test_agent_definitions_v2.py tests/workflows/test_session_defaults.py tests/workflows/test_seat_rules.py tests/mcp_proxy/tools/skills/test_list_skills.py tests/mcp_proxy/tools/spawn_agent/test_factory.py tests/servers/websocket/chat/test_servers_websocket_chat_session.py tests/servers/websocket/test_set_agent.py tests/hooks/test_agent_events_coverage.py tests/hooks/test_session_activation_reconciliation.py tests/hooks/event_handlers/test_session_variable_preservation.py tests/hooks/test_session_start_handlers.py tests/hooks/test_session_end_handlers.py tests/hooks/test_session_events_coverage.py tests/hooks/test_session_materialize.py tests/sessions/test_clear_acknowledgment.py tests/sessions/test_handoff.py tests/sessions/test_mailbox.py tests/servers/websocket/chat/test_clear_session.py tests/agents/watchdog/test_interactive_lifecycle_cleanup.py tests/servers/test_managed_clear_identity.py tests/servers/test_auth_service.py tests/servers/test_grant_auth.py tests/servers/routes/mcp_endpoints/test_execution_context.py tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py tests/servers/test_mcp_execution_context.py tests/servers/routes/test_llm_routes.py tests/servers/routes/test_session_variables.py tests/servers/routes/mcp/test_hook_session_metadata.py tests/skills/test_review_skill.py tests/agents/test_agents_sync.py -q
@@ -1648,7 +1675,8 @@ uv run gobby plans validate .gobby/plans/apply-agent-definition.md -p /Users/jos
 ```
 
 The first `rg` must print nothing: no production code, bundled template, guide
-or other test names a retired identifier. The second prints `1` for each file,
+or other test names a retired identifier. It can pass only after 1.5 and 3.1
+land. The second prints `1` for each file,
 because each allowlisted file holds exactly one retirement-absence assertion
 (1.1.7 and 1.5.1). Do not run the full pytest suite.
 
