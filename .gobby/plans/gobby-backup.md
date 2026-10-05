@@ -97,8 +97,11 @@ Orchestrator's rulings A1 to A8 (2026-10-05).
    - On a held lock, `backup --scheduled` records `skipped_locked` and exits
      0.
    - `verify --scheduled` waits for the lock, because the Sunday backup can
-     still hold it at 07:30. Every external step has a timeout, PostgreSQL
-     statements and lock waits included (1.3), so the wait is bounded.
+     still hold it at 07:30. The wait ends at the capture budget (1.2),
+     and a timeout records `error`. Every blocking lock (`gbackup.lock`,
+     `last-run.lock` and `.machine_id.lock`) has that deadline, and every
+     external step has a timeout, PostgreSQL statements and lock waits
+     included (1.3).
    - Interactive commands refuse on a held lock and exit 1, naming the
      holder.
    - Restore and cold also take the daemon's maintenance claim, which fails
@@ -125,7 +128,8 @@ Orchestrator's rulings A1 to A8 (2026-10-05).
      the Qdrant collections and the FalkorDB dump, then drains the restored
      ephemeral principals.
    - Volume tars are never restored.
-   - Restore releases no maintenance epoch (D1).
+   - Restore releases no maintenance epoch (D1). A manifest whose
+     `epoch_id` is not null is refused before any write (5.2).
 10. **Test protection.** A truthy `GOBBY_TEST_PROTECT` blocks every Docker
     invocation unless `GOBBY_TEST_ALLOW_DOCKER` is `1`, `true` or `yes`, the
     same contract as `docker_guard.py`. The test target is accepted only
@@ -162,6 +166,10 @@ Orchestrator's rulings A1 to A8 (2026-10-05).
     - A Qdrant collection's content digest is recorded only when its
       before and after digests match. Otherwise it is null, and verify
       checks the count range alone.
+    - A FalkorDB graph present in both `GRAPH.LIST` readings is required.
+      A graph present in only one reading is optional and has no count
+      expectation. A restored graph set must hold every required graph
+      and nothing outside the two readings.
 14. **Qdrant digest form.** gbackup hashes points in its own canonical JSON
     form and stays consistent with itself. Byte compatibility with Python's
     `json.dumps` is out of scope (AGENTS.md rule 10). `gbackup verify`
@@ -429,7 +437,7 @@ recorded change.
 | `restore_hub_files` (`files_home.py:585-595`) | Primitive 4.3; restore 5.2 |
 | `restore_postgres_globals` (`_stores.py:238-301`) | 5.2 |
 | Database reset, `pg_restore --no-owner`, extension probes (`postgres_backup.py:100-151`) | 5.2 |
-| Restored epoch release (`postgres_backup.py:100-151`) | Removed (D1) |
+| Restored epoch release (`postgres_backup.py:100-151`) | Removed (D1); restore refuses an epoch manifest before any write (5.2) |
 | `reconcile_restored_principals` (`_stores.py:233-235`) | 5.2 |
 | Qdrant and FalkorDB restore | New in 5.1 (D3 (a)) |
 | `check_manifest_gate` (`_manifest.py:255-296`) | Test-only; not ported |
@@ -563,11 +571,18 @@ machine ID. `rustix` (in `Cargo.lock`) provides `flock`, `openat` and
 
 Implementation:
 - The backup root is `<gobby_home()>/backups/hub`, created with mode 0700.
-- `RunLock::acquire(root, command, policy)` flocks `gbackup.lock` and then
-  writes the holder (PID, command, start time) into it.
+- `flock_until(file, deadline)` is the only blocking lock in gbackup. It
+  tries a non-blocking exclusive flock every 0.5 s until the deadline,
+  through an injected clock and sleeper. On expiry it fails with `lock
+  wait timed out after <s> s`, naming the lock file and the holder it
+  records. Callers pass the capture budget
+  (`GOBBY_POSTGRES_DUMP_TIMEOUT_SECONDS`, default 600 s, read in 1.3).
+- `RunLock::acquire(root, command, policy, deadline)` flocks
+  `gbackup.lock` and then writes the holder (PID, command, start time)
+  into it.
   - `Skip` (scheduled backup) returns a `skipped_locked` outcome.
-  - `Wait` (scheduled verify) blocks until the lock is free and reports the
-    seconds it waited.
+  - `Wait` (scheduled verify) uses `flock_until`, and reports the seconds
+    it waited. A timeout records status `error` and exits 1.
   - `Refuse` (every interactive command) fails with exit 1 and a message
     naming the holder's PID and command.
 - `LastRun` is `{"backup": RunRecord | null, "verify": RunRecord | null}`.
@@ -575,9 +590,9 @@ Implementation:
     `error` or `skipped_locked`), `backup_dir`, `error`, `pid` and
     `lock_wait_seconds`.
   - Only scheduled runs write it.
-  - A writer flocks `last-run.lock`, reads the file, replaces its own mode's
-    record, writes a 0600 temp file, fsyncs it, renames it over
-    `last-run.json` and fsyncs the directory.
+  - A writer takes `last-run.lock` through `flock_until`, reads the file,
+    replaces its own mode's record, writes a 0600 temp file, fsyncs it,
+    renames it over `last-run.json` and fsyncs the directory.
   - An error string is the error chain's display. No code path formats a
     DSN or a key into an error.
 - `jitter_minutes(machine_id)` takes the first eight bytes of the
@@ -604,8 +619,10 @@ Planned verification:
   without waiting. test:
   `crates/gbackup/src/envelope/tests.rs::skip_policy_returns_skipped_locked`.
 - 1.2.2 - The `Wait` policy acquires the lock after the holder releases it,
-  and reports the wait. test:
-  `crates/gbackup/src/envelope/tests.rs::wait_policy_acquires_after_release`.
+  and reports the wait. A holder that stays alive past the deadline fails
+  the wait with a timeout naming the holder, and `flock_until` behaves the
+  same for `last-run.lock`. test:
+  `crates/gbackup/src/envelope/tests.rs::wait_policy_acquires_after_release_and_times_out`.
 - 1.2.3 - The `Refuse` policy fails, naming the holder's PID and command.
   test: `crates/gbackup/src/envelope/tests.rs::refuse_policy_names_holder`.
 - 1.2.4 - Writing a `verify` record keeps the existing `backup` record, and
@@ -893,6 +910,10 @@ Targets:
 - `crates/gbackup/Cargo.toml`
 - `Cargo.lock`
 
+**Granularity:** one leaf with seven acceptance items. The manifest type,
+its schema, its integrity check and its artifact-set rules are one contract
+that every writer and reader shares.
+
 **Research context:** Python's manifest module (_manifest.py) defines
 format `gobby-hub-backup-manifest`, version 3, file name `manifest.json` and
 the store keys `postgres`, `qdrant`, `falkordb`, `volumes` and `files`.
@@ -943,6 +964,22 @@ Implementation:
   size.
 - `verify_artifacts(root, artifacts)` collects every defect the Python check
   reports, and fails once with all of them.
+- `check_artifact_set(&manifest)` adds the semantic rules the schema
+  cannot state, and leaves the v3 JSON shape alone:
+  - Artifact names are unique, and so are paths.
+  - Each store that is not skipped has its required records exactly
+    once, at Python's paths: `postgres-dump` (`postgres/gobby.dump`),
+    `postgres-globals` (`postgres/globals.sql`), `falkordb-rdb`
+    (`falkordb/dump.rdb`), `files-home` (`files/files_home.tar`), one
+    `qdrant-<name>` per collection in `details.collections` whose path
+    equals that collection's `snapshot`, and one `volume-<v>` per
+    recorded volume.
+  - A `qdrant-` or `volume-` record with no matching detail entry is
+    refused.
+  - Defects are collected and reported once.
+- Verify and restore run `check_artifact_set` before `verify_artifacts`.
+  They read every input through `Manifest::artifact(name)`, never a
+  fixed path, so every consumed byte is a hashed record.
 - `integrity_ok_by_size(dir)` is the retention predicate of Decision Record
   6. It reads metadata only. It is true only for a gbackup-written live
   manifest.
@@ -982,6 +1019,11 @@ Planned verification:
   `details.reason = "live-mode"`, and both states unverified with method
   `skipped-live-mode`. test:
   `crates/gbackup/src/manifest/tests.rs::live_volumes_record_is_skipped_live_mode`.
+- 2.1.7 - `check_artifact_set` refuses an omitted required record, a
+  duplicate name, a duplicate path, a Qdrant snapshot path with no
+  matching record, and an orphan `qdrant-` record. It accepts the
+  Python-written fixture and a gbackup-written live manifest. test:
+  `crates/gbackup/src/manifest/tests.rs::artifact_set_rules`.
 
 ### 2.2 PostgreSQL capture in an exported snapshot [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -1190,6 +1232,14 @@ Implementation:
   the RDB.
 - Equal readings record Python's details. Unequal readings record each
   count as `{min, max}` and set `live_drift: true`.
+- `graphs` holds the graphs present in both `GRAPH.LIST` readings, and
+  `graph_inventory` counts only those. A graph in exactly one reading goes
+  in `graphs_optional` with no counts, and sets `live_drift: true`.
+  Stable membership writes no `graphs_optional`, as Python.
+- `falkordb_matches(details, observed)` is the comparison that 4.2 and
+  5.1 share. Every `graphs` entry must be present, no graph outside
+  `graphs` and `graphs_optional` may be, and required counts and
+  `DBSIZE` match exactly or by range.
 - A `BGSAVE` that does not advance `LASTSAVE` within 300 s fails the
   capture. The clock and sleeper are injected.
 
@@ -1207,6 +1257,11 @@ Planned verification:
 - 2.4.3 - Stable readings record exact counts. Drifting readings record
   ranges and `live_drift`. test:
   `crates/gbackup/src/stores/falkordb/tests.rs::drift_records_count_ranges`.
+- 2.4.4 - A graph created and another deleted during `BGSAVE` are both
+  recorded as optional. `falkordb_matches` accepts a restored set with or
+  without each of them, and refuses a missing required graph or an
+  unknown one. test:
+  `crates/gbackup/src/stores/falkordb/tests.rs::membership_drift_records_optional_graphs`.
 
 ### 2.5 files_home archive and machine identity [category: code] (depends: 2.4)
 `kind: deliverable`
@@ -1260,7 +1315,7 @@ Implementation:
   details carry `members`, `sha256` and the member inventory that verify
   compares (4.3).
 - `capture_machine_identity(home)` takes the exclusive flock on
-  `.machine_id.lock`, reads `machine_id`, and writes `identity/machine_id`
+  `.machine_id.lock` through `flock_until` (1.2), reads `machine_id`, and writes `identity/machine_id`
   with mode 0600. A missing file archives nothing.
 
 Planned verification:
@@ -1632,8 +1687,8 @@ Implementation:
   directory (1.2), so a crashed run's leftovers are swept.
   - The passwords go through the child environment, as in 4.1.
   - It waits for `PING` and for loading to finish.
-  - It compares `GRAPH.LIST`, each graph's counts and `DBSIZE`, exactly
-    or by range.
+  - It compares `GRAPH.LIST`, each graph's counts and `DBSIZE` through
+    `falkordb_matches` (2.4).
   - The container and the directory are removed on every path.
 
 Planned verification:
@@ -1651,7 +1706,7 @@ test(verify::falkordb)'`, then `cargo clippy -p gobby-backup --all-targets
   collection is deleted after a failure. test:
   `crates/gbackup/src/verify/qdrant/tests.rs::range_and_digest_rules`.
 - 4.2.3 - FalkorDB verification compares the graph list, counts and
-  `DBSIZE` exactly or by range. It fails on a mismatch and removes the
+  `DBSIZE` through `falkordb_matches`, optional graphs included. It fails on a mismatch and removes the
   container either way. test:
   `crates/gbackup/src/verify/falkordb/tests.rs::compares_graphs_and_removes_container`.
 
@@ -1757,8 +1812,8 @@ Implementation:
      backup that passes `integrity_ok_by_size` and whose four live stores
      are not all `restore_verified`.
   4. Refuse a manifest that gbackup did not write.
-  5. Run `verify_artifacts` over every artifact. A failure stops before
-     any store is verified.
+  5. Run `check_artifact_set` (2.1), then `verify_artifacts` over every
+     artifact. A failure stops before any store is verified.
 - Then it verifies `postgres`, `qdrant`, `falkordb` and `files`, and
   continues after a store fails so that every failure is reported.
   - Each store's `restore_verified` becomes verified, or unverified with
@@ -1788,8 +1843,9 @@ Planned verification:
 - 4.4.3 - A Python-written manifest is refused before any container
   starts. test:
   `crates/gbackup/src/verify/tests.rs::refuses_python_written_manifest`.
-- 4.4.4 - An artifact hash mismatch fails before any store is verified.
-  test: `crates/gbackup/src/verify/tests.rs::hash_mismatch_stops_before_stores`.
+- 4.4.4 - An artifact-set defect or a hash mismatch fails before any
+  store is verified. test:
+  `crates/gbackup/src/verify/tests.rs::integrity_failure_stops_before_stores`.
 - 4.4.5 - Selection picks the newest integrity-ok live backup that is not
   yet verified, and reports `nothing to verify` when there is none. test:
   `crates/gbackup/src/verify/tests.rs::selects_newest_unverified_live_backup`.
@@ -1849,7 +1905,7 @@ Implementation:
   2. `docker cp` the RDB to `/var/lib/falkordb/data/dump.rdb`.
   3. `docker start` the container.
   4. Wait up to 60 s for `PING` and for loading to finish.
-  5. Compare the graph list and counts.
+  5. Compare the graph list and counts through `falkordb_matches` (2.4).
 
   After a successful stop, every later path attempts `docker start`,
   a failed copy included. The restore keeps the original error, and
@@ -1923,16 +1979,21 @@ ship apart, or a restore could write without its refusals.
 
   Python prints the target DSN redacted.
 - Decision Record 9 and D3 (a) set the gate. D1 removes the epoch release.
-- The login guard (baseline.sql lines 6690-6740) refuses connections while
-  an unreleased maintenance epoch row exists. Only a backup taken during a
-  pre-D1 epoch carries one.
+- The final login guard (baseline.sql lines 6743-6792) refuses
+  connections while an unreleased maintenance epoch row exists, unless the
+  session's `gobby.maintenance_epoch` setting matches it. Only a backup
+  taken during a pre-D1 epoch carries one, and its manifest records a
+  non-null `epoch_id`. Python released that epoch after `pg_restore`
+  (postgres_backup.py lines 133-138). gbackup has no release (D1), so such
+  a restore would lock every login out.
 
 Implementation:
 - `run_restore(args, env)` runs in this order:
   1. Take the lock with `Refuse`, then `maintenance_claim`. The claim
      fails while the daemon runs.
   2. Run `resolve_restore_target(env, url)` (1.3) and preflight.
-  3. Read the manifest (Python-written manifests are accepted), and run
+  3. Read the manifest (Python-written manifests are accepted). Refuse a
+     non-null `epoch_id`, naming D1. Run `check_artifact_set` (2.1), then
      `verify_artifacts` over every artifact.
   4. Gate: `postgres`, `qdrant`, `falkordb` and `files` must each record
      `archive_verified` and `restore_verified`. Otherwise refuse, naming the
@@ -1955,11 +2016,9 @@ Implementation:
      makes each `CREATE ROLE` idempotent, as Python does. The result is
      piped to `psql -v ON_ERROR_STOP=1` through `docker exec`.
   9. With `--clean`, reset the database as Python does, in a `pg::connect`
-     session (1.3).
+     session (1.3). `reset_database(dsn)` takes the target DSN alone.
   10. Run `pg_restore --no-owner` with `PGOPTIONS=-c event_triggers=off`.
-  11. Probe the three extensions. A login refused by the maintenance guard
-      fails with a message that the backup holds a pre-D1 maintenance
-      epoch.
+  11. Probe the three extensions.
   12. Restore Qdrant, then FalkorDB (5.1) with the held services-lock
       guard.
   13. Run `drain_ephemeral_principals` (2.2).
@@ -1979,9 +2038,10 @@ restore is out of scope for the leaf: it would replace the test hub.
 - 5.2.2 - A restored store without `restore_verified` is refused, named,
   and pointed at `gbackup verify`. test:
   `crates/gbackup/src/restore/tests.rs::gate_requires_every_restored_store_verified`.
-- 5.2.3 - Every preflight refusal happens before the first write,
-  including a late invalid tar member and a held services lock. The fake
-  harness records no mutation. test:
+- 5.2.3 - Every preflight refusal happens before the first write: a
+  non-null `epoch_id`, an artifact-set defect, a late invalid tar member
+  and a held services lock among them. The fake harness records no
+  mutation. test:
   `crates/gbackup/src/restore/tests.rs::preflight_refusals_precede_mutation`.
 - 5.2.4 - Without a terminal and without `--yes`, restore refuses, and
   `--yes` skips the prompt. test:
@@ -2001,8 +2061,15 @@ restore is out of scope for the leaf: it would replace the test hub.
   idempotent, and the replay uses `ON_ERROR_STOP`. test:
   `crates/gbackup/src/restore/postgres/tests.rs::globals_are_password_free_and_idempotent`.
 - 5.2.7 - `--clean` refuses a target database named `postgres`. The reset
-  recreates the database, owned by the DSN user. test:
-  `crates/gbackup/src/restore/postgres/tests.rs::serial_db_clean_reset_recreates_owned_database`.
+  recreates the database, owned by the DSN user. The `serial_db` test
+  never resets `gobby_test`:
+  - it creates a uniquely named `gbackup_reset_<pid>_<nanos>` database on
+    the admitted server, and resets that one;
+  - a guard drops it on every path;
+  - `gobby_test`'s OID is the same before and after.
+
+  test:
+  `crates/gbackup/src/restore/postgres/tests.rs::serial_db_clean_reset_recreates_disposable_database`.
 - 5.2.8 - A missing extension fails the probe and is named. No output
   contains the DSN password. test:
   `crates/gbackup/src/restore/postgres/tests.rs::probe_failure_names_extension_without_secrets`.
@@ -2509,6 +2576,16 @@ deferral:
     the verify command harness.
   - E7: a full recovery rehearsal on a test-owned hub, declined and recorded
     under Rejected alternatives.
+- 2026-10-05 17:05 CDT: Adversary round 1 (Adv1 gobby#15401) on `399bbbe`.
+  The Writer accepted all five blocking findings.
+  - B1: `flock_until` (1.2) bounds every blocking lock by the capture
+    budget, and Decision Record 7 says so.
+  - B2: restore refuses a non-null `epoch_id` before any write (5.2,
+    Decision Record 9).
+  - B3: FalkorDB graph membership drift records `graphs_optional`, and
+    `falkordb_matches` (2.4) is shared by 4.2 and 5.1 (Decision Record 13).
+  - B4: the reset test works on its own disposable database (5.2.7).
+  - B5: `check_artifact_set` (2.1) runs before every verify and restore.
 
 ## V2: Verification
 `kind: verification`
