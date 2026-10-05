@@ -1,0 +1,690 @@
+header:
+  plan_id: code-index-vector-reconciliation
+  plan_hash: ea35835cae1889424dd426c0ef95a722af193be8a48078de61a3867b2cab13ce
+  root_task_ref: '23570'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-05T21:36:23Z'
+  task_tree_source: db
+  task_tree_source_hash: aae6fdcb8b8dd63e3ce5c5bd0af8d2d38a5f462bac7d993549ef53a391be9a63
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: fe7f6c910d2ecafb87fc3445c9672b01af362c7682bfdb1727c00073eea58533
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23575'
+    validation_criteria_snippet: '1.1.1: An attempt returns the current hash and timestamp.
+      Completion with that attempt marks the version synced and keeps its attempt
+      time. test: `crates/gcode...'
+    matched_artifact_ref: crates/gcode/src/db/queries_cas_tests.rs::mark_vectors_synced_cas_marks_attempted_version
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: e9ae9cb8b3dee9630f84818e856fba78636d18eda639b633055f9c9703609515
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23575'
+    validation_criteria_snippet: '1.1.1: An attempt returns the current hash and timestamp.
+      Completion with that attempt marks the version synced and keeps its attempt
+      time. test: `crates/gcode...'
+    matched_artifact_ref: crates/gcode/src/db/queries_cas_tests.rs::mark_vectors_synced_cas_rejects_completion_after_state_moves
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 47b35518a4847802134b36656f24cc39f5533f41e6b74a21061100fd2e19dfbe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23575'
+    validation_criteria_snippet: '1.1.1: An attempt returns the current hash and timestamp.
+      Completion with that attempt marks the version synced and keeps its attempt
+      time. test: `crates/gcode...'
+    matched_artifact_ref: crates/gcode/src/db/queries_cas_tests.rs::mark_vectors_synced_cas_rejects_same_hash_stale_attempt
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 19494da0d5f08177229f7b1c643de941ca647211c747cfa03bce2ec4d3fd0bea
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23575'
+    validation_criteria_snippet: '1.1.1: An attempt returns the current hash and timestamp.
+      Completion with that attempt marks the version synced and keeps its attempt
+      time. test: `crates/gcode...'
+    matched_artifact_ref: crates/gcode/src/projection/sync/tests.rs::vector_sync_file_skips_when_state_moves_during_upsert
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: bee61dbda596d2f5762b38417390005a3209d9f69807fc43603097ff12c58b43
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23575'
+    validation_criteria_snippet: '1.1.1: An attempt returns the current hash and timestamp.
+      Completion with that attempt marks the version synced and keeps its attempt
+      time. test: `crates/gcode...'
+    matched_artifact_ref: crates/gcode/src/db/queries_cas_tests.rs::mark_vectors_synced_cas_failure_dirties_attempted_version
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.6
+  plan_node_hash: 17ecb773a3a891a74ce21d6fad93e302ba29216364fc74fe7a2d8d384caeaab7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23575'
+    validation_criteria_snippet: '1.1.1: An attempt returns the current hash and timestamp.
+      Completion with that attempt marks the version synced and keeps its attempt
+      time. test: `crates/gcode...'
+    matched_artifact_ref: crates/gcode/src/db/queries_cas_tests.rs::mark_graph_synced_cas_failure_dirties_attempted_version
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 3df6fd4ed564bd3eb2b995373e84988b06655932b294e2972c508c6a9136d787
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23576'
+    validation_criteria_snippet: '1.2.1: A successful native vector result leaves
+      `vectors_synced` as gcode wrote it. The worker never sets it, and the storage
+      mixin has no `mark_vectors_synced...'
+    matched_artifact_ref: tests/code_index/test_sync_worker.py::test_vector_sync_leaves_completion_to_native_cas
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 800d5f0ce1fd550920a1b8b46b15b4e5937a58ff670b53bbfb05a7d87fd15b91
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23576'
+    validation_criteria_snippet: '1.2.1: A successful native vector result leaves
+      `vectors_synced` as gcode wrote it. The worker never sets it, and the storage
+      mixin has no `mark_vectors_synced...'
+    matched_artifact_ref: tests/code_index/test_sync_worker.py::test_superseded_vector_skip_keeps_file_pending
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 65e4f941b0b4ac09548c6d679c3439face78a2a1911a59186bcdb235cbe17831
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23576'
+    validation_criteria_snippet: '1.2.1: A successful native vector result leaves
+      `vectors_synced` as gcode wrote it. The worker never sets it, and the storage
+      mixin has no `mark_vectors_synced...'
+    matched_artifact_ref: tests/code_index/test_sync_worker.py::test_graph_sync_leaves_completion_to_native_cas
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: c978fd973c541061ce2adce1657e5447029b8b490c1a91426a567ec2606f48a9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23576'
+    validation_criteria_snippet: '1.2.1: A successful native vector result leaves
+      `vectors_synced` as gcode wrote it. The worker never sets it, and the storage
+      mixin has no `mark_vectors_synced...'
+    matched_artifact_ref: tests/code_index/test_sync_worker.py::test_superseded_graph_skip_keeps_file_pending
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: 4ce18d5aeaf819f16af03f413db474986a370acd4a495589c4e592995c5c560e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23576'
+    validation_criteria_snippet: '1.2.1: A successful native vector result leaves
+      `vectors_synced` as gcode wrote it. The worker never sets it, and the storage
+      mixin has no `mark_vectors_synced...'
+    matched_artifact_ref: tests/code_index/test_code_index_storage.py::test_no_graph_shortcut_mark_rejects_changed_snapshot
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.6
+  plan_node_hash: c1d3be6dcb5c7ef9a9ab466cf7567f51e8a96f1bce389d52beb8a4d1b909bac8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23576'
+    validation_criteria_snippet: '1.2.1: A successful native vector result leaves
+      `vectors_synced` as gcode wrote it. The worker never sets it, and the storage
+      mixin has no `mark_vectors_synced...'
+    matched_artifact_ref: tests/code_index/test_sync_worker.py::test_import_only_init_file_delegates_graph_sync_to_native
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: 4f25823676372c3854d9abf8f28b771276aeb3e9a2fce5fa7a02d5ec28d5edb8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23577'
+    validation_criteria_snippet: '1.3.1: Re-writing a version whose symbol set changes
+      dirties both flags in one call. test: `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed...'
+    matched_artifact_ref: crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed_symbol_set_dirties_both_flags
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: fb7dc8e56b7e0998298489b38a91a8b49126c115b48ae31143eec50646389c16
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23577'
+    validation_criteria_snippet: '1.3.1: Re-writing a version whose symbol set changes
+      dirties both flags in one call. test: `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed...'
+    matched_artifact_ref: crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_identical_facts_keeps_both_flags
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: 6ebb85d97ff9ed5f43c0ce8114af8aacea14d769de53fc744cf5e5cab827de1f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23577'
+    validation_criteria_snippet: '1.3.1: Re-writing a version whose symbol set changes
+      dirties both flags in one call. test: `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed...'
+    matched_artifact_ref: crates/gcode/src/index/indexer/tests/facts.rs::empty_reparse_of_empty_version_keeps_flags
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.4
+  plan_node_hash: 62498cf93f9ca73d092d2e00bcf84daa27b5f5533384b1c3c18e8ae941bdb717
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23577'
+    validation_criteria_snippet: '1.3.1: Re-writing a version whose symbol set changes
+      dirties both flags in one call. test: `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed...'
+    matched_artifact_ref: crates/gcode/src/index/indexer/tests/facts.rs::reparse_that_drops_all_facts_dirties_both_flags
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.5
+  plan_node_hash: c4a561c004c25d55e482a125f1185166dead44cce28b61fa60a9cf7dc1a2187b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23577'
+    validation_criteria_snippet: '1.3.1: Re-writing a version whose symbol set changes
+      dirties both flags in one call. test: `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed...'
+    matched_artifact_ref: crates/gcode/src/index/indexer/tests/serial_db.rs::full_reindex_with_changed_symbol_ids_marks_projections_pending
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.6
+  plan_node_hash: c262eac605209dd07aee32bf919d4d9213d49400b8bcf35d822a64774781f43f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23577'
+    validation_criteria_snippet: '1.3.1: Re-writing a version whose symbol set changes
+      dirties both flags in one call. test: `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed...'
+    matched_artifact_ref: crates/gcode/src/db/queries_cas_tests.rs::dirty_version_sync_touches_only_named_flags_and_version
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.7
+  plan_node_hash: e023be2bf46b06755a41a8eb241f9344371db40922da3c785642e96fd6ceab1b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23577'
+    validation_criteria_snippet: '1.3.1: Re-writing a version whose symbol set changes
+      dirties both flags in one call. test: `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed...'
+    matched_artifact_ref: crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed_docstring_dirties_vectors_only
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.8
+  plan_node_hash: d3cb7fc583139074d5f389152724231240e2d40a5fa6d65ef458a3bee852cc50
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23577'
+    validation_criteria_snippet: '1.3.1: Re-writing a version whose symbol set changes
+      dirties both flags in one call. test: `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed...'
+    matched_artifact_ref: crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed_calls_dirties_graph_only
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.1
+  plan_node_hash: a85abb9c3e46c0e4fe61fadc15d3d91dd75cf06d88954ad6d460b2fb6e5b59b7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23578'
+    validation_criteria_snippet: '1.4.1: The superseded skip payload is a terminal
+      success shape with reason `sync_superseded` and no degradation. test: `crates/gcode/src/commands/graph/tests.r...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/tests.rs::superseded_skip_payload_is_terminal_success_shape
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.2
+  plan_node_hash: a3ff5c27fa6eb4d4bb40360eeeef2b0be57fcaf8d99a4da43dfa0e17a49b30a3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23578'
+    validation_criteria_snippet: '1.4.1: The superseded skip payload is a terminal
+      success shape with reason `sync_superseded` and no degradation. test: `crates/gcode/src/commands/graph/tests.r...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/tests.rs::graph_completion_reports_superseded_after_state_moves
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: a5b7656bce1befefb9e0e77a0d87eabb9b99df6f9c235f891587c08bf6d91229
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23579'
+    validation_criteria_snippet: '2.1.1: Only point IDs absent from PostgreSQL are
+      orphans, and each lands in its class (four seeded points, one per class, plus
+      live points). test: `crates/gcod...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::dry_run_classifies_only_ids_absent_from_postgres
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 8bf609bb0e535ae8cfdba4ab283cf692f1b46b98eac4b402ef53df5e24148c56
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23579'
+    validation_criteria_snippet: '2.1.1: Only point IDs absent from PostgreSQL are
+      orphans, and each lands in its class (four seeded points, one per class, plus
+      live points). test: `crates/gcod...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::dry_run_splits_missing_vectors_by_flag_and_reference
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: ba02fcaa9d9ac125ca2a09a2ae69f008a4de201923b7481fb29cae3c8c6cacc8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23579'
+    validation_criteria_snippet: '2.1.1: Only point IDs absent from PostgreSQL are
+      orphans, and each lands in its class (four seeded points, one per class, plus
+      live points). test: `crates/gcod...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests.rs::inventory_digest_is_order_independent_and_content_sensitive
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 553391ffd8dfdc239e3002de17980bf6f92af2e4b54f3156a3777e59f7815416
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23579'
+    validation_criteria_snippet: '2.1.1: Only point IDs absent from PostgreSQL are
+      orphans, and each lands in its class (four seeded points, one per class, plus
+      live points). test: `crates/gcod...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::dry_run_mutates_nothing
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: ff6fb72f785b1b64935a543d81c814548da5137966bc7dd519a6023cdb85b5d6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23579'
+    validation_criteria_snippet: '2.1.1: Only point IDs absent from PostgreSQL are
+      orphans, and each lands in its class (four seeded points, one per class, plus
+      live points). test: `crates/gcod...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::dry_run_treats_missing_collection_as_empty
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.6
+  plan_node_hash: 3f783c040daf8da69e02352aed028d3b0c424c0869395a10082842410bc15525
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23579'
+    validation_criteria_snippet: '2.1.1: Only point IDs absent from PostgreSQL are
+      orphans, and each lands in its class (four seeded points, one per class, plus
+      live points). test: `crates/gcod...'
+    matched_artifact_ref: crates/gcode/tests/contract.rs::contract_is_version_thirteen_without_ask
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: 13f0c9e18f6de8ccec8c8b657c51d9d7572edd564282dd100de3ef74848425b0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23580'
+    validation_criteria_snippet: '2.2.1: Apply with the dry-run digest deletes exactly
+      the orphan IDs, resets exactly the synced-missing versions, and writes a complete
+      receipt. An immediate dr...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_deletes_only_disowned_ids_and_writes_receipt
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 13bc62a5a5f987367dd311743bba07a20b62bdada71eed2503abe38eaddde1f3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23580'
+    validation_criteria_snippet: '2.2.1: Apply with the dry-run digest deletes exactly
+      the orphan IDs, resets exactly the synced-missing versions, and writes a complete
+      receipt. An immediate dr...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_is_busy_without_mutation_when_lease_is_held
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: 6080491953f4e947e2ea456281d18c7ef5f63a74cedcd9061f077fa3016cd4c3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23580'
+    validation_criteria_snippet: '2.2.1: Apply with the dry-run digest deletes exactly
+      the orphan IDs, resets exactly the synced-missing versions, and writes a complete
+      receipt. An immediate dr...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_refuses_when_inventory_changes_under_lease
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: 6684c923fa794d92e526cdef2860565349e6db58b21e15beb2b7bd12a03fc446
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23580'
+    validation_criteria_snippet: '2.2.1: Apply with the dry-run digest deletes exactly
+      the orphan IDs, resets exactly the synced-missing versions, and writes a complete
+      receipt. An immediate dr...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_records_partial_receipt_on_qdrant_failure
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: 009a6220dd0942d2c295013f87b171cb3a92b7631587b33d760c8310014633ef
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23580'
+    validation_criteria_snippet: '2.2.1: Apply with the dry-run digest deletes exactly
+      the orphan IDs, resets exactly the synced-missing versions, and writes a complete
+      receipt. An immediate dr...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests.rs::apply_refuses_receipt_outside_private_location
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.6
+  plan_node_hash: d0c1ae6e15db4295061697ed08604e179ccb1a96e8ae5ea606f4e1ec7a0d7259
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23580'
+    validation_criteria_snippet: '2.2.1: Apply with the dry-run digest deletes exactly
+      the orphan IDs, resets exactly the synced-missing versions, and writes a complete
+      receipt. An immediate dr...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_resets_only_synced_missing_versions
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.7
+  plan_node_hash: 54d216e0c1e6682adc17d7aacdb3ebe94c2284f309f893a82ea379fc77758689
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23580'
+    validation_criteria_snippet: '2.2.1: Apply with the dry-run digest deletes exactly
+      the orphan IDs, resets exactly the synced-missing versions, and writes a complete
+      receipt. An immediate dr...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_makes_no_mutation_when_initial_receipt_write_fails
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.8
+  plan_node_hash: be2f29b8ca5e70a9731351578c49e77f0a67d68c39cdc33939dff4f2570290fa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23580'
+    validation_criteria_snippet: '2.2.1: Apply with the dry-run digest deletes exactly
+      the orphan IDs, resets exactly the synced-missing versions, and writes a complete
+      receipt. An immediate dr...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_refuses_foreign_receipt_before_mutation
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.9
+  plan_node_hash: 168a70960f3ef85b579ce11ba8464568097c467b2ee3ab1bb403c707e3e83481
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23580'
+    validation_criteria_snippet: '2.2.1: Apply with the dry-run digest deletes exactly
+      the orphan IDs, resets exactly the synced-missing versions, and writes a complete
+      receipt. An immediate dr...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_reset_survives_adoption_of_retained_version
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.10
+  plan_node_hash: 50a2dfb48e0e61608e8d6ce894b1178037a113fc71996b3c428c275d56ec2e54
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23580'
+    validation_criteria_snippet: '2.2.1: Apply with the dry-run digest deletes exactly
+      the orphan IDs, resets exactly the synced-missing versions, and writes a complete
+      receipt. An immediate dr...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_stops_before_deletes_when_reset_receipt_write_fails
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.11
+  plan_node_hash: 6d44944e8d0477727405c96ab7906484ddcc1cb0c6af70fa7a05d081b4cf761d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23580'
+    validation_criteria_snippet: '2.2.1: Apply with the dry-run digest deletes exactly
+      the orphan IDs, resets exactly the synced-missing versions, and writes a complete
+      receipt. An immediate dr...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_stops_after_first_batch_when_receipt_write_fails
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.12
+  plan_node_hash: 60d5bc9fc3c6b931900969e91b23fa2b6208b04d443816f72d46fe78192a5a96
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23580'
+    validation_criteria_snippet: '2.2.1: Apply with the dry-run digest deletes exactly
+      the orphan IDs, resets exactly the synced-missing versions, and writes a complete
+      receipt. An immediate dr...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_exits_nonzero_when_final_receipt_write_fails
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.13
+  plan_node_hash: 7737695009fb5cf46f768c00dfe3711946190beb738b657073c34057eeac55cd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23580'
+    validation_criteria_snippet: '2.2.1: Apply with the dry-run digest deletes exactly
+      the orphan IDs, resets exactly the synced-missing versions, and writes a complete
+      receipt. An immediate dr...'
+    matched_artifact_ref: crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_reports_unconfirmed_when_published_receipt_write_fails
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: d9f6dac990eacc55797cb7ba28f8d4938f3c8a5b90f824ca0c0d222f859bfcf3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23581'
+    validation_criteria_snippet: '3.1.1: A blob committed at two paths protects only
+      the version at the path where history holds it. test: `crates/gcode/src/commands/status/content_gc/history/t...'
+    matched_artifact_ref: crates/gcode/src/commands/status/content_gc/history/tests.rs::duplicate_blob_protects_only_its_history_path
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: 5d8d0cfc90bda1165af24cc65a96bfaab59b072da38b995dc9d7f3c34a01288c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23581'
+    validation_criteria_snippet: '3.1.1: A blob committed at two paths protects only
+      the version at the path where history holds it. test: `crates/gcode/src/commands/status/content_gc/history/t...'
+    matched_artifact_ref: crates/gcode/src/commands/status/content_gc/history/tests.rs::rename_protects_each_path_by_its_own_history
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: 3281be948f53280126a94f70d7f373ae8706d01505f7d3b5f1a9d8e5f389154c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23581'
+    validation_criteria_snippet: '3.1.1: A blob committed at two paths protects only
+      the version at the path where history holds it. test: `crates/gcode/src/commands/status/content_gc/history/t...'
+    matched_artifact_ref: crates/gcode/src/commands/status/content_gc/history/tests.rs::unusual_paths_round_trip
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.4
+  plan_node_hash: 88f447ca05518a0b688d186117bd643c69be2862432debb5450950160a2d803a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23581'
+    validation_criteria_snippet: '3.1.1: A blob committed at two paths protects only
+      the version at the path where history holds it. test: `crates/gcode/src/commands/status/content_gc/history/t...'
+    matched_artifact_ref: crates/gcode/src/commands/status/content_gc/history/tests.rs::filtered_content_hashes_per_path
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.5
+  plan_node_hash: edbb9103210eb051ce36daeb23eece5d0a32ecbd37c647a4d7377696e7bec9bf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23581'
+    validation_criteria_snippet: '3.1.1: A blob committed at two paths protects only
+      the version at the path where history holds it. test: `crates/gcode/src/commands/status/content_gc/history/t...'
+    matched_artifact_ref: crates/gcode/src/commands/status/content_gc/tests.rs::history_failure_retains_root_candidates
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.6
+  plan_node_hash: e031c1af7463b3c9ee95c8617fec425fbb728470e0eb6fac9425a614cfc20c71
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23581'
+    validation_criteria_snippet: '3.1.1: A blob committed at two paths protects only
+      the version at the path where history holds it. test: `crates/gcode/src/commands/status/content_gc/history/t...'
+    matched_artifact_ref: crates/gcode/src/commands/status/content_gc/history/tests.rs::sha256_repository_tree_walk
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.7
+  plan_node_hash: 41fc99771d1c58796cf58a6eab6e2eed60630bd41bf1e4961d665a8d49a12180
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23581'
+    validation_criteria_snippet: '3.1.1: A blob committed at two paths protects only
+      the version at the path where history holds it. test: `crates/gcode/src/commands/status/content_gc/history/t...'
+    matched_artifact_ref: crates/gcode/src/commands/status/content_gc/history/tests.rs::recent_ancestor_behind_old_tip_stays_protected
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: aa6a8ef93d19d0c1fb116f0e1939d5c4bd78043d89e8d3ae0fa296c84018e4dd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23582'
+    validation_criteria_snippet: '3.2.1: A candidate under an `extra_excludes` pattern
+      is collected even though history holds it at that path. test: `crates/gcode/src/commands/status/content_gc...'
+    matched_artifact_ref: crates/gcode/src/commands/status/content_gc/tests.rs::excluded_path_is_collected_despite_history
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: 16e0b8147b633bfffde816078d54fa9b96f284a50b5f029f1b5ba569f88cda11
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23582'
+    validation_criteria_snippet: '3.2.1: A candidate under an `extra_excludes` pattern
+      is collected even though history holds it at that path. test: `crates/gcode/src/commands/status/content_gc...'
+    matched_artifact_ref: crates/gcode/src/index/walker/tests/classification.rs::history_eligibility_applies_hidden_allowlist
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: d3e6f4e183c1f69358c2cd624333cc4135f90e66ed3d0719842f8dd38c9c517c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23582'
+    validation_criteria_snippet: '3.2.1: A candidate under an `extra_excludes` pattern
+      is collected even though history holds it at that path. test: `crates/gcode/src/commands/status/content_gc...'
+    matched_artifact_ref: crates/gcode/src/commands/status/content_gc/tests.rs::missing_path_keeps_history_protection
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.4
+  plan_node_hash: e8cdd4412619406adccdb31fea8885eebf18c1700fab15152b49f7dd35cab720
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23582'
+    validation_criteria_snippet: '3.2.1: A candidate under an `extra_excludes` pattern
+      is collected even though history holds it at that path. test: `crates/gcode/src/commands/status/content_gc...'
+    matched_artifact_ref: crates/gcode/src/index/walker/tests/classification.rs::history_eligibility_respects_gitignore_for_existing_files
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.5
+  plan_node_hash: 734dd416e5487fef804fdba92083ad58d0e6bd208d28dfe20a837651d828732b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23582'
+    validation_criteria_snippet: '3.2.1: A candidate under an `extra_excludes` pattern
+      is collected even though history holds it at that path. test: `crates/gcode/src/commands/status/content_gc...'
+    matched_artifact_ref: crates/gcode/src/index/walker/tests/classification.rs::history_eligibility_ignores_file_size
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.6
+  plan_node_hash: 60082a40bc948fbe77500d6e96460a71d331326a1d01dd00164ef3b2bf82d9d6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23582'
+    validation_criteria_snippet: '3.2.1: A candidate under an `extra_excludes` pattern
+      is collected even though history holds it at that path. test: `crates/gcode/src/commands/status/content_gc...'
+    matched_artifact_ref: crates/gcode/src/commands/status/content_gc/tests.rs::gone_root_retains_every_candidate
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.7
+  plan_node_hash: 5cb198febe45bdf56170761b6795e6c8e89269871a7e9d45c2d921d9eafa1866
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23582'
+    validation_criteria_snippet: '3.2.1: A candidate under an `extra_excludes` pattern
+      is collected even though history holds it at that path. test: `crates/gcode/src/commands/status/content_gc...'
+    matched_artifact_ref: crates/gcode/src/commands/status/content_gc/tests.rs::history_failure_still_collects_ineligible_candidates
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: 52dbd0077bb4f1359673571853397ef8f23617b4b2da6e43126738f224be3b94
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23583'
+    validation_criteria_snippet: '4.1.1: The user guide documents the dry-run classes,
+      the digest, and the apply flags with their lease and receipt rules. behavior:
+      "vector reconcile" in `docs/...'
+    matched_artifact_ref: vector reconcile
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: a5c54765e2ece0a5061aad66cdf1409f26d12e9b31df37916b6697bffc4192a9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23583'
+    validation_criteria_snippet: '4.1.1: The user guide documents the dry-run classes,
+      the digest, and the apply flags with their lease and receipt rules. behavior:
+      "vector reconcile" in `docs/...'
+    matched_artifact_ref: vector reconcile
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: 874a57f34f68fadbd53fac94ab7531a49f52f4b88bfb9c2ab7bc0dfb505b811e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23583'
+    validation_criteria_snippet: '4.1.1: The user guide documents the dry-run classes,
+      the digest, and the apply flags with their lease and receipt rules. behavior:
+      "vector reconcile" in `docs/...'
+    matched_artifact_ref: its own path
+  deferral_target: null
+  detail: ''
+- section_id: D1
+  item_id: D1.1
+  plan_node_hash: 355c27fc205b29ab47298483ecf5edf30e8a4497fc88001b8ee7acf1375368a4
+  status: deferred
+  leaves: []
+  deferral_target: '#23584'
+  detail: deferral is valid
