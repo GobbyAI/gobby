@@ -604,6 +604,10 @@ class AgentLifecycleMonitor:
 
         handled = 0
         for run in runs:
+            if run.is_interactive:
+                self._stuck_interventions.pop(run.id, None)
+                self._draft_grace_observations.pop(run.id, None)
+                continue
             session_id = run.child_session_id or run.claimed_session_id or run.parent_session_id
             if not session_id:
                 self._stuck_interventions.pop(run.id, None)

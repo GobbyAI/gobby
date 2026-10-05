@@ -16,6 +16,7 @@ import pytest
 from tests.fixtures.agent_definitions import make_agent_definition
 
 if TYPE_CHECKING:
+    from gobby.dispatch.actions import SpawnAgentAction
     from gobby.storage.hub.protocol import HubDatabase
 
 import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
@@ -305,9 +306,11 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("is_interactive", [False, True])
 async def test_workflow_terminate_on_parked_daemon_stop_run_retains_state_and_skips_delivery(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
+    is_interactive: bool,
 ) -> None:
     """A parked (cancelled/daemon_stop) run must keep its workflow rows and
     never be reported to completion subscribers as a workflow-terminate success."""
@@ -344,6 +347,7 @@ async def test_workflow_terminate_on_parked_daemon_stop_run_retains_state_and_sk
         status="cancelled",
         terminal_reason="daemon_stop",
         child_session_id=CHILD_SESSION_ID,
+        is_interactive=is_interactive,
     )
     runner.agent_lifecycle_monitor.complete_workflow_run = AsyncMock()
     engine = RuleEngine(db=temp_db, runner=runner)
@@ -526,25 +530,30 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
     await terminal_delivery.drain_shielded_terminal_deliveries()
 
     assert response.decision == "allow"
-    assert run_manager.get(run.id).status == "success"
+    completed_run = run_manager.get(run.id)
+    assert completed_run is not None
+    assert completed_run.status == "success"
     assert task_manager.get_task(task.id).claimed_by_session_id is None
     assert stage_row(temp_db, task.id, "development")["state"] == "needs_review"
     assert mutex.get_mutex(task.id) is None
     assert instance_manager.get_for_session(child.id) is None
 
     sync_bundled_agents(temp_db)
-    spawned: list[object] = []
-    monkeypatch.setattr(
-        dispatcher,
-        "spawn_agent",
-        lambda action, **_kwargs: spawned.append(action) or "175b4656-fe55-571c-b57a-44c83644b57e",
-    )
+    spawned: list[SpawnAgentAction] = []
+
+    def spawn_review(action: SpawnAgentAction, **_kwargs: object) -> str:
+        spawned.append(action)
+        return "175b4656-fe55-571c-b57a-44c83644b57e"
+
+    monkeypatch.setattr(dispatcher, "spawn_agent", spawn_review)
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
     assert result.executed == 1
     assert spawned[0].agent_slug == "qa-reviewer"
-    assert mutex.get_mutex(task.id).run_id == "175b4656-fe55-571c-b57a-44c83644b57e"
+    review_mutex = mutex.get_mutex(task.id)
+    assert review_mutex is not None
+    assert review_mutex.run_id == "175b4656-fe55-571c-b57a-44c83644b57e"
 
 
 def test_daemon_stop_retains_typed_instance_other_reasons_delete(

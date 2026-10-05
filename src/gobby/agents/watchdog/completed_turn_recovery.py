@@ -176,6 +176,9 @@ async def recover_completed_turn(
     idle_timeout_seconds: int,
     pane_tail: str | None = None,
 ) -> int:
+    if run.is_interactive:
+        host._completed_turn_recovery.pop(run.id, None)
+        return 0
     event = snapshot.latest_turn_event
     if event is None or event.timestamp is None:
         return 0

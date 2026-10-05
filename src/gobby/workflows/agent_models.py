@@ -117,6 +117,10 @@ class AgentDefinitionBody(BaseModel):
     )
     prompts: AgentPromptBlocks = Field(default_factory=AgentPromptBlocks)
     # Execution
+    execution_mode: Literal["one_shot", "interactive"] = Field(
+        default="one_shot",
+        description="Run lifetime: one task, or a standing seat that remains available between turns.",
+    )
     provider: str = "inherit"
     model: StrictStr | None = None
     reasoning_effort: StrictStr | None = None

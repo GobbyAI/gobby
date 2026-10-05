@@ -199,7 +199,8 @@ class WatchdogRecoveryCoordinator:
             reason="recovering provider-capacity error",
             snapshot=snapshot,
         )
-        if not await self._send_idle_reprompt(run, tmux_name=tmux_name):
+        message = IdleDetector.INTERACTIVE_CAPACITY_REPROMPT_MESSAGE if run.is_interactive else None
+        if not await self._send_idle_reprompt(run, tmux_name=tmux_name, reprompt_message=message):
             return 0
 
         state.last_error_line_num = error_event.line_num

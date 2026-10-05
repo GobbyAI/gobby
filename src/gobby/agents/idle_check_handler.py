@@ -478,6 +478,11 @@ class IdleCheckHandler:
                 snapshot=transcript_snapshot,
             )
 
+        if run.is_interactive:
+            idle_detector.reset_idle(run.id)
+            self._recovery.discard(run.id)
+            return 0
+
         if session_recent:
             idle_detector.reset_idle(run.id)
             return 0

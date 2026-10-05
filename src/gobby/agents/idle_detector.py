@@ -131,6 +131,10 @@ class IdleDetector:
         "Continue working on your task. When your work is complete, call "
         "gobby-agents:end_agent_run with current_state and next_steps to end this agent run."
     )
+    # Standing seats are never told to end their run.
+    INTERACTIVE_CAPACITY_REPROMPT_MESSAGE = (
+        "Your last turn ended on a provider capacity error. Continue where you left off."
+    )
 
     def __init__(self, registry: DetectionRegistry, provider_id: str | None = None) -> None:
         self._registry = registry

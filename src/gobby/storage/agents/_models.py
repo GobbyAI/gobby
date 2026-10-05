@@ -79,6 +79,11 @@ class AgentRun:
     progress_age_seconds: float | None = field(default=None, compare=False)
     stall_suspected: bool = field(default=False, compare=False)
 
+    @property
+    def is_interactive(self) -> bool:
+        """Standing seats retain their lifecycle across idle turns and task changes."""
+        return (self.resume_metadata_json or {}).get("execution_mode") == "interactive"
+
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> AgentRun:
         """Create AgentRun from database row."""

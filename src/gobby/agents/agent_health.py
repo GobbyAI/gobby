@@ -188,9 +188,10 @@ class AgentHealthMonitor:
 
         for run in runs:
             try:
-                if await self._run_db(
-                    cooperative_close_handoff_pending, self._db, run
-                ) or await self._run_db(bound_task_is_closed, self._db, run):
+                if not run.is_interactive and (
+                    await self._run_db(cooperative_close_handoff_pending, self._db, run)
+                    or await self._run_db(bound_task_is_closed, self._db, run)
+                ):
                     continue
                 reason: str | None = None
                 is_timeout = False
