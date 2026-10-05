@@ -83,8 +83,9 @@ bullets, and all four are binding here:
 `kind: framing`
 
 This section answers #22644 criterion 2. It implements the definition's
-"compare against the pre-touch blob" option with git's own object hash; no
-sha256 is stored (Decision 5).
+"hash the named path before and after the mutating call" option with a
+sha256 of the path's bytes, held in memory only for the duration of the call
+(Decision 5).
 
 - **Which tools.** Every tool call that normalization classifies as
   `canonical_tool_kind == "write"`, over the write paths `resolve_edit_pair`
@@ -97,23 +98,48 @@ sha256 is stored (Decision 5).
   write-kind segments' targets count. Execute-kind calls and segments, including
   `git add` and `git restore --staged` without `--worktree`/`-W`
   (Decision 7), record nothing and are not checked by rule 3.
-- **Where the pre-call identity is taken.** At `before_tool`, rule 3 runs one
-  pathspec-limited `git status --porcelain=v1 --untracked-files=all -- <path>`
-  for every write path the session does not already own. A clean result
-  proves the working-tree bytes equal the HEAD blob (or the path is absent),
-  so the HEAD blob is the pre-touch content. A path the session already owns
-  needs no pre-call identity: it is already recorded, and a further write
-  cannot change who owns it.
-- **Where the post-call comparison runs.** At `after_tool`, the recorder runs
-  the same pathspec status, batched per checkout root, for each write path
-  the session does not already own. Dirty means the bytes differ from the
-  pre-touch blob, so the pair is recorded. Clean means nothing changed, so
-  nothing is recorded.
-- **Untracked paths.** A file the call creates shows `??`, so it is dirty and
-  recorded (creation is mutation). A pre-existing untracked file the session
-  does not own is dirty at first touch, so rule 3 refuses the write.
-- **Ignored paths.** Git reports nothing for them, so they are never refused
-  by rule 3 and never recorded. Rule 1 covers git-tracked folders only.
+- **Where the pre-call identity is taken.** At `before_tool`,
+  `ToolEventHandlerMixin.handle_before_tool` stores the sha256 of each write
+  path's bytes, or None when the path is absent. Entries live in the
+  daemon-wide in-memory store `pre_write_digests.PRE_WRITE_DIGESTS`, keyed by
+  `(session_id, request_id, realpath)`. `request_id` is the event's
+  correlation id, which `hooks/events.py::correlate_hook_lifecycle` fills
+  from `tool_use_id`, `toolCallId`, `tool_call_id` and the other provider
+  keys, so overlapping calls on one path keep separate baselines. When an
+  adapter supplies no id, `request_id` is "", and a later `before_tool` on
+  the same session and path overwrites the entry. Separately, rule 3 runs one pathspec-limited `git status
+  --porcelain=v1 --untracked-files=all -- <path>` per write path the session
+  does not already own, to refuse a path dirty before first touch.
+- **Where the post-call comparison runs.** At `after_tool`, for every
+  write-kind call whether it succeeded or failed, the recorder takes each
+  path's entry and re-hashes the path. Different bytes, including a created
+  or deleted file, mean mutation, so the pair is recorded. Equal bytes record
+  nothing, even for a path the session already owns or a merge-set path. A
+  pair recorded while clean, because the same call committed it, stays in
+  `task_edited_files`; reconciliation releases its live pair.
+- **No entry: bounded fallback.** A path has no entry after a daemon restart
+  during the call, a `before_tool` event that never reached the daemon, an
+  id-less overlapping call whose entry the other call took, or an entry older
+  than one hour. For those paths and for directories, which have no byte
+  hash, the post-call pathspec status decides: dirty records the pair, clean
+  records nothing. This status is no proof of mutation. In these branches
+  only, a no-op on an already-dirty path is recorded (the F2 shape), and a
+  write committed by the same call is missed (the F3 shape). The policy
+  chooses to record when in doubt, so rule 1 never misses dirt the session
+  may have made; a false record costs a commit of the session's own paths,
+  which rule 2 allows.
+- **Entry lifetime.** `after_tool` removes the entries it reads. A session's
+  remaining entries are dropped at its `session_end`, and any entry older
+  than one hour is dropped whenever a new one is stored, so entries whose
+  `after_tool` never fires do not accumulate.
+- **Untracked paths.** A file the call creates changes from absent to
+  present, so it is recorded (creation is mutation). A pre-existing untracked
+  file the session does not own is dirty at first touch, so rule 3 refuses
+  the write.
+- **Ignored paths.** Git reports nothing for them, so rule 3 never refuses
+  them. A changed ignored path is recorded, as the recorder does today, and
+  gate 9 never blocks on it because git reports it clean. Rule 1 covers
+  git-tracked files only.
 - **Paths outside any checkout.** `resolve_edit_pair` returns no pair when no
   `.gobby/project.json` root contains the path (Decision 13), so the path is
   neither checked by rule 3 nor recorded. Rule 4 still applies to every
@@ -126,12 +152,15 @@ sha256 is stored (Decision 5).
   touch, the recorder records a change under the worktree's real root, and
   gate 9 checks the pair.
 - **Git status unavailable.** At `before_tool`, rule 3 refuses as unverified
-  (today's text, kept). At `after_tool`, the recorder records the pair: the
-  call was allowed only because the path was clean or already owned, and
-  ledger reconciliation releases the pair once git reports it clean.
-- **Accepted race.** Another process can change the path between the
-  `before_tool` check and the `after_tool` status. The recorder then records
-  that change. Two simultaneous clean first touches both record.
+  (today's text, kept). At `after_tool` the hash comparison needs no git. In
+  the no-entry fallback, a failed status records the pair, and ledger
+  reconciliation releases it once git reports it clean.
+- **Accepted race.** Another process can change the path between the two
+  hashes, and the recorder then records that change. Overlapping calls by one
+  session on one path each compare against their own baseline, so the later
+  call also records a change the earlier one made; both records belong to
+  the same session. Two simultaneous clean first touches by different
+  sessions both record.
 
 ## Decision Record
 `kind: framing`
@@ -161,12 +190,22 @@ sha256 is stored (Decision 5).
    carries edited-file content) until the Rust multi-machine port. This plan
    has no foreign-origin sections and no prerequisite on #23277. Node-side
    ownership belongs to the Rust port.
-5. **Mutation detection uses the pre-touch blob (accepted).** Rule 3's clean
-   first touch proves the pre-touch content is the HEAD blob, and a post-call
-   pathspec status decides mutation. Stored pre/post sha256 was rejected: call
-   ids are adapter-specific (`tool_use_id`, `call_id` and `toolCallId` are each
-   read only inside their own adapter), and a pre-call hash would need a store
-   that survives daemon restarts.
+5. **Mutation detection hashes the named path before and after the call
+   (Orchestrator, 2026-10-05: replacement accepted).** At `before_tool` the
+   handler stores the sha256 of each write path's bytes in memory; at
+   `after_tool` the recorder re-hashes it, and only different bytes record.
+   This follows Josh's definition literally. The first draft's rule (rule 3's
+   clean first touch proves the HEAD blob, then a post-call pathspec status
+   decides) was replaced after the Adversary showed three misses: a write in
+   a call that then fails, a no-op write to an already-dirty path (owned
+   under another task, or in the merge set) and a write committed by the same
+   call. The objections that first rejected stored hashes no longer apply.
+   Entries are keyed by session, the event's normalized `request_id` (from
+   `correlate_hook_lifecycle`; "" when the adapter supplies none) and path,
+   so no adapter reads its own call id. A call with no entry, after a daemon
+   restart for example, falls back to the post-call status rule, so no
+   durable store is needed. That fallback and directories keep the old rule's
+   F2 and F3 shapes, bounded as the Content-Hash Contract states.
 6. **Write-kind calls only (accepted).** The recorder and rule 3 apply only to
    `canonical_tool_kind == "write"`, over the write paths that
    `resolve_edit_pair` maps to a pair. Today's rule 3 checks
@@ -441,6 +480,7 @@ Targets:
 Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/tasks/_factory.py` — no-edit-reason: calls create_lifecycle_registry with an unchanged signature
 - `tests/storage/tasks/test_closed_candidate_repair.py` — no-edit-reason: builds the registry and calls no retired tool
+- `.gobby/plans/research/security-boundaries-22103/probe_control_plane.py` — no-edit-reason: prints only the sorted server keys of TASK_MUTATION_TOOLS_BY_SERVER, and removing release_task_paths leaves every server key in place
 
 **Focused verification (planned):** run the five test files above plus
 `tests/mcp_proxy/tools/tasks/test_lifecycle_registry.py` if present, with the
@@ -895,12 +935,22 @@ the isolation prefix.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/hooks/event_handlers/_tool.py::*` — scope-reason: the recorder gains the content check
+- `src/gobby/hooks/event_handlers/_tool.py::*` — scope-reason: the before-tool hash snapshot, the failed-call path and the recorder's content check
+- `src/gobby/hooks/pre_write_digests.py`
+- `src/gobby/hooks/event_handlers/_session_end.py::*` — scope-reason: handle_session_end clears the ending session's pre-write digests
 - `src/gobby/hooks/_normalization_canonical.py::_classify_shell_segment_without_redirection`
 - `src/gobby/hooks/_normalization_canonical.py::_merge_shell_segment_metadata`
 - `src/gobby/hooks/_normalization_git_paths.py`
+- `tests/hooks/test_pre_write_digests.py`
 - `tests/hooks/test_tool_handlers.py::*` — scope-reason: adds the content-check and #22642 regression tests
 - `tests/hooks/test_normalization.py::*` — scope-reason: restore --staged becomes execute-kind
+- `tests/hooks/test_normalization_canonical_mutation_scope.py::*` — scope-reason: test_read_only_probe_loop_is_not_an_in_project_mutation restates the recorder gate, which drops canonical_repo_mutation; it must assert that the probe loop records nothing through the hash comparison
+
+**Granularity:** one section with more than six acceptance items, by design. The recorder is one lifecycle owner: the
+before-tool snapshot, the store and its session-end cleanup, and the
+after-tool comparison verify only together, and the write paths they hash are
+the ones the normalization change publishes. The #22642 regression needs both
+halves. The normalization split is forced by the size lint.
 
 Split `_normalization_canonical.py` (971 lines): move the `git add`, `git
 checkout` and `git restore` branches of
@@ -917,6 +967,20 @@ _ShellSegmentMetadata | None`, called from the original function.
   271). After
   1.3 it resolves pairs with `task_claim_state.resolve_edit_pair`; after 1.4 it
   calls `record_edited_files(session_id, rels, checkout_root=root)`.
+- `_tool.py::ToolEventHandlerMixin.handle_after_tool` (lines 223-289) calls
+  the recorder only when `not is_failure and is_edit`, so a write-kind call
+  that changes bytes and then fails records nothing today.
+- `_tool.py::ToolEventHandlerMixin.handle_before_tool` (lines 54-109) reads
+  `event.data` (which carries the canonical keys) and
+  `_platform_session_id`, and returns `allow` at its end.
+- `_session_end.py::SessionEndMixin.handle_session_end` resolves the
+  platform session id from `_platform_session_id` or the external id.
+- `hooks/events.py::correlate_hook_lifecycle` sets `event.request_id` from
+  the first of `request_id`, `requestId`, `interaction_id`, `item_id`,
+  `tool_call_id`, `toolCallId`, `tool_use_id` and `toolUseId` (and their
+  case variants) in `event.data`. The Claude Code, Grok, Droid and Codex
+  lifecycle adapters call it; Codex's `call_id` is not in the list, so a
+  Codex tool event may carry no id.
 - `task_dirty_state.py::task_dirty_paths(paths, cwd)` is the sync pathspec
   status (None when git fails; untracked dirty; ignored absent).
 - `ledger_reconcile.py::session_dirty_file_set_for_checkout(variables, root)`
@@ -953,33 +1017,69 @@ _ShellSegmentMetadata | None`, called from the original function.
   resolved mutation paths, including loop-bound ones. Execute-kind segments,
   `git add` and index-only `git restore` among them, contribute none. The
   function's other outputs are unchanged.
-- The recorder records only when `canonical_tool_kind == "write"`, over the W2
-  write paths (Decision 11) that `resolve_edit_pair` maps to a pair (Decision
-  6). `is_canonical_edit` in `_tool.py` drops its `canonical_repo_mutation`
-  condition, so a write into a sanctioned worktree of another project reaches
-  the recorder. For each resolved pair:
-  - already in the session's `session_dirty_files`: record without git (the
-    active task's ledger gains the pair);
-  - otherwise batch it per root into one `task_dirty_paths(rels, root)`:
-    dirty records the pair, clean records nothing, and None records it
-    (§Content-Hash Contract).
+- New `hooks/pre_write_digests.py`, class `PreWriteDigests`. It holds
+  `dict[tuple[str, str, str], tuple[str | None, float]]` (key `(session_id,
+  request_id or "", realpath)`, value `(sha256 hex or None,
+  time.monotonic())`) behind a `threading.Lock`. Its API:
+  - `file_digest(path) -> str | None | Literal["dir"]` streams sha256 over the
+    bytes, returning None when the path is absent and `"dir"` for a
+    directory.
+  - `snapshot(session_id, request_id, paths)` stores a digest for each path
+    except directories, and first drops every entry older than 3600 seconds.
+  - `take(session_id, request_id, path) -> tuple[str | None] | None` pops the
+    entry and returns a one-tuple holding the stored digest, or None when
+    there is no entry.
+  - `clear_session(session_id)` drops all of that session's entries.
+- Both hooks pass `event.request_id`, which `correlate_hook_lifecycle` has
+  already filled.
+- The module holds one daemon-wide instance, `PRE_WRITE_DIGESTS =
+  PreWriteDigests()`, which `_tool.py` and `_session_end.py` import. The
+  daemon runs one hook handler, so no constructor wiring is needed.
+- `handle_before_tool`: when the session id is known and the call is
+  write-kind (`canonical_tool_kind == "write"` or an `EDIT_TOOLS` name),
+  resolve the W2 write paths against `event.cwd` and call `snapshot` just
+  before the final `allow`. Snapshot errors are logged and never block.
+- `handle_after_tool` runs the recorder for every write-kind call, including
+  failed ones; the outcome no longer gates it.
+- The recorder records only when `canonical_tool_kind == "write"` (or an
+  `EDIT_TOOLS` name), over the W2 write paths (Decision 11) that
+  `resolve_edit_pair` maps to a pair (Decision 6). `is_canonical_edit` in
+  `_tool.py` drops its `canonical_repo_mutation` condition, so a write into a
+  sanctioned worktree of another project reaches the recorder. For each
+  resolved pair (Decision 5):
+  - With an entry from `take`, record the pair when `file_digest` now differs
+    from the stored digest. Equal digests record nothing, including for a path
+    the session already owns, so a no-op under another active task never
+    enters that task's ledger. The comparison does not consult git, so a path
+    committed by the same call is still recorded.
+  - With no entry, or a directory, batch the pair per root into one
+    `task_dirty_paths(rels, root)`: dirty records the pair, clean records
+    nothing, and None records it (§Content-Hash Contract).
+- `SessionEndMixin.handle_session_end` calls
+  `PRE_WRITE_DIGESTS.clear_session(session_id)` once the session id is
+  resolved.
 - `_mark_session_had_edits_if_claimed` runs only when at least one pair was
   recorded. `_notify_code_index` keeps its current trigger.
 
-Consumers unchanged:
-- `tests/hooks/test_normalization_canonical_mutation_scope.py` — no-edit-reason: covers non-git segments, whose classification is unchanged
 
-**Focused verification (planned):** run `tests/hooks/test_tool_handlers.py`
-and `tests/hooks/test_normalization.py` with the isolation prefix.
+**Focused verification (planned):** run `tests/hooks/test_tool_handlers.py`,
+`tests/hooks/test_pre_write_digests.py` and `tests/hooks/test_normalization.py`
+with the isolation prefix.
 
 **Acceptance:**
 
 - 1.5.1 - #22642 regression: in a temporary git checkout where a tracked file is staged, a Bash `git restore --staged <path>` call records no pair in `session_dirty_files`, `task_edited_files` or `session_edited_files`. test: `tests/hooks/test_tool_handlers.py::test_git_restore_staged_records_no_attribution`.
 - 1.5.2 - A Write or Edit that leaves a clean path's bytes unchanged records nothing, and one that changes them records the pair. test: `tests/hooks/test_tool_handlers.py::test_recorder_records_only_content_changes`.
-- 1.5.3 - A Write creating a new untracked file records it, a write to an ignored path records nothing, and a write to an owned path records without running git. test: `tests/hooks/test_tool_handlers.py::test_recorder_handles_untracked_ignored_and_owned_paths`.
+- 1.5.3 - A Write creating a new untracked file records it. A path the session owns under task A, rewritten with the same bytes while task B is active, records nothing in B's ledger, while a real change records it for B. test: `tests/hooks/test_tool_handlers.py::test_recorder_handles_untracked_and_owned_paths`.
 - 1.5.4 - `git restore --staged` and `git restore -S` without `--worktree`/`-W` normalize to execute-kind; `git restore --staged --worktree` and `git restore -W` stay write-kind. test: `tests/hooks/test_normalization.py::TestExternalNavigationScope.test_git_restore_pathspecs_without_separator_are_write_paths`.
 - 1.5.5 - Mixed shell segments publish `canonical_write_file_paths` as the union of write-kind targets: `cp a b && git restore -- c` gives `[b, c]`, `mv a b && echo x > d` and `rm e && echo x > d` include `d` with the `mv` or `rm` paths, and `git add x && git restore -- y` and `git restore --staged x && echo z > y` give `[y]` only. test: `tests/hooks/test_normalization.py::test_mixed_segments_publish_union_of_write_kind_targets`.
 - 1.5.6 - In a temporary git checkout, a Bash `git add <foreign path> && git restore -- <own path>` call, where `<own path>` is already in the session's ledger and the restore changes it, records `<own path>` and nothing for the `git add` path. test: `tests/hooks/test_tool_handlers.py::test_recorder_ignores_execute_segment_paths_in_mixed_command`.
+- 1.5.7 - A failed Bash call `echo changed > <path> && false` records the pair, and a failed call that leaves the bytes unchanged records nothing. test: `tests/hooks/test_tool_handlers.py::test_failed_write_call_records_only_changed_bytes`.
+- 1.5.8 - With MERGE_HEAD present, a same-bytes Write to a dirty merge-set path held by another session records nothing for the writer. test: `tests/hooks/test_tool_handlers.py::test_merge_set_noop_write_records_nothing`.
+- 1.5.9 - A Bash call that writes a clean tracked path and commits it (`echo x > <path> && git commit -qam m`) records the pair in `task_edited_files`, and `reconcile_edit_ledgers` then releases its clean live pair. test: `tests/hooks/test_tool_handlers.py::test_write_committed_in_same_call_keeps_task_record`.
+- 1.5.10 - With no stored entry, the status rule decides (dirty records, clean records nothing), and a directory path uses the same rule. test: `tests/hooks/test_tool_handlers.py::test_recorder_falls_back_to_status_without_entry`.
+- 1.5.11 - Interleaved `before(A)`, `before(B)`, `after(A)`, `after(B)` on one path with distinct request ids keep separate baselines. With no request id, the second `before` overwrites the first, and the second `after` takes the status fallback. test: `tests/hooks/test_pre_write_digests.py::test_interleaved_calls_keep_baselines_by_request_id`.
+- 1.5.12 - `handle_session_end` drops the session's entries and keeps other sessions' entries, and `snapshot` drops entries older than one hour. test: `tests/hooks/test_pre_write_digests.py::test_session_end_and_age_prune_drop_stale_entries`.
 
 ### 1.6 Rule 4 refuses writes into another Gobby project [category: code] (depends: 1.3, 1.5, 1.7)
 `kind: deliverable`
@@ -1305,6 +1405,13 @@ Targets:
   apply under a sanctioned worktree of another project (1.3, 1.5, 1.6, with
   1.6 now depending on 1.5 and 1.7). The sweep also corrected the Content-Hash
   Contract's W2 reference from Decision 12 to Decision 11.
+- 2026-10-05: Adversary findings CO-A3-F1 to F4 accepted. F4 adds the
+  security-boundaries probe to 1.1's unchanged consumers. F1 to F3 replace
+  Decision 5 (Orchestrator ruling, 2026-10-05). The recorder now compares a
+  sha256 of each write path taken at `before_tool` with one taken at
+  `after_tool`, for failed calls too. Entries are keyed by session,
+  normalized `request_id` and path, are cleared at session end and expire
+  after one hour, and the status rule remains a bounded fallback (1.5).
 
 ## V2: Verification
 `kind: verification`
