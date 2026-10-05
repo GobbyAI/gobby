@@ -50,8 +50,8 @@ it cannot set up a machine that joins a hub:
 
 The Orchestrator (gobby#14972) ruled on Q1 to Q7 on 2026-10-05 (16:33 CT) and
 accepted every recommendation. Q1 and Q7 need Josh's approval at plan
-approval. At 17:31 CT it accepted the enhancer's E06 and E08 as decisions 13
-and 14, which Josh sees at plan approval.
+approval. On 2026-10-05 it also accepted the enhancer's E06 and E08 as
+decisions 13 and 14, which Josh sees at plan approval.
 
 1. **Joining a self-hosted hub automates today's remote bridge (Q1, option
    (a); Josh approves).** The wizard prompts for the hub origin
@@ -125,7 +125,7 @@ and 14, which Josh sees at plan approval.
     `BootstrapConfig` defaults supply the ports, bind host and pool settings
     that `docs/guides/shared-stack.md` (Client setup) lists by hand today.
 13. **A combined key replacement and structural change is refused (enhancer
-    E06; Orchestrator ruling, 17:31 CT).** On a configured install, a run
+    E06; Orchestrator ruling, 2026-10-05).** On a configured install, a run
     that both replaces the embedding API key and makes a structural change
     is refused before any write. The remedy is to replace the key in a
     separate key-only run, then retry the structural change. The switch
@@ -135,7 +135,7 @@ and 14, which Josh sees at plan approval.
     active. A declined switch never writes the key. This plan adds no
     pending-secret state and leaves the switch API unchanged.
 14. **The no-op guarantee covers the five wizard steps (enhancer E08;
-    Orchestrator ruling, 17:31 CT).** With every default accepted, the role,
+    Orchestrator ruling, 2026-10-05).** With every default accepted, the role,
     datastores, embedding, UI exposure and CLI hooks steps write nothing.
     The unlisted steps keep today's orchestration (decision 4). For example,
     `run_daemon_setup` (`src/gobby/cli/install_setup.py`) still runs the
@@ -219,8 +219,8 @@ other plan's delivered contract.
   and calls.
 - **Granularity.** Each deliverable has at most six acceptance items and at
   most five production files. 1.5 keeps bootstrap publication and enrollment
-  together, because enrollment's trigger is the publication diff (a new or
-  changed hub origin). 1.6 has one classifier, which owns the key-only and
+  together, because publication clears the enrollment fields whose absence
+  triggers enrollment. 1.6 has one classifier, which owns the key-only and
   switch outcomes.
 
 ## P1: Installer wizard
@@ -604,7 +604,10 @@ Targets:
   - it mints a machine key and publishes `api_key`, `api_key_id` and
     `hub_cert` into the bootstrap.
   `login` builds the prompts from `click.prompt` and `click.confirm`. The
-  wizard reuses `enroll` unchanged. `enroll` takes the password only from
+  wizard reuses `enroll` unchanged. `enroll` can fail after the wizard has
+  published a new origin: a network error on the
+  `/api/auth/keys/bootstrap` POST raises before `_publish` writes the new
+  key (`src/gobby/cli/auth_login.py::enroll`). `enroll` takes the password only from
   `prompts.password()`, while the email can come from `request.email`.
 - Full-command tests stub `run_remote_preflight` at its boundary. The
   wizard's helpers must not open the copied credentials. Preflight keeps its
@@ -632,13 +635,25 @@ Targets:
     - The DSN is never echoed.
   - `publish_hub_join(join, raw, path) -> bool`:
     - with no bootstrap, `write_bootstrap_yaml` with exactly the three keys;
-    - with changed values, `update_bootstrap_yaml` setting the two values;
+    - with changed values, one `update_bootstrap_yaml` call whose updater
+      sets the two values. When `hub_daemon_url` changes, the same locked
+      write also removes the origin-bound enrollment fields `api_key`,
+      `api_key_id` and `hub_cert`. A DSN-only change keeps them. Every other
+      key is preserved.
     - with unchanged values, no write.
     It returns whether it wrote.
-  - `enroll_if_needed(join, raw_before, *, email, password_file,
-    fingerprint, no_interactive) -> Enrollment | None`:
-    - It runs `enroll` only when `raw_before` has no `api_key` or its
-      `hub_daemon_url` differs from `join.hub_daemon_url`.
+  - `enroll_if_needed(join, raw, *, email, password_file, fingerprint,
+    no_interactive) -> Enrollment | None`, where `raw` is the mapping as
+    published:
+    - It runs `enroll` only when `raw` has no `api_key`. A changed origin
+      cleared the key in its publication write, so this one guard covers a
+      fresh node, a repoint, and a repoint whose preflight or enrollment
+      failed or was interrupted. The next default run retries enrollment
+      until `enroll` publishes the new hub's key. No rollback and no
+      wizard state are added.
+    - A failed repoint leaves the node without the old hub's key. Returning
+      to the old hub enrolls again. This plan does not revoke the old key
+      at the old hub.
     - It builds `LoginRequest(hub=None, email=email,
       fingerprint=fingerprint, label=socket.gethostname(), insecure=False)`.
     - Interactive `LoginPrompts` use `click.prompt` and `click.confirm`, as
@@ -658,8 +673,9 @@ Targets:
     and reject them when COMPONENTS are named;
   - for the `self-hosted` role, before preflight: resolve, publish, then
     re-read `peek_install_bootstrap()` so preflight sees the new values;
-  - after preflight passes, call `enroll_if_needed` with the pre-publish
-    mapping. A preflight failure exits as today, with no enrollment;
+  - after preflight passes, call `enroll_if_needed` with the re-read
+    published mapping. A preflight failure exits as today, with no
+    enrollment;
   - the five hub flags on a `local` run are a `click.UsageError` ("<flag>
     applies to the self-hosted role only.").
 
@@ -670,10 +686,11 @@ isolation prefix.
 **Acceptance:**
 
 - 1.5.1 - `resolve_hub_join` defaults to the stored origin and DSN. It reads the DSN from `--hub-database-url-file` or the hidden prompt, where blank keeps the stored value. A given flag skips its prompt. A fresh non-interactive run without the inputs is a usage error naming both flags. test: `tests/cli/test_install_join.py::test_resolve_hub_join_defaults_and_file_inputs`.
-- 1.5.2 - `publish_hub_join` writes a fresh bootstrap with exactly `datastore_mode: remote`, `database_url` and `hub_daemon_url`. It updates only changed values, and writes nothing when they are unchanged. test: `tests/cli/test_install_join.py::test_publish_hub_join_writes_only_on_change`.
+- 1.5.2 - `publish_hub_join` writes a fresh bootstrap with exactly `datastore_mode: remote`, `database_url` and `hub_daemon_url`. It updates only changed values, and writes nothing when they are unchanged. A changed origin also removes `api_key`, `api_key_id` and `hub_cert` in the same write; a DSN-only change keeps them; every other key is preserved. test: `tests/cli/test_install_join.py::test_publish_hub_join_writes_only_on_change`.
 - 1.5.3 - The join step never opens `.secret_kek` or `local_cli_token`. A sentinel DSN or password never appears in stdout, stderr or logs, including when a file read, resolution or enrollment fails. test: `tests/cli/test_install_join.py::test_hub_join_never_reads_copied_credentials`.
-- 1.5.4 - `enroll_if_needed` calls `enroll` only when the bootstrap has no `api_key` or the hub origin changed. Without prompts it requires `--hub-email` and `--hub-password-file`, and refuses an unpinned TLS certificate unless `--hub-fingerprint` is given. `--hub-password-file` also supplies the interactive password, keeping its whitespace. test: `tests/cli/test_install_join.py::test_enroll_if_needed_runs_only_for_new_enrollment`.
+- 1.5.4 - `enroll_if_needed` calls `enroll` only when the published bootstrap has no `api_key`, and makes no call for an enrolled node with an unchanged origin. Without prompts it requires `--hub-email` and `--hub-password-file`, and refuses an unpinned TLS certificate unless `--hub-fingerprint` is given. `--hub-password-file` also supplies the interactive password, keeping its whitespace. test: `tests/cli/test_install_join.py::test_enroll_if_needed_runs_only_for_new_enrollment`.
 - 1.5.5 - A fresh `gobby install --role self-hosted --no-interactive` with the hub flags publishes the bootstrap before preflight and enrolls after preflight passes. A failed preflight exits without enrolling. The hub flags on a local run are a usage error. test: `tests/cli/test_cli_install.py::test_install_join_runs_preflight_then_enrollment`.
+- 1.5.6 - A node enrolled at hub A is repointed to hub B, and B's preflight or enrollment fails. The bootstrap then names B with no `api_key`, `api_key_id` or `hub_cert`, and every other key is unchanged. A default re-run retries enrollment, a successful enrollment publishes B's key, and the following re-run calls no `enroll` and writes nothing. test: `tests/cli/test_cli_install.py::test_install_failed_repoint_retries_enrollment`.
 
 ### 1.6 Embedding step reconciles against the stored configuration [category: code] (depends: 1.5)
 `kind: deliverable`
@@ -1121,7 +1138,7 @@ deferral:
     - D2.1
 ```
 
-- D2.1 - After #23585 lands, the `RoleChangeRefused` remedy also offers setting `GOBBY_HOME` to a fresh directory and running `gobby install` there.
+- D2.1 - After #23585 (Install paths ignore GOBBY_HOME) lands, the `RoleChangeRefused` remedy also offers setting `GOBBY_HOME` to a fresh directory and running `gobby install` there.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1132,8 +1149,8 @@ deferral:
   `.gobby/plans/research/installer-wizard-context-20151.md`. The draft is
   narrative only, with no M1.
 - 2026-10-05: Enhancer pass by `plan-enhancer-taskless-old` (run d0f45474)
-  returned E01 to E09. The Orchestrator (gobby#14972) accepted all nine at
-  17:31 CT. Applied:
+  returned E01 to E09. The Orchestrator (gobby#14972) accepted all nine on
+  2026-10-05. Applied:
   - 1.6's classifier compares the effective target first, so an unchanged
     configuration is never refused (E02). It refuses a model or dim change
     and a custom LM Studio or Ollama API base, which the switch cannot
@@ -1147,6 +1164,17 @@ deferral:
   Per the Orchestrator's ruling on #23585 (Install paths ignore
   GOBBY_HOME), the fresh-`GOBBY_HOME` remedy is deferred section D2, with
   #23585 as its external prerequisite.
+- 2026-10-05: Parked on Josh's deferral, verbatim: "20151 is deferred until
+  we prep 0.5.0 release". Plan Adversary Adv3 (gobby#15470) stopped its
+  review before finishing. There is no consensus and no M1.
+  - IW-A3-F1 (message a61c2f4a; section 1.5 enrollment retry state) is open
+    and unresolved. A clear-on-repoint repair is drafted in 1.5 (1.5.2,
+    1.5.4 and the new 1.5.6). Adv3 accepted it as the proposed repair
+    (message 9194e3de) but has not verified these bytes.
+  - One point is still pending and not drafted: on a configured install,
+    `--embedding-provider` should be accepted without `--embedding-url`,
+    for non-interactive flag parity (`src/gobby/cli/install.py:345`).
+  - Writer decisions 8 to 12 have not been reviewed by Adv3.
 
 ## V2: Verification
 `kind: verification`
