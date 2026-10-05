@@ -888,8 +888,12 @@ C2's signature and on the pinned read and retention paths it measures.
   proves the route through the binary. PIN-A7: C2 depends on T1, so the timing
   baseline still lands first after the C2/C3 split. PIN-A4 follow-through: R1 and
   A1 state the lifecycle reason for the detached-HEAD refusal. The stored base
-  branch is merge start's default target and the deletion merge reference. The
-  Orchestrator rules on that product exception.
+  branch is merge start's default target and the deletion merge reference.
+  Orchestrator ruling (gobby#14972): keep the refusal, so an omitted base on a
+  detached caller HEAD returns `detached_head_requires_base`, with no fallback to
+  `main` and no SHA recorded, and the caller passes an explicit base. Forking the
+  detached commit with a NULL base branch is rejected because it spreads
+  mechanism across about 30 base-branch consumers.
 
 ## V2: Verification
 `kind: verification`
