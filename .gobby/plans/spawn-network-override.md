@@ -473,3 +473,112 @@ remain unchanged.
   wrappers: 2.1 as a bug fix, and 1.1, 1.2, and 2.2 as features. D1 remains a
   typed planning deferral. Expansion waits for Josh's review of the four
   Orchestrator rulings and his approval.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Resolve the effective SRT profile for one launch
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: Null inherits the final definition''s profile; explicit
+    `none` and `trusted` take precedence for one launch, and an explicit value without
+    a resolved definition refuses. behavior: "effective per-spawn SRT network profile".
+
+    1.1.2: The override is a launch-local copy: the loaded body and stored definition
+    keep their profile. behavior: "one-launch override lifetime".
+
+    1.1.3: Resume reuses the saved effective sandbox config, so an overridden profile
+    survives resume without new resume code. behavior: "resume retains selected network
+    profile".'
+  labels:
+  - covers:spawn-network-override:1.1:1.1.1
+  - covers:spawn-network-override:1.1:1.1.2
+  - covers:spawn-network-override:1.1:1.1.3
+  tdd: false
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Deny unauthorized overrides
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: Root and named spawned callers may select either profile;
+    all other spawned callers may spawn only without an override. behavior: "network
+    override authority".
+
+    1.2.2: A forged parent session ID or a run-less non-root session never gains override
+    authority. behavior: "verified caller identity".
+
+    1.2.3: Bundled default permits child spawning, and override authority leaves seat-spawn
+    policy in force. behavior: "definition and seat spawn policy".'
+  labels:
+  - covers:spawn-network-override:1.2:1.2.1
+  - covers:spawn-network-override:1.2:1.2.2
+  - covers:spawn-network-override:1.2:1.2.3
+  tdd: false
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Enforce spawnable_agents for every spawn caller
+  category: code
+  task_type: bug
+  depends_on:
+  - '1.2'
+  validation_criteria: '2.1.1: A spawned agent whose `spawnable_agents` excludes an
+    agent cannot spawn it through a pipeline MCP step, and the refusal names `spawnable_agents`;
+    a regression test fails before the fix. behavior: "spawnable_agents on every entry
+    path".
+
+    2.1.2: The same caller can still spawn an allowed agent through a pipeline MCP
+    step, and the root, operator, and daemon-internal paths are unchanged. behavior:
+    "allowed spawns unchanged".
+
+    2.1.3: A spawned caller with unresolved or forged identity is refused. behavior:
+    "spawn caller identity fails closed".
+
+    2.1.4: Rejected credentials are refused even when the request carries an otherwise
+    authorized session. behavior: "rejected principal refused".
+
+    2.1.5: The fallback chain checked is the one the launch would use: in the target
+    project from an explicit `project_path` or the parent session, a forbidden actual
+    fallback is refused and an allowed one is permitted. behavior: "target-project
+    fallback authority".'
+  labels:
+  - covers:spawn-network-override:2.1:2.1.1
+  - covers:spawn-network-override:2.1:2.1.2
+  - covers:spawn-network-override:2.1:2.1.3
+  - covers:spawn-network-override:2.1:2.1.4
+  - covers:spawn-network-override:2.1:2.1.5
+  tdd: false
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Expose the choice on single-spawn surfaces
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '2.1'
+  validation_criteria: '2.2.1: MCP, HTTP, and CLI expose only `none|trusted`, with
+    omission/null inheriting the final definition, including after fallback in both
+    directions. behavior: "single-spawn network input".
+
+    2.2.2: HTTP `web_chat` rejects explicit network and managed credentials cannot
+    call the direct HTTP spawn route. behavior: "HTTP spawn boundary".
+
+    2.2.3: An explicit override from an unauthorized caller, including through a pipeline
+    MCP step, refuses before placement, checkout, child session, or launch. behavior:
+    "override authority at the spawn boundary".
+
+    2.2.4: The spawning reference, agents guide, and sandboxing guide document the
+    parameter, flag, inheritance, lifetime, and authority limits. file: `docs/guides/sandboxing.md`.'
+  labels:
+  - covers:spawn-network-override:2.2:2.2.1
+  - covers:spawn-network-override:2.2:2.2.2
+  - covers:spawn-network-override:2.2:2.2.3
+  - covers:spawn-network-override:2.2:2.2.4
+  tdd: false
+  source_section: '2.2'
+  implementation_domain: backend
+```
