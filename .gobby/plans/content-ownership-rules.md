@@ -1752,6 +1752,13 @@ Targets:
     commit such a pair.
   - LOW-3: 1.5.4's test is renamed
     `test_git_restore_index_only_pathspecs_are_execute_kind`.
+- 2026-10-05: Renewed V1 consensus. The Adversary (gobby#15470) confirmed
+  consensus on `f1a15538e8` (sha256 `a7c8f55a`) with no remaining
+  findings, after verifying the exact M1 withdrawal, the complete repair
+  diff and a clean base validation. Josh's approval carries to the repaired
+  commit (16:00 CT, relayed by the Orchestrator). The Adversary re-derives
+  M1 through the handoff-manifest route; routing stays eight backend code
+  leaves with TDD.
 
 ## V2: Verification
 `kind: verification`
