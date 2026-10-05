@@ -340,4 +340,4 @@ pub(crate) mod remap;
 
 #[cfg(all(test, gcode_postgres_tests))]
 #[path = "communities/refresh_tests.rs"]
-mod refresh_tests;
+mod serial_db;

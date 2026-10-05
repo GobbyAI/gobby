@@ -468,12 +468,82 @@ fn fresh_effective_cache_drops_when_postgres_revision_differs() {
         eprintln!("GCODE_POSTGRES_TEST_DATABASE_URL is unset; skipping revision cache test");
         return;
     };
-    let mut conn = crate::postgres::connect_readonly(&url).expect("test postgres");
+    let config = url.parse::<postgres::Config>().expect("test DSN");
+    assert!(
+        config.get_dbname().is_some_and(|name| {
+            name == "gobby_gcode_test" || name.starts_with("gobby_gcode_test_")
+        }),
+        "cache fixture requires the isolated gcode test database namespace"
+    );
+    struct RevisionSchema {
+        conn: postgres::Client,
+        name: String,
+    }
+    impl Drop for RevisionSchema {
+        fn drop(&mut self) {
+            if let Err(error) = self
+                .conn
+                .batch_execute(&format!("DROP SCHEMA \"{}\" CASCADE", self.name))
+            {
+                if std::thread::panicking() {
+                    eprintln!("revision schema cleanup failed: {error}");
+                } else {
+                    panic!("revision schema cleanup failed: {error}");
+                }
+            }
+        }
+    }
+    let mut fixture = RevisionSchema {
+        conn: crate::postgres::connect_readwrite(&url).expect("test postgres"),
+        name: format!("gcode_cache_revision_{}", uuid::Uuid::new_v4().simple()),
+    };
+    // This cache test needs only config_state, independently of public schema
+    // provisioning by a gcode runner (which now selects a different database).
+    fixture.conn.batch_execute(&format!(
+        "CREATE SCHEMA \"{0}\"; CREATE TABLE \"{0}\".config_state (id boolean PRIMARY KEY, revision bigint NOT NULL); INSERT INTO \"{0}\".config_state VALUES (true, 41)",
+        fixture.name,
+    )).expect("revision fixture schema");
+    let options = format!(
+        "{} -csearch_path={}",
+        config.get_options().unwrap_or(""),
+        fixture.name
+    );
+    let url = if let Ok(mut uri) = reqwest::Url::parse(&url) {
+        if let Some(query) = uri.query().map(|query| query.replace('+', "%2B")) {
+            uri.set_query(Some(&query));
+        }
+        let pairs: Vec<(String, String)> = uri
+            .query_pairs()
+            .filter(|(key, _)| key != "options")
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect();
+        uri.set_query(None);
+        uri.query_pairs_mut()
+            .extend_pairs(pairs)
+            .append_pair("options", &options);
+        // libpq-style URI parsing percent-decodes options but does not treat
+        // form-encoded '+' as a space.
+        let query = uri
+            .query()
+            .expect("fixture options query")
+            .replace('+', "%20");
+        uri.set_query(Some(&query));
+        uri.to_string()
+    } else {
+        format!(
+            "{url} options='{}'",
+            options.replace('\\', "\\\\").replace('\'', "\\'")
+        )
+    };
+    let mut conn = crate::postgres::connect_readonly(&url).expect("revision fixture connection");
     let current = crate::postgres::read_config_revision(&mut conn).expect("revision");
     let home = temp_home();
     fs::write(
         home.path().join("bootstrap.yaml"),
-        format!("database_url: '{url}'\n"),
+        format!(
+            "database_url: {}\n",
+            serde_json::to_string(&url).expect("fixture DSN YAML string")
+        ),
     )
     .expect("bootstrap");
     write_fresh_effective_cache(home.path(), current);

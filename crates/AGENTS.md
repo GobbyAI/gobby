@@ -35,7 +35,7 @@ GOBBY_SCHEMA_TEST_DATABASE_URL=<test-dsn> cargo nextest run -p gobby-core --feat
 # set at build time (DATABASE_URL and GOBBY_POSTGRES_TEST_* are ignored); the
 # fixture applies the schema and seeds this machine's row itself, so it refuses
 # targets outside the `gobby_gcode_test` namespace, never gobby_test's
-# pytest-managed schema. The fixture selects `gobby_gcode_test_v<compiled schema>`
+# pytest-managed schema. The fixture selects `gobby_gcode_test_v<compiled schema>_<root hash prefix>`
 # on this hub and creates it with pg_search when absent:
 GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test \
   cargo nextest run -p gobby-code -E 'test(serial_db)'
