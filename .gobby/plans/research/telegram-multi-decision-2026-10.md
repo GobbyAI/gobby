@@ -28,7 +28,9 @@ press in Telegram." He asked whether Telegram supports a multi-option confirmati
   defect that remains under that contract: after the first press, the other
   buttons stay drawn but do nothing except show an alert. A follow-up task in
   Lane 6 settles the answered message and states the contract at the send
-  boundary (see the last section).
+  boundary. Per Josh, it lands after #23143 "Relay live-session conversations
+  through Telegram and shared channel adapters" and reuses that task's
+  adapter-neutral relay contract for inbound callbacks (see the last section).
 
 ## 1. What the Bot API supports
 
@@ -248,7 +250,27 @@ in its own button message. This is already the interim practice.
   subscription and an answer path Gobby does not have, and lose token scoping.
 
 **Follow-up fix** (one implementation task; owning lane: Lane 6 Everything
-else, because communications has no lane of its own):
+else, because communications has no lane of its own).
+
+**Sequencing.** Josh's direction, relayed by the Orchestrator gobby#14972 at
+18:13 CT on 2026-10-05: the follow-up depends on #23143 "Relay live-session
+conversations through Telegram and shared channel adapters" and lands after it.
+Josh wants to chat over Telegram the way he does at the terminal.
+
+#23143 defines one adapter-neutral relay contract. Under it, a channel attaches
+to one live session, and inbound channel text is durably deduplicated and
+delivered to that session as an ordinary user turn with a generic source label
+such as `User (Telegram):`. Telegram is its first adapter, and #23143 avoids
+Telegram-specific core logic. Where the follow-up touches inbound callbacks, it
+reuses that contract and adds no Telegram-only path:
+
+- When the asking session is bound to a channel through #23143's relay, an
+  accepted press reaches that session through the relay's inbound delivery,
+  with its dedup and source label. It does not reach the session through a
+  separate Telegram-only path.
+- Telegram-specific work stays in the Telegram adapter: drawing the settled
+  message and answering the callback query. The adapter-neutral core only
+  records that the decision was answered and with which choice.
 
 1. Settle an answered decision message. Once a press is accepted, edit the
    decision message so it shows the recorded choice and carries no live
@@ -261,6 +283,12 @@ else, because communications has no lane of its own):
 
 Acceptance criteria for the follow-up:
 
+- The task is blocked by #23143 and starts only after #23143 lands.
+- For a session bound to a channel through #23143's relay, an accepted press is
+  delivered once to that session through the relay's inbound path. It carries
+  the relay's source label and dedup. A refused press is not relayed.
+- The adapter-neutral core holds no Telegram-specific settling logic. The
+  Telegram adapter draws the settled message and answers the callback query.
 - After the first accepted press on a decision message, the message shows the
   recorded choice and has no live keyboard. The only exception is a Retry answer
   button while the answer is `failed` or `in_doubt`.
