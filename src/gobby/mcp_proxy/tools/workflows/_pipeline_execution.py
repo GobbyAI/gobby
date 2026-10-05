@@ -720,13 +720,21 @@ async def resume_interrupted_pipelines(
 
         snapshot = _definition_snapshot(execution)
         if snapshot is None:
-            await _run_sync_db(
-                run_db,
-                execution_manager.update_execution_status,
-                execution_id=execution.id,
-                status=ExecutionStatus.FAILED,
-                outputs_json=json.dumps({"error": DEFINITION_SNAPSHOT_UNUSABLE}),
-            )
+            try:
+                await _run_sync_db(
+                    run_db,
+                    execution_manager.update_execution_status,
+                    execution_id=execution.id,
+                    status=ExecutionStatus.FAILED,
+                    outputs_json=json.dumps({"error": DEFINITION_SNAPSHOT_UNUSABLE}),
+                )
+            except Exception as e:
+                logger.warning(
+                    "Cannot fail execution %s with an unusable definition snapshot — "
+                    "will be interrupted: %s",
+                    execution.id,
+                    e,
+                )
             continue
 
         # Parse stored inputs
