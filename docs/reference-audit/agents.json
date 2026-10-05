@@ -311,7 +311,7 @@
       "reference": "src/gobby/install/shared/skills/gobby/references/agents/personas.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/agents_spawn_tools.py",
-        "symbol": "register_agent_spawn_tools.apply_persona"
+        "symbol": "register_agent_spawn_tools.apply_agent_definition"
       },
       "verification": [
         "source-audit",
@@ -319,7 +319,7 @@
       ],
       "audience": "agent",
       "server": "gobby-agents",
-      "tool": "apply_persona"
+      "tool": "apply_agent_definition"
     },
     {
       "surface": "mcp",
