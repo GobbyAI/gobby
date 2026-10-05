@@ -264,7 +264,7 @@ Targets:
 - `src/gobby/agents/sandbox_credentials.py`
 - `tests/utils/test_break_glass.py`
 - `tests/servers/test_break_glass.py`
-- `tests/agents/test_sandbox_policy.py::*` — scope-reason: the credential-root case asserts that the break-glass file and the bound startup bootstrap are denied for reads and writes
+- `tests/agents/test_sandbox_policy.py::*` — scope-reason: the eight cases that patch `sandbox_policy.get_gobby_home` set `GOBBY_HOME` with `monkeypatch.setenv` instead, so the moved helpers follow the test home, and the credential-root case asserts that the break-glass file and the bound startup bootstrap are denied for reads and writes
 - `tests/test_runner_front_door.py::*` — scope-reason: gains the case proving `run_gobby` creates the credential before the front door starts, including with `--config` outside `GOBBY_HOME`
 - `docs/guides/admin-operations.md`
 - `docs/contracts/secrets.md`
@@ -312,9 +312,16 @@ Targets:
   `_credential_roots` (`bootstrap.yaml`, `.secret_kek`, `local_cli_token`,
   `tools/srt`) and `_gcode_runtime_root` feed `sensitive_roots` and
   `sensitive_write_roots`, and `gcode_runtime_write_exceptions` also calls
-  `_gcode_runtime_root`. Nothing else calls the two helpers. Tests steer the
-  gobby home with the `GOBBY_HOME` environment variable and patch no module
-  attribute, so moving the helpers moves no patch path.
+  `_gcode_runtime_root`. Nothing else calls the two helpers. Eight
+  `tests/agents/test_sandbox_policy.py` cases (lines 103, 118, 133, 174, 355,
+  675, 706, and 726) patch `sandbox_policy.get_gobby_home`. Once the helpers
+  move, `sandbox_credentials` resolves its own `get_gobby_home` global, so those
+  patches stop steering `credential_roots()` and `gcode_runtime_root()`, and
+  the synthetic `/opt/gobby-home` case at line 133 would derive the real
+  runtime root. `gobby.paths.get_gobby_home` reads `GOBBY_HOME` on every call,
+  so setting the variable steers both modules and `daemon_bootstrap_path()`.
+  `tests/agents/test_sandbox_reaper.py` line 381 patches the same attribute for
+  the pre-commit-spare helpers, which do not move, so it is not edited.
   `tests/agents/test_sandbox.py` and `tests/agents/test_external_write_grants.py`
   assert subsets of the returned roots, so an added root leaves them true.
 - `src/gobby/agents/code_index.py`'s runtime-home reaper removes copied
@@ -363,7 +370,10 @@ Targets:
   `_credential_roots` and `_gcode_runtime_root` into the new
   `src/gobby/agents/sandbox_credentials.py` as `credential_roots()` and
   `gcode_runtime_root()`. `sensitive_roots`, `sensitive_write_roots`, and
-  `gcode_runtime_write_exceptions` import them. `credential_roots()` keeps its `get_gobby_home()` roots and adds
+  `gcode_runtime_write_exceptions` import them. In
+  `tests/agents/test_sandbox_policy.py`, each
+  `monkeypatch.setattr(sandbox_policy, "get_gobby_home", …)` becomes
+  `monkeypatch.setenv("GOBBY_HOME", str(gobby_home))`. `credential_roots()` keeps its `get_gobby_home()` roots and adds
   `daemon_bootstrap_path()` and `break_glass_path()`, so with `--config`
   outside `GOBBY_HOME` the startup bootstrap and break-glass file stay denied
   even under an allowed workspace. The
