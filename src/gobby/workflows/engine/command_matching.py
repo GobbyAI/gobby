@@ -260,13 +260,17 @@ def _tool_argv(words: list[str]) -> list[str]:
     return [_TOOL_SPEC_SUFFIX.sub("", words[0]), *words[1:]]
 
 
-def _after_options(words: list[str], value_options: frozenset[str]) -> list[str]:
+def _after_options(
+    words: list[str], value_options: frozenset[str], *, infer_long_options: bool = False
+) -> list[str]:
     """Drop leading options (and a value option's operand) through ``--``."""
     index = 0
     while index < len(words) and words[index].startswith("-"):
         if words[index] == "--":
             return words[index + 1 :]
-        index += option_word_count(words[index], value_options)
+        index += option_word_count(
+            words[index], value_options, infer_long_options=infer_long_options
+        )
     return words[index:]
 
 
@@ -321,7 +325,7 @@ def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) ->
             continue
         # watch and ssh join every remaining word into the command they run.
         if name == "watch":
-            rest = _after_options(unwrapped[1:], _WATCH_VALUE_OPTIONS)
+            rest = _after_options(unwrapped[1:], _WATCH_VALUE_OPTIONS, infer_long_options=True)
             if rest:
                 scripts.append(" ".join(rest))
             continue

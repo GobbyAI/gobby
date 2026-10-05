@@ -269,6 +269,47 @@ def test_execution_contexts(command: str) -> None:
     assert blocks_direct_provider_launch("Bash", {"command": command})
 
 
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("env -S 'echo hi; codex exec'", False),
+        ("env -iS 'echo hi; codex exec'", False),
+        ("env -S echo 'hi; codex exec'", False),
+        ("env -S '-i FOO=x echo hi; codex exec'", False),
+        ("env -S '-i FOO=x codex exec'", True),
+        (r"env -S 'codex\_exec'", True),
+        ("env -S '\"codex\" exec'", True),
+        ("env -S '\"codex exec\"'", False),
+        (r"env -S 'codex\texec'", False),
+        (r"env -S 'echo hi\c; codex exec'", False),
+        (r"env -S '\"echo\_hi\" codex exec'", False),
+        ("env -S '' codex exec", True),
+        ("env -S '-S \"codex exec\"'", True),
+        ("env -S 'codex exec \"'", True),
+        ("env --split 'codex exec'", True),
+        ("env --spl='codex exec'", True),
+        ("env --env0-from /tmp/vars codex", True),
+        ("env --quoting-style shell codex", True),
+        ("sudo --chd /tmp codex", True),
+        ("sudo --us root codex", True),
+        ("sudo -a auth codex", True),
+        ("sudo -c staff codex", True),
+        ("sudo -r role codex", True),
+        ("sudo -t type codex", True),
+        ("sudo --auth-type auth codex", True),
+        ("sudo --login-class staff codex", True),
+        ("sudo --role role codex", True),
+        ("sudo --type type codex", True),
+    ],
+)
+def test_env_split_and_getopt_prefixes_preserve_launches(
+    tool_name: str, command: str, blocked: bool
+) -> None:
+    key = "command" if tool_name == "Bash" else "cmd"
+    assert blocks_direct_provider_launch(tool_name, {key: command}) is blocked
+
+
 @pytest.mark.parametrize(
     "name",
     [

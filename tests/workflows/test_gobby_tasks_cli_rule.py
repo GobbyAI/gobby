@@ -357,6 +357,51 @@ def test_allows_mutation_words_as_wrapped_command_data(
 
 @pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
 @pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("env -iS 'echo harmless; " + _MUTATION + "'", False),
+        ("env -S 'echo harmless; " + _MUTATION + "'", False),
+        ("env -S echo 'harmless; " + _MUTATION + "'", False),
+        ("env -S '-i FOO=x echo harmless; " + _MUTATION + "'", False),
+        ("env -S 'echo harmless # " + _MUTATION + "'", False),
+        ("env -S '-i FOO=x " + _MUTATION + "'", True),
+        (r"env -S 'gobby\_tasks\_close\_1'", True),
+        ("env -S '\"gobby\" tasks close 1'", True),
+        ("env -S '\"gobby tasks close 1\"'", False),
+        (r"env -S 'gobby\ntasks close 1'", False),
+        (r"env -S 'echo harmless\c; " + _MUTATION + "'", False),
+        (r"env -S '\"echo\_harmless\" " + _MUTATION + "'", False),
+        ("env -S '' " + _MUTATION, True),
+        ("env -S '-S \"" + _MUTATION + "\"'", True),
+        ("env -S '" + _MUTATION + " \"'", True),
+        ("env --split '" + _MUTATION + "'", True),
+        ("env --spl='" + _MUTATION + "'", True),
+        ("env --env0-from /tmp/vars " + _MUTATION, True),
+        ("env --quoting-style shell " + _MUTATION, True),
+        ("env --chd /tmp " + _MUTATION, True),
+        ("sudo --chd /tmp " + _MUTATION, True),
+        ("sudo --us root " + _MUTATION, True),
+        ("sudo -a auth " + _MUTATION, True),
+        ("sudo -c staff " + _MUTATION, True),
+        ("sudo -r role " + _MUTATION, True),
+        ("sudo -t type " + _MUTATION, True),
+        ("sudo --auth-type auth " + _MUTATION, True),
+        ("sudo --login-class staff " + _MUTATION, True),
+        ("sudo --role role " + _MUTATION, True),
+        ("sudo --type type " + _MUTATION, True),
+        ("watch --inter 5 " + _MUTATION, True),
+        ("uv run --no-build " + _MUTATION, True),
+        ("uvx --no-build " + _MUTATION, True),
+    ],
+)
+def test_env_split_and_getopt_prefixes_preserve_execution(
+    db: HubDatabase, effect: RuleEffect, tool_name: str, command: str, blocked: bool
+) -> None:
+    assert RuleEngine(db)._should_block(effect, _shell_event(tool_name, command)) is blocked
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize(
     "command",
     [
         # Quotes and backslashes inside a word vanish before it runs, so each of
