@@ -12,7 +12,10 @@ import psutil
 
 from gobby.cli.daemon_singleton import format_singleton_status
 from gobby.runner_pid_file import ProbeState, probe_daemon_lock
+from gobby.storage.hub.managed import managed_grant_path
 from gobby.storage.schema_divergence import collect_schema_heads
+from gobby.utils.daemon_client import DaemonAuthenticationError, DaemonClient
+from gobby.utils.daemon_url import resolve_daemon_url
 
 from .installers.service import get_service_status
 from .utils import _is_process_alive, format_uptime, get_gobby_home
@@ -20,11 +23,54 @@ from .utils import _is_process_alive, format_uptime, get_gobby_home
 logger = logging.getLogger(__name__)
 
 
+def report_managed_health(ctx: click.Context) -> None:
+    """Report daemon API health without opening the managed seat's restricted hub."""
+    from gobby.cli.runtime import get_cli_runtime
+
+    url = resolve_daemon_url(bootstrap_path=get_cli_runtime(ctx).config_file)
+    try:
+        response = DaemonClient(url=url, timeout=2.0).call_http_api("/api/health", method="GET")
+    except DaemonAuthenticationError:
+        click.echo("Gobby daemon: authentication failed")
+        ctx.exit(1)
+    except httpx.RequestError:
+        click.echo("Gobby daemon: not responding")
+        ctx.exit(1)
+
+    if response.status_code != 200:
+        click.echo(f"Gobby daemon: unhealthy (HTTP {response.status_code})")
+        ctx.exit(1)
+    try:
+        payload = response.json()
+    except (TypeError, ValueError):
+        payload = None
+    if not isinstance(payload, dict) or payload.get("status") not in ("ok", "degraded"):
+        click.echo("Gobby daemon: invalid health response")
+        ctx.exit(1)
+    if payload["status"] == "degraded":
+        click.echo("Gobby daemon: degraded")
+        services = payload.get("degraded_services")
+        if isinstance(services, list) and all(isinstance(service, str) for service in services):
+            if services:
+                click.echo(f"  Degraded services: {', '.join(services)}")
+        hook_runtime = payload.get("hook_runtime")
+        if isinstance(hook_runtime, dict):
+            for key in ("state", "detail"):
+                if isinstance(hook_runtime.get(key), str):
+                    click.echo(f"  Hook runtime {key}: {hook_runtime[key]}")
+        ctx.exit(1)
+    click.echo("Gobby daemon: healthy (daemon API)")
+    ctx.exit(0)
+
+
 @click.command()
 @click.pass_context
 def health(ctx: click.Context) -> None:
     """Quick one-line daemon health check."""
     from gobby.cli.runtime import get_cli_runtime, require_cli_database
+
+    if managed_grant_path() is not None:
+        report_managed_health(ctx)
 
     pid_file = get_gobby_home() / "gobby.pid"
     probe = probe_daemon_lock(pid_file)
