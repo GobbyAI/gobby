@@ -108,6 +108,9 @@ enforces it (#22902 Constraints, boundary paragraph).
    - From the base agent, activation applies any persona-surface definition.
    - The same agent with the same pin is a no-op receipt (`status: unchanged`)
      that writes nothing and reinjects nothing.
+   - `variables` and `task_id` apply only when activation occurs. An
+     `unchanged` call ignores them: it resolves no task, merges no variables
+     and leaves the session's bindings as they are. There is no update mode.
    - Any other change is refused with the typed error
      `role_change_requires_relaunch`: seat X to seat Y, or a seat back to the
      base agent. This follows runbooks decision 20, "a role change is a
@@ -208,7 +211,7 @@ enforces it (#22902 Constraints, boundary paragraph).
     | --- | --- | --- |
     | Compaction | Same session; SessionStart `compact` re-activates by `_agent_type`; the step instance survives | none beyond Decision 2 |
     | Pane resume | Same as compaction (`source="resume"` on the existing row) | none beyond Decision 2 |
-    | `/clear` | Successor copies `_agent_type` and `_agent_definition_hash` before its activation; gets a fresh step instance at the first step | 1.4 |
+    | `/clear` | Successor copies `_agent_type` and `_agent_definition_hash` before its activation; gets a fresh step instance at the first step; a spawned seat's live run, its terminal and its back-pointer move to the successor after a staged clear | 1.4 |
     | Spawned-run resume | Reuses the session row; spawned sessions cannot change definition (Decision 5) | none |
 
 11. **Hand launch and lane carrier (R1, R2).**
@@ -281,6 +284,10 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) and re-verified at
   - The bind does not rebind an agent run. Only spawn
     (`spawn_agent/_runtime.py::_persist_spawn_runtime`) and the admin test
     route call `update_child_session`.
+  - Earlier in the same `/clear`, SessionEnd `clear` on a spawned seat
+    completes its run and marks its terminal exited, even after
+    `set_handoff(clear_session=true)` staged the attempt (1.4 research
+    context).
 - Spawned-run resume (`agents/resume_executor.py`) reuses the existing session
   (`existing_session_id`) and merges the spawn-time `initial_variables`.
 - Web chat:
@@ -375,6 +382,7 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) and re-verified at
 - Production files stay under 1,000 lines.
   - Current line counts of the targeted production files (2026-10-05):
     - `spawn_agent/_implementation.py` 926;
+    - `sessions/clear_continuation.py` 860;
     - `_session.py` 776;
     - `_agent.py` 721;
     - `session_activation.py` 698;
@@ -382,15 +390,20 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) and re-verified at
     - `_session_launch.py` 345;
     - `agent_models.py` 270;
     - `_session_start/agents.py` 241;
+    - `_session_end.py` 217;
     - `spawn_agent/_runtime.py` 195;
     - `agents_spawn_tools.py` 123;
     - `skills/discovery.py` 44.
-  - Only `spawn_agent/_implementation.py` is above 850 lines. 2.1 moves its
-    run-lifetime resolution into the new `spawn_agent/_run_lifetime.py`, so it
-    does not grow. `resume_executor.py` (711) is not targeted (Decision 5).
+  - Two targeted files are above 850 lines, and neither grows.
+    - 2.1 moves the run-lifetime resolution of `spawn_agent/_implementation.py`
+      into the new `spawn_agent/_run_lifetime.py`.
+    - 1.4 moves the run-lineage writes of `sessions/clear_continuation.py`
+      into the new `sessions/clear_run_lineage.py`.
+  - `resume_executor.py` (711) is not targeted (Decision 5).
 - Plan-wide target scope form per file: `session_activation.py`, `_agent.py`,
-  `_session_start/agents.py`, `materialize.py`, `spawn_agent/_implementation.py`
-  and `spawn_agent/_runtime.py` take exact symbols only.
+  `_session_start/agents.py`, `materialize.py`, `_session_end.py`,
+  `clear_continuation.py`, `spawn_agent/_implementation.py` and
+  `spawn_agent/_runtime.py` take exact symbols only.
 - Boundaries:
   - #22902 owns seat definitions and their bundle validation.
   - #22899 owns `sandbox_profile`. Activation copies no sandbox field: a
@@ -415,7 +428,7 @@ spawn.
 
 | Item | Runtime work | Evidence |
 | --- | --- | --- |
-| L2 | Idle-TTL enforcement for interactive runs whose `resume_metadata` carries `idle_ttl_seconds`: wrap up, save, `end_agent_run`. Interactive runs without the key keep #23442's no-idle-end behavior | `_handle_idle_check` returns early for every interactive run (`idle_check_handler.py:481`); `last_session_activity(session_id)` and `session.updated_at` already give the idle clock there |
+| L2 | Idle-TTL enforcement for interactive runs whose `resume_metadata` carries `idle_ttl_seconds`. The reader is `_handle_idle_check`'s interactive branch: once the run's idle time reaches the TTL, the run wraps up, saves and calls `end_agent_run`. Interactive runs without the key keep #23442's no-idle-end behavior. After 1.4, a seat's run points at its current `/clear` successor, so the idle clock follows the live session. The Orchestrator files it under #22691 | `_handle_idle_check` returns early for every interactive run (`idle_check_handler.py:481`); `last_session_activity(session_id)` and `session.updated_at` already give the idle clock there |
 | L3 | `end_agent_run` closes the pane and terminal | It terminates the runtime but never calls `pane_close`; `sweep_dead_panes` is lazy |
 | P1 | Orphan terminal reaper for live terminals whose session ended | No sweep covers them |
 | P2 | Failed Stop leaves a seat `active` for 30–90 minutes | `handle_stop` pauses only when `turn_disposition != "unknown"` |
@@ -565,6 +578,8 @@ task_id=None, task_manager=None, cli_source=None)`:
 7. Compute the pin.
    - If the current `_agent_type` equals `agent` and the stored pin equals the
      new one, return `{success: true, status: "unchanged"}` without writing.
+     This return comes before step 8, so `variables` and `task_id` are ignored
+     (Decision 5).
    - If the current `_agent_type` is not the base agent (absent, `default`, or
      `ConfigRepository(db).read(resolve_secrets=False).values["default_agent"]`)
      and differs from `agent`, refuse `role_change_requires_relaunch`, naming
@@ -643,8 +658,9 @@ Consumers unchanged:
   `error_code` and write nothing. test:
   `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_refusals_write_nothing`.
 - 1.1.3 - The same agent with the same pin returns `status: unchanged` without a
-  write, and a seat-to-seat or seat-to-base change returns
-  `role_change_requires_relaunch`. test:
+  write, even when the repeat call passes changed `variables` and a `task_id`
+  (no task resolution, merge or reinjection). A seat-to-seat or seat-to-base
+  change returns `role_change_requires_relaunch`. test:
   `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_same_seat_noop_and_role_change_refused`.
 - 1.1.4 - A tool the seat blocks is refused by `_check_agent_tool_enforcement`
   after activation, and skill exclusions follow `_agent_type`. test:
@@ -789,6 +805,14 @@ Rejected: a new context channel on `AgentActivationResult`. It was removed by
 the Claude 5 prompt cleanup, and the reinjection flag path already delivers
 exactly one line on the next turn.
 
+Tests: the step-instance drift case mirrors the `snap_db` and `_agent` helpers
+of `tests/workflows/test_step_snapshot_semantics.py`. It seeds the instance with
+`spawn_agent/_step_state.py::persist_initial_step_instance`, as
+`test_definition_edit_does_not_mutate_running_snapshot` does, so 1.3 does not
+depend on 1.2. It activates the seat, advances the instance to its second
+step, and then patches definition resolution to a body with changed rules,
+tool blocks and step list before it drives SessionStart `compact` and `resume`.
+
 Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_session_start_reactivation.py tests/hooks/event_handlers/test_session_variable_preservation.py -q`.
 
 **Acceptance:**
@@ -800,15 +824,31 @@ Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `tests/hooks/test_session_start_reactivation.py::test_reactivation_reports_definition_drift_once`.
 - 1.3.2 - An unchanged pin injects no drift line. test:
   `tests/hooks/test_session_start_reactivation.py::test_unchanged_pin_injects_no_drift_line`.
+- 1.3.3 - On a stepped seat advanced past its first step, a compact or resume
+  SessionStart after a change to the definition's rules, tool blocks and step
+  list stores the new pin, rule set and blocked tools and injects one drift
+  line. The step instance keeps its id, its current step and its snapshot.
+  test:
+  `tests/hooks/test_session_start_reactivation.py::test_drift_reactivation_keeps_running_step_instance`.
 
-### 1.4 /clear successor keeps its seat [category: code] (depends: 1.2, 1.3)
+### 1.4 /clear successor keeps its seat and its run [category: code] (depends: 1.2, 1.3)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/hooks/event_handlers/_session_start/materialize.py::_bind_clear_successor`
+- `src/gobby/sessions/clear_run_lineage.py`
+- `src/gobby/sessions/clear_continuation.py::take_clear_handoff_marker`
+- `src/gobby/sessions/clear_continuation.py::_commit_web_chat_clear_successor_rows`
+- `src/gobby/hooks/event_handlers/_session_end.py::SessionEndMixin.handle_session_end`
 - `tests/hooks/test_clear_successor_seat.py`
+- `tests/hooks/test_session_end_handlers.py::*` — scope-reason: cover a staged clear end that hands its run to the successor
 
-**Research context:** today's behavior:
+**Granularity:** the seat and the run cross the same `/clear` boundary, through
+the same marker take, and the regression for each needs the other: a successor
+that keeps its seat but loses its run is the bug the Orchestrator's Q3 ruling
+(2026-10-05) folds in here.
+
+**Research context:** today's behavior for the seat:
 - `_bind_clear_successor` takes the clear marker (`take_clear_handoff_marker`).
 - It copies the task claim (`preserve_task_claim_state`), merges
   `HANDOFF_PULL_PENDING_VARIABLE: True` and the predecessor's MCP proxy
@@ -821,10 +861,57 @@ Targets:
 - `/clear` is the routine boundary for the seats #22902 D10 lists as
   clear-between-deliverables: developer, researcher, code-reviewer,
   plan-writer and plan-adversary.
-- The bind does not rebind an agent run (As-Is Facts). This deliverable carries
-  seat identity only and does not change run binding.
+For the run of a spawned seat (Q3, verified with `gcode evidence` at
+7c80404126; excerpt hashes are prefixes):
+- `set_handoff(clear_session=true)` stages the clear attempt and moves the
+  predecessor to `awaiting_handoff` (`clear_continuation.py::stage_clear_attempt`,
+  lines 102-123, `00dedf6a`). `set_handoff` refuses only headless runs
+  (`_terminal.py:561-566`, `a1298cce`), so a terminal-backed seat can clear.
+- SessionEnd `clear` ends the run before the successor starts.
+  `handle_session_end` derives `end_status = "expired"` from the `clear`
+  reason for any session without a tmux target (`_session_end.py:67-85`,
+  `58e023de`). Spawned seats run in Gobby terminals, so they take that branch.
+  - The status write is skipped for an `awaiting_handoff` row (lines 180-190,
+    `0628a269`), but `terminal_outcome` still comes from `end_status`.
+  - With `session.agent_run_id` set, it calls
+    `SessionCoordinator.complete_agent_run` (lines 109-112, `8c5b8f04`),
+    which has no `/clear` exemption.
+  - It also marks the run's terminal row exited (`mark_exited`, lines
+    198-208).
+- Nothing moves the run to the successor.
+  - The take moves only `agent_runs.parent_session_id`
+    (`clear_continuation.py:478-490`, `2e67a571`; the web-chat commit repeats
+    it at line 779).
+  - `update_child_session` has two callers, spawn (`_runtime.py:182`) and the
+    admin test route (`admin/_testing.py:182`). The only other
+    `child_session_id` writes set it to NULL (`_failure_cleanup.py:491`,
+    `projects/purge.py:147`).
+  - `TerminalManager.bind_session` never rebinds an agent terminal: its update
+    requires `t.agent_run_id IS NULL` (`storage/terminals.py:715-727`,
+    `928b2f6a`).
+- A stale binding has concrete consumers.
+  - `list_termination_candidates` returns a running run with a live terminal
+    when any expired session has `id = child_session_id` or
+    `agent_run_id = run` (`storage/agents/_termination.py:126-145`,
+    `dd42756f`). `reconcile_pending_terminations` then terminalizes it.
+  - External write grants refuse a session that is not the run's
+    `child_session_id` (`external_write_grants.py:84-88`, `1e968128`).
+- Spawned-ness at activation comes from the session row.
+  - `build_agent_changes` re-reads the session and calls `_session_is_spawned`
+    (`_session_start/agents.py:54-55`, `969fc702`).
+  - `activate_materialized_session` refreshes `session_obj` after the bind and
+    before `_activate_default_agent`.
+  - The reconciler's `_backfill_terminal_pickup` sets `sessions.agent_run_id`
+    from the pane's `GOBBY_AGENT_RUN_ID` (`session_activation.py:177-183`,
+    `d9320690`), but only on a later hook event. Without a write in the take,
+    the successor activates with `is_spawned_agent: False` and the `persona`
+    prompt surface.
+- `claimed_session_id` records the session that owned the task when the run was
+  created (`agents/spawn.py:213`). The take never moved it, and this
+  deliverable leaves it alone: it is creation-time provenance, and the seat's
+  binding is `child_session_id`.
 
-Implementation:
+Implementation, seat identity:
 - In the same `merge_variables` call that sets `HANDOFF_PULL_PENDING_VARIABLE`
   and the inherited proxy readiness, copy the predecessor's `_agent_type` and
   `_agent_definition_hash` when
@@ -832,22 +919,89 @@ Implementation:
 - `_activate_default_agent` then resolves the seat and applies the full delta to
   the fresh session. 1.3 compares the carried pin.
 - The successor is a new session with no step instance, so `_ensure_step_instance`
-  (lifted in 1.2) creates a fresh one at the first step on the first hook event:
-  a clear ends a unit of work.
+  (lifted in 1.2) creates a fresh one at the first step of the definition it
+  resolves now, on the first hook event: a clear ends a unit of work.
 - The predecessor's variables are already read into `predecessor_vars`, so no
   extra query is needed.
 
-Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_clear_successor_seat.py tests/hooks/test_session_start_handlers.py -q`.
+Implementation, run binding:
+- SessionEnd: in `handle_session_end`, a `clear` end on a session whose row is
+  already `awaiting_handoff` and has `agent_run_id` set hands its run to the
+  successor. It skips `complete_agent_run` and the terminal `mark_exited`.
+  Status handling and step-instance deletion are unchanged. A `clear` end
+  without a staged attempt (`status` not `awaiting_handoff`) keeps today's
+  behavior, and the run ends.
+- `clear_continuation.py` is at 860 lines, so the run-lineage writes move out of
+  it into the new `sessions/clear_run_lineage.py` rather than growing it. The
+  move takes the `parent_session_id` updates from `take_clear_handoff_marker`
+  (lines 482-490, including the supersede id) and from
+  `_commit_web_chat_clear_successor_rows` (line 779). Both call one function,
+  `move_clear_run_lineage(conn, *, successor_id, session_ids)`, inside their
+  existing transaction, so the web-chat clear follows the same lineage rule.
+  It does nothing extra there, because a web-chat session is never a run's
+  child. The function:
+  1. moves `agent_runs.parent_session_id` from `session_ids` to the successor
+     (the moved statements);
+  2. moves `agent_runs.child_session_id` from `session_ids` to the successor
+     for runs in `pending` or `running`;
+  3. for the run it moved, sets `sessions.agent_run_id` to NULL on the
+     sessions in `session_ids` that point at it, sets the successor's
+     `agent_run_id` to it when null, and moves the run's live terminal row
+     (`terminals.agent_run_id` = run, `state` in `pending` or `live`) to the
+     successor.
+- The take expires the predecessor and calls the function in one transaction,
+  before `_activate_default_agent`. No reader sees a live run pointing at an
+  expired session: before the take the predecessor is `awaiting_handoff`, and
+  after it no expired session points at the run.
+- A staged clear whose successor never starts leaves the run on an
+  `awaiting_handoff` predecessor. The existing orphaned-handoff sweep
+  (`sessions/lifecycle.py`, `expire_orphaned_handoff_sessions`) expires that
+  row, and `reconcile_pending_terminations` then terminalizes the run. No new
+  sweep is added.
+
+Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_clear_successor_seat.py tests/hooks/test_session_start_handlers.py tests/hooks/test_session_end_handlers.py tests/hooks/test_session_events_coverage.py tests/hooks/test_session_materialize.py tests/sessions/test_clear_acknowledgment.py tests/sessions/test_handoff.py tests/sessions/test_mailbox.py tests/servers/websocket/chat/test_clear_session.py -q`.
+Then run `uv run ruff check` and `uv run mypy` on the changed files.
+
+Consumers unchanged:
+- `tests/hooks/test_session_materialize.py` — no-edit-reason: calls take_clear_handoff_marker, whose signature and boolean result are unchanged; its assertions read sessions.parent_session_id, which the take does not move.
+- `tests/sessions/test_clear_acknowledgment.py` — no-edit-reason: calls take_clear_handoff_marker with the same signature and result; its agent-run manager is a mock with no bound run.
+- `tests/sessions/test_handoff.py` — no-edit-reason: calls take_clear_handoff_marker with the same signature and result; its runs are children of other sessions, so only their parent_session_id moves, as today.
+- `tests/sessions/test_mailbox.py` — no-edit-reason: calls take_clear_handoff_marker with the same signature and result; it seeds no agent run.
+- `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py` — no-edit-reason: drives handle_session_end without a clear reason, so the staged-clear hand-off never applies.
+- `tests/workflows/test_session_end_cleanup.py` — no-edit-reason: drives handle_session_end without a clear reason, so the staged-clear hand-off never applies.
 
 **Acceptance:**
 
 - 1.4.1 - A `/clear` successor of an activated seat carries `_agent_type` and the
   pin and re-activates as that seat. test:
   `tests/hooks/test_clear_successor_seat.py::test_clear_successor_inherits_agent_type_and_pin`.
-- 1.4.2 - The successor gets a fresh step instance at the first step. test:
+- 1.4.2 - The successor gets a fresh step instance at the first step of the
+  current definition. After a definition edit, that is the new step list. test:
   `tests/hooks/test_clear_successor_seat.py::test_clear_successor_gets_fresh_step_instance`.
-- 1.4.3 - A base-agent predecessor carries nothing. test:
+- 1.4.3 - A base-agent predecessor with no run carries nothing: the successor
+  has no `_agent_type`, and its `agent_run_id` stays null. test:
   `tests/hooks/test_clear_successor_seat.py::test_base_agent_clear_successor_unchanged`.
+- 1.4.4 - After a staged `/clear`, a spawned interactive seat keeps its run.
+  - After SessionEnd `clear`, the run is still `running` and its terminal is
+    still live.
+  - After the successor's SessionStart:
+    - the run's `child_session_id`, the successor's `agent_run_id` and the
+      run terminal's `session_id` all name the successor;
+    - the predecessor's `agent_run_id` is null;
+    - the successor activates with `is_spawned_agent: True`;
+    - runs the predecessor spawned have the successor as
+      `parent_session_id`;
+    - `list_termination_candidates` does not return the run.
+
+  test:
+  `tests/hooks/test_clear_successor_seat.py::test_spawned_interactive_seat_keeps_run_binding_after_clear`.
+- 1.4.5 - A `clear` end on a run-bound `awaiting_handoff` session neither
+  completes the run nor marks its terminal exited. A `clear` end on a session
+  with no staged attempt still does both. test:
+  `tests/hooks/test_session_end_handlers.py::test_staged_clear_end_hands_run_to_successor`.
+- 1.4.6 - When a newer successor supersedes a bound one, the run moves from the
+  superseded successor to the newer one. test:
+  `tests/hooks/test_clear_successor_seat.py::test_superseding_successor_takes_the_run`.
 
 ### 1.5 Seat rules match `_agent_type` only [category: config] (depends: 1.1)
 `kind: deliverable`
@@ -933,6 +1087,7 @@ Targets:
 - `src/gobby/mcp_proxy/tools/spawn_agent/_runtime.py::build_spawn_context`
 - `tests/workflows/test_agent_definitions_v2.py::*` — scope-reason: cover idle_ttl_seconds validation
 - `tests/mcp_proxy/tools/spawn_agent/test_factory.py::*` — scope-reason: cover idle_ttl_seconds persistence beside execution_mode
+- `tests/agents/watchdog/test_interactive_lifecycle_cleanup.py::*` — scope-reason: assert idle_ttl_seconds survives resume beside execution_mode
 
 **Research context:** existing model and inputs:
 - `AgentDefinitionBody` (`workflows/agent_models.py`, 270 lines) has
@@ -984,11 +1139,27 @@ Implementation:
 - `build_spawn_context` gains `idle_ttl_seconds: int | None = None` and writes
   `resume_metadata["idle_ttl_seconds"]` when it is set. It writes no session
   variable, because the reader is the watchdog, and the watchdog reads the run.
-- No reader is added here. The L2 sibling reads the key (see "Runtime Lifecycle
-  Boundary").
+- No reader is added here. The reader is the L2 sibling (Runtime Lifecycle
+  Boundary), which the Orchestrator files under #22691: `_handle_idle_check`'s
+  interactive branch (`idle_check_handler.py:481`) ends the run once its idle
+  time reaches `idle_ttl_seconds`.
 - No spawn-time TTL override is added: no caller needs one.
 
-Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_agent_definitions_v2.py tests/mcp_proxy/tools/spawn_agent/test_factory.py tests/agents/test_agents_sync.py -q`.
+Tests:
+- The `test_factory.py` persistence matrix covers four cases:
+  - an interactive definition with a TTL stores the key;
+  - an interactive definition without a TTL stores no key;
+  - an interactive definition with a TTL under a spawn-time `one_shot`
+    override stores no key;
+  - a `one_shot` definition under a spawn-time `interactive` override stores
+    no key.
+- Each case asserts that `idle_ttl_seconds` appears only at the top level of
+  `resume_metadata` and never in the initial variables.
+- `test_interactive_lifecycle_cleanup.py::test_missing_interactive_terminal_resumes_after_task_close`
+  already asserts that resume carries `execution_mode`. It gains a TTL in
+  the stored `resume_metadata` and asserts that the TTL survives resume.
+
+Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_agent_definitions_v2.py tests/mcp_proxy/tools/spawn_agent/test_factory.py tests/agents/watchdog/test_interactive_lifecycle_cleanup.py tests/agents/test_agents_sync.py -q`.
 Then run `uv run ruff check` and `uv run mypy` on the changed files.
 
 Consumers unchanged:
@@ -1016,9 +1187,13 @@ Consumers unchanged:
   value on a `one_shot` definition. test:
   `tests/workflows/test_agent_definitions_v2.py::test_idle_ttl_requires_interactive_execution_mode`.
 - 2.1.2 - An interactive spawn of a definition with a TTL stores
-  `idle_ttl_seconds` in `resume_metadata`, and a spawn-time `one_shot` override
-  stores none. test:
+  `idle_ttl_seconds` at the top level of `resume_metadata`. An interactive
+  definition without a TTL, a spawn-time `one_shot` override, and a `one_shot`
+  definition overridden to `interactive` store none. test:
   `tests/mcp_proxy/tools/spawn_agent/test_factory.py::test_idle_ttl_is_persisted_only_for_interactive_runs`.
+- 2.1.3 - Resume carries `idle_ttl_seconds` through with `execution_mode`.
+  test:
+  `tests/agents/watchdog/test_interactive_lifecycle_cleanup.py::test_missing_interactive_terminal_resumes_after_task_close`.
 
 ## P3: Migration
 `kind: framing`
@@ -1063,6 +1238,8 @@ Edits:
   - It states that a session already bound to a non-default definition refuses
     another with `role_change_requires_relaunch`, and that the user relaunches
     the pane instead. The `agent="default"` restore sentence is deleted.
+  - It states that a repeat call for the active seat returns `unchanged` and
+    ignores `variables` and `task_id`.
   - It lists the typed refusals.
 - `epic.md` and the test phrase: `apply_agent_definition(agent="epic-reviewer")`.
 - `review.yaml`: "uses apply_agent_definition".
@@ -1170,7 +1347,7 @@ deferral:
 Run after the final edit of each leaf and again after the last leaf lands:
 
 ```bash
-DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/test_session_start_reactivation.py tests/hooks/test_interactive_step_instance.py tests/hooks/test_clear_successor_seat.py tests/workflows/test_step_snapshot_semantics.py tests/workflows/test_step_runtime_transitions.py tests/workflows/test_agent_definitions_v2.py tests/workflows/test_session_defaults.py tests/workflows/test_seat_rules.py tests/mcp_proxy/tools/skills/test_list_skills.py tests/mcp_proxy/tools/spawn_agent/test_factory.py tests/servers/websocket/chat/test_servers_websocket_chat_session.py tests/servers/websocket/test_set_agent.py tests/hooks/test_agent_events_coverage.py tests/hooks/test_session_activation_reconciliation.py tests/hooks/event_handlers/test_session_variable_preservation.py tests/hooks/test_session_start_handlers.py tests/skills/test_review_skill.py tests/agents/test_agents_sync.py -q
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/test_session_start_reactivation.py tests/hooks/test_interactive_step_instance.py tests/hooks/test_clear_successor_seat.py tests/workflows/test_step_snapshot_semantics.py tests/workflows/test_step_runtime_transitions.py tests/workflows/test_agent_definitions_v2.py tests/workflows/test_session_defaults.py tests/workflows/test_seat_rules.py tests/mcp_proxy/tools/skills/test_list_skills.py tests/mcp_proxy/tools/spawn_agent/test_factory.py tests/servers/websocket/chat/test_servers_websocket_chat_session.py tests/servers/websocket/test_set_agent.py tests/hooks/test_agent_events_coverage.py tests/hooks/test_session_activation_reconciliation.py tests/hooks/event_handlers/test_session_variable_preservation.py tests/hooks/test_session_start_handlers.py tests/hooks/test_session_end_handlers.py tests/hooks/test_session_events_coverage.py tests/hooks/test_session_materialize.py tests/sessions/test_clear_acknowledgment.py tests/sessions/test_handoff.py tests/sessions/test_mailbox.py tests/servers/websocket/chat/test_clear_session.py tests/agents/watchdog/test_interactive_lifecycle_cleanup.py tests/skills/test_review_skill.py tests/agents/test_agents_sync.py -q
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
 rg -w 'apply_persona|_persona_name|build_session_persona_changes' src tests docs/guides docs/reference-audit
 uv run gobby plans validate .gobby/plans/apply-agent-definition.md -p /Users/josh/Projects/gobby
@@ -1190,3 +1367,6 @@ before and after and happens outside quiet hours:
 5. After a compaction the session still reports the seat's skills.
 6. After a `/clear`, the successor reports `_agent_type: plan-writer` and a
    fresh step instance once the seat's step workflow exists.
+7. A spawned interactive seat that stages `set_handoff(clear_session=true)`
+   keeps its run: after the clear, `list_agents` shows the same run
+   `running` with the successor as its session.
