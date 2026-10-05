@@ -1272,6 +1272,18 @@ deferral:
   Orchestrator rulings (a) and (b), relayed by the Lane Manager gobby#15389.
   Targets and consumers were swept read-only on `0.5.0` at `48071323c9`. The
   draft is narrative only, with no M1.
+- 2026-10-05: Consensus between the Plan Writer gobby#15434 and the Adversary
+  gobby#15401 at `fc8d56b`, with this entry.
+  - The Orchestrator accepted enhancer edits E1 to E4, with E3 limited to
+    scope.
+  - The Adversary's findings KEY-A1 to KEY-A8 are resolved in `2752d70`,
+    `87f3e25`, `b9afc3b`, `ab8e05e`, and `fc8d56b`.
+  - Josh approved Decision 15 as written, through the Assistant gobby#15070,
+    relayed by the Lane Manager gobby#15389.
+  - Found work went to the Orchestrator: #23484 (Reference audit leaves
+    gobby auth login and gobby auth key unmapped), which 1.3 handles
+    conditionally. #23274 (Node channel, relay backend, and `/api/machines`)
+    gained its blocked-by edge to #23273.
 
 ## V2: Verification
 `kind: verification`
