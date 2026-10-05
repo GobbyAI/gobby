@@ -133,17 +133,20 @@ authorized coordinated restart.
 ## P2: Spawn caller guard and single-spawn surfaces
 `kind: framing`
 
-### 2.1 Enforce spawnable_agents for every spawn caller [category: code]
+### 2.1 Enforce spawnable_agents for every spawn caller (depends: 1.2) [category: code]
 `kind: deliverable`
 
 Targets:
 - `src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py::*` — scope-reason: add the spawn caller guard beside the existing spawn admission guards
 - `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: call the caller guard from MCP `spawn_agent` before any launch work
-- `tests/mcp_proxy/tools/spawn_agent/test_spawn_guards.py::*` — scope-reason: cover every caller-resolution branch, including rejected credentials
+- `src/gobby/workflows/condition_helpers_sessions.py::*` — scope-reason: resolve the target fallback chain in the launch's target project
+- `tests/mcp_proxy/tools/spawn_agent/test_spawn_guards.py::*` — scope-reason: cover every caller-resolution branch, rejected credentials, and cross-project fallback
+- `tests/workflows/test_spawn_scope_rules.py::*` — scope-reason: the rule checks requested names while fallback-chain cases move to the guard
 - `tests/workflows/test_mcp_step.py::*` — scope-reason: prove a pipeline MCP step cannot bypass spawnable_agents
 
 Add one spawn caller guard in `_spawn_guards.py`. MCP `spawn_agent` calls it on
-every call, before fallback, task admission, or any launch allocation.
+every call, after it resolves the target project and before fallback, task
+admission, or any launch allocation.
 `dispatch_batch` reaches spawning through the `spawn_agent` closure, so each
 batch suggestion passes the same guard until D1 retires batch spawning. HTTP
 `_do_spawn` needs no guard call: the agent capability matrix already limits that
@@ -163,21 +166,31 @@ and the current session context, first match wins, and never from
    caller, such as a pipeline step from a sessionless cron run.
 
 The local operator, a daemon-internal caller, and a root session keep today's
-spawns. A caller session runs the existing `spawn_target_allowed` with the
-target agent, so its definition's `spawnable_agents` must allow the target and
-every agent in the target's fallback chain; the refusal names
-`spawnable_agents`. An unresolvable or inconsistent identity raises and refuses.
-The `limit-spawnable-agents` `before_tool` rule stays. The guard also covers
-pipeline MCP steps, which call tools with `enforce_workflow=False` under the
-pipeline's seeded session. This deliverable works on current spawn APIs and
-needs no new parameter.
+spawns. A caller session runs `spawn_target_allowed` with the target agent, so
+its definition's `spawnable_agents` must allow the target and every agent in the
+target's fallback chain; the refusal names `spawnable_agents`. The caller's
+definition resolves in the verified caller's project, while the target and its
+fallback chain resolve in the target project the factory has already resolved
+from `project_path` or the parent session, which is the same project it loads
+fallback definitions from. `spawn_target_allowed` gains a keyword
+`target_project_id` for that: the guard passes the resolved project, and the
+`limit-spawnable-agents` `before_tool` rule, which keeps running and has no
+resolved target project, passes none, so it checks only the requested names
+(each `dispatch_batch` suggestion included) and leaves the actual fallback
+chain to the guard. No cross-project ban is added. An unresolvable or
+inconsistent identity raises and refuses. The guard also covers pipeline MCP
+steps, which call tools with `enforce_workflow=False` under the pipeline's
+seeded session. This deliverable works on current spawn APIs and needs no new
+parameter.
 
 **Granularity:** Split from the network exposure (2.2) on adversary review
 because it is independently closeable: it fixes existing `spawnable_agents`
 enforcement, the fold of #23463, **Pipeline MCP steps bypass
 limit-spawnable-agents, so a spawned agent can spawn any agent through a
 pipeline**, with its own failing regression and no dependency on `network`.
-2.2 extends the same guard rather than adding a second one.
+It is ordered after 1.2 only because both edit `condition_helpers_sessions.py`
+and `test_spawn_scope_rules.py`. 2.2 extends the same guard rather than adding
+a second one.
 
 **Research context:** `limit-spawnable-agents.yaml` calls `spawn_target_allowed`
 only as a `before_tool` rule. Pipeline MCP steps
@@ -191,13 +204,22 @@ callers; `AuthService.request_principal` returns `None` for the operator,
 live claims for a managed agent, and `False` for rejected credentials.
 `auth_service.py` rejects a session reference that differs from the token's
 `session_id`. `spawn_target_allowed` treats only a run-less depth-0 session as
-root and raises on unresolvable identity. `dispatch_batch` in `_factory.py`
-calls the `spawn_agent` closure per suggestion. Observed: `_factory.py` has 844
-lines and `_spawn_guards.py` 466, so both stay under the production ceiling.
-Planned: guard tests for each resolution branch, including `False` with an
-otherwise authorized session and with no session; a pipeline-step regression
-that fails before the fix; an allowed pipeline-step spawn; root, operator, and
-daemon-internal callers; forged and unresolved identity.
+root, raises on unresolvable identity, and today resolves both the caller's
+definition and the target's fallback chain in `caller.project_id`; its only
+caller is the rule, through the `condition_helpers_sessions.py` helper table.
+MCP `spawn_agent` resolves the target project with
+`_resolve_spawn_project_context_with_provenance` from `project_path` or the
+parent session, then loads the requested and fallback definitions there, so a
+target project whose chain differs from the caller's would launch an unchecked
+fallback. `dispatch_batch` in `_factory.py` calls the `spawn_agent` closure per
+suggestion. Observed: `_factory.py` has 844 lines and `_spawn_guards.py` 466, so
+both stay under the production ceiling; `test_spawn_scope_rules.py` asserts
+fallback-chain cases through the rule. Planned: guard tests for each resolution
+branch, including `False` with an otherwise authorized session and with no
+session; a pipeline-step regression that fails before the fix; an allowed
+pipeline-step spawn; root, operator, and daemon-internal callers; forged and
+unresolved identity; cross-project explicit-`project_path` and parent-project
+cases that deny a forbidden actual fallback and permit an allowed one.
 
 **Acceptance:**
 
@@ -205,6 +227,7 @@ daemon-internal callers; forged and unresolved identity.
 - 2.1.2 - The same caller can still spawn an allowed agent through a pipeline MCP step, and the root, operator, and daemon-internal paths are unchanged. behavior: "allowed spawns unchanged".
 - 2.1.3 - A spawned caller with unresolved or forged identity is refused. behavior: "spawn caller identity fails closed".
 - 2.1.4 - Rejected credentials are refused even when the request carries an otherwise authorized session. behavior: "rejected principal refused".
+- 2.1.5 - The fallback chain checked is the one the launch would use: in the target project from an explicit `project_path` or the parent session, a forbidden actual fallback is refused and an allowed one is permitted. behavior: "target-project fallback authority".
 
 ### 2.2 Expose the choice on single-spawn surfaces (depends: 1.1, 1.2, 2.1) [category: code]
 `kind: deliverable`
@@ -433,3 +456,20 @@ remain unchanged.
     guard (acceptance 2.2.1-2.2.4 from the former 2.1.1-2.1.3 and 2.1.7). D1
     now depends on 1.2, 2.1, and 2.2. The Orchestrator closes #23463 as a
     duplicate once expansion creates the 2.1 leaf.
+  - F-target-project-fallback: `spawn_target_allowed` resolved the target's
+    fallback chain in the caller's project while the factory launches from the
+    resolved target project, so authorization could check a different chain
+    from the launch. Resolved in 2.1: a `target_project_id` keyword makes the
+    guard check the target project's actual chain, the rule checks requested
+    names only, 2.1 now depends on 1.2 for the shared helper and rule-test
+    files, and acceptance 2.1.5 adds cross-project regressions.
+- 2026-10-05, consensus for #23444 between Lane 7 plan writer 2 (gobby#15413)
+  and Lane 7 plan adversary 2 (gobby#15414): all four adversary findings,
+  F-D1-external-edges, F-rejected-principal, F-leaf-atomicity, and
+  F-target-project-fallback, are resolved as recorded above, and the adversary
+  independently verified each repair and reran base validation. No semantic
+  blocker remains. The adversary derives and applies M1 on the committed bytes.
+  Intended routing is four code leaves for backend developers with no TDD
+  wrappers: 2.1 as a bug fix, and 1.1, 1.2, and 2.2 as features. D1 remains a
+  typed planning deferral. Expansion waits for Josh's review of the four
+  Orchestrator rulings and his approval.
