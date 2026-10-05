@@ -26,7 +26,7 @@ path, the line range and the `excerpt_hash`.
 
 | Miss | Verdict | Fix class |
 |---|---|---|
-| (a) Project removal leaves state | Confirmed. The purge never touches the filesystem, and four tables with no FK are never deleted. | A small current-daemon guard plus a schema FK. |
+| (a) Project removal leaves state | Confirmed. The purge leaves worktree and clone dirs, Cargo targets and backups. Three tables with no FK hold orphan rows today. | A small current-daemon guard plus a schema FK. |
 | (b) Orphan worktrees | Confirmed as relics: 1.0 GB plus empty dirs. None has a registry row. Creator attribution is an evidence gap. | Josh-approved operator removal. The guard in (a) prevents new orphans from purge. |
 | (c) Old 21 GB `cargo-target` | Confirmed stale. The 21 GB was created ad hoc by agents. Gobby's own legacy entries are empty. | Josh-approved operator removal. No code change. |
 | (d) `unmodeled_observation_events` size | The prune keeps up. Size comes from volume plus index churn: 84% of rows are one unmodeled Codex tool. | A product decision, then a data-only modeling fix. |
@@ -46,8 +46,17 @@ path, the line range and the `excerpt_hash`.
 6. clear vectors and the graph;
 7. delete hub rows.
 
-No step touches the filesystem: worktree or clone directories, Cargo targets
-and `~/.gobby/backups/<project-uuid>` are all left in place.
+None of these steps removes worktree or clone directories, Cargo targets or
+`~/.gobby/backups/<project-uuid>`. Any on-disk effect of the gcode invalidate
+child was not traced.
+
+The scheduler is the `gobby:project-purge` cron job. Its handler is
+`projects:purge-expired`, registered by `register_project_purge_cron` through
+`src/gobby/runner_init/project_purge.py:76`. It runs every 24 h and purges
+projects whose soft delete is more than 24 h old, at most 10 per run:
+
+- `src/gobby/projects/purge.py:19-24`
+  `excerpt_hash=d101e5446fbd05bc312e3a5fcd8d601e372b22fb351e42bd9b4ba2f47c1b4f29`
 
 - `src/gobby/projects/purge.py:256-263`
   `excerpt_hash=3b9e9ceca490b52fee13d3efe547e03f79477a8fb72ef4c33b2467fe717ebec4`
@@ -267,6 +276,7 @@ daemon start and then every 24 h:
 
 The daemon logs record 182 `Periodic unmodeled-observation cleanup` runs since
 2026-09-13, for example `2026-10-03 10:08:05 ... removed 7930 old occurrence rows`.
+Daemon log times are CDT.
 
 **Cutoff.** The prune deletes by `last_seen_at`:
 
@@ -366,6 +376,16 @@ Missed execution is ruled out. The size has three sources:
 Data-only: add the four names, with their chosen types, to `TOOL_TYPE_MAP` or
 `_SHELL_TOOLS`. It is a few lines of data that ports to Rust as data, with no
 new mechanism.
+
+Codex `exec` and `wait` reach `classify_tool` with their names unchanged. The
+parser's `custom_tool_call` branch copies `payload["name"]` and folds `status`
+into the input, which matches the `raw`/`status` sample keys:
+
+- `src/gobby/sessions/transcripts/codex.py:556-561`
+  `excerpt_hash=9ebb9add827f1b672e38f072071366cd39dcc716a6a0f2c1f2666a4f413ea086`
+
+If a bare `exec` key would be ambiguous across providers, the Codex-specific
+mapping belongs in that branch.
 
 - Isolated test: extend `tests/sessions/test_transcript_renderer.py::test_classify_tool`
   so the four names classify as known.
@@ -467,8 +487,9 @@ test pins the boundary.
 1. **The orphaned code-index sweep fails every cycle, and the cause is never
    logged.** `_sweep_orphaned_index_projects` warns `Orphaned code-index
    project 63dac488-3956-5023-a761-6d0ad76c2601 projection cleanup failed;
-   retaining for retry`. It did so at 13:53, 14:51, 15:46, 16:28 and 17:29 UTC
-   on 2026-10-05, and probably later.
+   retaining for retry`. It did so on 2026-10-05 at 13:53, 14:51, 15:46, 16:28
+   and 17:29 CDT (daemon log local time). As of 18:07 CDT, 17:29 was the
+   latest failure.
    - It passes `exc_info=True`
      (`src/gobby/code_index/maintenance.py:303-308`
      `excerpt_hash=cb0a0c0aaa2e2107165ad6ffb5bf90298f35aeb89721be2926c383b8e683f843`),
