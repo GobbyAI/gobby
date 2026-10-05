@@ -15,10 +15,11 @@ from gobby.tasks.close_test_coverage import (
 )
 from gobby.tasks.close_test_coverage import pytest_module_paths as _pytest_module_paths
 from gobby.tasks.close_test_coverage import (
-    test_types_audit_targets as _test_types_audit_targets,
+    related_python_source_tests,
+    uncovered_pytest_paths,
 )
 from gobby.tasks.close_test_coverage import (
-    uncovered_pytest_paths,
+    test_types_audit_targets as _test_types_audit_targets,
 )
 from gobby.tasks.close_test_coverage import (
     uncovered_test_paths as _uncovered_test_paths,
@@ -164,6 +165,7 @@ def evaluate_validation_commands(
         validation_criteria=validation_criteria,
         changed_paths=paths,
         deleted_paths=deleted_paths,
+        close_root=close_root,
     )
     changed_tests = _changed_python_test_paths(paths)
 
@@ -217,7 +219,9 @@ def evaluate_validation_commands(
             for record in records
             if set(record["categories"]).intersection(gate.details["unresolved_failure_categories"])
         ]
-    elif gate.details.get("pytest_uncovered_paths"):
+    elif gate.details.get("pytest_uncovered_paths") or gate.details.get(
+        "python_source_uncovered_tests"
+    ):
         relevant = []
     elif task_category in _TEST_REQUIRED_CATEGORIES:
         relevant = [record for record in records if "test" in record["categories"]]
@@ -267,6 +271,7 @@ def _evaluate_validation_commands(
     validation_criteria: str = "",
     changed_paths: Iterable[str] = (),
     deleted_paths: Iterable[str] = (),
+    close_root: str | None = None,
 ) -> CloseGateResult:
     """Evaluate checklist item 9 from transcript-derived validation commands.
 
@@ -282,13 +287,30 @@ def _evaluate_validation_commands(
     the test type audit still has to cover them.
     """
     category = (task_category or "").strip().casefold()
+    changed_paths = tuple(changed_paths)
     changed_python_test_paths = _changed_python_test_paths(changed_paths)
+    source_tests = related_python_source_tests(changed_paths, base_dir=close_root or ".")
     test_types_audit_required = bool(changed_python_test_paths)
     details = _validation_details(evidence)
 
     fresh_runs = _fresh_runs(evidence)
     definitive = [run for run in fresh_runs if run.outcome != "unknown"]
     credited = [run for run in definitive if not run.wrapped and run.core_command is not None]
+    passing_commands = tuple(
+        run.core_command or run.command for run in credited if run.outcome == "success"
+    )
+    uncovered_sources = {
+        source: list(uncovered)
+        for source, tests in source_tests.items()
+        if (uncovered := uncovered_pytest_paths(passing_commands, tests))
+    }
+    details.update(
+        python_source_related_tests={source: list(tests) for source, tests in source_tests.items()},
+        python_source_uncovered_tests=uncovered_sources,
+        python_sources_without_related_tests=[
+            source for source, tests in source_tests.items() if not tests
+        ],
+    )
     sequence_failures = [
         run
         for run in definitive
@@ -405,7 +427,7 @@ def _evaluate_validation_commands(
         )
 
     # Exempt tasks still need the command record for their explicit criteria review.
-    if not has_attributed_edits and not test_types_audit_required:
+    if not has_attributed_edits and not test_types_audit_required and not source_tests:
         return CloseGateResult(
             item=9,
             name="validation_commands",
@@ -414,7 +436,7 @@ def _evaluate_validation_commands(
             details={**details, "skip_reason": "no-edit"},
         )
 
-    if category in _AUTO_PASS_CATEGORIES and not test_types_audit_required:
+    if category in _AUTO_PASS_CATEGORIES and not test_types_audit_required and not source_tests:
         return CloseGateResult(
             item=9,
             name="validation_commands",
@@ -506,6 +528,22 @@ def _evaluate_validation_commands(
                 ),
                 details=details,
             )
+
+    if uncovered_sources:
+        uncovered_display = "; ".join(
+            f"`{source}`: " + ", ".join(f"`{test}`" for test in tests)
+            for source, tests in uncovered_sources.items()
+        )
+        return CloseGateResult(
+            item=9,
+            name="validation_commands",
+            status="failed",
+            message=(
+                "Changed Python sources have related tests with no credited fresh passing pytest target. "
+                f"Uncovered sources and tests: {uncovered_display}."
+            ),
+            details=details,
+        )
 
     required_category = "test" if category in _TEST_REQUIRED_CATEGORIES else None
     if category == "config":

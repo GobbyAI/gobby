@@ -530,6 +530,133 @@ def test_unrelated_pytest_does_not_cover_a_changed_python_test() -> None:
     assert gate.details["pytest_uncovered_paths"] == ["tests/tasks/test_close_checklist.py"]
 
 
+@pytest.mark.parametrize(
+    ("command", "expected_status"),
+    [
+        ("uv run pytest tests/test_unrelated.py -q", "failed"),
+        ("uv run pytest tests/test_widget.py -q", "passed"),
+        ("uv run pytest tests -q", "passed"),
+    ],
+)
+def test_changed_python_source_requires_related_pytest_coverage(
+    tmp_path: Path, command: str, expected_status: str
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/widget.py").write_text("value = 1\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_widget.py").write_text("def test_widget(): pass\n")
+    (tmp_path / "tests/test_unrelated.py").write_text("def test_unrelated(): pass\n")
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1, command=command),)),
+        has_attributed_edits=True,
+        changed_paths=("src/widget.py",),
+        close_root=str(tmp_path),
+    )
+
+    assert gate.status == expected_status
+    assert gate.details["python_source_related_tests"] == {
+        "src/widget.py": ["tests/test_widget.py"]
+    }
+    if expected_status == "failed":
+        assert gate.details["python_source_uncovered_tests"] == {
+            "src/widget.py": ["tests/test_widget.py"]
+        }
+        assert "src/widget.py" in gate.message
+        assert "tests/test_widget.py" in gate.message
+    else:
+        assert gate.details["python_source_uncovered_tests"] == {}
+
+
+def test_changed_python_source_without_related_tests_is_reported_not_blocking(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/unmatchedsentinelmodule.py").write_text("value = 1\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_unrelated.py").write_text("def test_unrelated(): pass\n")
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_run(1, command="uv run pytest tests/test_unrelated.py -q"),)
+        ),
+        has_attributed_edits=True,
+        changed_paths=("src/unmatchedsentinelmodule.py",),
+        close_root=str(tmp_path),
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["python_sources_without_related_tests"] == [
+        "src/unmatchedsentinelmodule.py"
+    ]
+
+
+@pytest.mark.parametrize("excluded", ["stale", "wrapped", "unknown", "foreign"])
+def test_python_source_coverage_requires_fresh_credited_success(
+    tmp_path: Path, excluded: str
+) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_widget.py").write_text("def test_widget(): pass\n")
+    command = "uv run pytest tests/test_widget.py -q"
+    if excluded == "wrapped":
+        command += " | tail -1"
+    elif excluded == "foreign":
+        command = f"uv --directory {tmp_path.parent / 'other'} run pytest tests/test_widget.py -q"
+    evidence = TranscriptEvidence(
+        validation_runs=(
+            _run(1, command=command, outcome="unknown" if excluded == "unknown" else "success"),
+            _run(3, command="uv run pytest tests/test_unrelated.py -q"),
+        ),
+        edits=(_edit(2),) if excluded == "stale" else (),
+    )
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        changed_paths=("src/widget.py",),
+        close_root=str(tmp_path),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["python_source_uncovered_tests"] == {
+        "src/widget.py": ["tests/test_widget.py"]
+    }
+
+
+def test_related_pytest_must_cover_each_source_and_preserve_test_type_audit(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "tests").mkdir()
+    for name in ("widget", "gadget"):
+        (tmp_path / f"tests/test_{name}.py").write_text(f"def test_{name}(): pass\n")
+    changed_paths = ("src/widget.py", "src/gadget.py", "tests/test_widget.py")
+    widget_run = _run(1, command="uv run pytest tests/test_widget.py -q")
+    audit_run = _scoped_audit_run(2, "tests/test_widget.py")
+    gadget_run = _run(3, command="uv run pytest tests/test_gadget.py -q")
+
+    def evaluate(runs: tuple[TranscriptValidationRun, ...]) -> CloseGateResult:
+        return evaluate_validation_commands(
+            task_category="code",
+            evidence=TranscriptEvidence(validation_runs=runs),
+            has_attributed_edits=True,
+            changed_paths=changed_paths,
+            close_root=str(tmp_path),
+        )
+
+    missing_audit = evaluate((widget_run, gadget_run))
+    assert missing_audit.status == "failed"
+    assert "test type audit" in missing_audit.message
+    missing_gadget = evaluate((widget_run, audit_run))
+    assert missing_gadget.status == "failed"
+    assert missing_gadget.details["python_source_uncovered_tests"] == {
+        "src/gadget.py": ["tests/test_gadget.py"]
+    }
+    assert evaluate((widget_run, audit_run, gadget_run)).status == "passed"
+
+
 def _deleted_test_gate(*audit_targets: str) -> CloseGateResult:
     return evaluate_validation_commands(
         task_category="code",

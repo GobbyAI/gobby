@@ -1,14 +1,15 @@
-"""Lexical coverage of changed Python tests for the close validation gate."""
+"""Python test selection and lexical coverage for the close validation gate."""
 
 from __future__ import annotations
 
 import posixpath
 from collections.abc import Iterable
 from fnmatch import fnmatchcase
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
 from gobby.tasks.command_equivalence import pytest_targets
+from gobby.tasks.related_tests import derive_related_test_terms, find_related_test_files
 from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 
 _TEST_TYPES_AUDIT_MATCHER = "gobby-test-types-audit"
@@ -31,6 +32,29 @@ def changed_python_test_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:
         ):
             python_tests.add(normalized)
     return tuple(sorted(python_tests))
+
+
+def related_python_source_tests(
+    changed_paths: Iterable[str], base_dir: str | Path = "."
+) -> dict[str, tuple[str, ...]]:
+    """Select existing tests using filename-stem terms, avoiding broad directory terms."""
+    base = Path(base_dir)
+    sources = {
+        normalized
+        for path in changed_paths
+        if (normalized := _normalize_repo_path(path)) is not None
+        and normalized.endswith(".py")
+        and not normalized.startswith("tests/")
+    }
+    return {
+        source: tuple(
+            test.relative_to(base).as_posix()
+            for test in find_related_test_files(
+                derive_related_test_terms(PurePosixPath(source).stem), base_dir=base
+            )
+        )
+        for source in sorted(sources)
+    }
 
 
 def pytest_module_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:
