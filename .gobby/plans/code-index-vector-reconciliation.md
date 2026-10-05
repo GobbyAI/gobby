@@ -919,7 +919,8 @@ Implementation:
   4. Check any existing receipt with `read_existing`. One for the same
      project, collection and digest is overwritten by this run. One for any
      other identity, or an unreadable file, is refused with no mutation.
-  5. Write the initial receipt: digest, project, collection, the planned
+  5. Write the initial receipt, a serde `ReconcileReceipt` struct in
+     `reconcile.rs`: digest, project, collection, the planned
      `version_ids` and orphan IDs per class, `versions_reset: []`,
      `deleted: []`, `complete: false`. Planned and confirmed lists stay
      separate. A write failure exits nonzero with no mutation.
