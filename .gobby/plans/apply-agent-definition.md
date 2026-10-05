@@ -726,8 +726,9 @@ Callers:
   too (`default.yaml` declares `surfaces: [spawn, persona]`), and it calls
   `build_persona_prompt_context`.
 - `activate_default_agent` applies Decision 5 to its `agent_name_override`.
-  When `is_role_change` holds for the override, it logs a warning and
-  activates the stored seat instead, so SessionStart never changes roles. An
+  When `is_role_change` holds for the override, it logs a warning naming the
+  session, the stored seat and the ignored override, and activates the stored
+  seat instead, so SessionStart never changes roles. An
   override on a base-agent row stays a first activation: that is #22904's
   placed launch (Constraints). The reconciler passes the stored or run agent,
   which is never a role change.
@@ -736,10 +737,12 @@ Callers:
   command. It sends error code `ROLE_CHANGE_REQUIRES_RELAUNCH` with the text
   "This terminal runs agent '<X>'. Switching to '<Y>' needs a relaunch: start
   a new terminal session and select agent '<Y>' there." It then sends
-  `agent_changed` naming X for that `target_session_id`. The UI's existing
-  `handleAgentChanged` (`web/src/hooks/useChat/transportConversationEvents.ts:271-277`)
-  restores the label that `sendAgentChange` set optimistically
-  (`web/src/hooks/useChat/actionControls.ts`), so web/ needs no edit. From the
+  `agent_changed` naming X for that `target_session_id`. Both reach the user
+  through existing UI paths, so web/ needs no edit. `handleTransportError`
+  (`web/src/hooks/useChat/transportConversationEvents.ts:364-391`) appends the
+  error text to the chat as a system message, which shows the relaunch
+  instruction. `handleAgentChanged` (lines 271-277) restores the label that
+  `sendAgentChange` set optimistically (`web/src/hooks/useChat/actionControls.ts`). From the
   base agent, or for the same agent, it sends `/gobby persona <name>` as
   today.
 - `_inject_agent_instructions_if_needed` resolves `agent_name` from
@@ -860,7 +863,8 @@ Consumers unchanged:
   completes. test:
   `tests/servers/websocket/chat/test_servers_websocket_chat_session.py::test_agent_switch_relaunches_through_activation`.
 - 1.1.14 - `activate_default_agent` with an `agent_name_override` naming seat Y
-  keeps seat X on a row stored at X, and activates Y on a base-agent row.
+  keeps seat X on a row stored at X and logs one warning naming the session, X
+  and Y. It activates Y on a base-agent row.
   test:
   `tests/hooks/event_handlers/test_activate_agent_override.py::test_override_never_changes_role`.
 - 1.1.15 - `set_agent` for an attached terminal at seat X with agent Y writes no
