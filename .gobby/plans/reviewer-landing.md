@@ -167,6 +167,13 @@ stage rows.
   `pre-merge-commit` runs `exit 0` under `GOBBY_MERGE=1`, which skips that
   foreign content. `pre-push` (`PUSH_REFS=$(cat)`) and `post-rewrite`
   (`while read`) consume stdin, which leaves the foreign content none.
+- Reflog: the main checkout logs every update of its branch in
+  `<git-common-dir>/logs/refs/heads/<branch>` (`core.logAllRefUpdates`
+  true; 1,740 entries for `0.5.0` on 2026-10-05). Probed in a throwaway
+  repository: `merge --ff-only` to a SHA, to a prebuilt merge commit, and a
+  direct commit each add an entry whose old and new values can be
+  recovered, and linked worktrees read the same log. A fast-forward leaves
+  no other trace of the pre-landing tip.
 - Commit discovery: `extract_task_ids_from_message` in
   `src/gobby/tasks/commits.py` links a commit whose message carries
   `[<project>-#N]` or `<project>-#N` to task N.
@@ -427,15 +434,29 @@ target, so any lock taken inside nests correctly), exported in `__all__`, key
    freeze that has returned applies to every later landing.
 3. Refuses `review_receipt_missing` unless the caller authored an
    `independent_review_approval` receipt on the task naming `commit_sha`, and
-   refuses `caller_is_claimant` when the caller now claims the task.
+   refuses `caller_is_claimant` when the caller now claims the task. It also
+   refuses `candidate_not_linked` unless a commit linked to the task matches
+   `commit_sha` by prefix, the way `close_receipts.py` renders
+   `matches_linked_commit`. Review, landing and close then name the same
+   commit; the developer runs `link_commit` before requesting LAND.
 4. When `commit_sha` is already an ancestor of the branch tip, there is no git
    write. If the caller already holds a `landing` receipt for the SHA, the
-   call returns that receipt's `mode`, `landed_tip`, `merge_commit`,
-   `activation_class` and `retest_required` unchanged. Otherwise a generated
-   landing merge in `<sha>..<tip>` whose second parent is `sha` (from
-   `git rev-list --merges --parents`) yields mode `merge` with
-   `retest_required: true`; failing that, mode `already_landed`. It records
-   that receipt and notifies. Closed tasks land like open ones.
+   call returns that receipt's facts unchanged. Otherwise it recovers the
+   landing from the branch reflog (`git log -g --format=%H
+   refs/heads/<branch>` in the main checkout, shared by linked worktrees),
+   walking entries oldest to newest as (old, new) pairs:
+   - The landing event is the first pair where `new` contains `sha` and `old`
+     does not. Mode is `merge` when `new` has two parents and `old` is its
+     first parent, otherwise `ff`. `landed_tip` is `new`, `merge_commit` is
+     `new` for a merge, and `retest_required` is true for a merge.
+     `activation_class` comes from the candidate paths measured from
+     `merge-base(old, sha)` (step 5). This covers a landing whose receipt
+     write failed and a candidate landed inside a stacked descendant's merge.
+   - With no qualifying entry (expired or never logged), the receipt records
+     `provenance: unknown`, mode `already_landed`, `activation_class:
+     unknown` and `retest_required: true`. Rollout step 4 says what an
+     unknown class means for release.
+   It records that receipt and notifies. Closed tasks land like open ones.
 5. Computes the merge base with the tip and the candidate paths
    (`git diff -z --name-only --no-renames <base> <sha>`), then the activation
    class. Every path set `land_commit` computes, overlap and moved paths
@@ -452,19 +473,23 @@ target, so any lock taken inside nests correctly), exported in `__all__`, key
    approver must name) and no git write.
 9. Otherwise re-reads `symbolic-ref HEAD` (changed since step 2: refuse
    `main_checkout_branch_changed`), runs `git merge --ff-only <sha>` in the
-   main checkout with the override variable, then confirms the branch ref
-   equals `sha`.
+   main checkout with the override variable, then reads the branch ref once
+   as `observed_tip` and confirms the target is contained in it
+   (`git merge-base --is-ancestor <target> <observed_tip>`). A permitted
+   Markdown commit may already have advanced the branch past the target.
 10. Records the `landing` receipt (author: caller; facts: `branch`,
-    `landed_tip`, `mode`, `activation_class`, `retest_required`, and
-    `merge_commit` when present) and messages the task's claimant, creator and
+    `landed_tip` (the attempted target), `observed_tip`, `mode`,
+    `activation_class`, `retest_required`, `provenance` (`recorded`,
+    `reflog` or `unknown`), and `merge_commit` when present) and messages
+    the task's claimant, creator and
     delegator, deduplicated and excluding the caller: `Landed #N "<title>"
     <short sha> on <branch> at <short tip>; activation <class>`.
 11. Returns `landed: true`, `mode`, `branch`, `landed_tip`,
     `activation_class`, `retest_required`.
 
-**Granularity:** 1.3 has eight acceptance items and one lifecycle owner, the
-landing call. The lock, branch and replay items are preconditions of that one
-call, so they stay together. Moved-tip handling and git failure handling are
+**Granularity:** 1.3 has nine acceptance items and one lifecycle owner, the
+landing call. The lock, branch, link and replay items are preconditions of
+that one call, so they stay together. Moved-tip handling and git failure handling are
 split into 1.4 because they are independently testable once 1.3 refuses
 `tip_moved`.
 
@@ -492,7 +517,11 @@ main checkout and real git; no test touches this checkout.
   or already on the tip, never count as overlap. test:
   `tests/tasks/test_land_commit.py::test_stacked_and_landed_candidates_never_overlap`.
 - 1.3.5 - A SHA already contained in the tip lands with no git write and one
-  `landing` receipt with mode `already_landed` across repeated calls. test:
+  `landing` receipt across repeated calls. A SHA fast-forwarded earlier
+  without a receipt recovers mode `ff`, its pre-landing base's class and
+  `provenance: reflog`. With its reflog entry expired, it records mode
+  `already_landed`, `activation_class: unknown`, `retest_required: true`.
+  test:
   `tests/tasks/test_land_commit.py::test_already_landed_candidate_records_landing_once`.
 - 1.3.6 - `MainCheckoutLanding` maps to `main_checkout_landing:<project_id>`
   and has the lowest lock priority. test:
@@ -506,6 +535,10 @@ main checkout and real git; no test touches this checkout.
   call from a linked worktree lands into the main checkout's branch. Each
   refusal leaves both branches unmoved. test:
   `tests/tasks/test_land_commit.py::test_landing_branch_is_main_checkout_head`.
+- 1.3.9 - A SHA carrying the caller's `independent_review_approval` but not
+  linked to the task refuses `candidate_not_linked` with no git write; after
+  `link_commit`, the same call lands. test:
+  `tests/tasks/test_land_commit.py::test_refuses_unlinked_candidate`.
 
 ### 1.4 Moved-tip landing and git failure handling [category: code] (depends: 1.3)
 `kind: deliverable`
@@ -552,9 +585,13 @@ Implementation in `src/gobby/tasks/land_commit.py`:
   - anything else: refuse `git_failed` with stderr.
   A refusal before the ref-moving command changes neither ref nor checkout.
 - Ref reconciliation: the ref-moving command runs with a 120-second timeout.
-  After it returns, fails or times out, `land_commit` re-reads the branch
-  ref before classifying the outcome. A ref equal to the target (the SHA or
-  the merge commit) is a landing whatever git returned. A failed receipt
+  After it returns, fails or times out, `land_commit` reads the branch ref
+  once as `observed_tip` before classifying the outcome. When the target (the
+  SHA or the merge commit) is contained in `observed_tip`, it is a landing
+  whatever git returned, including when a permitted Markdown commit has
+  already advanced the branch past it; `landed_tip` stays the target. When
+  the target is not contained, the refusal stands. Each retry reconciles
+  first, so an earlier attempt that did land counts. A failed receipt
   write then returns `landed: true` with `receipt_pending: true`, and a retry
   records it through 1.3 step 4. A failed message returns `landed: true` with
   `notification_pending` naming the unreached sessions. An interrupted
@@ -593,11 +630,16 @@ Planned verification:
 - 1.4.6 - A ref that moved before git timed out, and a receipt write that
   fails after the ref moved, both return `landed: true`; the second returns
   `receipt_pending: true`. A failed message returns `notification_pending`.
-  The checkout is never reset. test:
+  A direct Markdown commit that advances the branch past the target before
+  reconciliation, after a successful command and after a timeout, still
+  returns `landed: true` with `landed_tip` the target and `observed_tip` the
+  descendant. The checkout is never reset. test:
   `tests/tasks/test_land_commit.py::test_ref_moved_before_failure_reports_landing`.
 - 1.4.7 - A repeated call after a merge landing returns mode `merge` with
-  `retest_required: true`. A retry after `receipt_pending` finds the
-  generated merge and records the same. test:
+  `retest_required: true`. A retry after `receipt_pending` recovers the same
+  mode, `landed_tip` and class from the reflog. For stacked candidates A and
+  B where B lands by merge, A's later call records mode `merge` with
+  `retest_required: true` and A's own class. test:
   `tests/tasks/test_land_commit.py::test_merge_landing_replay_preserves_retest_obligation`.
 
 **Granularity:** 1.4 has seven acceptance items and one lifecycle owner, the
@@ -741,7 +783,10 @@ Implementation:
   `landing`; one sentence says a code task closes after `land_commit` records
   its landing.
 - `docs/guides/tasks.md`: a `### Landing` section after `### Close` covering
-  the reviewer flow, who may call each tool and grant each approval, path
+  the reviewer flow (the developer links the exact candidate with
+  `link_commit` before requesting LAND), who may call each tool and grant
+  each approval, replay and `provenance` (an `unknown` class waits for the
+  Orchestrator's activation ruling), path
   classes, approvals and freeze, moved-tip behavior with the retest
   procedure (1.4: commands from the task's validation evidence, the tested
   HEAD reported, a failed retest withholds the Lane Manager's close release
@@ -760,7 +805,8 @@ and a read-through against the shipped tool schemas.
   `src/gobby/install/shared/skills/gobby/references/tasks/closing.md`.
 - 2.1.2 - Read against the shipped `land_commit` and `set_landing_freeze`
   schemas, the guide states who may call each tool and grant each approval
-  reason, and the freeze's effect and unreadable-file rule. behavior:
+  reason, that the candidate is linked before LAND, what each `provenance`
+  value means, and the freeze's effect and unreadable-file rule. behavior:
   "set_landing_freeze" in `docs/guides/tasks.md`.
 - 2.1.3 - The guide lists the four path classes with their approvals, and
   every refusal code and pending flag that `land_commit.py` returns. behavior:
@@ -778,10 +824,9 @@ and a read-through against the shipped tool schemas.
    restart activates them.
 2. The Orchestrator switches routing: a reviewer's LAND is followed by its own
    `land_commit`. The Merge Manager finishes its in-flight landing tasks and
-   its `0.5.0` landing duty retires. The Orchestrator reassigns its other
-   duty, merging extra worktrees into a lane's primary worktree; the
-   recommendation is the lane reviewer, per Josh's "I don't like developers
-   doing merges".
+   its `0.5.0` landing duty retires. It keeps its other duty, merging extra
+   worktrees into a lane's primary worktree, under Josh's kickoff rule in
+   force today.
 3. 1.5 lands through `land_commit` (restart class, so with a `restart`
    approval). After the restart that syncs the rule, the Orchestrator runs
    `gobby install` from the main checkout, confirms `get_stale_git_hooks` is
@@ -789,12 +834,14 @@ and a read-through against the shipped tool schemas.
    section at `git rev-parse --git-path hooks`.
 4. At step 2 the Orchestrator edits `.gobby/roles/merge-manager.md`,
    `code-reviewer.md`, `lane-manager.md`, `orchestrator.md` and `_common.md`:
-   reviewers land with `land_commit` and, when `retest_required`, run the 1.4
-   retest procedure; Lane Managers check the `landing` receipt and, for a
-   merge landing, a passing retest report before a close release; a failed
-   or unavailable retest withholds the release and enters the found-work
-   path, never a rollback; the Orchestrator owns `set_landing_freeze` and
-   approvals.
+   developers run `link_commit` on the exact candidate before requesting
+   LAND; reviewers land with `land_commit` and, when `retest_required`, run
+   the 1.4 retest procedure; Lane Managers check the `landing` receipt and,
+   for a merge landing, a passing retest report before a close release; a
+   failed or unavailable retest withholds the release and enters the
+   found-work path, never a rollback; an `activation_class: unknown` receipt
+   withholds the release until the Orchestrator rules on activation; the
+   Orchestrator owns `set_landing_freeze` and approvals.
 5. The close-order rule (memory 283e9a81) keeps "code closes after landing".
    Its spacing of landings between close batches existed for the Merge
    Manager's index commands; whether to keep it is the Orchestrator's call.
@@ -817,6 +864,14 @@ and a read-through against the shipped tool schemas.
   retest procedure; E12 docs acceptance as a checklist (decision-7 part
   moot). Found work folded into 1.5: the `pre-push`, `pre-merge-commit` and
   `post-rewrite` templates chain to foreign hook content.
+- 2026-10-05: Adversary gobby#15414 findings on 3eaee73 accepted. Blocking:
+  F-M3-descendant-ref (reconciliation and 1.3 step 9 test containment in a
+  single observed tip); F-M3-replay-provenance (replay without a receipt
+  recovers mode, base, class and retest from the branch reflog, with
+  `provenance: unknown` as the fallback); F-M3-linked-source (refuse
+  `candidate_not_linked`, link before LAND). Nit: N-M3-primary-duty (the
+  Merge Manager keeps the lane-primary merge duty). The Orchestrator took
+  both role-file consequences at 12:46 CT.
 
 ## V2: Verification
 `kind: verification`
