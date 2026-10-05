@@ -157,7 +157,8 @@ Source mechanisms at `cf88559ef2`:
 
   A new version is inserted with false and NULL flags. On conflict,
   `upsert_file` rewrites `language`, `symbol_count`, `byte_size` and the
-  timestamps, and keeps both flags (`index/api.rs:274-279`). A `--full`
+  timestamps, and keeps both flags (`index/api.rs:274-279`, excerpt_hash
+  `a739e9d5d655318986969b3447de1b2124ed2fe4379c0840d7af094e739cb14f`). A `--full`
   re-parse skips adoption (`index/indexer/pipeline.rs:152-167`).
 - **Completion marks.** `mark_vector_sync_attempted` and
   `mark_vectors_synced` (`db/queries.rs:235-275`) match on project and path
@@ -180,12 +181,18 @@ Source mechanisms at `cf88559ef2`:
     and reports a skip when it fails.
   - The graph CLI's `sync_file_graph` discards the `mark_graph_synced`
     result on both of its paths: the no-graph-facts path
-    (`commands/graph/lifecycle.rs:239-245`) and the projection path
-    (`:264-270`). It returns `Synced` or `SkippedNoGraphFacts` either way.
+    (`commands/graph/lifecycle.rs:239-245`, excerpt_hash
+    `f7a5528f16f1123f22cc2429ab66b2f710302ac3b6f64fe7687d97882f20983b`) and
+    the projection path (`:264-270`, excerpt_hash
+    `ad858633c348c40945d764f44ec06f52472f6021b7cc579c7f6a2cfc47062b92`). It
+    returns `Synced` or `SkippedNoGraphFacts` either way.
   - The Python worker marks `current.id` graph-synced after any
-    non-degraded native result (`sync_worker.py:672-681`). It also marks
-    without a native call when `_file_needs_graph_sync` is false
-    (`:587-594`): no symbols, or a language outside `_GRAPH_SYNC_LANGUAGES`.
+    non-degraded native result (`sync_worker.py:672-681`, excerpt_hash
+    `2c69b34d56ed9d10c8fe1291adf6d503b6d68c32a5e4f5939187259e9e5e8aca`). It
+    also marks without a native call when `_file_needs_graph_sync` is false
+    (`:587-594`, excerpt_hash
+    `55ef450cedf3ecea5e708d7a2373d68829b11039352d62ebd5cb5c0ed0182382`): no
+    symbols, or a language outside `_GRAPH_SYNC_LANGUAGES`.
   - `_storage/files.py::mark_graph_synced(file_id, content_hash)` matches
     the version row only and stamps a Python-side attempt time.
   - `db/queries.rs::dirty_graph_sync_for_file` joins any machine's file
