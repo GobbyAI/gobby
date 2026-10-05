@@ -1,7 +1,13 @@
-"""HTTP routes for the session-feedback review loop."""
+"""HTTP routes for the session-feedback review loop.
+
+Store and cron-storage reads are synchronous hub-database calls, so every
+handler awaits them through ``asyncio.to_thread`` instead of blocking the
+event loop.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
@@ -72,8 +78,10 @@ def create_feedback_router(server: HTTPServer) -> APIRouter:
                 raise HTTPException(
                     status_code=422, detail=f"{name} must be one of {', '.join(allowed)}"
                 )
+        store = _service().store
         try:
-            entries = _service().store.list_feedback(
+            entries = await asyncio.to_thread(
+                store.list_feedback,
                 limit=limit,
                 unreviewed=unreviewed,
                 kind=kind,
@@ -86,8 +94,9 @@ def create_feedback_router(server: HTTPServer) -> APIRouter:
 
     @router.get("/runs")
     async def feedback_runs(limit: int = 20) -> dict[str, Any]:
+        store = _service().store
         try:
-            runs = _service().store.list_runs(limit=limit)
+            runs = await asyncio.to_thread(store.list_runs, limit=limit)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"success": True, "runs": [_run_summary(run) for run in runs]}
@@ -95,16 +104,20 @@ def create_feedback_router(server: HTTPServer) -> APIRouter:
     @router.get("/status")
     async def feedback_status() -> dict[str, Any]:
         store = _service().store
-        latest = store.list_runs(limit=1)
         cron_storage = getattr(server.services, "cron_storage", None)
-        job = (
-            cron_storage.get_job_by_name(FEEDBACK_REVIEW_CRON_JOB_NAME)
-            if cron_storage is not None
-            else None
-        )
+
+        def read_status() -> tuple[list[FeedbackReviewRun], int, Any]:
+            job = (
+                cron_storage.get_job_by_name(FEEDBACK_REVIEW_CRON_JOB_NAME)
+                if cron_storage is not None
+                else None
+            )
+            return store.list_runs(limit=1), store.backlog_count(), job
+
+        latest, backlog, job = await asyncio.to_thread(read_status)
         return {
             "success": True,
-            "backlog": store.backlog_count(),
+            "backlog": backlog,
             "latest_run": _run_summary(latest[0]) if latest else None,
             "schedule": (
                 {
@@ -121,14 +134,14 @@ def create_feedback_router(server: HTTPServer) -> APIRouter:
 
     @router.get("/review/latest")
     async def feedback_review_latest() -> dict[str, Any]:
-        run = _service().store.latest_run()
+        run = await asyncio.to_thread(_service().store.latest_run)
         if run is None:
             raise HTTPException(status_code=404, detail="no feedback review runs recorded")
         return {"success": True, "run": asdict(run)}
 
     @router.get("/review/{run_id}")
     async def feedback_review_run(run_id: str) -> dict[str, Any]:
-        run = _service().store.get_run(run_id)
+        run = await asyncio.to_thread(_service().store.get_run, run_id)
         if run is None:
             raise HTTPException(status_code=404, detail=f"feedback review run not found: {run_id}")
         return {"success": True, "run": asdict(run)}
@@ -137,15 +150,19 @@ def create_feedback_router(server: HTTPServer) -> APIRouter:
     async def feedback_observations(
         run_id: str, offset: int = 0, limit: int = 50
     ) -> dict[str, Any]:
+        store = _service().store
         try:
-            return _service().store.observations_page(run_id, offset=offset, limit=limit)
+            return await asyncio.to_thread(
+                store.observations_page, run_id, offset=offset, limit=limit
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.get("/review/{run_id}/results")
     async def feedback_results(run_id: str, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+        store = _service().store
         try:
-            return _service().store.results_page(run_id, offset=offset, limit=limit)
+            return await asyncio.to_thread(store.results_page, run_id, offset=offset, limit=limit)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
