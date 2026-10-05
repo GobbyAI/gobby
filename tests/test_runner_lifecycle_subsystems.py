@@ -433,12 +433,16 @@ async def test_node_mode_skips_hub_only_phases(
 
 @pytest.mark.asyncio
 async def test_node_lifecycle_phase_starts_the_manager_machine_local_only() -> None:
-    lifecycle_manager = SimpleNamespace(start=AsyncMock())
-    runner = SimpleNamespace(lifecycle_manager=lifecycle_manager)
+    start_kwargs: list[dict[str, object]] = []
+
+    async def start(**kwargs: object) -> None:
+        start_kwargs.append(kwargs)
+
+    runner = SimpleNamespace(lifecycle_manager=SimpleNamespace(start=start))
 
     await lifecycle_subsystems._start_machine_local_lifecycle(cast("GobbyRunner", runner), None)
 
-    lifecycle_manager.start.assert_awaited_once_with(machine_local_only=True)
+    assert start_kwargs == [{"machine_local_only": True}]
 
 
 @pytest.mark.asyncio
