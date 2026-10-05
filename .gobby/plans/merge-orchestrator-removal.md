@@ -510,3 +510,23 @@ its coordinated restart from the main checkout. Then:
   (better, testability): accepted, because ruling 4 keeps `merge` for descendant
   closure and no existing test proves it; it became acceptance 1.2.11. Both reuse
   existing test machinery and add no production mechanism.
+- 2026-10-05, consensus. Plan Writer gobby#15429 and Plan Adversary gobby#15414
+  reached consensus on ea0ab71602a6551ac032468127d3f892e0cb543b (plan sha256
+  `39bdec40c553371843b436a681621d8865a962d63f1de3023cf27f3260fa2415`). The
+  Adversary contested no Decision Record ruling. Resolved findings, all accepted:
+  - F-path-resolution-failure: `_resolve_paths` ran outside the handler that fails
+    the merge stage, so path errors looped as "Dispatch failed". Section 1.2 now
+    moves it inside that handler and adds acceptance 1.2.2.
+  - F-granularity-record: the old merge-stage deliverable held independently
+    closeable parts. It became 1.2 (failures fail for a human), 1.3 (roots land
+    their own workspace), and 1.4 (agentless merge stage), with every obligation
+    kept. The enhancer items above are now 1.3.2-1.3.4 and 1.4.6.
+  - F-retirement-sweep: three unowned literal hits became 2.1 Targets. The
+    closing sweep now allows only the retirement-absence test.
+  - F-deleted-module-coverage: the split dropped the `merge_recovery.py`
+    absence obligation. It is restored as 1.2.3.
+
+  The accepted stage-row advisory qualifies the stage-registry sync claim to
+  sync-owned rows, and section 3 checks the live `default_agent` values.
+  Agreed leaf routing: five code/backend leaves, tdd false; 1.2 bug, 2.1 chore,
+  1.1/1.3/1.4 feature.
