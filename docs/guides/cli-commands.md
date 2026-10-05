@@ -398,20 +398,39 @@ is promoted and nothing is stopped.
 
 ### `gobby auth`
 
-Reset the sole installed user's browser password and manage the install-scoped
-daemon API token.
+Reset the sole installed user's browser password, enroll a node with its hub,
+and manage the install-scoped daemon API token.
 
 ```bash
 gobby auth credentials
+gobby auth login [--hub URL] [--email EMAIL] [--fingerprint sha256:...] [--label LABEL] [--insecure]
+gobby auth key --show
 gobby auth token [--show] [--rotate]
 ```
 
 | Command or option | Purpose |
 | --- | --- |
 | `credentials` | Prompt for and set a new Argon2id password for the sole installed user's email. |
+| `login` | Enroll a `datastore_mode: remote` node: mint an API key on the hub with your email and password, then store it with the pinned hub certificate. |
+| `login --hub URL` | Must name the bootstrap's `hub_daemon_url`; login never re-homes a node. |
+| `login --fingerprint sha256:...` | Pin the hub certificate without a prompt; a mismatch exits before the password is sent. |
+| `login --label LABEL` | Label the minted key (default: this hostname). |
+| `login --insecure` | Allow plain `http://` to a non-loopback hub. Plain HTTP never pins a certificate. |
+| `key --show` | Print the enrolled key's hint and id, never the key. |
 | `token` | Show token path, file presence, stored hash prefix, and file/DB agreement. |
 | `token --show` | Print the plaintext token for deliberate client provisioning. |
 | `token --rotate` | Replace the token file and stored hash; recopy the file to other machines. |
+
+`login` refuses a `datastore_mode: local` bootstrap; set the node up first as
+[Client setup](shared-stack.md#client-setup) describes. Over HTTPS it prints the
+hub certificate's fingerprint and asks you to confirm it unless `--fingerprint`
+matches. The approved certificate is written to `~/.gobby/tls/hub.pem` and
+recorded as `hub_cert`, beside `api_key` and `api_key_id` in `bootstrap.yaml`.
+If the dialed host is outside the certificate's SANs, the handshake fails
+before the password is sent; add the host to `front_door.tls.sans` on the hub.
+A failure after the hub mints the key, but before `bootstrap.yaml` names it,
+restores the prior files and revokes the new key. A re-login keeps the prior
+key live on the hub.
 
 The token command reads `$GOBBY_HOME/local_cli_token` (default
 `~/.gobby/local_cli_token`). The daemon refreshes its credential cache on a
