@@ -958,3 +958,263 @@ uv run gobby plans validate .gobby/plans/reviewer-landing.md -p /Users/josh/Proj
 After rollout step 3, in the main checkout: a Markdown-only plan commit
 succeeds, and `git commit --allow-empty` with a staged `src/` path is refused
 by the guard.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Landing receipt kinds
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: A `landing_approval` is recorded from the task''s creator
+    or delegator and refused from any other session, the claimant included. test:
+    `tests/tasks/test_close_receipts.py::test_landing_approval_comes_only_from_task_creator_or_delegator`.
+
+    1.1.2: A `landing_approval` without a `reason`, or with a part outside `restart`,
+    `freeze`, `overlap`, is refused; `restart,overlap` with a `batch` fact is accepted.
+    test: `tests/tasks/test_close_receipts.py::test_landing_approval_requires_known_reasons`.
+
+    1.1.3: The MCP tool refuses kind `landing`, and its schema enum omits it. test:
+    `tests/tasks/test_close_receipts.py::test_tool_refuses_daemon_only_landing_kind`.
+
+    1.1.4: A `landing` receipt recorded through the module function is stored once
+    per author and SHA and returned on replay. test: `tests/tasks/test_close_receipts.py::test_landing_receipt_is_recorded_once_per_author_and_commit`.
+
+    1.1.5: The close-review prompt explains `landing_approval` and `landing` receipts
+    when the task carries them. test: `tests/tasks/test_close_receipts.py::test_reviewer_prompt_explains_landing_receipts`.
+
+    1.1.6: The creator approves `restart`, then `freeze,overlap`, for one SHA: two
+    receipts exist, the first unchanged, and repeating either call adds none. test:
+    `tests/tasks/test_close_receipts.py::test_landing_approval_new_reasons_append_receipt`.'
+  labels:
+  - covers:reviewer-landing:1.1:1.1.1
+  - covers:reviewer-landing:1.1:1.1.2
+  - covers:reviewer-landing:1.1:1.1.3
+  - covers:reviewer-landing:1.1:1.1.4
+  - covers:reviewer-landing:1.1:1.1.5
+  - covers:reviewer-landing:1.1:1.1.6
+  tdd: false
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Landing policy and freeze flag
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.2.1: `classify_paths` returns the strongest class: a `crates/`
+    path or `src/gobby/storage/schema_expected_identity.json` is cutover, `src/gobby/cli/`
+    is restart, `web/` alone is ui_build, and `docs/` plus `tests/` is none. test:
+    `tests/tasks/test_landing_policy.py::test_classify_paths_strongest_class_wins`.
+
+    1.2.2: `is_direct_commit_path` accepts only `*.md` at the root or under `.gobby/plans/`,
+    `.gobby/roles/`, `docs/`, and rejects `docs/reference-audit/admin.json`, `.gobby/plans/coverage/x.yaml`
+    and `src/gobby/AGENTS.md`. test: `tests/tasks/test_landing_policy.py::test_direct_commit_allows_only_listed_markdown`.
+
+    1.2.3: A missing freeze file reads as off and a malformed one as on. test: `tests/tasks/test_landing_policy.py::test_unreadable_freeze_file_reads_as_frozen`.
+
+    1.2.4: `set_landing_freeze` records the calling session, refuses `on` without
+    a reason, and a clear keeps the clearing session. test: `tests/mcp_proxy/tools/tasks/test_landing_tools.py::test_set_landing_freeze_records_setter_and_clearer`.
+
+    1.2.5: The registered gobby-tasks-ops tools equal the classified tuples, with
+    `set_landing_freeze` gated as a mutation. test: `tests/workflows/test_task_enforcement_rules.py::TestRequireTasksSkillForMutations::test_real_registry_inventory_matches_independent_classification`.'
+  labels:
+  - covers:reviewer-landing:1.2:1.2.1
+  - covers:reviewer-landing:1.2:1.2.2
+  - covers:reviewer-landing:1.2:1.2.3
+  - covers:reviewer-landing:1.2:1.2.4
+  - covers:reviewer-landing:1.2:1.2.5
+  tdd: false
+  source_section: '1.2'
+  implementation_domain: backend
+- title: land_commit fast-forward landing with approvals
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  validation_criteria: "1.3.1: Without the caller's `independent_review_approval`\
+    \ for the exact SHA, or when the caller claims the task, the call refuses and\
+    \ the branch does not move. test: `tests/tasks/test_land_commit.py::test_refuses_without_callers_land_receipt`.\n\
+    1.3.2: A docs-only candidate whose base is the tip fast-forwards the branch to\
+    \ the exact SHA, records a `landing` receipt with mode `ff` and class `none`,\
+    \ and messages the claimant and creator. test: `tests/tasks/test_land_commit.py::test_fast_forward_lands_exact_candidate`.\n\
+    1.3.3: A restart-class candidate, an active freeze and an overlapping in-flight\
+    \ candidate on another task each add their reason; one response lists all three\
+    \ with no git write, and matching `landing_approval` receipts let the same call\
+    \ land. test: `tests/tasks/test_land_commit.py::test_reports_every_missing_approval_at_once`.\n\
+    1.3.4: In-flight candidates that are ancestors or descendants of the SHA, or already\
+    \ on the tip, never count as overlap. test: `tests/tasks/test_land_commit.py::test_stacked_and_landed_candidates_never_overlap`.\n\
+    1.3.5: A SHA already contained in the tip lands with no git write and one `landing`\
+    \ receipt across repeated calls. A SHA fast-forwarded earlier by `land_commit`\
+    \ without a receipt recovers mode `ff`, the recorded class and `provenance: reflog`.\
+    \ A reviewed two-parent candidate that was fast-forwarded recovers mode `ff`.\
+    \ For O\u2192A\u2192B where `land_commit` observes O for B, a foreign fast-forward\
+    \ lands A, and `--ff-only` to B succeeds from A, replay of B recovers mode `ff`\
+    \ and replay of A records `provenance: unknown`. An expired or unreadable reflog,\
+    \ a non-`files` ref format, a log line outside the grammar, a landing written\
+    \ without the `gobby-land` action, a branch-creation entry, and an event the branch\
+    \ was rewound past each record `provenance: unknown`, mode `already_landed`, `activation_class:\
+    \ unknown` and `retest_required: true`. test: `tests/tasks/test_land_commit.py::test_already_landed_candidate_records_landing_once`.\n\
+    1.3.6: `MainCheckoutLanding` maps to `main_checkout_landing:<project_id>` and\
+    \ has the lowest lock priority. test: `tests/storage/hub/test_postgres_placeholder_remap.py::test_main_checkout_landing_lock_key`.\n\
+    1.3.7: Two concurrent `land_commit` calls run one at a time, and the lock is free\
+    \ again after a refusal and after an exception. A freeze set while a landing holds\
+    \ the lock applies to the next landing. test: `tests/tasks/test_land_commit.py::test_concurrent_landings_serialize_and_release_lock`.\n\
+    1.3.8: A detached main HEAD refuses `main_checkout_detached`, a branch switched\
+    \ before the write refuses `main_checkout_branch_changed`, and a call from a linked\
+    \ worktree lands into the main checkout's branch. Each refusal leaves both branches\
+    \ unmoved. test: `tests/tasks/test_land_commit.py::test_landing_branch_is_main_checkout_head`.\n\
+    1.3.9: A SHA carrying the caller's `independent_review_approval` but not linked\
+    \ to the task refuses `candidate_not_linked` with no git write; after `link_commit`,\
+    \ the same call lands. test: `tests/tasks/test_land_commit.py::test_refuses_unlinked_candidate`."
+  labels:
+  - covers:reviewer-landing:1.3:1.3.1
+  - covers:reviewer-landing:1.3:1.3.2
+  - covers:reviewer-landing:1.3:1.3.3
+  - covers:reviewer-landing:1.3:1.3.4
+  - covers:reviewer-landing:1.3:1.3.5
+  - covers:reviewer-landing:1.3:1.3.6
+  - covers:reviewer-landing:1.3:1.3.7
+  - covers:reviewer-landing:1.3:1.3.8
+  - covers:reviewer-landing:1.3:1.3.9
+  tdd: false
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Moved-tip landing and git failure handling
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.4.1: With the tip moved by disjoint paths, the branch lands
+    a two-parent merge commit (tip, SHA) with the landing message, the receipt says
+    `merge` and `retest_required`, and unrelated staged and dirty files in the main
+    checkout survive. test: `tests/tasks/test_land_commit.py::test_moved_tip_with_disjoint_paths_lands_merge_commit`.
+
+    1.4.2: With a moved path shared with the candidate, the call refuses `base_update_required`
+    naming that path, and the branch does not move. test: `tests/tasks/test_land_commit.py::test_moved_tip_with_shared_paths_requires_base_update`.
+
+    1.4.3: A direct commit that moves the tip between computing and landing is absorbed
+    by recomputing, and the landing still succeeds. A racing commit that touches a
+    candidate path refuses `base_update_required`, one that makes the class `restart`
+    adds that missing approval, and three exhausted attempts refuse `tip_contention`.
+    test: `tests/tasks/test_land_commit.py::test_tip_race_recomputes_and_lands`.
+
+    1.4.4: A locally dirty landed path refuses `checkout_dirty` and a held `index.lock`
+    refuses `checkout_busy`. Each refusal, a merge conflict and an exhausted contention
+    leave the ref, the worktree contents and the index entries unchanged, unrelated
+    staged files and untracked files included. test: `tests/tasks/test_land_commit.py::test_dirty_path_and_index_lock_refuse_without_ref_change`.
+
+    1.4.5: `extract_task_ids_from_message` finds no task in the generated merge commit''s
+    message, so commit discovery never links it to the task. test: `tests/tasks/test_land_commit.py::test_landing_merge_is_not_task_tagged`.
+
+    1.4.6: A ref that moved before git timed out, and a receipt write that fails after
+    the ref moved, both return `landed: true`; the second returns `receipt_pending:
+    true`. A failed message returns `notification_pending`. A direct Markdown commit
+    that advances the branch past the target before reconciliation, after a successful
+    command and after a timeout, still returns `landed: true` with `landed_tip` the
+    target and `observed_tip` the descendant. The checkout is never reset. test: `tests/tasks/test_land_commit.py::test_ref_moved_before_failure_reports_landing`.
+
+    1.4.7: A repeated call after a merge landing returns mode `merge` with `retest_required:
+    true`. A retry after `receipt_pending` recovers the same mode, `landed_tip` and
+    class from the `gobby-land` reflog entry. For stacked candidates A and B where
+    B lands by merge, A''s later call records mode `merge` with `retest_required:
+    true` and A''s own class; where B lands by fast-forward, A records mode `ff`.
+    Where a foreign fast-forward to A lands after B''s call observed its tip and B
+    then fast-forwards from A, A''s later call records `provenance: unknown`. test:
+    `tests/tasks/test_land_commit.py::test_merge_landing_replay_preserves_retest_obligation`.'
+  labels:
+  - covers:reviewer-landing:1.4:1.4.1
+  - covers:reviewer-landing:1.4:1.4.2
+  - covers:reviewer-landing:1.4:1.4.3
+  - covers:reviewer-landing:1.4:1.4.4
+  - covers:reviewer-landing:1.4:1.4.5
+  - covers:reviewer-landing:1.4:1.4.6
+  - covers:reviewer-landing:1.4:1.4.7
+  tdd: false
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Protected-branch guard
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  - '1.4'
+  validation_criteria: '1.5.1: In the main checkout, a commit touching only `docs/x.md`
+    and a root `NOTES.md` succeeds, and a commit touching `src/gobby/a.py` or `docs/reference-audit/a.json`
+    is refused with the path named. test: `tests/cli/installers/test_landing_guard_hook.py::test_direct_commit_allows_only_listed_markdown`.
+
+    1.5.2: From a linked worktree, `git merge`, `git reset` and `git branch -f` that
+    move the protected branch to code are refused, while commits on the lane branch
+    pass. test: `tests/cli/installers/test_landing_guard_hook.py::test_protected_branch_refuses_writes_from_any_worktree`.
+
+    1.5.3: With `GOBBY_LAND_COMMIT=1`, `land_commit`''s fast-forward passes the hook.
+    test: `tests/cli/installers/test_landing_guard_hook.py::test_land_commit_passes_installed_guard`.
+
+    1.5.4: The installer defines `reference-transaction`. test: `tests/cli/installers/test_git_hooks_installer.py::TestHookTemplates::test_all_expected_hooks_defined`.
+
+    1.5.5: An agent Bash command mentioning `GOBBY_LAND_COMMIT` is blocked for spawned
+    and interactive sessions. test: `tests/workflows/rules/test_landing_override_rule.py::test_landing_override_is_blocked_for_every_session`.
+
+    1.5.6: An install made before `reference-transaction` existed reports it stale,
+    and `gobby install` clears it; a repository with no Gobby section still reports
+    nothing. test: `tests/cli/installers/test_git_hooks_installer.py::test_missing_template_hook_is_stale_for_managed_install`.
+
+    1.5.7: With a foreign hook after the Gobby section that records its stdin and
+    arguments, the foreign hook runs with the original stdin for an allowed `reference-transaction`
+    update, a delete-only `pre-push`, a `pre-merge-commit` under `GOBBY_MERGE=1` and
+    a `post-rewrite`. A foreign `reference-transaction` refusal of a Gobby-allowed
+    update still aborts it. Reinstall and uninstall keep the foreign content. test:
+    `tests/cli/installers/test_git_hooks_installer.py::test_gobby_sections_chain_to_foreign_hook_content`.
+
+    1.5.8: A direct commit mixing `docs/a.md` with `src/gobby/a.py`, and one touching
+    a Markdown path that git quotes (a tab or newline in the name), are refused; a
+    path with spaces under `docs/` is allowed. test: `tests/cli/installers/test_landing_guard_hook.py::test_guard_classifies_unusual_paths_fail_closed`.'
+  labels:
+  - covers:reviewer-landing:1.5:1.5.1
+  - covers:reviewer-landing:1.5:1.5.2
+  - covers:reviewer-landing:1.5:1.5.3
+  - covers:reviewer-landing:1.5:1.5.4
+  - covers:reviewer-landing:1.5:1.5.5
+  - covers:reviewer-landing:1.5:1.5.6
+  - covers:reviewer-landing:1.5:1.5.7
+  - covers:reviewer-landing:1.5:1.5.8
+  tdd: false
+  source_section: '1.5'
+  implementation_domain: backend
+- title: Landing references and guide
+  category: docs
+  task_type: chore
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  validation_criteria: '2.1.1: The closing reference names both new receipt kinds,
+    their authority, append-only approvals and the landing-before-close order. behavior:
+    "landing_approval" in `src/gobby/install/shared/skills/gobby/references/tasks/closing.md`.
+
+    2.1.2: Read against the shipped `land_commit` and `set_landing_freeze` schemas,
+    the guide states who may call each tool and grant each approval reason, that the
+    candidate is linked before LAND, what each `provenance` value means, and the freeze''s
+    effect and unreadable-file rule. behavior: "set_landing_freeze" in `docs/guides/tasks.md`.
+
+    2.1.3: The guide lists the four path classes with their approvals, and every refusal
+    code and pending flag that `land_commit.py` returns. behavior: "base_update_required"
+    in `docs/guides/tasks.md`.
+
+    2.1.4: The guide gives the moved-tip retest procedure and its failed-retest path.
+    behavior: "retest_required" in `docs/guides/tasks.md`.
+
+    2.1.5: The guide states the Markdown-only direct-commit allowance, the guard and
+    its operator override. behavior: "GOBBY_LAND_COMMIT" in `docs/guides/tasks.md`.'
+  labels:
+  - covers:reviewer-landing:2.1:2.1.1
+  - covers:reviewer-landing:2.1:2.1.2
+  - covers:reviewer-landing:2.1:2.1.3
+  - covers:reviewer-landing:2.1:2.1.4
+  - covers:reviewer-landing:2.1:2.1.5
+  tdd: false
+  source_section: '2.1'
+  assigned_agent: tech-writer
+```
