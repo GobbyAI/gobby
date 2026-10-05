@@ -698,7 +698,7 @@ Targets:
 - `docs/contracts/identity-model.md`
 - `docs/contracts/gterm-protocols.md`
 - `docs/guides/http-endpoints.md`
-- `docs/reference-audit/admin.json::*` — scope-reason: drops the `gobby auth token` operation, whose `auth.py` implementation this leaf deletes, and maps `gobby auth login` and `gobby auth key` where no entry exists
+- `docs/reference-audit/admin.json::*` — scope-reason: drops the `gobby auth token` operation, whose `auth.py` implementation this leaf deletes, and maps `gobby auth login` and `gobby auth key` unless #23484 has landed
 
 **Granularity:** one leaf and one commit. The token file, its hash, and the
 alias leave together, and any consumer left on the old credential would 401
@@ -905,12 +905,15 @@ examples are 1.5; the CLI is 1.4.
   `gobby auth token` operation (its `auth.py::token` implementation goes). On
   `0.5.0` at `b9afc3b` the test already fails on the unmapped
   `gobby auth login` and `gobby auth key`, added by #23272 (`gobby auth login`
-  and `gobby auth key --show`). Unless a found-work fix has mapped them, this
-  leaf maps both to `authentication.md`, with `auth_login.py` symbols `login`
-  and `key` and the `source-inventory` and `cli-registry` evidence.
+  and `gobby auth key --show`). The Orchestrator filed that repair as #23484
+  ("Reference audit leaves gobby auth login and gobby auth key unmapped,
+  failing test_reference_contract_3_2_1 on 0.5.0"). If #23484 has landed, this
+  leaf keeps its entries. Otherwise it maps both to `authentication.md`, with
+  `auth_login.py` symbols `login` and `key` and the `source-inventory` and
+  `cli-registry` evidence.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/ tests/storage/test_storage_auth.py tests/storage/test_managed_credentials.py tests/storage/test_revisioned_config_store.py tests/config/ tests/utils/ tests/agents/test_agent_constants.py tests/agents/test_spawn_executor.py tests/agents/test_isolation.py tests/agents/test_sandbox.py tests/agents/test_sandbox_policy.py tests/cli/ tests/hooks/ tests/terminals/ tests/mcp_proxy/test_workspaces_registry.py tests/test_runner_front_door.py tests/test_runner_init.py tests/contracts/ tests/skills/test_reference_library.py -q`.
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/ tests/storage/test_storage_auth.py tests/storage/test_managed_credentials.py tests/storage/test_revisioned_config_store.py tests/config/ tests/utils/ tests/agents/test_agent_constants.py tests/agents/test_spawn_executor.py tests/agents/test_isolation.py tests/agents/test_sandbox.py tests/agents/test_sandbox_policy.py tests/cli/ tests/hooks/ tests/terminals/ tests/mcp_proxy/test_workspaces_registry.py tests/test_runner_front_door.py tests/test_runner_init.py tests/contracts/ tests/skills/test_reference_library.py::test_reference_contract_3_2_1 -q`.
 Heavy work: `cargo nextest run -p gdaemon -p gobby-core -p gclient -p gcode -p ghook -p gterminal` and
 `cargo clippy --workspace --all-targets -- -D warnings`. The e2e files run in
 V2.
@@ -1013,7 +1016,7 @@ Targets:
   test evidence item recording this leaf's focused pytest command and result.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_auth_login.py tests/cli/test_cli_auth.py tests/skills/test_reference_library.py -q`,
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_auth_login.py tests/cli/test_cli_auth.py tests/skills/test_reference_library.py::test_reference_contract_3_2_1 -q`,
 then `uv run ruff check` and `uv run mypy` on `src/gobby/cli/auth_login.py`.
 
 **Acceptance:**
@@ -1099,7 +1102,7 @@ below.
   `crates/CHANGELOG.md`.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/test_reference_library.py -q`,
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/test_reference_library.py::test_reference_contract_3_2_1 -q`,
 then the 1.5.1 sweep.
 
 **Acceptance:**
@@ -1109,7 +1112,7 @@ then the 1.5.1 sweep.
 - 1.5.3 - The observability example authenticates Prometheus with a dedicated minted key in an owner-only file. behavior: "gobby auth key --mint" in `docs/examples/observability/README.md`.
 - 1.5.4 - The admin guide's rotation procedure uses the key command and states the capability-token consequence. behavior: "gobby auth key --rotate" in `docs/guides/admin-operations.md`.
 
-### 1.6 Rollback rehearsal keeps the operator a way in [category: test] (depends: 1.3, 1.4)
+### 1.6 Rollback rehearsal keeps the operator a way in [category: test] (depends: 1.3, 1.4, 1.5)
 `kind: deliverable`
 
 Targets:
@@ -1168,51 +1171,68 @@ source being reverted, so every step binds both.
 
    `uv run` then uses the clone's own environment and `conftest.py`, and
    `prepare_daemon_env` keeps `<scratch>/bin` for every daemon start and
-   schema probe. The per-test home is created inside each run, so the bin dir
+   schema probe. The per-test home is created inside the run, so the bin dir
    sits beside it in `<scratch>`.
-3. Write an uncommitted scratch test module next to the clone's
-   `tests/e2e/conftest.py`. Its one test takes `daemon_instance`, runs the
-   checks for the phase named by `REHEARSAL_PHASE`, and writes a JSON record
-   to `<scratch>`. The record holds:
-   - `gobby.__file__`, which must lie under `<scratch>/clone/src`;
-   - `local_native_bin_path("gdaemon")` and `installed_schema_identity()`, which
-     must name `<scratch>/bin/gdaemon` and `latest_version` 459;
-   - the `exe()` of each gdaemon process among
-     `psutil.Process(daemon_instance.pid).children(recursive=True)`, which must
-     be `<scratch>/bin/gdaemon`;
-   - each check's command and status code, with every credential redacted.
-4. Build with `cargo build -p gobby-daemon -p gobby-code -p gobby-hooks`
+3. Build with `cargo build -p gobby-daemon -p gobby-code -p gobby-hooks`
    (heavy work). Promote the three `<scratch>/target/debug` artifacts with
    `uv run python -c` calling
    `promote_workspace_binary_set({...}, bin_dir=Path("<scratch>/bin"))`.
    Record `shasum -a 256` of the three files in `<scratch>/bin` and the
    identity stamp's contents.
-5. Tip phase: `REHEARSAL_PHASE=tip uv run pytest <module> -q`. The test sends
-   `GET /api/admin/status` with `Authorization: Bearer <bootstrap api_key>`
-   and expects 200. It finds `<home>/break_glass` with mode 0600 and no
-   `<home>/local_cli_token`.
-6. `git revert --no-edit` the recorded 1.4, 1.3, and 1.2 commits, newest
-   first; the 1.5 docs commit stays. A conflict confined to `docs/` keeps the
-   1.5 text, and any other conflict fails the rehearsal. Record the reverted
-   HEAD SHA. Rebuild and promote as in step 4 and record the new hashes and
-   stamp. The `gdaemon` hash must differ from the tip's.
-7. Reverted phase: `REHEARSAL_PHASE=reverted uv run pytest <module> -q`. The
-   reverted gdaemon applies a fresh isolated schema at 459 and the daemon
-   starts. The test runs, as subprocesses,
-   `curl -sS -o /dev/null -w '%{http_code}' -H "X-Gobby-Break-Glass: <contents of <home>/break_glass>" http://127.0.0.1:<public port>/api/admin/status`
-   expecting 200, then the same command without `-H` expecting 401.
-   Non-loopback refusal is proven by 1.1.2 and 1.3.12.
+4. Write an uncommitted scratch test module next to the clone's
+   `tests/e2e/conftest.py` and run it once with `uv run pytest <module> -q`.
+   Its one test takes `daemon_instance`, so one isolated home, one schema,
+   and one port pair live from the tip start through the reverted start; the
+   fixtures drop the schema and remove the temporary project and home only
+   after the test returns. The test writes a JSON record to `<scratch>`
+   holding, for each phase:
+   - `gobby.__file__`, under `<scratch>/clone/src`, and the daemon env's
+     `PYTHONPATH`, which must begin with `<scratch>/clone/src`;
+   - `local_native_bin_path("gdaemon")` and `installed_schema_identity()`,
+     naming `<scratch>/bin/gdaemon` and `latest_version` 459;
+   - the `exe()` of each gdaemon process among the runner's
+     `psutil.Process(pid).children(recursive=True)`, which must be
+     `<scratch>/bin/gdaemon`;
+   - each check's command and status code, with every credential redacted.
+5. Tip phase, inside the test: `GET /api/admin/status` with
+   `Authorization: Bearer <bootstrap api_key>` answers 200,
+   `<home>/break_glass` has mode 0600 and its SHA-256 is recorded, and no
+   `<home>/local_cli_token` exists. Then `daemon_instance.stop()`.
+6. Revert, inside the test, as recorded subprocesses: `git revert --no-edit`
+   the recorded 1.4, 1.3, and 1.2 commits, newest first; the 1.5 docs commit
+   stays. A conflict confined to `docs/` keeps the 1.5 text, and any other
+   conflict fails the rehearsal. Record the reverted HEAD SHA. Rebuild and
+   promote as in step 3, and record the new hashes and stamp. The `gdaemon`
+   hash must differ from the tip's. The scratch module is untracked, so the
+   revert leaves it in place.
+7. Reverted start, inside the test: `subprocess.Popen` reruns
+   `daemon_instance.command` with `daemon_instance.env`, its project directory
+   as `cwd`, and `start_new_session=True`. It keeps the same home, ports, and
+   schema, so the reverted code starts on the tip's bootstrap, stored config,
+   API-key rows, and break-glass file at schema 459. The test waits with
+   `wait_for_daemon_health`, an unauthenticated `/api/auth/status` probe.
+   `DaemonInstance.restart()` is not used, because its websocket wait
+   authenticates with the bootstrap key, which the reverted Python does not
+   accept. Then it runs, as subprocesses:
+   - `curl -sS -o /dev/null -w '%{http_code}' -H "X-Gobby-Break-Glass: <contents of <home>/break_glass>" http://127.0.0.1:<public port>/api/admin/status`,
+     expecting 200;
+   - the same command without `-H`, expecting 401.
+
+   `<home>/break_glass` must still match the tip's SHA-256. A `finally` block
+   stops the reverted daemon with `terminate_process_tree`. Non-loopback
+   refusal is proven by 1.1.2 and 1.3.12.
 8. Write the evidence doc under the heading "Break-glass admitted after
-   revert". It holds the tip, reverted-commit, and reverted HEAD SHAs, plus
-   both phases' JSON records, hashes, and stamps, the commands, and the
-   status codes.
-9. Clean up. After both pytest runs exit (their fixtures stop the daemons
-   and drop the schemas), `pgrep -f '<scratch>/bin/'` must find nothing.
-   Then remove `<scratch>`. Record both in the evidence doc.
+   revert". It holds:
+   - the tip, reverted-commit, and reverted HEAD SHAs;
+   - both phases' records, hashes, and stamps;
+   - the break-glass SHA-256 match;
+   - the commands and the status codes.
+9. Clean up. After pytest exits, `pgrep -f '<scratch>/bin/'` must find
+   nothing. Then remove `<scratch>`. Record both in the evidence doc.
 
 **Acceptance:**
 
-- 1.6.1 - After the cutover code is reverted, a daemon whose Python imports resolve under the reverted clone's `src` and whose running gdaemon is the reverted build promoted to the isolated bin dir starts at schema 459. It admits a loopback break-glass `GET /api/admin/status` and refuses the same request without the header with 401. The evidence records the source SHAs, promoted hashes, status codes, and cleanup. behavior: "Break-glass admitted after revert" in `docs/evidence/gdaemon-key-cutover-rollback-rehearsal.md`.
+- 1.6.1 - After the cutover code is reverted on the same isolated home and schema the tip ran on, a daemon whose Python imports resolve under the reverted clone's `src` and whose running gdaemon is the reverted build promoted to the isolated bin dir starts at schema 459. It admits a loopback break-glass `GET /api/admin/status` with the tip's byte-identical break-glass file, and it refuses the same request without the header with 401. The evidence records the source SHAs, promoted hashes, status codes, and cleanup. behavior: "Break-glass admitted after revert" in `docs/evidence/gdaemon-key-cutover-rollback-rehearsal.md`.
 
 ## D1 Live activation of the key cutover (depends: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6)
 `kind: deferred`
