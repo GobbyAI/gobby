@@ -1,12 +1,139 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import cast
 
+import psycopg
 import pytest
 
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
+from gobby.storage.machines import LocalMachineManager
+from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import get_machine_id
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture
+def usage_session_id(session_manager: SessionManager, sample_project: dict[str, str]) -> str:
+    machine_id = get_machine_id()
+    assert machine_id is not None
+    LocalMachineManager(session_manager.db).upsert_seen(machine_id, TEST_USER_ID)
+    return session_manager.register(
+        external_id="bigint-usage-session",
+        machine_id=machine_id,
+        source="claude",
+        project_id=sample_project["id"],
+    ).id
+
+
+@pytest.mark.parametrize(
+    "counter", ["input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens"]
+)
+def test_update_usage_accepts_totals_above_int32(
+    session_manager: SessionManager, usage_session_id: str, counter: str
+) -> None:
+    totals = dict.fromkeys(
+        ["input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens"], 0
+    )
+    totals[counter] = 2**31 + 123
+    assert (
+        session_manager.update_usage(
+            usage_session_id,
+            totals["input_tokens"],
+            totals["output_tokens"],
+            totals["cache_creation_tokens"],
+            totals["cache_read_tokens"],
+        )
+        is True
+    )
+    session = session_manager.get(usage_session_id)
+    assert session is not None
+    assert getattr(session, f"usage_{counter}") == 2**31 + 123
+
+
+@pytest.mark.parametrize(
+    "counter", ["input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens"]
+)
+def test_add_usage_delta_accumulates_past_int32(
+    session_manager: SessionManager, usage_session_id: str, counter: str
+) -> None:
+    totals = dict.fromkeys(
+        ["input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens"], 0
+    )
+    totals[counter] = 2**31 - 1
+    assert (
+        session_manager.update_usage(
+            usage_session_id,
+            totals["input_tokens"],
+            totals["output_tokens"],
+            totals["cache_creation_tokens"],
+            totals["cache_read_tokens"],
+        )
+        is True
+    )
+    deltas = dict.fromkeys(totals, 0)
+    deltas[counter] = 1
+    assert (
+        session_manager.add_usage_delta(
+            usage_session_id,
+            deltas["input_tokens"],
+            deltas["output_tokens"],
+            deltas["cache_creation_tokens"],
+            deltas["cache_read_tokens"],
+        )
+        is True
+    )
+    session = session_manager.get(usage_session_id)
+    assert session is not None
+    assert getattr(session, f"usage_{counter}") == 2**31
+
+
+def test_usage_bigint_migration_preserves_values_defaults_and_constraint(
+    session_manager: SessionManager, usage_session_id: str
+) -> None:
+    db = session_manager.db
+    counters = (
+        "usage_input_tokens",
+        "usage_output_tokens",
+        "usage_cache_creation_tokens",
+        "usage_cache_read_tokens",
+    )
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "crates/gcore/assets/schema/migrations/459_session_usage_bigint.sql"
+    ).read_text()
+    with db.transaction():
+        for column in counters:
+            db.execute(f"ALTER TABLE sessions ALTER COLUMN {column} TYPE integer")
+        db.execute(
+            "UPDATE sessions SET usage_input_tokens = 2147483647, "
+            "usage_output_tokens = 42, usage_cache_creation_tokens = NULL, "
+            "usage_cache_read_tokens = 2147483647 WHERE id = %s",
+            (usage_session_id,),
+        )
+        db.execute(migration)
+
+    row = db.fetchone("SELECT * FROM sessions WHERE id = %s", (usage_session_id,))
+    assert row is not None
+    assert tuple(row[column] for column in counters) == (2**31 - 1, 42, None, 2**31 - 1)
+    columns = db.fetchall(
+        "SELECT column_name, data_type, column_default FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'sessions' "
+        "AND column_name = ANY(%s) ORDER BY column_name",
+        (list(counters),),
+    )
+    assert len(columns) == 4
+    assert all(column["data_type"] == "bigint" for column in columns)
+    assert all(column["column_default"] == "0" for column in columns)
+    with pytest.raises(psycopg.errors.CheckViolation) as exc:
+        with db.transaction():
+            db.execute(
+                "UPDATE sessions SET usage_input_tokens = -1 WHERE id = %s", (usage_session_id,)
+            )
+    assert exc.value.diag.constraint_name == "sessions_context_usage_tokens_nonnegative"
 
 
 def test_ratio_is_null_when_window_or_usage_is_unknown() -> None:
@@ -100,9 +227,9 @@ def test_token_breakdown_ignores_malformed_token_values() -> None:
     snapshot = ContextUsageSnapshot.from_token_breakdown(
         source="web_chat",
         context_window=200_000,
-        uncached_prompt_tokens="not-a-number",  # type: ignore[arg-type]
-        cache_read_tokens=object(),  # type: ignore[arg-type]
-        cache_creation_tokens="5",
+        uncached_prompt_tokens=cast(int, "not-a-number"),
+        cache_read_tokens=cast(int, object()),
+        cache_creation_tokens=cast(int, "5"),
         output_tokens=-3,
     )
 

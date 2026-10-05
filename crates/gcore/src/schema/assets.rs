@@ -276,6 +276,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "5252f4b282dd302cd629af2d7a7782bd08fe1b232b3bf55e606a02f911e9be7a",
         sql: include_str!("../../assets/schema/migrations/458_add_api_keys.sql"),
     },
+    EmbeddedMigration {
+        version: 459,
+        filename: "459_session_usage_bigint.sql",
+        checksum: "d0b0e50196714c6d02cb82ccf2868c1bad4aed977ade712578426128521ebb9b",
+        sql: include_str!("../../assets/schema/migrations/459_session_usage_bigint.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
