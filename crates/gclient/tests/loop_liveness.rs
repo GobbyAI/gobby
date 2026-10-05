@@ -2262,7 +2262,9 @@ async fn a_second_release_behind_a_full_backlog_is_never_lost() {
                 .filter(|line| !line.starts_with("input "))
                 .collect::<Vec<_>>()
         };
-        timeout(LIVENESS_DEADLINE, async {
+        // This waits for the full serial write backlog before the releases
+        // and takes. Rendering progress keeps its separate liveness bound.
+        timeout(DRAIN_DEADLINE, async {
             while takes().iter().filter(|line| line.starts_with("take ")).count() < 4 {
                 tokio::task::yield_now().await;
             }
