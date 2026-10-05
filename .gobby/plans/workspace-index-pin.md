@@ -11,7 +11,8 @@ Plan artifact: `.gobby/plans/workspace-index-pin.md`
 
 A default worktree or local clone forks the caller checkout's local HEAD, including
 unpushed commits, without fetching; a detached caller HEAD requires an explicit
-base. An explicit local branch selects its local tip;
+base, because the recorded base branch is the workspace's landing target and
+deletion-safety merge reference, and a detached HEAD names none. An explicit local branch selects its local tip;
 an explicit remote branch fetches and selects its latest tip. The selected commit is
 resolved before creating or refreshing a workspace. An existing branch may not
 silently substitute another commit. A reused agent worktree rebases its work onto
@@ -258,7 +259,13 @@ caller checkout's `HEAD^{commit}`, and records the attached branch name as the
 workspace base branch. An explicit ref, including `main`, is never replaced by the
 current branch. An omitted base on a detached HEAD returns a recoverable
 `detached_head_requires_base` error before any side effect; it never falls back to
-`main`, and it never records a SHA as the base branch. Bare explicit refs are
+`main`, and it never records a SHA as the base branch. The selected commit
+already fixes the fork point, so the refusal rests on the workspace lifecycle
+rather than on the public SHA-base check. Merge start defaults its target to the
+stored base branch, and deletion's merge check reads it, including the stale
+cleanup before reuse. A detached HEAD names no branch for either. Falling back to
+`main` would land the detached commits in `main`, and recording the SHA would
+leave no branch to land into or to prove a merge against. Bare explicit refs are
 local only; `origin/<name>` and `refs/remotes/origin/<name>` are explicit remote
 refs that fetch only that ref and record `<name>` as the base branch.
 `_lifecycle.create_worktree` and its `WorktreeGitManager` wrapper require the
@@ -544,7 +551,8 @@ used by all text and symbol lanes; projection reads are separately owned by B4.
 `implementation_domain: backend`
 
 Targets:
-- `crates/gcode/src/commands/vector.rs::*` — scope-reason: constrain semantic results to pinned symbol versions
+- `crates/gcode/src/commands/vector.rs::*` — scope-reason: constrain semantic results to pinned symbol versions and route `vector sync-file` for an unowned overlay path to its pin
+- `crates/gcode/src/commands/graph/lifecycle.rs::*` — scope-reason: route `graph sync-file` for an unowned overlay path to its pin before missing-file handling
 - `crates/gcode/src/commands/graph/reads.rs::*` — scope-reason: graph reads use the pinned effective graph
 - `crates/gcode/src/graph/code_graph/read/relationships.rs::*` — scope-reason: relationship queries filter source versions
 - `crates/gcode/src/projection/sync.rs::*` — scope-reason: route an unowned overlay path's graph and vector sync through its pin
@@ -554,6 +562,7 @@ Targets:
 - `crates/gcode/src/commands/search/scoped_fetch.rs`
 - `crates/gcode/src/projection/sync/tests.rs::*` — scope-reason: recovery tests use existing projection fixtures
 - `crates/gcode/src/cli/tests/projection.rs::*` — scope-reason: verify degraded and recovered search
+- `crates/gcode/tests/projection_stale.rs::*` — scope-reason: binary-level proof that both sync-file commands reach the pinned helper
 - `src/gobby/code_index/_storage/files.py::*` — scope-reason: enumerate pending pinned projection work per overlay project
 - `src/gobby/code_index/sync_worker.py::*` — scope-reason: the existing worker pass drives pinned recovery
 - `tests/code_index/test_sync_worker_pins.py`
@@ -587,9 +596,19 @@ the attempt is outside the existing failure cool-off. A new storage method in
 `_sync_pass` processes it after the project's own pending files through a
 separate pinned branch that calls the existing `GcodeGateway.graph_sync_file` and
 `vector_sync_file` with the child root and path, so `gcode_gateway.py` (950
-lines) is unchanged. On the Rust side, `sync_graph_file` and
-`VectorProjectionState::sync_file` hand an overlay path with no owned selector to
-the new `crates/gcode/src/projection/sync/pinned.rs`. It reads graph facts and
+lines) is unchanged. Those gateway methods run `gcode graph sync-file` and
+`gcode vector sync-file`, whose entry points never reach the batch helpers in
+`projection/sync.rs`: `sync_file_graph` in
+`crates/gcode/src/commands/graph/lifecycle.rs` and `sync_file` in
+`crates/gcode/src/commands/vector.rs` return a missing-indexed-file result as soon
+as the child has no owned row for the path (Adversary excerpts `080e92dd…` and
+`ef3ea5c5…`). Both entry points keep their existing per-file lock. When marking
+the attempt finds no child-owned row, each calls the new
+`crates/gcode/src/projection/sync/pinned.rs` before that missing-file handling. The
+helper returns nothing when the path has no live, unshadowed pin row, so an
+unpinned missing path keeps today's skipped or error result. The batch
+`sync_graph_file` and `VectorProjectionState::sync_file` in `projection/sync.rs`
+reuse the same helper, which adds no gateway API. The helper reads graph facts and
 symbols at the exact pinned source project, path, and content hash, through
 exact-version variants of `read_graph_file_facts` (`crates/gcode/src/db/queries.rs`)
 and `fetch_symbols_for_file`
@@ -613,7 +632,15 @@ projection state while text and BM25 search stay available. Planned check: Rust
 projection tests that move one ancestor path, verify immediate text reads,
 observe eventual graph and vector recovery under the child namespace without
 rebuilding unchanged paths, and discard stale completions; focused Python
-worker tests that a pin alone schedules recovery.
+worker tests that a pin alone schedules recovery; and binary-level tests that run
+both sync-file commands on a pinned overlay path. The vector run uses a fake
+daemon collaborator that serves the handshake, effective config, and Qdrant, the
+same pattern as the existing concurrent vector grant test, and proves full
+recovery. CI has no FalkorDB lane (retired in #21045), so the graph run stops at
+the backend boundary. It proves that the pinned helper ran, that the pin's graph
+attempt was recorded and its flag stayed unset, and that the source facts row is
+untouched. The graph write itself is the unchanged `code_graph::sync_file_graph`
+call, and the helper-level tests cover selection and fencing.
 
 **Granularity:** Projection reconciliation has one background lifecycle and two
 projection backends; shared recovery state keeps their failure handling coherent.
@@ -627,6 +654,7 @@ scheduled lifecycle; either alone ships work nothing performs.
 - B4.3 - PostgreSQL/BM25 remain usable while projections recover and search reports degraded state. test: `crates/gcode/src/cli/tests/projection.rs::text_search_survives_projection_recovery`.
 - B4.4 - A completion for a re-pinned, shadowed, or purged pin is discarded and its projected rows are never admitted by reads. test: `crates/gcode/src/projection/sync/tests.rs::stale_pinned_completion_is_discarded`.
 - B4.5 - The daemon worker schedules pinned recovery from pin rows alone, skips shadowed paths, and leaves the source facts row's sync flags untouched. test: `tests/code_index/test_sync_worker_pins.py::test_worker_schedules_pinned_recovery`.
+- B4.6 - Under their existing file locks, `gcode vector sync-file` and `gcode graph sync-file` with `--allow-missing-indexed-file` reach the pinned helper for an unowned pinned overlay path. Vector recovers the pinned version into the child namespace and sets the pin's vector flag. Graph records the pin's graph attempt. Neither touches the source facts row, and an unpinned missing path still returns the skipped-missing-indexed-file payload. test: `crates/gcode/tests/projection_stale.rs::pinned_sync_file_routes_through_cli`.
 
 ### B5 Pin-aware retention and overlay purge (depends: B3)
 `kind: deliverable`
@@ -727,7 +755,7 @@ one candidate set; separating them would allow an incomplete index pass.
 - C1.3 - Candidate import resolution retains unchanged providers. test: `crates/gcode/src/index/indexer/tests/facts.rs::candidate_imports_keep_unchanged_providers`.
 - C1.4 - Without full discovery, a reverted dirty file, a deleted owned untracked file, and a reappearing tombstoned path each stop shadowing the pin. test: `crates/gcode/src/index/indexer/tests/overlay.rs::owned_rows_leave_divergence_without_discovery`.
 
-### C2 Pre-Leiden community input signature
+### C2 Pre-Leiden community input signature (depends: T1)
 `kind: deliverable`
 `category: code`
 `implementation_domain: backend`
@@ -851,6 +879,17 @@ C2's signature and on the pinned read and retention paths it measures.
   semantic pin failures (cold pin) from storage failures (recoverable error,
   B2.7). C2 is split: C2 reuses `partition_signature` for a versioned pre-Leiden
   input signature, and C3 carries the phase rename, guides, and benchmark.
+- 2026-10-05: Adversary recheck of `b1c1db10ef` (Adversary gobby#15401, Writer
+  gobby#15400). PIN-A1, PIN-A3, PIN-A5, PIN-A6 and the B2 and C2 clarifications
+  are resolved. PIN-A2 follow-through: the worker's gateway runs the `graph
+  sync-file` and `vector sync-file` CLI entry points, which bypassed the batch
+  helpers, so both now call the pinned helper under their existing file locks
+  before missing-file handling, B4 targets `commands/graph/lifecycle.rs`, and B4.6
+  proves the route through the binary. PIN-A7: C2 depends on T1, so the timing
+  baseline still lands first after the C2/C3 split. PIN-A4 follow-through: R1 and
+  A1 state the lifecycle reason for the detached-HEAD refusal. The stored base
+  branch is merge start's default target and the deletion merge reference. The
+  Orchestrator rules on that product exception.
 
 ## V2: Verification
 `kind: verification`
