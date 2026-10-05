@@ -256,14 +256,15 @@ the operator keeps a loopback way in when verification is wedged.
 
 Targets:
 - `src/gobby/utils/break_glass.py`
+- `src/gobby/utils/local_token.py::*` — scope-reason: adds `bind_daemon_bootstrap` and `daemon_bootstrap_path`
 - `src/gobby/servers/auth_service.py::*` — scope-reason: `AuthService.__init__` gains `break_glass_file`, and `_legacy_rejection` and `_accepted_bearer` admit the break-glass header before any database read
-- `src/gobby/runner.py::*` — scope-reason: only `run_gobby` changes; it creates the credential before the front door starts, and its signature is unchanged
+- `src/gobby/runner.py::*` — scope-reason: only `run_gobby` changes; it binds the startup bootstrap and creates the credential before the front door starts, and its signature is unchanged
 - `src/gobby/agents/sandbox_policy.py::*` — scope-reason: `_credential_roots` and `_gcode_runtime_root` move to `sandbox_credentials.py` (split below), and `sensitive_roots` and `sensitive_write_roots` call them there
 - `src/gobby/agents/sandbox_credentials.py`
 - `tests/utils/test_break_glass.py`
 - `tests/servers/test_break_glass.py`
 - `tests/agents/test_sandbox_policy.py::*` — scope-reason: the credential-root case asserts that the break-glass file is denied for reads and writes
-- `tests/test_runner_front_door.py::*` — scope-reason: gains the case proving `run_gobby` creates the credential before the front door starts
+- `tests/test_runner_front_door.py::*` — scope-reason: gains the case proving `run_gobby` creates the credential before the front door starts, including with `--config` outside `GOBBY_HOME`
 - `docs/guides/admin-operations.md`
 - `docs/contracts/secrets.md`
 
@@ -291,6 +292,14 @@ Targets:
   `tests/test_runner_lifecycle.py`, `tests/test_runner_pid_file.py`, and
   `tests/test_runner_front_door.py`. None changes, because the signature is
   unchanged.
+- Credential location. Startup key provisioning writes
+  `resolve_bootstrap_path(runner._config_file)`
+  (`src/gobby/runner_init/storage.py`), and the front door's home is that
+  file's directory. Every in-daemon reader, including `AuthService`
+  (`AuthService(lambda: self.services.database)` in `src/gobby/servers/http.py`),
+  defaults to `get_gobby_home()`. So with `--config` outside `GOBBY_HOME` the
+  two diverge. The precedent for process-wide daemon state is
+  `src/gobby/daemon_lease.py::current_lease`, which `code_index.py` reads.
 - Peer address: `runner_lifecycle.py` runs uvicorn with `proxy_headers=True` and
   `forwarded_allow_ips="127.0.0.1,::1"`. gdaemon's
   `crates/gdaemon/src/front_door/mod.rs::observe_peer` strips client
@@ -312,11 +321,17 @@ Targets:
   edited.
 
 **Implementation:**
+- `utils/local_token.py` gains the daemon's credential location, following
+  `current_lease`: `bind_daemon_bootstrap(path: Path) -> None` records the
+  startup bootstrap for this process, and `daemon_bootstrap_path() -> Path`
+  returns it, or `bootstrap_path()` when nothing is bound. Only `run_gobby`
+  binds, so client processes keep `bootstrap_path()`. Every in-daemon
+  credential reader in this plan resolves through `daemon_bootstrap_path()`.
 - New `src/gobby/utils/break_glass.py`:
   - `BREAK_GLASS_FILENAME = "break_glass"` and
     `BREAK_GLASS_HEADER = "X-Gobby-Break-Glass"`.
   - `break_glass_path(gobby_home: Path | None = None) -> Path` returns
-    `(gobby_home or get_gobby_home()) / BREAK_GLASS_FILENAME`.
+    `(gobby_home or daemon_bootstrap_path().parent) / BREAK_GLASS_FILENAME`.
   - `ensure_break_glass_credential(gobby_home: Path) -> None` creates the file
     with `os.open(path, O_WRONLY | O_CREAT | O_EXCL, 0o600)` and writes
     `secrets.token_urlsafe(32)` when it is absent. An existing file is never
@@ -325,14 +340,17 @@ Targets:
     the file is missing, unreadable, empty, has any `0o077` mode bit, or is not
     owned by `os.getuid()`. Otherwise it compares with `secrets.compare_digest`.
     It logs neither value.
-- `run_gobby` calls
-  `await asyncio.to_thread(ensure_break_glass_credential, <the same gobby-home expression FrontDoorChild uses>)`
-  immediately before `FrontDoorChild.from_bootstrap`. A failure is logged as a
+- `run_gobby` first calls
+  `bind_daemon_bootstrap(resolve_bootstrap_path(str(config_path) if config_path is not None else None))`.
+  That file's directory is the home `FrontDoorChild.from_bootstrap` receives.
+  Immediately before `FrontDoorChild.from_bootstrap` it calls
+  `await asyncio.to_thread(ensure_break_glass_credential, daemon_bootstrap_path().parent)`.
+  A failure is logged as a
   warning naming the path and does not stop startup: break-glass is a recovery
   aid and must not become a new way to wedge the daemon.
-- `AuthService.__init__` gains `break_glass_file: Path | None = None`, defaulting
-  to `break_glass_path()`. That is the same `get_gobby_home()` arrangement the
-  token file uses today. A private `_break_glass_admits(request)` returns true
+- `AuthService.__init__` gains `break_glass_file: Path | None = None`. When it
+  is `None`, each check resolves `break_glass_path()`, so the daemon reads the
+  file `run_gobby` created, wherever `--config` points. A private `_break_glass_admits(request)` returns true
   only when `request.client` is not `None`, `is_loopback_host(request.client.host)`
   holds, the header is present, and `break_glass_matches` holds. It is the first
   check in `_legacy_rejection` (returns `None`, admitted) and in
@@ -363,8 +381,7 @@ then `uv run ruff check` and `uv run mypy` on the touched modules.
 - 1.1.1 - `ensure_break_glass_credential` creates a mode-0600 file when it is absent and leaves an existing file byte-identical, and `break_glass_matches` refuses a file with any group or other mode bit, a file owned by another uid, and a wrong value. test: `tests/utils/test_break_glass.py::test_credential_is_owner_only_and_never_rewritten`.
 - 1.1.2 - With the database getter raising, a loopback request carrying the break-glass header is admitted to a non-grant route, while a non-loopback peer with the header and a loopback peer with a wrong or missing header get 401. The database getter is never called on the admitted path. test: `tests/servers/test_break_glass.py::test_break_glass_admits_only_loopback_holder_without_database`.
 - 1.1.3 - On a grant route, the break-glass header yields the operator bearer principal and the request is still refused without a grant. test: `tests/servers/test_break_glass.py::test_break_glass_still_requires_grant_on_grant_routes`.
-- 1.1.4 - `run_gobby` creates the credential in the gobby home before it starts the front door, and a creation failure does not stop startup. test: `tests/test_runner_front_door.py::test_run_gobby_creates_break_glass_before_front_door`.
-- 1.1.5 - Managed sandboxes may neither read nor write the break-glass file. test: `tests/agents/test_sandbox_policy.py::test_break_glass_file_is_a_credential_root`.
+- 1.1.4 - `run_gobby` creates the credential before it starts the front door, in the startup bootstrap's directory even when `--config` lies outside a different `GOBBY_HOME`, and an `AuthService` built with defaults in that process admits that file's value. A creation failure does not stop startup. test: `tests/test_runner_front_door.py::test_run_gobby_creates_break_glass_before_front_door`.- 1.1.5 - Managed sandboxes may neither read nor write the break-glass file. test: `tests/agents/test_sandbox_policy.py::test_break_glass_file_is_a_credential_root`.
 - 1.1.6 - The admin guide documents break-glass access. behavior: "Break-glass access" in `docs/guides/admin-operations.md`.
 
 ### 1.2 Managed capability tokens sign with a key derived from the bootstrap API key [category: code] (depends: 1.1)
@@ -465,15 +482,18 @@ call-site swaps.
   - `derive_managed_signing_key(api_key: str) -> bytes` returns
     `hmac.new(api_key.encode(), MANAGED_TOKEN_KEY_LABEL, hashlib.sha256).digest()`.
   - `read_managed_signing_key(bootstrap: Path | None = None) -> bytes | None`
-    reads `api_key` from the bootstrap and derives the key. It returns `None`
+    reads `api_key` from `bootstrap` or `daemon_bootstrap_path()` (1.1) and
+    derives the key. It returns `None`
     when the file is unreadable or carries no non-empty string `api_key`.
   - `_issue_managed_api_token` and the issuers sign with
     `hmac.new(signing_key, signed.encode(), hashlib.sha256)`. Verification uses
     the same key with `hmac.compare_digest`.
   - `classify_agent_api_token(token, signing_key: bytes | None)` returns
     `signing_key_unavailable` when the key is `None`.
-- `AuthService.__init__` gains `bootstrap_file: Path | None = None`, defaulting
-  to `bootstrap_path()`. `managed_signing_key() -> bytes | None` stats the file
+- `AuthService.__init__` gains `bootstrap_file: Path | None = None`; `None`
+  resolves `daemon_bootstrap_path()` on each call, so verification and the
+  in-process signers read the same startup bootstrap.
+  `managed_signing_key() -> bytes | None` stats the file
   on every call and re-reads and re-derives only when
   `(st_ino, st_mtime_ns, st_size)` changes, so a rotated key applies on the
   next request. It never depends on `refresh()`, which 1.3 deletes.
@@ -505,6 +525,7 @@ then `uv run ruff check` and `uv run mypy` on the touched modules.
 - 1.2.3 - After the bootstrap `api_key` is replaced by rename, the next request with a capability signed under the old key is rejected and one signed under the new key is accepted, with no refresh interval in between. test: `tests/servers/test_auth_service.py::test_rotated_bootstrap_key_invalidates_managed_tokens`.
 - 1.2.4 - The managed challenge proof uses the derived key and the interactive proof is unchanged. test: `tests/servers/routes/test_runtime_handshake.py::test_managed_challenge_uses_derived_signing_key`.
 - 1.2.5 - With no bootstrap `api_key`, issuance fails closed with `signing_key_unavailable` and every presented capability is rejected. test: `tests/utils/test_local_token.py::test_missing_bootstrap_key_refuses_issuance_and_verification`.
+- 1.2.6 - With the daemon bootstrap bound outside a different `GOBBY_HOME` whose own bootstrap carries another key, a capability from `read_managed_signing_key()` verifies in an `AuthService` built with defaults, and one signed with the `GOBBY_HOME` key is rejected. test: `tests/servers/test_auth_service.py::test_managed_signing_uses_the_daemon_bootstrap`.
 
 ### 1.3 Shared-token cutover: gdaemon validates keys and Python trusts only the front door [category: code] (depends: 1.1, 1.2)
 `kind: deliverable`
@@ -812,7 +833,8 @@ examples are 1.5; the CLI is 1.4.
   explicit key file with no default. gcode's 401 remediation and ghook's
   `AUTH_401_REMEDIATION` name `gobby auth login`. ghook's diagnose field
   becomes `api_key_present` in both schema copies, with no schema bump. Python
-  `read_local_api_token` keeps its name and reads the bootstrap `api_key`;
+  `read_local_api_token` keeps its name and reads `api_key` from
+  `daemon_bootstrap_path()` (1.1);
   `local_token_path` is removed with its consumers. `frame_client.py` and
   `_frame_token` call `read_local_api_token()`. gterm reads the key on every
   frames hello, `HostState` drops its cached token, and gterm gains the
