@@ -308,6 +308,26 @@ pub struct ProjectIdentity {
 }
 
 impl Context {
+    /// Validate a new active project scope against the managed database binding.
+    pub(crate) fn validate_project_scope(
+        &self,
+        project_id: &str,
+        project_root: &Path,
+    ) -> anyhow::Result<()> {
+        if let Some(runtime) = &self.grant_ai
+            && runtime.bundle.principal.kind.is_managed()
+        {
+            let mut conn = db::connect_readonly(&self.database_url)?;
+            super::managed_scope::validate(
+                &mut conn,
+                &runtime.bundle.principal,
+                project_id,
+                project_root,
+            )?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn runtime_config_capture_degraded(&self) -> bool {
         self.runtime_config_capture_degraded
     }
@@ -405,11 +425,33 @@ impl Context {
         services: ServiceConfigSelection,
     ) -> anyhow::Result<Self> {
         let project_id = normalize_project_id(project_id)?;
-        let acquired = grant::acquire_with(&grant::AcquireRequest::from_process_for_project_id(
-            &project_id,
-        ))
-        .map_err(CliError::grant)?;
+        let request = grant::AcquireRequest::from_process_for_project_id(&project_id);
+        // A managed grant belongs to the caller's parent project. The requested
+        // code-index ID may be an overlay and is validated against the DB binding
+        // after acquisition rather than presented as the grant's parent identity.
+        let managed_root = if request.managed_bootstrap.is_some()
+            || request.managed_envelope.is_some()
+            || request.expected_execution_id.is_some()
+        {
+            Some(detect_project_root()?)
+        } else {
+            None
+        };
+        let request = managed_root
+            .as_deref()
+            .map(grant::AcquireRequest::from_process)
+            .unwrap_or(request);
+        let acquired = grant::acquire_with(&request).map_err(CliError::grant)?;
         let database_url = db::database_url_from_acquired(&acquired)?;
+        if acquired.bundle.principal.kind.is_managed() {
+            let mut conn = db::connect_readonly(&database_url)?;
+            super::managed_scope::validate(
+                &mut conn,
+                &acquired.bundle.principal,
+                &project_id,
+                Path::new(""),
+            )?;
+        }
         let falkordb = services
             .falkordb
             .then(|| db::falkor_from_grant(&acquired.bundle))

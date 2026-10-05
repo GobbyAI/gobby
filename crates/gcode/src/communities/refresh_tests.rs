@@ -92,7 +92,8 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
     grant.principal.kind = gobby_core::grant::PrincipalKind::ToolChat;
     grant.principal.execution_id = Some(managed.execution_id.to_string());
     grant.principal.session_id = Some(managed.session_id.to_string());
-    grant.principal.code_overlay_project_id = Some(admitted_id.clone());
+    // Production managed bundles omit overlays; only the DB binding carries it.
+    assert!(grant.principal.code_overlay_project_id.is_none());
     let grant = grant.with_checksum();
     let bootstrap = write_managed_bootstrap(&home, &grant).expect("write fixture grant");
     // Keep a temporary local endpoint bound but non-serving so grant acquisition
@@ -194,9 +195,51 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
                 typed
                     .recovery
                     .as_deref()
-                    .is_some_and(|text| text.contains("lane manager"))
+                    .is_some_and(|text| text.contains("grant issued for the requested workspace"))
             );
             assert!(!typed.message.contains("serving existing index"));
+            let index_error = crate::commands::index::run(
+                &ctx,
+                &admitted_root,
+                Some(foreign_root.to_str().expect("foreign root").to_string()),
+                None,
+                false,
+                false,
+                false,
+                false,
+                crate::output::Format::Json,
+            )
+            .expect_err("index positional foreign path is denied");
+            assert_eq!(
+                index_error
+                    .downcast_ref::<crate::cli_error::CliError>()
+                    .expect("typed index denial")
+                    .code,
+                "code_overlay_mismatch"
+            );
+            let original_cwd = std::env::current_dir().expect("original working directory");
+            std::env::set_current_dir(&admitted_root).expect("managed caller working directory");
+            let id_result = Context::resolve_for_project_id_with_services(
+                &foreign_id,
+                true,
+                ServiceConfigSelection::database_only(),
+            );
+            let admitted_id_result = Context::resolve_for_project_id_with_services(
+                &admitted_id,
+                true,
+                ServiceConfigSelection::database_only(),
+            );
+            std::env::set_current_dir(original_cwd).expect("restore working directory");
+            admitted_id_result.expect("project-ID commands admit own overlay");
+            let id_error = id_result.expect_err("project-ID commands deny foreign scope");
+            assert_eq!(
+                id_error
+                    .downcast_ref::<crate::cli_error::CliError>()
+                    .expect("typed project-ID denial")
+                    .code,
+                "code_overlay_mismatch",
+                "{id_error:#}"
+            );
             let foreign_count: i64 = owner
                 .query_one(
                     "SELECT count(*) FROM code_indexed_projects WHERE id = $1",
