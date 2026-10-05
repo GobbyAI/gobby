@@ -2518,6 +2518,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libc",
+ "num-bigint",
  "rand 0.8.6",
  "rcgen",
  "serde",

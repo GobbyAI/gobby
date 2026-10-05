@@ -87,7 +87,7 @@ fn exclusive_roles_preserve_winner_and_release_is_idempotent() -> anyhow::Result
     winner.release();
     assert_eq!(probe_daemon_lock(&path)?, ProbeState::Absent);
     let daemon = claim_pid_file(&path, Role::Daemon)?.expect("daemon after maintenance");
-    assert_eq!(daemon.generation, 2);
+    assert_eq!(daemon.generation.as_i64(), Some(2));
     assert_eq!(fs::read_to_string(&path)?, std::process::id().to_string());
     assert_eq!(probe_daemon_lock(&path)?, ProbeState::Daemon);
     drop(daemon);
@@ -195,7 +195,7 @@ fn nonce_conversion_is_one_shot_and_preserves_mismatches() -> anyhow::Result<()>
     assert!(convert_or_acquire_service_claim(&path, Some(&reserved.nonce_path)).is_err());
     fs::set_permissions(&reserved.nonce_path, fs::Permissions::from_mode(0o600))?;
     let claim = convert_or_acquire_service_claim(&path, Some(&reserved.nonce_path))?;
-    assert_eq!(claim.generation, 2);
+    assert_eq!(claim.generation.as_i64(), Some(2));
     assert!(!reserved.nonce_path.exists());
     assert_eq!(
         record(&path)?["ack"],
@@ -260,7 +260,7 @@ fn held_claim_converts_without_an_exclusion_gap() -> anyhow::Result<()> {
     assert_eq!(probe_daemon_lock(&path)?, ProbeState::LiveReservation);
     assert!(claim_pid_file(&path, Role::Maintenance)?.is_none());
     let converted = convert_or_acquire_service_claim(&path, Some(&reserved.nonce_path))?;
-    assert_eq!(converted.generation, 3);
+    assert_eq!(converted.generation.as_i64(), Some(3));
     Ok(())
 }
 
@@ -300,6 +300,10 @@ fn generation_coercions_match_python_int() -> anyhow::Result<()> {
         (json!(3.0), 4),
         (json!(true), 2),
         (json!(" 5 "), 6),
+        (json!(" +1_000 "), 1001),
+        (json!("1__2"), 1),
+        (json!("3_"), 1),
+        (json!("+_1"), 1),
         (json!(-2), -1),
         (json!([3]), 1),
     ] {
@@ -312,9 +316,101 @@ fn generation_coercions_match_python_int() -> anyhow::Result<()> {
             encode_record(&previous_record)?,
         )?;
         let claim = claim_pid_file(&path, Role::Maintenance)?.expect("claim");
-        assert_eq!(claim.generation, expected);
+        assert_eq!(claim.generation.as_i64(), Some(expected));
         assert_eq!(record(&path)?["generation"], expected);
     }
+    Ok(())
+}
+
+#[test]
+fn unbounded_generations_interoperate_with_python() -> anyhow::Result<()> {
+    let dir = TempDir::new()?;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let prepare = r#"import json, sys
+from pathlib import Path
+from gobby.runner_pid_record import encode_record, decode_record
+from gobby.runner_pid_file import reserve_service_start
+generations = [2**63-1, 2**63, 2**64-1, 2**64, -(2**63)-1,
+               10**100, -(10**100), str(10**100), str(-(10**100)), 1e100, -1e100]
+cases = []
+for mode in ('claim', 'reserve', 'convert', 'held'):
+    for i, generation in enumerate(generations):
+        p = Path(sys.argv[1]) / f'{mode}-{i}.pid'
+        lock = p.with_name(p.name + '.lock')
+        if mode == 'convert':
+            reserve_service_start(p, backend='launchd')
+            record = decode_record(lock.read_bytes())
+            assert record is not None
+        else:
+            record = {'version': 1, 'state': 'role', 'role': 'maintenance',
+                      'pid': 99999999, 'boot_id': 'previous', 'reservation': None, 'ack': None}
+        record['generation'] = generation
+        lock.write_bytes(encode_record(record))
+        cases.append({'path': str(p), 'mode': mode,
+                      'expected': int(generation) + (2 if mode == 'held' else 1)})
+print(json.dumps(cases))
+"#;
+    let output = Command::new("uv")
+        .args(["run", "python", "-c", prepare])
+        .arg(dir.path())
+        .current_dir(&root)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let cases: Vec<Value> = serde_json::from_slice(&output.stdout)?;
+    for case in &cases {
+        let path = Path::new(case["path"].as_str().expect("path"));
+        // Decoding must preserve Python's checksum before any acquisition.
+        let prior = record(path)?;
+        match case["mode"].as_str().expect("mode") {
+            "claim" => {
+                drop(claim_pid_file(path, Role::Maintenance)?.expect("claim"));
+            }
+            "reserve" => {
+                reserve_service_start(path, "launchd")?;
+            }
+            "convert" => {
+                let nonce = Path::new(
+                    prior["reservation"]["nonce_path"]
+                        .as_str()
+                        .expect("nonce path"),
+                );
+                drop(convert_or_acquire_service_claim(path, Some(nonce))?);
+                assert!(!nonce.exists());
+            }
+            "held" => {
+                let mut claim = claim_pid_file(path, Role::Maintenance)?.expect("claim");
+                claim.into_service_reservation("launchd")?;
+                assert!(claim.fileno().is_none());
+            }
+            _ => panic!("unexpected mode"),
+        }
+        assert_eq!(record(path)?["generation"], case["expected"], "{case}");
+    }
+    let verify = r#"import json, sys
+from pathlib import Path
+from gobby.runner_pid_record import decode_record, encode_record
+for case in json.loads(sys.argv[1]):
+    p = Path(case['path'])
+    raw = p.with_name(p.name + '.lock').read_bytes()
+    record = decode_record(raw)
+    assert record is not None, case
+    assert record['generation'] == case['expected'], (case, record)
+    assert encode_record(record) == raw, case
+"#;
+    let output = Command::new("uv")
+        .args(["run", "python", "-c", verify])
+        .arg(serde_json::to_string(&cases)?)
+        .current_dir(root)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     Ok(())
 }
 

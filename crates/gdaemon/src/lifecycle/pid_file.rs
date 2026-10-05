@@ -13,8 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use num_bigint::BigInt;
 use rand::{RngCore, rngs::OsRng};
-use serde_json::{Value, json};
+use serde_json::{Number, Value, json};
 use sha2::{Digest, Sha256};
 
 pub const SERVICE_LAUNCH_ENV: &str = "GOBBY_SERVICE_LAUNCH";
@@ -60,7 +61,7 @@ pub struct PidFileClaim {
     file: Option<File>,
     pid_file: PathBuf,
     pub role: Role,
-    pub generation: i64,
+    pub generation: Number,
 }
 
 impl PidFileClaim {
@@ -85,7 +86,7 @@ impl PidFileClaim {
         if reservation_is_live(reservation(&record), now(), current_boot_id()) {
             return Err(invalid("a service start reservation is already live"));
         }
-        let view = mint_reservation(file, &self.pid_file, backend, next_generation(&record)?)?;
+        let view = mint_reservation(file, &self.pid_file, backend, &next_generation(&record)?)?;
         self.release();
         Ok(view)
     }
@@ -228,30 +229,47 @@ fn acquire_record<T>(
     }
 }
 
-fn next_generation(record: &Option<Value>) -> io::Result<i64> {
+fn next_generation(record: &Option<Value>) -> io::Result<Number> {
     let generation = record.as_ref().and_then(|r| r.get("generation"));
     let generation = generation
         .and_then(|value| match value {
-            Value::Bool(value) => Some(i64::from(*value)),
-            Value::String(value) => value.trim().parse().ok(),
-            _ => value.as_i64().or_else(|| {
+            Value::Bool(value) => Some(BigInt::from(*value)),
+            Value::String(value) => {
+                let value = value.trim();
+                let digits = value
+                    .strip_prefix('+')
+                    .or_else(|| value.strip_prefix('-'))
+                    .unwrap_or(value);
+                // BigInt accepts repeated/trailing separators that Python int
+                // rejects. Permit underscores only between digit groups.
+                digits
+                    .split('_')
+                    .all(|group| !group.is_empty() && group.bytes().all(|b| b.is_ascii_digit()))
+                    .then(|| value.parse().ok())?
+            }
+            Value::Number(value) => value.to_string().parse::<BigInt>().ok().or_else(|| {
                 let number = value.as_f64()?;
-                (number.is_finite() && number >= i64::MIN as f64 && number < -(i64::MIN as f64))
-                    .then_some(number.trunc() as i64)
+                number
+                    .is_finite()
+                    .then(|| format!("{:.0}", number.trunc()).parse().ok())?
             }),
+            _ => None,
         })
-        .unwrap_or(0);
-    generation
-        .checked_add(1)
-        .ok_or_else(|| invalid("generation overflow"))
+        .unwrap_or_default();
+    // Python's int and increment have no machine-word bound. Keep the wire
+    // integer exact through decoding, arithmetic and canonical checksumming.
+    (generation + BigInt::from(1))
+        .to_string()
+        .parse()
+        .map_err(io::Error::other)
 }
 
-fn role_record(role: &str, generation: i64, ack: Value) -> Value {
+fn role_record(role: &str, generation: &Number, ack: Value) -> Value {
     json!({"version":1,"state":role,"role":role,"pid":std::process::id(),
         "boot_id":current_boot_id(),"generation":generation,"reservation":null,"ack":ack})
 }
 
-fn write_role(file: &mut File, role: Role, generation: i64, ack: Value) -> io::Result<()> {
+fn write_role(file: &mut File, role: Role, generation: &Number, ack: Value) -> io::Result<()> {
     write_record(file, &role_record("transitioning", generation, Value::Null))?;
     write_record(file, &role_record(role.name(), generation, ack))
 }
@@ -355,7 +373,7 @@ pub fn claim_pid_file(pid_file: &Path, role: Role) -> io::Result<Option<PidFileC
     }
     let generation = next_generation(&record)?;
     acquire_record(&mut file, |file| {
-        write_role(file, role, generation, Value::Null)?;
+        write_role(file, role, &generation, Value::Null)?;
         if role == Role::Daemon {
             write_pid(pid_file)?;
         }
@@ -454,7 +472,7 @@ fn mint_reservation(
     file: &mut File,
     pid_file: &Path,
     backend: &str,
-    generation: i64,
+    generation: &Number,
 ) -> io::Result<ServiceReservation> {
     let mut bytes = [0_u8; 16];
     OsRng.try_fill_bytes(&mut bytes).map_err(io::Error::other)?;
@@ -497,7 +515,7 @@ pub fn reserve_service_start(pid_file: &Path, backend: &str) -> io::Result<Servi
         return Err(invalid("a live process still owns the pid file"));
     }
     acquire_record(&mut file, |file| {
-        mint_reservation(file, pid_file, backend, next_generation(&record)?)
+        mint_reservation(file, pid_file, backend, &next_generation(&record)?)
     })
 }
 
@@ -534,7 +552,7 @@ pub fn convert_or_acquire_service_claim(
     };
     let generation = next_generation(&record)?;
     acquire_record(&mut file, |file| {
-        write_role(file, Role::Daemon, generation, ack)?;
+        write_role(file, Role::Daemon, &generation, ack)?;
         write_pid(pid_file)?;
         Ok(())
     })?;
