@@ -937,6 +937,11 @@ and a read-through against the shipped tool schemas.
   unknown`. 1.3.5 and 1.4.7 cover the race. A merge landing cannot hit it:
   a forward move that stays an ancestor of the generated merge would make
   the candidate a fast-forward.
+- 2026-10-05 13:06 CT: Writer gobby#15429 and Adversary gobby#15414 reached
+  consensus on 3b57838146f8b1ab903b177aeb8a4b19a9465aaf (blob 28f4f39627,
+  base validation exit 0). F-M3-descendant-ref, F-M3-replay-provenance,
+  F-M3-linked-source and N-M3-primary-duty are resolved; no findings remain.
+  The Adversary derives M1 next. Josh approves before expansion.
 
 ## V2: Verification
 `kind: verification`
