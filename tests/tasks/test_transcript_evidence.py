@@ -55,6 +55,8 @@ from gobby.tasks.transcript_evidence_snapshots import load_durable_snapshot
 from gobby.tasks.transcript_evidence_transfer import CHUNK_RECORDS, ChunkedPayload, decode, encode
 from gobby.tasks.transcript_outcomes import EvidenceOutcome
 from gobby.tasks.transcript_outcomes import extract_output as _extract_output
+from gobby.workflows.found_work_gate import unresolved_validation_failures
+from gobby.workflows.validation_cover import cargo_package_selection_failed
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
 
@@ -1340,6 +1342,63 @@ async def test_failed_rust_test_run_does_not_overturn_passing_python_lint(tmp_pa
         (lint, "success", ("lint", "type_check")),
         (nextest, "failure", ("test",)),
     ]
+
+
+_NEXTEST_PACKAGE_ERROR = (
+    "Exit code 101\n"
+    "error: package ID specification `gterminal` did not match any packages\n\n"
+    "help: a package with a similar name exists: `termina`\n"
+    "error: command `/Users/josh/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo test "
+    "--no-run --message-format json-render-diagnostics --package gterminal --test build_env` "
+    "exited with code 101"
+)
+_NEXTEST_TEST_FAILURE = (
+    "Exit code 100\n"
+    "        FAIL [   0.012s] gterminal::build_env resolves_pinned_zig\n"
+    "     Summary [   0.050s] 3 tests run: 2 passed, 1 failed, 0 skipped\n"
+    "error: test run failed"
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "exit_code", "selection_error"),
+    [
+        pytest.param(_NEXTEST_PACKAGE_ERROR, 101, True, id="package-spec-error"),
+        pytest.param(_NEXTEST_TEST_FAILURE, 100, False, id="test-failure"),
+    ],
+)
+async def test_claude_bash_error_header_reaches_the_stop_gate(
+    tmp_path: Path, content: str, exit_code: int, selection_error: bool
+) -> None:
+    """Records shaped like gobby#15391's: Claude's status is only the error text (#23529)."""
+    transcript = tmp_path / "claude.jsonl"
+    command = "cargo nextest run -p gterminal --test build_env"
+    records = _claude_tool_pair(
+        command=command,
+        call_id="toolu_01MLWZy9sxBbRtUWydVodEFF",
+        start=BASE_TIME,
+        result=content,
+        is_error=True,
+    )
+    records[1]["toolUseResult"] = f"Error: {content}"
+    _write_jsonl(transcript, records)
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    [run] = evidence.validation_runs
+    assert (run.command, run.outcome, run.exit_code) == (command, "failure", exit_code)
+    assert cargo_package_selection_failed(run) is selection_error
+    unresolved = unresolved_validation_failures(
+        evidence.validation_runs, owner_handoff=False, project_path=str(tmp_path)
+    )
+    assert unresolved == (() if selection_error else (run,))
 
 
 _CLAUDE_USER_REJECTED = (

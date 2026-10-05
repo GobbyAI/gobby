@@ -11,7 +11,7 @@ from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 
-from gobby.tasks.command_equivalence import target_covers
+from gobby.tasks.command_equivalence import canonical_command, target_covers
 from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationRun,
     TranscriptValidationSegment,
@@ -48,6 +48,78 @@ _COLLECTED_RE = re.compile(
 )
 _ERROR_LINE_RE = re.compile(r"^\s*ERROR\b.*$", re.MULTILINE)
 _MISSING_PATH_RE = re.compile(r"ERROR: file or directory not found: (\S+)")
+_CARGO_MISSING_PACKAGE_RE = re.compile(
+    r"error: package ID specification `([^`]+)` did not match any packages"
+)
+_CARGO_NEXTEST_WRAPPER_RE = re.compile(r"error: command `([^`]+)` exited with code 101")
+_CARGO_EXECUTION_RE = re.compile(
+    r"^\s*(?:Compiling|Checking|Finished|Running)\b|\brunning \d+ tests?\b|test result:"
+    r"|^\s*(?:PASS|FAIL|Summary)\b",
+    re.MULTILINE,
+)
+
+
+def cargo_package_selection_failed(failure: TranscriptValidationRun) -> bool:
+    """Recognize a Cargo package-selection error that never compiled or ran tests.
+
+    Recorded output can include provider metadata and nextest's Cargo subprocess
+    diagnostic. Require a complete missing-package diagnostic, reject execution
+    markers and other errors, and verify any nextest wrapper selected that package.
+    """
+    if (
+        failure.exit_code != 101
+        or failure.output_truncated
+        or not failure.output
+        or failure.wrapped
+        or "test" not in failure.categories
+    ):
+        return False
+    command = canonical_command(failure.command)
+    if command is None:
+        return False
+    tokens = shlex.split(command)
+    if "&&" in tokens:
+        return False
+    if tokens[:2] == ["uv", "run"]:
+        tokens = tokens[2:]
+    if tokens[:2] != ["cargo", "test"] and tokens[:3] != ["cargo", "nextest", "run"]:
+        return False
+    args = tokens[: tokens.index("--")] if "--" in tokens else tokens
+    packages = {args[index + 1] for index, token in enumerate(args[:-1]) if token == "--package"}
+    lines = [line.strip() for line in failure.output.splitlines() if line.strip()]
+    matches = [match for line in lines if (match := _CARGO_MISSING_PACKAGE_RE.fullmatch(line))]
+    if (
+        len(matches) != 1
+        or matches[0].group(1) not in packages
+        or _CARGO_EXECUTION_RE.search(failure.output)
+        or _COLLECTED_RE.search(failure.output)
+    ):
+        return False
+    package = matches[0].group(1)
+    for line in lines:
+        if not line.startswith("error:") or _CARGO_MISSING_PACKAGE_RE.fullmatch(line):
+            continue
+        wrapper = _CARGO_NEXTEST_WRAPPER_RE.fullmatch(line)
+        if tokens[:3] != ["cargo", "nextest", "run"] or wrapper is None:
+            return False
+        wrapper_command = canonical_command(wrapper.group(1))
+        if wrapper_command is None:
+            return False
+        wrapped = shlex.split(wrapper_command)
+        if (
+            len(wrapped) < 3
+            or Path(wrapped[0]).name != "cargo"
+            or wrapped[1] != "test"
+            or "&&" in wrapped
+        ):
+            return False
+        wrapped_args = wrapped[: wrapped.index("--")] if "--" in wrapped else wrapped
+        if "--no-run" not in wrapped_args or not any(
+            wrapped_args[index : index + 2] == ["--package", package]
+            for index in range(len(wrapped_args) - 1)
+        ):
+            return False
+    return True
 
 
 def run_covers(success: TranscriptValidationRun, failure: TranscriptValidationRun) -> bool:
