@@ -31,7 +31,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationRun,
     TranscriptValidationSegment,
 )
-from gobby.tasks.transcript_outcomes import EvidenceOutcome
+from gobby.tasks.transcript_outcomes import EvidenceOutcome, extract_output
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.found_work_gate import (
@@ -112,6 +112,13 @@ class _Config:
 
 
 _CARGO_PACKAGE_ERROR = "error: package ID specification `gterminal` did not match any packages"
+# Captured by the reviewer from cargo-nextest in this worktree, including its wrapper diagnostic.
+_CARGO_NEXTEST_ERROR = (
+    _CARGO_PACKAGE_ERROR + "\nhelp: a package with a similar name exists: `termina`\n"
+    "error: command `/Users/josh/.rustup/toolchains/stable-aarch64-apple-darwin/bin/"
+    "cargo test --no-run --message-format json-render-diagnostics --package gterminal "
+    "--test build_env` exited with code 101"
+)
 _CARGO_TEST_FAILURE = (
     "running 8 tests\ntest build_env ... FAILED\ntest result: FAILED. 7 passed; 1 failed"
 )
@@ -138,6 +145,42 @@ _CARGO_TEST_FAILURE = (
             None,
             False,
             id="nextest-no-package",
+        ),
+        pytest.param(
+            "cargo nextest run -p gterminal --test build_env",
+            _CARGO_NEXTEST_ERROR,
+            101,
+            False,
+            None,
+            False,
+            id="captured-nextest-wrapper",
+        ),
+        pytest.param(
+            "cargo nextest run -p gterminal --test build_env",
+            _CARGO_NEXTEST_ERROR.replace("--package gterminal", "--package gobby-client"),
+            101,
+            False,
+            None,
+            True,
+            id="wrapper-wrong-package",
+        ),
+        pytest.param(
+            "cargo nextest run -p gterminal --test build_env",
+            _CARGO_NEXTEST_ERROR.replace("exited with code 101", "exited with code 102"),
+            101,
+            False,
+            None,
+            True,
+            id="wrapper-wrong-exit",
+        ),
+        pytest.param(
+            "cargo nextest run -p gterminal --test build_env",
+            _CARGO_NEXTEST_ERROR.replace("--no-run ", ""),
+            101,
+            False,
+            None,
+            True,
+            id="wrapper-ran-tests",
         ),
         pytest.param(
             "cargo nextest run --package=gterminal --test build_env",
@@ -268,10 +311,18 @@ async def test_cargo_package_spec_stop_failure(
     green_command: str | None,
     should_block: bool,
 ) -> None:
+    # Use the recorder's extraction boundary: provider metadata precedes process output.
+    recorded_output, recorded_truncated = extract_output(
+        {
+            "type": "tool_result",
+            "tool_use_id": "toolu_01ABC",
+            "content": f"Exit code {exit_code}\n{output}",
+        }
+    )
     failed = replace(
-        _run(1, "failure", command, output=output),
+        _run(1, "failure", command, output=recorded_output),
         exit_code=exit_code,
-        output_truncated=truncated,
+        output_truncated=truncated or recorded_truncated,
     )
     runs: tuple[TranscriptValidationRun, ...] = (failed,)
     if green_command is not None:
