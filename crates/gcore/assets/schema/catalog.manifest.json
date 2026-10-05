@@ -4014,19 +4014,19 @@
     },
     {
       "name": "sessions.usage_cache_creation_tokens",
-      "definition": "integer|int4|YES|0|NEVER"
+      "definition": "bigint|int8|YES|0|NEVER"
     },
     {
       "name": "sessions.usage_cache_read_tokens",
-      "definition": "integer|int4|YES|0|NEVER"
+      "definition": "bigint|int8|YES|0|NEVER"
     },
     {
       "name": "sessions.usage_input_tokens",
-      "definition": "integer|int4|YES|0|NEVER"
+      "definition": "bigint|int8|YES|0|NEVER"
     },
     {
       "name": "sessions.usage_output_tokens",
-      "definition": "integer|int4|YES|0|NEVER"
+      "definition": "bigint|int8|YES|0|NEVER"
     },
     {
       "name": "sessions.workflow_name",
