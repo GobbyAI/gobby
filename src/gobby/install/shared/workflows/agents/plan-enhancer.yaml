@@ -135,6 +135,8 @@ step_workflow:
         Read the plan off the local filesystem, send plan-writer ranked
         Better/Bigger edits over send_message, and stay live for revisions and
         questions. Call end_agent_run only when told the run is finished.
+        Include current_state summarizing the enhancement and next_steps naming
+        the writer's or coordinator's remaining actions in the handoff.
       allowed_tools: "all"
       blocked_mcp_tools:
         - "gobby-tasks:create_task"
