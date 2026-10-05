@@ -15,6 +15,10 @@ pub const CONTROL_SOCKET: &str = "gterm-control.sock";
 pub const FRAMES_SOCKET: &str = "gterm-frames.sock";
 pub const PID_FILE: &str = "gterm.pid";
 pub const TOKEN_FILE: &str = "gterm-control.token";
+/// How long a spawned host may take to come up. A cold start pins the binary
+/// and re-execs from the pin before it binds, which a loaded machine stretches
+/// past five seconds (#23420). This is a hang guard, not a speed bound.
+pub const COLD_START: Duration = Duration::from_secs(15);
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct HostProc {
@@ -225,7 +229,7 @@ pub fn rpc(stream: &mut UnixStream, method: &str, extra: serde_json::Value) -> V
 }
 
 pub fn wait_socket(path: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + COLD_START;
     while Instant::now() < deadline {
         if path.exists() && UnixStream::connect(path).is_ok() {
             return;
@@ -246,8 +250,13 @@ pub fn wait_socket(path: &Path) {
 }
 
 /// Poll `ready` until it reports true, panicking after five seconds.
-pub fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+pub fn wait_until(what: &str, ready: impl FnMut() -> bool) {
+    wait_until_within(what, Duration::from_secs(5), ready);
+}
+
+/// Poll `ready` until it reports true, panicking after `budget`.
+pub fn wait_until_within(what: &str, budget: Duration, mut ready: impl FnMut() -> bool) {
+    let deadline = Instant::now() + budget;
     while Instant::now() < deadline {
         if ready() {
             return;
