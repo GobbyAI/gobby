@@ -5,12 +5,21 @@
 
 use crate::ui::hit::SidebarSection;
 use crate::ui::settings::SidebarSide;
+use ratatui::backend::WindowSize;
 use ratatui::layout::Rect;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
 /// The overlay's width in columns, at most the width it lies over.
 pub const OVERLAY_WIDTH: u16 = 34;
+
+/// The widest the pinned sidebar drags, in the pixels the terminal reports
+/// (Josh, 2026-10-05: "max 540px width").
+const MAX_WIDTH_PIXELS: u32 = 540;
+
+/// The width cap in columns before the terminal reports its pixels, and the
+/// floor under the pixel cap: a terminal reporting no pixels keeps it.
+const BASE_MAX_WIDTH: u16 = 36;
 
 #[derive(Debug, Clone)]
 pub struct SidebarState {
@@ -63,7 +72,7 @@ impl Default for SidebarState {
             side: SidebarSide::Left,
             width: 26,
             min_width: 18,
-            max_width: 36,
+            max_width: BASE_MAX_WIDTH,
             scrolls: [0; 4],
             scrolled_at: [None; 4],
             selected: 0,
@@ -118,6 +127,17 @@ impl SidebarState {
         self.width = width.clamp(self.min_width, self.max_width);
     }
 
+    /// Cap the width at the columns `MAX_WIDTH_PIXELS` spans at the
+    /// window's cell width, never below `BASE_MAX_WIDTH`.
+    pub fn cap_to_window(&mut self, window: WindowSize) {
+        let columns = (u32::from(window.columns_rows.width) * MAX_WIDTH_PIXELS)
+            .checked_div(u32::from(window.pixels.width))
+            .unwrap_or(0);
+        self.max_width = u16::try_from(columns)
+            .unwrap_or(u16::MAX)
+            .max(BASE_MAX_WIDTH);
+    }
+
     /// Split `middle` into the sidebar rect and the content. Pinned, a
     /// `pinned_width` column on `side` beside the content; as the overlay,
     /// `OVERLAY_WIDTH` columns on `side` over content that keeps all of
@@ -169,5 +189,28 @@ mod tests {
         sidebar.width = 26;
         sidebar.set_width_from_column(Rect::new(0, 1, 26, 18), 29);
         assert_eq!(sidebar.width, 30);
+    }
+
+    #[test]
+    fn the_width_cap_spans_540_pixels_and_never_drops_below_36() {
+        let window = |columns, pixels| WindowSize {
+            columns_rows: ratatui::layout::Size::new(columns, 40),
+            pixels: ratatui::layout::Size::new(pixels, 800),
+        };
+        let mut sidebar = SidebarState::default();
+        // 8-pixel cells: 540 pixels span 67 whole columns.
+        sidebar.cap_to_window(window(200, 1600));
+        assert_eq!(sidebar.max_width, 67);
+        // 17-pixel cells span 31, under the floor.
+        sidebar.cap_to_window(window(100, 1700));
+        assert_eq!(sidebar.max_width, 36);
+        // A terminal reporting no pixels keeps the floor.
+        sidebar.cap_to_window(window(200, 1600));
+        sidebar.cap_to_window(window(200, 0));
+        assert_eq!(sidebar.max_width, 36);
+        // The drag clamps to the new cap.
+        sidebar.cap_to_window(window(200, 1600));
+        sidebar.set_width_from_column(Rect::new(0, 1, 26, 18), 99);
+        assert_eq!(sidebar.width, 67);
     }
 }

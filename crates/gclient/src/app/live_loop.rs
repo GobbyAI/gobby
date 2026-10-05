@@ -70,7 +70,7 @@ use reconnect::{
     await_reconnect_job, begin_reconnect, handle_live_event, handle_reconnect_outcome,
     recv_daemon_event, settle_sidebar_banner, wait_for_reconnect,
 };
-use render::{pane_hit_map_stale, render_live_workspace};
+use render::{cap_sidebar_to_window, pane_hit_map_stale, render_live_workspace};
 use signals::{recv_exit_signal, recv_resize_signal, recv_suspend_signal};
 use suspend::suspend_process;
 
@@ -176,6 +176,7 @@ pub async fn run_live_loop<B: Backend>(
     // Draw once before the first select: input outranks the render tick, so
     // the earliest event, a click included, would otherwise route against an
     // empty hit map.
+    cap_sidebar_to_window(terminal, chrome);
     if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
         workspace.latch_exit(error.to_string());
         loop_error = Some(error);
@@ -489,6 +490,7 @@ pub async fn run_live_loop<B: Backend>(
             // A resize redraws at the new size; the geometry pass after the
             // select then reads the rects that draw produced.
             _ = recv_resize_signal(&mut resize_signal) => {
+                cap_sidebar_to_window(terminal, chrome);
                 if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
                     workspace.latch_exit(error.to_string());
                     loop_error = Some(error);

@@ -4,6 +4,9 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::process::Command;
 
+#[path = "build_zig.rs"]
+mod build_zig;
+
 fn zig_target(target: &str) -> &str {
     match target {
         "x86_64-unknown-linux-gnu" => "x86_64-linux-gnu",
@@ -32,6 +35,7 @@ fn env_bool(name: &str) -> Option<bool> {
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=build_zig.rs");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_VT_ENGINE");
     if env::var_os("CARGO_FEATURE_VT_ENGINE").is_none() {
         return;
@@ -64,7 +68,7 @@ fn main() {
         .trim()
         .to_string();
 
-    let zig = env::var("ZIG").unwrap_or_else(|_| "zig".into());
+    let zig = build_zig::machine_zig().unwrap_or_else(|message| panic!("{message}"));
     let mut command = Command::new(&zig);
     command
         .arg("build")
@@ -82,7 +86,8 @@ fn main() {
         Ok(status) => status,
         Err(err) if err.kind() == ErrorKind::NotFound => {
             panic!(
-                "zig not found (required Zig 0.16). Install Zig 0.16 and ensure `{zig}` is on PATH, or set ZIG to the zig binary."
+                "zig not found (required Zig 0.16). Install Zig 0.16 and ensure `{}` is on PATH, or set ZIG to the zig binary.",
+                zig.to_string_lossy()
             );
         }
         Err(err) => panic!("failed to execute zig build for vendored libghostty-vt: {err}"),

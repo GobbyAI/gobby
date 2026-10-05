@@ -46,6 +46,49 @@ def _which_cargo_only(name: str) -> str | None:
     return "/usr/bin/cargo" if name == "cargo" else None
 
 
+def _which_cargo_and_zig(name: str) -> str | None:
+    return f"/usr/bin/{name}" if name in {"cargo", "zig"} else None
+
+
+def _build_gterm_workspace(
+    tmp_path: Path,
+    which: Callable[[str], str | None],
+    path_zig_version: str,
+    kegs: tuple[Path, ...],
+) -> tuple[str | None, MagicMock, Path]:
+    """Run the local gterm workspace build in a fake workspace with these Zig sources."""
+    workspace = tmp_path / "workspace"
+    (workspace / "crates" / "gterminal").mkdir(parents=True)
+    (workspace / "src" / "gobby" / "cli").mkdir(parents=True)
+    (workspace / "Cargo.toml").touch()
+    (workspace / "crates" / "gterminal" / "Cargo.toml").touch()
+    source = workspace / "target" / "release" / "gterm"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"gterm-bin")
+    dest = tmp_path / "bin"
+    dest.mkdir()
+
+    with (
+        patch("gobby.cli.install_setup.shutil.which", side_effect=which),
+        patch(
+            "gobby.cli.install_setup.subprocess.run",
+            return_value=MagicMock(returncode=0, stdout=path_zig_version),
+        ) as mock_run,
+        patch.object(install_setup_gterm, "_HOMEBREW_ZIG_016", kegs),
+        patch(
+            "gobby.cli.install_setup_gterm.__file__",
+            str(workspace / "src" / "gobby" / "cli" / "install_setup_gterm.py"),
+        ),
+        patch(
+            "gobby.cli.install_setup_gterm.try_acquire_native_bin_lock",
+            return_value=MagicMock(),
+        ),
+        patch("gobby.install.bin_freshness_promotion.os.replace", wraps=os.replace),
+    ):
+        result = _install_gterm_from_submodule(dest)
+    return result, mock_run, dest
+
+
 class TestGtermInstaller:
     def test_stage0_targets_are_macos_linux_only(self) -> None:
         assert tuple(sorted(_STAGE0_TARGETS.values())) == tuple(sorted(STAGE0_TRIPLES))
@@ -59,79 +102,72 @@ class TestGtermInstaller:
         assert result["skipped"] is True
         assert "unsupported platform" in str(result["reason"])
 
-    def test_workspace_build_skips_without_zig(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    @pytest.mark.parametrize(
+        ("which", "probes"),
+        [
+            (_which_cargo_only, []),
+            (_which_cargo_and_zig, [["/usr/bin/zig", "version"]]),
+        ],
+        ids=["no PATH zig", "PATH zig 0.17"],
+    )
+    def test_workspace_build_skips_without_zig_016(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        which: Callable[[str], str | None],
+        probes: list[list[str]],
     ) -> None:
-        workspace = tmp_path / "workspace"
-        (workspace / "crates" / "gterminal").mkdir(parents=True)
-        (workspace / "src" / "gobby" / "cli").mkdir(parents=True)
-        (workspace / "Cargo.toml").touch()
-        (workspace / "crates" / "gterminal" / "Cargo.toml").touch()
-        dest = tmp_path / "bin"
-        dest.mkdir()
+        monkeypatch.delenv("ZIG", raising=False)
+        absent = (tmp_path / "opt-homebrew-zig", tmp_path / "usr-local-zig")
 
-        with (
-            patch("gobby.cli.install_setup.shutil.which", side_effect=_which_cargo_only),
-            patch("gobby.cli.install_setup.subprocess.run") as mock_run,
-            patch(
-                "gobby.cli.install_setup_gterm.__file__",
-                str(workspace / "src" / "gobby" / "cli" / "install_setup_gterm.py"),
-            ),
-        ):
-            result = _install_gterm_from_submodule(dest)
+        result, mock_run, _ = _build_gterm_workspace(tmp_path, which, "0.17.0\n", absent)
 
         assert result is None
-        mock_run.assert_not_called()
+        assert [c.args[0] for c in mock_run.call_args_list] == probes
         assert GTERM_NO_ZIG_SKIP_REASON in capsys.readouterr().out
 
-    def test_workspace_build_uses_vt_engine_and_600s_timeout(self, tmp_path: Path) -> None:
-        workspace = tmp_path / "workspace"
-        (workspace / "crates" / "gterminal").mkdir(parents=True)
-        (workspace / "src" / "gobby" / "cli").mkdir(parents=True)
-        (workspace / "Cargo.toml").touch()
-        (workspace / "crates" / "gterminal" / "Cargo.toml").touch()
-        source = workspace / "target" / "release" / "gterm"
-        source.parent.mkdir(parents=True)
-        source.write_bytes(b"gterm-bin")
-        dest = tmp_path / "bin"
-        dest.mkdir()
-        lock = MagicMock()
+    @pytest.mark.parametrize(
+        ("which", "zig_env", "intel_keg", "probes"),
+        [
+            (_which_cargo_only, "/custom/zig", False, []),
+            (_which_cargo_and_zig, None, False, [["/usr/bin/zig", "version"]]),
+            (_which_cargo_only, None, True, []),
+        ],
+        ids=["ZIG set", "PATH zig 0.16", "keg-only Zig 0.16, no PATH zig"],
+    )
+    def test_workspace_build_finds_zig_016_in_build_zig_order(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        which: Callable[[str], str | None],
+        zig_env: str | None,
+        intel_keg: bool,
+        probes: list[list[str]],
+    ) -> None:
+        if zig_env is None:
+            monkeypatch.delenv("ZIG", raising=False)
+        else:
+            monkeypatch.setenv("ZIG", zig_env)
+        kegs = (tmp_path / "opt-homebrew-zig", tmp_path / "usr-local-zig")
+        if intel_keg:
+            kegs[1].touch()
 
-        def fake_which(name: str) -> str | None:
-            if name in {"cargo", "zig"}:
-                return f"/usr/bin/{name}"
-            return None
-
-        with (
-            patch("gobby.cli.install_setup.shutil.which", side_effect=fake_which),
-            patch(
-                "gobby.cli.install_setup.subprocess.run",
-                return_value=MagicMock(returncode=0),
-            ) as mock_run,
-            patch(
-                "gobby.cli.install_setup_gterm.__file__",
-                str(workspace / "src" / "gobby" / "cli" / "install_setup_gterm.py"),
-            ),
-            patch(
-                "gobby.cli.install_setup_gterm.try_acquire_native_bin_lock",
-                return_value=lock,
-            ),
-            patch("gobby.install.bin_freshness_promotion.os.replace", wraps=os.replace),
-        ):
-            result = _install_gterm_from_submodule(dest)
+        result, mock_run, dest = _build_gterm_workspace(tmp_path, which, "0.16.0\n", kegs)
 
         assert result == "promoted"
-        command = mock_run.call_args.args[0]
-        assert command[:6] == [
+        *probed, build = mock_run.call_args_list
+        assert [c.args[0] for c in probed] == probes
+        assert build.args[0][:7] == [
             "cargo",
             "build",
             "--release",
             "-p",
             "gobby-terminal",
             "--features",
+            "vt-engine",
         ]
-        assert "vt-engine" in command
-        assert mock_run.call_args.kwargs["timeout"] == 600
+        assert build.kwargs["timeout"] == 600
         assert (dest / "gterm").read_bytes() == b"gterm-bin"
 
     def test_github_uses_gterm_tag_prefix(self, tmp_path: Path) -> None:

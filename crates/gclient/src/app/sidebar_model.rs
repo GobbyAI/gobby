@@ -164,7 +164,9 @@ impl AgentEntry {
 
     /// `claude-fable-5.1-xhigh`: the display name (else the raw model) lowercased,
     /// each whitespace run one `-`, with the effort appended. When the display
-    /// name drops the family (`Fable 5.1`), the raw id's first token leads.
+    /// name drops the family (`Fable 5.1`), the raw id's first token leads. An
+    /// absent segment leaves no dangling `-`: a run spawned with an effort
+    /// before its model is known reads `xhigh`.
     pub fn model_slug(&self) -> String {
         let model = self
             .model_display_name
@@ -185,7 +187,9 @@ impl AgentEntry {
             }
         }
         if let Some(effort) = &self.effort {
-            slug.push('-');
+            if !slug.is_empty() {
+                slug.push('-');
+            }
             slug.push_str(effort);
         }
         slug

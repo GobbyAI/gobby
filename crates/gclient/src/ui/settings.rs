@@ -2,7 +2,7 @@
 //! Client-local preferences (theme, keymap path, layout knobs) and the
 //! settings overlay that edits them. Nothing here reaches the daemon.
 
-use crate::theme::ThemeKind;
+use crate::theme::{ThemeKind, ThemeName};
 use crate::ui::chrome::Chrome;
 use crate::ui::widgets::{
     action_button_row_rects, centered_popup_rect, modal_choice_rows, modal_stack_areas,
@@ -149,7 +149,11 @@ impl AgentSort {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ClientPrefs {
+    /// The appearance: `dark`, `light` or `system`. The key predates named
+    /// themes, which `palette` picks.
     pub theme: String,
+    /// The named theme drawn in that appearance.
+    pub palette: ThemeName,
     /// Draw gclient's chrome in grays (`Palette::monochrome`); pane
     /// contents keep their apps' colours.
     pub monochrome: bool,
@@ -191,6 +195,7 @@ impl Default for ClientPrefs {
     fn default() -> Self {
         Self {
             theme: "dark".to_string(),
+            palette: ThemeName::default(),
             monochrome: false,
             mouse_capture: true,
             keybinds: String::new(),
@@ -235,6 +240,7 @@ impl ClientPrefs {
 /// Rows of the settings overlay, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsRow {
+    Appearance,
     Theme,
     Monochrome,
     MouseCapture,
@@ -251,7 +257,8 @@ pub enum SettingsRow {
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 13] = [
+    pub const ALL: [SettingsRow; 14] = [
+        SettingsRow::Appearance,
         SettingsRow::Theme,
         SettingsRow::Monochrome,
         SettingsRow::MouseCapture,
@@ -277,6 +284,7 @@ pub struct SettingsState {
 
 fn row_label(row: SettingsRow) -> &'static str {
     match row {
+        SettingsRow::Appearance => "Appearance",
         SettingsRow::Theme => "Theme",
         SettingsRow::Monochrome => "Monochrome",
         SettingsRow::MouseCapture => "Mouse capture",
@@ -301,9 +309,12 @@ fn on_off(value: bool) -> &'static str {
     }
 }
 
-fn row_value(row: SettingsRow, prefs: &ClientPrefs) -> String {
+fn row_value(row: SettingsRow, chrome: &Chrome) -> String {
+    let prefs = &chrome.prefs;
     match row {
-        SettingsRow::Theme => prefs.theme.clone(),
+        SettingsRow::Appearance => prefs.theme.clone(),
+        // The theme drawn: Restored where the saved one is not offered.
+        SettingsRow::Theme => chrome.theme.name.label().to_string(),
         SettingsRow::Monochrome => on_off(prefs.monochrome).to_string(),
         SettingsRow::MouseCapture => on_off(prefs.mouse_capture).to_string(),
         SettingsRow::PaneScrollbars => on_off(prefs.pane_scrollbars).to_string(),
@@ -399,7 +410,7 @@ pub fn render_settings(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Option
         let label = format!(
             "{marker}{:<width$}{}",
             row_label(*row),
-            row_value(*row, &chrome.prefs),
+            row_value(*row, chrome),
             width = VALUE_COLUMN
         );
         frame.render_widget(Paragraph::new(label).style(style), rect);
@@ -466,11 +477,12 @@ mod tests {
 
     #[test]
     fn row_values_follow_prefs() {
-        let mut prefs = ClientPrefs::default();
+        let mut chrome = Chrome::dark();
         let labels: Vec<&str> = SettingsRow::ALL.into_iter().map(row_label).collect();
         assert_eq!(
             labels,
             [
+                "Appearance",
                 "Theme",
                 "Monochrome",
                 "Mouse capture",
@@ -486,45 +498,57 @@ mod tests {
                 "Title scrolling",
             ]
         );
-        assert_eq!(row_value(SettingsRow::SidebarSide, &prefs), "left");
-        assert_eq!(row_value(SettingsRow::SidebarPinned, &prefs), "on");
-        prefs.sidebar_side = prefs.sidebar_side.toggled();
-        prefs.sidebar_pinned = true;
-        assert_eq!(row_value(SettingsRow::SidebarSide, &prefs), "right");
-        assert_eq!(row_value(SettingsRow::SidebarPinned, &prefs), "on");
+        assert_eq!(row_value(SettingsRow::SidebarSide, &chrome), "left");
+        assert_eq!(row_value(SettingsRow::SidebarPinned, &chrome), "on");
+        chrome.prefs.sidebar_side = chrome.prefs.sidebar_side.toggled();
+        chrome.prefs.sidebar_pinned = true;
+        assert_eq!(row_value(SettingsRow::SidebarSide, &chrome), "right");
+        assert_eq!(row_value(SettingsRow::SidebarPinned, &chrome), "on");
         // Both survive prefs.toml under their own keys.
         let home = tempfile::tempdir().expect("temp gobby home");
-        let path = crate::prefs::save_prefs(home.path(), &prefs).expect("save prefs");
+        let path = crate::prefs::save_prefs(home.path(), &chrome.prefs).expect("save prefs");
         let text = std::fs::read_to_string(path).expect("read prefs");
         assert!(text.contains("sidebar_side = \"right\""), "{text}");
         assert!(text.contains("sidebar_pinned = true"), "{text}");
         let loaded = crate::prefs::load_prefs(home.path()).expect("load prefs");
         assert_eq!(loaded.sidebar_side, SidebarSide::Right);
         assert!(loaded.sidebar_pinned);
-        assert_eq!(row_value(SettingsRow::Theme, &prefs), "dark");
-        assert_eq!(row_value(SettingsRow::Monochrome, &prefs), "off");
-        prefs.monochrome = true;
-        assert_eq!(row_value(SettingsRow::Monochrome, &prefs), "on");
-        assert_eq!(row_value(SettingsRow::MouseCapture, &prefs), "on");
-        assert_eq!(row_value(SettingsRow::PaneGaps, &prefs), "on");
-        prefs.pane_gaps = false;
-        prefs.sidebar_width = 30;
-        prefs.mouse_capture = false;
-        assert_eq!(row_value(SettingsRow::PaneGaps, &prefs), "off");
-        assert_eq!(row_value(SettingsRow::SidebarWidth, &prefs), "30");
-        assert_eq!(row_value(SettingsRow::MouseCapture, &prefs), "off");
+        assert_eq!(row_value(SettingsRow::Appearance, &chrome), "dark");
         assert_eq!(
-            row_value(SettingsRow::RightClickPassthrough, &prefs),
+            row_value(SettingsRow::Theme, &chrome),
+            ThemeName::default().label()
+        );
+        // A saved theme Dark does not offer reads as Restored, the theme
+        // drawn in its place.
+        chrome.prefs.palette = ThemeName::Ink;
+        chrome.set_theme(ThemeKind::Dark);
+        assert_eq!(row_value(SettingsRow::Theme, &chrome), "Restored");
+        assert_eq!(row_value(SettingsRow::Monochrome, &chrome), "off");
+        chrome.prefs.monochrome = true;
+        assert_eq!(row_value(SettingsRow::Monochrome, &chrome), "on");
+        assert_eq!(row_value(SettingsRow::MouseCapture, &chrome), "on");
+        assert_eq!(row_value(SettingsRow::PaneGaps, &chrome), "on");
+        chrome.prefs.pane_gaps = false;
+        chrome.prefs.sidebar_width = 30;
+        chrome.prefs.mouse_capture = false;
+        assert_eq!(row_value(SettingsRow::PaneGaps, &chrome), "off");
+        assert_eq!(row_value(SettingsRow::SidebarWidth, &chrome), "30");
+        assert_eq!(row_value(SettingsRow::MouseCapture, &chrome), "off");
+        assert_eq!(
+            row_value(SettingsRow::RightClickPassthrough, &chrome),
             "none"
         );
-        prefs.right_click_passthrough_modifier = PassthroughModifier::Alt;
-        assert_eq!(row_value(SettingsRow::RightClickPassthrough, &prefs), "alt");
-        assert_eq!(row_value(SettingsRow::AgentSort, &prefs), "grouped");
-        prefs.agent_sort = prefs.agent_sort.toggled();
-        assert_eq!(row_value(SettingsRow::AgentSort, &prefs), "priority");
-        assert_eq!(row_value(SettingsRow::TitleScrolling, &prefs), "left");
-        prefs.title_scrolling = TitleScrolling::Right;
-        assert_eq!(row_value(SettingsRow::TitleScrolling, &prefs), "right");
+        chrome.prefs.right_click_passthrough_modifier = PassthroughModifier::Alt;
+        assert_eq!(
+            row_value(SettingsRow::RightClickPassthrough, &chrome),
+            "alt"
+        );
+        assert_eq!(row_value(SettingsRow::AgentSort, &chrome), "grouped");
+        chrome.prefs.agent_sort = chrome.prefs.agent_sort.toggled();
+        assert_eq!(row_value(SettingsRow::AgentSort, &chrome), "priority");
+        assert_eq!(row_value(SettingsRow::TitleScrolling, &chrome), "left");
+        chrome.prefs.title_scrolling = TitleScrolling::Right;
+        assert_eq!(row_value(SettingsRow::TitleScrolling, &chrome), "right");
         assert_eq!(TitleScrolling::Right.stepped(1), TitleScrolling::Off);
         assert_eq!(TitleScrolling::Off.stepped(-1), TitleScrolling::Right);
         assert_eq!(TitleScrolling::Off.stepped(1), TitleScrolling::Left);

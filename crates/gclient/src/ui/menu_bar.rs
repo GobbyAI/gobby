@@ -57,16 +57,16 @@ pub struct MenuBarHits {
     pub titles: Vec<(usize, Rect)>,
 }
 
-/// One full-width row in the light theme's colours whatever the theme:
-/// bold `bar_ink` on `bar`. Each title's cell pads it by one on either
-/// side, so neighbours read two cells apart and the cells tile the bar
-/// from its left edge; the title whose menu is open reads `bar_open_ink`
-/// on `bar_ink`.
+/// One full-width row on the theme's header fill, the sidebar's section
+/// header rows' colour, with their bold titles (`band_ink`). Each title's
+/// cell pads it by one on either side, so neighbours read two cells apart
+/// and the cells tile the bar from its left edge; the title whose menu is
+/// open sits on the selection fill, like the active tab.
 pub fn render_menu_bar(frame: &mut Frame, rect: Rect, chrome: &Chrome) -> MenuBarHits {
     let p = &chrome.palette;
     let bar = Style::new()
-        .bg(p.bar)
-        .fg(p.bar_ink)
+        .bg(p.band)
+        .fg(p.band_ink.ink(p.subtext0))
         .add_modifier(Modifier::BOLD);
     // The title stays open while a submenu cascades from its menu.
     let root = std::iter::successors(chrome.menu.as_ref(), |menu| menu.parent.as_deref()).last();
@@ -85,7 +85,7 @@ pub fn render_menu_bar(frame: &mut Frame, rect: Rect, chrome: &Chrome) -> MenuBa
             hits.titles.push((index, cell));
         }
         let style = if open == Some(menu) {
-            bar.bg(p.bar_ink).fg(p.bar_open_ink)
+            bar.bg(p.selection).fg(p.selection_ink.text)
         } else {
             bar
         };
@@ -131,7 +131,7 @@ mod tests {
         });
     }
 
-    /// One full-width row in the bar's colours, the titles two cells apart,
+    /// One full-width row on the header fill, the titles two cells apart,
     /// and each title's cell padded by one on either side so the cells tile
     /// the bar from its left edge.
     #[test]
@@ -146,7 +146,11 @@ mod tests {
         );
         for x in 0..WIDTH {
             let cell = &buffer[(x, 0)];
-            assert_eq!((cell.fg, cell.bg), (palette.bar_ink, palette.bar), "x={x}");
+            assert_eq!(
+                (cell.fg, cell.bg),
+                (palette.band_ink.ink(palette.subtext0), palette.band),
+                "x={x}"
+            );
             assert!(cell.modifier.contains(Modifier::BOLD), "x={x}");
         }
         assert_eq!(row_text(&buffer, 1).trim(), "", "the bar is one row");
@@ -164,9 +168,9 @@ mod tests {
         );
     }
 
-    /// The title whose menu is open reads in the open colours across its
+    /// The title whose menu is open sits on the selection fill across its
     /// whole cell, also while a submenu cascades from it; every other cell
-    /// keeps the bar's colours.
+    /// keeps the header fill.
     #[test]
     fn the_open_title_reads_in_the_open_colours() {
         let mut chrome = Chrome::new(Theme::new(ThemeKind::Light));
@@ -183,9 +187,9 @@ mod tests {
         for x in 0..WIDTH {
             let cell = &buffer[(x, 0)];
             let expected = if (view.left()..view.right()).contains(&x) {
-                (palette.bar_open_ink, palette.bar_ink)
+                (palette.selection_ink.text, palette.selection)
             } else {
-                (palette.bar_ink, palette.bar)
+                (palette.band_ink.ink(palette.subtext0), palette.band)
             };
             assert_eq!((cell.fg, cell.bg), expected, "x={x}");
         }
@@ -202,6 +206,9 @@ mod tests {
         });
         let (_, buffer) = draw(&chrome);
         let cell = &buffer[(view.x, 0)];
-        assert_eq!((cell.fg, cell.bg), (palette.bar_open_ink, palette.bar_ink));
+        assert_eq!(
+            (cell.fg, cell.bg),
+            (palette.selection_ink.text, palette.selection)
+        );
     }
 }

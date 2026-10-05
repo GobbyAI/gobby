@@ -405,7 +405,7 @@ pub fn render_tab_bar<W: WorkspaceView>(
     }
 
     frame.render_widget(
-        Paragraph::new(" ".repeat(area.width as usize)).style(Style::default().bg(p.surface0)),
+        Paragraph::new(" ".repeat(area.width as usize)).style(Style::default().bg(p.band)),
         area,
     );
 
@@ -413,13 +413,13 @@ pub fn render_tab_bar<W: WorkspaceView>(
     // of them needs you.
     for marker in [&view.left, &view.right] {
         if marker.rect.width > 0 {
-            let fg = if marker.needs_you {
+            let fg = p.band_ink.ink(if marker.needs_you {
                 state_dot(RowState::Attention, p).1
             } else {
                 p.overlay1
-            };
+            });
             frame.render_widget(
-                Paragraph::new(marker.text.as_str()).style(Style::default().fg(fg).bg(p.surface0)),
+                Paragraph::new(marker.text.as_str()).style(Style::default().fg(fg).bg(p.band)),
                 marker.rect,
             );
         }
@@ -439,20 +439,26 @@ pub fn render_tab_bar<W: WorkspaceView>(
             continue;
         }
         let active = idx == chrome.active_index();
-        // The active tab rises off the bar on the raised surface in every
-        // theme; the host's own ground would read as a hole under System.
+        // The active tab sits on the selection fill, the rest on the header
+        // fill, each inked for its fill; the host's own ground would read as
+        // a hole under System.
+        let ink = if active {
+            &p.selection_ink
+        } else {
+            &p.band_ink
+        };
         let style = if active {
             Style::default()
-                .fg(p.text)
-                .bg(p.surface1)
+                .fg(ink.text)
+                .bg(p.selection)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(p.subtext0).bg(p.surface0)
+            Style::default().fg(ink.ink(p.subtext0)).bg(p.band)
         };
-        // A dragged tab lifts off the bar: its own foreground on the bar's
-        // surface, reversed, until the release drops it.
+        // A dragged tab lifts off the bar: its own foreground on the header
+        // fill, reversed, until the release drops it.
         let style = if dragged == Some(idx) {
-            style.bg(p.surface0).add_modifier(Modifier::REVERSED)
+            style.bg(p.band).add_modifier(Modifier::REVERSED)
         } else {
             style
         };
@@ -461,7 +467,7 @@ pub fn render_tab_bar<W: WorkspaceView>(
         let line = match glyphs[idx] {
             Some((glyph, color)) => Line::from(vec![
                 Span::raw(" "),
-                Span::styled(glyph, Style::default().fg(color)),
+                Span::styled(glyph, Style::default().fg(ink.ink(color))),
                 Span::raw(text[1 + glyph.len()..].to_string()),
             ]),
             None => Line::raw(text),
@@ -474,7 +480,7 @@ pub fn render_tab_bar<W: WorkspaceView>(
             .is_some_and(|next| next.width > 0 && next.x == rect.right() + 1);
         if next_shown {
             frame.render_widget(
-                Paragraph::new("│").style(Style::default().fg(p.line).bg(p.surface0)),
+                Paragraph::new("│").style(Style::default().fg(p.line).bg(p.band)),
                 Rect::new(rect.right(), rect.y, 1, 1),
             );
         }
@@ -482,13 +488,13 @@ pub fn render_tab_bar<W: WorkspaceView>(
 
     if view.new_tab_hit_area.width > 0 {
         frame.render_widget(
-            Paragraph::new(" + ").style(Style::default().fg(p.overlay1).bg(p.surface0)),
+            Paragraph::new(" + ").style(Style::default().fg(p.band_ink.ink(p.overlay1)).bg(p.band)),
             view.new_tab_hit_area,
         );
         // The same rule that parts two tabs parts the last one from `+`.
         if view.tab_hit_areas.iter().any(|rect| rect.width > 0) {
             frame.render_widget(
-                Paragraph::new("│").style(Style::default().fg(p.line).bg(p.surface0)),
+                Paragraph::new("│").style(Style::default().fg(p.line).bg(p.band)),
                 Rect::new(view.new_tab_hit_area.x - 1, area.y, 1, 1),
             );
         }

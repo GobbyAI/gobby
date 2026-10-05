@@ -1,19 +1,19 @@
 # gclient screen golden: menu_bar
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
-00 : bar_ink/bar+b*19 surface_dim/bar_ink+b*6 bar_ink/bar+b*95
-01 |                   ┌─────────────────┐                                                                                  |
-01 : text/panel_bg*19 surface0/panel_bg*19 text/panel_bg*82
-02 | 1: Untitled   │ + │   Theme: Dark ▸ │                                                                                  |
-02 : text/surface1+b*15 line/surface0*1 overlay1/surface0*3 surface0/panel_bg*1 accent/panel_bg+bv*17 surface0/panel_bg*1 text/surface0*82
-03 |┌ ○ term-alpha · Fo│   Monochrome    │─────────────────────────────────────────────────────────────────────────────────┐|
-03 : accent/panel_bg*1 accent/panel_bg+b*18 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*1 accent/panel_bg*82
-04 |│                  │   Sidebar ▸     │                                                                                 │|
-04 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*1 text/panel_bg*81 accent/panel_bg*1
-05 |│                  └─────────────────┘                                                                                 │|
-05 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*19 text/panel_bg*81 accent/panel_bg*1
-06 |│                                                                                                                      │|
-06 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
+00 : subtext0/surface0+b*19 text/selection+b*6 subtext0/surface0+b*95
+01 |                   ┌──────────────────────┐                                                                             |
+01 : text/panel_bg*19 surface0/panel_bg*24 text/panel_bg*77
+02 | 1: Untitled   │ + │   Appearance: Dark ▸ │                                                                             |
+02 : text/selection+b*15 line/surface0*1 overlay1/surface0*3 surface0/panel_bg*1 accent/panel_bg+bv*22 surface0/panel_bg*1 text/surface0*77
+03 |┌ ○ term-alpha · Fo│   Theme: Restored ▸  │────────────────────────────────────────────────────────────────────────────┐|
+03 : accent/panel_bg*1 accent/panel_bg+b*18 surface0/panel_bg*1 text/panel_bg*22 surface0/panel_bg*1 accent/panel_bg*77
+04 |│                  │   Monochrome         │                                                                            │|
+04 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*22 surface0/panel_bg*1 text/panel_bg*76 accent/panel_bg*1
+05 |│                  │   Sidebar ▸          │                                                                            │|
+05 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*22 surface0/panel_bg*1 text/panel_bg*76 accent/panel_bg*1
+06 |│                  └──────────────────────┘                                                                            │|
+06 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*24 text/panel_bg*76 accent/panel_bg*1
 07 |│                                                                                                                      │|
 07 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 08 |│                                                                                                                      │|

@@ -13,7 +13,7 @@ pub mod machines;
 pub mod projects;
 pub mod terminals;
 
-use crate::theme::Palette;
+use crate::theme::{FillInk, Palette};
 use crate::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::scrollbar::{render_scrollbar, scrolled_recently, should_show_scrollbar};
@@ -227,24 +227,23 @@ pub fn section_metrics<W: WorkspaceView>(
     )
 }
 
-/// Draw a section heading into `rect`'s first row: a full-width
-/// `surface_dim` band, between the ground and the `surface0`/`surface1` row
-/// fills in either theme, with the title at column 1 in bold body text
-/// (#23280).
+/// Draw a section heading into `rect`'s first row: a full-width band on the
+/// theme's header fill, with the title at column 1 in bold subtext0, or the
+/// first ink legible on that fill (#23416).
 pub(super) fn render_band(frame: &mut Frame, rect: Rect, title: &str, palette: &Palette) {
     let rect = Rect::new(rect.x, rect.y, rect.width, rect.height.min(BAND_ROWS));
     if rect.width < 3 || rect.height == 0 {
         return;
     }
     frame.render_widget(
-        Block::default().style(Style::default().bg(palette.surface_dim)),
+        Block::default().style(Style::default().bg(palette.band)),
         rect,
     );
     let title = truncate_end(title, usize::from(rect.width) - 2);
     let title_rect = Rect::new(rect.x + 1, rect.y, display_width_u16(&title), 1);
     let style = Style::default()
-        .fg(palette.text)
-        .bg(palette.surface_dim)
+        .fg(palette.band_ink.ink(palette.subtext0))
+        .bg(palette.band)
         .add_modifier(Modifier::BOLD);
     frame.render_widget(Paragraph::new(Span::styled(title, style)), title_rect);
 }
@@ -276,10 +275,11 @@ pub(super) fn render_section_rows(
             if y + height > body.bottom() {
                 break;
             }
-            let row_style = if row.selected {
-                Style::default().bg(p.surface1)
-            } else if row.active {
-                Style::default().bg(p.surface0)
+            // The selected and the active row share the selection fill, the
+            // one row fill a theme sets apart from its header rows.
+            let on_selection = row.selected || row.active;
+            let row_style = if on_selection {
+                Style::default().bg(p.selection)
             } else {
                 Style::default()
             };
@@ -315,6 +315,9 @@ pub(super) fn render_section_rows(
                 );
             }
             let rect = Rect::new(body.x, y, body.width, height);
+            if on_selection {
+                ink_fill(frame, rect, &p.selection_ink);
+            }
             match row.kind {
                 RowKind::Project => {
                     hits.projects.push((row.id.clone(), rect));
@@ -351,6 +354,20 @@ pub(super) fn render_section_rows(
         let thumb = if lit { p.overlay0 } else { p.dim };
         render_scrollbar(frame, metrics, track, None, thumb, "▕");
         hits.scrollbars[section.index()] = Some(track);
+    }
+}
+
+/// Swap each colour drawn on `ink`'s fill inside `rect` for the one legible
+/// there (`FillInk::ink`); cells on any other fill keep theirs.
+fn ink_fill(frame: &mut Frame, rect: Rect, ink: &FillInk) {
+    let buffer = frame.buffer_mut();
+    for y in rect.top()..rect.bottom() {
+        for x in rect.left()..rect.right() {
+            let cell = &mut buffer[(x, y)];
+            if cell.bg == ink.fill {
+                cell.fg = ink.ink(cell.fg);
+            }
+        }
     }
 }
 

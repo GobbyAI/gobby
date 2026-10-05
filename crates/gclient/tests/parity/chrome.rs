@@ -695,11 +695,12 @@ parity_tests! {
             let auto_style = cell(&terminal, auto_rect.x + 1, auto_rect.y).style();
             let custom_style = cell(&terminal, custom_rect.x + 1, custom_rect.y).style();
 
-            assert_eq!(auto_style.fg, Some(palette().subtext0));
-            assert_eq!(auto_style.bg, Some(palette().surface0));
+            let p = palette();
+            assert_eq!(auto_style.fg, Some(p.band_ink.ink(p.subtext0)));
+            assert_eq!(auto_style.bg, Some(p.band));
             assert!(!auto_style.add_modifier.contains(Modifier::DIM));
-            assert_eq!(custom_style.fg, Some(palette().text));
-            assert_eq!(custom_style.bg, Some(palette().surface1));
+            assert_eq!(custom_style.fg, Some(p.selection_ink.text));
+            assert_eq!(custom_style.bg, Some(p.selection));
             assert!(custom_style.add_modifier.contains(Modifier::BOLD));
         }
 
@@ -718,10 +719,10 @@ parity_tests! {
             let custom_rect = tabs.tab_hit_areas[1];
             let custom_style = cell(&terminal, custom_rect.x + 1, custom_rect.y).style();
 
-            // gclient: the active tab always sits on the raised surface,
+            // gclient: the active tab always sits on the selection fill,
             // so a reset panel background changes nothing.
-            assert_eq!(custom_style.bg, Some(palette().surface1));
-            assert_eq!(custom_style.fg, Some(palette().text));
+            assert_eq!(custom_style.bg, Some(palette().selection));
+            assert_eq!(custom_style.fg, Some(palette().selection_ink.text));
             assert!(custom_style.add_modifier.contains(Modifier::BOLD));
         }
 
@@ -1239,12 +1240,15 @@ switch_project = "ctrl+1..9"
                     // or selector and a rule set `+` apart from the last tab
                     // (#23120), then the Terminals address took subtext0
                     // (#23280 Option B) and section headings regained a
-                    // surface_dim band (#23280): 4.1.3
+                    // surface_dim band (#23280), then headings, the tab row
+                    // and the menu bar took the theme's header fill, the
+                    // active tab its selection fill, and the unfocused pane
+                    // its own fill, its scrollbar lane included (#23416): 4.1.3
                     // requires a glyph change to fail here, so this digest
                     // moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "e61b97928b91e57e158a694645d418455c9b676e203c5baea709111823bc3f1a",
+                        "4b7087b4dc95b4423dce0d2d51e71cc3b62a20da6c18fa12a29b5d72e0b6d952",
                         "the frame moved; read it against the boards before pinning:\n{}",
                         rect_rows(&terminal, frame).join("\n")
                     );
@@ -1683,6 +1687,7 @@ fn rendered_settings_hits_match_drawn_rows() {
     assert_eq!(view.settings_dialog_area, popup);
     assert_eq!(view.settings_row_hit_areas.len(), SettingsRow::ALL.len());
     let labels = [
+        "Appearance",
         "Theme",
         "Monochrome",
         "Mouse capture",
@@ -1767,7 +1772,7 @@ fn open_pane_below_stacks_the_new_slot_under_the_focused_one() {
 }
 
 // The upstream parity case keeps its pinned identity above; this names the
-// tab treatment directly: the active tab rises on the raised surface.
+// tab treatment directly: the active tab sits on the selection fill.
 #[test]
 fn tab_bar_raises_the_active_tab_in_every_theme() {
     let ws = scripted(&["test"]);
@@ -1781,17 +1786,23 @@ fn tab_bar_raises_the_active_tab_in_every_theme() {
     let active = tab_view(&ws, &chrome, area).tab_hit_areas[1];
     let style = cell(&terminal, active.x + 1, active.y).style();
 
-    // The same surface in Dark and under System, where the host's own
-    // ground would read as a hole in the bar.
-    assert_eq!(style.fg, Some(palette().text));
-    assert_eq!(style.bg, Some(palette().surface1));
+    // A fill in Dark and under System alike, where the host's own ground
+    // would read as a hole in the bar; System draws its own cell's fill.
+    assert_eq!(style.fg, Some(palette().selection_ink.text));
+    assert_eq!(style.bg, Some(palette().selection));
     assert!(style.add_modifier.contains(Modifier::BOLD));
 
     chrome.prefs.theme = "system".to_string();
+    chrome.set_theme(gobby_client::theme::ThemeKind::Dark);
     let terminal = render_full(&ws, &chrome, area);
     let style = cell(&terminal, active.x + 1, active.y).style();
-    assert_eq!(style.fg, Some(palette().text));
-    assert_eq!(style.bg, Some(palette().surface1));
+    assert_eq!(style.fg, Some(chrome.palette.selection_ink.text));
+    assert_eq!(style.bg, Some(chrome.palette.selection));
+    assert_ne!(
+        chrome.palette.selection,
+        palette().selection,
+        "System's own cell"
+    );
 
     // The pane body starts right under the tab row: no rule between them.
     assert_eq!(chrome.view.terminal_area.y, active.y + 1);

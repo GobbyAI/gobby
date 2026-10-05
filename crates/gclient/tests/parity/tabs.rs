@@ -112,7 +112,7 @@ parity_tests! {
             let (_, tab_rect) = hits.tabs[0];
             let style = cell(&term, tab_rect.x + 1, tab_rect.y).style();
 
-            assert_eq!(style.bg, Some(palette().surface1), "the raised surface");
+            assert_eq!(style.bg, Some(palette().selection), "the selection fill");
             assert!(!style.add_modifier.contains(Modifier::DIM));
             assert!(style.add_modifier.contains(Modifier::BOLD));
         }
@@ -563,7 +563,7 @@ fn tab_drag_reorders_or_clicks() {
     assert_eq!(chrome.active_index(), 0);
     assert_eq!(chrome.gesture, None);
 
-    // Past the threshold the tab is dragged and drawn reversed on surface0.
+    // Past the threshold the tab is dragged and drawn reversed on the header fill.
     route_mouse(&ws, &mut chrome, &at(LEFT_DOWN, col));
     assert_eq!(
         route_mouse(&ws, &mut chrome, &at(LEFT_DRAG, col + TAB_DRAG_THRESHOLD)),
@@ -579,7 +579,7 @@ fn tab_drag_reorders_or_clicks() {
     );
     let term = draw_with_hits(&ws, &mut chrome, area);
     let style = cell(&term, col, row).style();
-    assert_eq!(style.bg, Some(palette().surface0));
+    assert_eq!(style.bg, Some(palette().band));
     assert!(style.add_modifier.contains(Modifier::REVERSED));
     let (other, _) = tab_cell(&chrome, 1);
     assert!(!cell(&term, other, row)

@@ -40,6 +40,15 @@ pub(super) fn render_live_workspace<B: Backend>(
         .map_err(|error| FrameError::Other(error.to_string()))
 }
 
+/// Re-derive the sidebar's width cap from the window's pixel size, at
+/// startup and on every resize; a backend that cannot report it keeps the
+/// cap it has.
+pub(super) fn cap_sidebar_to_window<B: Backend>(terminal: &mut Terminal<B>, chrome: &mut Chrome) {
+    if let Ok(window) = terminal.backend_mut().window_size() {
+        chrome.sidebar.cap_to_window(window);
+    }
+}
+
 /// The click and key routing read the drawn hit map, so a projection that
 /// changed the pane layout while input was queued must redraw before the next
 /// event uses it, independent of the render tick.

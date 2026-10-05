@@ -527,6 +527,7 @@ pub(super) fn up<W: WorkspaceView>(
         }
         Some(MouseGesture::SidebarDrag) => {
             chrome.prefs.sidebar_width = chrome.sidebar.width;
+            persist_prefs(ws.gobby_home(), chrome);
             MouseOutcome::Handled
         }
         Some(MouseGesture::Select { slot }) => {

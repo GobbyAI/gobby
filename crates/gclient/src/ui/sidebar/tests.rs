@@ -80,6 +80,13 @@ fn screen(terminal: &Terminal<TestBackend>) -> String {
         .join("\n")
 }
 
+fn rgb(color: ratatui::style::Color) -> (u8, u8, u8) {
+    match color {
+        ratatui::style::Color::Rgb(r, g, b) => (r, g, b),
+        other => panic!("not a palette colour: {other:?}"),
+    }
+}
+
 #[test]
 fn a_right_sidebar_keeps_its_edge_column_first() {
     // On the right the edge faces the panes, so the sections start one
@@ -218,10 +225,10 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
 }
 
 #[test]
-fn section_headings_sit_on_a_band_between_the_ground_and_the_row_fills() {
-    // Josh (#23280): every heading row is a full-width band darker than the
-    // row selection fills and lighter than the panel ground, its title bold
-    // `text`.
+fn section_headings_sit_on_the_header_fill_in_its_ink() {
+    // Every heading row is full width on the theme's header fill, its title
+    // bold subtext0, or text where subtext0 falls under AA there (the
+    // theme-mapping board, #23416).
     let ws = scripted_workspace();
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
         let mut chrome = Chrome::dark();
@@ -233,8 +240,8 @@ fn section_headings_sit_on_a_band_between_the_ground_and_the_row_fills() {
                 render_sidebar(frame, Rect::new(0, 0, 26, 40), &ws, &chrome);
             })
             .unwrap();
-        let n = &chrome.theme.neutrals;
-        let ratio = crate::theme::contrast_ratio(n.text.rgb(), n.surface_dim.rgb());
+        let title_ink = p.band_ink.ink(p.subtext0);
+        let ratio = crate::theme::contrast_ratio(rgb(title_ink), rgb(p.band));
         assert!(ratio >= 4.5, "{kind:?} heading title contrast {ratio:.2}");
         let cells = terminal.backend().buffer();
         for (y, title) in [
@@ -244,11 +251,11 @@ fn section_headings_sit_on_a_band_between_the_ground_and_the_row_fills() {
             (23, "Terminals"),
         ] {
             for x in 0..25 {
-                assert_eq!(cells[(x, y)].bg, p.surface_dim, "{kind:?} {title} x={x}");
+                assert_eq!(cells[(x, y)].bg, p.band, "{kind:?} {title} x={x}");
             }
             for x in 1..=title.len() as u16 {
                 let cell = &cells[(x, y)];
-                assert_eq!(cell.fg, p.text, "{kind:?} {title} x={x}");
+                assert_eq!(cell.fg, title_ink, "{kind:?} {title} x={x}");
                 assert!(cell.modifier.contains(Modifier::BOLD), "{kind:?} {title}");
             }
         }
@@ -325,11 +332,13 @@ fn list_scroll_clamps_to_the_last_page() {
 }
 
 /// Every drawn cell of an agent's quiet lines (`No assigned task`, the
-/// model) meets AA against the fill it actually sits on: the ground, the
-/// active fill and the selected fill, in dark, light and monochrome.
+/// model) and of a selected project's accent name meets AA against the fill
+/// it actually sits on: the ground or the selection fill, which the active
+/// and the selected row share. Each theme Dark and Light offer, in colour
+/// and in monochrome.
 #[test]
 fn agent_quiet_lines_meet_aa_on_every_row_fill() {
-    use crate::theme::{contrast_ratio, ThemeKind};
+    use crate::theme::{contrast_ratio, ThemeKind, ThemeName};
     use ratatui::style::Color;
 
     let rgb = |color: Color, ground: Color| match (color, ground) {
@@ -349,17 +358,32 @@ fn agent_quiet_lines_meet_aa_on_every_row_fill() {
         row("plain", false, false),
         row("active", true, false),
         row("selected", false, true),
+        SidebarRow {
+            id: "proj-site".into(),
+            label: "gobby-site".into(),
+            kind: RowKind::Project,
+            selected: true,
+            ..SidebarRow::default()
+        },
     ];
-    let mut light = Chrome::dark();
-    light.set_theme(ThemeKind::Light);
-    let mut mono_dark = Chrome::dark();
-    mono_dark.prefs.monochrome = true;
-    mono_dark.set_theme(ThemeKind::Dark);
-    let mut mono_light = Chrome::dark();
-    mono_light.prefs.monochrome = true;
-    mono_light.set_theme(ThemeKind::Light);
-    for chrome in [Chrome::dark(), light, mono_dark, mono_light] {
+    let mut chromes = Vec::new();
+    for kind in [ThemeKind::Dark, ThemeKind::Light] {
+        for name in ThemeName::ALL
+            .into_iter()
+            .filter(|name| name.offered(kind, false))
+        {
+            for monochrome in [false, true] {
+                let mut chrome = Chrome::dark();
+                chrome.prefs.palette = name;
+                chrome.prefs.monochrome = monochrome;
+                chrome.set_theme(kind);
+                chromes.push(chrome);
+            }
+        }
+    }
+    for chrome in chromes {
         let p = &chrome.palette;
+        let case = format!("{:?} {:?}", chrome.theme.name, chrome.theme.kind);
         let area = Rect::new(0, 0, 26, 12);
         let mut terminal = Terminal::new(TestBackend::new(26, 12)).unwrap();
         let mut hits = SidebarHits::default();
@@ -397,13 +421,37 @@ fn agent_quiet_lines_meet_aa_on_every_row_fill() {
                 let ratio = contrast_ratio(rgb(cell.fg, p.panel_bg), rgb(cell.bg, p.panel_bg));
                 assert!(
                     ratio >= 4.5,
-                    "{:?} {} row {quiet:?}: {ratio:.2}:1",
-                    chrome.theme.kind,
+                    "{case} {} row {quiet:?}: {ratio:.2}:1",
                     rows[fill].id,
+                );
+                let on_selection = fill > 0;
+                assert_eq!(
+                    cell.bg == p.selection,
+                    on_selection,
+                    "{case} {}",
+                    rows[fill].id
                 );
             }
             checked[fill] += 1;
         }
-        assert_eq!(checked, [2, 2, 2], "both quiet lines of every row drawn");
+        assert_eq!(
+            checked,
+            [2, 2, 2],
+            "{case}: both quiet lines of every row drawn"
+        );
+
+        let (_, project) = hits.projects[0];
+        let name = text
+            .lines()
+            .nth(usize::from(project.y))
+            .and_then(|line| line.find("gobby-site").map(|at| line[..at].chars().count()))
+            .map(|x| u16::try_from(x).unwrap())
+            .expect("project name drawn");
+        for x in name..name + 10 {
+            let cell = &buffer[(x, project.y)];
+            assert_eq!(cell.bg, p.selection, "{case} project x={x}");
+            let ratio = contrast_ratio(rgb(cell.fg, p.panel_bg), rgb(cell.bg, p.panel_bg));
+            assert!(ratio >= 4.5, "{case} selected project name: {ratio:.2}:1");
+        }
     }
 }

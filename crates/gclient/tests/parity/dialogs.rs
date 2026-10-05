@@ -516,7 +516,10 @@ fn modal_keys_drive_every_mode() {
     // Settings: space toggles the selected row and queues the capture switch;
     // right steps the sidebar width; enter and esc close.
     chrome.mode = Mode::Settings;
-    chrome.settings.selected = 1;
+    chrome.settings.selected = SettingsRow::ALL
+        .iter()
+        .position(|row| *row == SettingsRow::Monochrome)
+        .expect("monochrome row");
     assert_eq!(
         press(&ws, &mut chrome, KeyCode::Down),
         ModalOutcome::Consumed

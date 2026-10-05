@@ -14,6 +14,7 @@ use ratatui::layout::{Margin, Position, Rect};
 
 use crate::app::PaneId;
 use crate::daemon::Daemon;
+use crate::theme::ThemeName;
 use crate::ui::hit::SidebarSection;
 use crate::ui::menu_bar::MenuBarMenu;
 use crate::ui::sidebar::ALL_MACHINES;
@@ -29,13 +30,16 @@ use items::{
     agent_items, global_items, pane_items, project_items, submenu_items, tab_items, worktree_items,
 };
 pub(super) use items::{
-    arrange_row, blocked_entry, enabled_if, item, passthrough_label, theme_row_label, toggle,
+    appearance_row_label, arrange_row, blocked_entry, enabled_if, item, passthrough_label,
+    theme_row_label, toggle,
 };
 
 /// A menu that opens beside the row of its parent menu that names it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Submenu {
-    /// View › Theme: the theme choices.
+    /// View › Appearance: dark, light or system.
+    Appearance,
+    /// View › Theme: every named theme.
     Theme,
     /// View › Sidebar: showing and pinning the sidebar, and one submenu per
     /// section.
@@ -53,7 +57,7 @@ impl Submenu {
     fn parent(&self) -> Option<Self> {
         match self {
             Self::Section(_) => Some(Self::Sidebar),
-            Self::Theme | Self::Sidebar | Self::Arrange(_) => None,
+            Self::Appearance | Self::Theme | Self::Sidebar | Self::Arrange(_) => None,
         }
     }
 }
@@ -141,8 +145,10 @@ pub enum MenuAction {
     PinSidebar,
     /// Open this submenu beside the row that names it.
     OpenSubmenu(Submenu),
-    /// Save this theme preference (`dark`, `light` or `system`) and draw in it.
-    SetTheme(&'static str),
+    /// Save this appearance (`dark`, `light` or `system`) and draw in it.
+    SetAppearance(&'static str),
+    /// Save this named theme and draw in it.
+    SetTheme(ThemeName),
     /// Flip the monochrome preference, save it and redraw in it.
     ToggleMonochrome,
     /// List the agents on every machine (`true`) or on this one.
@@ -299,10 +305,15 @@ where
             chrome.menu = Some(submenu_state(workspace, chrome, submenu));
             chrome.mode = Mode::ContextMenu;
         }
-        MenuAction::SetTheme(theme) => {
-            chrome.prefs.theme = (*theme).to_owned();
+        MenuAction::SetAppearance(appearance) => {
+            chrome.prefs.theme = (*appearance).to_owned();
             let kind = chrome.prefs.theme_kind();
             chrome.set_theme(kind);
+            persist_prefs(workspace.gobby_home(), chrome);
+        }
+        MenuAction::SetTheme(name) => {
+            chrome.prefs.palette = *name;
+            chrome.set_theme(chrome.theme.kind);
             persist_prefs(workspace.gobby_home(), chrome);
         }
         MenuAction::ToggleMonochrome => {

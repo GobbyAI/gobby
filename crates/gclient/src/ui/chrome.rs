@@ -9,7 +9,7 @@ use crate::app::viewer_state::{local_tab_id, ViewerState, LOCAL_TAB_PREFIX};
 use crate::app::workspace_ops::WorkspaceModel;
 use crate::app::{ClickRun, ContextMenuState, MouseGesture, Pane, PaneId, Workspace};
 use crate::daemon::{DaemonError, LayoutAxis, LayoutNode};
-use crate::theme::{Palette, Theme, ThemeKind};
+use crate::theme::{Palette, Theme, ThemeKind, ThemeName};
 use crate::ui::chrome_render::ChromeHits;
 use crate::ui::dialogs::Dialog;
 use crate::ui::hit::Hit;
@@ -427,13 +427,25 @@ impl Chrome {
     }
 
     /// Record the hosting terminal's answer to gclient's OSC 10/11 query.
+    /// Host-matched takes its hue from the host's background, so a new
+    /// background redraws it.
     pub fn record_host_color(&mut self, kind: DefaultColorKind, color: RgbColor) {
+        let background = self.host_colors.background;
         self.host_colors = self.host_colors.with_color(kind, color);
+        if self.theme.name == ThemeName::HostMatched && self.host_colors.background != background {
+            self.set_theme(self.theme.kind);
+        }
     }
 
-    /// Draw in `kind`, in grays when `prefs.monochrome` is set.
+    /// Draw the preferred theme in `kind`, over the host terminal in System,
+    /// in grays when `prefs.monochrome` is set.
     pub fn set_theme(&mut self, kind: ThemeKind) {
-        self.theme = Theme::new(kind);
+        self.theme = if self.prefs.follows_system() {
+            let host = self.host_colors.background.map(|c| (c.r, c.g, c.b));
+            Theme::hosted(self.prefs.palette, kind, host)
+        } else {
+            Theme::named(self.prefs.palette, kind)
+        };
         self.palette = if self.prefs.monochrome {
             Palette::monochrome(&self.theme)
         } else {
@@ -444,14 +456,14 @@ impl Chrome {
     /// Adopt loaded prefs: the theme and the sidebar width take effect at
     /// once; the rest is read from `prefs` wherever it applies.
     pub fn apply_prefs(&mut self, prefs: ClientPrefs) {
-        self.prefs.monochrome = prefs.monochrome;
-        self.set_theme(prefs.theme_kind());
         self.sidebar.width = prefs.sidebar_width;
         self.sidebar.side = prefs.sidebar_side;
         self.sidebar.pinned = prefs.sidebar_pinned;
         self.sidebar.project_order = prefs.project_order.clone();
         self.sidebar.project_labels = prefs.project_labels.clone();
         self.prefs = prefs;
+        // After the prefs land: the theme reads its name and monochrome there.
+        self.set_theme(self.prefs.theme_kind());
     }
 
     /// The focused project's tab bar.

@@ -139,7 +139,12 @@ fn observable_state(fixture: &LiveMenuFixture) -> String {
         fixture.chrome.toasts.len(),
         fixture.chrome.alert_log.len(),
         fixture.chrome.tabs().tabs.len(),
-    ) + &format!(":{:?}", fixture.chrome.focused_pane())
+    ) + &format!(
+        ":{:?}:{:?}:{:?}",
+        fixture.chrome.focused_pane(),
+        fixture.chrome.theme.name,
+        fixture.chrome.prefs.palette,
+    )
 }
 
 #[test]
@@ -232,7 +237,12 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
 
     assert_eq!(
         labels(MenuBarMenu::View),
-        ["  Theme: Dark ▸", "  Monochrome", "  Sidebar ▸"]
+        [
+            "  Appearance: Dark ▸",
+            "  Theme: Restored ▸",
+            "  Monochrome",
+            "  Sidebar ▸"
+        ]
     );
     assert_eq!(
         labels(MenuBarMenu::Window),
@@ -260,6 +270,7 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
         .map(ContextMenuKind::MenuBar)
         .chain(
             [
+                Submenu::Appearance,
                 Submenu::Theme,
                 Submenu::Sidebar,
                 Submenu::Section(SidebarSection::Machines),
@@ -374,8 +385,8 @@ async fn pick_menu_row(
     row
 }
 
-/// Open the Theme choices through the View menu's Theme row.
-async fn open_the_theme_choices(
+/// Open the Appearance choices through the View menu's Appearance row.
+async fn open_the_appearance_choices(
     terminal: &mut Terminal<TestBackend>,
     fixture: &mut LiveMenuFixture,
 ) -> Rect {
@@ -383,7 +394,7 @@ async fn open_the_theme_choices(
         terminal,
         fixture,
         MenuBarMenu::View,
-        MenuAction::OpenSubmenu(Submenu::Theme),
+        MenuAction::OpenSubmenu(Submenu::Appearance),
     )
     .await;
     assert_eq!(
@@ -413,28 +424,35 @@ fn screen(terminal: &Terminal<TestBackend>) -> String {
         .join("\n")
 }
 
-// Regression: the drawn Theme row once did nothing when the loop dispatched
+// Regression: the drawn Appearance row once did nothing when the loop dispatched
 // it. The row must open its choices beside the View menu, which stays open
 // behind them, and a pick must save.
 #[tokio::test]
-async fn clicking_the_theme_row_opens_its_choices_and_a_pick_saves_it() {
+async fn clicking_the_appearance_row_opens_its_choices_and_a_pick_saves_it() {
     let mut fixture = live_menu_fixture(true, false).await;
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test backend");
-    let row = open_the_theme_choices(&mut terminal, &mut fixture).await;
-    let choices = fixture.chrome.menu.as_ref().expect("theme choices open");
-    assert_eq!(choices.kind, ContextMenuKind::Submenu(Submenu::Theme));
+    let row = open_the_appearance_choices(&mut terminal, &mut fixture).await;
+    let choices = fixture
+        .chrome
+        .menu
+        .as_ref()
+        .expect("appearance choices open");
+    assert_eq!(choices.kind, ContextMenuKind::Submenu(Submenu::Appearance));
     let labels: Vec<&str> = choices.items.iter().map(|item| item.label).collect();
     assert_eq!(labels, ["● Dark", "  Light", "  System"]);
     assert!(
         choices.item_rects[0].x > row.right(),
         "beside the View menu"
     );
-    assert_eq!(choices.item_rects[0].y, row.y, "level with the theme row");
+    assert_eq!(
+        choices.item_rects[0].y, row.y,
+        "level with the appearance row"
+    );
     let parent = choices.parent.as_deref().expect("the View menu stays open");
     assert_eq!(parent.kind, ContextMenuKind::MenuBar(MenuBarMenu::View));
     assert_eq!(
         parent.items[parent.selected].action,
-        MenuAction::OpenSubmenu(Submenu::Theme)
+        MenuAction::OpenSubmenu(Submenu::Appearance)
     );
     assert_eq!(
         parent.item_rects[parent.selected], row,
@@ -444,7 +462,7 @@ async fn clicking_the_theme_row_opens_its_choices_and_a_pick_saves_it() {
     let drawn: String = (row.x..row.right())
         .map(|x| buffer[(x, row.y)].symbol())
         .collect();
-    assert!(drawn.contains("Theme: Dark ▸"), "{drawn:?}");
+    assert!(drawn.contains("Appearance: Dark ▸"), "{drawn:?}");
 
     let light = choices.item_rects[1];
     let press = left_press((light.x + 1, light.y));
@@ -452,7 +470,7 @@ async fn clicking_the_theme_row_opens_its_choices_and_a_pick_saves_it() {
     let MouseOutcome::Menu { kind, action } = outcome else {
         panic!("the Light click dispatches: {outcome:?}");
     };
-    assert_eq!(action, MenuAction::SetTheme("light"));
+    assert_eq!(action, MenuAction::SetAppearance("light"));
     apply_live_menu_action(&mut fixture.workspace, &mut fixture.chrome, kind, action)
         .await
         .expect("dispatch the pick");
@@ -462,13 +480,13 @@ async fn clicking_the_theme_row_opens_its_choices_and_a_pick_saves_it() {
     fixture.mock.shutdown().await;
 }
 
-// The View menu stays live behind the theme choices: a press on one of its
-// rows acts on that row, and Esc closes both menus.
+// The View menu stays live behind the appearance choices: a press on one of
+// its rows acts on that row, and Esc closes both menus.
 #[tokio::test]
-async fn the_view_menu_behind_the_theme_choices_stays_live() {
+async fn the_view_menu_behind_the_appearance_choices_stays_live() {
     let mut fixture = live_menu_fixture(true, false).await;
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test backend");
-    open_the_theme_choices(&mut terminal, &mut fixture).await;
+    open_the_appearance_choices(&mut terminal, &mut fixture).await;
     let parent = fixture
         .chrome
         .menu
@@ -491,7 +509,7 @@ async fn the_view_menu_behind_the_theme_choices_stays_live() {
     );
     assert!(fixture.chrome.menu.is_none(), "the row ran and both closed");
 
-    open_the_theme_choices(&mut terminal, &mut fixture).await;
+    open_the_appearance_choices(&mut terminal, &mut fixture).await;
     let outcome = route_modal_key(&fixture.workspace, &mut fixture.chrome, &key(KeyCode::Esc));
     assert!(matches!(outcome, ModalOutcome::Close));
     assert!(
@@ -505,14 +523,18 @@ async fn the_view_menu_behind_the_theme_choices_stays_live() {
 /// On a frame too narrow for the choices right of the View menu, they open
 /// on its left rather than over it.
 #[tokio::test]
-async fn the_theme_choices_open_left_of_the_view_menu_on_a_narrow_frame() {
+async fn the_appearance_choices_open_left_of_the_view_menu_on_a_narrow_frame() {
     let mut fixture = live_menu_fixture(true, false).await;
     let mut terminal = Terminal::new(TestBackend::new(50, 24)).expect("test backend");
     fixture
         .chrome
         .compute_view(&fixture.workspace, Rect::new(0, 0, 50, 24));
-    let row = open_the_theme_choices(&mut terminal, &mut fixture).await;
-    let choices = fixture.chrome.menu.as_ref().expect("theme choices open");
+    let row = open_the_appearance_choices(&mut terminal, &mut fixture).await;
+    let choices = fixture
+        .chrome
+        .menu
+        .as_ref()
+        .expect("appearance choices open");
     let view_left = choices
         .parent
         .as_deref()
@@ -523,7 +545,7 @@ async fn the_theme_choices_open_left_of_the_view_menu_on_a_narrow_frame() {
         first.right() < view_left,
         "left of the View menu: {first:?}, View rows from x {view_left}"
     );
-    assert_eq!(first.y, row.y, "the first choice lines up with Theme");
+    assert_eq!(first.y, row.y, "the first choice lines up with Appearance");
     fixture.mock.shutdown().await;
 }
 

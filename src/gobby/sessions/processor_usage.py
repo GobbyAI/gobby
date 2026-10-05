@@ -59,14 +59,20 @@ class ProcessorUsageMixin:
         has_context_occupancy = any(msg.context_used_tokens is not None for msg in messages)
         has_window_metadata = any(self._message_context_window(msg) is not None for msg in messages)
         has_model = any(isinstance(msg.model, str) and bool(msg.model) for msg in messages)
-        # Claude Code's hook payloads carry no effort; its transcript records do.
-        observed_effort = next(
-            (
-                effort
-                for msg in reversed(messages)
-                if (effort := observed_reasoning_effort(msg.raw_json)) is not None
-            ),
-            None,
+        # Claude Code's hook payloads carry no effort; its transcript records do. A
+        # catch-up batch short of EOF ends on a historical record, so it keeps the
+        # stored effort the way it keeps the stored occupancy.
+        observed_effort = (
+            next(
+                (
+                    effort
+                    for msg in reversed(messages)
+                    if (effort := observed_reasoning_effort(msg.raw_json)) is not None
+                ),
+                None,
+            )
+            if publish_occupancy
+            else None
         )
         if (
             not has_usage
@@ -345,7 +351,7 @@ class ProcessorUsageMixin:
     async def _publish_tail_occupancy(
         self: ProcessorHost, session_id: str, transcript_path: str
     ) -> None:
-        """Publish the latest occupancy found in the transcript tail.
+        """Publish the latest occupancy and reasoning effort found in the transcript tail.
 
         Runs while a catch-up has history left to ingest, so the context-pressure
         guard reads the live context size rather than a value from before the
@@ -387,12 +393,11 @@ class ProcessorUsageMixin:
                     "Tail occupancy parse failed for session %s", session_id, exc_info=True
                 )
                 return
-            for msg in reversed(records):
-                if not isinstance(msg, ParsedMessage):
-                    continue
+            messages = [msg for msg in records if isinstance(msg, ParsedMessage)]
+            snapshot: ContextUsageSnapshot | None = None
+            for msg in reversed(messages):
                 window = self._message_context_window(msg) or session_window
                 model = msg.model if isinstance(msg.model, str) and msg.model else session_model
-                snapshot: ContextUsageSnapshot | None = None
                 if msg.context_used_tokens is not None:
                     snapshot = ContextUsageSnapshot.from_reported_occupancy(
                         source=normalized_source,
@@ -410,13 +415,25 @@ class ProcessorUsageMixin:
                         source=source, context_window=window, usage=msg.usage, model=model
                     )
                 if snapshot is not None and snapshot.context_used_tokens is not None:
-                    await self._run_db(
-                        self.session_manager.update_context_usage, session_id, snapshot
-                    )
-                    return
-            if whole_file:
-                return
+                    break
+                snapshot = None
+            if snapshot is not None or whole_file:
+                break
             limit *= 4
+        # The catch-up's history passes keep the stored effort until EOF, so the
+        # tail publishes the live one alongside the live occupancy.
+        effort = next(
+            (
+                effort
+                for msg in reversed(messages)
+                if (effort := observed_reasoning_effort(msg.raw_json)) is not None
+            ),
+            None,
+        )
+        if effort is not None and effort != getattr(session, "reasoning_effort", None):
+            await self._run_db(self.session_manager.update, session_id, reasoning_effort=effort)
+        if snapshot is not None:
+            await self._run_db(self.session_manager.update_context_usage, session_id, snapshot)
 
 
 def _read_complete_tail_lines(path: str, limit: int) -> tuple[list[str], bool]:
