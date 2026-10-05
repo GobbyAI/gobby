@@ -540,6 +540,34 @@ async def test_missing_snapshot_fails_closed(definition_json: str | None) -> Non
 
 
 @pytest.mark.asyncio
+async def test_failed_snapshot_status_write_does_not_abort_recovery(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A DB error failing one unusable-snapshot execution still resumes the rest."""
+    broken = _make_execution(execution_id="pe-broken", definition_json=None)
+    healthy = _make_execution(execution_id="pe-healthy")
+    loader = MagicMock()
+    loader.load_pipeline = AsyncMock(return_value=_definition())
+    executor = MagicMock()
+    executor.execute = AsyncMock(side_effect=asyncio.CancelledError)
+    execution_manager = MagicMock()
+    execution_manager.list_executions.return_value = [broken, healthy]
+    execution_manager.update_execution_status.side_effect = RuntimeError("db down")
+
+    with caplog.at_level("WARNING"):
+        resumed = await resume_interrupted_pipelines(
+            loader=loader,
+            executor=executor,
+            execution_manager=execution_manager,
+            project_id="test-project",
+        )
+
+    assert resumed == ["pe-healthy"]
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("pe-broken" in message and "db down" in message for message in warnings)
+
+
+@pytest.mark.asyncio
 async def test_precreate_records_caller_project() -> None:
     """The pre-created execution carries the caller's project, not the manager's bound one."""
     loader = MagicMock()
