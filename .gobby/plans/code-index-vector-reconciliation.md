@@ -17,8 +17,9 @@ taken at `cf88559ef2`.
 The plan does three things:
 - It stops new drift on both projection flags. gcode becomes the only owner
   of vector-sync completion, through a compare-and-set that mirrors the graph
-  one (1.1). The graph CLI honors its existing compare-and-set (1.4), and the
-  Python worker stops marking either flag after a native call (1.2). A
+  one (1.1). The graph CLI honors its existing compare-and-set (1.4). The
+  Python worker stops marking either flag after a native call, and sends
+  every graph-language file to gcode for graph-fact eligibility (1.2). A
   re-parse of an existing content version marks a projection pending when
   that projection's stored input changes (1.3).
 - `gcode vector reconcile` replaces `gcode vector cleanup-orphans`. A
@@ -117,14 +118,18 @@ Out of scope:
     input changes (1.3). `graph rebuild` keeps ignoring the result. It runs
     under the exclusive project lock (`lifecycle.rs:446`), and a failed
     compare-and-set there leaves the row pending, which is safe.
-13. **No-graph shortcut.** The worker marks a file graph-synced without a
-    native call when `_file_needs_graph_sync` is false (`sync_worker.py:587-594`).
-    The shortcut stays: removing it would make `sync_no_fact_file` write
-    `CodeFile` nodes for files the daemon never projects today. Its mark
-    becomes a compare-and-set on the snapshot fields the decision used,
-    `symbol_count` and `language`. A same-hash re-parse rewrites both
-    (`index/api.rs:274-279`), so a concurrent re-parse that adds symbols
-    leaves the row pending for the next scan.
+13. **Graph eligibility and the no-graph shortcut.** gcode owns graph-fact
+    eligibility. `_file_needs_graph_sync` keeps only its language check, so
+    every file in a graph language goes to the native command. That command
+    applies `has_no_graph_facts` over imports, symbols, calls and
+    inheritance. For a file with none of them, it clears the path's stale
+    graph through `sync_no_fact_file`. This fixes S8. Files in other
+    languages keep the Python shortcut, which saves one gcode call per
+    non-code file. The shortcut's mark becomes a compare-and-set on the
+    snapshot's `language`, the only field the decision now reads. A
+    same-hash re-parse rewrites `language` (`index/api.rs:274-279`), so a
+    concurrent re-parse that changes it leaves the row pending for the next
+    scan.
 
 ## As-Is Facts
 `kind: framing`
@@ -192,7 +197,16 @@ Source mechanisms at `cf88559ef2`:
     also marks without a native call when `_file_needs_graph_sync` is false
     (`:587-594`, excerpt_hash
     `55ef450cedf3ecea5e708d7a2373d68829b11039352d62ebd5cb5c0ed0182382`): no
-    symbols, or a language outside `_GRAPH_SYNC_LANGUAGES`.
+    symbols, or a language outside `_GRAPH_SYNC_LANGUAGES`
+    (`sync_worker.py:79-80`, excerpt_hash
+    `0de87c61266a9fed498704611dbfd6c38b41dfe63110466e1aafdf13df06679d`).
+  - Native eligibility is `has_no_graph_facts`, which requires empty
+    imports, definitions, calls and inheritance (`lifecycle.rs:203-210`,
+    excerpt_hash
+    `704272dbbf04d0dd7595e2924248a8a140fd72a6920f4deea1ee54096bddbfd3`). For
+    a file with no facts, `sync_no_fact_file`
+    (`graph/code_graph/write.rs:171-178`) deletes the path's stale graph
+    and its bare file node, and writes nothing.
   - `_storage/files.py::mark_graph_synced(file_id, content_hash)` matches
     the version row only and stamps a Python-side attempt time.
   - `db/queries.rs::dirty_graph_sync_for_file` joins any machine's file
@@ -278,6 +292,11 @@ Source-proven mechanisms (frequency unmeasured):
 - **S7.** A same-version re-parse that changes imports, calls, inheritance
   or projected symbol fields keeps `graph_synced = true`, so the graph keeps
   the old facts.
+- **S8.** The worker's eligibility differs from native's. A graph-language
+  file with imports, calls or inheritance but no symbols, such as an
+  `__init__.py` that only imports, is marked graph-synced without its edges
+  being projected. When a file's new version has no symbols, the path's old
+  graph nodes also stay, because the native cleanup never runs.
 
 Hypotheses and the evidence that settles each:
 
@@ -408,8 +427,9 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
 
 Targets:
 - `src/gobby/code_index/sync_worker.py::_sync_file`
+- `src/gobby/code_index/sync_worker.py::_file_needs_graph_sync`
 - `src/gobby/code_index/_storage/files.py::CodeIndexFileStorageMixin`
-- `tests/code_index/test_sync_worker.py::*` — scope-reason: drop `mark_vectors_synced` assertions and fakes, move `mark_graph_synced` assertions to the shortcut-only snapshot call, add the four completion tests
+- `tests/code_index/test_sync_worker.py::*` — scope-reason: drop `mark_vectors_synced` assertions and fakes, move `mark_graph_synced` assertions to the shortcut-only snapshot call, add the completion and import-only tests
 - `tests/code_index/test_sync_worker_breaker.py::*` — scope-reason: drop `mark_vectors_synced` fakes and assertions; graph-mark counts drop to shortcut calls only
 - `tests/test_runner_code_index_shutdown.py::*` — scope-reason: its storage fake defines `mark_vectors_synced`
 - `tests/code_index/test_code_index_storage.py::*` — scope-reason: the stale-hash test at 1689 calls the new `mark_graph_synced(file)` signature; add the shortcut snapshot test
@@ -434,8 +454,11 @@ Implementation:
   reference and fake.
 - `CodeIndexFileStorageMixin.mark_graph_synced(file: IndexedFile) -> bool`
   serves only the shortcut (Decision Record 13). It runs
-  `UPDATE code_indexed_files SET graph_synced = TRUE, graph_sync_attempted_at = %s WHERE id = %s AND content_hash = %s AND symbol_count = %s AND language = %s`
+  `UPDATE code_indexed_files SET graph_synced = TRUE, graph_sync_attempted_at = %s WHERE id = %s AND content_hash = %s AND language = %s`
   with the snapshot's values. The shortcut at :592 passes `current`.
+- `_file_needs_graph_sync(file)` returns
+  `file.language.lower() in _GRAPH_SYNC_LANGUAGES`, without the
+  `symbol_count > 0` check (Decision Record 13, S8).
 - Keep `mark_vector_sync_attempted` (:497), `mark_graph_sync_attempted`
   (:599), `requeue_vector_sync` and `requeue_graph_sync`.
 
@@ -459,9 +482,14 @@ then `uv run ruff check src/ && uv run mypy src/`.
   the file pending. test:
   `tests/code_index/test_sync_worker.py::test_superseded_graph_skip_keeps_file_pending`.
 - 1.2.5 - The shortcut mark returns false and leaves `graph_synced = false`
-  when the row's `symbol_count` or `language` no longer matches the
-  snapshot, and marks the row when both match. test:
+  when the row's `language` no longer matches the snapshot, and marks the
+  row when it matches. test:
   `tests/code_index/test_code_index_storage.py::test_no_graph_shortcut_mark_rejects_changed_snapshot`.
+- 1.2.6 - A Python `__init__.py` with imports and no symbols
+  (`symbol_count = 0`) goes to the native graph sync, and the worker makes
+  no shortcut mark. A file outside `_GRAPH_SYNC_LANGUAGES` still takes the
+  shortcut. test:
+  `tests/code_index/test_sync_worker.py::test_import_only_init_file_delegates_graph_sync_to_native`.
 
 ### 1.3 Re-parse projection reset [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -1199,6 +1227,12 @@ drop is part of it.
   - Graph parity: S6 and S7 in As-Is Facts, Decision Records 12 and 13,
     new leaf 1.4, 1.2 covers both Python marks, and 1.3 resets both flags
     (1.3.8).
+- 2026-10-05 15:39 CDT: The Orchestrator gobby#14972 folded in the
+  worker's graph eligibility. S8 records the gap. Decision Record 13 now
+  routes every graph-language file to gcode's `has_no_graph_facts`, and
+  corrects its earlier claim: `sync_no_fact_file` only deletes. 1.2 drops
+  the `symbol_count > 0` check and narrows the shortcut compare-and-set to
+  `language` (1.2.5, 1.2.6).
 
 ## V2: Verification
 `kind: verification`
