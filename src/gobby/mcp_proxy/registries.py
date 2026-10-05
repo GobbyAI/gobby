@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Awaitable, Callable
+import time
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager
@@ -41,6 +43,20 @@ if TYPE_CHECKING:
     from gobby.worktrees.merge import MergeResolver
 
 logger = logging.getLogger("gobby.mcp.registries")
+
+
+@contextmanager
+def _startup_step(name: str) -> Iterator[None]:
+    """Name an active initializer even when it has not returned yet."""
+    started = time.monotonic()
+    logger.info("Startup step %s started", name)
+    try:
+        yield
+    except Exception:
+        logger.exception("Startup step %s failed after %.3fs", name, time.monotonic() - started)
+        raise
+    else:
+        logger.info("Startup step %s completed in %.3fs", name, time.monotonic() - started)
 
 
 def setup_internal_registries(
@@ -501,8 +517,10 @@ def setup_internal_registries(
             )
 
         initial_skills_epoch = initial_config
-        initial_hub_manager = build_hub_manager(initial_skills_epoch)
-        initial_search = build_skill_search(initial_skills_epoch)
+        with _startup_step("skills hub manager"):
+            initial_hub_manager = build_hub_manager(initial_skills_epoch)
+        with _startup_step("skills search"):
+            initial_search = build_skill_search(initial_skills_epoch)
         hub_cache: tuple[object | None, HubManager] = (
             initial_skills_epoch,
             initial_hub_manager,
@@ -530,16 +548,17 @@ def setup_internal_registries(
                     search_cache = (active_config, build_skill_search(active_config))
                 return search_cache[1]
 
-        skills_registry = create_skills_registry(
-            db=db,
-            project_id=project_id,
-            hub_manager=initial_hub_manager,
-            search=initial_search,
-            run_db=run_db,
-            hub_manager_resolver=resolve_hub_manager,
-            search_resolver=resolve_skill_search,
-        )
-        manager.add_registry(skills_registry)
+        with _startup_step("skills registry"):
+            skills_registry = create_skills_registry(
+                db=db,
+                project_id=project_id,
+                hub_manager=initial_hub_manager,
+                search=initial_search,
+                run_db=run_db,
+                hub_manager_resolver=resolve_hub_manager,
+                search_resolver=resolve_skill_search,
+            )
+            manager.add_registry(skills_registry)
         logger.debug("Skills registry initialized")
     else:
         logger.debug("Skills registry not initialized: db is None")
@@ -547,27 +566,29 @@ def setup_internal_registries(
     # Initialize cron registry if database is available
     if db is not None:
         try:
-            from gobby.mcp_proxy.tools.cron import create_cron_registry
-            from gobby.storage.cron import CronJobStorage
+            with _startup_step("cron registry"):
+                from gobby.mcp_proxy.tools.cron import create_cron_registry
+                from gobby.storage.cron import CronJobStorage
 
-            cron_storage = CronJobStorage(db)
-            cron_registry = create_cron_registry(
-                cron_storage=cron_storage, cron_scheduler=cron_scheduler
-            )
-            manager.add_registry(cron_registry)
+                cron_storage = CronJobStorage(db)
+                cron_registry = create_cron_registry(
+                    cron_storage=cron_storage, cron_scheduler=cron_scheduler
+                )
+                manager.add_registry(cron_registry)
             logger.debug("Cron registry initialized")
         except (ImportError, RuntimeError, OSError) as e:
             logger.debug("Cron registry not initialized: %s", e)
 
     if communications_manager is not None:
         try:
-            from gobby.mcp_proxy.tools.communications import create_communications_registry
+            with _startup_step("communications registry"):
+                from gobby.mcp_proxy.tools.communications import create_communications_registry
 
-            communications_registry = create_communications_registry(
-                communications_manager,
-                db=db,
-            )
-            manager.add_registry(communications_registry)
+                communications_registry = create_communications_registry(
+                    communications_manager,
+                    db=db,
+                )
+                manager.add_registry(communications_registry)
             logger.debug("Communications registry initialized")
         except (ImportError, RuntimeError, OSError) as e:
             logger.debug("Communications registry not initialized: %s", e)
