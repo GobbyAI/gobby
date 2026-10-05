@@ -44,7 +44,7 @@ enforces it (#22902 Constraints, boundary paragraph).
    - The Python implementation takes an explicit `session_id` for one
      in-process caller: the web-chat launch, which activates a session it has
      just created.
-   - Rejected: PD-targeted activation of another session. No flow in #22902,
+   - Rejected: Orchestrator-targeted activation of another session. No flow in #22902,
      #22904 or #22895 needs it. It would also change another agent's rules and
      tool blocks mid-turn with no receipt.
    - `apply_persona` and its module are deleted, with no alias (AGENTS.md rule
@@ -60,8 +60,9 @@ enforces it (#22902 Constraints, boundary paragraph).
      - `is_spawned_agent=False`;
      - `workflows.variables` and selector-filtered defaults;
      - the reinjection flags;
-     - the pin (Decision 4);
-     - the lifecycle declaration (Decision 9).
+     - the pin (Decision 4).
+
+     Run lifetime is not part of the delta (Decision 9).
    - Why this closes the gaps:
      - `RuleEngine` resolves selectors from `_agent_type`, so writing it is what
        makes rules follow the seat.
@@ -154,23 +155,48 @@ enforces it (#22902 Constraints, boundary paragraph).
    - Scope of the change:
      - `default.yaml` declares no `step_workflow`, so plain sessions are
        unaffected.
-     - Seats without one (assistant, program-director, lane-manager, archivist)
+     - Seats without one (assistant, orchestrator, lane-manager, archivist)
        get none.
      - Spawned sessions already get their instance at spawn
        (`spawn_agent/_step_state.py::persist_initial_step_instance`), so the lift
        only widens recovery.
-9. **Lifecycle is declared on the definition. Runtime enforcement is separate
-   (R4).**
-   - `AgentDefinitionBody` gains an optional
-     `lifecycle: {mode: long_lived | one_task | follow_up, idle_ttl_seconds: int
-     | null}`.
-     - `one_task` clears between deliverables and keeps the pane.
-     - `long_lived` compacts and never clears.
-     - `follow_up` requires `idle_ttl_seconds`.
-   - Activation writes it to `_agent_lifecycle`. That session variable is the
-     contract the runtime work reads.
-   - This replaces #22902 D10's "Continuity is prose, not schema" (corrected in
-     the #22902 revision below).
+9. **Run lifetime is `execution_mode`. The only addition is an idle TTL.
+   Runtime enforcement is separate (R4).**
+   - Superseded on 2026-10-05 (Orchestrator ruling, relayed by the Lane Manager
+     gobby#15389): the 2026-09-28 draft's
+     `lifecycle: {mode: long_lived | one_task | follow_up, idle_ttl_seconds}`
+     field and its `_agent_lifecycle` session variable. Reason: one mechanism
+     per concern. `execution_mode` (#23442, Standing seats launched with
+     spawn_agent are reprompted to end their run when idle, then completed by
+     the watchdog) already owns run lifetime.
+   - `AgentDefinitionBody.execution_mode` (`one_shot | interactive`) stays the
+     single run-lifetime field.
+     - Spawn resolves the effective mode; a spawn-time `execution_mode`
+       overrides the definition.
+     - Spawn stores the mode in the run's `resume_metadata`, which
+       `AgentRun.is_interactive` reads.
+   - The only new field is `idle_ttl_seconds`, a positive integer that is valid
+     only with `execution_mode: interactive`.
+     - It ends an interactive follow-up run that has sat idle that long.
+     - Spawn stores it in `resume_metadata` next to `execution_mode`, and only
+       when the effective mode is `interactive`.
+   - Mapping of the superseded values:
+
+     | Superseded `lifecycle.mode` | Declaration now |
+     | --- | --- |
+     | `long_lived` | `execution_mode: interactive`, no `idle_ttl_seconds` |
+     | `one_task` | `execution_mode: interactive`, no `idle_ttl_seconds` |
+     | `follow_up` | `execution_mode: interactive` with `idle_ttl_seconds` |
+
+     - `long_lived` and `one_task` collapse into one value, because both keep
+       their pane between tasks. Whether a seat compacts or clears between
+       deliverables is a context-boundary practice, not run lifetime. It stays
+       prose in each seat prompt (#22902 D10), and 1.4 carries the seat across
+       `/clear`.
+     - `one_shot` is not a seat lifecycle. It is for single-pass spawned
+       workers such as plan-enhancer and the close reviewer.
+   - Both fields act on agent runs. A hand-launched pane has no run, so
+     activation writes nothing about run lifetime.
    - A model or provider change is a new agent. No in-place switch exists for
      terminal or spawned sessions, and this plan adds none.
    - Rework after rejection goes to a fresh agent (R3).
@@ -203,7 +229,8 @@ enforces it (#22902 Constraints, boundary paragraph).
 ## As-Is Facts
 `kind: framing`
 
-Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) unless marked:
+Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) and re-verified at
+48071323c9 (Writer, 2026-10-05) unless marked:
 
 - `mcp_proxy/tools/apply_persona.py` (305 lines) is the only way to activate a
   definition on an existing session.
@@ -245,10 +272,14 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) unless marked:
   - Enforcement (`_get_step_for_session`) has no spawned check.
 - `/clear` successor:
   - `materialize.py::_bind_clear_successor` copies the task claim, the
-    handoff-pull flag and the title.
-  - `activate_materialized_session` calls the bind (line hint 352) before
-    `_activate_default_agent` (line hint 402). The successor has no
+    handoff-pull flag, the MCP proxy readiness (`inherited_mcp_proxy_ready`)
+    and the title.
+  - `activate_materialized_session` calls the bind (line hint 356) before
+    `_activate_default_agent` (line hint 406). The successor has no
     `_agent_type`, so it resolves `default` and the seat is lost.
+  - The bind does not rebind an agent run. Only spawn
+    (`spawn_agent/_runtime.py::_persist_spawn_runtime`) and the admin test
+    route call `update_child_session`.
 - Spawned-run resume (`agents/resume_executor.py`) reuses the existing session
   (`existing_session_id`) and merges the spawn-time `initial_variables`.
 - Web chat:
@@ -258,18 +289,50 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) unless marked:
     system prompt with `build_session_persona_context`.
 - `compute_definition_hash(definition_json: str)`
   (`storage/definitions/_shared.py`) feeds template drift only today.
-- `AgentDefinitionBody` has no `version` or `lifecycle` field. `timeout` is a
-  wall-clock run limit, not an idle limit.
+- `AgentDefinitionBody` (`workflows/agent_models.py`, 270 lines):
+  - `version: StrictStr | None` (line 112) landed with #22993 (Retire the
+    skills map and store version, #22902 1.1, closed 2026-09-28). Decision 4
+    keeps it out of the pin.
+  - `execution_mode: Literal["one_shot", "interactive"] = "one_shot"`
+    (line 120) landed in #23442's commits a95e39fdad, 80ecc84f10 and
+    dbfdc43f42. #23442 is still open.
+    - `spawn_agent_impl` resolves the effective mode (`_implementation.py:137`):
+      the spawn argument wins, otherwise the definition's value.
+    - `build_spawn_context` writes it to the run's initial variables
+      (`_runtime.py:62`) and `resume_metadata` (`_runtime.py:134`).
+    - `AgentRun.is_interactive` (`storage/agents/_models.py:83`) reads
+      `resume_metadata`. The idle check, health check, lifecycle monitor,
+      lifecycle reconciliation and completed-turn recovery branch on it.
+    - `_handle_idle_check` returns early for every interactive run
+      (`idle_check_handler.py:481`), so nothing ends an idle interactive run
+      today.
+    - Resume passes the stored `resume_metadata` through whole
+      (`tests/agents/watchdog/test_interactive_lifecycle_cleanup.py` asserts
+      that `execution_mode` survives).
+  - It has no idle-TTL field. `timeout` (line 149) is a wall-clock run limit,
+    not an idle limit.
+- The #22902 seat rules landed with `_persona_name` clauses: #22994 (Roles rule
+  group with shared seat guidance, #22902 2.1) and #22995 (Seat spawn and write
+  policy with the Plan Writer enhancer exception, #22902 2.2). Both are closed.
+  - The conditions read `_agent_type in SEATS or _persona_name in SEATS`, or
+    `'<seat>' in [_agent_type, _persona_name]`.
+  - The files are `rules/roles/inject-seat-common.yaml` (3 hits),
+    `seat-spawn-policy.yaml` (9) and `seat-write-scope.yaml` (2).
+  - `tests/workflows/test_seat_rules.py` fixtures set `_persona_name`.
+- Seat definitions: `plan-writer.yaml`, `plan-adversary.yaml` and
+  `plan-enhancer.yaml` landed with #23339, and `researcher.yaml` predates the
+  seats. None declares `execution_mode`, so each takes `one_shot`. The other
+  seats (#22996, #22997, #22998) and the planning-council rewrite (#22999) are
+  open.
 
 ## Constraints
 `kind: framing`
 
 - No code in this planning task. The leaves below are the implementation.
 - Consumer sweep evidence.
-  - Run from the #22903 worktree. The code index does not cover the worktree
-    overlay (#20664), and `gcode grep` groups hits by file, so the file list
-    came from ripgrep:
-    `rg -n -w 'apply_persona|apply_persona_impl|build_persona_changes|build_session_persona_changes|build_session_persona_context|colliding_persona_variable_error|_session_has_assigned_or_active_task|_persona_name' src tests docs`.
+  - Re-run on main at 48071323c9 (2026-10-05). `gcode grep` groups hits by
+    file, so the file list came from ripgrep:
+    `rg -l -w 'apply_persona|apply_persona_impl|build_persona_changes|build_session_persona_changes|build_session_persona_context|colliding_persona_variable_error|_session_has_assigned_or_active_task|_persona_name' src tests docs`.
   - Code hits:
     - `agents_spawn_tools.py` (registration);
     - `apply_persona.py`;
@@ -281,14 +344,18 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) unless marked:
   - Bundled hits:
     - `skills/gobby/references/agents/personas.md`;
     - `skills/gobby/references/review/epic.md`;
-    - `workflows/review.yaml`.
+    - `workflows/review.yaml`;
+    - `workflows/rules/roles/inject-seat-common.yaml`,
+      `seat-spawn-policy.yaml` and `seat-write-scope.yaml` (new since the
+      2026-09-28 sweep; 1.5).
   - Doc hits:
     - `docs/guides/agents.md`;
     - `docs/guides/workflows-overview.md`;
     - `docs/reference-audit/agents.json`;
     - `docs/reference-audit/variables.json`.
-    - Historical review notes under `docs/reviews/` are records and are left
-      unchanged.
+    - Historical records are left unchanged: review notes under
+      `docs/reviews/`, `docs/audits/post-push-review-ae78ebdf00.md` and
+      `docs/plans/completed/provider-agnostic-resume.md`.
   - Test hits:
     - `tests/mcp_proxy/tools/test_apply_persona.py`;
     - `tests/workflows/test_step_snapshot_semantics.py`;
@@ -298,25 +365,31 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) unless marked:
     - `tests/skills/test_review_skill.py`;
     - `tests/hooks/test_agent_events_coverage.py` and
       `tests/hooks/test_session_activation_reconciliation.py`, whose fixtures
-      set `_persona_name`.
+      set `_persona_name`;
+    - `tests/workflows/test_seat_rules.py` (new since the 2026-09-28 sweep;
+      1.5).
   - `tests/servers/websocket/test_set_agent.py` names only
     `test_rejects_unsafe_persona_name_before_tmux_send` and the `/gobby persona`
     string, and stays unchanged (Decision 12).
 - Production files stay under 1,000 lines.
-  - Current line counts of the targeted production files:
-    - `_session.py` 770;
-    - `_agent.py` 699;
+  - Current line counts of the targeted production files (2026-10-05):
+    - `spawn_agent/_implementation.py` 926;
+    - `_session.py` 776;
+    - `_agent.py` 721;
     - `session_activation.py` 698;
-    - `materialize.py` 493;
+    - `materialize.py` 497;
     - `_session_launch.py` 345;
+    - `agent_models.py` 270;
     - `_session_start/agents.py` 241;
-    - `agent_models.py` 219;
-    - `agents_spawn_tools.py` 122;
+    - `spawn_agent/_runtime.py` 195;
+    - `agents_spawn_tools.py` 123;
     - `skills/discovery.py` 44.
-  - None reaches 850 lines. `resume_executor.py` (972) is not targeted
-    (Decision 5).
+  - Only `spawn_agent/_implementation.py` is above 850 lines. 2.1 moves its
+    run-lifetime resolution into the new `spawn_agent/_run_lifetime.py`, so it
+    does not grow. `resume_executor.py` (711) is not targeted (Decision 5).
 - Plan-wide target scope form per file: `session_activation.py`, `_agent.py`,
-  `_session_start/agents.py` and `materialize.py` take exact symbols only.
+  `_session_start/agents.py`, `materialize.py`, `spawn_agent/_implementation.py`
+  and `spawn_agent/_runtime.py` take exact symbols only.
 - Boundaries:
   - #22902 owns seat definitions and their bundle validation.
   - #22899 owns `sandbox_profile`. Activation copies no sandbox field: a
@@ -325,22 +398,23 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) unless marked:
   - #22904 owns placed launch, which passes `agent_name_override` at session
     start and so reaches the same core through `activate_default_agent`.
   - #22895 owns runbook deployment.
-- Rollout is PD-owned (see V1): the leaves change imported Python, so a daemon
+- Rollout is Orchestrator-owned (see V1): the leaves change imported Python, so a daemon
   restart from the main checkout, with global notices outside quiet hours
   (04:45–06:45 CT), precedes any live activation.
 
 ## Runtime Lifecycle Boundary (R4)
 `kind: framing`
 
-The PD's ruling R4 keeps the activation and lifecycle declaration fields in this
+The PD's ruling R4 keeps activation and the run-lifetime declaration in this
 plan (Decision 9, deliverable 2.1). Runtime lifecycle work that is independently
-testable is carried as **#22691 sibling tasks for the PD to file**. This plan
-does not defer it. Its only shared contract is the `_agent_lifecycle` session
-variable that 2.1 writes.
+testable is carried as **#22691 sibling tasks for the Orchestrator to file**.
+This plan does not defer it. The shared contract is the run's `resume_metadata`:
+`execution_mode` (#23442) and the `idle_ttl_seconds` key that 2.1 writes at
+spawn.
 
 | Item | Runtime work | Evidence |
 | --- | --- | --- |
-| L2 | Daemon idle-TTL sweep for `follow_up` sessions: wrap up, save, `end_agent_run` | No idle field today; `idle_check_handler.py` covers spawned runs only |
+| L2 | Idle-TTL enforcement for interactive runs whose `resume_metadata` carries `idle_ttl_seconds`: wrap up, save, `end_agent_run`. Interactive runs without the key keep #23442's no-idle-end behavior | `_handle_idle_check` returns early for every interactive run (`idle_check_handler.py:481`); `last_session_activity(session_id)` and `session.updated_at` already give the idle clock there |
 | L3 | `end_agent_run` closes the pane and terminal | It terminates the runtime but never calls `pane_close`; `sweep_dead_panes` is lazy |
 | P1 | Orphan terminal reaper for live terminals whose session ended | No sweep covers them |
 | P2 | Failed Stop leaves a seat `active` for 30–90 minutes | `handle_stop` pauses only when `turn_disposition != "unknown"` |
@@ -348,8 +422,9 @@ variable that 2.1 writes.
 | L7 | Load-gated lane slots | Scheduler scope; listed so it is not lost |
 
 Confirmed by the PD (gobby#14730, 2026-09-28): "separate" in R4 means sibling
-tasks under #22691, which the PD files at the appropriate stage. This plan
-carries only the shared `_agent_lifecycle` declaration.
+tasks under #22691, which the PD files at the appropriate stage. Since the
+2026-10-05 revision (Decision 9), this plan carries only the `idle_ttl_seconds`
+declaration and its spawn-time persistence.
 
 ## Cross-Plan Correction: #22902
 `kind: framing`
@@ -357,25 +432,32 @@ carries only the shared `_agent_lifecycle` declaration.
 The approved #22902 plan names `apply_persona` and conflicts with R2 and R3. The
 Writer corrects it under #22903 after Josh approves this plan. The correction
 goes through a fresh #22902 review round (#22902 Decision 14): the Adversary
-re-derives M1, and the PD applies it.
+re-derives and applies M1, and the Orchestrator reviews the stamped plan.
 
-Timing is PD-coordinated. `update_plan_hash` writes through the main checkout,
-which is frozen during the cutover preflight.
+Timing is Orchestrator-coordinated, because `update_plan_hash` writes into the
+shared main checkout.
 
-Corrections (line hints are against 45e6be4254):
+Corrections (line hints are against 45e6be4254, which is still the plan's last
+commit on 2026-10-05):
 
 - Line 86: the skill-selector readers become `resolve_skills_for_agent` and
   `apply_agent_definition`.
 - D2 (lane text) and 4.1 (lane files): the lane derives from task and queue
   ownership (R2). The lane line in each lane role file lasts only until D2 of
   this plan retires the files.
-- D10: continuity is declared by `lifecycle` (this plan's 2.1). The prose
-  catalogue becomes each seat's `lifecycle` value, which D1 of this plan sets.
+- D10: run lifetime is declared by `execution_mode` and `idle_ttl_seconds`
+  (this plan's Decision 9 and 2.1), and D1 of this plan sets each seat's
+  values. Compact versus clear stays prose. "No `continuity` field: nothing
+  reads it" is restated, because spawn and the watchdog read `execution_mode`.
+  The researcher moves from clear-between-deliverables to a follow-up seat with
+  an idle TTL.
 - D11: role files point at `apply_agent_definition(agent=<seat>)`.
 - As-Is (the `apply_persona_impl` bullet): the text is restated as the
   pre-#22903 state.
-- 2.1 rule condition: `variables.get('_agent_type') in SEATS`. The
-  `_persona_name` clause is removed (Decision 3).
+- 2.1 and 2.2 rule conditions: `variables.get('_agent_type') in SEATS`. Both
+  leaves are closed (#22994, #22995), so the `_persona_name` clauses are
+  landed code, which this plan's 1.5 removes. The #22902 text is restated as
+  the pre-#22903 state.
 - P3 framing: "because `apply_persona` replaces the default persona" becomes
   "because definition activation replaces the default prompt".
 - 3.2 (developer loop): the same-session BOUNCE loop (`bounced`, `submit` →
@@ -719,18 +801,23 @@ Targets:
 **Research context:** today's behavior:
 - `_bind_clear_successor` takes the clear marker (`take_clear_handoff_marker`).
 - It copies the task claim (`preserve_task_claim_state`), merges
-  `HANDOFF_PULL_PENDING_VARIABLE: True` into the successor, and applies the
+  `HANDOFF_PULL_PENDING_VARIABLE: True` and the predecessor's MCP proxy
+  readiness (`inherited_mcp_proxy_ready`) into the successor, and applies the
   successor title.
-- `activate_materialized_session` runs the bind (line hint 352) before
-  `_activate_default_agent` (line hint 402).
+- `activate_materialized_session` runs the bind (line hint 356) before
+  `_activate_default_agent` (line hint 406).
 - The successor has no `_agent_type`, so `resolve_agent_name` returns config
   `default_agent`, and the seat is lost.
-- `/clear` is the routine boundary for `one_task` seats: developer,
-  code-reviewer, plan-writer, plan-adversary and researcher (#22902 D10).
+- `/clear` is the routine boundary for the seats #22902 D10 lists as
+  clear-between-deliverables: developer, researcher, code-reviewer,
+  plan-writer and plan-adversary.
+- The bind does not rebind an agent run (As-Is Facts). This deliverable carries
+  seat identity only and does not change run binding.
 
 Implementation:
-- In the same `merge_variables` call that sets `HANDOFF_PULL_PENDING_VARIABLE`,
-  copy the predecessor's `_agent_type` and `_agent_definition_hash` when
+- In the same `merge_variables` call that sets `HANDOFF_PULL_PENDING_VARIABLE`
+  and the inherited proxy readiness, copy the predecessor's `_agent_type` and
+  `_agent_definition_hash` when
   `_agent_type` is set and is not the base agent.
 - `_activate_default_agent` then resolves the seat and applies the full delta to
   the fresh session. 1.3 compares the carried pin.
@@ -752,61 +839,176 @@ Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 1.4.3 - A base-agent predecessor carries nothing. test:
   `tests/hooks/test_clear_successor_seat.py::test_base_agent_clear_successor_unchanged`.
 
-## P2: Lifecycle Declaration
-`kind: framing`
-
-**Goal:** a definition declares how its agent lives, and activation records it
-for the runtime work that enforces it.
-
-### 2.1 Lifecycle field on agent definitions [category: code] (depends: 1.2)
+### 1.5 Seat rules match `_agent_type` only [category: config] (depends: 1.1)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/workflows/agent_models.py::*` — scope-reason: add the AgentLifecycle model and the lifecycle field to AgentDefinitionBody
-- `src/gobby/mcp_proxy/tools/apply_agent_definition.py`
-- `tests/workflows/test_agent_definitions_v2.py::*` — scope-reason: cover lifecycle validation
-- `tests/mcp_proxy/tools/test_apply_agent_definition.py`
+- `src/gobby/install/shared/workflows/rules/roles/inject-seat-common.yaml::*` — scope-reason: drop the retired _persona_name clause, its comment and the seat-identity guidance wording
+- `src/gobby/install/shared/workflows/rules/roles/seat-spawn-policy.yaml::*` — scope-reason: drop the retired _persona_name clauses from every seat condition and the header comment
+- `src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml::*` — scope-reason: drop the retired _persona_name clauses from both write-scope conditions
+- `tests/workflows/test_seat_rules.py::*` — scope-reason: fixtures set _agent_type instead of the retired _persona_name, plus one stale-variable regression
 
-**Research context:** existing model and inputs:
-- `AgentDefinitionBody` (`workflows/agent_models.py`, 219 lines) is
-  `extra="ignore"` for bundled sync, and `reject_legacy_step_keys` rejects
-  retired keys.
-- `timeout` is a wall-clock run limit (`agent_health.py`), not an idle limit.
-- Josh's input (PD scope add, memory 7faa183d):
-  - each agent lives in a pane with one task at a time;
-  - developers `/clear` between tasks and keep the pane;
-  - follow-up agents such as the researcher get an idle TTL of about 15
-    minutes, then wrap up, save and `end_agent_run`;
-  - coordinators are long-lived;
-  - the TTL is declared on the definition.
-- #22902 D10 has the same split in prose, with no field.
+**Research context:** the `rules/roles/` group landed with #22994 (Roles rule
+group with shared seat guidance) and #22995 (Seat spawn and write policy with
+the Plan Writer enhancer exception). Its conditions match a seat through both
+variables, because `apply_persona` writes only `_persona_name` and spawn writes
+only `_agent_type` (#22902 2.1: "`agent_scope` alone would miss persona
+sessions").
+- `inject-seat-common.yaml`:
+  - the condition is `(_agent_type in SEATS or _persona_name in SEATS) and not
+    _seat_common_injected`;
+  - a comment explains the dual match;
+  - the guidance line reads "Your seat is the definition named by your
+    `_persona_name` or `_agent_type`."
+- `seat-spawn-policy.yaml` (9 hits):
+  - the same disjunction appears in four conditions;
+  - `'<seat>' [not] in [_agent_type, _persona_name]` carries the plan-writer
+    and orchestrator exceptions;
+  - the header comment explains the dual match.
+- `seat-write-scope.yaml` has `'assistant' in [...]` and `'archivist' in
+  [...]`.
+- `reset-seat-common-on-context-loss.yaml` reads neither variable.
+
+After 1.1, activation writes `_agent_type` for every seat. The `_persona_name`
+clauses are then dead, and the V1 `rg` cannot pass while they remain. The edit
+cannot land before 1.1, because until then a persona session carries only
+`_persona_name`. Bundled rule templates sync to the rule registry (AGENTS.md
+rule 8).
+
+`tests/workflows/test_seat_rules.py` drives a `RuleEngine` fixture with variable
+dicts:
+- `ASSISTANT`, `PLAN_WRITER` and `ORCHESTRATOR` set
+  `{"_agent_type": "default", "_persona_name": <seat>}`;
+- `test_seat_common_injected_once_per_epoch`,
+  `test_seat_common_matches_spawned_and_skips_non_seats` and
+  `test_seat_common_rearms_after_compact` build `{"_persona_name": ...}`
+  contexts.
 
 Implementation:
-- New model `AgentLifecycle(BaseModel, extra="forbid")`:
-  - `mode: Literal["long_lived", "one_task", "follow_up"]`;
-  - `idle_ttl_seconds: int | None = None`.
-- A model validator:
-  - requires `idle_ttl_seconds` greater than 0 for `follow_up`;
-  - forbids it for `long_lived`;
-  - allows it for `one_task`.
-- `AgentDefinitionBody.lifecycle: AgentLifecycle | None = None`.
-- `build_definition_changes` writes
-  `_agent_lifecycle = body.lifecycle.model_dump()` when the field is declared,
-  and `None` otherwise.
-- No runtime reader is added here. The PD's sibling tasks read
-  `_agent_lifecycle` (see "Runtime Lifecycle Boundary").
-- #22902 1.1 also edits `agent_models.py` (`version`, `skills`). The two changes
-  touch different fields, and whichever lands second rebases.
+- Each condition keeps only its `_agent_type` side. The disjunctions become
+  `variables.get('_agent_type') in [<SEATS>]`, and each two-variable list
+  membership becomes `variables.get('_agent_type') == '<seat>'` (or `!=`).
+- Both comments say that activation and spawn both set `_agent_type`.
+- The guidance line becomes "Your seat is the definition named by your
+  `_agent_type`."
+- Test fixtures set `{"_agent_type": <seat>}`. A new test asserts that a
+  context carrying only `_persona_name: plan-writer` matches no seat rule.
 
-Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_agent_definitions_v2.py tests/mcp_proxy/tools/test_apply_agent_definition.py tests/agents/test_agents_sync.py -q`.
+Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_seat_rules.py -q`, and
+`rg -w _persona_name src/gobby/install/shared/workflows/rules tests/workflows/test_seat_rules.py`,
+which must print nothing.
 
 **Acceptance:**
 
-- 2.1.1 - `lifecycle` validates the three modes and rejects a `follow_up` without
-  a positive TTL and a `long_lived` with one. test:
-  `tests/workflows/test_agent_definitions_v2.py::test_lifecycle_declaration_validates`.
-- 2.1.2 - Activation records the declaration as `_agent_lifecycle`. test:
-  `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activation_writes_lifecycle_declaration`.
+- 1.5.1 - Every `rules/roles/` condition matches a seat through `_agent_type`
+  alone, and a context that carries only `_persona_name` matches none of them.
+  test: `tests/workflows/test_seat_rules.py::test_persona_name_alone_matches_no_seat_rule`.
+- 1.5.2 - Seat guidance injection still matches a session whose `_agent_type`
+  names a seat and skips one that names no seat. test:
+  `tests/workflows/test_seat_rules.py::test_seat_common_matches_spawned_and_skips_non_seats`.
+
+## P2: Run Lifetime Declaration
+`kind: framing`
+
+**Goal:** a definition declares when an idle interactive run ends, and spawn
+records it for the runtime work that enforces it.
+
+### 2.1 Idle TTL on agent definitions [category: code]
+`kind: deliverable`
+
+Targets:
+- `src/gobby/workflows/agent_models.py::*` — scope-reason: add the optional idle_ttl_seconds field and its interactive-only validator to AgentDefinitionBody; every existing reader of the body is unaffected by a defaulted field
+- `src/gobby/mcp_proxy/tools/spawn_agent/_run_lifetime.py`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::spawn_agent_impl`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_runtime.py::build_spawn_context`
+- `tests/workflows/test_agent_definitions_v2.py::*` — scope-reason: cover idle_ttl_seconds validation
+- `tests/mcp_proxy/tools/spawn_agent/test_factory.py::*` — scope-reason: cover idle_ttl_seconds persistence beside execution_mode
+
+**Research context:** existing model and inputs:
+- `AgentDefinitionBody` (`workflows/agent_models.py`, 270 lines) has
+  `model_config = ConfigDict(extra="ignore")` for stale YAML.
+  `reject_legacy_step_keys` rejects retired keys with migration hints.
+- `execution_mode` (line 120) defaults to `one_shot`. `timeout` (line 149) is
+  a wall-clock run limit (`agent_health.py`), not an idle limit.
+- `spawn_agent_impl` resolves `effective_execution_mode` (`_implementation.py:137`):
+  the spawn argument wins, otherwise the definition's value. It passes the
+  result to `build_spawn_context` next to `prewarm_pre_commit_store`, which it
+  reads from `agent_body` the same way.
+- `build_spawn_context` writes `execution_mode` to the initial variables
+  (`_runtime.py:62`) and `resume_metadata` (`_runtime.py:134`). Resume passes
+  `resume_metadata` through whole.
+- `test_factory.py::test_execution_mode_is_persisted_for_watchdog_and_resume`
+  is parametrized over the definition mode and the spawn override, and it
+  asserts both stores. It is the pattern to extend.
+- `template_hashes.py` hashes the parent body, so a new defaulted field changes
+  every bundled hash once. Sync refreshes that drift, as it did for #22993's
+  `version`.
+- Josh's input (PD scope add, memory 7faa183d):
+  - follow-up agents such as the researcher get an idle TTL of about 15
+    minutes, then wrap up, save and `end_agent_run`;
+  - the TTL is declared on the definition.
+- #23442's description records Josh's goal: every seat except the Orchestrator
+  and the Assistant launches with sandboxed `spawn_agent` as a long-lived
+  interactive run.
+
+Implementation:
+- `AgentDefinitionBody.idle_ttl_seconds: PositiveInt | None = None`, placed
+  after `execution_mode`, with the description "Idle seconds after which an
+  interactive run ends."
+- A model validator rejects `idle_ttl_seconds` unless `execution_mode` is
+  `interactive`.
+- `spawn_agent/_implementation.py` is at 926 lines, so the run-lifetime
+  resolution moves out of it into the new `spawn_agent/_run_lifetime.py`
+  rather than growing it. The move takes the effective-mode resolution and its
+  invalid-mode refusal (`_implementation.py:137-141`).
+  - The new module holds a frozen `RunLifetime(execution_mode,
+    idle_ttl_seconds)` and `resolve_run_lifetime(agent_body, execution_mode)`.
+  - The function returns the effective mode as today, and the definition's
+    `idle_ttl_seconds` only when that mode is `interactive`. A spawn-time
+    `one_shot` override therefore drops the definition's TTL.
+  - `spawn_agent_impl` calls it in place of the moved lines, keeps the same
+    `execution_mode must be one_shot or interactive` refusal, and passes both
+    values to `build_spawn_context`. Its other `effective_execution_mode` reads
+    (the standing-seat prompt suffix) use `RunLifetime.execution_mode`, so the
+    file does not grow.
+- `build_spawn_context` gains `idle_ttl_seconds: int | None = None` and writes
+  `resume_metadata["idle_ttl_seconds"]` when it is set. It writes no session
+  variable, because the reader is the watchdog, and the watchdog reads the run.
+- No reader is added here. The L2 sibling reads the key (see "Runtime Lifecycle
+  Boundary").
+- No spawn-time TTL override is added: no caller needs one.
+
+Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_agent_definitions_v2.py tests/mcp_proxy/tools/spawn_agent/test_factory.py tests/agents/test_agents_sync.py -q`.
+Then run `uv run ruff check` and `uv run mypy` on the changed files.
+
+Consumers unchanged:
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py` — no-edit-reason: passes the spawn-time execution_mode through unchanged; the TTL comes from the definition only.
+- `src/gobby/storage/agents/_models.py` — no-edit-reason: is_interactive keeps reading execution_mode; the TTL reader belongs to the L2 sibling.
+- `src/gobby/dispatch/spawn.py` — no-edit-reason: calls spawn_agent_impl, whose signature and result shape are unchanged.
+- `src/gobby/feedback/agent.py` — no-edit-reason: calls spawn_agent_impl, whose signature and result shape are unchanged.
+- `src/gobby/scheduler/executor.py` — no-edit-reason: calls spawn_agent_impl, whose signature and result shape are unchanged.
+- `src/gobby/servers/routes/agent_spawn.py` — no-edit-reason: calls spawn_agent_impl, whose signature and result shape are unchanged.
+- `tests/agents/test_backend_ingress.py` — no-edit-reason: drives spawn_agent_impl without an idle_ttl_seconds definition; its assertions are unchanged.
+- `tests/agents/test_local_context_setup.py` — no-edit-reason: drives spawn_agent_impl without an idle_ttl_seconds definition; its assertions are unchanged.
+- `tests/agents/test_sandbox_network.py` — no-edit-reason: drives spawn_agent_impl without an idle_ttl_seconds definition; its assertions are unchanged.
+- `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py` — no-edit-reason: drives spawn_agent_impl error paths that the move does not touch.
+- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py` — no-edit-reason: initial variables gain no key; the TTL goes only to resume_metadata.
+- `tests/mcp_proxy/tools/spawn_agent/test_placement.py` — no-edit-reason: drives spawn_agent_impl without an idle_ttl_seconds definition; its assertions are unchanged.
+- `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py` — no-edit-reason: drives spawn_agent_impl without an idle_ttl_seconds definition; its assertions are unchanged.
+- `tests/mcp_proxy/tools/test_agents_spawn_tools.py` — no-edit-reason: drives spawn_agent_impl without an idle_ttl_seconds definition; its assertions are unchanged.
+- `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py` — no-edit-reason: drives spawn_agent_impl without an idle_ttl_seconds definition; its assertions are unchanged.
+- `tests/tasks/test_plan_gate.py` — no-edit-reason: drives spawn_agent_impl without an idle_ttl_seconds definition; its assertions are unchanged.
+
+**Acceptance:**
+
+- 2.1.1 - `idle_ttl_seconds` accepts a positive integer with
+  `execution_mode: interactive`, and rejects zero, a negative value, and any
+  value on a `one_shot` definition. test:
+  `tests/workflows/test_agent_definitions_v2.py::test_idle_ttl_requires_interactive_execution_mode`.
+- 2.1.2 - An interactive spawn of a definition with a TTL stores
+  `idle_ttl_seconds` in `resume_metadata`, and a spawn-time `one_shot` override
+  stores none. test:
+  `tests/mcp_proxy/tools/spawn_agent/test_factory.py::test_idle_ttl_is_persisted_only_for_interactive_runs`.
 
 ## P3: Migration
 `kind: framing`
@@ -858,7 +1060,7 @@ Edits:
   - The surface row names the new tool.
   - The "intentionally narrow" paragraph becomes the activation contract:
     Decisions 2, 4, 5, 7 and 8, the continuity table from Decision 10, and the
-    `lifecycle` field.
+    run-lifetime fields `execution_mode` and `idle_ttl_seconds` (Decision 9).
   - The run-tools list names `apply_agent_definition`.
 - `workflows-overview.md`: the tool name.
 - The JSONs: the tool name and `apply_agent_definition.py::build_definition_changes`.
@@ -875,34 +1077,46 @@ nothing.
 - 3.1.2 - The epic-review reference and its test name the new tool. test:
   `tests/skills/test_review_skill.py::test_epic_review_references_pin_routing_and_verdict_mapping`.
 - 3.1.3 - The agents guide documents the activation contract, continuity table
-  and `lifecycle`. behavior: "role_change_requires_relaunch" in
+  and `idle_ttl_seconds`. behavior: "role_change_requires_relaunch" in
   `docs/guides/agents.md`.
 - 3.1.4 - The workflows overview, the review pipeline, and both reference-audit
   files name `apply_agent_definition` and no `apply_persona`. file:
   `docs/guides/workflows-overview.md`.
 
-## D1 Seat lifecycle values (depends: 2.1)
+## D1 Seat run-lifetime values (depends: 2.1)
 `kind: deferred`
 
-Once #22902's seat definitions exist (its P3), each seat declares `lifecycle`:
-- `long_lived`: assistant, program-director, lane-manager, archivist and
-  log-monitor.
-- `one_task`: developer, code-reviewer, plan-writer and plan-adversary.
-- `follow_up` with `idle_ttl_seconds: 900`: researcher.
+Once #22902's seat definitions exist (its P3), each seat declares its run
+lifetime (Decision 9):
+- `execution_mode: interactive`, no `idle_ttl_seconds`: assistant,
+  orchestrator, lane-manager, archivist, log-monitor, developer,
+  code-reviewer, plan-writer and plan-adversary.
+- `execution_mode: interactive` with `idle_ttl_seconds: 900`: researcher.
+- `execution_mode: one_shot` (the default, so nothing to declare):
+  plan-enhancer.
 
 The #22902 bundle contract test (`tests/workflows/test_seat_definitions.py`)
-asserts the mapping. Before the seats land, there is nothing to annotate.
+asserts the mapping.
+
+`plan-writer.yaml`, `plan-adversary.yaml` and `plan-enhancer.yaml` (#23339) and
+`researcher.yaml` exist today and take the `one_shot` default (As-Is Facts).
+The other seats do not exist yet. #22902's open P3 leaves own every seat YAML:
+#22996 (Coordination seats: assistant, orchestrator, lane-manager), #22997
+(One developer definition with task-routed skills), #22998 (Review and
+observation seats: code-reviewer, archivist, log-monitor, researcher) and
+#22999 (Planning council seats and the review flow). Editing those files here
+would collide with those leaves.
 
 ```yaml
 deferral:
   task_ref: "TBD-after-22902-P3"
-  reason: "External prerequisite: the seat YAML files are created by #22902 P3 leaves under root #22988."
-  owner: "program-director"
+  reason: "External prerequisite: the seat YAML files are created or rewritten by the open #22902 P3 leaves (#22996-#22999) under root #22988."
+  owner: "orchestrator"
   original_acceptance_items:
     - D1.1
 ```
 
-- D1.1 - Every seat definition declares the lifecycle mode above, and the seat
+- D1.1 - Every seat definition declares the run lifetime above, and the seat
   contract test pins it.
 
 ## D2 Roster and role-file retirement (depends: 1.4)
@@ -929,7 +1143,7 @@ The gates:
 deferral:
   task_ref: "TBD-after-22894"
   reason: "External prerequisite: #22894 acceptance pins the roster, role files and default.yaml lookup phrases until it closes."
-  owner: "program-director"
+  owner: "orchestrator"
   original_acceptance_items:
     - D2.1
     - D2.2
@@ -943,19 +1157,19 @@ deferral:
 ## V1: Verification
 `kind: verification`
 
-Run after the final edit of each leaf and again before the PD lands the branch:
+Run after the final edit of each leaf and again after the last leaf lands:
 
 ```bash
-DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/test_session_start_reactivation.py tests/hooks/test_interactive_step_instance.py tests/hooks/test_clear_successor_seat.py tests/workflows/test_step_snapshot_semantics.py tests/workflows/test_step_runtime_transitions.py tests/workflows/test_agent_definitions_v2.py tests/workflows/test_session_defaults.py tests/mcp_proxy/tools/skills/test_list_skills.py tests/servers/websocket/chat/test_servers_websocket_chat_session.py tests/servers/websocket/test_set_agent.py tests/hooks/test_agent_events_coverage.py tests/hooks/test_session_activation_reconciliation.py tests/hooks/event_handlers/test_session_variable_preservation.py tests/hooks/test_session_start_handlers.py tests/skills/test_review_skill.py tests/agents/test_agents_sync.py -q
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/test_session_start_reactivation.py tests/hooks/test_interactive_step_instance.py tests/hooks/test_clear_successor_seat.py tests/workflows/test_step_snapshot_semantics.py tests/workflows/test_step_runtime_transitions.py tests/workflows/test_agent_definitions_v2.py tests/workflows/test_session_defaults.py tests/workflows/test_seat_rules.py tests/mcp_proxy/tools/skills/test_list_skills.py tests/mcp_proxy/tools/spawn_agent/test_factory.py tests/servers/websocket/chat/test_servers_websocket_chat_session.py tests/servers/websocket/test_set_agent.py tests/hooks/test_agent_events_coverage.py tests/hooks/test_session_activation_reconciliation.py tests/hooks/event_handlers/test_session_variable_preservation.py tests/hooks/test_session_start_handlers.py tests/skills/test_review_skill.py tests/agents/test_agents_sync.py -q
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
 rg -w 'apply_persona|_persona_name|build_session_persona_changes' src tests docs/guides docs/reference-audit
-uv run gobby plans validate /Users/josh/.gobby/worktrees/gobby/task-22903-apply-agent-definition/.gobby/plans/apply-agent-definition.md -p /Users/josh/Projects/gobby
+uv run gobby plans validate .gobby/plans/apply-agent-definition.md -p /Users/josh/Projects/gobby
 ```
 
 The `rg` must print nothing. Do not run the full pytest suite.
 
-Live check after the PD-owned restart, which is announced globally before and
-after and happens outside quiet hours:
+Live check after the Orchestrator-owned restart, which is announced globally
+before and after and happens outside quiet hours:
 1. A hand-launched default pane calls
    `apply_agent_definition(agent="plan-writer")`. The receipt is `applied`, and
    the next turn carries the seat prompt.
