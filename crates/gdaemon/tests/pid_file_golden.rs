@@ -14,14 +14,18 @@ const RESERVATION: &[u8] =
     include_bytes!("../../../tests/fixtures/pid_file_records/service_reservation.json");
 
 fn record(path: &Path) -> anyhow::Result<Value> {
-    decode_record(&fs::read(path.with_extension("pid.lock"))?)
-        .ok_or_else(|| anyhow::anyhow!("invalid record"))
+    parse_record(&fs::read(path.with_extension("pid.lock"))?)
+}
+
+fn parse_record(raw: &[u8]) -> anyhow::Result<Value> {
+    anyhow::ensure!(decode_record(raw).is_some(), "invalid record");
+    Ok(serde_json::from_slice(raw)?)
 }
 
 #[test]
 fn python_records_parse() -> anyhow::Result<()> {
     for (raw, state, generation) in [(DAEMON, "daemon", 7), (RESERVATION, "reservation", 8)] {
-        let parsed = decode_record(raw).expect("Python golden checksum");
+        let parsed = parse_record(raw)?;
         assert_eq!(parsed["state"], state);
         assert_eq!(parsed["generation"], generation);
         assert_eq!(
@@ -29,7 +33,7 @@ fn python_records_parse() -> anyhow::Result<()> {
             raw.strip_suffix(b"\n").unwrap_or(raw)
         );
     }
-    let parsed = decode_record(RESERVATION).expect("reservation");
+    let parsed = parse_record(RESERVATION)?;
     assert_eq!(
         parsed["reservation"]["nonce_path"],
         "/tmp/gobby-雪-😀/gobby.pid.service-nonce"
@@ -87,7 +91,7 @@ fn exclusive_roles_preserve_winner_and_release_is_idempotent() -> anyhow::Result
     winner.release();
     assert_eq!(probe_daemon_lock(&path)?, ProbeState::Absent);
     let daemon = claim_pid_file(&path, Role::Daemon)?.expect("daemon after maintenance");
-    assert_eq!(daemon.generation.as_i64(), Some(2));
+    assert_eq!(daemon.generation.to_string(), "2");
     assert_eq!(fs::read_to_string(&path)?, std::process::id().to_string());
     assert_eq!(probe_daemon_lock(&path)?, ProbeState::Daemon);
     drop(daemon);
@@ -195,7 +199,7 @@ fn nonce_conversion_is_one_shot_and_preserves_mismatches() -> anyhow::Result<()>
     assert!(convert_or_acquire_service_claim(&path, Some(&reserved.nonce_path)).is_err());
     fs::set_permissions(&reserved.nonce_path, fs::Permissions::from_mode(0o600))?;
     let claim = convert_or_acquire_service_claim(&path, Some(&reserved.nonce_path))?;
-    assert_eq!(claim.generation.as_i64(), Some(2));
+    assert_eq!(claim.generation.to_string(), "2");
     assert!(!reserved.nonce_path.exists());
     assert_eq!(
         record(&path)?["ack"],
@@ -260,7 +264,7 @@ fn held_claim_converts_without_an_exclusion_gap() -> anyhow::Result<()> {
     assert_eq!(probe_daemon_lock(&path)?, ProbeState::LiveReservation);
     assert!(claim_pid_file(&path, Role::Maintenance)?.is_none());
     let converted = convert_or_acquire_service_claim(&path, Some(&reserved.nonce_path))?;
-    assert_eq!(converted.generation.as_i64(), Some(3));
+    assert_eq!(converted.generation.to_string(), "3");
     Ok(())
 }
 
@@ -309,14 +313,14 @@ fn generation_coercions_match_python_int() -> anyhow::Result<()> {
     ] {
         let dir = TempDir::new()?;
         let path = dir.path().join("gobby.pid");
-        let mut previous_record = decode_record(DAEMON).expect("golden");
+        let mut previous_record = parse_record(DAEMON)?;
         previous_record["generation"] = previous;
         fs::write(
             path.with_extension("pid.lock"),
             encode_record(&previous_record)?,
         )?;
         let claim = claim_pid_file(&path, Role::Maintenance)?.expect("claim");
-        assert_eq!(claim.generation.as_i64(), Some(expected));
+        assert_eq!(claim.generation.to_string(), expected.to_string());
         assert_eq!(record(&path)?["generation"], expected);
     }
     Ok(())
@@ -345,9 +349,10 @@ for mode in ('claim', 'reserve', 'convert', 'held'):
             record = {'version': 1, 'state': 'role', 'role': 'maintenance',
                       'pid': 99999999, 'boot_id': 'previous', 'reservation': None, 'ack': None}
         record['generation'] = generation
+        record['extra'] = {'nested': [10**100, -(10**100)]}
         lock.write_bytes(encode_record(record))
         cases.append({'path': str(p), 'mode': mode,
-                      'expected': int(generation) + (2 if mode == 'held' else 1)})
+                      'expected': str(int(generation) + (2 if mode == 'held' else 1))})
 print(json.dumps(cases))
 "#;
     let output = Command::new("uv")
@@ -364,7 +369,9 @@ print(json.dumps(cases))
     for case in &cases {
         let path = Path::new(case["path"].as_str().expect("path"));
         // Decoding must preserve Python's checksum before any acquisition.
-        let prior = record(path)?;
+        let raw = fs::read(path.with_extension("pid.lock"))?;
+        let prior = decode_record(&raw).expect("Python record");
+        assert_eq!(encode_record(&prior)?, raw);
         match case["mode"].as_str().expect("mode") {
             "claim" => {
                 drop(claim_pid_file(path, Role::Maintenance)?.expect("claim"));
@@ -373,11 +380,8 @@ print(json.dumps(cases))
                 reserve_service_start(path, "launchd")?;
             }
             "convert" => {
-                let nonce = Path::new(
-                    prior["reservation"]["nonce_path"]
-                        .as_str()
-                        .expect("nonce path"),
-                );
+                let payload: Value = serde_json::from_str(prior["reservation"].get())?;
+                let nonce = Path::new(payload["nonce_path"].as_str().expect("nonce path"));
                 drop(convert_or_acquire_service_claim(path, Some(nonce))?);
                 assert!(!nonce.exists());
             }
@@ -388,7 +392,13 @@ print(json.dumps(cases))
             }
             _ => panic!("unexpected mode"),
         }
-        assert_eq!(record(path)?["generation"], case["expected"], "{case}");
+        let result =
+            decode_record(&fs::read(path.with_extension("pid.lock"))?).expect("Rust record");
+        assert_eq!(
+            result["generation"].get(),
+            case["expected"].as_str().expect("expected"),
+            "{case}"
+        );
     }
     let verify = r#"import json, sys
 from pathlib import Path
@@ -398,7 +408,7 @@ for case in json.loads(sys.argv[1]):
     raw = p.with_name(p.name + '.lock').read_bytes()
     record = decode_record(raw)
     assert record is not None, case
-    assert record['generation'] == case['expected'], (case, record)
+    assert record['generation'] == int(case['expected']), (case, record)
     assert encode_record(record) == raw, case
 "#;
     let output = Command::new("uv")
@@ -422,7 +432,7 @@ fn cleanup_preserves_matching_nonce_with_foreign_permissions() -> anyhow::Result
     fs::set_permissions(&reserved.nonce_path, fs::Permissions::from_mode(0o644))?;
     assert_eq!(cancel_service_reservation(&path)?, ProbeState::Absent);
     assert_eq!(fs::read_to_string(&reserved.nonce_path)?, reserved.nonce);
-    let mut stale = decode_record(RESERVATION).expect("golden");
+    let mut stale = parse_record(RESERVATION)?;
     stale["reservation"]["nonce_path"] = json!(reserved.nonce_path);
     stale["reservation"]["nonce"] = json!(reserved.nonce);
     fs::write(path.with_extension("pid.lock"), encode_record(&stale)?)?;

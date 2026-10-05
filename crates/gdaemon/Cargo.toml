@@ -33,7 +33,7 @@ hyper-util = { version = "0.1", features = ["client-legacy", "http1", "server", 
 # ring only, matching the workspace's rustls; aws-lc-rs stays out of the build.
 rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["float_roundtrip", "arbitrary_precision"] }
+serde_json = { version = "1", features = ["float_roundtrip", "raw_value"] }
 num-bigint = "0.4"
 rand = "0.8"
 sha2 = "0.10"
