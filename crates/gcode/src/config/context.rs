@@ -429,10 +429,7 @@ impl Context {
         // A managed grant belongs to the caller's parent project. The requested
         // code-index ID may be an overlay and is validated against the DB binding
         // after acquisition rather than presented as the grant's parent identity.
-        let managed_root = if request.managed_bootstrap.is_some()
-            || request.managed_envelope.is_some()
-            || request.expected_execution_id.is_some()
-        {
+        let managed_root = if request.managed_bootstrap.is_some() {
             Some(detect_project_root()?)
         } else {
             None

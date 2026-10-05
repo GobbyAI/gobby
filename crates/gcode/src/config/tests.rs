@@ -875,4 +875,105 @@ fn grant_settings_supply_indexing_and_vector_dim() {
     });
 }
 
+#[test]
+#[serial_test::serial(serial_env)]
+fn explicit_project_id_without_bootstrap_ignores_agent_environment() {
+    use gobby_core::grant::{
+        CachedSettings, DirectConnections, PrincipalKind, TrustedBinding, interactive_cache_path,
+        managed_direct_grant, write_binding, write_coherent_pair,
+    };
+
+    let tmp = tempfile::tempdir().expect("isolated runtime");
+    let home = tmp.path().join("home");
+    let cwd = tmp.path().join("checkout");
+    std::fs::create_dir_all(&home).expect("runtime home");
+    std::fs::create_dir_all(&cwd).expect("caller checkout");
+    let requested_id = uuid::Uuid::new_v4().to_string();
+    let cwd_id = uuid::Uuid::new_v4().to_string();
+    let machine_id = uuid::Uuid::new_v4().to_string();
+    write_project_json(&cwd, serde_json::json!({"id": cwd_id}));
+    std::fs::write(home.join("machine_id"), &machine_id).expect("machine identity");
+    // Bind a non-serving temporary endpoint; even a cache miss cannot contact
+    // the user's daemon. A coherent grant cache needs no handshake or DB access.
+    let endpoint = TcpListener::bind("127.0.0.1:0").expect("isolated endpoint");
+    let daemon_url = format!(
+        "http://{}",
+        endpoint.local_addr().expect("endpoint address")
+    );
+    let mut grant = managed_direct_grant(
+        &requested_id,
+        &machine_id,
+        &DirectConnections::postgres("postgresql://fixture@127.0.0.1:1/unused"),
+    );
+    grant.principal.kind = PrincipalKind::Interactive;
+    grant.principal.execution_id = None;
+    grant.principal.session_id = None;
+    let grant = grant.with_checksum();
+    write_binding(
+        &home,
+        &TrustedBinding {
+            endpoint: daemon_url.clone(),
+            deployment_token: grant.deployment.token.clone(),
+        },
+    )
+    .expect("trusted test binding");
+    let cache = interactive_cache_path(&home, &grant.deployment.token, &requested_id, None);
+    write_coherent_pair(
+        &cache,
+        &grant,
+        &CachedSettings {
+            config_revision: grant.config_revision,
+            settings: Default::default(),
+        },
+    )
+    .expect("coherent interactive cache");
+    temp_env::with_vars(
+        [
+            ("GOBBY_HOME", Some(home.as_os_str())),
+            ("GOBBY_DAEMON_URL", Some(std::ffi::OsStr::new(&daemon_url))),
+            ("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", None),
+            ("GOBBY_AGENT_RUN_ID", None),
+            ("GOBBY_MANAGED_EXECUTION_ID", None),
+            ("GOBBY_AGENT_API_TOKEN", None),
+            ("GOBBY_SESSION_ID", None),
+            ("GOBBY_PARENT_SESSION_ID", None),
+        ],
+        || {
+            let original_cwd = std::env::current_dir().expect("original working directory");
+            std::env::set_current_dir(&cwd).expect("caller working directory");
+            let results: Vec<_> = [
+                "GOBBY_AGENT_RUN_ID",
+                "GOBBY_AGENT_API_TOKEN",
+                "GOBBY_MANAGED_EXECUTION_ID",
+            ]
+            .into_iter()
+            .map(|key| {
+                let result = temp_env::with_var(key, Some("fixture"), || {
+                    Context::resolve_for_project_id_with_services(
+                        &requested_id,
+                        true,
+                        ServiceConfigSelection::database_only(),
+                    )
+                });
+                (key, result)
+            })
+            .collect();
+            std::env::set_current_dir(original_cwd).expect("restore working directory");
+            for (key, result) in results {
+                let ctx = result.unwrap_or_else(|error| panic!("{key}: {error:#}"));
+                assert_eq!(ctx.project_id, requested_id, "{key}");
+                assert_eq!(
+                    ctx.grant_ai
+                        .expect("grant runtime")
+                        .bundle
+                        .principal
+                        .project_id,
+                    requested_id,
+                    "{key} must acquire the requested project's grant, not {cwd_id}"
+                );
+            }
+        },
+    );
+}
+
 mod runtime_contract;
