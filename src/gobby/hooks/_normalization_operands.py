@@ -14,6 +14,101 @@ from gobby.hooks._normalization_shell import (
 )
 
 _CURL_SHORT_OPTIONS_WITH_VALUES = frozenset("AbcCdDeEFHKmoPQrTtuwxXYz")
+# Options whose value is the next word (or attached) for file-mutation commands.
+# Values are timestamps, modes, owners, suffixes, or read-only references, except
+# the -t/--target-directory destination, which _file_command_operands returns.
+# install -S is GNU's suffix and BSD/macOS's safe-copy flag. Directory mode
+# must retain every possible BSD operand, including GNU's possible suffix.
+_FILE_COMMAND_VALUE_OPTIONS: dict[str, tuple[str, frozenset[str]]] = {
+    "touch": ("Adrt", frozenset({"--date", "--reference", "--time"})),
+    "mkdir": ("m", frozenset({"--mode"})),
+    "mv": ("St", frozenset({"--suffix", "--target-directory"})),
+    "cp": ("St", frozenset({"--no-preserve", "--sparse", "--suffix", "--target-directory"})),
+    "install": (
+        "gmoSt",
+        frozenset(
+            {"--group", "--mode", "--owner", "--strip-program", "--suffix", "--target-directory"}
+        ),
+    ),
+}
+# Exact flags that GNU getopt matches before treating them as abbreviations
+# of a longer value-taking option (install --strip vs --strip-program).
+_LONG_FLAGS_SHADOWING_VALUE_OPTIONS = frozenset({"--strip"})
+_INSTALL_LONG_DIRECTORY_CANDIDATES = frozenset({"--debug", "--directory"})
+
+
+def _resolve_long_option(option: str, names: frozenset[str]) -> str | None:
+    """Resolve ``option`` exactly or as GNU's unambiguous abbreviation of one of ``names``."""
+    if option in names:
+        return option
+    if option in _LONG_FLAGS_SHADOWING_VALUE_OPTIONS:
+        return None
+    matches = [name for name in names if name.startswith(option)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _file_command_operands(cmd: str, parts: list[str]) -> tuple[list[str], str | None, bool]:
+    """Return operands, the ``-t``/``--target-directory`` value, and install directory mode.
+
+    Option values never become operands, including clustered short options
+    (``touch -mt STAMP``), abbreviated long options, and long options given a
+    separate value. ``install -d`` creates every operand.
+    """
+    short_values, long_values = _FILE_COMMAND_VALUE_OPTIONS.get(cmd, ("", frozenset()))
+    if cmd == "install":
+        bsd_result = _parse_file_command_operands(
+            cmd, parts, short_values.replace("S", ""), long_values
+        )
+        if bsd_result[2]:
+            return bsd_result
+    return _parse_file_command_operands(cmd, parts, short_values, long_values)
+
+
+def _parse_file_command_operands(
+    cmd: str, parts: list[str], short_values: str, long_values: frozenset[str]
+) -> tuple[list[str], str | None, bool]:
+    operands: list[str] = []
+    target_directory: str | None = None
+    creates_directories = False
+    after_options = False
+    index = 1
+    while index < len(parts):
+        part = parts[index]
+        index += 1
+        if not part or part in _SHELL_CONTROL_TOKENS:
+            continue
+        if after_options or part == "-" or not part.startswith("-"):
+            operands.append(part)
+            continue
+        if part == "--":
+            after_options = True
+            continue
+        option, value = part, None
+        if part.startswith("--"):
+            name, has_value, attached = part.partition("=")
+            resolved = _resolve_long_option(name, long_values)
+            if resolved is None:
+                if cmd == "install" and (
+                    _resolve_long_option(name, _INSTALL_LONG_DIRECTORY_CANDIDATES) == "--directory"
+                ):
+                    creates_directories = True
+                continue
+            option, value = resolved, attached if has_value else None
+        else:
+            for offset, flag in enumerate(part[1:], start=2):
+                if flag in short_values:
+                    option, value = f"-{flag}", part[offset:] or None
+                    break
+                if cmd == "install" and flag == "d":
+                    creates_directories = True
+            else:
+                continue
+        if value is None:
+            value = parts[index] if index < len(parts) else ""
+            index += 1
+        if option in {"-t", "--target-directory"} and cmd != "touch":
+            target_directory = value
+    return operands, target_directory, creates_directories
 
 
 def _truncate_positional_paths(parts: list[str]) -> list[str]:

@@ -19,6 +19,7 @@ from gobby.hooks._normalization_bindings import (
 )
 from gobby.hooks._normalization_operands import (
     _curl_output_paths,
+    _file_command_operands,
     _find_has_mutation_predicate,
     _git_add_positional_args_after,
     _git_grep_is_revision_scoped,
@@ -846,8 +847,8 @@ def _classify_shell_segment_without_redirection(
         )
 
     if cmd == "touch":
-        positional = _shell_positional_args(parts)
-        paths = [candidate for candidate in positional if _looks_path_target(candidate)]
+        operands, _, _ = _file_command_operands(cmd, parts)
+        paths = [candidate for candidate in operands if _looks_path_target(candidate)]
         rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
         return _ShellSegmentMetadata(
             "write",
@@ -857,8 +858,8 @@ def _classify_shell_segment_without_redirection(
         )
 
     if cmd in {"rm", "mkdir", "rmdir"}:
-        positional = _shell_positional_args(parts)
-        paths = [candidate for candidate in positional if _looks_path_target(candidate)]
+        operands, _, _ = _file_command_operands(cmd, parts)
+        paths = [candidate for candidate in operands if _looks_path_target(candidate)]
         return _ShellSegmentMetadata(
             "write",
             paths=tuple(_rebase_shell_paths(paths, cwd)),
@@ -866,9 +867,10 @@ def _classify_shell_segment_without_redirection(
         )
 
     if cmd in {"cp", "install"}:
-        positional = _shell_positional_args(parts)
-        candidate = positional[-1] if positional else None
-        paths = [candidate] if candidate and _looks_path_target(candidate) else []
+        operands, target_directory, creates_directories = _file_command_operands(cmd, parts)
+        if not creates_directories:
+            operands = [target_directory or operands[-1]] if target_directory or operands else []
+        paths = [candidate for candidate in operands if _looks_path_target(candidate)]
         rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
         return _ShellSegmentMetadata(
             "write",
@@ -878,8 +880,9 @@ def _classify_shell_segment_without_redirection(
         )
 
     if cmd == "mv":
-        positional = _shell_positional_args(parts)
-        paths = [candidate for candidate in positional if _looks_path_target(candidate)]
+        operands, target_directory, _ = _file_command_operands(cmd, parts)
+        operands += [target_directory] if target_directory else []
+        paths = [candidate for candidate in operands if _looks_path_target(candidate)]
         return _ShellSegmentMetadata(
             "write",
             paths=tuple(_rebase_shell_paths(paths, cwd)),
