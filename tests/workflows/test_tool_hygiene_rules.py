@@ -367,6 +367,7 @@ def _require_uv_effect() -> RuleEffect:
         tools=["Bash"],
         command_pattern=REQUIRE_UV_COMMAND_PATTERN,
         reason=REQUIRE_UV_REASON,
+        resolve_uv_run=False,
     )
 
 
@@ -408,6 +409,7 @@ class TestRequireUvShouldBlock:
             "uv run pytest tests/ -v",
             "uv pip install requests",
             "uv run python -m pip install requests",
+            "uv -q run --with pyyaml python -m pip install requests",
         ],
     )
     def test_allows_uv_managed_commands(self, db: HubDatabase, command: str) -> None:

@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.hooks._ansi_c import ShellDialect, decode_ansi_c_escape
 from gobby.hooks._normalization_paths import _append_unique_path
 
 # Tools that run shell commands. ``Bash`` is the canonical runtime name, but
@@ -124,12 +125,12 @@ def tokenize_shell_command(
     return scan.tokens
 
 
-def scan_shell_command(command: str) -> ShellScan:
+def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> ShellScan:
     """Tokenize ``command`` and keep each token's source span and heredoc bodies.
 
     Spans index into ``command`` with quotes and escapes included, so a token
     range maps back to its raw text. Raises ``ValueError`` on an unclosed
-    quote or a trailing escape.
+    quote or a trailing escape. ``dialect`` selects how ``$'...'`` escapes decode.
     """
     tokens: list[ShellToken] = []
     spans: list[tuple[int, int]] = []
@@ -137,6 +138,7 @@ def scan_shell_command(command: str) -> ShellScan:
     current: list[str] = []
     quoted = False
     in_single_quote = False
+    ansi_c = False
     in_double_quote = False
     escaped = False
     token_start: int | None = None
@@ -144,6 +146,7 @@ def scan_shell_command(command: str) -> ShellScan:
     heredoc_operator: str | None = None
     logical_continuation = False
     comparison_operators: set[int] = set()
+    in_backtick = False
     # Output redirects of substitutions inside the current double-quoted word.
     quoted_substitution_redirects: list[tuple[ShellToken, tuple[int, int]]] = []
 
@@ -186,6 +189,10 @@ def scan_shell_command(command: str) -> ShellScan:
         char = command[index]
 
         if in_single_quote:
+            if ansi_c and char == "\\" and index + 1 < len(command):
+                decoded, index = decode_ansi_c_escape(command, index, dialect=dialect)
+                current.append(decoded)
+                continue
             if char == "'":
                 in_single_quote = False
             else:
@@ -223,6 +230,21 @@ def scan_shell_command(command: str) -> ShellScan:
             index += 1
             continue
 
+        if char == "#" and token_start is None:
+            # An unquoted word-initial ``#`` comments out the rest of the line; a
+            # quote inside it opens nothing. The newline still ends the command,
+            # and inside unquoted backticks so does the closing backtick.
+            end = command.find("\n", index)
+            end = len(command) if end == -1 else end
+            if in_backtick:
+                closing = command.find("`", index, end)
+                end = end if closing == -1 else closing
+            index = end
+            continue
+
+        if char == "`":
+            in_backtick = not in_backtick
+
         if char == "\\":
             if index + 1 < len(command) and command[index + 1] == "\n":
                 index += 2
@@ -233,11 +255,13 @@ def scan_shell_command(command: str) -> ShellScan:
             index += 1
             continue
 
-        if char == "'":
+        if char == "'" or command.startswith("$'", index):
+            # ANSI-C `$'...'` decodes C escapes (gobby.hooks._ansi_c).
             begin(index)
             quoted = True
             in_single_quote = True
-            index += 1
+            ansi_c = char == "$"
+            index += 2 if ansi_c else 1
             continue
 
         if char == '"':

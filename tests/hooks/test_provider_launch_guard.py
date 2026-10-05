@@ -132,6 +132,12 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "git commit -m \"$(cat <<'EOF'\nfix: the watchdog's hook (1M context\nEOF\n)\"",
         'git commit -m "$(cat <<EOF\nit\'s done\nEOF\n)"',
         "x=\"$(cat <<-'EOF' |\n tr a b\n\tit's (text\n\tEOF\n)\"",
+        # ANSI-C quoting escapes its apostrophe; the string is data (#23134).
+        "echo $'it\\'s'",
+        # `\c` does not consume the closing quote; the word is data.
+        "echo $'\\c'Z",
+        # Either dialect's decoding of an echo argument is still data.
+        "echo $'\\claude -p hi'",
     ],
 )
 def test_administration_and_documentation(command: str) -> None:
@@ -178,10 +184,23 @@ def test_help_does_not_exempt_launch_operands(command: str) -> None:
         "nice -n 5 codex",
         "timeout -k 2 5 codex",
         "sudo -u nobody codex",
+        # Every sudo option that takes a value consumes its operand (#23134).
+        "sudo -D /tmp codex",
+        "sudo -R /srv codex",
+        "sudo -U nobody codex",
+        "sudo --close-from 3 codex",
+        "sudo --command-timeout 5 codex",
+        "sudo -nD /tmp codex",
+        "sudo -D/tmp codex",
+        "sudo --chdir=/tmp codex",
         "/usr/bin/env -- codex",
         "time -p codex",
         "env -S 'codex exec'",
         "env --split-string='codex exec'",
+        "env -iS 'codex exec'",
+        "env -Scodex",
+        "env -P /usr/bin codex",
+        "env -a name codex",
         "setsid --wait codex",
         "stdbuf -o L codex",
         "xargs -I '{}' codex exec '{}'",
@@ -227,10 +246,75 @@ def test_help_does_not_exempt_launch_operands(command: str) -> None:
         'x="$(cat <<EOF\nit\'s $(claude -p hi)\nEOF\n)"',
         "x=\"$(sh <<'EOF'\ncodex exec\nEOF\n)\"",
         "echo $(( 1 << EOF\n))\nclaude -p hi\nEOF\n))",
+        "bash -c $'claude -p \\'hi\\''",
+        "echo $'it\\'s'; claude -p hi",
+        "bash -c -- 'claude -p hi'",
+        # bash decodes C escapes inside `$'...'`, so each spells a separator or name.
+        "bash -c $'echo hi\\nclaude -p hi'",
+        "bash -c $'echo hi\\x0aclaude -p hi'",
+        "bash -c $'echo hi\\012claude -p hi'",
+        "bash -c $'echo hi\\cJclaude -p hi'",
+        "bash -c $'\\x63laude -p hi'",
+        # zsh keeps a decoded NUL, so `eval` still runs the command after it.
+        "eval $'true\\0; claude -p hi'",
+        "eval $'true\\x00; claude -p hi'",
+        # zsh drops an unknown escape's backslash and reads `\C-j` as a newline.
+        "$'\\claude' -p hi",
+        "eval $'true\\C-jclaude -p hi'",
+        # A named zsh decodes its script's escapes as zsh, whatever the outer shell.
+        "zsh -c \"\\$'\\\\claude' -p hi\"",
     ],
 )
 def test_execution_contexts(command: str) -> None:
     assert blocks_direct_provider_launch("Bash", {"command": command})
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("env -S 'echo hi; codex exec'", False),
+        ("env -iS 'echo hi; codex exec'", False),
+        ("env -S echo 'hi; codex exec'", False),
+        ("env -S '-i FOO=x echo hi; codex exec'", False),
+        ("env -S '-i FOO=x codex exec'", True),
+        (r"env -S 'codex\_exec'", True),
+        ("env -S '\"codex\" exec'", True),
+        ("env -S '\"codex exec\"'", False),
+        (r"env -S 'codex\texec'", False),
+        (r"env -S 'echo hi\c; codex exec'", False),
+        (r"env -S '\"echo\_hi\" codex exec'", False),
+        ("env -S '' codex exec", True),
+        ("env -S '-S \"codex exec\"'", True),
+        ("env -S 'codex exec \"'", True),
+        ("env --split 'codex exec'", True),
+        ("env --spl='codex exec'", True),
+        ("env --env0-from /tmp/vars codex", True),
+        ("env --quoting-style shell codex", True),
+        ("sudo --chd /tmp codex", True),
+        ("sudo --us root codex", True),
+        ("sudo -a auth codex", True),
+        ("sudo -c staff codex", True),
+        ("sudo -r role codex", True),
+        ("sudo -t type codex", True),
+        ("sudo --auth-type auth codex", True),
+        ("sudo --login-class staff codex", True),
+        ("sudo --role role codex", True),
+        ("sudo --type type codex", True),
+    ],
+)
+def test_env_split_and_getopt_prefixes_preserve_launches(
+    tool_name: str, command: str, blocked: bool
+) -> None:
+    key = "command" if tool_name == "Bash" else "cmd"
+    assert blocks_direct_provider_launch(tool_name, {key: command}) is blocked
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize("prefix", ["sudo --login", "sudo --login-class x", "sudo --login-c x"])
+def test_sudo_exact_flag_precedes_value_prefix(tool_name: str, prefix: str) -> None:
+    key = "command" if tool_name == "Bash" else "cmd"
+    assert blocks_direct_provider_launch(tool_name, {key: prefix + " codex"}) is True
 
 
 @pytest.mark.parametrize(

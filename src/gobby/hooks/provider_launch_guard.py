@@ -7,8 +7,10 @@ Keep quote provenance until executable contexts have been identified.
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from typing import Any
 
+from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect
 from gobby.hooks._normalization_shell import (
     ShellToken,
     _get_command_text,
@@ -120,7 +122,10 @@ _HELP_COMMAND_PROVIDERS = frozenset({"codex", "droid", "grok", "agy"})
 def blocks_direct_provider_launch(tool_name: Any, tool_input: Any) -> bool:
     """Rule predicate, independent of session variables and launch preferences."""
     command = _get_command_text(tool_input)
-    return bool(is_shell_tool(tool_name) and command and _blocked(command, 0))
+    if not (is_shell_tool(tool_name) and command):
+        return False
+    # bash and zsh decode some `$'...'` escapes differently; block on either reading.
+    return any(_blocked(command, 0, dialect) for dialect in SHELL_DIALECTS)
 
 
 def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list[str]]:
@@ -140,7 +145,7 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             output.append(command[index : index + 2])
             index += 2
             continue
-        if quote != "'" and (
+        if quote not in {"'", "$"} and (
             command.startswith("$(", index)
             or char == "`"
             or (not data and not quote and command[index : index + 2] in {"<(", ">("})
@@ -152,10 +157,16 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             output.append("__gobby_expansion__")
             index = end + 1
             continue
+        if not data and not quote and command.startswith("$'", index):
+            # ANSI-C `$'...'` ("$" state): a backslash escapes the next character.
+            quote = "$"
+            output.append("$'")
+            index += 2
+            continue
         if not data and char in "\"'":
             if not quote:
                 quote = char
-            elif quote == char:
+            elif quote == char or (quote == "$" and char == "'"):
                 quote = ""
         elif not data and not quote:
             if char == "#" and (index == 0 or command[index - 1] in " \t\n;|&()"):
@@ -203,6 +214,138 @@ def _separator(token: ShellToken) -> bool:
     return not token.quoted and token.value in {";", "|", "&", "&&", "||", "\n"}
 
 
+def option_word_count(
+    option: str,
+    value_options: Collection[str],
+    *,
+    infer_long_options: bool = False,
+    flag_options: Collection[str] = (),
+) -> int:
+    """Words a leading option occupies, read as getopt reads it.
+
+    A value option takes the next word unless its value is attached
+    (``--chdir=/x``, ``-D/x``). In a short cluster (``-nD``) the first value
+    option takes the rest of the cluster, or the next word when it ends it.
+    Long-option inference is opt-in: getopt permits prefixes, clap does not.
+    An exact flag wins over a prefix of a longer value option.
+    """
+    if option in value_options:
+        return 2
+    if option.startswith("--"):
+        if infer_long_options and "=" not in option and option not in flag_options:
+            return 2 if any(value.startswith(option) for value in value_options) else 1
+        return 1
+    for index in range(1, len(option)):
+        if "-" + option[index] in value_options:
+            return 2 if index == len(option) - 1 else 1
+    return 1
+
+
+def _env_split_string(
+    option: str, rest: list[str], value_options: Collection[str]
+) -> list[str] | None:
+    """The words env's -S option reads as a command string, or None without -S.
+
+    ``-S`` may end a short cluster (``-iS cmd``) or carry its string attached
+    (``-Scmd``, ``--split-string=cmd``); an earlier value option in the cluster
+    takes the rest of it instead (``-uS`` unsets ``S``).
+    """
+    if option.startswith("--"):
+        flag, separator, attached = option.partition("=")
+        if len(flag) > 2 and "--split-string".startswith(flag):
+            return [attached, *rest] if separator else rest
+        return None
+    for index in range(1, len(option)):
+        letter = "-" + option[index]
+        if letter == "-S":
+            attached = option[index + 1 :]
+            return [attached, *rest] if attached else rest
+        if letter in value_options:
+            return None
+    return None
+
+
+def _split_env_argv(string: str) -> list[str]:
+    """Read literal env -S words, preserving operators and escaped whitespace as data.
+
+    env has its own quoting/escape grammar, including ``\\_`` separators.
+    Dynamic expansions and malformed strings retain the conservative shell reading.
+    """
+    words: list[str] = []
+    word: list[str] = []
+    quote = ""
+    started = False
+    index = 0
+    escapes = {"f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
+    while index < len(string):
+        char = string[index]
+        index += 1
+        if char in " \t\n\v\f\r" and not quote:
+            if started:
+                words.append("".join(word))
+                word = []
+                started = False
+            continue
+        if char == "#" and not started:
+            break
+        if char in "\"'" and (not quote or char == quote):
+            quote = "" if quote else char
+            started = True
+            continue
+        if char == "\\" and (quote != "'" or string[index : index + 1] in {"\\", "'"}):
+            if index == len(string):
+                raise ValueError("Trailing env -S escape")
+            char = string[index]
+            index += 1
+            if char == "_" and not quote:
+                if started:
+                    words.append("".join(word))
+                    word = []
+                    started = False
+                continue
+            if char == "c" and not quote:
+                break
+            if char == "_" and quote == '"':
+                char = " "
+            elif char in escapes:
+                char = escapes[char]
+            elif char not in "\"'#$\\":
+                raise ValueError("Invalid env -S escape")
+        elif char == "$" and quote != "'":
+            raise ValueError("Dynamic env -S expansion")
+        word.append(char)
+        started = True
+    if quote:
+        raise ValueError("Unterminated env -S quote")
+    if started:
+        words.append("".join(word))
+    return words
+
+
+_SUDO_FLAG_OPTIONS = frozenset(
+    {
+        "--background",
+        "--preserve-env",  # Optional operands must be attached with '='.
+        "--edit",
+        "--set-home",
+        "--login",
+        "--remove-timestamp",
+        "--list",
+        "--preserve-groups",
+        "--shell",
+        "--validate",
+        "--askpass",
+        "--bell",
+        "--help",
+        "--reset-timestamp",
+        "--no-update",
+        "--non-interactive",
+        "--stdin",
+        "--version",
+    }
+)
+
+
 def _unwrap(words: list[str]) -> list[str]:
     """Common literal execution wrappers; never treat query operands as launches."""
     while words:
@@ -235,7 +378,18 @@ def _unwrap(words: list[str]) -> list[str]:
         }:
             words = words[1:]
             takes_value = {
-                "env": {"-u", "--unset", "-C", "--chdir"},
+                # BSD env adds -P; GNU env adds -a/--argv0. -S is handled below.
+                "env": {
+                    "-u",
+                    "--unset",
+                    "-C",
+                    "--chdir",
+                    "-P",
+                    "-a",
+                    "--argv0",
+                    "--env0-from",
+                    "--quoting-style",
+                },
                 "exec": {"-a"},
                 "nice": {"-n", "--adjustment"},
                 "timeout": {"-s", "--signal", "-k", "--kill-after"},
@@ -245,12 +399,27 @@ def _unwrap(words: list[str]) -> list[str]:
                     "-h",
                     "-p",
                     "-C",
+                    "-D",
+                    "-R",
                     "-T",
+                    "-U",
+                    "-a",
+                    "-c",
+                    "-r",
+                    "-t",
                     "--user",
                     "--group",
                     "--host",
                     "--prompt",
                     "--chdir",
+                    "--chroot",
+                    "--close-from",
+                    "--command-timeout",
+                    "--other-user",
+                    "--auth-type",
+                    "--login-class",
+                    "--role",
+                    "--type",
                 },
                 "time": {"-f", "-o", "--format", "--output"},
                 "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
@@ -275,12 +444,25 @@ def _unwrap(words: list[str]) -> list[str]:
                     break
                 if name == "command" and any(flag in option for flag in "vV"):
                     return []
-                if name == "env" and option in {"-S", "--split-string"}:
-                    # env -S interprets its argument as a command string.
-                    return ["sh", "-c", " ".join(words[1:])]
-                if name == "env" and option.startswith("--split-string="):
-                    return ["sh", "-c", " ".join([option.split("=", 1)[1], *words[1:]])]
-                words = words[2:] if option in takes_value else words[1:]
+                script = (
+                    _env_split_string(option, words[1:], takes_value) if name == "env" else None
+                )
+                if script is not None:
+                    if not script:
+                        return []
+                    try:
+                        words = [*_split_env_argv(script[0]), *script[1:]]
+                    except ValueError:
+                        return ["sh", "-c", " ".join(script)]
+                    # Split words may themselves contain env options (shebang form).
+                    continue
+                count = option_word_count(
+                    option,
+                    takes_value,
+                    infer_long_options=True,
+                    flag_options=_SUDO_FLAG_OPTIONS if name == "sudo" else (),
+                )
+                words = words[count:]
             if name == "timeout" and words:
                 words = words[1:]
         elif name == "eval":
@@ -357,14 +539,14 @@ def _piped_to_shell(tokens: list[ShellToken], end: int) -> bool:
     return False
 
 
-def _blocked(command: str, depth: int) -> bool:
+def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
     if depth > _MAX_DEPTH or len(command) > _MAX_LENGTH:
         return True
     try:
         prepared, expansions = _prepare(command, depth)
-        if any(_blocked(body, depth + 1) for body in expansions):
+        if any(_blocked(body, depth + 1, dialect) for body in expansions):
             return True
-        scan = scan_shell_command(prepared)
+        scan = scan_shell_command(prepared, dialect=dialect)
         start = 0
         for end in range(len(scan.tokens) + 1):
             if end < len(scan.tokens) and not _separator(scan.tokens[end]):
@@ -376,30 +558,37 @@ def _blocked(command: str, depth: int) -> bool:
             if not words:
                 continue
             name = words[0].rsplit("/", 1)[-1]
+            # A named shell decodes the script it runs in its own dialect.
+            inner: ShellDialect = "zsh" if name == "zsh" else "bash"
             if name in _PROVIDERS and not _administration(words[1:], name):
                 return True
             piped = _piped_to_shell(scan.tokens, end)
             if piped and name in {"echo", "printf"}:
-                if any(_blocked(value, depth + 1) for value in words[1:]):
+                if any(_blocked(value, depth + 1, dialect) for value in words[1:]):
                     return True
             if name in _SHELLS:
                 for index, arg in enumerate(words[1:], 1):
                     if arg.startswith("-") and not arg.startswith("--") and "c" in arg:
-                        if index + 1 < len(words) and _blocked(words[index + 1], depth + 1):
+                        # `--` ends the options; the script is the word after it.
+                        script = words[index + 1 : index + 3]
+                        if script[:1] == ["--"]:
+                            script = script[1:]
+                        if script and _blocked(script[0], depth + 1, inner):
                             return True
                         break
                 # Literal here-strings are executable input as well.
                 for index, token in enumerate(segment[:-1]):
                     if _shell_stdin(words) and not token.quoted and token.value == "<<<":
-                        if _blocked(segment[index + 1].value, depth + 1):
+                        if _blocked(segment[index + 1].value, depth + 1, inner):
                             return True
             if _shell_stdin(words) or piped:
-                if any(_blocked(body.text, depth + 1) for body in bodies):
+                body_dialect = inner if _shell_stdin(words) else dialect
+                if any(_blocked(body.text, depth + 1, body_dialect) for body in bodies):
                     return True
             for body in bodies:
                 if not body.quoted:
                     _, substitutions = _prepare(body.text, depth, data=True)
-                    if any(_blocked(value, depth + 1) for value in substitutions):
+                    if any(_blocked(value, depth + 1, dialect) for value in substitutions):
                         return True
         return False
     except ValueError:

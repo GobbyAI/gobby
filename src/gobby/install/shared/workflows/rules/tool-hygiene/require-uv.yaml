@@ -11,4 +11,6 @@ rules:
       - type: block
         tools: [Bash]
         command_pattern: "(^|(?<=[;&|]))\\s*(?:sudo\\s+)?(?:pip3?\\b|python(?:\\d+(?:\\.\\d+)?)?\\s+-m\\s+pip\\b)"
+        # `uv run python -m pip …` is the form this rule asks for.
+        resolve_uv_run: false
         reason: "Use `uv pip …` or `uv run python -m pip …` — uv manages this project's Python environment."

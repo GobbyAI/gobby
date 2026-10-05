@@ -410,6 +410,7 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
             pattern=effect.command_pattern,
             not_pattern=effect.command_not_pattern,
             mask_quoted=bool(getattr(effect, "mask_quoted", False)),
+            resolve_uv_run=bool(getattr(effect, "resolve_uv_run", True)),
         )
 
     def _should_block(self, effect: Any, event: HookEvent) -> bool:

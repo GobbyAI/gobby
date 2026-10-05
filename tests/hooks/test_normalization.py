@@ -2075,6 +2075,66 @@ class TestHeredocTokenization:
             HeredocBody("$(x)", quoted=False, terminated=True, opener=8),
         ]
 
+    def test_scan_reads_ansi_c_quote_escapes(self) -> None:
+        # `$'...'` lets a backslash escape the apostrophe, so `\'` stays inside
+        # the word and the separator after the closing quote still splits.
+        scan = scan_shell_command("echo $'it\\'s' ; x $'a\\\\'")
+
+        assert shell_token_values(scan.tokens) == ["echo", "it's", ";", "x", "a\\"]
+        assert [token.quoted for token in scan.tokens] == [False, True, False, False, True]
+
+    def test_scan_decodes_ansi_c_escapes(self) -> None:
+        # bash decodes C escapes inside `$'...'`; the decoded word is what runs.
+        scan = scan_shell_command("x $'a\\nb\\tc\\x41\\101\\u00e9\\cJ\\e\\q' $'\\x4g'")
+
+        assert shell_token_values(scan.tokens) == ["x", "a\nb\tcAAé\n\x1b\\q", "\x04g"]
+
+    def test_scan_follows_bash_ansi_c_limits(self) -> None:
+        # Octal stops after three digits and a bare `\x` or `\8` stays literal. A
+        # decoded NUL stays: zsh keeps it, and `eval` runs what follows it.
+        scan = scan_shell_command("x $'\\0101' $'\\x\\8' $'ab\\0cd\\'ef'g $'\\ca\\cß'")
+
+        assert shell_token_values(scan.tokens) == [
+            "x",
+            "\b1",
+            "\\x\\8",
+            "ab\0cd'efg",
+            "\x01\x1f",
+        ]
+
+    def test_scan_ansi_c_control_escape_keeps_quote_pairs(self) -> None:
+        # The lexer pairs each backslash with the next character first, so `\c`
+        # never consumes the closing quote (bash prints a lone backslash), and
+        # `\c\X` is ^\ followed by X, a backslash included.
+        scan = scan_shell_command("x $'\\c'Z $'\\c\\'y' $'\\c\\\\x' ; z")
+
+        assert shell_token_values(scan.tokens) == ["x", "\\Z", "\x1c'y", "\x1c\\x", ";", "z"]
+
+    @pytest.mark.parametrize(
+        ("word", "decoded"),
+        [
+            # zsh has no `\c` escape and drops the backslash of any unknown one.
+            ("$'\\cJ'", "cJ"),
+            ("$'\\gobby'", "gobby"),
+            ("$'\\8'", "8"),
+            # A hex or Unicode escape with no digits is NUL.
+            ("$'\\x'", "\0"),
+            # `\C-X` is control and `\M-X` meta; they compose in either order.
+            ("$'\\C-j'", "\n"),
+            ("$'\\Cx'", "\x18"),
+            ("$'\\C-?'", "\x7f"),
+            ("$'\\C-\\\\'", "\x1c"),
+            ("$'\\M-\\C-a'", "\x81"),
+            ("$'\\C-\\M-a'", "\x81"),
+            # A modifier with nothing before the closing quote decodes to nothing.
+            ("$'\\C-'Z", "Z"),
+        ],
+    )
+    def test_scan_decodes_ansi_c_escapes_as_zsh(self, word: str, decoded: str) -> None:
+        scan = scan_shell_command(f"x {word}", dialect="zsh")
+
+        assert shell_token_values(scan.tokens) == ["x", decoded]
+
     def test_scan_records_an_unterminated_body_as_live_input(self) -> None:
         command = "cat <<EOF > out.txt\nstill > body\nnever closed"
 
@@ -2100,6 +2160,27 @@ class TestHeredocTokenization:
             "\n",
         ]
         assert scan.heredocs == [HeredocBody("body", quoted=True, terminated=True, opener=2)]
+
+    def test_scan_skips_word_initial_comments_and_keeps_heredoc_input(self) -> None:
+        command = "cat <<'EOF' # it's\n# don't\nEOF\necho a#b 'c # d' # e's"
+
+        scan = scan_shell_command(command)
+
+        assert shell_token_values(scan.tokens) == [
+            "cat",
+            "<<",
+            "EOF",
+            "\n",
+            "echo",
+            "a#b",
+            "c # d",
+        ]
+        assert scan.heredocs == [HeredocBody("# don't", quoted=True, terminated=True, opener=2)]
+
+    def test_scan_ends_a_backtick_comment_at_the_closing_backtick(self) -> None:
+        scan = scan_shell_command("echo `true # it's` ; ls # `x`")
+
+        assert shell_token_values(scan.tokens) == ["echo", "`true", "`", ";", "ls"]
 
 
 class TestToolErrorDetection:

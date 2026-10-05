@@ -33,8 +33,10 @@ established by an earlier segment (#21056) and a quoted path such as
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass
 
+from gobby.hooks._ansi_c import SHELL_DIALECTS
 from gobby.hooks._normalization_shell import (
     _SHELL_SEQUENCING_TOKENS,
     HeredocBody,
@@ -51,6 +53,7 @@ from gobby.hooks.provider_launch_guard import (
     _SHELLS,
     _prepare,
     _unwrap,
+    option_word_count,
 )
 
 # Commands whose standard input is never interpreted as code. Every other
@@ -82,8 +85,264 @@ def mask_quoted_spans(command: str) -> str:
     spaces, which also removes newline segment boundaries inside string data
     (the way a multi-line commit message tripped command-position anchors,
     #20887).
+
+    An unquoted ``#`` starts a comment through the newline; a quote inside it is
+    prose, not the start of a string (#23134). Without this, an apostrophe in a
+    comment reads as an unterminated single-quoted span and blanks the real
+    invocation on the following line.
     """
     return _blank_quoted_chars(command, chars=None)
+
+
+# Wrapper scripts nest (``bash -c "bash -c '…'"``); resolve them to a bounded
+# depth, matching the substitution-recursion guard used by the shell scanner.
+_WRAPPER_DEPTH = 8
+# Value-taking options for wrapper tools whose executed command follows them.
+# procps watch: only these take a separate operand; -d/-p/-x and the rest are flags.
+_WATCH_VALUE_OPTIONS = frozenset({"-n", "--interval", "-q", "--equexit"})
+_SSH_VALUE_OPTIONS = frozenset(
+    {
+        "-p",
+        "-l",
+        "-i",
+        "-o",
+        "-F",
+        "-c",
+        "-m",
+        "-b",
+        "-e",
+        "-D",
+        "-L",
+        "-R",
+        "-W",
+        "-J",
+        "-S",
+        "-w",
+        "-B",
+        "-I",
+        "-Q",
+        "-E",
+        "-O",
+        "-P",
+    }
+)
+# uv 0.12 global options, accepted before the subcommand and after it.
+_UV_GLOBAL_VALUE_OPTIONS = frozenset(
+    {
+        "--cache-dir",
+        "--color",
+        "--allow-insecure-host",
+        "--directory",
+        "--project",
+        "--config-file",
+    }
+)
+# Every value-taking option `uv run --help` lists.
+_UV_RUN_VALUE_OPTIONS = _UV_GLOBAL_VALUE_OPTIONS | frozenset(
+    {
+        "--extra",
+        "--no-extra",
+        "--group",
+        "--no-group",
+        "--only-group",
+        "--no-editable-package",
+        "--env-file",
+        "-w",
+        "--with",
+        "--with-editable",
+        "--with-requirements",
+        "--package",
+        "--python-platform",
+        "--index",
+        "--default-index",
+        "-i",
+        "--index-url",
+        "--extra-index-url",
+        "-f",
+        "--find-links",
+        "--index-strategy",
+        "--keyring-provider",
+        "-P",
+        "--upgrade-package",
+        "--upgrade-group",
+        "--resolution",
+        "--prerelease",
+        "--prerelease-package",
+        "--fork-strategy",
+        "--exclude-newer",
+        "--exclude-newer-package",
+        "--no-sources-package",
+        "--reinstall-package",
+        "--link-mode",
+        "-C",
+        "--config-setting",
+        "--config-settings-package",
+        "--no-build-isolation-package",
+        "--no-build-package",
+        "--no-binary-package",
+        "--refresh-package",
+        "-p",
+        "--python",
+    }
+)
+# Every value-taking option `uvx --help` (alias `uv tool run`) lists.
+_UV_TOOL_RUN_VALUE_OPTIONS = _UV_GLOBAL_VALUE_OPTIONS | frozenset(
+    {
+        "--from",
+        "-w",
+        "--with",
+        "--with-editable",
+        "--with-requirements",
+        "-c",
+        "--constraints",
+        "-b",
+        "--build-constraints",
+        "--overrides",
+        "--env-file",
+        "--python-platform",
+        "--torch-backend",
+        "--index",
+        "--default-index",
+        "-i",
+        "--index-url",
+        "--extra-index-url",
+        "-f",
+        "--find-links",
+        "--index-strategy",
+        "--keyring-provider",
+        "-P",
+        "--upgrade-package",
+        "--upgrade-group",
+        "--resolution",
+        "--prerelease",
+        "--prerelease-package",
+        "--fork-strategy",
+        "--exclude-newer",
+        "--exclude-newer-package",
+        "--no-sources-package",
+        "--reinstall-package",
+        "--link-mode",
+        "-C",
+        "--config-setting",
+        "--config-settings-package",
+        "--no-build-isolation-package",
+        "--no-build-package",
+        "--no-binary-package",
+        "--refresh-package",
+        "-p",
+        "--python",
+    }
+)
+# A tool command may carry its package's version or extras (`ruff@0.6`, `ruff==0.6`).
+_TOOL_SPEC_SUFFIX = re.compile(r"[@\[<>=!~].*", re.DOTALL)
+
+
+def _uv_run_argv(name: str, args: list[str]) -> list[str] | None:
+    """The argv ``uv run``, ``uv tool run`` or ``uvx`` executes; None for other commands."""
+    if name == "uvx":
+        return _tool_argv(_after_options(args, _UV_TOOL_RUN_VALUE_OPTIONS))
+    if name != "uv":
+        return None
+    subcommand = _after_options(args, _UV_GLOBAL_VALUE_OPTIONS)
+    if subcommand[:1] == ["run"]:
+        return _after_options(subcommand[1:], _UV_RUN_VALUE_OPTIONS)
+    if subcommand[:1] == ["tool"]:
+        tool = _after_options(subcommand[1:], _UV_GLOBAL_VALUE_OPTIONS)
+        if tool[:1] in (["run"], ["uvx"]):
+            return _tool_argv(_after_options(tool[1:], _UV_TOOL_RUN_VALUE_OPTIONS))
+    return None
+
+
+def _tool_argv(words: list[str]) -> list[str]:
+    """Drop a package spec suffix from the tool command uv runs."""
+    if not words:
+        return words
+    return [_TOOL_SPEC_SUFFIX.sub("", words[0]), *words[1:]]
+
+
+def _after_options(
+    words: list[str], value_options: frozenset[str], *, infer_long_options: bool = False
+) -> list[str]:
+    """Drop leading options (and a value option's operand) through ``--``."""
+    index = 0
+    while index < len(words) and words[index].startswith("-"):
+        if words[index] == "--":
+            return words[index + 1 :]
+        index += option_word_count(
+            words[index], value_options, infer_long_options=infer_long_options
+        )
+    return words[index:]
+
+
+def _decoded_stages(subject: str) -> list[list[str]]:
+    """Return each pipeline stage's words as bash and as zsh would run them.
+
+    The shells decode some ``$'...'`` escapes differently, so a word can name a
+    command under one and not the other; both readings are kept.
+    """
+    stages: list[list[str]] = []
+    for dialect in SHELL_DIALECTS:
+        try:
+            scan = scan_shell_command(subject, dialect=dialect)
+        except ValueError:
+            continue
+        for stage in _pipeline_stages(scan.tokens):
+            words = _stage_words(stage)
+            # A subshell runs its body: `(time cmd)` scans as `(time`, `cmd)`.
+            if words and words[0].startswith("("):
+                head = words[0].lstrip("(")
+                words = [head, *words[1:]] if head else words[1:]
+                tail = words[-1].rstrip(")") if words else ""
+                words = [*words[:-1], tail] if tail else words[:-1]
+            if words and words not in stages:
+                stages.append(words)
+    return stages
+
+
+def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) -> list[str]:
+    """Return the command strings a segment's literal wrappers would execute.
+
+    Only arguments that are code count: a shell ``-c`` string, ``eval``'s
+    arguments, ``xargs``/``timeout``/``watch``/``ssh`` targets and any other
+    prefix ``_unwrap`` strips. A data argument to an ordinary command
+    (``git commit -m``) is not a wrapper and yields nothing.
+    """
+    scripts: list[str] = []
+    for words in stages:
+        unwrapped = _unwrap(words)
+        if not unwrapped:
+            continue
+        name = shell_command_name(unwrapped[0])
+        if name in _SHELLS:
+            for index, arg in enumerate(unwrapped[1:], 1):
+                if arg.startswith("-") and not arg.startswith("--") and "c" in arg:
+                    # `--` ends the options; the script is the word after it.
+                    script = unwrapped[index + 1 : index + 3]
+                    if script[:1] == ["--"]:
+                        script = script[1:]
+                    scripts.extend(script[:1])
+                    break
+            continue
+        # watch and ssh join every remaining word into the command they run.
+        if name == "watch":
+            rest = _after_options(unwrapped[1:], _WATCH_VALUE_OPTIONS, infer_long_options=True)
+            if rest:
+                scripts.append(" ".join(rest))
+            continue
+        if name == "ssh":
+            rest = _after_options(unwrapped[1:], _SSH_VALUE_OPTIONS)
+            if len(rest) > 1:
+                scripts.append(" ".join(rest[1:]))
+            continue
+        # These exec their argv directly, so each word stays one word.
+        argv = _uv_run_argv(name, unwrapped[1:])
+        if argv is not None:
+            if argv and resolve_uv_run:
+                scripts.append(shlex.join(argv))
+            continue
+        if unwrapped != words:
+            scripts.append(shlex.join(unwrapped))
+    return scripts
 
 
 def command_patterns_match(
@@ -92,6 +351,7 @@ def command_patterns_match(
     pattern: str | None,
     not_pattern: str | None = None,
     mask_quoted: bool = False,
+    resolve_uv_run: bool = True,
 ) -> bool:
     """Return whether ``command`` selects a block effect carrying these patterns.
 
@@ -101,10 +361,28 @@ def command_patterns_match(
         return True
     subjects = executable_command_subjects(command)
     exemption_text = "\n".join(subjects)
-    if mask_quoted:
-        pattern_subjects = [mask_quoted_spans(subject) for subject in subjects]
-    else:
-        pattern_subjects = [_mask_quoted_command_boundaries(subject) for subject in subjects]
+    mask_one = mask_quoted_spans if mask_quoted else _mask_quoted_command_boundaries
+    pattern_subjects: list[str] = []
+    pending: list[tuple[str, int]] = [(subject, 0) for subject in subjects]
+    while pending:
+        text, depth = pending.pop()
+        pattern_subjects.append(mask_one(text))
+        # Quotes and backslashes inside a word vanish before it runs, so a
+        # quoted or escaped command name still runs that command. Match each
+        # stage's decoded words too, re-quoted so a word holding spaces stays data.
+        stages = _decoded_stages(text)
+        pattern_subjects.extend(mask_one(shlex.join(words)) for words in stages)
+        # A literal execution wrapper (``bash -c``, ``eval``, ``xargs``,
+        # ``timeout``, ``watch``, ``ssh``) runs a further command string that the
+        # scanner reads as one segment's words. Resolve it through these same
+        # rules, to a bounded depth, so a nested wrapped invocation such as
+        # ``bash -c "bash -c '…'"`` still matches (#23134).
+        scripts = _wrapper_scripts(stages, resolve_uv_run=resolve_uv_run)
+        if scripts and depth >= _WRAPPER_DEPTH:
+            # Code nested past the bound is unread, so the selector fails closed.
+            return True
+        for script in scripts:
+            pending.extend((inner, depth + 1) for inner in executable_command_subjects(script))
     if not any(re.search(pattern, subject) for subject in pattern_subjects):
         return False
     return not (not_pattern and re.search(not_pattern, exemption_text))
@@ -122,6 +400,21 @@ def _blank_quoted_chars(command: str, *, chars: frozenset[str] | None) -> str:
         ch = command[i]
         if ch == "\\":
             i += 2
+        elif ch == "#" and (i == 0 or command[i - 1] in " \t\n;|&()"):
+            # An unquoted ``#`` at word start comments through the newline; the
+            # text inside it is prose, so a quote there must not open a span.
+            end = command.find("\n", i)
+            i = n if end < 0 else end
+        elif command.startswith("$'", i):
+            # ANSI-C `$'...'`: a backslash escapes the next character.
+            end = i + 2
+            while end < n and command[end] != "'":
+                end += 2 if command[end] == "\\" else 1
+            end = min(end, n)
+            for j in range(i + 2, end):
+                if chars is None or command[j] in chars:
+                    out[j] = " "
+            i = end + 1
         elif ch == "'":
             end = command.find("'", i + 1)
             end = n if end == -1 else end
@@ -153,10 +446,13 @@ def executable_command_subjects(command: str) -> list[str]:
     return _subjects(command, 0)
 
 
-def _subjects(command: str, depth: int) -> list[str]:
+def _subjects(command: str, depth: int, *, heredoc_source: bool = False) -> list[str]:
     try:
         scan = scan_shell_command(command)
     except ValueError:
+        return [command]
+    # Preserve interpreter source verbatim unless it has its own heredoc boundaries.
+    if heredoc_source and not scan.heredocs:
         return [command]
     segments = _split_segments(scan.tokens)
     if not segments:
@@ -184,7 +480,10 @@ def _subjects(command: str, depth: int) -> list[str]:
         segment = segments[owner]
         tokens = scan.tokens[segment.first : segment.last + 1]
         if _heredoc_may_execute(tokens, raw[owner], heredoc, heredoc.opener - segment.first):
-            subjects[owner] = f"{subjects[owner]}\n{heredoc.text}"
+            # Nested stdin data may contain unmatched quotes. Remove that data
+            # through the existing consumer rules before quote masking sees it.
+            body = "\n".join(_subjects(heredoc.text, depth, heredoc_source=True))
+            subjects[owner] = f"{subjects[owner]}\n{body}"
         elif not heredoc.quoted:
             subjects[owner] += "".join(f"\n{span}" for span in _substitution_spans(heredoc.text))
     return subjects
