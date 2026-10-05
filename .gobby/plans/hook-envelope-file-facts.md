@@ -1626,3 +1626,348 @@ After every leaf has landed:
    suite's spool fixture, never the live inbox), and the monolith rule still
    blocks a 1,000-line crossing.
 5. The inbox directory is mode 0700 after the first post-activation hook.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: ghook captures `file_facts`
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: Write, Edit, MultiEdit `edits[]` and apply_patch targets
+    under every `TOOL_INPUT_SOURCES` key yield facts keyed by the raw path. This covers
+    JSON-string tool input, a freeform apply_patch string, and each apply_patch object
+    field in `PATCH_TEXT_KEYS`, including `cmd` and `CommandLine`. It covers apply_patch
+    named under `tool_name`, `function_name` or `toolName`, and Write and Edit targets
+    under the raw path aliases `TargetFile`, `AbsolutePath`, `target_file` and `targetFile`.
+    A non-patch, non-JSON string yields no facts. test: `crates/ghook/src/file_facts.rs::collects_write_edit_multiedit_and_patch_targets`.
+
+    1.1.2: Read payloads, `tool_response` content, and paths outside `GUARDED_EXTENSIONS`,
+    such as `.env`, `.json` and `.ipynb`, yield no facts and omit the field. test:
+    `crates/ghook/src/file_facts.rs::ignores_reads_responses_and_unguarded_extensions`.
+
+    1.1.3: `line_count` equals Python `len(text.splitlines())` for empty, trailing-newline,
+    LF, CRLF, CR and every other `splitlines` boundary. A file over 262,144 bytes,
+    including one whose 1,000 lines are CR-separated, carries that count and `truncated:
+    true` with no `content`. A missing path carries `exists: false`. An existing file
+    that cannot be read gets no fact. test: `crates/ghook/src/file_facts.rs::caps_content_and_reports_missing_files`.
+
+    1.1.4: A relative path resolves against the tool cwd, including a nested cwd below
+    the root and a `workdir` key. A missing in-root target, including one under missing
+    parent directories, keeps its `relative_path`. A raw key with surrounding whitespace
+    or backslashes reads the normalized file. `relative_path` is null only outside
+    the root, including through an existing symlinked ancestor that points outside.
+    With no project root, as in a managed run from an unmarked cwd, `collect` returns
+    `None`. test: `crates/ghook/src/file_facts.rs::resolves_relative_paths_against_project_root`.
+
+    1.1.5: An envelope with `file_facts` validates against both byte-identical v1
+    schema copies, and one without it still validates. test: `crates/ghook/src/envelope.rs::envelope_with_file_facts_validates_against_v1_schema`.
+
+    1.1.6: `build_dispatch_envelope` attaches facts for a PreToolUse Edit payload
+    and omits the field for a SessionStart payload. test: `crates/ghook/src/dispatch.rs::dispatch_envelope_attaches_file_facts_for_edits`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.1:1.1.1
+  - covers:hook-envelope-file-facts:1.1:1.1.2
+  - covers:hook-envelope-file-facts:1.1:1.1.3
+  - covers:hook-envelope-file-facts:1.1:1.1.4
+  - covers:hook-envelope-file-facts:1.1:1.1.5
+  - covers:hook-envelope-file-facts:1.1:1.1.6
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Owner-only hook inbox
+  category: code
+  task_type: bug
+  depends_on: []
+  validation_criteria: '1.2.1: `enqueue_to` leaves the inbox directory at mode 0700,
+    including when it already existed as 0755. test: `crates/ghook/src/transport.rs::enqueue_makes_inbox_owner_only`.
+
+    1.2.2: `quarantine_malformed_at` leaves the inbox directory at mode 0700. test:
+    `crates/ghook/src/transport.rs::quarantine_malformed_makes_inbox_owner_only`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.2:1.2.1
+  - covers:hook-envelope-file-facts:1.2:1.2.2
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Daemon delivery scope carries `file_facts` and hook origin
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.3.1: `file_facts` reaches rule evaluation through the delivery
+    context, also on the workflow runtime and rule-engine threads, and never appears
+    in `HookEvent.data`, `HookEvent.metadata`, the broadcast payload or the webhook
+    payload. test: `tests/hooks/test_hook_delivery.py::test_file_facts_reach_rules_but_not_event_payloads`.
+
+    1.3.2: Origin is foreign when `machine_id` differs, when `machine_id_error` is
+    present, or when the daemon has no local id and the payload carries one. It is
+    local otherwise, including when the payload has no machine identity. The diagnostic
+    names the machine id or the error code. test: `tests/hooks/test_hook_delivery.py::test_origin_classification`.
+
+    1.3.3: Malformed `file_facts` entries are dropped without logging. test: `tests/hooks/test_hook_delivery.py::test_malformed_file_facts_are_dropped`.
+
+    1.3.4: The Rust constants in `crates/ghook/src/file_facts.rs` match the raw ingress
+    contracts and the consumers. `TOOL_INPUT_KEYS` equals `TOOL_INPUT_SOURCES`. `PATH_KEYS`
+    equals `_PATH_FIELDS` plus `_EDIT_PATH_KEYS`. `TOOL_NAME_KEYS` equals `normalize_tool_fields`''
+    precedence. `PATCH_TEXT_KEYS` equals `_APPLY_PATCH_TEXT_FIELDS` plus the `_TOOL_INPUT_FIELD_ALIASES`
+    sources mapped to `command`. `CWD_KEYS` equals `current_tool_cwd`''s keys plus
+    the `Cwd` alias. `EDIT_TEXT_KEYS` covers every consumer edit-text key. `GUARDED_EXTENSIONS`
+    equals `MONOLITH_SOURCE_EXTENSIONS`. test: `tests/hooks/test_hook_delivery.py::test_ghook_file_fact_constants_match_python`.
+
+    1.3.5: `fact_for` finds a fact by exact raw key, then by a whitespace- or separator-normalized
+    raw key or `relative_path`. Colliding aliases with differing facts return `None`.
+    No lookup touches disk. test: `tests/hooks/test_hook_delivery.py::test_fact_lookup_aliases_are_lexical_and_unambiguous`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.3:1.3.1
+  - covers:hook-envelope-file-facts:1.3:1.3.2
+  - covers:hook-envelope-file-facts:1.3:1.3.3
+  - covers:hook-envelope-file-facts:1.3:1.3.4
+  - covers:hook-envelope-file-facts:1.3:1.3.5
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Monolith projection and Rust TDD classification read `file_facts`
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.4.1: A carried fact wins over disk content. Projection works
+    without a daemon-side project root (`project_path=None`). An over-cap fact at
+    the ceiling blocks. A foreign Write or apply_patch Add File to a missing in-root
+    `src/` file whose proposed content reaches 1,000 lines blocks without evaluator
+    disk access. A fact with a null `relative_path` is skipped. test: `tests/workflows/test_monolith_guard.py::test_projection_prefers_envelope_facts`.
+
+    1.4.2: A foreign uncarried guard path is reported unverifiable and blocks. A local
+    uncarried path still reads disk. test: `tests/workflows/test_monolith_guard.py::test_uncarried_paths_follow_origin`.
+
+    1.4.3: Rust test-only classification reads the carried content at both PreToolUse
+    and PostToolUse. A raw absolute key with backslash separators or surrounding whitespace,
+    passed through `normalize_tool_fields` and `condition_helpers._is_tdd_test_path`,
+    still uses the carried content, with disk access forbidden for both origins. The
+    prior file is a production file over the cap. A foreign truncated or uncarried
+    path is not test-only, for both a full-content Write of only `#[cfg(test)]` code
+    and a targeted Edit, at both phases. A local truncated path classifies from disk,
+    with today''s semantics. A verified missing file (`exists: false`) keeps the new-file
+    result. A relative uncarried path, or an existing file that cannot be read, is
+    not test-only. test: `tests/workflows/test_rust_test_evidence.py::test_classification_reads_envelope_facts`.
+
+    1.4.4: The guarded file is over 256 KiB with 900 lines, each containing `marker`.
+    A foreign `replace_all` Edit that turns `marker` into two lines is reported unverifiable,
+    both below and across the ceiling, and so is a foreign non-`replace_all` Edit.
+    A foreign full-content Write projects its exact count. With local origin, the
+    same truncated fact projects from disk text and reports the true 1,800 lines.
+    test: `tests/workflows/test_monolith_guard.py::test_truncated_fact_targeted_edits_are_unverifiable_when_foreign`.
+
+    1.4.5: A local managed envelope from an unmarked cwd carries no facts (1.1.4).
+    An absolute in-project Write or Edit then projects from disk and blocks at the
+    1,000-line boundary. A carried fact with a null `relative_path` stays excluded.
+    test: `tests/workflows/test_monolith_guard.py::test_rootless_envelope_keeps_disk_guard`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.4:1.4.1
+  - covers:hook-envelope-file-facts:1.4:1.4.2
+  - covers:hook-envelope-file-facts:1.4:1.4.3
+  - covers:hook-envelope-file-facts:1.4:1.4.4
+  - covers:hook-envelope-file-facts:1.4:1.4.5
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Monolith projection applies MultiEdit edits
+  category: code
+  task_type: bug
+  depends_on:
+  - '1.4'
+  validation_criteria: '1.5.1: A MultiEdit whose sequential edits take a 990-line
+    file to 1,000 or more lines is reported, and one that stays below 1,000 is not.
+    Over a foreign truncated fact, a MultiEdit, including one whose element sets `replace_all`,
+    is reported unverifiable (1.4). Over a local truncated fact, it projects from
+    disk text. test: `tests/workflows/test_monolith_guard.py::test_multiedit_edits_project_sequentially`.
+
+    1.5.2: NotebookEdit `.ipynb` targets stay outside the guard. test: `tests/workflows/test_monolith_guard.py::test_notebook_targets_are_not_guarded`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.5:1.5.1
+  - covers:hook-envelope-file-facts:1.5:1.5.2
+  tdd: true
+  source_section: '1.5'
+  implementation_domain: backend
+- title: Foreign-origin events resolve no checkout and fail the git gates closed
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.6.1: A foreign-origin `git commit` blocks with `FOREIGN_ORIGIN_DIAGNOSTIC`,
+    and no git subprocess runs. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_commit_fails_closed_without_git`.
+
+    1.6.2: A foreign-origin write blocks with the diagnostic and releases nothing
+    when its carried `relative_path` is claimed by another session. That includes
+    a claim recorded in a different checkout, so two checkouts with the same relative
+    path both count. A nested cwd maps to the same relative identity. An uncarried
+    path, such as a `.md` target or a shell-derived write, blocks when another session
+    holds any claim, including a claim whose ledger is empty (before its first edit,
+    or after a release). It passes when no other session holds a claim. A fact with
+    a null `relative_path`, or an unclaimed carried path, passes. Spies show no `Path.resolve`,
+    `normalize_task_checkout_root`, git call or release. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_write_on_claimed_path_fails_closed`.
+
+    1.6.3: A foreign-origin event resolves no checkout and no git worktree root, even
+    when this machine holds a checkout of the same project. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_event_resolves_no_local_checkout`.
+
+    1.6.4: A foreign-origin after_tool git event skips `reconcile_edit_ledgers`, and
+    the code-review gate stays armed. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_event_skips_reconcile_and_keeps_review_gate`.
+
+    1.6.5: Local-origin gate values returned by `git_gate_eval_context`, including
+    `foreign_landing_merge`, are byte-identical before and after the move, and the
+    later `_evaluate_rules` augmentation runs in its existing order. test: `tests/workflows/test_foreign_origin_gates.py::test_local_gate_context_unchanged_by_move`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.6:1.6.1
+  - covers:hook-envelope-file-facts:1.6:1.6.2
+  - covers:hook-envelope-file-facts:1.6:1.6.3
+  - covers:hook-envelope-file-facts:1.6:1.6.4
+  - covers:hook-envelope-file-facts:1.6:1.6.5
+  tdd: true
+  source_section: '1.6'
+  implementation_domain: backend
+- title: Foreign-origin monolith ledger recount is unverifiable
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.5'
+  validation_criteria: '1.7.1: For a foreign-origin event, every guarded ledger path
+    is reported unverifiable at commit, task transition and turn end, and no file
+    is read. test: `tests/workflows/test_monolith_guard.py::test_foreign_outstanding_paths_are_unverifiable`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.7:1.7.1
+  tdd: true
+  source_section: '1.7'
+  implementation_domain: backend
+- title: Foreign-origin TDD path identity runs no git
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.8.1: Foreign-origin TDD path identity uses the string fallback,
+    and no git subprocess runs. test: `tests/workflows/test_tdd_gate_worktree_paths.py::test_foreign_origin_skips_git_identity`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.8:1.8.1
+  tdd: true
+  source_section: '1.8'
+  implementation_domain: backend
+- title: Foreign-origin found-work terminal evidence fails closed
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.9.1: For a foreign-origin turn end with no task disposition,
+    including a session owned by another machine with no local transcript evidence,
+    the found-work gate reports the diagnostic as a terminal failure and blocks. No
+    session load, transcript derivation, cover, `lexists`, `ls-tree` or status probe
+    runs. test: `tests/workflows/test_found_work_gate.py::test_foreign_origin_terminal_evidence_fails_closed`.
+
+    1.9.2: Local-origin terminal failures, covers and clearances are unchanged after
+    the helper move. test: `tests/workflows/test_found_work_gate.py::test_local_terminal_failures_unchanged_by_move`.
+
+    1.9.3: With otherwise identical inputs, a seeded empty local cache entry does
+    not answer a foreign stop, which still reports the diagnostic. A seeded foreign
+    diagnostic does not answer a local stop, which recomputes its own result. A same-origin
+    repeat reuses the cache. test: `tests/workflows/test_found_work_gate.py::test_analysis_cache_is_origin_scoped`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.9:1.9.1
+  - covers:hook-envelope-file-facts:1.9:1.9.2
+  - covers:hook-envelope-file-facts:1.9:1.9.3
+  tdd: true
+  source_section: '1.9'
+  implementation_domain: backend
+- title: Foreign-origin source reads are unverified
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.10.1: A foreign-origin source read is unverified and redirected,
+    and no file, `.git` or `gcode.json` is read. test: `tests/hooks/test_code_navigation_recovery.py::test_foreign_origin_read_is_unverified`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.10:1.10.1
+  tdd: true
+  source_section: '1.10'
+  implementation_domain: backend
+- title: Foreign-origin path handling is lexical and probes no checkout
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.10'
+  validation_criteria: '1.11.1: A foreign-origin Write, Read and shell-navigation
+    event is normalized, and `navigation_requires_index` and `write_paths_within`
+    are evaluated on it, under one spy set. No `Path.resolve`, `Path.expanduser`,
+    `Path.is_dir`, `Path.exists`, `find_project_root` or `.git`/`commondir` read occurs.
+    A write stays `canonical_repo_mutation`, including a scratchpad path. A `~` path
+    is unresolvable. No gcode project hint is set. test: `tests/hooks/test_path_scope.py::test_foreign_origin_path_handling_probes_nothing`.
+
+    1.11.2: For a foreign-origin delivery, `current_project_root` returns only an
+    explicit event `project_path`, lexically, and `write_paths_within` is `False`,
+    so the seat write is outside scope. Local results for the same inputs are unchanged.
+    test: `tests/hooks/test_path_scope.py::test_foreign_origin_project_root_is_explicit_only`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.11:1.11.1
+  - covers:hook-envelope-file-facts:1.11:1.11.2
+  tdd: true
+  source_section: '1.11'
+  implementation_domain: backend
+- title: Foreign-origin post-tool edits record fact paths without git or index
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.12.1: A foreign-origin edit records the fact''s `relative_path`,
+    and an uncarried path''s raw string, with no checkout root. A nested cwd records
+    the same relative path. `task_edited_file_checkouts` and `session_dirty_file_checkouts`
+    gain no row, while `has_dirty_files` stays armed. Spies show no `Path.resolve`,
+    `find_project_root`, git log or index notify, inside `record_edited_files` too.
+    test: `tests/hooks/test_tool_handlers.py::test_foreign_mutation_records_fact_path_without_git_or_index`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.12:1.12.1
+  tdd: true
+  source_section: '1.12'
+  implementation_domain: backend
+- title: Foreign-origin run_command effects do not spawn
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.13.1: A foreign-origin `run_command` effect does not spawn
+    and is audited as skipped. test: `tests/workflows/test_run_command_effect.py::test_foreign_origin_skips_run_command_spawn`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.13:1.13.1
+  tdd: true
+  source_section: '1.13'
+  implementation_domain: backend
+- title: Foreign-origin shell commands skip the rtk rewrite
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.14.1: A foreign-origin shell command is not rtk-rewritten,
+    and no rtk process starts. test: `tests/workflows/test_proxy_hooks.py::test_foreign_origin_skips_rtk_rewrite`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.14:1.14.1
+  tdd: true
+  source_section: '1.14'
+  implementation_domain: backend
+- title: Foreign-origin hook ingress resolves no project from local disk
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.15.1: A foreign-origin hook whose cwd also exists on this
+    machine, with no explicit or session project, raises the foreign-origin diagnostic.
+    Spies on `get_project_context`, checkout validation, Cargo target linking, `register`
+    and marker refresh are never called. Foreign explicit and session resolutions,
+    and local cwd-marker ingress, are unchanged. test: `tests/hooks/test_project_checkout_ingress.py::test_foreign_origin_resolves_no_project_from_local_disk`.
+
+    1.15.2: An AGY pre-invocation envelope with `machine_id_error` takes no startup-claim
+    lease and reads no project marker. test: `tests/hooks/test_startup_claim_preflight.py::test_machine_id_error_takes_no_lease_and_reads_no_marker`.'
+  labels:
+  - covers:hook-envelope-file-facts:1.15:1.15.1
+  - covers:hook-envelope-file-facts:1.15:1.15.2
+  tdd: true
+  source_section: '1.15'
+  implementation_domain: backend
+```
