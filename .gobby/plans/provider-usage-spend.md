@@ -460,6 +460,9 @@ Targets:
     - `missing`: a row of D absent from S, or `sessions.usage_*` differing
       from the stored totals. On a session that is still `active` this
       includes lines the processor has not ingested yet.
+    Each audit is a snapshot bounded by its transcript read. A line appended
+    after that read is outside the pass, and the next audit reports it
+    `missing` if it is still not ingested.
   - `--fix` is a diff repair. The old delete-all-and-reinsert is removed,
     because it deleted rows the processor inserted after the transcript
     read. One transaction per session:
@@ -502,7 +505,7 @@ session.
 - 2.1.4 - The live writer and the rebuild writer both persist `api_calls`, and `list_session_events` returns it. test: `tests/sessions/test_usage_call_identity.py::test_writers_persist_api_calls`.
 - 2.1.5 - The audit deduplicates parsed events by `message_id`, so a Codex session with repeated totals shows no drift. A stored row with NULL `message_id` is drift, and `--fix` replaces it with keyed rows. test: `tests/sessions/test_usage_call_identity.py::test_audit_dedupes_and_flags_unkeyed_rows`.
 - 2.1.6 - Stored rows whose token totals equal the transcript's still drift when they keep a pre-460 identity. This covers a Claude row and a Grok row with valid ids and NULL `api_calls`, and a Codex rollout without repeated totals whose rows keep index ids. They are reported `stale`. `--fix` rewrites them to keyed rows with `api_calls`, and a second audit reports `stale=0` and `missing=0`. test: `tests/sessions/test_usage_call_identity.py::test_audit_flags_equal_total_identity_drift`.
-- 2.1.7 - `--fix` is safe against live ingestion. In a fixture that interleaves the audit with processor inserts, a row inserted after the audit's stored-row read survives `--fix`, and `sessions.usage_*` afterwards equals `get_session_totals` including it. A line appended after the transcript read is reported `missing`, never `stale`, and nothing deletes it. Only pre-read rows that are unkeyed or absent from the derived set are deleted. A pre-read row with the same key but NULL `api_calls` is corrected in place to `api_calls` 1, keeps its `id`, and is still present after `--fix`. test: `tests/sessions/test_usage_call_identity.py::test_fix_never_deletes_rows_ingested_during_audit`.
+- 2.1.7 - `--fix` is safe against live ingestion. In a fixture that interleaves the audit with processor inserts, a row inserted after the audit's stored-row read survives `--fix`, and `sessions.usage_*` afterwards equals `get_session_totals` including it. A line appended after the stored-row read but before the transcript read is reported `missing`, never `stale`, and nothing deletes it. A line appended after the transcript read is outside that pass: that audit does not report it, and a following audit reports it `missing` while it is still not ingested. Only pre-read rows that are unkeyed or absent from the derived set are deleted. A pre-read row with the same key but NULL `api_calls` is corrected in place to `api_calls` 1, keeps its `id`, and is still present after `--fix`. test: `tests/sessions/test_usage_call_identity.py::test_fix_never_deletes_rows_ingested_during_audit`.
 
 ### 2.2 Claude subagent calls enter the parent ledger [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -1312,6 +1315,11 @@ model, and they land after every surface exists.
     `observed_at` (2.3, 2.3.4).
   - CR7 LOW-2: alert delivery is scheduled after the provider lock is
     released, with a 10 s send timeout (4.2, 4.2.3).
+  - The Adversary's timing correction at 48000bc411: a line appended
+    between the stored-row read and the transcript read is `missing`, and a
+    line appended after the transcript read is reported by the next audit,
+    since each audit is a snapshot bounded by its transcript read (2.1,
+    2.1.7).
 
 ## V2: Verification
 `kind: verification`
