@@ -571,3 +571,75 @@ After both leaves pass:
 2. Rerun `cargo test -p gobby-code --lib commands::graph::view`.
 3. On a promoted binary, `gcode graph view --view=communities --format json`
    on the main checkout lists equal-size communities in ascending id order.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Rerun the Graphify comparison on current gcode
+  category: test
+  task_type: chore
+  depends_on: []
+  validation_criteria: '1.1.1: The report records the fresh runtime root and its ownership
+    receipt, the dated script copies'' SHA-256 values, both tools'' identities (gcode
+    version, contract, and SHA-256 of the copied installed binary; Graphify''s PyPI
+    version and executable and lock SHA-256), the corpus commits, and a 5-minute load
+    average under 5 before every timed case. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.2: The report gives C1 to C6 for both tools in the 09 table shape (seconds,
+    changed files, symbols and chunks for gcode; nodes, edges and uncached files for
+    Graphify) beside the 09 numbers, and states that gcode''s C2 to C6 include the
+    community refresh. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.3: The report gives C7 for both tools: the marker each used, the one planned
+    `SIGTERM`, any safety `SIGKILL`, the native recovery commands, and whether the
+    recovered state equals a fresh clean C1 state, by the 09 signature for Graphify
+    and by step 4''s fact, projection and vector checks for gcode, with the gcode
+    row-count marker recorded as an amendment to the matrix. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.4: The report scores C8''s 14 frozen questions for both tools as in 09, and
+    states whether the gcode hybrid lane was included or excluded by the embedding
+    preflight. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.5: The report records Graphify''s deterministic community names, whether current
+    Graphify emits semantic community names (yes, no, or `blocked-preflight` with
+    the reason), and gcode''s count of communities by `label_source`, each from its
+    own untimed state, without comparing community counts, and a section that states
+    the evidence for Josh''s #22604 decision without making it. behavior: "Decision
+    input for #22604" in `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+
+    1.1.6: The report gives a verdict for each of the four parity+ properties by step
+    7''s producers and conditions, says whether each was measured in this run, records
+    every remap or retirement behavior no case exercised as `not-exercised`, and records
+    the label-admission property as missing while #22604 is held. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:1.1:1.1.1
+  - covers:gcode-graphify-parity-delta:1.1:1.1.2
+  - covers:gcode-graphify-parity-delta:1.1:1.1.3
+  - covers:gcode-graphify-parity-delta:1.1:1.1.4
+  - covers:gcode-graphify-parity-delta:1.1:1.1.5
+  - covers:gcode-graphify-parity-delta:1.1:1.1.6
+  tdd: false
+  source_section: '1.1'
+  assigned_agent: backend-developer
+- title: Order size ties by community id in the graph views
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.2.1: `build_view_payload` lists two communities of equal
+    size with ids 10 and 2 as `community:2` then `community:10`, after any larger
+    community. test: `crates/gcode/src/commands/graph/view/render_tests.rs::view_orders_size_ties_by_numeric_community_id`.
+
+    1.2.2: The communities list view returns `["community:2", "community:10", "community:1"]`
+    for the existing three-community fixture. test: `crates/gcode/src/commands/graph/view/communities/tests.rs::list_orders_communities_by_size_then_community_id`.
+
+    1.2.3: An MCG view over stored communities 10 and 2 of equal size lists `community:2`
+    first, in the payload and in the Mermaid subgraph order. test: `crates/gcode/src/commands/graph/view/mcg/tests.rs::mcg_orders_size_ties_by_community_id`.'
+  labels:
+  - covers:gcode-graphify-parity-delta:1.2:1.2.1
+  - covers:gcode-graphify-parity-delta:1.2:1.2.2
+  - covers:gcode-graphify-parity-delta:1.2:1.2.3
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+```
