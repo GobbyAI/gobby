@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import inspect
 import logging
 import threading
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from typing import Any, TypeVar
 
 from gobby.hooks.events import HookEventType
@@ -123,6 +124,7 @@ class WorkflowEvaluationRuntime:
             except BaseException:
                 coroutine.close()
                 raise
+            future.add_done_callback(_close_if_cancelled_unstarted(coroutine, loop))
 
         try:
             return future.result(timeout)
@@ -232,3 +234,30 @@ def _evaluation_task_was_cancelled(task_holder: list[asyncio.Task[Any]]) -> bool
     if task is None:
         return True
     return task.cancelling() > 0
+
+
+def _close_if_cancelled_unstarted(
+    coroutine: Coroutine[Any, Any, Any], loop: asyncio.AbstractEventLoop
+) -> Callable[[concurrent.futures.Future[Any]], None]:
+    """Close the submitted coroutine when its future is cancelled before it ran.
+
+    A cancel that wins before ``_as_task``'s first step leaves the coroutine
+    unstarted, and only GC would finalize it, warning that it was never
+    awaited. The check runs on the loop thread, after the task's creation and
+    cancel callbacks, so a started coroutine is never closed from the caller.
+    """
+
+    def close_if_unstarted() -> None:
+        if inspect.getcoroutinestate(coroutine) == inspect.CORO_CREATED:
+            coroutine.close()
+
+    def on_done(future: concurrent.futures.Future[Any]) -> None:
+        if not future.cancelled():
+            return
+        try:
+            loop.call_soon_threadsafe(close_if_unstarted)
+        except RuntimeError:
+            # The loop is closed, so nothing can start the coroutine any more.
+            close_if_unstarted()
+
+    return on_done

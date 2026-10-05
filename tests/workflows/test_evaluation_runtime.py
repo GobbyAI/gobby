@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import gc
+import inspect
 import threading
 import time
+import warnings
 from collections.abc import Coroutine
 from datetime import UTC, datetime
 from pathlib import Path
@@ -123,6 +126,46 @@ def test_run_timeout_releases_the_caller_and_cancels_the_coroutine() -> None:
         assert time.perf_counter() - started_at < 1.0
         assert cancelled.wait(timeout=1.0)
     finally:
+        runtime.shutdown()
+
+
+def test_cancelled_before_start_closes_coroutine() -> None:
+    """A wedge that outlasts the caller's timeout leaves no never-awaited coroutine."""
+    runtime = WorkflowEvaluationRuntime(max_workers=1)
+    wedged = threading.Event()
+    unwedge = threading.Event()
+
+    async def wedge() -> None:
+        wedged.set()
+        unwedge.wait(timeout=5.0)  # blocks the loop thread itself
+
+    async def never_started() -> None:
+        await asyncio.sleep(0)
+
+    async def probe() -> str:
+        return "ran"
+
+    wedger = threading.Thread(target=runtime.run, args=(wedge(),), kwargs={"timeout": 5.0})
+    wedger.start()
+    try:
+        assert wedged.wait(timeout=5.0)
+        coroutine = never_started()
+        with pytest.raises(TimeoutError):
+            runtime.run(coroutine, timeout=0.05)
+        unwedge.set()
+        wedger.join(timeout=5.0)
+        # The loop has drained everything queued before this probe.
+        assert runtime.run(probe(), timeout=5.0) == "ran"
+
+        assert inspect.getcoroutinestate(coroutine) == inspect.CORO_CLOSED
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            del coroutine
+            gc.collect()
+        assert not [w for w in caught if "was never awaited" in str(w.message)]
+    finally:
+        unwedge.set()
+        wedger.join(timeout=5.0)
         runtime.shutdown()
 
 

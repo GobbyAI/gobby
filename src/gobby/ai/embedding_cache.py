@@ -125,6 +125,13 @@ async def generate_cached_embeddings(
                 fresh = await fetch(new_texts)
                 if len(fresh) != len(new_fills):
                     raise EmbeddingGenerationError("Embedding cache fill returned the wrong count")
+                # A wrong-dimension fill fails every waiter and caches nothing.
+                for embedding in fresh:
+                    if expected_dim is not None and len(embedding) != expected_dim:
+                        raise EmbeddingGenerationError(
+                            f"Embedding dimension mismatch for model={model}: "
+                            f"expected {expected_dim}, got {len(embedding)}"
+                        )
             except asyncio.CancelledError:
                 # Only the producer owns these fills. Release them before
                 # propagating its real cancellation; surviving callers retry.
