@@ -274,20 +274,28 @@ class TranscriptReader:
         """Render one window of an already-resolved snapshot off the event loop."""
         if resolved is None or resolved.index is None or resolved.path is None:
             return WindowResult(groups=[], returned_count=0, total_groups=0)
-        return await asyncio.to_thread(
-            render_window,
-            resolved.path,
-            resolved.source or "claude",
-            session_id,
-            resolved.index,
-            limit=limit,
-            offset=offset,
-            order=order,
-            lines=resolved.lines,
-            gzip_index=resolved.gzip_index,
-            max_span=max_span,
-            observation_tracker=ObservationTracker(self._observation_store),
-        )
+        tracker = ObservationTracker(self._observation_store, batch=True)
+        path, index = resolved.path, resolved.index
+
+        def render() -> WindowResult:
+            try:
+                return render_window(
+                    path,
+                    resolved.source or "claude",
+                    session_id,
+                    index,
+                    limit=limit,
+                    offset=offset,
+                    order=order,
+                    lines=resolved.lines,
+                    gzip_index=resolved.gzip_index,
+                    max_span=max_span,
+                    observation_tracker=tracker,
+                )
+            finally:
+                tracker.flush()
+
+        return await asyncio.to_thread(render)
 
     async def get_rendered_messages(
         self,

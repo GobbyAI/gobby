@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from dataclasses import replace
+from typing import Any, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.unmodeled_observations import (
     UnmodeledObservationInput,
     UnmodeledObservationStore,
@@ -15,6 +20,157 @@ pytestmark = pytest.mark.unit
 
 # unmodeled_observation_events.session_id is a native uuid column.
 SESSION_STORAGE = "aeaeaeae-0000-4000-8000-00000000ac01"
+
+
+@pytest.mark.parametrize("session_id", [SESSION_STORAGE, None])
+def test_batch_preserves_occurrence_counts_and_refreshes_timestamps(
+    temp_db: HubDatabase, session_id: str | None
+) -> None:
+    store = UnmodeledObservationStore(temp_db)
+    observations = [
+        replace(_observation("batch_tool", source_ref=str(i)), session_id=session_id)
+        for i in range(120)
+    ]
+    real_transaction = temp_db.transaction
+    statement_counts: list[int] = []
+
+    @contextmanager
+    def counted_transaction() -> Iterator[Transaction]:
+        with real_transaction() as transaction:
+            spy = MagicMock(wraps=transaction)
+            yield cast(Transaction, spy)
+            statement_counts.append(spy.execute.call_count)
+
+    with patch.object(temp_db, "transaction", side_effect=counted_transaction) as transactions:
+        assert store.record_many(observations + observations[:20]) == 120
+        assert transactions.call_count == 1
+    assert statement_counts == [3]
+    rows = store.list_observations(source="codex", kind="block_type")
+    assert [(row.name, row.count) for row in rows] == [("batch_tool", 120)]
+    temp_db.execute("UPDATE unmodeled_observations SET last_seen_at = NOW() - INTERVAL '1 day'")
+    temp_db.execute(
+        "UPDATE unmodeled_observation_events SET last_seen_at = NOW() - INTERVAL '1 day'"
+    )
+    previous = store.list_observations(source="codex", kind="block_type")[0].last_seen_at
+    assert store.record_many(observations) == 0
+    refreshed = store.list_observations(source="codex", kind="block_type")[0]
+    assert refreshed.count == 120
+    assert refreshed.last_seen_at > previous
+    stale = temp_db.fetchone(
+        "SELECT count(*) AS n FROM unmodeled_observation_events WHERE last_seen_at <= %s",
+        (previous,),
+    )
+    assert stale is not None and stale["n"] == 0
+
+
+def test_parallel_batches_count_distinct_occurrences_once(temp_db: HubDatabase) -> None:
+    store = UnmodeledObservationStore(temp_db)
+    observations = [_observation("parallel_batch", source_ref=str(i)) for i in range(40)]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(store.record_many, [observations, observations]))
+    assert sum(results) == 40
+    rows = store.list_observations(source="codex", kind="block_type")
+    assert [(row.name, row.count) for row in rows] == [("parallel_batch", 40)]
+
+
+def test_batch_keeps_the_last_novel_sample_when_replaying_old_occurrences(
+    temp_db: HubDatabase,
+) -> None:
+    store = UnmodeledObservationStore(temp_db)
+    old = replace(_observation("batch_sample", source_ref="1"), sample={"old": "value"})
+    new = replace(_observation("batch_sample", source_ref="2"), sample={"new": "value"})
+    assert store.record(old) is True
+    assert store.record_many([new, old]) == 1
+    row = store.list_observations(source="codex", kind="block_type")[0]
+    assert row.count == 2
+    assert row.sample_keys == ["new"]
+    assert row.sample_hash == stable_sample_hash(new.sample)
+    assert store.record_many([old]) == 0
+    replayed = store.list_observations(source="codex", kind="block_type")[0]
+    assert replayed.sample_keys == ["new"]
+    assert replayed.sample_hash == row.sample_hash
+
+
+def test_empty_or_unidentified_batch_does_not_open_a_transaction(
+    temp_db: HubDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = UnmodeledObservationStore(temp_db)
+    with (
+        patch.object(temp_db, "transaction", wraps=temp_db.transaction) as transactions,
+        caplog.at_level("INFO", logger="gobby.storage.unmodeled_observations"),
+    ):
+        assert store.record_many([]) == 0
+        assert store.record_many([replace(_observation("no_ref"), source_ref="")]) == 0
+        assert transactions.call_count == 0
+    assert "Unmodeled transcript block observed without stable source_ref" in caplog.text
+
+
+def test_batch_normalizes_uuid_case_when_selecting_the_novel_sample(temp_db: HubDatabase) -> None:
+    store = UnmodeledObservationStore(temp_db)
+    old = replace(_observation("uuid_case", source_ref="1"), sample={"old": "value"})
+    new = replace(
+        _observation("uuid_case", source_ref="2"),
+        session_id=SESSION_STORAGE.upper(),
+        sample={"new": "value"},
+    )
+    assert store.record(old) is True
+    assert store.record_many([old, new]) == 1
+    row = store.list_observations(source="codex", kind="block_type")[0]
+    assert row.count == 2
+    assert row.sample_keys == ["new"]
+    assert row.sample_hash == stable_sample_hash(new.sample)
+
+
+def test_prune_between_duplicate_insert_and_refresh_leaves_no_zero_count_aggregate(
+    temp_db: HubDatabase,
+) -> None:
+    store = UnmodeledObservationStore(temp_db)
+    observation = _observation("retention_race")
+    assert store.record(observation) is True
+    temp_db.execute(
+        "UPDATE unmodeled_observation_events SET last_seen_at = NOW() - INTERVAL '2 days'"
+    )
+    real_transaction = temp_db.transaction
+    pruned: list[int] = []
+    with ThreadPoolExecutor(max_workers=1) as executor:
+
+        @contextmanager
+        def interleaved_transaction() -> Iterator[Transaction]:
+            with real_transaction() as transaction:
+                spy = MagicMock(wraps=transaction)
+
+                def execute(sql: str, parameters: Any = None) -> Any:
+                    result = transaction.execute(sql, parameters)
+                    if sql.lstrip().startswith("INSERT INTO unmodeled_observation_events"):
+                        pruned.append(
+                            executor.submit(store.prune_events_older_than, retention_days=1).result(
+                                timeout=5
+                            )
+                        )
+                    return result
+
+                spy.execute.side_effect = execute
+                yield cast(Transaction, spy)
+
+        with patch.object(temp_db, "transaction", side_effect=interleaved_transaction):
+            assert store.record_many([observation]) == 0
+    assert pruned == [1]
+    assert store.list_observations(source="codex", kind="block_type") == []
+
+
+def test_parallel_mixed_replays_and_novel_keys_keep_both_counts(temp_db: HubDatabase) -> None:
+    store = UnmodeledObservationStore(temp_db)
+    first = _observation("mixed_a", source_ref="1")
+    second = _observation("mixed_b", source_ref="1")
+    assert store.record_many([first, second]) == 2
+    batches = [
+        [replace(first, source_ref="2"), second],
+        [first, replace(second, source_ref="2")],
+    ]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        assert list(executor.map(store.record_many, batches)) == [1, 1]
+    rows = store.list_observations(source="codex", kind="block_type")
+    assert sorted((row.name, row.count) for row in rows) == [("mixed_a", 2), ("mixed_b", 2)]
 
 
 def _observation(name: str, *, source_ref: str = "42") -> UnmodeledObservationInput:

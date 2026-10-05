@@ -19,6 +19,7 @@ from gobby.sessions import transcript_reader as reader_module
 from gobby.sessions.transcript_index import clear_index_cache
 from gobby.sessions.transcript_reader import TranscriptReader, clear_archive_cache
 from gobby.sessions.transcript_window import render_window
+from gobby.storage.unmodeled_observations import UnmodeledObservationStore
 
 pytestmark = pytest.mark.unit
 
@@ -137,6 +138,74 @@ async def _search(registry: InternalToolRegistry, **arguments: Any) -> dict[str,
     result = await registry.call("search_session_messages", arguments)
     assert isinstance(result, dict)
     return result
+
+
+@pytest.mark.parametrize("limit,full_content", [(30, True), (5, False)])
+@pytest.mark.parametrize("store_failure", [False, True])
+async def test_tool_heavy_search_batches_telemetry_and_preserves_cursor_matches(
+    tmp_path: Path, limit: int, full_content: bool, store_failure: bool
+) -> None:
+    path = tmp_path / "tool-heavy.jsonl"
+    lines: list[dict[str, Any]] = []
+    for i in range(120):
+        lines.extend(
+            [
+                {"type": "user", "message": {"role": "user", "content": f"needle {i}"}},
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": f"call-{i}",
+                                "name": "novel_tool_23408",
+                                "input": {"index": i},
+                            },
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {"type": "tool_result", "tool_use_id": f"call-{i}", "content": "done"},
+                        ],
+                    },
+                },
+            ]
+        )
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+    manager = _manager([_session("tool-heavy", path)])
+    store = MagicMock(spec=UnmodeledObservationStore)
+    if store_failure:
+        store.record_many.side_effect = RuntimeError("telemetry unavailable")
+    registry = InternalToolRegistry(name="gobby-sessions", description="test")
+    register_message_tools(registry, manager, TranscriptReader(manager, observation_store=store))
+    found: list[str] = []
+    cursor = None
+    calls = 0
+    while True:
+        result = await _search(
+            registry,
+            query="needle",
+            session_id="tool-heavy",
+            limit=limit,
+            full_content=full_content,
+            cursor=cursor,
+        )
+        assert result["success"] is True
+        assert len(result["results"]) <= limit
+        found.extend(_contents(result))
+        calls += 1
+        cursor = result.get("next_cursor")
+        if not cursor:
+            break
+        assert calls <= 120
+    assert found == [f"needle {i}" for i in range(120)]
+    assert store.record.call_count == 0
+    assert 0 < store.record_many.call_count <= 2 * calls
 
 
 def _contents(result: dict[str, Any]) -> list[str]:
