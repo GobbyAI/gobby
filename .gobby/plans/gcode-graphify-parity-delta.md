@@ -551,6 +551,15 @@ Consumers unchanged:
     own starting state and the stored watermark, with unexercised remap or
     retirement recorded as such and multi-run history resting on the
     `remap/tests.rs` unit tests (GP-A6).
+- 2026-10-05 13:51 CT: V1 consensus between the Plan Writer gobby#15434
+  and the Adversary gobby#15401 on `b84096cd6f` (SHA-256
+  `2d344705b90c44d908830a2d4e269f94488c89c03fba8b36bdad166d7dc1b410`).
+  GP-A1 to GP-A6 are resolved with no disagreement left open, and the
+  Adversary's own base validation exits 0 on those bytes. Routing: 1.1 is
+  category `test`, assigned `backend-developer`, TDD false, no sibling
+  dependencies; 1.2 is category `code`, domain backend, assigned
+  `backend-developer`, TDD true, no sibling dependencies. The whole plan
+  stays gated on #22862 and on Josh's approval of the stamped plan.
 
 ## V2: Verification
 `kind: verification`
