@@ -191,7 +191,12 @@ approved key-cutover plan specified.
       - A missed hello timeout, a failed hello write, or a check that errors
         or times out closes 1011 with no ack. An unproven key never yields an
         acknowledged channel.
-      - A registry entry reads `connected` only once the ack is sent.
+      - A registry entry reads `connected` only after its ack send succeeds,
+        and only while it is still the machine's current connection.
+      - Admission watches for replacement at every await, including the
+        pre-ack check and the ack send. A connection replaced there closes
+        4409, sends no ack once it observes the replacement, and never reads
+        `connected`. A failed ack send leaves no registry entry.
     - **The database-error exception.** On an established channel, a recheck
       that errors or misses its 4 s deadline keeps the channel open, and the
       next tick retries it. This is the one case in which the 29 s bound can
@@ -678,9 +683,12 @@ Targets:
     otherwise returns `Skipped` without touching the database. Callers run it
     in a spawned task, which keeps the gate until the database operation
     completes.
-  - `ChannelHandle` also carries `live: bool`, which `mark_live(machine_id,
-    connection_id)` sets when the ack is sent. `is_connected(machine_id) ->
-    bool` and `connected_ids()` report only live entries.
+  - `ChannelHandle` also carries `live: bool`, false at `register`.
+    `mark_live(machine_id, connection_id) -> bool` sets it only while
+    `current` still names `connection_id`, and returns whether it did. It
+    never touches a successor's handle. The handler calls it only after its
+    ack send succeeds. `is_connected(machine_id) -> bool` and
+    `connected_ids()` report only live entries.
   - No `std` lock is held across an await.
 - `nodes/channel.rs` holds the hub endpoint, the node client, and
   `ChannelTiming`:
@@ -703,11 +711,20 @@ Targets:
          with no ack. A still-running write keeps its gate until it completes.
     4. It runs the key check `SELECT 1 FROM api_keys WHERE id = $1 AND
        revoked_at IS NULL` under `recheck_deadline`, which covers pool
-       acquisition and the query:
+       acquisition and the query. A biased select polls its close signal
+       first:
+       - The close signal (it was replaced) closes with that code and no ack,
+         and drops the in-flight check.
        - No row removes the entry and closes 4401 with no ack.
        - An error or a timeout removes the entry and closes 1011 with no ack.
-       - Otherwise it calls `registry.mark_live` and sends the ack.
-    5. It then selects over four events and never awaits bookkeeping:
+       - A proven key continues to step 5.
+    5. It sends the ack in a biased select that polls its close signal first:
+       - The close signal closes with that code. The channel never goes live.
+       - A failed send removes the entry and exits. Nothing was published.
+       - After a successful send it calls `registry.mark_live`. If that
+         returns `false`, a successor replaced it after the send, so it closes
+         4409 and never reads `connected`.
+    6. It then selects over four events and never awaits bookkeeping:
        - **A received frame.** Any frame resets the `idle_timeout` deadline.
          On a ping, when `heartbeat_write` has elapsed since the last write
          started and no heartbeat write is in flight, it spawns the
@@ -719,7 +736,7 @@ Targets:
          tick (Decision 10's database-error exception).
        - **The idle deadline.** It removes the entry and closes 4408.
        - **The close signal.** It closes with the signal's code (4409).
-    6. On exit it calls `registry.remove(machine_id, connection_id)`, which is
+    7. On exit it calls `registry.remove(machine_id, connection_id)`, which is
        a no-op when the entry is already gone or replaced.
 
     `node_version` and `platform` are bounded to 64 characters.
@@ -769,8 +786,8 @@ and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work), th
   - It does not pause tokio time, because paused time auto-advances past the timers while the hub awaits its database query. test: `crates/gdaemon/tests/nodes.rs::revoked_key_closes_channel_on_heartbeat`.
 - 1.3.3 - The node client sends a hello with the gdaemon version and `<os>/<arch>`, pings at its interval, and reconnects after a close. Against a refusing hub its delays double from the start value to the ceiling, and they reset after an ack. It reads the key again on each attempt. test: `crates/gdaemon/tests/nodes.rs::node_channel_reconnects_with_backoff`.
 - 1.3.4 - A channel whose first frame is not a valid hello closes with 1008, and a registered channel silent past the idle timeout closes with 4408 and leaves the registry. test: `crates/gdaemon/tests/nodes.rs::silent_or_malformed_channel_is_closed`.
-- 1.3.5 - On a hub, an upgrade to `/api/nodes/channel` without a key identity is refused with 401 before any upgrade. A standalone front door does not mount the route and proxies the request to its backend. A key revoked after the upgrade but before hello, or while the hello write is blocked by a test row lock that is then released, closes 4401 with no ack, and leaves no registry entry and no `connected` machine. test: `crates/gdaemon/tests/nodes.rs::channel_requires_a_key_on_a_hub`.
-- 1.3.6 - While a test transaction holds a row lock on the machine's `machines` row, a first connection's hello write blocks. A second connection for the same machine then registers. The first connection closes with 4409 and no ack while its write stays blocked, and the second's ack does not arrive while the lock is held. After the test releases the lock, the first write completes and releases the gate, the second receives its ack, and the row holds the second connection's `node_version` with the registry naming the second connection. A `registry.persist` call under the superseded `connection_id` returns `Skipped` and leaves the row unchanged. test: `crates/gdaemon/tests/nodes.rs::replaced_channel_cannot_overwrite_successor_bookkeeping`.
+- 1.3.5 - On a hub, an upgrade to `/api/nodes/channel` without a key identity is refused with 401 before any upgrade. A standalone front door does not mount the route and proxies the request to its backend. A key revoked after the upgrade but before hello, or while the hello write is blocked by a test row lock that is then released, closes 4401 with no ack, and leaves no registry entry and no `connected` machine. While a test transaction holds `ACCESS EXCLUSIVE` on `api_keys` and blocks a registered channel's pre-ack check, the machine reads `connected: false`. A raw peer that resets its TCP connection while that check is blocked makes the ack send fail after the lock is released, which leaves no registry entry and the machine never reading `connected`. A `mark_live` call under a superseded `connection_id` returns `false` and leaves the successor not live. test: `crates/gdaemon/tests/nodes.rs::channel_requires_a_key_on_a_hub`.
+- 1.3.6 - While a test transaction holds a row lock on the machine's `machines` row, a first connection's hello write blocks. A second connection for the same machine then registers. The first connection closes with 4409 and no ack while its write stays blocked, and the second's ack does not arrive while the lock is held. After the test releases the lock, the first write completes and releases the gate, the second receives its ack, and the row holds the second connection's `node_version` with the registry naming the second connection. A `registry.persist` call under the superseded `connection_id` returns `Skipped` and leaves the row unchanged. In the pre-ack variant, two upgrades authenticate first, and a test transaction then holds `ACCESS EXCLUSIVE` on `api_keys`. The test uses a recheck deadline long enough to keep the first connection's pre-ack check blocked through the replacement. The first connection's hello and write complete and its pre-ack check blocks. The second connection's hello then registers and replaces it. The first closes 4409 with no ack while its check is still blocked, and the machine reads `connected: false`. After the lock is released, the second connection receives its ack and becomes the live entry. test: `crates/gdaemon/tests/nodes.rs::replaced_channel_cannot_overwrite_successor_bookkeeping`.
 
 ### 1.4 `/api/machines` lists the caller's machines with connection state [category: code] (depends: 1.3)
 `kind: deliverable`
@@ -840,7 +857,7 @@ Targets:
 
 **Acceptance:**
 
-- 1.4.1 - `GET /api/machines` returns `{"machines": [...]}` with only the caller's machines, ordered by `first_seen, id`, each with exactly the eleven fields listed in this section's Implementation and RFC 3339 or `null` timestamps. `connected` is true exactly for machines with a registered channel, and false for every row on a standalone front door. `GET /api/machines/{id}` returns one such unwrapped object and answers 404 `machine_not_found` for another user's machine, an unknown id, and a malformed id. test: `crates/gdaemon/tests/nodes.rs::machines_api_lists_rows_with_connection_state`.
+- 1.4.1 - `GET /api/machines` returns `{"machines": [...]}` with only the caller's machines, ordered by `first_seen, id`, each with exactly the eleven fields listed in this section's Implementation and RFC 3339 or `null` timestamps. `connected` is true exactly for machines with an acknowledged live channel, and false for every row on a standalone front door. `GET /api/machines/{id}` returns one such unwrapped object and answers 404 `machine_not_found` for another user's machine, an unknown id, and a malformed id. test: `crates/gdaemon/tests/nodes.rs::machines_api_lists_rows_with_connection_state`.
 - 1.4.2 - Without a key identity both routes answer 401 `missing_auth`, and a query error answers 503 `machines_unavailable`. test: `crates/gdaemon/tests/nodes.rs::machines_api_requires_a_key`.
 - 1.4.3 - The configuration guide documents running a node, its relay and channel, and `/api/machines`. behavior: the "Nodes" section in `docs/guides/configuration.md`.
 
@@ -1005,6 +1022,15 @@ Consumers unchanged:
     admission, and `connected` starts only at the ack.
   - NC-A3: 1.3.2 adds blocked-write and timeout coverage, and the pair test
     drops its phase logic and requires an observation before 30 s.
+- 2026-10-05: The Adversary's recheck of `5e57e4d` confirmed that NC-A2,
+  NC-A3, and NC-A8 are resolved, and raised NC-A9. Its repair:
+  - Admission watches the close signal during the pre-ack check and the ack
+    send.
+  - `mark_live` checks the current generation and runs only after a
+    successful ack send.
+  - A superseded or failed attempt never goes live.
+  - 1.3.5 and 1.3.6 cover publication, ack failure, and pre-ack replacement,
+    and 1.4.1 reads "acknowledged live channel".
 
 ## V2: Verification
 `kind: verification`
