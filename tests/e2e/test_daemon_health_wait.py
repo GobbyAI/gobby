@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from tests.e2e.conftest import (
+    DAEMON_HEALTH_LOG_TAIL_CHARS,
     DAEMON_HEALTH_MIN_PROBE_ATTEMPTS,
     DaemonHealthTimeoutError,
     find_free_port,
@@ -83,6 +84,44 @@ def test_failure_reports_probe_breakdown_and_daemon_log_tail(
     assert "latest startup progress" in message
     assert "--- daemon error log tail ---" in message
     assert "startup phase timed out" in message
+
+
+@pytest.mark.parametrize("mcp_log_state", ["populated", "empty", "missing"])
+def test_unready_daemon_reports_bounded_mcp_startup_tail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mcp_log_state: str,
+) -> None:
+    log_file = tmp_path / "daemon.log"
+    log_file.write_text("daemon still starting\n")
+    mcp_log = tmp_path / "mcp.log"
+    if mcp_log_state == "populated":
+        mcp_log.write_text(
+            "obsolete startup line\n" * DAEMON_HEALTH_LOG_TAIL_CHARS
+            + "Startup step skills search started\n"
+        )
+    elif mcp_log_state == "empty":
+        mcp_log.touch()
+
+    def unavailable(url: str, *, timeout: float) -> httpx.Response:
+        return httpx.Response(503, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("tests.e2e.conftest.httpx.get", unavailable)
+    with pytest.raises(DaemonHealthTimeoutError) as exc_info:
+        wait_for_daemon_health(1, log_file=log_file, timeout=0.0, min_attempts=1)
+
+    error = exc_info.value
+    message = str(error)
+    assert "last_status_code=503" in message
+    assert "daemon still starting" in message
+    assert "--- mcp log tail ---" in message
+    if mcp_log_state == "populated":
+        assert "Startup step skills search started" in message
+        assert len(error.mcp_log_tail) == DAEMON_HEALTH_LOG_TAIL_CHARS
+    elif mcp_log_state == "empty":
+        assert f"<mcp log is empty: {mcp_log}>" in message
+    else:
+        assert f"<unable to read {mcp_log}:" in message
 
 
 def test_daemon_that_never_serves_route_fails_promptly(tmp_path: Path) -> None:
