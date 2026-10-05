@@ -35,11 +35,12 @@ LAST_USED = FIRST_USED + (MESSAGE_COUNT - 1) * USED_STEP
 CHUNK_BYTES = 4096
 
 
-def _assistant_line(index: int, first_used: int = FIRST_USED) -> str:
+def _assistant_line(index: int, first_used: int = FIRST_USED, effort: str | None = None) -> str:
     # input + cache_read + cache_creation is the reported occupancy.
     used = first_used + index * USED_STEP
     return json.dumps(
-        {
+        ({"effort": effort} if effort else {})
+        | {
             "type": "assistant",
             "uuid": f"uuid-{index}",
             "timestamp": "2026-09-24T19:12:00Z",
@@ -83,16 +84,23 @@ class _Harness:
         self.session.model = "claude-fable-5-1"
         self.session.context_used_tokens = None
         self.session.context_usage_confidence = None
+        self.session.reasoning_effort = None
         self.published: list[int | None] = []
+        self.efforts: list[str] = []
 
         def persist_context(_session_id: str, snapshot: Any) -> bool:
             self.published.append(snapshot.context_used_tokens)
             self.session.context_used_tokens = snapshot.context_used_tokens
             return True
 
+        def persist_effort(_session_id: str, *, reasoning_effort: str) -> None:
+            self.efforts.append(reasoning_effort)
+            self.session.reasoning_effort = reasoning_effort
+
         self.session_manager = MagicMock()
         self.session_manager.get.return_value = self.session
         self.session_manager.update_context_usage.side_effect = persist_context
+        self.session_manager.update.side_effect = persist_effort
         self.processor = SessionMessageProcessor(MagicMock(), session_manager=self.session_manager)
 
     def restart(self) -> None:
@@ -174,6 +182,34 @@ async def test_bounded_catchup_passes_reach_eof_without_regressing_occupancy(
     assert harness.session.context_used_tokens == LAST_USED
     assert harness.processor._byte_offsets[SESSION_ID] == transcript.stat().st_size
     assert harness.processor._stats[SESSION_ID]["message_count"] == MESSAGE_COUNT
+
+
+@pytest.mark.asyncio
+async def test_catchup_tail_publishes_latest_reasoning_effort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """History passes short of EOF keep the stored effort, so the tail publishes it.
+
+    No record after the last effort-bearing one carries an effort, so the EOF
+    pass has none of its own to write.
+    """
+    monkeypatch.setattr(processor_transcripts, "CATCHUP_CHUNK_BYTES", CHUNK_BYTES)
+    efforts = {2: "medium", MESSAGE_COUNT - 6: "xhigh"}
+    transcript = tmp_path / "claude.jsonl"
+    transcript.write_text(
+        "".join(f"{_assistant_line(i, effort=efforts.get(i))}\n" for i in range(MESSAGE_COUNT)),
+        encoding="utf-8",
+    )
+    harness = _Harness(monkeypatch)
+    harness.processor.register_session(SESSION_ID, str(transcript))
+
+    caught_up = await harness.processor._process_session(SESSION_ID, str(transcript))
+
+    assert caught_up is False
+    assert harness.efforts == ["xhigh"]
+    while not await harness.processor._process_session(SESSION_ID, str(transcript)):
+        pass
+    assert harness.efforts == ["xhigh"]
 
 
 @pytest.mark.asyncio
