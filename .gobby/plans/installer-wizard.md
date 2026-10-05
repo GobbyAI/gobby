@@ -35,8 +35,11 @@ it cannot set up a machine that joins a hub:
 - The five steps run in the order role, datastores, embedding, UI exposure,
   CLI hooks. Each reads its current state from the store that owns it, offers
   that state as the default, and writes only when the answer differs.
-- Re-running `gobby install` with every default accepted writes no file, no
-  config value and no secret.
+- Re-running `gobby install` with every default accepted makes the five
+  steps write nothing: no bootstrap change, datastore exposure change,
+  embedding config or secret write, switch request, UI exposure change, or
+  CLI hook, settings or content write. The unlisted steps keep today's
+  behavior (decision 14).
 - A structural embedding change shows how many collections will be
   re-embedded, asks for confirmation, and starts the managed switch.
 - Every wizard answer has a non-interactive flag that reaches the same step
@@ -47,7 +50,8 @@ it cannot set up a machine that joins a hub:
 
 The Orchestrator (gobby#14972) ruled on Q1 to Q7 on 2026-10-05 (16:33 CT) and
 accepted every recommendation. Q1 and Q7 need Josh's approval at plan
-approval.
+approval. At 17:31 CT it accepted the enhancer's E06 and E08 as decisions 13
+and 14, which Josh sees at plan approval.
 
 1. **Joining a self-hosted hub automates today's remote bridge (Q1, option
    (a); Josh approves).** The wizard prompts for the hub origin
@@ -68,11 +72,13 @@ approval.
    managed collections the switch re-embeds and asks to proceed. On Yes it
    starts the managed switch after the daemon starts. If the daemon is not
    running it prints the exact `gobby embeddings switch` command.
-   Non-interactive runs need `--confirm-reembed`. A target the switch cannot
-   reach is refused on an existing install, with a remedy citing
-   `.gobby/plans/local-inference-runtime-foundation.md` section 3.2. Such
-   targets are provider `none`, `openai`, `openai-compatible`, or any target
-   without a catalog key.
+   Non-interactive runs need `--confirm-reembed`. On an existing install, a
+   structural change the current catalog switch cannot perform is refused
+   before any write (1.6). An unchanged configuration is never refused,
+   whatever its provider. The refusal does not promise that another plan
+   unlocks the target. The local-inference plan's separate contracts are in
+   `.gobby/plans/local-inference-runtime-foundation.md` sections 2.3, 3.2
+   and 5.2.
 4. **Unlisted steps keep today's behavior (Q4).** Identity, files home, rtk,
    voice, IDE settings, Git hooks and project init keep their orchestration,
    prompts and consumers. Git hooks already skip unchanged hooks
@@ -90,8 +96,10 @@ approval.
    existing install is refused before any write. The remedy names the
    datastore move runbook (`.gobby/plans/completed/hub-pc-datastore-move.md`;
    the ruling cited its pre-archive path) or moving the Gobby home aside and
-   installing again. Hub and solo are the same role. Switching between them
-   only toggles sharing (decision 2).
+   installing again. Pointing `GOBBY_HOME` at a fresh directory is not offered
+   until #23585 (Install paths ignore GOBBY_HOME) lands. That remedy is the
+   deferred section D2. Hub and solo are the same role. Switching between
+   them only toggles sharing (decision 2).
 8. **Secret answers come from files (writer decision).** The hub DSN, hub
    password and embedding API key are never accepted as plaintext argv. Their
    flags name a file: `--hub-database-url-file`, `--hub-password-file` and
@@ -116,6 +124,23 @@ approval.
     `datastore_mode: remote`, `database_url` and `hub_daemon_url`.
     `BootstrapConfig` defaults supply the ports, bind host and pool settings
     that `docs/guides/shared-stack.md` (Client setup) lists by hand today.
+13. **A combined key replacement and structural change is refused (enhancer
+    E06; Orchestrator ruling, 17:31 CT).** On a configured install, a run
+    that both replaces the embedding API key and makes a structural change
+    is refused before any write. The remedy is to replace the key in a
+    separate key-only run, then retry the structural change. The switch
+    request carries no key: `src/gobby/cli/embeddings.py::switch` posts only
+    `catalog_key`, `provider` and `api_base`. Writing the shared key before
+    a declined or failed switch would change the provider that is still
+    active. A declined switch never writes the key. This plan adds no
+    pending-secret state and leaves the switch API unchanged.
+14. **The no-op guarantee covers the five wizard steps (enhancer E08;
+    Orchestrator ruling, 17:31 CT).** With every default accepted, the role,
+    datastores, embedding, UI exposure and CLI hooks steps write nothing.
+    The unlisted steps keep today's orchestration (decision 4). For example,
+    `run_daemon_setup` (`src/gobby/cli/install_setup.py`) still runs the
+    global npm installs outside Homebrew mode. 1.8 proves the composed steps
+    at their service boundaries.
 
 ## Scope Boundary
 `kind: framing`
@@ -132,12 +157,14 @@ asks this one to cite its sections 2.3 and 5.2 instead
   bootstrap block.
 
 This plan owns the overall install flow, the role fork and the reconciliation
-semantics. It leaves the provider setup branches, detection and the local
-runtime block to that plan. It edits only
-`_managed_embedding_collections_exist` in
+semantics. It leaves the provider setup branches, detection, the
+`local_runtime` bootstrap block and local-family activation to that plan. It
+edits only `_managed_embedding_collections_exist` in
 `src/gobby/cli/installers/embedding.py`. That plan is not expanded, so the
 two plans cannot be ordered. Whichever lands second rebases onto the other's
-changes there.
+changes there. It also re-checks this wizard's stored-state reading
+(`_embedding_state`), effective target and switch dispatch (1.6) against the
+other plan's delivered contract.
 
 ## Constraints
 `kind: framing`
@@ -159,11 +186,20 @@ changes there.
   outside its owning store. The wizard never opens `.secret_kek` or
   `local_cli_token`. Remote preflight's existing `_credential_errors`
   (`src/gobby/cli/installers/remote_preflight.py`) checks them with
-  `is_file()`.
+  `is_file()`. The secret-file reader (`read_secret_file`, 1.5) reports the
+  flag, the path and the exception type, never the file's contents. A hidden
+  prompt never shows a secret as its default. New error handling never logs
+  a raw exception from a secret-bearing call. Tests feed sentinel secrets
+  and assert that the sentinel never appears in stdout, stderr or logs,
+  including on failure paths.
 - **Flag scope.** Every new flag applies to the full install only. When
   COMPONENTS are named, `install` rejects it with `click.UsageError("<flag>
   applies to the full install only.")`, the same way it rejects
   `--files-home`. Each step leaf adds this check for its own flags.
+  Explicit flags override both the stored default and the prompt in every
+  mode, and a step prompts only for answers without a flag. A flag of the
+  other role is a `click.UsageError`: the sharing flags on a self-hosted run
+  (1.4) and the hub flags on a local run (1.5).
 - **Prompt order.** The five listed steps run in the task's relative order:
   role, datastores, embedding, UI exposure, CLI hooks. The unlisted steps
   (Decision 4) keep their positions between them. After 1.7 the full-install
@@ -238,6 +274,9 @@ Targets:
   removed.
 - Rejected: per-file sync of command directories, which would need its own
   stale-file deletion logic.
+- Tests prove a skip by spying on `copy2`, `copytree` and `rmtree` and by
+  comparing the target's inode. `copy2` copies the source's `st_mtime_ns`, so
+  an equal mtime alone does not prove that no copy ran.
 
 **Implementation:**
 - Delete `_install_file`. Add `copy_if_changed` and `_tree_matches`.
@@ -263,8 +302,8 @@ prefix.
 
 **Acceptance:**
 
-- 1.1.1 - `install_global_hooks`, `_copy_plugins` and `_copy_docs` leave a byte-identical regular target untouched (same `st_mtime_ns`) and replace a differing target. test: `tests/cli/installers/test_shared.py::test_shared_copies_skip_identical_targets`.
-- 1.1.2 - `install_cli_content` leaves identical command files and command directories untouched. It recopies a directory whose tree differs and removes target files absent from the source. test: `tests/cli/installers/test_shared.py::test_cli_content_recopies_only_changed_trees`.
+- 1.1.1 - `install_global_hooks`, `_copy_plugins` and `_copy_docs` make no `copy2` call for a byte-identical regular target, which keeps its inode and `st_mtime_ns`, and replace a differing target. test: `tests/cli/installers/test_shared.py::test_shared_copies_skip_identical_targets`.
+- 1.1.2 - `install_cli_content` makes no `copy2`, `copytree` or `rmtree` call for identical command files and command directories. It recopies a directory whose tree differs and removes target files absent from the source. test: `tests/cli/installers/test_shared.py::test_cli_content_recopies_only_changed_trees`.
 - 1.1.3 - `copy_if_changed` replaces a symlinked target with a regular copy even when the bytes match, and applies `mode` when the permission bits differ. test: `tests/cli/installers/test_shared.py::test_copy_if_changed_replaces_symlink_and_fixes_mode`.
 - 1.1.4 - `shared.py` defines `copy_if_changed` and no longer defines `_install_file`. file: `src/gobby/cli/installers/shared.py`.
 
@@ -338,11 +377,11 @@ plus `tests/cli/test_install_components.py` with the isolation prefix.
 
 **Acceptance:**
 
-- 1.2.1 - A second `install_claude` run with unchanged inputs leaves `settings.json` untouched (same bytes and `st_mtime_ns`), creates no `settings.json.*.backup`, and reports `already_configured`. test: `tests/cli/installers/test_cli_installers_claude.py::test_install_claude_rerun_writes_nothing`.
+- 1.2.1 - A second `install_claude` run with unchanged inputs makes no `os.replace` call, leaves `settings.json`'s inode, bytes and `st_mtime_ns` unchanged, creates no `settings.json.*.backup`, and reports `already_configured`. test: `tests/cli/installers/test_cli_installers_claude.py::test_install_claude_rerun_writes_nothing`.
 - 1.2.2 - `install_claude` with a changed hook template writes one backup and the merged settings. test: `tests/cli/installers/test_cli_installers_claude.py::test_install_claude_backs_up_only_on_change`.
-- 1.2.3 - A second `install_qwen` run leaves `settings.json` and the installed agent scripts untouched and creates no backup. test: `tests/cli/installers/test_qwen_installer.py::test_install_qwen_rerun_writes_nothing`.
-- 1.2.4 - A second `install_grok` run leaves `gobby.json` untouched and creates no `gobby.json.*.backup`. test: `tests/cli/installers/test_grok_installer.py::test_install_grok_rerun_writes_nothing`.
-- 1.2.5 - A second `_install_hooks_file` run leaves Codex `hooks.json` untouched. test: `tests/cli/installers/test_codex_installer.py::test_codex_hooks_file_rerun_writes_nothing`.
+- 1.2.3 - A second `install_qwen` run makes no `settings.json` write and no `copy2` call for the agent scripts, and creates no backup. test: `tests/cli/installers/test_qwen_installer.py::test_install_qwen_rerun_writes_nothing`.
+- 1.2.4 - A second `install_grok` run makes no `gobby.json` write, leaves its inode, bytes and `st_mtime_ns` unchanged, and creates no `gobby.json.*.backup`. test: `tests/cli/installers/test_grok_installer.py::test_install_grok_rerun_writes_nothing`.
+- 1.2.5 - A second `_install_hooks_file` run makes no `_atomic_write_json` call for Codex `hooks.json`. test: `tests/cli/installers/test_codex_installer.py::test_codex_hooks_file_rerun_writes_nothing`.
 
 ### 1.3 Role step forks the install on machine role [category: code]
 `kind: deliverable`
@@ -374,8 +413,8 @@ Targets:
   `.gobby/plans/completed/hub-pc-datastore-move.md`, and moving the home
   aside. It does not suggest pointing `GOBBY_HOME` at a fresh directory,
   because `ensure_daemon_config` (`src/gobby/cli/install_setup.py`) still
-  hardcodes `~/.gobby/bootstrap.yaml`. That inconsistency goes to the
-  Orchestrator as found work.
+  hardcodes `~/.gobby/bootstrap.yaml`. That defect is #23585 (Install paths
+  ignore GOBBY_HOME), and the fresh-home remedy is deferred to D2.
 - Today's interactive install tests that feed prompt input are few
   (`tests/cli/test_cli_install.py` has two `input=` runs and
   `tests/cli/test_install_coverage.py` has one). Every other install test
@@ -389,8 +428,10 @@ Targets:
     `datastore_mode: remote`, otherwise `local`.
   - `resolve_install_role(explicit, *, current, no_interactive, choose) ->
     InstallRole`. `choose(default)` is the interactive prompt. The default
-    is `current` or `local`. A non-interactive run returns `explicit`, else
-    the default. `managed` raises `ManagedHubUnavailable`. A role different
+    is `current` or `local`. An explicit `--role` wins in every mode and
+    skips the prompt. Otherwise an interactive run returns `choose(default)`
+    and a non-interactive run returns the default. `managed` raises
+    `ManagedHubUnavailable`. A role different
     from a non-None `current` raises `RoleChangeRefused`.
   - `RoleChangeRefused(click.ClickException)` has the message: "This machine
     is installed as <current>. Gobby does not change a machine's role in
@@ -416,7 +457,7 @@ the isolation prefix.
 **Acceptance:**
 
 - 1.3.1 - `current_install_role` returns None for no bootstrap, `self-hosted` for remote mode, and `local` for local mode with `hub` true or false. test: `tests/cli/test_install_role.py::test_current_install_role_from_bootstrap`.
-- 1.3.2 - `resolve_install_role` defaults to the current role, interactively and without prompts. `--role` sets the role on a fresh install. test: `tests/cli/test_install_role.py::test_resolve_install_role_defaults_to_current`.
+- 1.3.2 - `resolve_install_role` defaults to the current role, interactively and without prompts. `--role` sets the role on a fresh install and skips the prompt. test: `tests/cli/test_install_role.py::test_resolve_install_role_defaults_to_current`.
 - 1.3.3 - A role different from the current role raises `RoleChangeRefused`, whose message names the current role, the Gobby home and the runbook path. test: `tests/cli/test_install_role.py::test_role_change_on_existing_install_is_refused`.
 - 1.3.4 - `managed` raises `ManagedHubUnavailable` on fresh and existing installs. test: `tests/cli/test_install_role.py::test_managed_role_is_typed_unavailable`.
 - 1.3.5 - On a local install, `gobby install --role self-hosted --no-interactive` exits non-zero with the remedy before preflight and leaves `bootstrap.yaml` unchanged. `--role` with a COMPONENT is a usage error. test: `tests/cli/test_cli_install.py::test_install_refuses_role_change_before_mutation`.
@@ -477,10 +518,12 @@ Targets:
   - `resolve_hub_sharing(raw, current_host, *, share, bind, host,
     no_interactive, confirm, prompt) -> HubSharing`:
     - The default answer is `raw.get("hub") is True`.
-    - Interactive: `confirm("Will other machines join this hub?",
-      default)`. When the answer is Yes, `prompt` asks for the Tailscale
-      IPv4 bind and the published host, defaulting to the current values
-      when the machine is already a hub.
+    - A given flag supplies its answer in every mode and skips its
+      question.
+    - Interactive, for answers without a flag: `confirm("Will other
+      machines join this hub?", default)`. When sharing is on, `prompt`
+      asks for the Tailscale IPv4 bind and the published host, defaulting
+      to the current values when the machine is already a hub.
     - Non-interactive: flag values, else the current values. Turning
       sharing on without `--datastores-bind` and `--datastores-host` is a
       `click.UsageError` naming both flags.
@@ -499,7 +542,9 @@ Targets:
     when COMPONENTS are named;
   - for the `local` role, run the step after `prepare_install_state`. Read
     `current_host` from `config_store.read_snapshot().values`. A required
-    change with no `config_store` is a `click.ClickException`.
+    change with no `config_store` is a `click.ClickException`;
+  - the three flags on a `self-hosted` run are a `click.UsageError`
+    ("<flag> applies to the local role only.").
 - `expose_datastores` keeps calling `_commit_shared_endpoints` with a host
   string, which keeps today's behavior.
 
@@ -512,9 +557,9 @@ with the isolation prefix.
 
 - 1.4.1 - `unexpose_datastores` writes `services_bind_address: 127.0.0.1` and `hub: false`, restarts the services, unsets `databases.published_host`, and points Qdrant and FalkorDB at the local defaults. test: `tests/cli/test_datastores_expose.py::test_unexpose_datastores_restores_loopback_endpoints`.
 - 1.4.2 - When readiness or endpoint publication fails, `unexpose_datastores` restores the previous bootstrap and compose state and raises `DatastoreExposureError`. test: `tests/cli/test_datastores_expose.py::test_unexpose_datastores_rolls_back_on_failure`.
-- 1.4.3 - `resolve_hub_sharing` defaults to the current sharing state and the current bind and host. Turning sharing on without prompts requires both flags. test: `tests/cli/test_install_hub_sharing.py::test_resolve_hub_sharing_defaults_to_current`.
+- 1.4.3 - `resolve_hub_sharing` defaults to the current sharing state and the current bind and host. Turning sharing on without prompts requires both flags. In an interactive run, a given flag skips its question. test: `tests/cli/test_install_hub_sharing.py::test_resolve_hub_sharing_defaults_to_current`.
 - 1.4.4 - `apply_hub_sharing` makes no call when nothing changed. It calls `expose_datastores` for a turn-on or a changed bind or host, and `unexpose_datastores` with the notice for a turn-off. test: `tests/cli/test_install_hub_sharing.py::test_apply_hub_sharing_mutates_only_on_change`.
-- 1.4.5 - `install` runs the sharing step only for the `local` role and passes the three flags to it. The flags with a COMPONENT are a usage error. test: `tests/cli/test_cli_install.py::test_install_hub_sharing_flags_reach_step`.
+- 1.4.5 - `install` runs the sharing step only for the `local` role and passes the three flags to it. The flags with a COMPONENT or on a self-hosted run are a usage error. test: `tests/cli/test_cli_install.py::test_install_hub_sharing_flags_reach_step`.
 
 ### 1.5 Join a self-hosted hub [category: code] (depends: 1.4)
 `kind: deliverable`
@@ -559,10 +604,19 @@ Targets:
   - it mints a machine key and publishes `api_key`, `api_key_id` and
     `hub_cert` into the bootstrap.
   `login` builds the prompts from `click.prompt` and `click.confirm`. The
-  wizard reuses `enroll` unchanged.
+  wizard reuses `enroll` unchanged. `enroll` takes the password only from
+  `prompts.password()`, while the email can come from `request.email`.
+- Full-command tests stub `run_remote_preflight` at its boundary. The
+  wizard's helpers must not open the copied credentials. Preflight keeps its
+  documented token read.
 
 **Implementation:**
 - New `src/gobby/cli/install_join.py`:
+  - `read_secret_file(path: Path, *, flag: str) -> str` reads UTF-8 text and
+    removes one trailing line ending only, so password whitespace survives.
+    An empty value, `OSError` or `UnicodeDecodeError` is a
+    `click.UsageError` naming the flag, the path and the exception type,
+    never the contents. 1.6 reuses it for the key file.
   - `HubJoin(hub_daemon_url: str, database_url: str)`.
   - `resolve_hub_join(raw, *, hub_url, database_url_file, no_interactive,
     prompt) -> HubJoin`:
@@ -570,8 +624,9 @@ Targets:
       `database_url`.
     - Interactive: "Hub URL" with the current origin as default, then the
       hidden "Hub PostgreSQL URL (blank keeps current)".
-    - `--hub-database-url-file` is read and stripped; it replaces the prompt
-      and the stored value.
+    - `--hub-url` and `--hub-database-url-file` (read with
+      `read_secret_file`) supply their answers in every mode and skip their
+      prompts.
     - A non-interactive run with no current value and no flag is a
       `click.UsageError` naming `--hub-url` and `--hub-database-url-file`.
     - The DSN is never echoed.
@@ -588,10 +643,14 @@ Targets:
       fingerprint=fingerprint, label=socket.gethostname(), insecure=False)`.
     - Interactive `LoginPrompts` use `click.prompt` and `click.confirm`, as
       `login` does.
-    - Non-interactive prompts read the password from
-      `--hub-password-file`. A missing email or password file is a
+    - A given `--hub-password-file` (read with `read_secret_file`)
+      supplies `LoginPrompts.password` in interactive and non-interactive
+      runs.
+    - Non-interactive: a missing email or password file is a
       `click.UsageError`, and certificate confirmation returns False, so a
       TLS hub needs `--hub-fingerprint`.
+    - An enrolled node whose hub origin is unchanged needs no enrollment
+      input.
 - `install`:
   - add `--hub-url URL`, `--hub-database-url-file PATH`, `--hub-email
     EMAIL`, `--hub-password-file PATH` and `--hub-fingerprint SHA256` (file
@@ -600,7 +659,9 @@ Targets:
   - for the `self-hosted` role, before preflight: resolve, publish, then
     re-read `peek_install_bootstrap()` so preflight sees the new values;
   - after preflight passes, call `enroll_if_needed` with the pre-publish
-    mapping. A preflight failure exits as today, with no enrollment.
+    mapping. A preflight failure exits as today, with no enrollment;
+  - the five hub flags on a `local` run are a `click.UsageError` ("<flag>
+    applies to the self-hosted role only.").
 
 **Focused verification (planned):** run `tests/cli/test_install_join.py`,
 `tests/cli/test_auth_login.py` and `tests/cli/test_cli_install.py` with the
@@ -608,11 +669,11 @@ isolation prefix.
 
 **Acceptance:**
 
-- 1.5.1 - `resolve_hub_join` defaults to the stored origin and DSN. It reads the DSN from `--hub-database-url-file` or the hidden prompt, where blank keeps the stored value. A fresh non-interactive run without the inputs is a usage error naming both flags. test: `tests/cli/test_install_join.py::test_resolve_hub_join_defaults_and_file_inputs`.
+- 1.5.1 - `resolve_hub_join` defaults to the stored origin and DSN. It reads the DSN from `--hub-database-url-file` or the hidden prompt, where blank keeps the stored value. A given flag skips its prompt. A fresh non-interactive run without the inputs is a usage error naming both flags. test: `tests/cli/test_install_join.py::test_resolve_hub_join_defaults_and_file_inputs`.
 - 1.5.2 - `publish_hub_join` writes a fresh bootstrap with exactly `datastore_mode: remote`, `database_url` and `hub_daemon_url`. It updates only changed values, and writes nothing when they are unchanged. test: `tests/cli/test_install_join.py::test_publish_hub_join_writes_only_on_change`.
-- 1.5.3 - The join step never opens `.secret_kek` or `local_cli_token` and never echoes the DSN. test: `tests/cli/test_install_join.py::test_hub_join_never_reads_copied_credentials`.
-- 1.5.4 - `enroll_if_needed` calls `enroll` only when the bootstrap has no `api_key` or the hub origin changed. Without prompts it requires `--hub-email` and `--hub-password-file`, and refuses an unpinned TLS certificate unless `--hub-fingerprint` is given. test: `tests/cli/test_install_join.py::test_enroll_if_needed_runs_only_for_new_enrollment`.
-- 1.5.5 - A fresh `gobby install --role self-hosted --no-interactive` with the hub flags publishes the bootstrap before preflight and enrolls after preflight passes. A failed preflight exits without enrolling. test: `tests/cli/test_cli_install.py::test_install_join_runs_preflight_then_enrollment`.
+- 1.5.3 - The join step never opens `.secret_kek` or `local_cli_token`. A sentinel DSN or password never appears in stdout, stderr or logs, including when a file read, resolution or enrollment fails. test: `tests/cli/test_install_join.py::test_hub_join_never_reads_copied_credentials`.
+- 1.5.4 - `enroll_if_needed` calls `enroll` only when the bootstrap has no `api_key` or the hub origin changed. Without prompts it requires `--hub-email` and `--hub-password-file`, and refuses an unpinned TLS certificate unless `--hub-fingerprint` is given. `--hub-password-file` also supplies the interactive password, keeping its whitespace. test: `tests/cli/test_install_join.py::test_enroll_if_needed_runs_only_for_new_enrollment`.
+- 1.5.5 - A fresh `gobby install --role self-hosted --no-interactive` with the hub flags publishes the bootstrap before preflight and enrolls after preflight passes. A failed preflight exits without enrolling. The hub flags on a local run are a usage error. test: `tests/cli/test_cli_install.py::test_install_join_runs_preflight_then_enrollment`.
 
 ### 1.6 Embedding step reconciles against the stored configuration [category: code] (depends: 1.5)
 `kind: deliverable`
@@ -623,11 +684,13 @@ Targets:
 - `src/gobby/cli/installers/embedding.py::_managed_embedding_collections_exist`
 - `src/gobby/cli/_install_embedding_prompts.py::_run_embedding_install`
 - `src/gobby/cli/_install_embedding_prompts.py::_get_embedding_api_key`
+- `src/gobby/cli/_install_embedding_prompts.py::_select_embedding_model`
 - `src/gobby/cli/install_embedding_change.py`
 - `src/gobby/cli/install.py::*` — scope-reason: adds the embedding flags, rejects them with COMPONENTS, runs the embedding step before the CLI installers, and requests a pending switch after daemon start
 - `tests/cli/test_install_state.py::*` — scope-reason: adds the catalog-key state test
 - `tests/cli/test_install_embedding_change.py`
-- `tests/cli/test_install_embedding_wizard.py::*` — scope-reason: adds the key-replacement test
+- `tests/cli/test_install_embedding_wizard.py::*` — scope-reason: adds the key-replacement test and moves the key mocks to the (key, replaced) return
+- `tests/cli/test_install_coverage.py::*` — scope-reason: updates its EmbeddingInstallState fixtures and _run_embedding_install call assertions for the new keywords
 - `tests/cli/test_cli_install.py::*` — scope-reason: adds the embedding wiring test
 
 **Research context:**
@@ -679,6 +742,33 @@ Targets:
   down until `_maybe_start_daemon_after_install`. That starts it only
   interactively with a local UI. `_daemon_already_running()` reports the
   result.
+- The switch resolves an API base only for vLLM. For every other provider,
+  `EmbeddingSwitchCoordinator.start`
+  (`src/gobby/ai/embedding_switch_service.py`) uses
+  `_provider_api_base(provider)` (`src/gobby/ai/embedding_switch_runner.py`).
+  It takes no model or dimension; both follow from the catalog key.
+- `_select_embedding_provider` re-detects local providers, and for provider
+  `none` it calls the installer itself before returning.
+  `_prompt_customization` defaults blank answers to the provider defaults,
+  not to the stored values. Neither suits a configured install.
+  `_select_embedding_model` defaults its picker to `DEFAULT_CATALOG_ID`.
+- The existing structural flags are `--embedding-url`,
+  `--embedding-provider` (`lmstudio`, `ollama`, `openai-compatible` or
+  `vllm`; requires `--embedding-url`), `--embedding-model` and
+  `--embedding-dim`.
+- Consumer sweep: `gcode grep -w
+  '_get_embedding_api_key|_run_embedding_install|EmbeddingInstallState|resolve_installer_ui_exposure|apply_installer_ui_exposure|_commit_shared_endpoints'
+  src tests -m 150`.
+  - Production hits: `_install_embedding_prompts.py`, `_install_prompts.py`,
+    `_install_state.py`, `datastores.py`, `install.py`,
+    `install_components.py` and `ui_exposure.py`.
+  - Test hits: `tests/cli/test_cli_install.py`,
+    `tests/cli/test_datastores_expose.py`,
+    `tests/cli/test_install_components.py`,
+    `tests/cli/test_install_coverage.py`,
+    `tests/cli/test_install_embedding_wizard.py`,
+    `tests/cli/test_install_prompts.py` and `tests/test_ui_exposure.py`.
+  - Each hit is a Target or a listed consumer in 1.4, 1.6 or 1.7.
 
 **Implementation:**
 - `_install_state.py`: `EmbeddingInstallState.catalog_key: str | None =
@@ -688,15 +778,42 @@ Targets:
   loop, and `_managed_embedding_collections_exist` returns `count > 0`, with
   unchanged error handling.
 - New `src/gobby/cli/install_embedding_change.py`:
-  - `EmbeddingTarget(provider, catalog_key, api_base)`, where `api_base` is
-    the override or the provider default from `_PROVIDER_CONFIG`.
+  - `EmbeddingTarget(provider, catalog_key, api_base, model, dim)`.
+  - `resolve_embedding_target(current, *, provider, api_base, model, dim,
+    catalog_key, no_interactive, prompt, pick_catalog) -> EmbeddingTarget`:
+    - It starts from the stored values in `current` and replaces only the
+      answers that a flag gives or a prompt changes.
+    - Interactive runs ask for the provider, the catalog key
+      (`pick_catalog`) and the API base, defaulting to the stored values,
+      and skip each answer that has a flag.
+    - When the provider changes and no API base is given, the API base is
+      the new provider's default.
+    - A run whose only embedding flag is `--embedding-api-key-file` asks no
+      structural question.
+    - It never runs provider detection or `_prompt_customization`.
   - `classify_embedding_change(current, target, *, key_replaced: bool) ->
-    EmbeddingChange`. The kinds are `unchanged`, `key_only`, `switch` and
-    `refused`. It compares the provider, catalog key and API base. It
-    refuses when the target provider is not `lmstudio`, `ollama` or `vllm`,
-    or has no catalog key. The refusal remedy says the switch supports only
-    catalog models on those providers, and that other targets wait for
-    `.gobby/plans/local-inference-runtime-foundation.md` section 3.2.
+    EmbeddingChange`, with the kinds `unchanged`, `key_only`, `switch` and
+    `refused`, decided in this order:
+    1. An identical normalized structure (provider, catalog key, API base,
+       model and dim) is `key_only` when the key was replaced, else
+       `unchanged`. This holds for every provider, including `none`,
+       `openai` and `openai-compatible`.
+    2. A structural change together with a replaced key is `refused`, with
+       decision 13's two-run remedy.
+    3. A structural change is `refused` in these cases:
+       - the target provider is not `lmstudio`, `ollama` or `vllm`;
+       - the target has no catalog key;
+       - the model or dim differs from the stored value. The switch takes
+         both from the catalog key, so the remedy names
+         `--embedding-catalog`.
+       - for `lmstudio` and `ollama`, the API base differs from
+         `_provider_api_base(provider)`, which the switch uses. vLLM keeps
+         its explicit API base.
+    4. Otherwise it is `switch`.
+    The refusal remedy reads: "This installed configuration cannot be
+    changed through the current catalog switch. The wizard switches catalog
+    models on LM Studio, Ollama and vLLM only." It does not promise that
+    another plan unlocks the target.
   - `write_embedding_api_key(key) -> None` is the non-structural secret
     write described above.
   - `confirm_switch(change, count, *, no_interactive, confirm_reembed,
@@ -710,23 +827,38 @@ Targets:
     <key> --provider <provider> --api-base <url>`, omitting `--api-base`
     when there is none.
 - `_get_embedding_api_key`:
-  - takes `api_key_file: Path | None = None`; a file overrides everything;
+  - takes `api_key_file: Path | None = None`, read with `read_secret_file`
+    (1.5); a file overrides everything;
   - returns `(key, replaced)`;
   - with a stored key and prompts, asks "Embedding API Key (blank keeps
     current)"; a non-blank answer different from the stored key sets
     `replaced`.
+- `_select_embedding_model` takes `default_key: str | None = None`. The
+  picker defaults to that key when it is in `picker_keys()`, else to
+  `DEFAULT_CATALOG_ID`.
 - `_run_embedding_install` takes `current: EmbeddingInstallState | None =
-  None`, `catalog_override: str | None = None`, `api_key_file`, and
-  `confirm_reembed: bool = False`. `catalog_override` replaces the catalog
-  picker. When `current` is configured, it classifies the target instead of
-  calling the installer:
+  None`, `catalog_override: str | None = None`, `api_key_file: Path | None =
+  None` and `confirm_reembed: bool = False`. `catalog_override` replaces the
+  catalog picker. When `current` is configured, it skips
+  `_select_embedding_provider` and `_prompt_customization`. It resolves the
+  target with `resolve_embedding_target`, using
+  `_select_embedding_model(default_key=...)` as `pick_catalog`, gets the
+  key, and classifies instead of calling the installer:
   - `unchanged`: records success and writes nothing;
   - `key_only`: calls `write_embedding_api_key`;
   - `refused`: records a failed result with the remedy;
   - `switch`: counts the collections and confirms. A declined switch
     records success and writes nothing. An accepted one records
     `results["embedding"]["pending_switch"]`.
-  A fresh install keeps today's path through the installer.
+  It still returns the provider string. A fresh install, and the component
+  path that passes no `current`, keep today's path through the installer.
+- Tests:
+  - in `tests/cli/test_install_embedding_wizard.py`, every
+    `_get_embedding_api_key` mock and direct assertion moves to the `(key,
+    replaced)` return, including the missing-key and abort cases;
+  - in `tests/cli/test_install_coverage.py`, the `EmbeddingInstallState`
+    fixtures and `_run_embedding_install` call assertions take the new
+    keywords.
 - `install`:
   - add `--embedding-catalog KEY`, `--embedding-api-key-file PATH` and
     `--confirm-reembed`, and reject them when COMPONENTS are named;
@@ -747,15 +879,16 @@ Consumers unchanged:
 **Focused verification (planned):** run `tests/cli/test_install_state.py`,
 `tests/cli/test_install_embedding_change.py`,
 `tests/cli/test_install_embedding_wizard.py`,
-`tests/cli/installers/test_embedding_installer.py` and
-`tests/cli/test_cli_install.py` with the isolation prefix.
+`tests/cli/installers/test_embedding_installer.py`,
+`tests/cli/test_install_coverage.py` and `tests/cli/test_cli_install.py` with
+the isolation prefix.
 
 **Acceptance:**
 
 - 1.6.1 - `_embedding_state` reports the stored catalog key in `EmbeddingInstallState.catalog_key`. test: `tests/cli/test_install_state.py::test_embedding_state_reports_catalog_key`.
-- 1.6.2 - `classify_embedding_change` returns `unchanged` for an identical target, `key_only` for a replaced key alone, and `switch` for a different catalog key, provider or API base on `lmstudio`, `ollama` or `vllm`. It returns `refused` with the 3.2 remedy for `none`, `openai`, `openai-compatible` or a missing catalog key. test: `tests/cli/test_install_embedding_change.py::test_classify_embedding_change`.
-- 1.6.3 - With a stored key, the key prompt offers "blank keeps current". A replacement writes only the API key secret through `ConfigStore.patch` and no structural key. test: `tests/cli/test_install_embedding_wizard.py::test_replacement_key_writes_secret_only`.
-- 1.6.4 - A switch asks for confirmation naming the managed collection count. Without prompts it proceeds only with `--confirm-reembed`. A declined switch writes nothing. test: `tests/cli/test_install_embedding_change.py::test_structural_change_requires_reembed_confirmation`.
+- 1.6.2 - `classify_embedding_change` returns `unchanged` for an identical target and `key_only` for a replaced key alone, for every provider including `none`, `openai` and `openai-compatible`. It returns `switch` for a changed catalog key or provider on `lmstudio`, `ollama` or `vllm`, or a changed vLLM API base. It returns `refused` for a structural change to a non-catalog provider, a missing catalog key, a changed model or dim, or a custom LM Studio or Ollama API base. test: `tests/cli/test_install_embedding_change.py::test_classify_embedding_change`.
+- 1.6.3 - With a stored key, the key prompt offers "blank keeps current". A replacement from the prompt or `--embedding-api-key-file` writes only the API key secret through `ConfigStore.patch` and no structural key. A key-file-only run asks no structural question and ignores provider detection. A sentinel key never appears in stdout, stderr or logs, including when the file read fails. test: `tests/cli/test_install_embedding_wizard.py::test_replacement_key_writes_secret_only`.
+- 1.6.4 - A switch asks for confirmation naming the managed collection count. Without prompts it proceeds only with `--confirm-reembed`. A declined switch, and a combined key replacement and structural change, write no secret and record no pending switch. test: `tests/cli/test_install_embedding_change.py::test_structural_change_requires_reembed_confirmation`.
 - 1.6.5 - A pending switch is POSTed to `/api/embeddings/switch/start` with the CLI's body when the daemon runs. Otherwise the exact `gobby embeddings switch` command is printed. test: `tests/cli/test_install_embedding_change.py::test_pending_switch_posts_or_prints_command`.
 - 1.6.6 - On a configured install, `gobby install` with defaults calls neither the embedding installer nor any config write. The embedding step runs before the CLI installers, and the new flags with a COMPONENT are a usage error. test: `tests/cli/test_cli_install.py::test_install_embedding_change_routes_through_switch`.
 
@@ -766,7 +899,7 @@ Targets:
 - `src/gobby/ui_exposure.py::resolve_installer_ui_exposure`
 - `src/gobby/ui_exposure.py::apply_installer_ui_exposure`
 - `src/gobby/cli/install.py::*` — scope-reason: adds --expose-ui/--no-expose-ui, rejects it with COMPONENTS, and runs the UI step after the embedding step and before the CLI installers
-- `tests/test_ui_exposure.py::*` — scope-reason: adds the default and change tests
+- `tests/test_ui_exposure.py::*` — scope-reason: adds the default and change tests and passes current at the existing call sites
 - `tests/cli/test_install_coverage.py::*` — scope-reason: updates its UI-exposure install test for the new step position and signatures
 - `tests/cli/test_cli_install.py::*` — scope-reason: adds the UI step order and flag test
 
@@ -810,6 +943,8 @@ Targets:
     default: click.confirm("Expose the web UI to your Tailscale network?",
     default=default)`;
   - keep today's warning on `UiExposeError` for both directions.
+- Tests: the existing `resolve_installer_ui_exposure` calls in
+  `tests/test_ui_exposure.py` pass `current` and assert `confirm(current)`.
 
 **Focused verification (planned):** run `tests/test_ui_exposure.py`,
 `tests/cli/test_install_coverage.py` and `tests/cli/test_cli_install.py` with
@@ -853,22 +988,34 @@ Targets:
 - New `tests/cli/test_install_rerun_noop.py`. One fixture builds a first
   install for each of two roles: a local hub with embedding, UI exposure and
   every detected CLI configured, and a self-hosted node with `api_key` set.
-- After the first run, it snapshots:
-  - the bootstrap bytes;
-  - each installed hook, settings and content file's bytes and
+  `GOBBY_HOME` is the temporary `HOME/.gobby`, which keeps the fixture
+  isolated until #23585 (Install paths ignore GOBBY_HOME) lands.
+- The five step implementations run for real. Only their external
+  boundaries are faked.
+- After the first run, it resets every spy and counter, then snapshots:
+  - the bootstrap's bytes, inode and `st_mtime_ns`;
+  - each installed hook, settings and content file's bytes, inode and
     `st_mtime_ns`;
-  - the set of `*.backup` files;
-  - the fakes' write counters.
-- Each test runs `install` again and compares.
+  - the set of `*.backup` files.
+- Each test runs `install` again. Spies on `copy2`, `copytree`, `rmtree`,
+  `os.replace`, `_atomic_write_json`, `write_bootstrap_yaml` and
+  `update_bootstrap_yaml` must record no call for a managed artifact. The
+  fakes must record no ConfigStore or SecretStore write and no call to
+  `expose_datastores`, `unexpose_datastores`, `enroll`,
+  `install_embedding`, the switch request, `enable_tailscale_ui` or
+  `disable_tailscale_ui`. Every snapshot must be unchanged.
+- The suite proves the five steps composed at their service boundaries.
+  The unlisted steps stay faked, and it makes no claim about their
+  filesystem activity (decision 14).
 
 **Focused verification (planned):** run
 `tests/cli/test_install_rerun_noop.py` with the isolation prefix.
 
 **Acceptance:**
 
-- 1.8.1 - A second `gobby install --no-interactive` on a local hub install changes no bootstrap byte, no installed file's bytes or `st_mtime_ns`, creates no `*.backup` file, and makes no ConfigStore or SecretStore write. test: `tests/cli/test_install_rerun_noop.py::test_local_rerun_with_defaults_mutates_nothing`.
-- 1.8.2 - A second `gobby install --no-interactive` on an enrolled self-hosted node writes no bootstrap and does not call `enroll`. test: `tests/cli/test_install_rerun_noop.py::test_node_rerun_with_defaults_mutates_nothing`.
-- 1.8.3 - An interactive re-run that accepts every prompt's default has the same outcome as the non-interactive re-run. test: `tests/cli/test_install_rerun_noop.py::test_interactive_defaults_match_non_interactive_rerun`.
+- 1.8.1 - A second `gobby install --no-interactive` on a local hub install makes no copy, replace or bootstrap write call for a managed artifact, leaves every snapshot unchanged, creates no `*.backup` file, and makes no ConfigStore, SecretStore, exposure, enrollment, embedding installer, switch request or UI exposure call. test: `tests/cli/test_install_rerun_noop.py::test_local_rerun_with_defaults_mutates_nothing`.
+- 1.8.2 - A second `gobby install --no-interactive` on an enrolled self-hosted node meets every 1.8.1 assertion, including no bootstrap write and no `enroll` call. test: `tests/cli/test_install_rerun_noop.py::test_node_rerun_with_defaults_mutates_nothing`.
+- 1.8.3 - An interactive re-run that accepts every prompt's default meets every 1.8.1 assertion, on both fixtures. test: `tests/cli/test_install_rerun_noop.py::test_interactive_defaults_match_non_interactive_rerun`.
 
 ### 1.9 Document the wizard [category: docs] (depends: 1.7)
 `kind: deliverable`
@@ -914,10 +1061,11 @@ Targets:
     with the hub flags. Drop the hand-written bootstrap block. State that
     enrollment runs inside install.
 - `cli-commands.md`: one modifier row per new flag. State that secret inputs
-  take file paths, that new flags apply to the full install only, and that
-  a role change is refused.
+  take file paths, that new flags apply to the full install only, that a
+  role change is refused, and that a combined key and structural embedding
+  change is refused (decision 13).
 - `installation.md` and `onboarding.md`: describe the role step, the
-  re-run-is-a-no-op guarantee, and the role-change remedy.
+  five-step re-run guarantee (decision 14), and the role-change remedy.
 
 **Acceptance:**
 
@@ -955,6 +1103,26 @@ deferral:
 
 - D1.1 - Choosing `managed` prompts for the managed hub origin and a registration token (file flag without prompts), registers a machine-bound API key, writes a credential-free node bootstrap, and is a no-op on re-run.
 
+## D2 Role-change remedy offers a fresh Gobby home (depends: 1.3)
+`kind: deferred`
+
+The `RoleChangeRefused` remedy (1.3) names only moving the Gobby home aside,
+which works today. Pointing `GOBBY_HOME` at a fresh directory would also be a
+remedy, but `ensure_daemon_config` (`src/gobby/cli/install_setup.py`) and
+`src/gobby/cli/installers/claude.py` still write under `~/.gobby`. #23585
+(Install paths ignore GOBBY_HOME) owns that fix. This plan does not absorb it.
+
+```yaml
+deferral:
+  task_ref: "created-at-expansion"
+  reason: "External prerequisite: #23585 (Install paths ignore GOBBY_HOME) must land before the role-change remedy can offer a fresh GOBBY_HOME."
+  owner: "orchestrator"
+  original_acceptance_items:
+    - D2.1
+```
+
+- D2.1 - After #23585 lands, the `RoleChangeRefused` remedy also offers setting `GOBBY_HOME` to a fresh directory and running `gobby install` there.
+
 ## V1 Plan Changelog
 `kind: verification`
 
@@ -963,6 +1131,22 @@ deferral:
   verified read-only on `0.5.0` at `361cdd224b`. Research notes are in
   `.gobby/plans/research/installer-wizard-context-20151.md`. The draft is
   narrative only, with no M1.
+- 2026-10-05: Enhancer pass by `plan-enhancer-taskless-old` (run d0f45474)
+  returned E01 to E09. The Orchestrator (gobby#14972) accepted all nine at
+  17:31 CT. Applied:
+  - 1.6's classifier compares the effective target first, so an unchanged
+    configuration is never refused (E02). It refuses a model or dim change
+    and a custom LM Studio or Ollama API base, which the switch cannot
+    perform (E01).
+  - The test consumers of changed signatures and the consumer sweep (E03).
+  - Proof of a skipped write by spies and inode checks (E04).
+  - Flag precedence and role-mismatched flags (E05).
+  - Secret failure paths, through `read_secret_file` (E07).
+  - Refusal remedy text and the second-lands re-check (E09).
+  - E06 and E08 became decisions 13 and 14.
+  Per the Orchestrator's ruling on #23585 (Install paths ignore
+  GOBBY_HOME), the fresh-`GOBBY_HOME` remedy is deferred section D2, with
+  #23585 as its external prerequisite.
 
 ## V2: Verification
 `kind: verification`
