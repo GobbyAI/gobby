@@ -1594,6 +1594,22 @@ D3.1: the hub-node e2e test above passes over the relay.
   D1.7 mapped, and node gates deferred to S2.11). The 13-site inventory, the
   persistence sweep and the corpus check were verified read-only on `0.5.0`
   at `ae78ebdf00`. The draft is narrative only, with no M1.
+- 2026-10-05: V1 consensus between the Plan Writer (gobby#15468) and the Plan
+  Adversary (gobby#15470) at `9c26026f66`. The Orchestrator (gobby#14972)
+  ruled on two disagreements the seats could not settle. Decision 13: foreign
+  ingress project resolution fails closed. Decision 14, option A: foreign
+  ledger rows carry no checkout root, carried relative paths match
+  project-wide, and an uncarried foreign mutation path blocks while any other
+  active session holds a claim. That gate relaxes at S2.11 (#21569, Hook
+  ingress and node-local envelope ledger) through D1.2. Findings A3-F1 to
+  A3-F7 are resolved:
+  - truncated or unknown prior text fails closed for foreign origin;
+  - rootless ghook runs send no facts, and relative paths join the tool cwd;
+  - raw provider aliases are captured, with parity pinned;
+  - empty-ledger claims still block uncarried foreign writes;
+  - foreign path handling is lexical;
+  - the found-work cache key carries the origin;
+  - foreign ledger attribution is checkout-free.
 
 ## V2: Verification
 `kind: verification`
