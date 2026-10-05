@@ -1,14 +1,14 @@
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::UnixStream;
 use tokio::sync::{mpsc, watch};
-use tokio::time::timeout;
+use tokio::time::{timeout, Instant};
 
 use super::{
     encoded_message_bytes, enqueue_control, send_control, write_outbound, ControlClose,
@@ -217,6 +217,12 @@ async fn control_deadline_and_event_overflow() {
         true
     );
     let event_terminal_id = "x".repeat(200 * 1024);
+    // Host and peer share this test's one runtime thread, so an OS stall
+    // freezes the peer while the host's wall-clock grace for the reason line
+    // runs out (#23420). A paused clock only advances while both are idle, so
+    // the peer's 1 ms cadence stays inside that 20 ms grace however loaded the
+    // machine is.
+    tokio::time::pause();
     let started = Instant::now();
     slow_state
         .events
@@ -239,6 +245,7 @@ async fn control_deadline_and_event_overflow() {
         tail.ends_with(DEADLINE_LINE),
         "the host must name control_deadline before closing; tail={tail:?}"
     );
+    tokio::time::resume();
 
     // A subscriber that does not drain is told event_overflow on its own
     // socket. Exercise this under the feature set used by the gterm binary.

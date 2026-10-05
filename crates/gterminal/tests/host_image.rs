@@ -262,7 +262,7 @@ fn host_through(dir: &Path, link: &Path, token: &str) -> host_support::HostProc 
     let mut host = host_support::spawn_host_binary(link, dir, &[], &[], &[]);
     let pid = host.id().to_string();
     let mut exited = None;
-    host_support::wait_until("the host starts or exits", || {
+    host_support::wait_until_within("the host starts or exits", host_support::COLD_START, || {
         exited = host.try_wait().expect("poll host");
         exited.is_some()
             || (dir.join(host_support::CONTROL_SOCKET).exists()
