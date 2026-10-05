@@ -115,8 +115,9 @@ impl HeartbeatHost {
             if let Some(shutdown) = running.shutdown.take() {
                 let _ = shutdown.send(());
             }
-            (&mut running.supervisor).await?;
+            let result = (&mut running.supervisor).await;
             self.running = None;
+            result?;
         }
         Ok(())
     }

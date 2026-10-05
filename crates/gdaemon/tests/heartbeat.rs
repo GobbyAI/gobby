@@ -202,6 +202,29 @@ async fn duplicate_names_and_registration_after_start_are_rejected() -> Result<(
     host.stop().await
 }
 
+#[test]
+fn stopping_after_a_supervisor_join_error_is_idempotent() -> Result<()> {
+    let mut host = HeartbeatHost::new();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    {
+        let _entered = runtime.enter();
+        host.start()?;
+    }
+    drop(runtime);
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let error = host.stop().await.unwrap_err();
+        assert!(error.downcast_ref::<tokio::task::JoinError>().is_some());
+        assert!(host.stop().await.is_ok());
+    });
+    Ok(())
+}
+
 struct Active(Arc<AtomicUsize>);
 
 impl Drop for Active {
