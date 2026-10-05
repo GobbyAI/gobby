@@ -56,8 +56,12 @@ baseline seeds in `crates/gcore/assets/schema/baseline.sql` and
 merge-orchestrator` on the `pr` and `merge` rows: `is_live_mutable_seed_field`
 (`crates/gcore/src/schema/verify.rs`) lists `task_stages_registry.default_agent`,
 `description`, and `bundled_hash` as live-mutable, and startup stage-registry sync
-(`src/gobby/storage/tasks/_stage_registry_loader.py`) rewrites the rows from
-`stages.yaml`. No schema carrier or crate rebuild is needed.
+(`src/gobby/storage/tasks/_stage_registry_loader.py`) rewrites sync-owned rows
+from `stages.yaml`. Sync skips a locally edited row, one whose live hash matches
+neither its stored nor its new bundled hash. On 2026-10-05,
+`uv run gobby stages show pr` and `uv run gobby stages show merge` both print
+`is_edited: false`, so sync owns both rows. No schema carrier or crate rebuild is
+needed.
 
 ## Decision Record
 `kind: framing`
@@ -483,8 +487,9 @@ its coordinated restart from the main checkout. Then:
 - `uv run gobby agents show merge-orchestrator` reports no active installed row.
   This is the evidence spawn-network-override D1 waits for; the Orchestrator lifts
   D1's hold only after it.
-- `uv run gobby sync` or startup logs show the stage registry rewrote the `pr` and
-  `merge` rows without `default_agent`.
+- `uv run gobby stages show pr` and `uv run gobby stages show merge` print
+  `"default_agent": null`. A row that still names merge-orchestrator was edited
+  locally and skipped by sync; the Orchestrator resolves it before lifting D1.
 - `gcode grep -l -i -E "merge[-_ ]orchestrator" src tests` lists only
   `tests/dispatch/test_dispatch_prompts.py`.
 - The focused pytest commands in each deliverable pass against the isolated test hub.
