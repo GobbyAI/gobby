@@ -1076,6 +1076,32 @@ Consumers unchanged:
     revoked tick's check, 4401 close, and drop now share one absolute
     deadline, the tick plus 4 s, through the public `key_tick`, and 1.3.2
     covers a slow check with a pending close.
+- 2026-10-05: V1 consensus on `939ed67`. Seats: Plan Writer gobby#15434,
+  Adversary gobby#15401, Orchestrator gobby#14972.
+  - The Orchestrator accepted the enhancer's NC-E01 to NC-E08 at 11:56 CT.
+  - The Adversary's NC-A1 to NC-A9 are resolved, and no blocking or
+    proportionality finding remains.
+  - Disagreements resolved:
+    - Decision 1: there are no external edges and no deferrals. Expansion
+      waits until #23523 (Live activation of the key cutover) closes
+      (Orchestrator, 12:11 CT).
+    - Revocation timing: the Orchestrator's final ruling at 12:40 CT
+      superseded its interim 35 s message. Rechecks run every 25 s from the
+      upgrade, with a 4 s budget per check covering pool acquisition and the
+      query. A timeout or error falls under the parent's database-error
+      exception. Teardown completes within 29 s, which keeps NC-E05 and the
+      parent's 30 s bound. The Orchestrator confirmed the shared tick budget
+      at 12:54 CT.
+  - Routing:
+    - 1.1 to 1.4 are code leaves: `task_type` feature,
+      `implementation_domain` backend, and `tdd` true.
+    - 1.5 is a test leaf: `task_type` chore, `assigned_agent`
+      backend-developer, and `tdd` false.
+    - Dependencies follow the headings: 1.1 has none, 1.2 depends on 1.1,
+      1.3 on 1.2, 1.4 on 1.3, and 1.5 on 1.2, 1.3, and 1.4. There are no
+      external edges.
+  - Decisions 2 and 3 change key-cutover behavior, so Josh approves them
+    explicitly along with the stamped bytes.
 
 ## V2: Verification
 `kind: verification`
