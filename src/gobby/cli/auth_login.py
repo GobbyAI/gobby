@@ -98,8 +98,12 @@ def enroll(request: LoginRequest, prompts: LoginPrompts) -> Enrollment:
             staged = _stage(pem_path, pem)
             verify = ssl.create_default_context(cafile=str(staged))
         password = prompts.password()
+        # The password goes to the approved origin only, never to an environment proxy.
         with httpx.Client(
-            base_url=hub.origin, verify=verify, timeout=httpx.Timeout(NETWORK_TIMEOUT_SECONDS)
+            base_url=hub.origin,
+            verify=verify,
+            timeout=httpx.Timeout(NETWORK_TIMEOUT_SECONDS),
+            trust_env=False,
         ) as client:
             body = {
                 "email": email,

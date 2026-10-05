@@ -428,7 +428,14 @@ def test_login_refuses_local_bootstrap_and_hub_mismatch(
 
 
 def test_login_http_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """4.5.3: plaintext needs loopback or --insecure, never a fingerprint."""
+    """4.5.3: plaintext needs loopback or --insecure, never a fingerprint.
+
+    An environment proxy never sees the enrollment: the hub client dials the origin directly.
+    """
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
     probes: list[object] = []
 
     def _probe(address: object, *args: object, **kwargs: object) -> str:
