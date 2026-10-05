@@ -285,10 +285,18 @@ async fn blocked_acquisition_is_bounded_and_cancellation_releases_the_lock() -> 
         db.admin.batch_execute(&format!(
             "BEGIN; LOCK TABLE {}.deployment_runtime IN ACCESS EXCLUSIVE MODE", db.schema
         )).await?;
+        let application_name = owner.application_name().to_owned();
         let mut acquire = Box::pin(owner.try_acquire());
         let observed = timeout(Duration::from_secs(4), async {
             loop {
-                if successor.owner().await?.is_some() {
+                db.admin.simple_query("SELECT pg_stat_clear_snapshot()").await?;
+                let blocked: bool = db.admin.query_one(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+                     WHERE application_name = $1 AND wait_event_type = 'Lock' \
+                     AND query LIKE 'INSERT INTO deployment_runtime%')",
+                    &[&application_name],
+                ).await?.try_get(0)?;
+                if blocked {
                     return anyhow::Ok(());
                 }
                 tokio::task::yield_now().await;
@@ -309,6 +317,12 @@ async fn blocked_acquisition_is_bounded_and_cancellation_releases_the_lock() -> 
         // A second blocked acquisition reaches the five-second operation bound.
         let result = timeout(Duration::from_secs(7), owner.try_acquire()).await?;
         assert!(result.is_err());
+        timeout(Duration::from_secs(7), async {
+            while successor.owner().await?.is_some() {
+                tokio::task::yield_now().await;
+            }
+            anyhow::Ok(())
+        }).await??;
         db.admin.batch_execute("ROLLBACK").await?;
         assert!(db.runtime_row("blocked").await?.is_none());
         assert!(successor.try_acquire().await?);

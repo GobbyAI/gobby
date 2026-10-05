@@ -2,10 +2,10 @@
 //! Native HTTP admission and mode integration belong to the lifecycle cutover.
 
 use super::{APPLICATION_PREFIX, ActiveDaemonLease, resolve_keys};
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use deadpool_postgres::ClientWrapper;
 use std::time::Duration;
-use tokio::time::{Instant, sleep, timeout};
+use tokio::time::{sleep, timeout};
 
 const RECOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -28,7 +28,7 @@ impl ActiveDaemonLease {
     /// Never promotes. Termination rechecks PID, application identity,
     /// freshness and the exact database-wide lock in a single statement.
     pub async fn recover_stale_owner(&self, stale_after: Duration) -> Result<LeaseOwner> {
-        timeout(RECOVERY_TIMEOUT, async {
+        let (client, keys, owner) = timeout(RECOVERY_TIMEOUT, async {
             let client = self.connect("gobby-lease-probe").await?;
             let keys = resolve_keys(&client).await?;
             let Some(owner) = read_owner(&client, keys).await? else {
@@ -71,18 +71,21 @@ impl ActiveDaemonLease {
             {
                 bail!("lease owner changed or refreshed during stale recovery verification");
             }
-            let deadline = Instant::now() + RECOVERY_TIMEOUT;
+            anyhow::Ok((client, keys, owner))
+        })
+        .await??;
+        // Give release its full budget after termination, independently of
+        // the bounded verification/termination phase above.
+        timeout(RECOVERY_TIMEOUT, async {
             loop {
                 if read_owner(&client, keys).await?.is_none() {
                     return Ok(owner);
                 }
-                if Instant::now() >= deadline {
-                    bail!("stale lease owner did not release within recovery timeout");
-                }
                 sleep(Duration::from_millis(50)).await;
             }
         })
-        .await?
+        .await
+        .map_err(|_| anyhow!("stale lease owner did not release within recovery timeout"))?
     }
 }
 
