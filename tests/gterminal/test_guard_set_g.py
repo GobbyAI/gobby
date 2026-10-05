@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import psutil
 import pytest
 
 from gobby.guard_set_g import (
@@ -17,6 +18,7 @@ from gobby.guard_set_g import (
     client_clippy_argv,
     client_nextest_argv,
     evaluate_gated_targets,
+    finalize_pidfile_host,
     gterm_socket_path_budget,
     isolated_run_root,
     isolated_run_root_name_budget,
@@ -82,6 +84,40 @@ class RecordingFinalize:
 
     def __call__(self, pid: int, socket_dir: Path, roots: tuple[Path, ...]) -> None:
         self.calls.append((pid, socket_dir, roots))
+
+
+class UnkillableHost:
+    """A host that outlasts both waits, recording the signals it receives."""
+
+    def __init__(self, socket_dir: Path) -> None:
+        self.socket_dir = socket_dir
+        self.signals: list[str] = []
+
+    def cmdline(self) -> list[str]:
+        return _host_cmd(self.socket_dir)
+
+    def terminate(self) -> None:
+        self.signals.append("terminate")
+
+    def kill(self) -> None:
+        self.signals.append("kill")
+
+    def wait(self, timeout: float) -> None:
+        raise psutil.TimeoutExpired(timeout)
+
+
+def test_finalize_returns_when_host_outlasts_kill_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    socket_dir = (tmp_path / "sock").resolve()
+    socket_dir.mkdir()
+    (socket_dir / "gterm.pid").write_text("4242")
+    host = UnkillableHost(socket_dir)
+    monkeypatch.setattr(psutil, "Process", lambda pid: host)
+
+    finalize_pidfile_host(4242, socket_dir, (tmp_path,))
+
+    assert host.signals == ["terminate", "kill"]
 
 
 def test_socket_dir_from_cmdline_requires_gterm_host_and_socket_dir(tmp_path: Path) -> None:

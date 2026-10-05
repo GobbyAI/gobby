@@ -191,7 +191,8 @@ def finalize_pidfile_host(pid: int, socket_dir: Path, roots: tuple[Path, ...]) -
         except psutil.TimeoutExpired:
             process.kill()
             process.wait(timeout=1.0)
-    except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+    except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, psutil.TimeoutExpired):
+        # SIGKILL is already sent; a host slow to exit must not fail the caller's teardown.
         return
 
 

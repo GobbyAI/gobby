@@ -13,7 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from gobby.terminals.host_protocol import control_socket_path, control_token_path, write_pidfile
+from gobby.terminals.host_protocol import (
+    control_socket_path,
+    control_token_path,
+    pidfile_path,
+    write_pidfile,
+)
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     E2E_HOST_OWNER_FILE,
@@ -100,6 +105,20 @@ def _wait_for_exit(process: subprocess.Popen[bytes]) -> None:
 def test_reap_stops_the_host_of_a_dead_owner(host_root: Path, spawn: Spawn) -> None:
     socket_dir = _orphaned_dir(host_root)
     host = _start_host(spawn, socket_dir)
+
+    reap_orphaned_terminal_hosts(host_root)
+
+    _wait_for_exit(host)
+    assert host.returncode is not None
+    assert not socket_dir.exists()
+
+
+def test_reap_stops_a_dead_owners_host_that_has_no_pidfile_yet(
+    host_root: Path, spawn: Spawn
+) -> None:
+    socket_dir = _orphaned_dir(host_root)
+    host = _start_host(spawn, socket_dir)
+    pidfile_path(socket_dir).unlink()
 
     reap_orphaned_terminal_hosts(host_root)
 

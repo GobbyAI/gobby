@@ -39,8 +39,8 @@ from websockets.sync.client import connect as connect_websocket
 
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
 from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
-from gobby.guard_set_g import finalize_pidfile_host
-from gobby.terminals.host_protocol import read_pidfile
+from gobby.guard_set_g import finalize_pidfile_host, socket_dir_from_cmdline
+from gobby.terminals.host_protocol import read_pidfile, write_pidfile
 from gobby.utils.dependency_requirements import SRT_RELEASE
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
 from tests.native_binary_selection import (
@@ -796,8 +796,20 @@ def stop_terminal_host(socket_dir: Path) -> None:
     """
     resolved = socket_dir.resolve()
     pid = read_pidfile(resolved)
-    if pid is not None:
-        finalize_pidfile_host(pid, resolved, (resolved.parent,))
+    if pid is None:
+        # The spawner can die between starting the host and recording its pid.
+        pid = next(
+            (
+                process.pid
+                for process in psutil.process_iter(["cmdline"])
+                if socket_dir_from_cmdline(process.info["cmdline"]) == resolved
+            ),
+            None,
+        )
+        if pid is None:
+            return
+        write_pidfile(resolved, pid)
+    finalize_pidfile_host(pid, resolved, (resolved.parent,))
 
 
 def reap_orphaned_terminal_hosts(root: Path) -> None:
