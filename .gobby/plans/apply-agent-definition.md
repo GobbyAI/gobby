@@ -428,7 +428,7 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) and re-verified at
   - #22904 owns placed launch, which passes `agent_name_override` at session
     start and so reaches the same core through `activate_default_agent`.
   - #22895 owns runbook deployment.
-- Rollout is Orchestrator-owned (see V1): the leaves change imported Python, so a daemon
+- Rollout is Orchestrator-owned (see V2): the leaves change imported Python, so a daemon
   restart from the main checkout, with global notices outside quiet hours
   (04:45–06:45 CT), precedes any live activation.
 
@@ -693,7 +693,7 @@ which must print nothing. The first excluded file holds the retirement-absence
 assertion of 1.1.7, and `rg -w -c apply_persona tests/mcp_proxy/tools/test_apply_agent_definition.py`
 must print `1`. The other exclusions are paths that later leaves own. 1.5
 removes the rule clauses and the seat-rule fixtures, and 3.1 rewrites the two
-references, the review workflow and its test. The final-state `rg` in V1 covers
+references, the review workflow and its test. The final-state `rg` in V2 covers
 all of them.
 
 Consumers unchanged:
@@ -1154,7 +1154,7 @@ sessions").
 - `reset-seat-common-on-context-loss.yaml` reads neither variable.
 
 After 1.1, activation writes `_agent_type` for every seat. The `_persona_name`
-clauses are then dead, and the V1 `rg` cannot pass while they remain. The edit
+clauses are then dead, and the V2 `rg` cannot pass while they remain. The edit
 cannot land before 1.1, because until then a persona session carries only
 `_persona_name`. Bundled rule templates sync to the rule registry (AGENTS.md
 rule 8).
@@ -1660,7 +1660,40 @@ deferral:
 - D3.2 - An interactive run without `idle_ttl_seconds` is never ended for
   idleness.
 
-## V1: Verification
+## V1 Plan Changelog
+`kind: verification`
+
+- 2026-10-05: Consensus between the Lane 7 Plan Writer gobby#15429 and the Plan
+  Adversary gobby#15414 at `c89787fcc0`, after one sweep that raised eight
+  blocking findings, all resolved:
+  - F1: the pin records the resolved provider for `provider: inherit` at both
+    entry points (1.1).
+  - F2: activation always writes the skill and blocked-tool keys, so a narrower
+    inherited restriction cannot survive (1.1).
+  - F3: one drift helper serves SessionStart re-activation and a repeat tool
+    call, so 1.3 depends on 1.1 and 1.2.
+  - F4: the retirement `rg` has a bounded allowlist. Each leaf's check excludes
+    only paths that a later leaf owns, and the V2 check runs after the last
+    leaf.
+  - F5: after a managed `/clear`, the successor is refused at MCP ingress and
+    attributed to the predecessor at hook, variable and LLM ingress. The finding
+    first claimed only refusal. New deliverable 1.6 makes all four sites follow
+    the run's live binding. Tokens and grants keep the issued session as
+    provenance.
+  - F6: D3 routes through the Orchestrator's 08:18 CT ruling: it is filed under
+    #22691 "Lane 3 - Runbooks" before expansion and carries a numeric ref, and
+    its edges are added after expansion.
+  - F7: the `/clear` successor keeps the run's spawn depth (1.4.7).
+  - F-managed-consumer-inventory: the bridge and the two helper-mocking tests
+    are declared as unchanged consumers of 1.6.
+
+  The Orchestrator's request, relayed by the Lane Manager gobby#15389, added
+  1.1.11 for #23477 "Block worktree creation in the plan-writer, plan-enhancer
+  and plan-adversary agent definitions". The plan has 40 acceptance items over
+  eight deliverables, and the original 30 keep their order. Base validation
+  passes without warnings.
+
+## V2: Verification
 `kind: verification`
 
 Each leaf runs its own planned verification after its final edit. Run this
