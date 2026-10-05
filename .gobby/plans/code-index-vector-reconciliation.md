@@ -17,7 +17,8 @@ taken at `cf88559ef2`.
 The plan does three things:
 - It stops new drift on both projection flags. gcode becomes the only owner
   of vector-sync completion, through a compare-and-set that mirrors the graph
-  one (1.1). The graph CLI honors its existing compare-and-set (1.4). The
+  one. A failed completion of either flag also dirties the version it
+  attempted (1.1). The graph CLI honors its existing compare-and-set (1.4). The
   Python worker stops marking either flag after a native call, and sends
   every graph-language file to gcode for graph-fact eligibility (1.2). A
   re-parse of an existing content version marks a projection pending when
@@ -101,13 +102,24 @@ Out of scope:
 8. **Detached writers.** A projection worker that outlives its lock only
    upserts IDs it read from PostgreSQL. Reconcile never deletes an ID present
    in PostgreSQL under the lease. A point recreated after a pass is an orphan
-   for the next pass. No fencing is added.
+   for the next pass. A stale writer can also overwrite a version's points
+   or graph facts with older input after another attempt synced that
+   version (S9). Its completion then fails the compare-and-set, and the
+   failure dirties the attempted version as well as this machine's current
+   row (1.1), so whichever machine references that version re-syncs it. A
+   stale write whose process exits before its completion runs is not
+   detected. No fencing is added.
 9. **History protection.** It keys on `(path, content_hash)`, gathered by one
-   `cat-file` tree walk pruned to candidate paths. When history cannot be
-   read, every candidate of that root is retained.
-10. **Eligibility.** A candidate whose path is ineligible under the root's
-    current config is collected whatever its history. A missing path is never
-    treated as gitignore-excluded.
+   `cat-file` tree walk pruned to candidate paths. The root trees come from
+   every reachable commit dated inside the window, including ancestors of
+   older-dated tips. When history cannot be read, every eligible candidate
+   of that root is retained.
+10. **Eligibility.** Root availability comes first. A root that is not an
+    existing directory retains every candidate, and stale-project prune owns
+    removing it. Under an existing root, a candidate whose path is
+    ineligible under current config is collected whatever its history, even
+    when history cannot be read. Eligibility reads only config and the
+    working tree. A missing path is never treated as gitignore-excluded.
 11. **Automation.** An hourly automated apply is deferred (D1) until the live
     procedure has run once.
 12. **Graph flag parity.** S6 and S7 are the same flag-race class as S1 and
@@ -169,8 +181,9 @@ Source mechanisms at `cf88559ef2`:
   `mark_vectors_synced` (`db/queries.rs:235-275`) match on project and path
   through this machine's file state. Neither checks a hash or an attempt.
   The graph pair is a compare-and-set: `mark_graph_sync_attempted` returns
-  `GraphSyncAttempt`, and `mark_graph_synced` dirties the live row on
-  failure (`db/queries.rs:13-186`).
+  `GraphSyncAttempt`, and on failure `mark_graph_synced` dirties only this
+  machine's current row for the path (`db/queries.rs:112-186`, excerpt_hash
+  `9ec8c082913683e5bdf5404fbfac9196985dfe7d67d80529d14cb0f2e5ecf318`).
 - **Callers of the marks.**
   - `projection/sync.rs::VectorProjectionState::sync_file` (646-661) runs
     inside a bounded worker. The caller abandons a stalled worker after 300
@@ -297,6 +310,27 @@ Source-proven mechanisms (frequency unmeasured):
   `__init__.py` that only imports, is marked graph-synced without its edges
   being projected. When a file's new version has no symbols, the path's old
   graph nodes also stay, because the native cleanup never runs.
+- **S9.** A failed completion dirties only this machine's current row.
+  Suppose machine A's stalled write for version H resumes after machine B
+  re-parsed H with the same symbol IDs and changed vector text or calls,
+  and re-synced it. A's write restores the older input, but its failed
+  completion leaves H marked synced. Symbol IDs carry the content hash
+  (`models.rs:159-170`, excerpt_hash
+  `62753da9201589d6fc37255061bd3e5e9929194fdd7f19963bcc02a61103bc2a`).
+  Vector text covers the docstring (`vector/code_symbols/embedding.rs:390-442`,
+  excerpt_hash
+  `e35f1f614084f2b200d45abb28ea29f30e7c5c62663ace324bda3c823582b643`).
+  Points are upserted by symbol ID (`vector/code_symbols/lifecycle.rs:302-360`,
+  excerpt_hash
+  `ad8e202c6a1b23e14616db0b590d8449588279e01cf83ac42d007aea3b6926dd`). The
+  graph writer replaces a path's facts for one content hash
+  (`graph/code_graph/write.rs:67-178`, excerpt_hash
+  `0fcc0a04dfd52008e834b7ed00c857365a15399bffecb89d87db34b16bdb0a67`).
+- **S10.** `recent_content_hashes_in_git_history` passes `--since` to
+  `rev-list --all` (`content_gc.rs:374-415`, excerpt_hash
+  `8299951a0293592be2985bc36cdb8cd20168e9f6ae5bc73d523da6ca4b08f535`). That
+  option stops traversal at an older-dated commit, so a recent ancestor of
+  an older-dated tip is silently left out of the protection set.
 
 Hypotheses and the evidence that settles each:
 
@@ -351,12 +385,13 @@ Hypotheses and the evidence that settles each:
 gcode, and a re-parse can no longer leave changed projection input behind a
 true flag.
 
-### 1.1 Vector completion compare-and-set [category: code]
+### 1.1 Vector completion compare-and-set and attempted-version recovery [category: code]
 `kind: deliverable`
 
 Targets:
 - `crates/gcode/src/db/queries.rs::mark_vector_sync_attempted`
 - `crates/gcode/src/db/queries.rs::mark_vectors_synced`
+- `crates/gcode/src/db/queries.rs::mark_graph_synced`
 - `crates/gcode/src/projection/sync.rs::VectorProjectionState`
 - `crates/gcode/src/commands/vector.rs::sync_file`
 - `crates/gcode/src/index/api_tests.rs::*` — scope-reason: the attempt and completion calls at 111-133 move to the new signatures
@@ -374,6 +409,11 @@ graph compare-and-set in `db/queries.rs:13-186` and its tests in
 `db/queries_cas_tests.rs` are the pattern. The project-level
 `mark_project_vector_sync_attempted` and `mark_project_vectors_synced` serve
 `vector rebuild` under the exclusive project lock and stay as they are.
+`mark_graph_synced` is called by `projection/sync.rs::sync_graph_file`, the
+graph CLI's `sync_file_graph` (1.4) and `rebuild_project_graph`. Rebuild runs
+under the exclusive project lock, so its completions do not fail in
+practice, and a failure there now also dirties the attempted version, which
+is safe.
 
 Implementation:
 - Add `pub struct VectorSyncAttempt { content_hash: String, attempted_at: ... }`
@@ -385,10 +425,19 @@ Implementation:
 - `mark_vectors_synced(conn, project, path, content_hash, attempted_at) -> bool`
   sets `vectors_synced = true`, keeping `vector_sync_attempted_at`, only on
   the row whose hash and attempt both match and which this machine's state
-  still references. When nothing matches, a CTE in the same statement sets
-  `vectors_synced = false` and `vector_sync_attempted_at = NULL` on this
-  machine's current row for the path, and the call returns false. This
-  mirrors `mark_graph_synced`.
+  still references. When nothing matches, a second CTE in the same statement
+  sets `vectors_synced = false` and `vector_sync_attempted_at = NULL` on two
+  rows, and the call returns false:
+  - this machine's current row for the path, as `mark_graph_synced` does
+    today;
+  - the attempted version `(project, path, content_hash)`, with no
+    file-state join, when that row still exists. A stale write may have
+    overwritten its points after another attempt synced it (S9), whichever
+    machine references it, including none.
+- `mark_graph_synced` adds the same attempted-version row to its failure
+  CTE, for `graph_synced` and `graph_sync_attempted_at`. Both statements
+  keep this SQL local. 1.1 does not call 1.3's `dirty_version_sync`, which
+  would invert the 1.3 dependency.
 - `VectorProjectionState::sync_file` captures the attempt before fetching
   symbols and passes it to the compare-and-set. A failed compare-and-set
   returns `ProjectionFileSyncOutcome::SkippedMissingIndexedFile`.
@@ -403,8 +452,14 @@ Implementation:
   before answering the upsert.
 
 Planned verification:
-`GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'test(mark_vectors_synced) | test(mark_vector_sync) | test(serial_db) | test(api_tests)'`,
+`GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'test(mark_vectors_synced) | test(mark_vector_sync) | test(mark_graph_synced) | test(serial_db) | test(api_tests)'`,
 then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
+
+**Granularity:** four production files and six acceptance items, one
+outcome: a completion either matches its attempt or leaves every version its
+write could have touched pending. The graph change is that failure rule in
+the sibling statement of the same file and test file. Splitting it out would
+put two leaves on one query and one test module.
 
 **Acceptance:**
 
@@ -421,6 +476,17 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
 - 1.1.4 - When the state moves during the upsert, `VectorProjectionState`
   reports a skip and the new current version stays pending. test:
   `crates/gcode/src/projection/sync/tests.rs::vector_sync_file_skips_when_state_moves_during_upsert`.
+- 1.1.5 - A failed vector completion dirties the attempted version as well
+  as this machine's current row. The fixture is the S9 case: this machine's
+  state has moved from H to K, and H is `vectors_synced = true` under a
+  later attempt, as after another machine re-synced changed docstring text.
+  It runs twice, once with H referenced by another machine's state and once
+  with no state referencing H. Each time, completion with the old H attempt
+  returns false and leaves both H and K false with a NULL attempt. test:
+  `crates/gcode/src/db/queries_cas_tests.rs::mark_vectors_synced_cas_failure_dirties_attempted_version`.
+- 1.1.6 - The same holds for `mark_graph_synced`, with H re-synced on the
+  graph flag after a calls and imports change, in the same two runs. test:
+  `crates/gcode/src/db/queries_cas_tests.rs::mark_graph_synced_cas_failure_dirties_attempted_version`.
 
 ### 1.2 Sync worker leaves projection completion to gcode [category: code] (depends: 1.1, 1.4)
 `kind: deliverable`
@@ -562,6 +628,13 @@ Planned verification:
 `GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'test(facts) | test(serial_db) | test(dirty_version_sync)'`,
 then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
 
+**Granularity:** eight acceptance items, one outcome: a re-parse resets
+exactly the flags whose projection input changed. The items are the cases of
+one read, compare and dirty step in one transaction: both flags, neither,
+empty, all facts dropped, `--full`, the helper's scope, vectors only and
+graph only. Splitting vectors from graph would put two leaves on the same
+function, transaction and test file.
+
 **Acceptance:**
 
 - 1.3.1 - Re-writing a version whose symbol set changes dirties both
@@ -603,7 +676,8 @@ Consumers unchanged:
 
 **Research context:** see As-Is Facts (graph completion).
 `projection/sync.rs::sync_graph_file` already honors the compare-and-set
-(`:625-633`), and 1.1 does not change its graph path. `rebuild_project_graph`
+(`:625-633`). 1.1 changes only the failure branch of `mark_graph_synced`,
+which that path already reports as a skip. `rebuild_project_graph`
 also discards the result (`lifecycle.rs:346` and `:364`) and stays as it
 is (Decision Record 12). `sync_file_graph` needs FalkorDB
 (`code_graph::require_graph_reads`, `code_graph::sync_file_graph`), so the
@@ -850,17 +924,29 @@ Implementation:
      `deleted: []`, `complete: false`. Planned and confirmed lists stay
      separate. A write failure exits nonzero with no mutation.
   6. In one transaction, run `UPDATE code_indexed_files SET vectors_synced = false, vector_sync_attempted_at = NULL WHERE id = ANY($1) AND vectors_synced RETURNING id`
-     for the synced-missing version IDs. Record the returned IDs as
-     `versions_reset` and rewrite the receipt.
+     for the synced-missing version IDs, then commit. The returned IDs
+     become `versions_reset` only after the commit succeeds, and then the
+     receipt is rewritten. A commit error exits nonzero, reports the reset
+     as unconfirmed with the receipt path, and sends no delete. The receipt
+     keeps `versions_reset: []`.
   7. Delete orphan IDs with `delete_symbol_vectors` in batches of 256. Append
      each batch to `deleted` and rewrite the receipt after it.
   8. On success, set `complete: true` and exit 0.
+- **Receipt persistence.** The apply sequence writes every receipt through a
+  `persist: &mut dyn FnMut(&ReconcileReceipt) -> anyhow::Result<()>`
+  argument. The command passes a closure over `receipt::write_atomic` and
+  the validated path. Tests pass a recorder that keeps each persisted
+  receipt and fails at a chosen write. No filesystem fault can target the
+  write that follows the committed reset, so this argument is the test hook.
 - **Failure.**
   - A Qdrant error stops the batch loop, leaves `complete: false`, prints
     the error with the receipt path, and exits nonzero.
   - A receipt rewrite failure after step 6 stops before the next mutation.
     It prints the confirmed `versions_reset` count and `deleted` IDs on
-    stderr with the receipt path, and exits nonzero.
+    stderr with the receipt path, and exits nonzero. The last persisted
+    receipt stays `complete: false`. When the failing write is the final
+    `complete: true` one, every delete has run and the exit is still
+    nonzero.
   - A rerun starts over from the dry-run.
 - **Output.** The JSON keys add `mode: "apply"`, `receipt`, `deleted_points`,
   `versions_reset` and `complete`. The `gcode-cli.md` version-13 note
@@ -870,7 +956,8 @@ Implementation:
 **Granularity:** nine production files, one outcome: guarded apply. The
 receipt extraction exists only so apply and retire-files share one set of
 location checks. Shipping it alone leaves no consumer, and shipping apply
-without it duplicates security checks.
+without it duplicates security checks. Its twelve acceptance items are the
+guards and failure boundaries of that one sequence.
 
 Planned verification:
 `GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'test(reconcile) | test(retire_files) | test(projection)'`,
@@ -911,6 +998,20 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
   `vectors_synced = false` when this machine later adopts it, so the
   worker's pending query selects it. test:
   `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_reset_survives_adoption_of_retained_version`.
+- 2.2.10 - When the receipt write right after the committed flag reset
+  fails, apply exits nonzero and sends no Qdrant delete. The flags stay
+  reset. Stderr gives the receipt path and the confirmed `versions_reset`
+  count, and the last persisted receipt is the initial one. test:
+  `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_stops_before_deletes_when_reset_receipt_write_fails`.
+- 2.2.11 - With 257 orphan IDs (two batches), when the write after the first
+  batch fails, apply exits nonzero and sends no second delete. Stderr lists
+  the first batch's IDs. The last persisted receipt has `versions_reset`
+  filled, `deleted: []` and `complete: false`. test:
+  `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_stops_after_first_batch_when_receipt_write_fails`.
+- 2.2.12 - When only the final `complete: true` write fails, apply exits
+  nonzero after every delete. The last persisted receipt lists every batch
+  with `complete: false`. test:
+  `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_exits_nonzero_when_final_receipt_write_fails`.
 
 ## P3: Path-Aware Content Retention
 `kind: framing`
@@ -941,8 +1042,10 @@ Implementation:
 - `history.rs::recent_path_hashes(root, retention_days, candidate_paths: &BTreeSet<String>) -> anyhow::Result<HashSet<(String, String)>>`:
   1. `git rev-parse --show-object-format` gives the raw OID width: 20 for
      sha1, 32 for sha256.
-  2. `git log --all --since=<N>.days --format=%T` gives the unique root
-     trees.
+  2. `git log --all --since-as-filter=<N>.days --format=%T` gives the
+     unique root trees. `--since-as-filter` visits every reachable commit,
+     so a recent ancestor of an older-dated tip is kept (S10). Plain
+     `--since` stops traversal there. Installed Git is 2.54.0.
   3. Build the set of directory prefixes of the candidate paths.
   4. One `git cat-file --batch` process walks the raw tree objects from each
      root, memoized on `(prefix, tree oid)`. It descends only into directory
@@ -957,12 +1060,18 @@ Implementation:
   `recent_path_hashes` once per root with that root's candidate paths. A
   candidate is protected only when `(file_path, content_hash)` is in the
   set. An `Err` retains all of that root's candidates and logs a warning.
+  3.2 narrows this to the root's eligible candidates.
   `recent_content_hashes_in_git_history` is deleted.
 
 Planned verification:
 `cargo nextest run -p gobby-code -E 'test(history)'`, then
 `GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'test(content_gc)'`,
 then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
+
+**Granularity:** two production files and seven acceptance items, one
+outcome: history protects a version only at its own path. The items are the
+walk's path, rename, encoding, filter, failure, object-format and traversal
+cases.
 
 **Acceptance:**
 
@@ -979,10 +1088,14 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
   indexer computes for that path's checkout. test:
   `crates/gcode/src/commands/status/content_gc/history/tests.rs::filtered_content_hashes_per_path`.
 - 3.1.5 - When git history cannot be read, discovery retains every candidate
-  of that root. test:
+  of that root. Its fixture paths are eligible under `test_context()`, so the
+  test still passes after 3.2. test:
   `crates/gcode/src/commands/status/content_gc/tests.rs::history_failure_retains_root_candidates`.
 - 3.1.6 - A sha256 repository is walked correctly. test:
   `crates/gcode/src/commands/status/content_gc/history/tests.rs::sha256_repository_tree_walk`.
+- 3.1.7 - A commit dated inside the window, followed on the same branch by
+  a tip dated before the cutoff, still protects its path and hash. test:
+  `crates/gcode/src/commands/status/content_gc/history/tests.rs::recent_ancestor_behind_old_tip_stays_protected`.
 
 ### 3.2 Current-config eligibility for history protection [category: code] (depends: 3.1)
 `kind: deliverable`
@@ -990,6 +1103,7 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
 Targets:
 - `crates/gcode/src/index/walker/classification.rs::passes_path_filters`
 - `crates/gcode/src/index/walker/classification.rs::explicit_path_visible`
+- `crates/gcode/src/index/walker/classification.rs::classify_explicit_file_with_options`
 - `crates/gcode/src/index/walker.rs::*` — scope-reason: re-export `HistoryPathEligibility` as `pub(crate)`
 - `crates/gcode/src/index/indexer/util.rs::effective_excludes`
 - `crates/gcode/src/index/indexer.rs::*` — scope-reason: re-export `effective_excludes` as `pub(crate)`
@@ -1024,22 +1138,35 @@ Implementation:
   bundle, size) are skipped.
 - `explicit_path_visible` sets `max_filesize = Some(MAX_FILE_SIZE)`
   (`classification.rs:105-107`), so a large current file would fail the
-  visibility walk. It gains a `max_filesize: Option<u64>` parameter. The
-  classifier caller (`:57`) passes `Some(MAX_FILE_SIZE)`, which keeps
-  indexing unchanged. `HistoryPathEligibility` passes `None`.
+  visibility walk. It gains a `max_filesize: Option<u64>` parameter. Its
+  only existing caller, `classify_explicit_file_with_options` (`:57`),
+  passes `Some(MAX_FILE_SIZE)`, which keeps indexing unchanged.
+  `HistoryPathEligibility` passes `None`.
 - `effective_excludes` becomes `pub(crate)`, re-exported from `indexer`.
 - `discover_content_gc(ctx: &Context, retention_days)` takes the project from
-  `ctx.project_id`. An ineligible candidate is collected without a history
-  lookup. History (3.1) runs only for eligible candidates.
+  `ctx.project_id` and decides each candidate root in this order:
+  1. A root that is not an existing directory retains all its candidates,
+     eligible or not.
+  2. Under an existing root, an ineligible candidate is collected without a
+     history lookup.
+  3. History (3.1) runs only for eligible candidates. A history error
+     retains them, and the ineligible ones are still collected, because
+     eligibility reads only config and the working tree.
 - `prune.rs::discover_project_scoped_records` passes `&ctx`.
 - Worktrees: each project root follows these rules with its own config. A
-  root whose checkout is gone fails its git calls and retains its
-  candidates. Stale-project prune owns removing that root.
+  root whose checkout is gone retains its candidates through rule 1.
+  Stale-project prune owns removing that root.
 
 Planned verification:
 `cargo nextest run -p gobby-code -E 'test(classification)'`, then
 `GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'test(content_gc) | test(prune)'`,
 then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
+
+**Granularity:** six production files and seven acceptance items, one
+outcome: history protects a path only while current config indexes it. The
+items are that rule's eligibility cases and its order against root
+availability and history failure. Shipping the rule without that order
+would collect excluded paths under a gone root.
 
 **Acceptance:**
 
@@ -1060,6 +1187,14 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
   at that path still protects an old candidate. Classification still
   excludes that file from indexing. test:
   `crates/gcode/src/index/walker/tests/classification.rs::history_eligibility_ignores_file_size`.
+- 3.2.6 - A root that is not an existing directory retains an eligible
+  candidate, a candidate under `extra_excludes`, and a hidden candidate
+  outside the allowlist. test:
+  `crates/gcode/src/commands/status/content_gc/tests.rs::gone_root_retains_every_candidate`.
+- 3.2.7 - Under an existing root whose history cannot be read, a candidate
+  under `extra_excludes` is collected and an eligible candidate is
+  retained. test:
+  `crates/gcode/src/commands/status/content_gc/tests.rs::history_failure_still_collects_ineligible_candidates`.
 
 ## P4: Documentation
 `kind: framing`
@@ -1093,7 +1228,8 @@ Implementation:
 - Remove the claim that `gcode prune` composes projection cleanup.
 - The prune paragraph says history protects a version only at its own path,
   and only while the path passes the current excludes, hidden and gitignore
-  rules.
+  rules. A root whose checkout is gone keeps all its versions, and a
+  history error keeps the eligible ones.
 
 Planned verification: `uv run gobby plans validate .gobby/plans/code-index-vector-reconciliation.md -p /Users/josh/Projects/gobby`
 and a read-through against the shipped `gcode vector reconcile --help`.
@@ -1242,7 +1378,7 @@ leaf lands:
 
 ```bash
 cargo nextest run -p gobby-code
-GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'test(serial_db) | test(mark_vectors_synced) | test(dirty_version_sync) | test(commands::graph) | test(history) | test(reconcile)'
+GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'test(serial_db) | test(mark_vectors_synced) | test(mark_vector_sync) | test(mark_graph_synced) | test(api_tests) | test(dirty_version_sync) | test(commands::graph) | test(history) | test(content_gc) | test(prune) | test(reconcile) | test(retire_files)'
 cargo clippy -p gobby-code && cargo fmt -p gobby-code -- --check
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_sync_worker.py tests/code_index/test_sync_worker_breaker.py tests/test_runner_code_index_shutdown.py tests/code_index/test_code_index_storage.py tests/skills/test_reference_library.py -q
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
