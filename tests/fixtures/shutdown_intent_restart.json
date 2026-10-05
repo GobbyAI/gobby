@@ -1,0 +1,1 @@
+{"source": "cli_restart", "intent": "restart", "sender_pid": 4242, "timestamp": 2000.0, "details": {"drain_terminals": false}}

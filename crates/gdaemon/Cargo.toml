@@ -38,7 +38,7 @@ num-bigint = "0.4"
 rand = "0.8"
 sha2 = "0.10"
 time = "0.3"
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring", "tls12"] }
 tower-service = "0.3"
 uuid = { version = "1", features = ["v4"] }
