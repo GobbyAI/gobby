@@ -4,6 +4,7 @@ from contextlib import nullcontext
 
 import click
 
+from gobby.cli.auth_login import key, login
 from gobby.cli.runtime import require_cli_database
 from gobby.identity import hash_password, validate_password
 from gobby.storage.auth import (
@@ -17,7 +18,11 @@ from gobby.utils.local_token import local_token_path, read_local_api_token
 
 @click.group("auth")
 def auth() -> None:
-    """Manage web credentials and the local daemon API token."""
+    """Manage web credentials, node enrollment, and the local daemon API token."""
+
+
+auth.add_command(login)
+auth.add_command(key)
 
 
 @auth.command("credentials")

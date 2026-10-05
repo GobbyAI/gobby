@@ -62,11 +62,15 @@ def test_auth_reset_password(mock_stores: tuple[MagicMock, MagicMock]) -> None:
     )
 
 
-def test_auth_group_has_credentials_and_token_commands() -> None:
-    assert set(auth.commands) == {"credentials", "token"}
+def test_auth_group_registers_enrollment_and_token_commands() -> None:
+    assert set(auth.commands) == {"credentials", "token", "login", "key"}
     help_result = CliRunner().invoke(auth, ["token", "--help"])
     assert help_result.exit_code == 0
     assert "gobby auth token --rotate" in help_result.output
+    login_help = CliRunner().invoke(auth, ["login", "--help"])
+    assert login_help.exit_code == 0
+    for option in ("--hub", "--email", "--fingerprint", "--label", "--insecure"):
+        assert option in login_help.output
 
 
 def test_auth_token_status_and_show(
