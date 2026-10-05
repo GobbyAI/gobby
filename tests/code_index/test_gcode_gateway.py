@@ -307,7 +307,9 @@ async def test_gateway_preserves_bounded_partial_output_on_incremental_timeout(
     )
     processes = [FakeProcess(stdout=GCODE_PIN_STDOUT), timeout_proc]
     _patch_subprocess(monkeypatch, processes)
-    gateway = GcodeGateway(binary="/tmp/gcode", timeout_seconds=0.01)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+    await gateway._ensure_version()
+    gateway._timeout_seconds = 0.01
 
     result = await gateway.incremental_index(tmp_path, ["src/app.py"])
 
@@ -700,7 +702,9 @@ async def test_gateway_raises_for_timeout(monkeypatch: pytest.MonkeyPatch) -> No
         timeout_proc,
     ]
     _patch_subprocess(monkeypatch, processes)
-    gateway = GcodeGateway(binary="/tmp/gcode", timeout_seconds=0.01)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+    await gateway._ensure_version()
+    gateway._timeout_seconds = 0.01
 
     with pytest.raises(GcodeTimeoutError, match="stderr tail: stage=graph-clear") as exc_info:
         await gateway.graph_clear("proj-1")

@@ -420,6 +420,7 @@ fn resolve_index_context(
     let target_filter = path_filter_for(&target_root, &target);
     if target_root != ctx.project_root {
         let identity = crate::config::resolve_project_identity(&target_root)?;
+        ctx.validate_project_scope(&identity.project_id, &target_root)?;
         crate::config::warn_project_identity(&identity, ctx.quiet);
         if !ctx.quiet {
             eprintln!(

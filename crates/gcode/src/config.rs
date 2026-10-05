@@ -2,6 +2,7 @@
 
 mod context;
 mod layers;
+mod managed_scope;
 mod runtime_contract;
 mod services;
 
