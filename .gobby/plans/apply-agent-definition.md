@@ -85,7 +85,11 @@ enforces it (#22902 Constraints, boundary paragraph).
      `compute_definition_hash(agent_body.model_dump_json())` over the resolved
      body it applies, which is the same form `template_hashes.py` uses for agent
      templates. The resolved body is stable for a session because its CLI
-     source does not change.
+     source does not change, and both entry points (the tool and SessionStart)
+     resolve `provider: inherit` with that source (1.1).
+   - Every activation path delivers the same receipt. A same-seat activation
+     with a different pin injects one drift line, whether it is a SessionStart
+     re-activation or a repeat tool call (1.3).
    - The pin is identity, not a freeze. On any later activation of the same seat
      (SessionStart on compact, resume or a `/clear` successor) with a different
      hash:
@@ -211,7 +215,7 @@ enforces it (#22902 Constraints, boundary paragraph).
     | --- | --- | --- |
     | Compaction | Same session; SessionStart `compact` re-activates by `_agent_type`; the step instance survives | none beyond Decision 2 |
     | Pane resume | Same as compaction (`source="resume"` on the existing row) | none beyond Decision 2 |
-    | `/clear` | Successor copies `_agent_type` and `_agent_definition_hash` before its activation; gets a fresh step instance at the first step; a spawned seat's live run, its terminal and its back-pointer move to the successor after a staged clear | 1.4 |
+    | `/clear` | Successor copies `_agent_type` and `_agent_definition_hash` before its activation; gets a fresh step instance at the first step; a spawned seat's live run, its terminal and its back-pointer move to the successor after a staged clear; the pane's frozen managed identity then speaks for the successor | 1.4, 1.6 |
     | Spawned-run resume | Reuses the session row; spawned sessions cannot change definition (Decision 5) | none |
 
 11. **Hand launch and lane carrier (R1, R2).**
@@ -252,7 +256,9 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) and re-verified at
   - It seeds `step_workflow_complete=False` only when the definition has a step
     workflow, the session is spawned, and the session has an assigned or active
     task.
-  - It writes the blocked-tools keys only when they are non-empty.
+  - It writes the blocked-tools keys only when they are non-empty,
+    `_active_skill_names` only for a restricted skill selection, and
+    `_skill_format` only when the definition sets one.
 - `activate_default_agent` handles existing sessions as follows.
   - It always re-applies seven keys: `_agent_type`, `_active_rule_names`,
     `_active_skill_names`, `_skill_format`, the two blocked-tools keys and
@@ -288,6 +294,10 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) and re-verified at
     completes its run and marks its terminal exited, even after
     `set_handoff(clear_session=true)` staged the attempt (1.4 research
     context).
+  - A spawned pane keeps its launch environment across `/clear`. Its hooks and
+    its MCP proxy send `GOBBY_SESSION_ID`, the predecessor, as
+    `X-Gobby-Session-Id`, so the daemon attributes the successor's hook events
+    and tool calls to the expired predecessor (1.6 research context).
 - Spawned-run resume (`agents/resume_executor.py`) reuses the existing session
   (`existing_session_id`) and merges the spawn-time `initial_variables`.
 - Web chat:
@@ -384,14 +394,18 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) and re-verified at
     - `spawn_agent/_implementation.py` 926;
     - `sessions/clear_continuation.py` 860;
     - `_session.py` 776;
+    - `routes/mcp/hooks.py` 775;
     - `_agent.py` 721;
     - `session_activation.py` 698;
+    - `routes/llm.py` 575;
+    - `request_context.py` 515;
     - `materialize.py` 497;
     - `_session_launch.py` 345;
     - `agent_models.py` 270;
     - `_session_start/agents.py` 241;
     - `_session_end.py` 217;
     - `spawn_agent/_runtime.py` 195;
+    - `routes/sessions/variables.py` 126;
     - `agents_spawn_tools.py` 123;
     - `skills/discovery.py` 44.
   - Two targeted files are above 850 lines, and neither grows.
@@ -402,8 +416,9 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) and re-verified at
   - `resume_executor.py` (711) is not targeted (Decision 5).
 - Plan-wide target scope form per file: `session_activation.py`, `_agent.py`,
   `_session_start/agents.py`, `materialize.py`, `_session_end.py`,
-  `clear_continuation.py`, `spawn_agent/_implementation.py` and
-  `spawn_agent/_runtime.py` take exact symbols only.
+  `clear_continuation.py`, `spawn_agent/_implementation.py`,
+  `spawn_agent/_runtime.py`, `request_context.py`, `routes/mcp/hooks.py`,
+  `routes/sessions/variables.py` and `routes/llm.py` take exact symbols only.
 - Boundaries:
   - #22902 owns seat definitions and their bundle validation.
   - #22899 owns `sandbox_profile`. Activation copies no sandbox field: a
@@ -428,7 +443,7 @@ spawn.
 
 | Item | Runtime work | Evidence |
 | --- | --- | --- |
-| L2 | Idle-TTL enforcement for interactive runs whose `resume_metadata` carries `idle_ttl_seconds`. The reader is `_handle_idle_check`'s interactive branch: once the run's idle time reaches the TTL, the run wraps up, saves and calls `end_agent_run`. Interactive runs without the key keep #23442's no-idle-end behavior. After 1.4, a seat's run points at its current `/clear` successor, so the idle clock follows the live session. Carried as deferral D3; its task goes under #22691 at expansion, after Josh approves this plan | `_handle_idle_check` returns early for every interactive run (`idle_check_handler.py:481`); `last_session_activity(session_id)` and `session.updated_at` already give the idle clock there |
+| L2 | Idle-TTL enforcement for interactive runs whose `resume_metadata` carries `idle_ttl_seconds`. The reader is `_handle_idle_check`'s interactive branch: once the run's idle time reaches the TTL, the run wraps up, saves and calls `end_agent_run`. Interactive runs without the key keep #23442's no-idle-end behavior. After 1.4, a seat's run points at its current `/clear` successor, so the idle clock follows the live session. Carried as deferral D3. The Orchestrator files its task under #22691 after Josh approves this plan and before expansion, and D3 states the numeric-ref route | `_handle_idle_check` returns early for every interactive run (`idle_check_handler.py:481`); `last_session_activity(session_id)` and `session.updated_at` already give the idle clock there |
 | L3 | `end_agent_run` closes the pane and terminal | It terminates the runtime but never calls `pane_close`; `sweep_dead_panes` is lazy |
 | P1 | Orphan terminal reaper for live terminals whose session ended | No sweep covers them |
 | P2 | Failed Stop leaves a seat `active` for 30–90 minutes | `handle_stop` pauses only when `turn_disposition != "unknown"` |
@@ -548,14 +563,37 @@ cannot be split without a red tree.
 - Registration is the nested `apply_persona` inside
   `agents_spawn_tools.py::register_agent_spawn_tools`, which passes
   `ctx.db` and `ctx.task_manager`.
+- The two entry points resolve `provider: inherit` differently today
+  (adversary finding F-pin-provider-identity, gobby#15414, verified at
+  921ecab10a).
+  - `agent_resolver.py::_resolve_inherit` sets the provider to `cli_source`,
+    or to `"claude"` when it is omitted (lines 31-33).
+  - The tool passes the session's source (`apply_persona.py:237`, through
+    `_resolve_session_identity`).
+  - `activate_default_agent` receives `cli_source` (`event.source.value` at
+    both callers, `flow.py:121` and `materialize.py:308`) but calls
+    `resolve_agent` without it (`_session_start/agents.py:120-124`).
+  - The pin hashes every dumped field, so a Codex seat would pin
+    `provider: codex` through the tool and `provider: claude` at its next
+    SessionStart, which is false drift.
+- `build_persona_changes` writes `_active_skill_names` only when the selection
+  is restricted (line 87) and `_skill_format` only when it is set (line 90).
+  The narrow builder that 1.1 deletes wrote `None` for both (lines 133-134).
+  `search_skills.py:120-125` treats `None` as every skill, and
+  `activate_default_agent` re-applies both keys on every re-activation (adversary
+  finding F-full-delta-stale-skills).
 
 Implementation:
 - New module `mcp_proxy/tools/apply_agent_definition.py`. Every symbol in it is
   new or moved:
   - `build_definition_changes`: moved from `build_persona_changes`, with the
-    same signature and body. It always writes both blocked-tools keys, as an
-    empty list when absent, so a stale block cannot survive. It also writes
-    `_agent_definition_hash`.
+    same signature and body, except that a full activation replaces every
+    definition-owned key, so no restriction, block or format from an earlier
+    activation survives:
+    - it always writes both blocked-tools keys, as an empty list when absent;
+    - it always writes `_active_skill_names` (`None` when the definition
+      selects every skill) and `_skill_format` (`None` when it sets none);
+    - it writes `_agent_definition_hash`.
   - `definition_pin(agent_body) -> str`: returns
     `compute_definition_hash(agent_body.model_dump_json())`.
   - `build_persona_prompt_context`: moved from `build_session_persona_context`.
@@ -611,6 +649,9 @@ Callers:
 - `activate_default_agent` adds `_agent_definition_hash` to both its
   `internal_keys` and `always_reapply` sets, so every re-activation refreshes
   the pin (1.3 compares it first).
+- `activate_default_agent` passes its `cli_source` to `resolve_agent`, so both
+  entry points resolve `provider: inherit` to the session's CLI and compute the
+  same pin for the same row.
 - `start_hydrated_session` calls `apply_agent_definition_impl` with the
   explicit session id. `_create_chat_session_inner` calls
   `build_persona_prompt_context`.
@@ -634,11 +675,22 @@ Tests: `test_apply_agent_definition.py` uses the `HubDatabase` fixtures of
   `source="compact"` on a session activated as a seat. It asserts that
   `_agent_type`, `_active_skill_names` and `_active_rule_names` still carry the
   seat's values, which is the compaction-hazard regression.
+- The pin-identity case seeds a session whose `source` is `codex` and a seat row
+  with `provider: inherit`. It activates through the tool, drives SessionStart
+  `compact` with `cli_source="codex"`, and repeats the tool call.
+- The skill-reset cases configure a base agent with restricted skill selectors
+  and a `skill_format`, and a seat with neither. The reactivation case patches
+  definition resolution to drop the seat's selectors and format before
+  SessionStart `compact`.
+- The registry case lists the registered tools of
+  `register_agent_spawn_tools` and asserts that `apply_persona` is absent.
 
 Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/test_session_start_reactivation.py tests/workflows/test_step_snapshot_semantics.py tests/mcp_proxy/tools/skills/test_list_skills.py tests/workflows/test_session_defaults.py tests/servers/websocket/chat/test_servers_websocket_chat_session.py tests/hooks/test_agent_events_coverage.py tests/hooks/test_session_activation_reconciliation.py tests/hooks/event_handlers/test_session_variable_preservation.py -q`.
 Then run `uv run ruff check` and `uv run mypy` on the changed files, and
-`rg -w 'apply_persona|_persona_name|build_session_persona_changes' src tests`,
-which must print nothing.
+`rg -w 'apply_persona|_persona_name|build_session_persona_changes' src tests --glob '!tests/mcp_proxy/tools/test_apply_agent_definition.py'`,
+which must print nothing. The one excluded file holds the retirement-absence
+assertion of 1.1.7, and `rg -w -c apply_persona tests/mcp_proxy/tools/test_apply_agent_definition.py`
+must print `1`.
 
 Consumers unchanged:
 - `src/gobby/hooks/event_handlers/_base.py` — no-edit-reason: calls get_session_skill_exclusions by name; the signature and return type are unchanged, only the variable it reads changes.
@@ -673,9 +725,27 @@ Consumers unchanged:
   `apply_agent_definition_impl`. test:
   `tests/servers/websocket/chat/test_servers_websocket_chat_session.py::test_web_chat_launch_uses_apply_agent_definition`.
 - 1.1.7 - `apply_persona.py` no longer exists and the tool registry exposes
-  `apply_agent_definition` and no `apply_persona`. symbol:
-  `register_agent_spawn_tools`. file:
-  `src/gobby/mcp_proxy/tools/agents_spawn_tools.py`.
+  `apply_agent_definition` and no `apply_persona`. test:
+  `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_registry_exposes_apply_agent_definition_only`.
+- 1.1.8 - A `provider: inherit` seat on a `codex` session keeps one pin across
+  tool activation, a `compact` SessionStart and a repeat tool call. The
+  SessionStart stores the same pin, and the repeat call returns `unchanged`
+  without a write. test:
+  `tests/hooks/test_session_start_reactivation.py::test_inherit_provider_pin_is_stable_across_entry_points`.
+- 1.1.9 - Activating a seat that selects every skill and sets no skill format,
+  over a base agent that restricted both, stores `_active_skill_names: None`
+  and `_skill_format: None`. test:
+  `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activation_clears_inherited_skill_restriction`.
+- 1.1.10 - A `compact` SessionStart after the seat's definition drops its skill
+  selectors and format stores `_active_skill_names: None` and
+  `_skill_format: None`. test:
+  `tests/hooks/test_session_start_reactivation.py::test_reactivation_clears_dropped_skill_restriction`.
+- 1.1.11 - A hand-launched pane that activates a seat whose definition blocks
+  `gobby-worktrees:create_worktree` (`blocked_mcp_tools`) and `EnterWorktree`
+  (`blocked_tools`) is refused both by `_check_agent_tool_enforcement`, and
+  stays refused after a `compact` SessionStart. #23477 relies on this for the
+  plan-family seats (Orchestrator, via gobby#15389, 2026-10-05). test:
+  `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activated_seat_refuses_worktree_tools`.
 
 ### 1.2 Step workflows on interactive sessions [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -756,13 +826,19 @@ Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 1.2.5 - The old no-instance non-goal test is inverted. test:
   `tests/workflows/test_step_snapshot_semantics.py::test_definition_activation_materializes_step_instance`.
 
-### 1.3 Definition drift receipt on re-activation [category: code] (depends: 1.1)
+### 1.3 Definition drift receipt on re-activation [category: code] (depends: 1.1, 1.2)
 `kind: deliverable`
 
 Targets:
+- `src/gobby/mcp_proxy/tools/apply_agent_definition.py`
 - `src/gobby/hooks/event_handlers/_session_start/agents.py::activate_default_agent`
 - `src/gobby/hooks/event_handlers/_agent.py::AgentEventHandlerMixin._inject_agent_instructions_if_needed`
 - `tests/hooks/test_session_start_reactivation.py`
+- `tests/mcp_proxy/tools/test_apply_agent_definition.py`
+
+**Granularity:** the drift comparison is shared by the tool and SessionStart,
+so both entry points change with it. 1.3 depends on 1.2 because 1.2 also edits
+`apply_agent_definition.py`.
 
 **Research context:** existing behavior:
 - `activate_default_agent` reads `existing = sv_mgr.get_variables(session_id)`
@@ -781,22 +857,31 @@ Targets:
   `agent_body.prompt_for(surface)` when `_agent_context_injected` is false or
   `_agent_identity_reinject` or `_agent_context_rehydrate_pending` is set. It
   then stages the three flags back to their idle values.
+- The tool re-applies a same-seat changed pin as drift (1.1 step 7) and already
+  sets `_agent_identity_reinject`. Without its own drift line, the next
+  SessionStart sees the new pin and cannot report the change (adversary finding
+  F-tool-drift-receipt).
 
 Implementation:
-- In `activate_default_agent`, compare `existing` against the new changes after
-  the `always_reapply` filter, immediately before `merge_variables`, and add the
-  drift keys at that point so the filter cannot drop them.
-- When the stored `_agent_type` equals the activated name and the stored
-  `_agent_definition_hash` is non-null and differs from the new one, add to the
-  filtered changes:
-  - `_agent_definition_drift`: a single line of the form "Definition
-    `<agent>` changed since this session activated it (`<old[:12]>` →
-    `<new[:12]>`); the current definition now applies.";
+- New function in `apply_agent_definition.py`:
+  `definition_drift_line(existing: Mapping[str, Any], agent: str, new_pin: str) -> str | None`.
+  When `existing["_agent_type"]` equals `agent` and the stored
+  `_agent_definition_hash` is non-null and differs from `new_pin`, it returns a
+  single line of the form "Definition `<agent>` changed since this session
+  activated it (`<old[:12]>` → `<new[:12]>`); the current definition now
+  applies." Otherwise it returns `None`.
+- In `activate_default_agent`, call it with `existing` after the
+  `always_reapply` filter, immediately before `merge_variables`, so the filter
+  cannot drop the keys. For a line, add to the filtered changes:
+  - `_agent_definition_drift`: the line;
   - `_agent_identity_reinject: True`.
+- In `apply_agent_definition_impl` step 9, call it with the variables read at
+  step 2. For a line, add `_agent_definition_drift` to the changes; the
+  reinjection flag is already set.
 - In `_inject_agent_instructions_if_needed`, when `_agent_definition_drift` is a
   non-empty string, add it after the preamble and stage it back to `None` with
   the other flags.
-- No drift line is produced in these cases:
+- Neither path produces a drift line in these cases:
   - no stored pin (the first activation);
   - the same pin;
   - a different agent. A `/clear` successor carrying the predecessor's pin is
@@ -809,12 +894,15 @@ exactly one line on the next turn.
 Tests: the step-instance drift case mirrors the `snap_db` and `_agent` helpers
 of `tests/workflows/test_step_snapshot_semantics.py`. It seeds the instance with
 `spawn_agent/_step_state.py::persist_initial_step_instance`, as
-`test_definition_edit_does_not_mutate_running_snapshot` does, so 1.3 does not
-depend on 1.2. It activates the seat, advances the instance to its second
-step, and then patches definition resolution to a body with changed rules,
-tool blocks and step list before it drives SessionStart `compact` and `resume`.
+`test_definition_edit_does_not_mutate_running_snapshot` does. It activates the
+seat, advances the instance to its second step, and then patches definition
+resolution to a body with changed rules, tool blocks and step list before it
+drives SessionStart `compact` and `resume`. The tool case activates a seat,
+patches definition resolution to a changed row, calls the tool again for the
+same seat, runs `_inject_agent_instructions_if_needed` twice, and then repeats
+the tool call unchanged.
 
-Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_session_start_reactivation.py tests/hooks/event_handlers/test_session_variable_preservation.py -q`.
+Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_session_start_reactivation.py tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/event_handlers/test_session_variable_preservation.py -q`.
 
 **Acceptance:**
 
@@ -823,7 +911,8 @@ Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   including on a session that already stores `_agent_identity_reinject: False`
   and `_agent_definition_drift: None`. test:
   `tests/hooks/test_session_start_reactivation.py::test_reactivation_reports_definition_drift_once`.
-- 1.3.2 - An unchanged pin injects no drift line. test:
+- 1.3.2 - An unchanged pin injects no drift line, including for a
+  `provider: inherit` seat on a `codex` session whose pin the tool wrote. test:
   `tests/hooks/test_session_start_reactivation.py::test_unchanged_pin_injects_no_drift_line`.
 - 1.3.3 - On a stepped seat advanced past its first step, a compact or resume
   SessionStart after a change to the definition's rules, tool blocks and step
@@ -831,6 +920,10 @@ Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   line. The step instance keeps its id, its current step and its snapshot.
   test:
   `tests/hooks/test_session_start_reactivation.py::test_drift_reactivation_keeps_running_step_instance`.
+- 1.3.4 - A same-seat tool call after the seat's row changed stores the new pin
+  and stages one drift line, which the next injection delivers once and the one
+  after it does not. An unchanged repeat call stages none. test:
+  `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_same_seat_changed_row_reports_drift_once`.
 
 ### 1.4 /clear successor keeps its seat and its run [category: code] (depends: 1.2, 1.3)
 `kind: deliverable`
@@ -911,6 +1004,16 @@ For the run of a spawned seat (Q3, verified with `gcode evidence` at
   created (`agents/spawn.py:213`). The take never moved it, and this
   deliverable leaves it alone: it is creation-time provenance, and the seat's
   binding is `child_session_id`.
+- Spawn depth does not cross a terminal `/clear` (adversary finding
+  F-clear-spawn-depth, gobby#15414, verified at 9e79ef1).
+  - The successor's SessionStart reads `agent_depth` from the hook payload and
+    defaults to 0 when it is absent (`_session_start/flow.py:303` and `:322`).
+    It then registers the row with that depth (lines 411-423).
+  - `can_spawn_child` reads the stored depth (`agents/session.py:116`) against
+    the depth limit (lines 133-141), so a depth-5 seat could spawn after a
+    clear.
+  - The web-chat clear already copies the predecessor's `agent_depth` and
+    `spawned_by_agent_id` (`clear_continuation.py:724-725`).
 
 Implementation, seat identity:
 - In the same `merge_variables` call that sets `HANDOFF_PULL_PENDING_VARIABLE`
@@ -937,10 +1040,11 @@ Implementation, run binding:
   move takes the `parent_session_id` updates from `take_clear_handoff_marker`
   (lines 482-490, including the supersede id) and from
   `_commit_web_chat_clear_successor_rows` (line 779). Both call one function,
-  `move_clear_run_lineage(conn, *, successor_id, session_ids)`, inside their
-  existing transaction, so the web-chat clear follows the same lineage rule.
-  It does nothing extra there, because a web-chat session is never a run's
-  child. The function:
+  `move_clear_run_lineage(conn, *, predecessor_id, successor_id, session_ids)`,
+  inside their existing transaction, so the web-chat clear follows the same
+  lineage rule. It does nothing extra there, because a web-chat session is
+  never a run's child and its successor row already carries the predecessor's
+  depth. The function:
   1. moves `agent_runs.parent_session_id` from `session_ids` to the successor
      (the moved statements);
   2. moves `agent_runs.child_session_id` from `session_ids` to the successor
@@ -949,7 +1053,11 @@ Implementation, run binding:
      sessions in `session_ids` that point at it, sets the successor's
      `agent_run_id` to it when null, and moves the run's live terminal row
      (`terminals.agent_run_id` = run, `state` in `pending` or `live`) to the
-     successor.
+     successor;
+  4. copies `agent_depth` and `spawned_by_agent_id` from `predecessor_id`, the
+     session whose clear marker the take consumes, to the successor. The
+     source is that stored row, never `parent_session_id` or hook input, and
+     a superseding successor copies from the same predecessor.
 - The take expires the predecessor and calls the function in one transaction,
   before `_activate_default_agent`. No reader sees a live run pointing at an
   expired session: before the take the predecessor is `awaiting_handoff`, and
@@ -960,15 +1068,17 @@ Implementation, run binding:
   row, and `reconcile_pending_terminations` then terminalizes the run. No new
   sweep is added.
 
-Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_clear_successor_seat.py tests/hooks/test_session_start_handlers.py tests/hooks/test_session_end_handlers.py tests/hooks/test_session_events_coverage.py tests/hooks/test_session_materialize.py tests/sessions/test_clear_acknowledgment.py tests/sessions/test_handoff.py tests/sessions/test_mailbox.py tests/servers/websocket/chat/test_clear_session.py -q`.
+Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_clear_successor_seat.py tests/hooks/test_session_start_handlers.py tests/hooks/test_session_end_handlers.py tests/hooks/test_session_events_coverage.py tests/hooks/test_session_materialize.py tests/sessions/test_clear_acknowledgment.py tests/sessions/test_handoff.py tests/sessions/test_mailbox.py tests/servers/websocket/chat/test_clear_session.py tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py -q`.
 Then run `uv run ruff check` and `uv run mypy` on the changed files.
+`test_execution_session_end_cleanup.py` drives `handle_session_end` without a
+clear reason, so the staged-clear hand-off never applies there; 1.6 owns its
+only edit.
 
 Consumers unchanged:
 - `tests/hooks/test_session_materialize.py` — no-edit-reason: calls take_clear_handoff_marker, whose signature and boolean result are unchanged; its assertions read sessions.parent_session_id, which the take does not move.
 - `tests/sessions/test_clear_acknowledgment.py` — no-edit-reason: calls take_clear_handoff_marker with the same signature and result; its agent-run manager is a mock with no bound run.
 - `tests/sessions/test_handoff.py` — no-edit-reason: calls take_clear_handoff_marker with the same signature and result; its runs are children of other sessions, so only their parent_session_id moves, as today.
 - `tests/sessions/test_mailbox.py` — no-edit-reason: calls take_clear_handoff_marker with the same signature and result; it seeds no agent run.
-- `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py` — no-edit-reason: drives handle_session_end without a clear reason, so the staged-clear hand-off never applies.
 - `tests/workflows/test_session_end_cleanup.py` — no-edit-reason: drives handle_session_end without a clear reason, so the staged-clear hand-off never applies.
 
 **Acceptance:**
@@ -1003,6 +1113,11 @@ Consumers unchanged:
 - 1.4.6 - When a newer successor supersedes a bound one, the run moves from the
   superseded successor to the newer one. test:
   `tests/hooks/test_clear_successor_seat.py::test_superseding_successor_takes_the_run`.
+- 1.4.7 - A depth-5 seat's terminal clear successor, whose SessionStart payload
+  carries no `agent_depth`, stores the predecessor's `agent_depth` and
+  `spawned_by_agent_id`, and so does a superseding successor.
+  `can_spawn_child` refuses both. test:
+  `tests/hooks/test_clear_successor_seat.py::test_clear_successor_keeps_spawn_depth`.
 
 ### 1.5 Seat rules match `_agent_type` only [category: config] (depends: 1.1)
 `kind: deliverable`
@@ -1060,8 +1175,10 @@ Implementation:
   context carrying only `_persona_name: plan-writer` matches no seat rule.
 
 Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_seat_rules.py -q`, and
-`rg -w _persona_name src/gobby/install/shared/workflows/rules tests/workflows/test_seat_rules.py`,
-which must print nothing.
+`rg -w _persona_name src/gobby/install/shared/workflows/rules`, which must print
+nothing. The test file keeps exactly one retirement-absence fixture, the 1.5.1
+context: `rg -w -c _persona_name tests/workflows/test_seat_rules.py` must print
+`1`.
 
 **Acceptance:**
 
@@ -1071,6 +1188,126 @@ which must print nothing.
 - 1.5.2 - Seat guidance injection still matches a session whose `_agent_type`
   names a seat and skips one that names no seat. test:
   `tests/workflows/test_seat_rules.py::test_seat_common_matches_spawned_and_skips_non_seats`.
+
+### 1.6 Managed pane identity follows its run across /clear [category: code] (depends: 1.4)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/sessions/clear_run_lineage.py`
+- `src/gobby/servers/routes/mcp/endpoints/request_context.py::_set_context_for_request`
+- `src/gobby/servers/routes/mcp/hooks.py::execute_hook`
+- `src/gobby/servers/routes/sessions/variables.py::_bound_session_id`
+- `src/gobby/servers/routes/llm.py::chat_completions`
+- `tests/servers/test_managed_clear_identity.py`
+- `tests/servers/routes/mcp_endpoints/test_execution_context.py::*` — scope-reason: the MagicMock server's auth_service.verified_agent_claims returns None, so the mock does not stand in for run claims
+- `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py::*` — scope-reason: the MagicMock servers' auth_service.verified_agent_claims returns None
+- `tests/servers/test_mcp_execution_context.py::*` — scope-reason: the MagicMock server's auth_service.verified_agent_claims returns None
+- `tests/servers/routes/test_llm_routes.py::*` — scope-reason: the SimpleNamespace claims stub gains agent_run_id=None
+
+**Granularity:** one rule, applied at the four places where a run-bound
+capability names its caller session. 1.4 makes the run's binding authoritative,
+and this deliverable makes requests follow it. It is split from 1.4 because it
+changes server ingress, while 1.4 changes the clear lifecycle.
+
+**Research context:** adversary finding F-clear-capability-continuity
+(gobby#15414) reported that the successor is refused. The source shows a
+different failure: the successor is accepted and attributed to the expired
+predecessor. Verified at 9e79ef1:
+- A spawned pane keeps its launch environment across `/clear`.
+  - ghook sets `X-Gobby-Session-Id` from `GOBBY_SESSION_ID` before the payload
+    session (`crates/ghook/src/dispatch.rs:402-413`).
+  - The MCP stdio proxy sends `GOBBY_SESSION_ID` as the caller for managed runs
+    (`mcp_proxy/stdio_proxy.py::DaemonProxy._request`).
+  - `utils/local_token.py::daemon_auth_headers` sends the run token from
+    `GOBBY_AGENT_API_TOKEN`, with `GOBBY_SESSION_ID` and `GOBBY_AGENT_RUN_ID`
+    beside it.
+  - The token's `session_id` claim is the session it was issued for
+    (`issue_agent_api_token`, `local_token.py:96`).
+- Auth passes after the clear. `auth_service.py::_agent_identity_matches` checks
+  the header session against `claims.session_id` (lines 170-174), and both still
+  name the predecessor.
+- Attribution goes to the predecessor:
+  - hook ingress puts the header into `_platform_session_id` (`hooks.py:284`),
+    and `SessionLookupService.resolve` returns an explicit platform session as
+    it is (`hooks/session_lookup.py:155-160`). Revival of a cleared row is
+    suppressed (`storage/sessions/_terminal_revival.py`), but the id is still
+    returned;
+  - `_set_context_for_request` seeds the header session as the caller, and
+    `utils/session_context.py` follows no clear chain;
+  - `routes/sessions/variables.py::_bound_session_id` returns
+    `claims.session_id` (lines 24-38);
+  - `routes/llm.py::chat_completions` takes `claims.session_id` (line 308), and
+    the capability matrix admits run tokens on that route.
+- After 1.4's take, the run's `child_session_id` and the successor's
+  `agent_run_id` name each other, and the predecessor's `agent_run_id` is null.
+  Before the take, `child_session_id` is still the predecessor. That pair is the
+  live binding.
+
+Implementation:
+- New function in `sessions/clear_run_lineage.py`:
+  `current_run_session_id(db, *, agent_run_id: str | None, session_id: str, project_id: str) -> str`.
+  It returns the run's `child_session_id` when all of these hold:
+  - `agent_run_id` is set;
+  - the run is `pending` or `running`;
+  - the child session's `agent_run_id` is that run;
+  - the child session's `project_id` equals `project_id`.
+
+  Otherwise it returns `session_id`. It follows the run's binding and never
+  walks the clear chain, so a predecessor with no run is never forwarded.
+- Each call site passes the verified claims (`agent_run_id`, `session_id`,
+  `project_id`):
+  - `_set_context_for_request`: when `server.auth_service.verified_agent_claims(request)`
+    returns claims, it seeds the returned session in place of the header
+    session. Auth has already bound the header to `claims.session_id`.
+  - `execute_hook`: it stores the returned session as `_platform_session_id`.
+  - `_bound_session_id`: it accepts a requested session that resolves to
+    `claims.session_id` or to the returned session, and returns the returned
+    session.
+  - `chat_completions`: it uses the returned session.
+- Unchanged, with reasons:
+  - `_agent_identity_matches`: the header still names the token's session.
+  - `runtime_grants/handshake.py` (line 90 recomputes the token signature over
+    its own claims; line 165 binds a grant principal to the token's session),
+    `routes/runtime_handshake.py:165` and `grant_auth.py::bearer_matches_grant`
+    (line 249). The grant and the token both name the issued session, as
+    capability provenance, so a grant stays valid across the clear. Caller
+    attribution is decided at the four sites above.
+- Scope and revocation are unchanged. A token speaks only for its own run, in
+  its own project, on its own machine. Once the run ends, `_managed_capability_is_live`
+  rejects the token (`run_inactive`) before any of these sites runs.
+
+Tests: `tests/servers/test_managed_clear_identity.py` uses the HTTP server
+fixtures of `tests/servers/test_auth_service.py`. It seeds the post-take state
+of 1.4: an expired predecessor with a consumed clear marker, a live successor,
+and a `running` run whose `child_session_id` is the successor. It mints a token
+for (run, predecessor, project) with `issue_agent_api_token` and sends the
+headers a spawned pane sends.
+
+Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_managed_clear_identity.py tests/servers/test_auth_service.py tests/servers/test_grant_auth.py tests/servers/routes/mcp_endpoints/test_execution_context.py tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py tests/servers/test_mcp_execution_context.py tests/servers/routes/test_llm_routes.py tests/servers/routes/test_session_variables.py tests/servers/routes/mcp/test_hook_session_metadata.py -q`.
+Then run `uv run ruff check` and `uv run mypy` on the changed files.
+
+Consumers unchanged:
+- `src/gobby/servers/routes/mcp/endpoints/execution.py` — no-edit-reason: calls _set_context_for_request(server, arguments, request) at four sites; the signature and the returned tokens are unchanged.
+
+**Acceptance:**
+
+- 1.6.1 - After a staged clear, a wrapper `call_tool` for a session-scoped tool
+  that carries the pane's frozen headers and token is attributed to the
+  successor: a `set_variable` through it lands on the successor's row, and the
+  predecessor's row is unchanged. test:
+  `tests/servers/test_managed_clear_identity.py::test_successor_tool_call_is_attributed_to_successor`.
+- 1.6.2 - A hook event with the frozen headers resolves `_platform_session_id`
+  to the successor, and `POST /api/sessions/<predecessor>/variables/get`
+  returns the successor's variables. test:
+  `tests/servers/test_managed_clear_identity.py::test_successor_hook_and_variables_follow_run`.
+- 1.6.3 - Nothing is forwarded in these cases:
+  - before the take;
+  - for a token whose run has ended, which is refused `run_inactive`;
+  - for a token of another run;
+  - for a session with no run.
+
+  test:
+  `tests/servers/test_managed_clear_identity.py::test_no_forwarding_without_live_run_binding`.
 
 ## P2: Run Lifetime Declaration
 `kind: framing`
@@ -1201,7 +1438,7 @@ Consumers unchanged:
 
 **Goal:** every document and bundled skill names the tool that exists.
 
-### 3.1 Bundled references and guides [category: docs] (depends: 1.2, 1.4, 2.1)
+### 3.1 Bundled references and guides [category: docs] (depends: 1.2, 1.4, 1.6, 2.1)
 `kind: deliverable`
 
 Targets:
@@ -1254,8 +1491,9 @@ Edits:
 - The JSONs: the tool name and `apply_agent_definition.py::build_definition_changes`.
 
 Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/test_review_skill.py -q`, and
-`rg -w apply_persona src docs/guides docs/reference-audit tests`, which must print
-nothing.
+`rg -w apply_persona src docs/guides docs/reference-audit tests --glob '!tests/mcp_proxy/tools/test_apply_agent_definition.py'`,
+which must print nothing. The excluded file holds only the 1.1.7
+retirement-absence assertion.
 
 **Acceptance:**
 
@@ -1361,14 +1599,29 @@ watchdog enforces it:
 - An interactive run without the key keeps #23442's behavior: idleness never
   ends it.
 
-The Orchestrator's ruling (2026-10-05) places this work under #22691 (Lane 3 -
-Runbooks), not under this plan's epic. The task is created at expansion, after
-Josh approves this plan.
+The Orchestrator's rulings (2026-10-05, 08:10 and 08:18 CT) parent this work
+under #22691 (Lane 3 - Runbooks). Expansion creates a placeholder deferral's
+task under the plan's root epic and leaves a numeric `task_ref` alone
+(`tasks/expansion/_deferrals.py::create_placeholder_deferral_tasks`), so D3
+reaches its parent through a numeric ref:
+1. After Josh approves this plan and before expansion, the Orchestrator files
+   the D3 task under #22691. Its labels are
+   `deferred-from:<plan_id>:<D3 section_id>`, `needs-planning` and the plan
+   provenance label. Its description cites this plan's path and section, and
+   its validation criteria copy D3.1 and D3.2.
+2. The Writer replaces the placeholder `task_ref` below with that `#N` in one
+   mechanical path-only commit. The change needs no re-approval, and the
+   Adversary verifies it.
+3. Expansion runs and leaves `#N` alone. Expansion-qa proves it is not
+   `task_missing`.
+4. After expansion, the Orchestrator adds the edges that the placeholder path
+   would have added: `#N` blocked by the 2.1 leaf, and the root epic blocked by
+   `#N`.
 
 ```yaml
 deferral:
-  task_ref: "TBD-under-22691-at-expansion"
-  reason: "Orchestrator ruling (2026-10-05, R4): runtime lifecycle enforcement is parented under #22691 (Lane 3 - Runbooks) and created at expansion after Josh approves this plan."
+  task_ref: "TBD-filed-under-22691-before-expansion"
+  reason: "Orchestrator rulings (2026-10-05, 08:10 and 08:18 CT, R4): runtime lifecycle enforcement is parented under #22691 (Lane 3 - Runbooks). The Orchestrator files the task after Josh approves this plan, the Writer replaces this placeholder with its numeric ref before expansion, and the Orchestrator adds the 2.1 and root-epic edges after expansion."
   owner: "orchestrator"
   original_acceptance_items:
     - D3.1
@@ -1387,13 +1640,17 @@ deferral:
 Run after the final edit of each leaf and again after the last leaf lands:
 
 ```bash
-DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/test_session_start_reactivation.py tests/hooks/test_interactive_step_instance.py tests/hooks/test_clear_successor_seat.py tests/workflows/test_step_snapshot_semantics.py tests/workflows/test_step_runtime_transitions.py tests/workflows/test_agent_definitions_v2.py tests/workflows/test_session_defaults.py tests/workflows/test_seat_rules.py tests/mcp_proxy/tools/skills/test_list_skills.py tests/mcp_proxy/tools/spawn_agent/test_factory.py tests/servers/websocket/chat/test_servers_websocket_chat_session.py tests/servers/websocket/test_set_agent.py tests/hooks/test_agent_events_coverage.py tests/hooks/test_session_activation_reconciliation.py tests/hooks/event_handlers/test_session_variable_preservation.py tests/hooks/test_session_start_handlers.py tests/hooks/test_session_end_handlers.py tests/hooks/test_session_events_coverage.py tests/hooks/test_session_materialize.py tests/sessions/test_clear_acknowledgment.py tests/sessions/test_handoff.py tests/sessions/test_mailbox.py tests/servers/websocket/chat/test_clear_session.py tests/agents/watchdog/test_interactive_lifecycle_cleanup.py tests/skills/test_review_skill.py tests/agents/test_agents_sync.py -q
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/test_session_start_reactivation.py tests/hooks/test_interactive_step_instance.py tests/hooks/test_clear_successor_seat.py tests/workflows/test_step_snapshot_semantics.py tests/workflows/test_step_runtime_transitions.py tests/workflows/test_agent_definitions_v2.py tests/workflows/test_session_defaults.py tests/workflows/test_seat_rules.py tests/mcp_proxy/tools/skills/test_list_skills.py tests/mcp_proxy/tools/spawn_agent/test_factory.py tests/servers/websocket/chat/test_servers_websocket_chat_session.py tests/servers/websocket/test_set_agent.py tests/hooks/test_agent_events_coverage.py tests/hooks/test_session_activation_reconciliation.py tests/hooks/event_handlers/test_session_variable_preservation.py tests/hooks/test_session_start_handlers.py tests/hooks/test_session_end_handlers.py tests/hooks/test_session_events_coverage.py tests/hooks/test_session_materialize.py tests/sessions/test_clear_acknowledgment.py tests/sessions/test_handoff.py tests/sessions/test_mailbox.py tests/servers/websocket/chat/test_clear_session.py tests/agents/watchdog/test_interactive_lifecycle_cleanup.py tests/servers/test_managed_clear_identity.py tests/servers/test_auth_service.py tests/servers/test_grant_auth.py tests/servers/routes/mcp_endpoints/test_execution_context.py tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py tests/servers/test_mcp_execution_context.py tests/servers/routes/test_llm_routes.py tests/servers/routes/test_session_variables.py tests/servers/routes/mcp/test_hook_session_metadata.py tests/skills/test_review_skill.py tests/agents/test_agents_sync.py -q
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
-rg -w 'apply_persona|_persona_name|build_session_persona_changes' src tests docs/guides docs/reference-audit
+rg -w 'apply_persona|_persona_name|build_session_persona_changes' src tests docs/guides docs/reference-audit --glob '!tests/mcp_proxy/tools/test_apply_agent_definition.py' --glob '!tests/workflows/test_seat_rules.py'
+rg -w -c 'apply_persona|_persona_name|build_session_persona_changes' tests/mcp_proxy/tools/test_apply_agent_definition.py tests/workflows/test_seat_rules.py
 uv run gobby plans validate .gobby/plans/apply-agent-definition.md -p /Users/josh/Projects/gobby
 ```
 
-The `rg` must print nothing. Do not run the full pytest suite.
+The first `rg` must print nothing: no production code, bundled template, guide
+or other test names a retired identifier. The second prints `1` for each file,
+because each allowlisted file holds exactly one retirement-absence assertion
+(1.1.7 and 1.5.1). Do not run the full pytest suite.
 
 Live check after the Orchestrator-owned restart, which is announced globally
 before and after and happens outside quiet hours:
@@ -1410,3 +1667,6 @@ before and after and happens outside quiet hours:
 7. A spawned interactive seat that stages `set_handoff(clear_session=true)`
    keeps its run: after the clear, `list_agents` shows the same run
    `running` with the successor as its session.
+8. In that successor, `get_variable("_agent_type")` returns the seat, and a
+   `set_variable` lands on the successor's row (the session `#N` the pane now
+   reports), not on the predecessor's.
