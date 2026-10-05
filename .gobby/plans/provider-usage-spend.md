@@ -44,8 +44,10 @@ incident and the per-CLI usage sources).
   the task whose claim was latest when each call happened.
 - `gobby-metrics:get_usage_ledger`, `GET /api/admin/usage/ledger`, and
   `gobby tokens ledger` serve per-session and per-task totals with keyset
-  paging. Totals are computed over the whole scope, so paging can never change
-  them (3.1, 3.2).
+  paging. Totals are computed over the whole scope on every request, so cursor
+  and limit never change them; paging is a live traversal (Decision 10).
+  Spend that no provider record covers reads as unknown, never as zero
+  (3.1, 3.2).
 - Codex quota observations from live transcripts feed
   `ProviderCapacityService`, so `get_provider_capacity` and
   `gobby tokens quota` show Codex windows, reset times and the credit balance
@@ -124,7 +126,14 @@ Writer decisions:
 10. **Totals come from SQL over the full scope on every call.** Rows page with
     an opaque keyset cursor over (event_at, session_id, message_key). Message
     ids survive a rebuild, so a cursor stays valid after
-    `_persist_session_transcript` replaces the rows.
+    `_persist_session_transcript` replaces the rows. Paging is a live
+    traversal, not a frozen export. Cursor and limit never filter totals, so
+    pages read from unchanged data carry identical totals. Usage ingested
+    between two pages raises the totals of the later page and appears on it
+    or a page after it. A row that lands before an already-issued cursor (a
+    late subagent row with an earlier timestamp) counts in the totals but is
+    returned only by a traversal restarted without a cursor. There is no
+    snapshot table, export job, or cursor lease.
 11. **Codex quota is pushed.** It is never polled. The live processor observes
     the newest `rate_limits` of a caught-up pass. Gobby never reads CLI
     credentials and never calls undocumented quota endpoints (`wham/usage`,
@@ -471,7 +480,12 @@ Targets:
   (115 files in total). Async Task tool results carry no usage.
 - `_process_session_unlocked` reads new complete lines from a per-session
   byte offset (`self._byte_offsets`) and calls `_process_parsed_batch` with
-  `publish_occupancy=caught_up`.
+  `publish_occupancy=caught_up`. When the parent has no new lines it returns
+  early (`if not new_lines: return True`, processor_transcripts.py:244-245),
+  before it looks up the parser.
+- `ProcessorLifecycleMixin._loop` calls `_process_all_sessions` every
+  `poll_interval`, which runs `_process_session` for every registered
+  session. An idle parent therefore still gets a pass on every poll.
 - The rebuild builds an occupancy snapshot for each event and replays the
   snapshots in Pass 3 (transcript_processing.py:507-546).
   `_persist_usage_events` publishes tail occupancy.
@@ -506,6 +520,13 @@ Targets:
   `ProcessorHost` declares the attribute and the method.
 - `_process_session_unlocked` awaits `_persist_ledger_batch` after
   `_process_parsed_batch` succeeds, before it advances `_byte_offsets`.
+- The no-new-lines branch also feeds the ledger. Before returning, it
+  resolves the session's parser from `self._parsers` and, when one exists,
+  awaits
+  `_persist_ledger_batch(session_id, transcript_path, _parser_source(parser), [], [], caught_up)`.
+  A subagent append or a Droid sidecar change is then ingested on the next
+  poll while the parent transcript is idle. The existing poll loop drives
+  that pass, so no watcher, polling service, or event bus is added.
   `unregister_session` and `_reset_transcript_state` drop the session's
   subagent offsets. A daemon restart starts at offset 0, and the unique
   message ids make the reread idempotent.
@@ -548,6 +569,7 @@ rebuild, and audit. The shared reader keeps them identical.
 - 2.2.2 - Lines appended to the subagent file between two live passes are read once. Rereading from offset 0 after a simulated restart inserts nothing new. test: `tests/sessions/test_claude_subagent_usage.py::test_live_offsets_read_each_line_once`.
 - 2.2.3 - The parent's context occupancy snapshot and published tail occupancy are unchanged by subagent rows. test: `tests/sessions/test_claude_subagent_usage.py::test_subagent_rows_never_touch_occupancy`.
 - 2.2.4 - Two subagents whose messages lack an API id get distinct agent-scoped fallback ids, and the audit includes subagent rows without reporting drift. test: `tests/sessions/test_claude_subagent_usage.py::test_fallback_ids_are_agent_scoped_and_audited`.
+- 2.2.5 - With the parent transcript unchanged, two complete usage lines appended to a subagent file are ingested by the next normal live pass. The parent gains exactly two rows, `sessions.usage_*` includes them, and the parent's occupancy is unchanged. A further idle pass inserts nothing and leaves `sessions.usage_*` unchanged. test: `tests/sessions/test_claude_subagent_usage.py::test_idle_parent_pass_ingests_subagent_appends`.
 
 ### 2.3 Provider-reported run totals [category: code] (depends: 2.2)
 `kind: deliverable`
@@ -601,12 +623,15 @@ Targets:
     dispatches on source and returns a list.
 - New `src/gobby/storage/reported_usage.py::ReportedUsageStore` with:
   - `upsert_runs(session_id, runs)`:
-    `ON CONFLICT (session_id, run_key) DO UPDATE … WHERE session_reported_usage.observed_at <= excluded.observed_at`,
-    so the newest cumulative reading wins and replays are no-ops.
+    `ON CONFLICT (session_id, run_key) DO UPDATE … WHERE session_reported_usage.observed_at < excluded.observed_at`.
+    A newer cumulative reading wins. A replay or an unchanged reading writes
+    no row version, which matters because idle passes reread the Droid
+    sidecar on every poll.
   - `list_runs(session_ids)`.
 - `_persist_ledger_batch` calls `collect_runs` on each pass for the batch's
   lines and messages, and upserts the result. Droid reads the sidecar on every
-  pass.
+  pass, including the no-new-lines pass that 2.2 adds, so a sidecar-only
+  change refreshes the run while the transcript is idle.
 - The rebuild and the audit call `collect_runs` over the full transcript and
   upsert. The audit prints the run count and the amount by unit for each
   session.
@@ -624,6 +649,7 @@ and wiring work for about 30 lines of parsing each.
 - 2.3.2 - A Grok turn converts `costUsdTicks` to USD exactly, and a turn flagged `usageIsIncomplete` stores `cost_complete` false. test: `tests/sessions/test_reported_usage.py::test_grok_turn_runs_convert_ticks`.
 - 2.3.3 - A Droid sidecar yields one `factory_credits` run, and a missing sidecar yields none. test: `tests/sessions/test_reported_usage.py::test_droid_sidecar_run`.
 - 2.3.4 - Upserting an older reading after a newer one leaves the newer one, and the live path, rebuild, and audit produce identical rows. test: `tests/sessions/test_reported_usage.py::test_upsert_keeps_newest_and_paths_agree`.
+- 2.3.5 - With the Droid transcript unchanged, rewriting its sidecar with a larger `factoryCredits` and a later mtime refreshes the `droid:session` run on the next normal live pass. A further pass with the sidecar unchanged leaves the row untouched, with the same `xmin`. test: `tests/sessions/test_reported_usage.py::test_idle_pass_refreshes_droid_sidecar`.
 
 ## P3: The ledger interface
 `kind: framing`
@@ -682,7 +708,8 @@ Targets:
     starts strictly after it. A malformed cursor raises `ValueError`.
     `next_cursor` is NULL on the last page.
   - **Totals.** One aggregate query over the whole scope, independent of
-    cursor and limit, returns:
+    cursor and limit, runs on every request and describes the scope as of
+    that request (the live-traversal rules are in Decision 10). It returns:
     - `rows`, `api_calls` (sum of non-NULL values), and
       `api_calls_complete` (no NULL `api_calls` in scope);
     - the four token sums;
@@ -706,6 +733,20 @@ Targets:
     and spend modes, each as `exact`, `reported`, or `unknown` with a reason.
     Coverage also carries `unkeyed_rows`, the count of rows with NULL
     `message_id`.
+  - **Observed spend.** Each coverage descriptor also carries
+    `spend_observed`, derived from the runs the scope reports for that source
+    (attributed and `unattributed` together):
+    - `unknown` with reason `no reported run` when the source has rows in
+      scope but no run (a Claude session without `cost-state`, a Droid
+      session without a sidecar);
+    - `reported` with `runs` and `incomplete_runs` when at least one run
+      exists. A run whose amount is 0 is reported as 0 and is never treated
+      as unknown.
+    - A source whose spend mode is `unknown` in `SOURCE_COVERAGE` keeps that
+      mode and its capability reason.
+    `reported` means only that these runs exist. It never claims that the
+    session's billing is complete. Amounts stay provider-reported and
+    separated by unit.
   - **Attribution.** A task scope returns `attribution_since`, the earliest
     `claimed_at` of the task's intervals, or NULL when the task has none.
 - MCP: `create_metrics_registry` registers the read-only
@@ -728,7 +769,8 @@ Targets:
   (symbol `create_metrics_registry.get_usage_ledger`) and the HTTP route
   (symbol `register_usage_routes.get_usage_ledger`). Both reference
   `references/observability/usage.md`, which gains a short section on the
-  ledger: scopes, cursor, totals, and coverage.
+  ledger: scopes, the cursor as a live traversal, totals, coverage, and
+  `spend_observed`.
 
 Consumers unchanged:
 - `src/gobby/mcp_proxy/registries.py` — no-edit-reason: calls `create_metrics_registry` with its unchanged signature.
@@ -750,11 +792,13 @@ duplicate the scope and cursor validation across leaves.
 **Acceptance:**
 
 - 3.1.1 - The fixture is ingested through the real parsers and `_persist_usage_events`. It has two Claude calls with distinct usage, the first written as two content-block lines sharing one `message.id`, and three Codex `token_count` lines, one repeating a cumulative total. The ledger has exactly four rows, and its totals equal the hand-computed sums of the four distinct calls. test: `tests/storage/test_usage_ledger.py::test_fixture_calls_are_counted_once`.
-- 3.1.2 - Paging that fixture at `limit=1` returns four pages whose rows, unioned, equal the single `limit=1000` page with no duplicates. Every page carries identical totals. test: `tests/storage/test_usage_ledger.py::test_paging_neither_loses_nor_double_counts`.
+- 3.1.2 - Paging that fixture at `limit=1` returns four pages whose rows, unioned, equal the single `limit=1000` page with no duplicates. While the data is unchanged, every page carries identical totals. test: `tests/storage/test_usage_ledger.py::test_paging_neither_loses_nor_double_counts`.
 - 3.1.3 - Re-ingesting the same transcripts through the rebuild (`_persist_session_transcript`) leaves the rows and totals unchanged, and a cursor issued before the rebuild resumes at the same row. test: `tests/storage/test_usage_ledger.py::test_rebuild_keeps_rows_totals_and_cursor`.
 - 3.1.4 - With two tasks claimed in sequence by one session, and an overlap where the later claim wins, each call is attributed to exactly one task. A reported run that spans both claims is `unattributed` for both tasks. `attribution_since` is the first `claimed_at`. test: `tests/storage/test_usage_ledger.py::test_task_scope_latest_claim_wins`.
 - 3.1.5 - Coverage reports Codex spend as `unknown` with its reason, `api_calls_complete` false when a Droid row is in scope, and the count of unkeyed rows. test: `tests/storage/test_usage_ledger.py::test_coverage_reports_missing_data`.
 - 3.1.6 - `get_usage_ledger` resolves `#N` task refs in the calling project, refuses a session from another project, and returns an error for a malformed cursor. The HTTP route returns the same page for UUIDs and 400 for a malformed cursor. test: `tests/mcp_proxy/tools/test_usage_ledger_tool.py::test_ledger_tool_and_route_scope_and_errors`.
+- 3.1.7 - Four session scopes keep unknown spend separate from reported spend. A Claude session with token rows and no `cost-state` reports spend `unknown` with reason `no reported run`. A Droid session with no sidecar reports the same. A Grok session whose one complete turn has `costUsdTicks` 0 reports `reported` with 1 run, 0 incomplete, and 0 usd. A Grok session whose one turn is flagged `usageIsIncomplete` reports 1 incomplete run. The reported-spend sums contain only what the runs state. test: `tests/storage/test_usage_ledger.py::test_spend_unknown_is_distinct_from_reported_zero`.
+- 3.1.8 - Extending the 3.1.2 fixture after page one is read: an appended Claude call raises the totals returned with page two and appears on a later page. A subagent row inserted with a timestamp before the cursor is counted in the totals but absent from the remaining pages. A traversal restarted without a cursor returns every row exactly once. test: `tests/storage/test_usage_ledger.py::test_paging_is_a_live_traversal`.
 
 ### 3.2 `gobby tokens ledger` and `gobby tokens quota` [category: code] (depends: 3.1)
 `kind: deliverable`
@@ -779,6 +823,10 @@ Targets:
   - resolves the ref and calls `UsageLedgerStore.page` directly;
   - prints totals, `by_source`, reported spend by unit, durations, coverage,
     and `next_cursor`;
+  - prints each source's spend from `spend_observed`:
+    `unknown (no reported run)` or the capability reason, or the reported
+    amount by unit with the run and incomplete-run counts. Unknown spend never
+    prints as `0`;
   - with `--json`, emits the page dict.
 - `gobby tokens quota [PROVIDER]`:
   - calls `/api/providers/{provider}/usage` for the given provider, or for
@@ -800,6 +848,7 @@ reference entry and one test file.
 
 - 3.2.1 - `gobby tokens ledger --session` and `--task` print the store's totals for the 3.1 fixture, and `--json` round-trips the page dict. Passing both scopes, or neither, is a usage error. test: `tests/cli/test_tokens_ledger_cli.py::test_ledger_command_prints_scope_totals`.
 - 3.2.2 - `gobby tokens quota codex` prints the window, reset time, level, and balance from a stubbed daemon response, and an unreachable daemon exits 1. test: `tests/cli/test_tokens_ledger_cli.py::test_quota_command_reads_daemon_snapshot`.
+- 3.2.3 - For the 3.1.7 scopes, `gobby tokens ledger --session` prints `unknown (no reported run)` for the Claude session without `cost-state`, `0 usd` over 1 run for the zero-cost Grok session, and 1 incomplete run for the incomplete Grok session. test: `tests/cli/test_tokens_ledger_cli.py::test_ledger_command_keeps_unknown_spend_distinct`.
 
 ## P4: Codex quota and operator alerts
 `kind: framing`
@@ -1055,7 +1104,8 @@ Targets:
   - **Context occupancy:** the existing occupancy snapshots, which are not
     accounting.
   - **Spend:** `get_usage_ledger`, `/api/admin/usage/ledger`, and
-    `gobby tokens ledger`.
+    `gobby tokens ledger`. Paging is a live traversal (Decision 10), and
+    `spend_observed` separates unknown spend from reported zero.
 - §Provider Capacity gains Codex observation, `details`, the alert levels,
   and `communications.operator_alert_channel`.
 - §Token Ledger Audit gains the post-deploy `gobby tokens audit --all --fix`
@@ -1085,6 +1135,24 @@ model, and they land after every surface exists.
   Orchestrator rulings of about 14:50 CT. Targets and consumers were swept
   read-only on `0.5.0` after `4858476f43`. The draft is narrative only, with
   no M1.
+- **2026-10-05, enhancement round 1 of 1.** `kind: enhancement`,
+  `enhancer_run` 935c1967-daae-4ac5-8453-e4bee0013645
+  (`plan-enhancer-taskless-old`), `suggestions_presented` 3, not converged.
+  The Orchestrator gobby#14972 accepted all three:
+  - PUS-E01 accepted. `_process_session_unlocked` returns before any ledger
+    work when the parent has no new lines, so subagent appends and Droid
+    sidecar changes had no ingestion path while the parent was idle. 2.2 now
+    runs `_persist_ledger_batch` on that pass and adds 2.2.5. 2.3 adds 2.3.5
+    and makes the upsert strict, so the idle pass that rereads the sidecar
+    writes no row version when nothing changed.
+  - PUS-E02 accepted. Run capability alone could not tell a missing record
+    from a reported zero. 3.1 adds `spend_observed` to coverage with 3.1.7,
+    and 3.2 renders it with 3.2.3.
+  - PUS-E03 accepted. Totals are recomputed on every request, so "paging
+    never changes totals" needed an unchanged-data condition. Decision 10
+    now defines paging as a live traversal, 3.1.2 states the condition, and
+    3.1.8 proves an append and a late earlier-timestamp row. No snapshot
+    table, export job, or cursor lease is added.
 
 ## V2: Verification
 `kind: verification`
