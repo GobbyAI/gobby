@@ -117,11 +117,12 @@ match memory graph labels or memory-owned `RELATES_TO_CODE` bridge queries.
 `project_id`; with `--drop-collection` it deletes that one collection outright
 (project purge). It must not list, drop, or mutate memory vector collections.
 
-`gcode index` handles deleted-file projection cleanup in Rust before hub fact
-deletion. Missing explicit files and whole-project stale/orphan files delete the
-file's code graph projection and Qdrant code-symbol points using
-`project_id + file_path`; daemon reconciliation is no longer the required cleanup
-mechanism for these cases.
+`gcode index` handles a deleted file by removing this machine's
+`code_indexed_file_states` row for it (`api::file_state::delete_file_state`),
+for missing explicit files and for whole-project orphan paths alike. Content
+versions, their facts, and their code graph and Qdrant projections stay for
+other machines that reference them and for `gcode prune` content GC, which
+deletes a version's projections before its hub rows.
 
 `gcode graph cleanup-orphans` is the graph-only reconciliation command. It
 compares project-scoped `CodeFile.path` and `CodeSymbol.file_path` values
