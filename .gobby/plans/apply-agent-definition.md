@@ -146,7 +146,9 @@ enforces it (#22902 Constraints, boundary paragraph).
      a stored `_agent_type` that differs from the new agent, on a row that is
      not spawned. That includes the permitted first activation over a
      configured base agent, which can declare variables and steps like any
-     agent (adversary finding F-B1-base-cleanup).
+     agent (adversary finding F-B1-base-cleanup). Both tests run again under
+     the session's step lock at the write (1.1), so a decision made from an
+     earlier read never commits over a newer seat.
    - Rejected: a new row per web-chat switch. The launch binds the row by
      conversation id (`chat/_session.py:314-330`), and `set_agent` keeps that id
      stable. A new row would need a second successor-commit flow beside the
@@ -664,9 +666,30 @@ Implementation:
     `ConfigRepository(db).read(resolve_secrets=False).values["default_agent"]`)
     and differs from `agent`. Step 7, the attached-terminal handler and the
     override guard share it. It decides permission only.
-  - `commit_definition_changes(db, session_id, agent, changes) -> dict`: the
-    one write path for both activation entries, the tool and
-    `activate_default_agent`. It rereads the session's variables, then:
+  - `activation_decision(db, variables, agent, pin, *, relaunch, same_pin_noop)
+    -> str`:
+    - It returns `unchanged` when `same_pin_noop` is true, the stored
+      `_agent_type` equals `agent`, and the stored pin equals `pin`.
+    - It returns `role_change_requires_relaunch` when `is_role_change` holds
+      and `relaunch` is false.
+    - Otherwise it returns `apply`.
+    Step 7 and `commit_definition_changes` share it, so the early check and
+    the locked check cannot diverge.
+  - `commit_definition_changes(db, session_id, agent, changes, *, relaunch,
+    same_pin_noop) -> dict`: the one write path for both activation entries,
+    the tool and `activate_default_agent`.
+    - It opens `db.transaction_immediate(AgentStepInstanceMutation(session_id=
+      session_id))` and rereads the session's variables under that lock.
+    - It reruns `activation_decision` on the reread, with the pin from
+      `changes["_agent_definition_hash"]`. A result other than `apply` is
+      returned with the current `_agent_type`, and nothing is written. A
+      decision taken before the lock therefore never commits over a newer
+      seat (adversary finding F-B1-locked-permission).
+    - The variable lock, at priority 950, nests inside the step lock at 875,
+      as `_acquire_lock` requires (`postgres_pool.py:707-715`). Ambient
+      transaction reuse is keyed by the adapter (`_ambient.py:28-56`), so the
+      helper builds every manager from its one `db`. No caller of either entry
+      holds an immediate transaction.
     - It finds an identity change when the stored `_agent_type` is set and
       differs from `agent`, and `is_spawned_agent` is not true. The spawned
       exclusion matters because the reconciler passes the run agent when the
@@ -681,8 +704,9 @@ Implementation:
       new lists. A key that a drifted definition no longer declares keeps its
       value, as runtime values do, and stays listed until the next identity
       change clears it (adversary finding F-B1-key-ledger).
-    - It runs one `merge_variables` and returns the merged variables. 1.2
-      wraps it in the step lock.
+    - It runs one `merge_variables` inside the held transaction and returns
+      `status: "applied"` with the merged variables. 1.2 adds the step
+      instance delete to the same transaction.
   - `build_persona_prompt_context`: moved from `build_session_persona_context`.
   - `colliding_definition_variable_error`: moved from
     `colliding_persona_variable_error`.
@@ -702,21 +726,24 @@ web-chat launch passes `relaunch=True`. The registered tool never does.
 4. Resolve the definition, or refuse `unknown_agent_definition`.
 5. Refuse `persona_surface_missing`.
 6. Refuse `pipeline_requires_spawn` when `workflows.pipeline` is set.
-7. Compute the pin.
-   - If the current `_agent_type` equals `agent` and the stored pin equals the
-     new one, return `{success: true, status: "unchanged"}` without writing.
-     This return comes before step 8, so `variables` and `task_id` are ignored
-     (Decision 5).
-   - If `is_role_change(db, variables, agent)` holds and `relaunch` is false,
-     refuse `role_change_requires_relaunch`, naming both. With `relaunch`
+7. Compute the pin, and run `activation_decision(db, variables, agent, pin,
+   relaunch=relaunch, same_pin_noop=True)` on the step 2 read.
+   - `unchanged` returns `{success: true, status: "unchanged"}` without
+     writing. This return comes before step 8, so `variables` and `task_id`
+     are ignored (Decision 5).
+   - `role_change_requires_relaunch` refuses, naming both. With `relaunch`
      true, the role change proceeds.
    - The same agent with a different pin re-applies, as drift.
 8. Resolve `task_id`, or refuse `task_unresolved`.
 9. Build the changes with `build_definition_changes(is_spawned=False)` and add
    `_agent_context_injected=False` and `_agent_identity_reinject=True`.
 10. Refuse `variable_collision`.
-11. Write through `commit_definition_changes`. On an identity change it clears
-    the previous definition's keys, and from 1.2 it ends its step instance.
+11. Write through `commit_definition_changes(..., relaunch=relaunch,
+    same_pin_noop=True)`. If its locked recheck returns `unchanged` or
+    `role_change_requires_relaunch`, the impl returns the same receipt as
+    step 7. An activation that committed first wins, and the other writes
+    nothing. On an identity change the helper clears the previous
+    definition's keys, and from 1.2 it ends the previous step instance.
 
 Every refusal is `{success: false, error_code, error}`, returned before any
 write.
@@ -737,9 +764,18 @@ Callers:
 - `activate_default_agent` adds `_agent_definition_hash` and
   `_agent_definition_keys` to both its `internal_keys` and `always_reapply`
   sets, so every re-activation refreshes the pin (1.3 compares it first) and
-  the key list. It writes through `commit_definition_changes` in place of its
-  own `merge_variables`, so a same-agent re-activation keeps the union of key
-  lists, and an override on a base-agent row clears the base agent's keys.
+  the key list. It writes through `commit_definition_changes(...,
+  relaunch=False, same_pin_noop=False)` in place of its own
+  `merge_variables`.
+  - A same-agent re-activation still refreshes every always-reapply key and
+    keeps the union of key lists.
+  - An override on a base-agent row clears the base agent's keys.
+  - If the locked recheck returns `role_change_requires_relaunch`, a relaunch
+    committed while it prepared its delta. It writes nothing, logs a warning
+    naming the session, the current seat and the stale agent, and returns
+    `None`. The relaunch already wrote the current seat's full delta and
+    requested reinjection. The reconciler reports `activation_failed` for that
+    one event and resolves the current seat on the next.
 - `activate_default_agent` passes its `cli_source` to `resolve_agent`, so both
   entry points resolve `provider: inherit` to the session's CLI and compute the
   same pin for the same row.
@@ -808,6 +844,14 @@ Tests: `test_apply_agent_definition.py` uses the `HubDatabase` fixtures of
 - The configured-base case sets `default_agent` to a definition declaring
   `{base_only: 1}`, activates the base agent on the row, and then activates Y
   through the tool without `relaunch`.
+- The concurrent-activation case runs two threads on a base-agent row, one
+  activating Y and one Z. A `threading.Barrier` patched into step 8's task
+  resolution holds both past step 7 until both arrive. Each join is bounded at
+  10 seconds.
+- The stale-SessionStart case patches `build_agent_changes` to wait on a
+  `threading.Event` after building X's delta. While it waits, a
+  `relaunch=True` activation to Y commits. The event is then set, with joins
+  bounded at 10 seconds.
 - The web-chat switch case mirrors the existing launch tests: it patches
   `apply_agent_definition_impl` and asserts the call and `start_data`.
 - The override case extends `test_activate_agent_override.py`: a row stored at
@@ -913,6 +957,15 @@ Consumers unchanged:
   `base_only`, activating seat Y through the tool without `relaunch` succeeds
   and sets `base_only` to `None`. test:
   `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activation_over_configured_base_clears_base_keys`.
+- 1.1.18 - Two concurrent tool activations from the base agent, to Y and to Z,
+  both pass step 7. Exactly one returns `applied`, the other returns
+  `role_change_requires_relaunch`, and the row holds only the winner's delta.
+  test:
+  `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_concurrent_activations_recheck_permission_under_lock`.
+- 1.1.19 - A SessionStart activation of X whose delta was built before a
+  `relaunch=True` to Y committed writes nothing. It returns `None` and logs one
+  warning naming the session, Y and X, and the row keeps Y's delta. test:
+  `tests/hooks/test_session_start_reactivation.py::test_stale_sessionstart_behind_relaunch_keeps_current_seat`.
 
 ### 1.2 Step workflows on interactive sessions [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -962,21 +1015,15 @@ Implementation:
     event (Decision 8).
   - The helper stays in `session_activation.py`, so there is one step-instance
     writer for non-spawn paths.
-- `commit_definition_changes` (1.1) runs inside one
-  `db.transaction_immediate(AgentStepInstanceMutation(session_id=...))`, and
-  rereads the variables under that lock. On an identity change it deletes the
-  previous instance with `AgentStepInstanceManager.delete_for_session`, then
-  merges (adversary finding F-B1-step-race).
+- `commit_definition_changes` (1.1) already holds the step lock and has
+  rechecked the decision. On an identity change, it now also deletes the
+  previous instance with `AgentStepInstanceManager.delete_for_session` inside
+  that transaction, before the merge (adversary finding F-B1-step-race).
   - `_ensure_step_instance` returns early on any existing instance
     (`session_activation.py:660-661`), so without the delete seat X's steps
     would outlive X.
-  - The delete and the merge commit together. `delete_for_session` re-enters
-    the held step lock as a no-op (`postgres_pool.py:394-405`). The variable
-    lock, at priority 950, nests inside the step lock at 875, as
-    `_acquire_lock` requires (`postgres_pool.py:707-715`).
-  - Ambient transaction reuse is keyed by the adapter (`_ambient.py:28-56`), so
-    the helper builds both managers from its one `db`. No caller of either
-    entry holds an immediate transaction.
+  - The delete and the merge commit together, because `delete_for_session`
+    re-enters the held step lock as a no-op (`postgres_pool.py:394-405`).
   - A merge failure rolls back the delete, so the row stays X with X's
     instance.
 - `_ensure_step_instance` takes the step lock, rereads the session's
