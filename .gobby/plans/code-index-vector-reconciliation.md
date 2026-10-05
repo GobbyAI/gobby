@@ -1388,6 +1388,27 @@ drop is part of it.
   corrects its earlier claim: `sync_no_fact_file` only deletes. 1.2 drops
   the `symbol_count > 0` check and narrows the shortcut compare-and-set to
   `language` (1.2.5, 1.2.6).
+- 2026-10-05 16:07 CDT: V1 consensus between the Plan Writer gobby#15429 and
+  the Adversary gobby#15414. Adv2 reviewed `fea67a2949`, then rechecked the
+  repairs at `7dcb256`, `f298235fc4` and `db7fcedc69` (plan blob
+  `e7010a0bacd5ac181c963eebefeb04a28f686521`). Seven findings, all
+  accepted and resolved:
+  - F-VERSION-RECOVERY: a failed vector or graph completion also dirties
+    the attempted version, with no file-state join (S9, Decision Record 8,
+    1.1.5, 1.1.6).
+  - F-RECEIPT-FAILURE: the reset is confirmed only after its commit, and a
+    `persist` seam tests the rewrite boundaries (2.2.10 to 2.2.12).
+  - F-ROOT-FAILURE-PRECEDENCE: root availability, then eligibility, then
+    history (Decision Records 9 and 10, 3.2.6, 3.2.7).
+  - F-GRANULARITY: 1.3 records its decision.
+  - F-TARGET-CALLER: 3.2 targets `classify_explicit_file_with_options`.
+  - F-HISTORY-DATES: `--since-as-filter` keeps recent ancestors of
+    older-dated tips (S10, 3.1.7).
+  - F-RECEIPT-PUBLISH-FAILURE: any `persist` error is unconfirmed, success
+    is exit 0 with the payload, and the live procedure says so (2.2.13).
+
+  Writer consistency edits: the V2 DB filter is the union of the leaf
+  filters, and 4.1's prune text covers gone roots and history errors.
 
 ## V2: Verification
 `kind: verification`
