@@ -26,12 +26,13 @@ or closes. Prefer `capture-pane` for read-only pane inspection.
 - `gclient help` prints the command-mode table without contacting the daemon.
 
 `--json`, `--daemon-url URL`, and `--token-file PATH` apply to action verbs.
-`--workspace REF` is accepted only by `list`, `new-tab`, and `select`; it is not
-a general pane option. `list` and `new-tab` use `GOBBY_WORKSPACE_ID` when the
-option is omitted, and otherwise require it explicitly. `select` derives the
-workspace from a full numeric tab or pane ref; a shorter or UUID ref needs
-`--workspace` or `GOBBY_WORKSPACE_ID`. Discover the current workspace ref from
-daemon workspace listings rather than assuming a project name or fixed number.
+`--workspace REF` applies to every action verb. `list` and `new-tab` use
+`GOBBY_WORKSPACE_ID` when the option is omitted, and otherwise require it
+explicitly. For verbs targeting a pane or tab, it scopes short IDs and rejects
+a full ref outside the selected workspace. `select` derives the workspace from
+a full numeric tab or pane ref; a shorter or UUID ref needs `--workspace` or
+`GOBBY_WORKSPACE_ID`. Discover the current workspace ref from daemon workspace
+listings rather than assuming a project name or fixed number.
 
 Omitted pane `REF` uses `GOBBY_PANE_REF`, which a Gobby pane shell inherits.
 Outside a pane, pass an explicit ref. Numeric refs have the form

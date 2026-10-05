@@ -398,8 +398,10 @@ def create_spawn_agent_registry(
             write_paths_reason: Required authorization reason for nonempty external roots
             notify_parent_on_completion: Whether to notify the parent when the agent completes
             droid_mode: Use Droid's one-shot exec runner or interactive terminal UI
-            placement: Bind the agent's terminal into a workspace pane before exec
-                ({"kind": "tab"|"split", ...}); refusals carry ``placement_error``
+            placement: Bind the agent's terminal into a workspace pane before exec:
+                {"tab": {"workspace": REF, "title": TEXT}} or
+                {"split": {"pane": REF, "axis": "right"|"down", "title": TEXT}}.
+                Refusals carry ``placement_error``.
 
         Returns:
             Dict with success status, run_id, child_session_id, isolation metadata
