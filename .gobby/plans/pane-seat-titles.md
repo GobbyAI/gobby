@@ -1007,6 +1007,12 @@ which must return nothing.
   and every branch. Every earlier 458 site, including 3.4.4's test name, is
   now 459 (`f9fcdad`). M1 withdrawn (memory `f5577ae0`); the Adversary
   (gobby#14579) derives a fresh M1.
+- 2026-10-04: CodeRabbit p004 (#23421) f006/f011, triaged by the Adversary
+  (gobby#14550): V2's aggregate pytest ran
+  `tests/storage/test_session_title_source_migration.py` after 1.1 and 2.1,
+  before 3.4 creates it. That file now runs in its own V2 command from 3.4 on.
+  No acceptance item changes, so M1 stands. f005 and the 3.1-3.3 history are
+  no-fix (#23424).
 
 ## V2: Verification
 `kind: verification`
@@ -1014,12 +1020,18 @@ which must return nothing.
 Run after each leaf's final edit and again before the PD lands the branch:
 
 ```bash
-DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/terminals/test_workspace_agent_panes.py tests/mcp_proxy/tools/spawn_agent tests/mcp_proxy/tools/tasks/test_create_task.py tests/mcp_proxy/tools/tasks/test_close_task_flow.py tests/mcp_proxy/tools/sessions tests/sessions tests/storage/sessions tests/storage/test_sessions_import.py tests/storage/test_local_model_flags.py tests/storage/test_session_title_source_migration.py tests/servers/routes tests/servers/test_http_models.py tests/servers/test_session_control.py tests/servers/websocket/chat/test_stream_persistence.py tests/hooks tests/test_runner_maintenance_tmux_repair.py tests/communications tests/cli/test_cli_sessions.py tests/cli/test_cli_sessions_coverage.py tests/utils/test_daemon_git_inventory.py -q
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/terminals/test_workspace_agent_panes.py tests/mcp_proxy/tools/spawn_agent tests/mcp_proxy/tools/tasks/test_create_task.py tests/mcp_proxy/tools/tasks/test_close_task_flow.py tests/mcp_proxy/tools/sessions tests/sessions tests/storage/sessions tests/storage/test_sessions_import.py tests/storage/test_local_model_flags.py tests/servers/routes tests/servers/test_http_models.py tests/servers/test_session_control.py tests/servers/websocket/chat/test_stream_persistence.py tests/hooks tests/test_runner_maintenance_tmux_repair.py tests/communications tests/cli/test_cli_sessions.py tests/cli/test_cli_sessions_coverage.py tests/utils/test_daemon_git_inventory.py -q
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
 cargo nextest run -p gobby-client
 cargo nextest run -p gobby-core
 npm --prefix web run test -- sessionTitle terminalSessions SessionsTab
 uv run gobby plans validate .gobby/plans/pane-seat-titles.md -p /Users/josh/Projects/gobby
+```
+
+From leaf 3.4 on, which creates the migration 459 test, also run:
+
+```bash
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_session_title_source_migration.py -q
 ```
 
 Live checks after the PD-owned restart and the gclient install: a pane labelled
