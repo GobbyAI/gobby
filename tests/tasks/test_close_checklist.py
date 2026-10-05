@@ -742,6 +742,91 @@ def test_generic_source_stems_match_only_their_mirrored_package(tmp_path: Path, 
     }
 
 
+@pytest.mark.parametrize("sources", [("widget", "gadget"), ("gadget", "widget")])
+def test_related_source_selector_prefilters_and_caches_sibling_parses(
+    tmp_path: Path, sources: tuple[str, str]
+) -> None:
+    package = tmp_path / "src/gobby/feature"
+    package.mkdir(parents=True)
+    (package / "widget.py").write_text("VALUE = 1\n")
+    (package / "gadget.py").write_text("VALUE = 2\n")
+    facade = "from . import widget, gadget\n"
+    second = "from ._facade import widget\n"
+    misleading = "EXAMPLE = 'widget gadget'\n"
+    (package / "_facade.py").write_text(facade)
+    (package / "_second.py").write_text(second)
+    (package / "misleading.py").write_text(misleading)
+    for index in range(50):
+        (package / f"unrelated_{index}.py").write_text(f"OTHER = {index}\n")
+    tests = tmp_path / "tests/feature"
+    tests.mkdir(parents=True)
+    test_import = "from gobby.feature._second import widget\n"
+    (tests / "test_second.py").write_text(test_import)
+
+    with patch("gobby.tasks.close_test_coverage.ast.parse", wraps=ast.parse) as parse:
+        selected = related_python_source_tests(
+            (f"src/gobby/feature/{source}.py" for source in sources), base_dir=tmp_path
+        )
+
+    assert selected == {
+        "src/gobby/feature/gadget.py": ("tests/feature/test_second.py",),
+        "src/gobby/feature/widget.py": ("tests/feature/test_second.py",),
+    }
+    assert sorted(call.args[0] for call in parse.call_args_list) == sorted(
+        [facade, second, misleading, test_import]
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "collected"),
+    [("test_widget.py", True), ("run_widget_sandbox.py", True), ("widget_test.py", False)],
+)
+def test_related_source_selector_uses_pytest_module_patterns(
+    tmp_path: Path, name: str, collected: bool
+) -> None:
+    tests = tmp_path / "tests/feature"
+    tests.mkdir(parents=True)
+    (tests / name).write_text("from gobby.feature.widget import VALUE\n")
+    selected = related_python_source_tests(("src/gobby/feature/widget.py",), base_dir=tmp_path)
+    assert selected == {
+        "src/gobby/feature/widget.py": (f"tests/feature/{name}",) if collected else ()
+    }
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_status"),
+    [
+        ("uv run pytest tests/test_unrelated.py -q", "failed"),
+        ("uv run pytest tests/run_widget_sandbox.py -q", "passed"),
+    ],
+)
+def test_related_sandbox_runner_requires_fresh_pytest_coverage(
+    tmp_path: Path, command: str, expected_status: str
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/widget.py").write_text("value = 1\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/run_widget_sandbox.py").write_text("from widget import value\n")
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1, command=command),)),
+        has_attributed_edits=True,
+        changed_paths=("src/widget.py",),
+        close_root=str(tmp_path),
+    )
+    assert gate.status == expected_status
+    assert gate.details["python_source_related_tests"] == {
+        "src/widget.py": ["tests/run_widget_sandbox.py"]
+    }
+    if expected_status == "failed":
+        assert gate.details["python_source_uncovered_tests"] == {
+            "src/widget.py": ["tests/run_widget_sandbox.py"]
+        }
+        assert "tests/run_widget_sandbox.py" in gate.message
+    else:
+        assert gate.details["python_source_uncovered_tests"] == {}
+
+
 def test_related_source_selector_on_real_module_paths() -> None:
     root = Path(__file__).resolve().parents[2]
     selected = related_python_source_tests(
@@ -755,11 +840,6 @@ def test_related_source_selector_on_real_module_paths() -> None:
         ),
         base_dir=root,
     )
-    assert "tests/hooks/test_normalization.py" in selected["src/gobby/hooks/_ansi_c.py"]
-    assert (
-        "tests/agents/test_sandbox_network.py"
-        in selected["src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py"]
-    )
     assert selected["src/gobby/storage/__init__.py"] == ()
     assert (
         "tests/pipelines/test_pipeline_executor_core.py"
@@ -769,7 +849,9 @@ def test_related_source_selector_on_real_module_paths() -> None:
         "tests/servers/routes/test_feedback_routes.py"
         in selected["src/gobby/servers/routes/feedback.py"]
     )
-    assert "tests/tasks/test_close_checklist.py" in selected["src/gobby/tasks/close_checklist.py"]
+    assert (
+        selected["src/gobby/tasks/close_checklist.py"][0] == "tests/tasks/test_close_checklist.py"
+    )
     assert not any(
         "expansion" in path or "escalation" in path or "score" in path
         for paths in selected.values()

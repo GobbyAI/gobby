@@ -67,10 +67,13 @@ def _module_imports(
     module: str,
     relevant_prefixes: set[str] | None = None,
     parent_import: re.Pattern[str] | None = None,
+    *,
+    text: str | None = None,
 ) -> set[str]:
     """Read imports without importing/executing repository modules."""
     try:
-        text = path.read_text(encoding="utf-8")
+        if text is None:
+            text = path.read_text(encoding="utf-8")
         if (
             relevant_prefixes is not None
             and not any(prefix in text for prefix in relevant_prefixes)
@@ -127,7 +130,8 @@ def related_python_source_tests(
     selected: dict[str, tuple[str, ...]] = dict.fromkeys(sources, ())
     if not sources or not (base / "tests").is_dir():
         return selected
-    packages: dict[Path, dict[str, set[str]]] = {}
+    packages: dict[Path, dict[str, tuple[Path, str]]] = {}
+    parsed_siblings: dict[Path, set[str]] = {}
     families: dict[str, dict[str, int]] = {}
     for source in sources:
         source_path = PurePosixPath(source)
@@ -136,19 +140,29 @@ def related_python_source_tests(
         module = _module_name(source)
         parent = base / source_path.parent
         if parent not in packages:
-            packages[parent] = {
-                _module_name(path.relative_to(base).as_posix()): _module_imports(
-                    path, _module_name(path.relative_to(base).as_posix())
-                )
-                for path in parent.glob("*.py")
-                if path.is_file() and path.stem != "__init__"
-            }
+            packages[parent] = {}
+            for path in parent.glob("*.py"):
+                if not path.is_file() or path.stem == "__init__":
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except (OSError, UnicodeError) as exc:
+                    logger.debug("Cannot select related tests from %s: %s", path, exc)
+                    continue
+                packages[parent][_module_name(path.relative_to(base).as_posix())] = (path, text)
         family = {module: 0}
-        while importers := {
-            sibling: 1 + min(family[dependency] for dependency in imports.intersection(family))
-            for sibling, imports in packages[parent].items()
-            if sibling not in family and imports.intersection(family)
-        }:
+        while True:
+            leaves = {member.rpartition(".")[2] for member in family}
+            importers: dict[str, int] = {}
+            for sibling, (path, text) in packages[parent].items():
+                if sibling in family or not any(leaf in text for leaf in leaves):
+                    continue
+                if path not in parsed_siblings:
+                    parsed_siblings[path] = _module_imports(path, sibling, leaves, text=text)
+                if dependencies := parsed_siblings[path].intersection(family):
+                    importers[sibling] = 1 + min(family[dependency] for dependency in dependencies)
+            if not importers:
+                break
             family.update(importers)
         families[source] = family
     prefixes = {module for family in families.values() for module in family}
@@ -162,11 +176,14 @@ def related_python_source_tests(
         if parents
         else None
     )
-    candidates = sorted(
-        path
-        for path in (base / "tests").rglob("*.py")
-        if path.is_file() and (path.name.startswith("test_") or path.name.endswith("_test.py"))
-    )
+    candidates = [
+        base / path
+        for path in pytest_module_paths(
+            path.relative_to(base).as_posix()
+            for path in (base / "tests").rglob("*.py")
+            if path.is_file()
+        )
+    ]
     tests = [
         (
             path.relative_to(base).as_posix(),
