@@ -435,12 +435,16 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 ## D1 Node-scoped transcript processing (depends: 2.2)
 `kind: deferred`
 
-`core_services` is hub-only in 2.2 because `SessionLifecycleManager` processes
-every session in the shared database with no machine filter. Transcript files
-live on the machine that ran the session, so the hub cannot read a node's
-transcripts, and in `node` mode nothing processes them. A node-scoped transcript
-processor needs a machine filter on the pending-session query and a decision on
-where the derived artifacts are written. Neither belongs to run modes.
+`core_services` is hub-only in 2.2 because `SessionLifecycleManager` also runs
+shared-row loops: session expiry and purges, and the knowledge-graph queue.
+Transcript processing is already machine-scoped:
+`get_pending_transcript_sessions` (`src/gobby/storage/sessions/_transcript.py`)
+selects only sessions whose `machine_id` is this machine's (641bc44427), and the
+owning machine writes the derived rows and keeps the sidecar and archive on its
+own disk. Transcript files live on the machine that ran the session, so the hub
+cannot read a node's transcripts, and in `node` mode nothing processes them. The
+gap is starting the machine-local part of the manager on a node, which does not
+belong to run modes.
 
 Acceptance item D1.1: a `node` runner processes the transcripts of sessions
 whose `machine_id` is its own, and no other session's.
@@ -497,6 +501,11 @@ deferral:
   correction 32ad98fb04 runs it in every mode. `provider-capability-refresh`
   stays hub-only, with a note on the local CLI probes. 2.2.1 and M1 are
   unchanged.
+- 2026-10-04: D1's premise corrected while specifying #23112. The pending
+  transcript query already filters by `machine_id`
+  (`src/gobby/storage/sessions/_transcript.py:25-51`, 641bc44427), and artifact
+  ownership is settled in code. The gap is that a node starts no machine-local
+  lifecycle loop. D1.1 and M1 are unchanged; #23112 carries the atomic spec.
 
 ## V2: Verification
 `kind: verification`
