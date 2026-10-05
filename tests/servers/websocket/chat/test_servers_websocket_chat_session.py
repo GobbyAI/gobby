@@ -26,6 +26,8 @@ pytestmark = pytest.mark.unit
 
 
 class DummyMixin(ChatStreamingMixin, ChatSessionMixin):
+    _fire_lifecycle: AsyncMock
+
     def __init__(self) -> None:
         self.clients: dict = {}
         self._chat_sessions: dict = {}
@@ -40,14 +42,133 @@ class DummyMixin(ChatStreamingMixin, ChatSessionMixin):
         self.daemon_config: Any = None
         self.web_chat_runtime_manager: Any = None
         self.config_runtime: Any = None
-
-    async def _fire_lifecycle(self, cid: str, event_type: str, data: object) -> None:
-        pass
+        self._fire_lifecycle = AsyncMock()
+        self._cancel_tts = AsyncMock()
 
 
 @pytest.fixture
 def mixin() -> DummyMixin:
     return DummyMixin()
+
+
+@pytest.fixture
+def web_activation(mixin: DummyMixin) -> tuple[DummyMixin, AsyncMock]:
+    session = AsyncMock()
+    session.provider = "qwen"
+    session.chat_mode = "normal"
+    session.db_session_id = None
+    session.resume_session_id = None
+    session.project_path = None
+    session.project_id = None
+    session.system_prompt_override = None
+    mixin.web_chat_runtime_manager = MagicMock()
+    mixin.web_chat_runtime_manager.create_session.return_value = session
+    row = MagicMock(
+        id="db-id-seat",
+        seq_num=11,
+        usage_output_tokens=0,
+        chat_mode="normal",
+        approved_tools_json=None,
+    )
+    mixin.session_manager = MagicMock()
+    mixin.session_manager.db = MagicMock()
+    mixin.session_manager.register.return_value = row
+    mixin.session_manager.get.return_value = None
+    mixin._pending_providers["seat-chat"] = "qwen"
+    mixin._pending_projects["seat-chat"] = "proj-seat"
+    mixin._fire_lifecycle = AsyncMock()
+    return mixin, session
+
+
+@pytest.mark.asyncio
+async def test_web_chat_launch_uses_apply_agent_definition(
+    web_activation: tuple[DummyMixin, AsyncMock],
+) -> None:
+    owner, session = web_activation
+    owner._pending_agents["seat-chat"] = "planner"
+    with (
+        patch("gobby.servers.websocket.chat._session.get_machine_id", return_value="mach1"),
+        patch("gobby.workflows.agent_resolver.resolve_agent") as resolve,
+        patch(
+            "gobby.mcp_proxy.tools.apply_agent_definition.build_persona_prompt_context",
+            return_value=("Planner instructions", None),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.apply_agent_definition.apply_agent_definition_impl",
+            new=AsyncMock(return_value={"success": True, "status": "applied"}),
+        ) as activate,
+    ):
+        resolve.return_value = MagicMock(name="planner")
+        created = await owner._create_chat_session_inner("seat-chat")
+        await drain_asyncio_tasks()
+    activate.assert_awaited_once_with(
+        agent="planner",
+        db=owner.session_manager.db,
+        session_id="db-id-seat",
+        cli_source="qwen",
+        relaunch=True,
+    )
+    assert session.system_prompt_override == "Planner instructions"
+    assert created is session
+    assert owner._chat_sessions["seat-chat"] is session
+    assert session.db_session_id == "db-id-seat"
+    owner._fire_lifecycle.assert_awaited_once_with(
+        "seat-chat", HookEventType.SESSION_START, {"skip_default_agent_activation": True}
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["y", "default"])
+async def test_agent_switch_relaunches_through_activation(
+    web_activation: tuple[DummyMixin, AsyncMock],
+    target: str,
+) -> None:
+    from tests.servers.websocket.test_set_agent import ConcreteSessionControl
+
+    owner, session = web_activation
+    old_session = MagicMock(db_session_id="db-id-x", _pending_agent_name="x")
+    old_session.stop = AsyncMock()
+    owner._chat_sessions["seat-chat"] = old_session
+    control = ConcreteSessionControl()
+    control._chat_sessions = owner._chat_sessions
+    control._pending_agents = owner._pending_agents
+    control.session_manager = owner.session_manager
+    with patch(
+        "gobby.servers.websocket.handlers.session_config._validate_persona_agent",
+        new=AsyncMock(return_value=True),
+    ):
+        await control._handle_set_agent(
+            AsyncMock(), {"conversation_id": "seat-chat", "agent_name": target}
+        )
+    old_session.stop.assert_awaited_once()
+    assert owner._pending_agents["seat-chat"] == target
+    with (
+        patch("gobby.servers.websocket.chat._session.get_machine_id", return_value="mach1"),
+        patch("gobby.workflows.agent_resolver.resolve_agent") as resolve,
+        patch(
+            "gobby.mcp_proxy.tools.apply_agent_definition.build_persona_prompt_context",
+            return_value=(f"Instructions for {target}", None),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.apply_agent_definition.apply_agent_definition_impl",
+            new=AsyncMock(return_value={"success": True, "status": "applied"}),
+        ) as activate,
+    ):
+        resolve.return_value = MagicMock(name=target)
+        created = await owner._create_chat_session_inner("seat-chat")
+        await drain_asyncio_tasks()
+    activate.assert_awaited_once_with(
+        agent=target,
+        db=owner.session_manager.db,
+        session_id="db-id-seat",
+        cli_source="qwen",
+        relaunch=True,
+    )
+    assert created is session
+    assert session.system_prompt_override == f"Instructions for {target}"
+    owner._fire_lifecycle.assert_awaited_once_with(
+        "seat-chat", HookEventType.SESSION_START, {"skip_default_agent_activation": True}
+    )
 
 
 class TestResolveWebChatReasoning:
@@ -657,13 +778,13 @@ class TestCreateChatSessionInner:
             patch("gobby.servers.websocket.chat._session.get_machine_id", return_value="mach1"),
             patch("gobby.workflows.agent_resolver.resolve_agent") as mock_resolve_agent,
             patch(
-                "gobby.mcp_proxy.tools.apply_persona.build_session_persona_context",
+                "gobby.mcp_proxy.tools.apply_agent_definition.build_persona_prompt_context",
                 return_value=("## Role\nPlanner", None),
             ),
             patch(
-                "gobby.mcp_proxy.tools.apply_persona.apply_persona_impl",
+                "gobby.mcp_proxy.tools.apply_agent_definition.apply_agent_definition_impl",
                 new=AsyncMock(return_value={"success": True}),
-            ) as mock_apply_persona,
+            ) as mock_apply_agent_definition,
         ):
             agent_body = MagicMock()
             agent_body.name = "planner"
@@ -706,7 +827,7 @@ class TestCreateChatSessionInner:
                 reasoning_effort=None,
             )
             assert mock_session.system_prompt_override == "## Role\nPlanner"
-            mock_apply_persona.assert_awaited_once()
+            mock_apply_agent_definition.assert_awaited_once()
             mixin._fire_lifecycle.assert_awaited_once_with(
                 "conv-persona",
                 HookEventType.SESSION_START,

@@ -261,7 +261,6 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         Everything needed is already in DB from SessionStart activation:
         - Lifecycle/enforcement identity: _agent_type session variable
-        - Interactive prompt identity: _persona_name session variable
         - Agent definition: agent_definitions table
         """
         if not self._session_manager:
@@ -307,10 +306,6 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         is_spawned_agent = bool(variables.get("is_spawned_agent"))
         agent_name = variables.get("_agent_type", "default")
-        if not is_spawned_agent:
-            persona_name = variables.get("_persona_name")
-            if isinstance(persona_name, str) and persona_name:
-                agent_name = persona_name
 
         from gobby.workflows.agent_resolver import resolve_agent
 

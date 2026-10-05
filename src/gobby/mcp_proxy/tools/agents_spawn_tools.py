@@ -100,21 +100,20 @@ def register_agent_spawn_tools(
     registry.merge_from(spawn_registry)
 
     @registry.tool(
-        name="apply_persona",
+        name="apply_agent_definition",
         description=(
-            "Apply a persona-capable agent definition to the current session. "
-            "Updates prompt-facing persona state and skill selection without "
-            "spawning a child agent or changing provider/model/isolation."
+            "Activate an agent definition on the current session: prompt, rules, skills, "
+            "variables, tool restrictions and step workflow. A role change requires a relaunch."
         ),
     )
-    async def apply_persona(
+    async def apply_agent_definition(
         agent: str,
         variables: dict[str, Any] | None = None,
         task_id: str | None = None,
     ) -> dict[str, Any]:
-        from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+        from gobby.mcp_proxy.tools.apply_agent_definition import apply_agent_definition_impl
 
-        return await apply_persona_impl(
+        return await apply_agent_definition_impl(
             agent=agent,
             db=ctx.db,
             variables=variables,

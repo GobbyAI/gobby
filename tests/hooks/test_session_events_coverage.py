@@ -17,6 +17,7 @@ from gobby.sessions.compact_identity import CompactIdentityResolution
 from gobby.storage.session_activity import ProviderIdentityRebind
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
+from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 
 from ._event_handler_helpers import empty_database_mock
 
@@ -636,13 +637,13 @@ class TestSessionStartAndHelpers:
     def test_build_agent_changes(self) -> None:
         handler = _TestHandler()
 
-        mock_agent_body = MagicMock()
-        mock_agent_body.name = "test-agent"
-        mock_agent_body.workflows.skill_format = "content"
-        mock_agent_body.workflows.variables = {"good_var": "val", "_bad_var": "skip"}
-        mock_agent_body.steps = None
-        mock_agent_body.step_variables = {}
-        mock_agent_body.step_workflow = None
+        mock_agent_body = make_agent_definition(
+            name="test-agent",
+            prompts={"agent": "Work."},
+            workflows=make_agent_workflows(
+                skill_format="content", variables={"good_var": "val", "_bad_var": "skip"}
+            ),
+        )
 
         mock_rule = MagicMock()
         mock_rule.name = "rule1"
@@ -687,13 +688,11 @@ class TestSessionStartAndHelpers:
         handler = _TestHandler()
         handler._session_manager.get.return_value = _make_session(**session_kwargs)
 
-        mock_agent_body = MagicMock()
-        mock_agent_body.name = "test-agent"
-        mock_agent_body.workflows.skill_format = "content"
-        mock_agent_body.workflows.variables = {}
-        mock_agent_body.steps = None
-        mock_agent_body.step_variables = {}
-        mock_agent_body.step_workflow = None
+        mock_agent_body = make_agent_definition(
+            name="test-agent",
+            prompts={"agent": "Work."},
+            workflows=make_agent_workflows(skill_format="content"),
+        )
 
         with (
             patch("gobby.workflows.selectors.resolve_rules_for_agent", return_value=set()),
@@ -754,7 +753,12 @@ class TestSessionMoreCoverage:
             mock_resolve.return_value = mock_agent
 
             mock_build.return_value = (
-                {"_agent_type": "test-agent", "var1": "val1"},
+                {
+                    "_agent_type": "test-agent",
+                    "var1": "val1",
+                    "_agent_definition_hash": "fixed-pin",
+                    "_agent_definition_keys": ["var1"],
+                },
                 {"rule1"},
                 active_skills,
             )

@@ -3,24 +3,67 @@
 from __future__ import annotations
 
 import logging
-from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 
 pytestmark = [pytest.mark.unit]
 
 
+@pytest.mark.parametrize("initial", ["x", "default"])
+def test_override_never_changes_role(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    initial: str,
+) -> None:
+    from gobby.storage.definitions import AgentDefinitionManager
+    from tests.hooks.test_session_start_reactivation import activation_handler
+    from tests.mcp_proxy.tools.test_apply_agent_definition import register_session
+
+    sid = register_session(temp_db, monkeypatch)
+    for name in ("default", "x", "y"):
+        body = make_agent_definition(name=name, surfaces=["persona"], prompts={"persona": name})
+        AgentDefinitionManager(temp_db).create(
+            name=name, definition_json=body.model_dump_json(), source="custom"
+        )
+    SessionVariableManager(temp_db).merge_variables(sid, {"_agent_type": initial})
+    result = activation_handler(temp_db)._activate_default_agent(sid, "codex", None, "y")
+    expected = "x" if initial == "x" else "y"
+    assert result is not None
+    assert result.agent_name == expected
+    assert SessionVariableManager(temp_db).get_variables(sid)["_agent_type"] == expected
+    warnings = [
+        record.getMessage() for record in caplog.records if record.levelno == logging.WARNING
+    ]
+    if initial == "x":
+        assert len(warnings) == 1
+        assert sid in warnings[0]
+        assert "keeps agent x" in warnings[0]
+        assert "ignored role-change override y" in warnings[0]
+    else:
+        assert warnings == []
+
+
 def _make_event_handlers() -> EventHandlers:
     """Create an EventHandlers instance with minimal mocked dependencies."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
     session_storage = MagicMock()
     session_storage.db = MagicMock()
     # Make db.fetchall return empty lists so iteration works
     session_storage.db.fetchall.return_value = []
     session_manager = session_storage
+    variables = SessionVariableManager(session_storage.db)
+    if isinstance(variables, MagicMock):
+        variables.get_variables.return_value = {}
 
     return EventHandlers(
         session_manager=session_manager,
@@ -35,23 +78,10 @@ def _db(handlers: EventHandlers) -> object:
     return session_manager.db
 
 
-def _make_agent_body(name: str = "test-agent") -> MagicMock:
-    """Create a mock agent body returned by resolve_agent."""
-    body = MagicMock()
-    body.name = name
-    body.prompt_for.return_value = None
-    body.workflows = MagicMock()
-    body.workflows.skill_format = None
-    body.workflows.variables = None
-    body.workflows.rules = []
-    body.workflows.skills = []
-    body.workflows.rule_selectors = SimpleNamespace(include=[], exclude=[])
-    body.rules = []
-    body.variables = None
-    body.steps = None
-    body.step_variables = {}
-    body.step_workflow = None
-    return body
+def _make_agent_body(name: str = "test-agent") -> AgentDefinitionBody:
+    return make_agent_definition(
+        name=name, prompts={"agent": "Work."}, workflows=make_agent_workflows()
+    )
 
 
 class TestAgentNameOverride:
@@ -78,7 +108,9 @@ class TestAgentNameOverride:
             assert mock_repo.call_count == 0
             assert not mock_repo.called
 
-        mock_resolve.assert_called_once_with("custom-agent", _db(handlers), project_id="proj-1")
+        mock_resolve.assert_called_once_with(
+            "custom-agent", _db(handlers), project_id="proj-1", cli_source="claude"
+        )
         assert mock_resolve.call_count == 1
         assert mock_resolve.call_args is not None
 
@@ -114,6 +146,7 @@ class TestAgentNameOverride:
                 configured_agent,
                 _db(handlers),
                 project_id=None,
+                cli_source="claude",
             )
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
@@ -133,7 +166,9 @@ class TestAgentNameOverride:
         )
 
         assert mock_resolve.call_count == 1
-        assert mock_resolve.call_args == call("my-agent", _db(handlers), project_id="proj-2")
+        assert mock_resolve.call_args == call(
+            "my-agent", _db(handlers), project_id="proj-2", cli_source="claude"
+        )
         assert mock_resolve.return_value.name == "my-agent"
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
@@ -147,6 +182,7 @@ class TestAgentNameOverride:
         mock_resolve.return_value = agent_body
 
         mock_svm = MagicMock()
+        mock_svm.get_variables.return_value = {}
         mock_svm_cls.return_value = mock_svm
 
         handlers._activate_default_agent(
@@ -196,6 +232,7 @@ class TestAgentNameOverride:
             "scoped-agent",
             _db(handlers),
             project_id="proj-from-session",
+            cli_source="claude",
         )
         mock_rules_cls.return_value.list_all.assert_called_once_with(
             enabled=True,
@@ -238,6 +275,7 @@ class TestAgentNameOverride:
             "scoped-agent",
             _db(handlers),
             project_id="proj-1",
+            cli_source="claude",
         )
         mock_rules_cls.return_value.list_all.assert_called_once_with(
             enabled=True,

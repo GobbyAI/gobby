@@ -252,15 +252,16 @@ async def start_hydrated_session(
         except Exception:
             logger.debug("Failed to persist selected model for web-chat session", exc_info=True)
 
-    if persona_selected and session_manager and session.db_session_id:
+    if pending_agent and session_manager and session.db_session_id:
         try:
-            from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+            from gobby.mcp_proxy.tools.apply_agent_definition import apply_agent_definition_impl
 
-            persona_result = await apply_persona_impl(
+            persona_result = await apply_agent_definition_impl(
                 agent=agent_name,
                 db=session_manager.db,
                 session_id=session.db_session_id,
                 cli_source=provider_name,
+                relaunch=True,
             )
             if isinstance(persona_result, dict) and persona_result.get("success") is False:
                 raise RuntimeError(
@@ -282,10 +283,8 @@ async def start_hydrated_session(
         owner._chat_sessions[session_key] = session
 
     start_data: dict[str, Any] = {}
-    if persona_selected:
+    if pending_agent:
         start_data["skip_default_agent_activation"] = True
-    elif pending_agent:
-        start_data["agent_name_override"] = pending_agent
 
     def _log_session_start_error(task: asyncio.Task[Any]) -> None:
         if task.cancelled():

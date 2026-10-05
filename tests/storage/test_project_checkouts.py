@@ -1155,7 +1155,7 @@ def test_identity_repo_path_residue_allowlist() -> None:
         "tests/mcp_proxy/test_metrics_manager.py",
         "tests/mcp_proxy/test_metrics_store.py",
         "tests/mcp_proxy/test_registries.py",
-        "tests/mcp_proxy/tools/test_apply_persona.py",
+        "tests/mcp_proxy/tools/test_apply_agent_definition.py",
         "tests/mcp_proxy/tools/test_hub.py",
         "tests/plans/test_plan_coverage_ci.py",
         "tests/sessions/test_e2e_session_tracking.py",

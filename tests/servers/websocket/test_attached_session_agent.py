@@ -3,15 +3,25 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.servers.websocket.handlers.session_config import _set_attached_session_agent
 from gobby.servers.websocket.session_control import SessionControlMixin
 from gobby.terminals.runtime import Delivered, IndeterminateWrite
+
+
+@pytest.fixture(autouse=True)
+def base_agent_variables() -> Iterator[None]:
+    with patch(
+        "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+        return_value={"_agent_type": "default"},
+    ):
+        yield
 
 
 def _attached_target(backend: str = "native") -> tuple[SimpleNamespace, AsyncMock]:
@@ -74,3 +84,35 @@ async def test_persona_command_does_not_confirm_indeterminate_write() -> None:
 
     assert server._send_error.await_args.kwargs["code"] == "PERSONA_DISPATCH_UNCONFIRMED"
     websocket.send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_attached_terminal_role_change_refused_before_write() -> None:
+    server, websocket = _attached_target()
+    with (
+        patch(
+            "gobby.servers.websocket.handlers.session_config._validate_persona_agent",
+            return_value=True,
+        ),
+        patch(
+            "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+            return_value={"_agent_type": "x"},
+        ),
+        patch(
+            "gobby.storage.config_repository.ConfigRepository.read",
+            return_value=SimpleNamespace(values={"default_agent": "default"}),
+        ),
+    ):
+        await _set_attached_session_agent(
+            cast(SessionControlMixin, server), websocket, "session-1", "y"
+        )
+    server.write_coordinator.write.assert_not_awaited()
+    assert server._send_error.await_args.kwargs["code"] == "ROLE_CHANGE_REQUIRES_RELAUNCH"
+    text = server._send_error.await_args.args[1]
+    assert "start a new terminal session" in text
+    assert "'x'" in text and "'y'" in text
+    assert json.loads(websocket.send.await_args.args[0]) == {
+        "type": "agent_changed",
+        "target_session_id": "session-1",
+        "agent_name": "x",
+    }

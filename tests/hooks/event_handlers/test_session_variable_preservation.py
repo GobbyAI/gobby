@@ -11,7 +11,6 @@ import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -24,7 +23,9 @@ from gobby.hooks.session_materialize import activate_deferred_session
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = [pytest.mark.unit]
@@ -55,25 +56,12 @@ def _make_event_handlers() -> EventHandlers:
 def _make_agent_body(
     name: str = "default",
     variables: dict[str, Any] | None = None,
-) -> MagicMock:
-    """Create a mock agent body with optional default variables."""
-    body = MagicMock()
-    body.name = name
-    body.prompt_for.return_value = None
-    body.workflows = MagicMock()
-    body.workflows.skill_format = None
-    body.workflows.variables = variables
-    body.workflows.rules = []
-    body.workflows.skills = []
-    body.workflows.rule_selectors = SimpleNamespace(include=[], exclude=[])
-    body.rules = []
-    body.variables = None
-    body.blocked_tools = []
-    body.blocked_mcp_tools = []
-    body.steps = None
-    body.step_variables = {}
-    body.step_workflow = None
-    return body
+) -> AgentDefinitionBody:
+    return make_agent_definition(
+        name=name,
+        prompts={"agent": "Work."},
+        workflows=make_agent_workflows(variables=variables or {}),
+    )
 
 
 def _get_merged_changes(mock_svm: MagicMock) -> dict[str, Any]:
@@ -396,8 +384,10 @@ class TestReturningSessionReappliesInternalKeys:
         mock_svm = MagicMock()
         mock_svm_cls.return_value = mock_svm
         mock_svm.get_variables.return_value = {
-            "_agent_type": "old-agent",
+            "_agent_type": "default",
             "_active_rule_names": ["old-rule"],
+            "_agent_definition_hash": "old-pin",
+            "_agent_definition_keys": ["retired_key"],
             "is_spawned_agent": False,
             "mode_level": 1,
         }
@@ -414,6 +404,8 @@ class TestReturningSessionReappliesInternalKeys:
         assert "_agent_type" in changes
         assert "_active_rule_names" in changes
         assert "is_spawned_agent" in changes
+        assert changes["_agent_definition_hash"] != "old-pin"
+        assert "retired_key" in changes["_agent_definition_keys"]
         # User variable preserved
         assert "mode_level" not in changes
 

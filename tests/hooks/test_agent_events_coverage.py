@@ -419,7 +419,6 @@ class TestHandleBeforeAgent:
                 "gobby.workflows.state_manager.SessionVariableManager.get_variables",
                 return_value={
                     "_agent_type": "backend-developer",
-                    "_persona_name": "qa-reviewer",
                     "_agent_context_injected": False,
                     "_agent_context_rehydrate_pending": True,
                     "is_spawned_agent": True,
@@ -504,8 +503,7 @@ class TestHandleBeforeAgent:
         )
 
         variables: dict[str, Any] = {
-            "_agent_type": "default",
-            "_persona_name": "operator",
+            "_agent_type": "operator",
             "_agent_context_injected": True,
             "_agent_identity_reinject": True,
             "_agent_context_rehydrate_pending": False,

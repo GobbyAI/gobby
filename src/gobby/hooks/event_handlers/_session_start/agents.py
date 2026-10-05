@@ -14,6 +14,7 @@ def resolve_agent_name(
     handler: Any,
     session_id: str,
     agent_name_override: str | None,
+    existing_vars: dict[str, Any] | None = None,
 ) -> str:
     """Determine which agent to activate."""
     if handler._session_manager is None:
@@ -23,8 +24,10 @@ def resolve_agent_name(
 
     from gobby.workflows.state_manager import SessionVariableManager
 
-    sv_mgr = SessionVariableManager(handler._session_manager.db)
-    existing_vars = sv_mgr.get_variables(session_id)
+    if existing_vars is None:
+        existing_vars = SessionVariableManager(handler._session_manager.db).get_variables(
+            session_id
+        )
     existing_agent_type = existing_vars.get("_agent_type") if existing_vars else None
 
     if existing_agent_type and existing_agent_type != "default":
@@ -49,12 +52,12 @@ def build_agent_changes(
         raise RuntimeError("session storage is not initialized")
 
     from gobby.hooks.session_activation import _session_is_spawned
-    from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
+    from gobby.mcp_proxy.tools.apply_agent_definition import build_definition_changes
 
     session = handler._session_manager.get(session_id)
     is_spawned = _session_is_spawned(session)
 
-    return build_persona_changes(
+    return build_definition_changes(
         agent_body=agent_body,
         session_id=session_id,
         db=handler._session_manager.db,
@@ -105,7 +108,25 @@ def activate_default_agent(
         return None
 
     _ta0 = time.monotonic()
-    default_agent_name = handler._resolve_agent_name(session_id, agent_name_override)
+    from gobby.mcp_proxy.tools.apply_agent_definition import (
+        commit_definition_changes,
+        is_role_change,
+    )
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    db = handler._session_manager.db
+    sv_mgr = SessionVariableManager(db)
+    existing = sv_mgr.get_variables(session_id)
+    expected_agent_type = existing.get("_agent_type")
+    if agent_name_override and is_role_change(db, existing, agent_name_override):
+        handler.logger.warning(
+            "Session %s keeps agent %s; ignored role-change override %s",
+            session_id,
+            expected_agent_type,
+            agent_name_override,
+        )
+        agent_name_override = str(expected_agent_type)
+    default_agent_name = handler._resolve_agent_name(session_id, agent_name_override, existing)
     if default_agent_name == "none":
         return None
 
@@ -121,6 +142,7 @@ def activate_default_agent(
             default_agent_name,
             handler._session_manager.db,
             project_id=project_id,
+            cli_source=cli_source,
         )
     except AgentResolutionError as e:
         handler.logger.error("Failed to resolve default agent '%s': %s", default_agent_name, e)
@@ -157,10 +179,6 @@ def activate_default_agent(
         enabled_variables,
     )
 
-    from gobby.workflows.state_manager import SessionVariableManager
-
-    sv_mgr = SessionVariableManager(handler._session_manager.db)
-
     internal_keys = {
         "_agent_type",
         "_active_rule_names",
@@ -169,10 +187,11 @@ def activate_default_agent(
         "_agent_blocked_tools",
         "_agent_blocked_mcp_tools",
         "is_spawned_agent",
+        "_agent_definition_hash",
+        "_agent_definition_keys",
     }
     variables_count = len([k for k in changes if k not in internal_keys])
 
-    existing = sv_mgr.get_variables(session_id)
     if existing:
         always_reapply = {
             "_agent_type",
@@ -182,11 +201,30 @@ def activate_default_agent(
             "_agent_blocked_tools",
             "_agent_blocked_mcp_tools",
             "is_spawned_agent",
+            "_agent_definition_hash",
+            "_agent_definition_keys",
         }
         changes = {k: v for k, v in changes.items() if k in always_reapply or k not in existing}
 
     _ta_vars = time.monotonic()
-    sv_mgr.merge_variables(session_id, changes)
+    committed = commit_definition_changes(
+        db,
+        session_id,
+        default_agent_name,
+        changes,
+        expected_agent_type=expected_agent_type,
+        relaunch=False,
+        same_pin_noop=False,
+    )
+    if committed["status"] != "applied":
+        handler.logger.warning(
+            "Session %s keeps agent %s; stale activation of %s refused (%s)",
+            session_id,
+            committed["agent"],
+            default_agent_name,
+            committed["status"],
+        )
+        return None
 
     _ta_format = time.monotonic()
     if active_skills is None:
