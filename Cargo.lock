@@ -2510,12 +2510,15 @@ dependencies = [
  "axum",
  "bytes",
  "clap",
+ "deadpool-postgres",
+ "futures-util",
  "gobby-core",
  "gobby-terminals",
  "http-body-util",
  "hyper",
  "hyper-util",
  "libc",
+ "rand 0.8.6",
  "rcgen",
  "serde",
  "serde_json",
@@ -2523,8 +2526,10 @@ dependencies = [
  "tempfile",
  "time",
  "tokio",
+ "tokio-postgres",
  "tokio-rustls",
  "tower-service",
+ "uuid",
 ]
 
 [[package]]
