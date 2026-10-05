@@ -45,8 +45,9 @@ from that:
   claims.
 - Gate 9 (rule 1) checks only the closing session's own live pairs for the
   task, per checkout, and names no foreign owner.
-- One ledger carries ownership: `session_dirty_files` (live) and
-  `task_edited_files` (per task, per checkout). The edit-time, checkout-mirror,
+- One ledger carries ownership: `session_dirty_files` holds the live pairs,
+  each tagged with the one task it is live for, and `task_edited_files` is
+  the append-only per-task history. The edit-time, checkout-mirror,
   history and baseline variables are gone, along with `release_task_paths`,
   `inspect_task_path_ownership`, `capture_baseline_dirty_files` and the
   claim-time scope check.
@@ -107,8 +108,8 @@ sha256 of the path's bytes, held in memory only for the duration of the call
   resolved target, whether the input was relative or absolute. So
   `../other-worktree/p.py` and a relative symlink that leaves the cwd's
   checkout reach the checkout that holds the real file. With no `event.cwd`
-  and no absolute `workdir`, a relative path has no pair at any of the four
-  sites; absolute paths resolve unchanged. This narrows today's rule 3, which
+  and no absolute `workdir` or `cwd` in the tool input, a relative path has
+  no pair at any of the four sites; absolute paths resolve unchanged. This narrows today's rule 3, which
   read such a path against `project_path` although the recorder could never
   record it. Adapters copy `event.cwd` from the provider payload.
 - **Where the pre-call identity is taken.** At `before_tool`,
@@ -195,8 +196,11 @@ sha256 of the path's bytes, held in memory only for the duration of the call
    follows rule 2. #23363 land 7 passes: its six paths are exactly the
    files that differ between HEAD `b3a65779db` and MERGE_HEAD `7094fc272b`.
 2. **R2, transfer at claim (Orchestrator).** At claim, the task's live pairs
-   move from ended or no-longer-claiming predecessor sessions into the
-   claimant's ledger. Ownership never duplicates across two live sessions.
+   (pairs tagged with the task, Decision 8) move from ended or
+   no-longer-claiming predecessor sessions into the claimant's ledger, still
+   tagged with the task. A predecessor's pair tagged with another task never
+   moves, even when the predecessor's history names the claimed task.
+   Ownership never duplicates across two live sessions.
    Each move is one hub transaction under a new `SessionVariablePairMutation`
    lock that takes both rows' session-variable advisory keys in session-id
    order. Eligibility is rechecked inside it, a failure is reported in the
@@ -240,11 +244,25 @@ sha256 of the path's bytes, held in memory only for the duration of the call
 7. **`git restore --staged` is execute-kind (accepted).** Without
    `--worktree`/`-W` it changes only the index. It is reclassified from
    `"write"` to `"execute"`, like `git add`. This is the #22642 command.
-8. **One ledger (accepted).** `session_dirty_files: {checkout_root: [rel]}` is
-   live ownership. `task_edited_files: {task_id: {checkout_root: [rel]}}` is the
-   per-task record. Every other attribution variable is deleted. Legacy
-   branches are deleted outright under AGENTS.md rule 10 (no backward
-   compatibility): a stored value of the old shape reads as empty.
+8. **One ledger, live set and history kept apart (accepted; live tag by
+   Orchestrator ruling on CO-A3-F9, 2026-10-05).**
+   `session_dirty_files: {checkout_root: {rel: task_id | null}}` is live
+   ownership. Each live pair carries the one task it is live for, or null.
+   `task_edited_files: {task_id: {checkout_root: [rel]}}` is the append-only
+   per-task history, for audit and gate 12; it never makes a pair live. A
+   task's live pairs are the session's pairs tagged with that task. A
+   mutation recorded while task B is active tags the pair B, replacing any
+   earlier tag, so the pair is live for B only. The tag ends when
+   reconciliation drops the pair, when the pair transfers to a claimant
+   (Decision 2), when the session mutates it for another task, or when the
+   task closes (`_cleanup_closed_claim` sets its tags to null). A claim
+   released without closing (live-session recovery, a spawn handoff, a
+   claim observer) keeps the tag, so the next claimant can take the pair.
+   Rejected: a release marker on history rows, which reconciliation,
+   re-mutation and close would each have to flip; the tag ends with the pair
+   that reconciliation already drops. Every other attribution variable is
+   deleted. Legacy branches are deleted outright under AGENTS.md rule 10 (no
+   backward compatibility): a stored value of the old shape reads as empty.
 9. **Rule 4 compares project ids (accepted).** The project id of the path's
    `.gobby/project.json` root must equal the session's project id. The single
    exception is a registered worktree of the other project whose `task_id` is
@@ -255,9 +273,11 @@ sha256 of the path's bytes, held in memory only for the duration of the call
    gated like any own-project pair.
 10. **W1, accessor meaning.** `task_edited_file_set`,
     `task_edited_file_set_for_checkout` and `target_task_has_edits` return the
-    task's live pairs (task ledger ∩ `session_dirty_files`), which is their
-    effective meaning today. `task_edited_checkout_paths` returns every
-    recorded pair (gate 12 evidence). Their callers therefore stay unchanged.
+    task's live pairs (the session pairs tagged with the task), which is their
+    effective meaning today: `reconcile_edit_ledgers` drops clean pairs from
+    the per-task live ledger, and `remove_claimed_task` drops a closed task's
+    rows. `task_edited_checkout_paths` returns every recorded pair (gate 12
+    evidence). Their callers therefore stay unchanged.
 11. **W2, write paths.** Rules 3 and 4 and the recorder read
     `canonical_write_file_paths` when the key is present, else
     `canonical_file_paths`. A dirty `cp` source is therefore not refused.
@@ -291,8 +311,8 @@ sha256 of the path's bytes, held in memory only for the duration of the call
     lookup has no project filter, because a sanctioned worktree's holders
     belong to another project (Decision 9) and ledger keys are already
     realpath roots.
-    The task ref is the claimed task whose live pairs hold the path, else "no
-    claimed task".
+    The task ref is the pair's live tag when the holder still claims that
+    task, else "no claimed task".
 16. **W6, task ledger lifetime.** `task_edited_files` is append-only for the
     session's life: `remove_claimed_task` no longer drops it, because a closed
     task's pairs must keep excluding those paths from a later task's gate 12
@@ -300,8 +320,10 @@ sha256 of the path's bytes, held in memory only for the duration of the call
     a task that closed before the evidence window excludes only its live
     pairs. `_cleanup_closed_claim` clears
     `had_edits` when no task still in `claimed_tasks` has live pairs.
-    Recorded pairs that are no longer live serve gate 12 only; every other
-    reader, `outstanding_monolith_paths` among them, reads live pairs.
+    History serves audit and gate 12 only and never revives a live
+    association (Orchestrator ruling on CO-A3-F9). Every other reader,
+    `outstanding_monolith_paths`, transfer, the close guard and rules 2 and 3
+    among them, reads live tags.
 17. **The rule 2 user-directed exception needs no mechanism.** An ended owner
     is not live, a live owner acts on the user's direction, and the user's own
     terminal commits bypass agent hooks.
@@ -346,8 +368,10 @@ mechanism, its replacement, and the tests deleted or changed.
     `tests/agents/test_terminal_timeout_checkpoint.py` (1.4).
 - **`task_edited_file_checkouts`**, its `_history` and `_history_started_at`
   variants, and `session_dirty_file_checkouts`.
-  - Replacement: the nested shape of `task_edited_files` and
-    `session_dirty_files` (Decision 8).
+  - Replacement: the task-tagged nested `session_dirty_files` replaces the
+    per-task live map `task_edited_file_checkouts` and
+    `session_dirty_file_checkouts`, and the nested append-only
+    `task_edited_files` replaces the history variants (Decision 8).
   - Change `tests/workflows/test_session_variable_manager.py`,
     `tests/workflows/test_task_claim_state.py`,
     `tests/workflows/test_code_review_scope.py`,
@@ -749,7 +773,9 @@ Split `commit_guard.py` (956 lines): move the commit-parsing half, lines 45-322
   variables, intersect `session_dirty_file_set_for_checkout(variables, root)`
   with `paths`, and pick the task ref from the claimed task whose
   `task_edited_file_set_for_checkout(variables, task, root)` holds the path,
-  else None. Replace `_active_path_owners` and `_active_foreign_path_owners`.
+  else None. After 1.4 that accessor reads the pair's live tag, so at most
+  one task matches. Replace `_active_path_owners` and
+  `_active_foreign_path_owners`.
 - Rule 3, `foreign_dirty_edit_conflict(db, event, *, session_id, project_id,
   project_path) -> str`:
   1. Return "" unless `canonical_tool_kind == "write"` (Decision 6).
@@ -926,16 +952,21 @@ and the module helper `_session_dirty_file_checkouts`) into the new
   docstring names `task_edited_file_checkouts` (line 457).
 
 **Implementation:**
-- `session_dirty_files` becomes `{checkout_root: [rel]}` and
-  `task_edited_files` becomes `{task_id: {checkout_root: [rel]}}`. A value of
-  any other shape reads as empty (Decision 8).
+- `session_dirty_files` becomes `{checkout_root: {rel: task_id | null}}`, the
+  live set with each pair's one live task, and `task_edited_files` becomes
+  the append-only history `{task_id: {checkout_root: [rel]}}`. A value of
+  any other shape, including the flat list and a `{root: [rel]}` map, reads
+  as empty (Decision 8).
 - `EditLedgerMixin.record_edited_files(session_id, rels, *, checkout_root:
-  str) -> bool`: `checkout_root` is required and `edited_at` is gone. It adds
-  each pair to `session_dirty_files`, the active task's ledger and
-  `session_edited_files`. `release_session_dirty_files(session_id, rels, *,
-  checkout_root: str)` drops pairs from `session_dirty_files` only.
+  str) -> bool`: `checkout_root` is required and `edited_at` is gone. It sets
+  each pair in `session_dirty_files` to the active task (null without one),
+  replacing any earlier tag, appends the pair to the active task's
+  `task_edited_files` row, and adds it to `session_edited_files`.
+  `release_session_dirty_files(session_id, rels, *, checkout_root: str)`
+  drops pairs, tags included, from `session_dirty_files` only.
 - In `task_claim_state.py`, add `task_live_checkout_paths(variables, task_id)
-  -> frozenset[tuple[str, str]]` (task ledger ∩ `session_dirty_files`).
+  -> frozenset[tuple[str, str]]`: the `session_dirty_files` pairs tagged with
+  the task. History never contributes (Decision 16).
   `task_edited_file_set`, `task_edited_file_set_for_checkout` and
   `target_task_has_edits` derive from it; `task_edited_checkout_paths` returns
   every recorded pair. `other_task_edited_checkout_paths` keeps
@@ -943,8 +974,10 @@ and the module helper `_session_dirty_file_checkouts`) into the new
   live pairs, plus its recorded pairs when the task is not exempt.
   `derive_close_transcript_evidence` keeps passing
   `_closed_before_window_task_ids`. A task closed before the window therefore
-  stops suppressing a later edit to the same pair once its live ownership is
-  released, while live or overlapping other-task pairs still suppress it.
+  stops suppressing a later edit to the same pair once its live tag ends,
+  while live or overlapping other-task pairs still suppress it. A later
+  mutation of that pair for another task retags it, so the closed task's
+  history never reads as live.
   Delete `task_edited_checkout_history_paths`,
   `task_edited_file_times` and `_task_edited_file_checkouts`.
   `remove_claimed_task` no longer touches `task_edited_files` (Decision 16).
@@ -953,12 +986,12 @@ and the module helper `_session_dirty_file_checkouts`) into the new
   under a root that no longer exists. Delete `_task_ledger_paths`,
   `SESSION_DIRTY_FILE_CHECKOUTS_VARIABLE` and `_TASK_LEDGER_VARIABLES`.
 - In the defaults YAML, delete `task_edited_file_checkouts` and
-  `task_edited_file_times`, and describe `task_edited_files` as
-  `{task_id: {checkout_root: [relative paths]}}`.
+  `task_edited_file_times`, and describe `task_edited_files` as the
+  append-only history `{task_id: {checkout_root: [relative paths]}}`.
 - `outstanding_monolith_paths` keeps its signature and returns nothing
   without a project root. It projects the session's live task pairs, the
-  union of `task_live_checkout_paths(variables, task)` over the tasks in
-  `task_edited_files`, each against its own root (Decision 16). A recorded
+  `session_dirty_files` pairs with a non-null tag, each against its own root
+  (Decision 16). A recorded
   pair that is no longer live is not projected, so another session's later
   growth of that file never blocks this session. An over-budget file the
   session owns stays live, because `require-monolith-resolution-before-commit`
@@ -969,8 +1002,10 @@ and the module helper `_session_dirty_file_checkouts`) into the new
 - Gate 12: `task_checkout_paths = task_edited_checkout_paths(variables,
   task_id)`; delete the history union, the `history_started_at` branch and the
   four legacy helpers.
-- `_cleanup_closed_claim`: after `remove_claimed_task`, clear `had_edits` when
-  no task left in `claimed_tasks` has live pairs.
+- `_cleanup_closed_claim`: after `remove_claimed_task`, set the closed task's
+  tags in the closer's `session_dirty_files` to null (the pairs stay owned by
+  the session), and clear `had_edits` when no task left in `claimed_tasks`
+  has live pairs. Other claim releases leave tags unchanged (Decision 8).
 - Delete the legacy branch of `_authorized_task_paths`; fix the
   `task_recovery` docstring.
 
@@ -995,13 +1030,13 @@ the isolation prefix.
 
 **Acceptance:**
 
-- 1.4.1 - `record_edited_files` writes the pair to `session_dirty_files[root]`, `task_edited_files[active][root]` and `session_edited_files`, and requires `checkout_root`. test: `tests/workflows/test_session_variable_manager.py::test_record_edited_files_writes_nested_ledgers`.
-- 1.4.2 - `task_edited_file_set` and `target_task_has_edits` report only live pairs, while `task_edited_checkout_paths` reports every recorded pair after reconciliation releases one. test: `tests/workflows/test_task_claim_state.py::test_live_and_recorded_task_pairs_differ_after_release`.
+- 1.4.1 - `record_edited_files` sets `session_dirty_files[root][rel]` to the active task (null without one, replacing an earlier tag), appends the pair to `task_edited_files[active][root]` and `session_edited_files`, and requires `checkout_root`. test: `tests/workflows/test_session_variable_manager.py::test_record_edited_files_writes_nested_ledgers`.
+- 1.4.2 - `task_edited_file_set` and `target_task_has_edits` report only pairs tagged with the task, while `task_edited_checkout_paths` reports every recorded pair after reconciliation releases one. F9 sequence: session S records p under task A, commits it and reconciliation releases it, then records p under task B; A then has no live pair and B has p, although A's history still names p. test: `tests/workflows/test_task_claim_state.py::test_live_and_recorded_task_pairs_differ_after_release`.
 - 1.4.3 - `remove_claimed_task` keeps the task's ledger, and `_cleanup_closed_claim` clears `had_edits` only when no remaining claimed task has live pairs. test: `tests/workflows/test_task_claim_state.py::test_remove_claimed_task_keeps_task_ledger`.
 - 1.4.4 - `reconcile_edit_ledgers` releases clean pairs and every pair under a checkout root that no longer exists, and never edits `task_edited_files`. test: `tests/workflows/test_session_variable_manager.py::test_reconcile_releases_clean_and_missing_root_pairs`.
-- 1.4.5 - Gate 12 credits the task's own recorded pairs without the history variables. Another task's live pairs always exclude its paths from this task's evidence, and its recorded but not live pairs exclude them unless that task is in `_closed_before_window_task_ids`. The parametrized cases are: closed before the window and released (credited), closed before the window and still live (excluded), and an overlapping task (excluded). The legacy cases are deleted. test: `tests/mcp_proxy/tools/tasks/test_close_evidence_sessions.py::test_close_excludes_other_task_edit_in_same_checkout`.
+- 1.4.5 - Gate 12 credits the task's own recorded pairs without the history variables. Another task's live pairs always exclude its paths from this task's evidence, and its recorded but not live pairs exclude them unless that task is in `_closed_before_window_task_ids`. The parametrized cases are: closed before the window and released (credited), closed before the window and still live (excluded), closed before the window with its released pair re-mutated by this task, which retags it (credited), and an overlapping task (excluded). The legacy cases are deleted. test: `tests/mcp_proxy/tools/tasks/test_close_evidence_sessions.py::test_close_excludes_other_task_edit_in_same_checkout`.
 - 1.4.6 - `outstanding_monolith_paths` projects a worktree pair against its own root, so an over-budget file in a task worktree is reported. test: `tests/workflows/test_monolith_guard.py::test_outstanding_monolith_paths_projects_each_pair_against_its_root`.
-- 1.4.7 - Old-shape values (`session_dirty_files` as a list, `task_edited_files` with list values) read as empty, and no retired variable name remains in `src/`. test: `tests/workflows/test_task_claim_state.py::test_old_shape_ledger_values_read_as_empty`.
+- 1.4.7 - Old-shape values (`session_dirty_files` as a list or as `{root: [rel]}`, `task_edited_files` with list values) read as empty, and no retired variable name remains in `src/`. test: `tests/workflows/test_task_claim_state.py::test_old_shape_ledger_values_read_as_empty`.
 - 1.4.8 - `outstanding_monolith_paths` reports only live pairs: a pair whose task closed and whose live pair was released is not reported after the file grows past the ceiling while another session owns it, while an over-budget pair live for one of the session's tasks is reported. test: `tests/workflows/test_monolith_guard.py::test_outstanding_monolith_paths_ignores_released_history`.
 
 ### 1.5 The recorder records only content-changing writes [category: code] (depends: 1.4)
@@ -1131,7 +1166,7 @@ _ShellSegmentMetadata | None`, called from the original function.
   - With an entry from `take`, record the pair when `file_digest` now differs
     from the stored digest. Equal digests record nothing, including for a path
     the session already owns, so a no-op under another active task never
-    enters that task's ledger. The comparison does not consult git, so a path
+    retags the pair or enters that task's history. The comparison does not consult git, so a path
     committed by the same call is still recorded.
   - With no entry, or a directory, batch the pair per root into one
     `task_dirty_paths(rels, root)`: dirty records the pair, clean records
@@ -1468,10 +1503,11 @@ Targets:
      row is `to_session_id`, the claimant's `claimed_tasks` holds the task,
      and `releases_task_ownership(predecessor variables, task_id, live=...)`
      holds. If any check fails, return 0 with nothing written.
-  3. Take the predecessor's live pairs for the task
-     (`task_live_checkout_paths`). Add each to the claimant's
-     `session_dirty_files` and `task_edited_files[task_id]`, and remove it
-     from the predecessor's `session_dirty_files`. Leave the claimant's
+  3. Take the predecessor's pairs tagged with the task
+     (`task_live_checkout_paths`); pairs tagged with any other task stay.
+     Set each in the claimant's `session_dirty_files` with the task's tag,
+     append it to the claimant's `task_edited_files[task_id]`, and remove it,
+     tag included, from the predecessor's `session_dirty_files`. Leave the claimant's
      `session_edited_files` (it did not edit them) and the predecessor's
      `task_edited_files` (gate 12, Decision 16) unchanged.
   4. Write both changed rows and return the number of pairs moved.
@@ -1493,8 +1529,9 @@ Targets:
   live predecessor that still claims the task contributes nothing, and a
   pair under a deleted checkout can never be committed or reconciled by its
   ended holder, so it is dropped.
-- `claim_task` calls it after the claimant's variables merge. Before the
-  `already_claimed` early return, it calls it again, which retries any
+- `claim_task` calls `_transfer_task_dirty_pairs` after the claimant's
+  variables merge. Before the `already_claimed` early return, it calls
+  `_transfer_task_dirty_pairs` again, which retries any
   transfer that failed earlier. A non-empty list goes into the result as
   `pair_transfer_errors`. The claim itself still succeeds. While errors
   remain, the `already_claimed` message says to call `claim_task` again to
@@ -1518,6 +1555,7 @@ Targets:
 - 1.8.4 - While one thread holds a `SessionVariablePairMutation` transaction open, another thread's `_mutate_variables` on either row waits until it commits and then sees the transferred ledger. test: `tests/workflows/test_session_variable_manager.py::test_single_row_mutation_waits_on_pair_lock`.
 - 1.8.5 - `advisory_lock_keys(SessionVariablePairMutation(b, a))` equals the `SessionVariableMutation` keys of `a` then `b`, and taking a `SessionVariableMutation` lock after the pair lock raises `LockAcquisitionOrderError`. test: `tests/storage/test_manager_surface_parity.py::test_session_variable_pair_lock_keys_match_single_row_keys_in_sorted_order`.
 - 1.8.6 - When a claim's transfer fails, the result carries `pair_transfer_errors` and its message invites a retry; a later `claim_task` by the same session takes the `already_claimed` return, completes the transfer, and reports no `pair_transfer_errors`. test: `tests/mcp_proxy/tools/test_claim_task.py::test_already_claimed_retry_completes_failed_pair_transfer`.
+- 1.8.7 - F9 regression: session S mutates p under task A and q under A, releases A without closing (both stay tagged A), then mutates p for task B (p retags to B); in a variant, S commits p under A, reconciliation releases it, and S mutates p again for B. When another session claims A, only q transfers, p stays with S tagged B, `untransferred_task_pairs` for A never names p, and A's close is not blocked by p while S's close of B still is. test: `tests/mcp_proxy/tools/test_claim_task.py::test_claim_transfers_only_pairs_live_for_the_claimed_task`.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1553,6 +1591,15 @@ Targets:
   untransferred pair, so 1.7 now depends on 1.8 (1.7, 1.8, Decision 2). The
   Constraints bullet separates persisted session variables from the
   in-memory digest store.
+- 2026-10-05: Adversary finding CO-A3-F9 accepted under the Orchestrator's
+  ruling (live association and history stay distinct; the task-tag shape and
+  the non-close-release reading confirmed). `session_dirty_files` becomes
+  `{root: {rel: task_id | null}}`; a mutation for B retags the pair to B; the
+  tag ends at reconciliation, retag, transfer or task close; history never
+  revives a live pair (Decisions 2, 8, 10, 15, 16; 1.4, 1.5, 1.8). New
+  regressions 1.4.2's F9 sequence, a 1.4.5 retag case and 1.8.7. Prose:
+  1.8 names `_transfer_task_dirty_pairs`, and Path resolution covers an
+  absolute tool-input `cwd`.
 
 ## V2: Verification
 `kind: verification`
