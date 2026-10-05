@@ -93,9 +93,10 @@ enforces it (#22902 Constraints, boundary paragraph).
      - the new hash is stored;
      - one drift line is injected into the next turn.
    - A running step instance keeps its snapshot until its unit of work ends.
-   - #22902 D4's human `version` marker is not part of the pin, because hash
-     identity is sufficient. That also leaves no external dependency on #22902
-     1.1.
+   - There is no separate `version` pin. #22902 D4's human `version` marker is
+     a body field, so `compute_definition_hash` (which hashes every key of the
+     dumped body) already covers it: a version bump changes the pin, as any
+     other edit does. Nothing in this plan reads `version` on its own.
    - Rejected: refusing on drift. A bundled sync or `reload_cache` (#22902 D13)
      would strand every live seat.
    - Confirmed by the PD (gobby#14730, 2026-09-28): the pin is the content hash
@@ -291,8 +292,8 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) and re-verified at
   (`storage/definitions/_shared.py`) feeds template drift only today.
 - `AgentDefinitionBody` (`workflows/agent_models.py`, 270 lines):
   - `version: StrictStr | None` (line 112) landed with #22993 (Retire the
-    skills map and store version, #22902 1.1, closed 2026-09-28). Decision 4
-    keeps it out of the pin.
+    skills map and store version, #22902 1.1, closed 2026-09-28). As a body
+    field it is inside the content-hash pin (Decision 4).
   - `execution_mode: Literal["one_shot", "interactive"] = "one_shot"`
     (line 120) landed in #23442's commits a95e39fdad, 80ecc84f10 and
     dbfdc43f42. #23442 is still open.
@@ -748,9 +749,16 @@ Targets:
 
 **Research context:** existing behavior:
 - `activate_default_agent` reads `existing = sv_mgr.get_variables(session_id)`
-  before its merge.
+  before its merge. For an existing session it then filters the changes to keys
+  in `always_reapply` or absent from `existing`, and merges the result.
 - After 1.1, `_agent_definition_hash` is in `always_reapply`, so the merge
   overwrites the stored pin with the current one.
+- `_agent_identity_reinject` is stored on any session that has injected once
+  (staged back to `False`), and `_agent_definition_drift` stays stored as
+  `None` after its first delivery. Both keys are therefore present in
+  `existing` and are dropped if they enter the changes before the filter
+  (enhancer note, gobby#15446, verified at
+  `_session_start/agents.py::activate_default_agent`).
 - `AgentActivationResult` has no context field, and the prompt reaches the model
   only through `_inject_agent_instructions_if_needed`. That method prepends
   `agent_body.prompt_for(surface)` when `_agent_context_injected` is false or
@@ -758,11 +766,12 @@ Targets:
   then stages the three flags back to their idle values.
 
 Implementation:
-- Before the merge in `activate_default_agent`, compare `existing` against the
-  new changes.
+- In `activate_default_agent`, compare `existing` against the new changes after
+  the `always_reapply` filter, immediately before `merge_variables`, and add the
+  drift keys at that point so the filter cannot drop them.
 - When the stored `_agent_type` equals the activated name and the stored
   `_agent_definition_hash` is non-null and differs from the new one, add to the
-  changes:
+  filtered changes:
   - `_agent_definition_drift`: a single line of the form "Definition
     `<agent>` changed since this session activated it (`<old[:12]>` →
     `<new[:12]>`); the current definition now applies.";
@@ -785,8 +794,9 @@ Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 **Acceptance:**
 
 - 1.3.1 - A resume or compact SessionStart whose seat definition changed applies
-  the current row, stores the new pin, and injects the drift line exactly once.
-  test:
+  the current row, stores the new pin, and injects the drift line exactly once,
+  including on a session that already stores `_agent_identity_reinject: False`
+  and `_agent_definition_drift: None`. test:
   `tests/hooks/test_session_start_reactivation.py::test_reactivation_reports_definition_drift_once`.
 - 1.3.2 - An unchanged pin injects no drift line. test:
   `tests/hooks/test_session_start_reactivation.py::test_unchanged_pin_injects_no_drift_line`.
