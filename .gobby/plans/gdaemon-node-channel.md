@@ -185,8 +185,21 @@ approved key-cutover plan specified.
       happens in the front door. The hub then waits for hello, registers the
       machine, and writes its hello bookkeeping, all within the 10 s hello
       timeout from the upgrade. It checks the key once more under the 4 s
-      deadline and only then sends the ack. Admission therefore ends within
-      14 s, before the first recheck tick at 25 s.
+      deadline and only then sends the ack. The ack send must finish by the
+      admission end, which is the upgrade plus the hello timeout plus the
+      recheck deadline (14 s). A send still pending then removes the entry
+      and drops the transport. Admission therefore ends within 14 s, before
+      the first recheck tick at 25 s.
+      - A recheck tick that finds the key revoked shares one absolute cycle
+        deadline, the tick plus the recheck deadline, between its check and
+        its close. The handler removes the entry at once and tries the 4401
+        close only for the budget that remains. It then drops the transport
+        at that deadline, so teardown stays within 29 s.
+      - Every other close-frame send, during admission or after it, is
+        bounded by its own recheck deadline. The handler then drops the
+        transport, so no close path stalls the handler.
+      - Each close that ends a registered connection's entry follows that
+        entry's removal.
       - A key revoked at any point before that check closes 4401 with no ack.
       - A missed hello timeout, a failed hello write, or a check that errors
         or times out closes 1011 with no ack. An unproven key never yields an
@@ -698,14 +711,15 @@ Targets:
     these steps:
     1. At the upgrade it creates the recheck timer with
        `tokio::time::interval_at(upgrade + key_recheck, key_recheck)` and
-       `MissedTickBehavior::Delay`. It also sets the admission deadline,
-       `upgrade + hello_timeout`.
-    2. It waits for a valid hello until the admission deadline. An invalid
+       `MissedTickBehavior::Delay`. It also sets two deadlines: the hello
+       deadline, `upgrade + hello_timeout`, and the admission end, `hello
+       deadline + recheck_deadline`.
+    2. It waits for a valid hello until the hello deadline. An invalid
        first frame closes 1008, and a missed deadline closes 1011.
     3. It registers the machine. In a spawned task through
        `registry.persist`, it writes `last_heartbeat_at = now()` and
        `node_version`. It waits for that task's result, its close signal, or
-       the admission deadline:
+       the hello deadline:
        - The close signal (it was replaced) closes with that code and no ack.
        - A write error or a missed deadline removes the entry and closes 1011
          with no ack. A still-running write keeps its gate until it completes.
@@ -718,8 +732,15 @@ Targets:
        - No row removes the entry and closes 4401 with no ack.
        - An error or a timeout removes the entry and closes 1011 with no ack.
        - A proven key continues to step 5.
-    5. It sends the ack in a biased select that polls its close signal first:
+    5. It runs this step as the public `send_ack(sink, registry, machine_id,
+       connection_id, close, admission_end)`, which is generic over
+       `Sink<Message> + Unpin` and returns the outcome the handler acts on.
+       A biased select polls the close signal first, then the admission end,
+       then the send:
        - The close signal closes with that code. The channel never goes live.
+       - The admission end, with the send still pending, removes the entry
+         and drops the transport without a close frame. Nothing was
+         published.
        - A failed send removes the entry and exits. Nothing was published.
        - After a successful send it calls `registry.mark_live`. If that
          returns `false`, a successor replaced it after the send, so it closes
@@ -730,16 +751,25 @@ Targets:
          started and no heartbeat write is in flight, it spawns the
          `last_heartbeat_at` and `node_version` write through
          `registry.persist`.
-       - **A recheck tick.** It runs the step 4 key check under
-         `recheck_deadline`. No row removes the registry entry and then
-         closes 4401. An error or a timeout keeps the channel until the next
-         tick (Decision 10's database-error exception).
+       - **A recheck tick.** It runs the public `key_tick(sink, pool,
+         registry, machine_id, connection_id, key_id, cycle_deadline)`, which
+         is generic over `Sink<Message> + Unpin`. `cycle_deadline` is the
+         tick plus `recheck_deadline`, and it bounds the check, the close,
+         and the drop together:
+         - The step 4 key check runs until `cycle_deadline`.
+         - No row removes the registry entry at once, then sends 4401 until
+           `cycle_deadline`, and then drops the transport.
+         - An error or a timeout keeps the channel until the next tick
+           (Decision 10's database-error exception).
        - **The idle deadline.** It removes the entry and closes 4408.
        - **The close signal.** It closes with the signal's code (4409).
     7. On exit it calls `registry.remove(machine_id, connection_id)`, which is
        a no-op when the entry is already gone or replaced.
 
-    `node_version` and `platform` are bounded to 64 characters.
+    The revoked-tick close runs only until `cycle_deadline`. Every other
+    close-frame send runs under its own `recheck_deadline`. In both cases the
+    handler then drops the transport. `node_version` and `platform` are
+    bounded to 64 characters.
   - **Node client.** A task loops `connect → hello → ack → ping every
     ping_interval` with these rules:
     - Each attempt reads `api_key` with key-cutover's `read_api_key_at`.
@@ -783,10 +813,11 @@ and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work), th
   - **First-check proof.** It revokes the channel's key R/4 after its upgrade completes. The 4401 close arrives within R + D of the revocation on a monotonic clock, and the machine is already absent from the registry. The first recheck after the revocation falls 0.75R after it and the second 1.75R after it, so only the first scheduled recheck fits that bound. This runs for three peers: the node client sending its scheduled pings, a raw peer silent after hello, and a raw peer sending only Pong frames.
   - **Bookkeeping never blocks revocation.** While a test transaction holds a row lock on the machine's `machines` row, a due heartbeat write blocks. The key is then revoked, and the channel still closes 4401 within R + D.
   - **Unproven checks.** While a test transaction holds `ACCESS EXCLUSIVE` on `api_keys`, a tick's check times out after D and the channel stays open. After the lock is released, the next tick proves the key again.
+  - **Teardown shares the tick's budget.** The test revokes the key, then holds `ACCESS EXCLUSIVE` on `api_keys` and calls the public `key_tick` with a `futures_util::sink` whose send never completes. It releases the lock D/2 after the tick, so the check returns no row late. The registry entry is gone as soon as `key_tick` reads that result, and `key_tick` returns with the transport dropped by the tick plus D on a monotonic clock. That is the remaining budget, not D again.
   - It does not pause tokio time, because paused time auto-advances past the timers while the hub awaits its database query. test: `crates/gdaemon/tests/nodes.rs::revoked_key_closes_channel_on_heartbeat`.
 - 1.3.3 - The node client sends a hello with the gdaemon version and `<os>/<arch>`, pings at its interval, and reconnects after a close. Against a refusing hub its delays double from the start value to the ceiling, and they reset after an ack. It reads the key again on each attempt. test: `crates/gdaemon/tests/nodes.rs::node_channel_reconnects_with_backoff`.
 - 1.3.4 - A channel whose first frame is not a valid hello closes with 1008, and a registered channel silent past the idle timeout closes with 4408 and leaves the registry. test: `crates/gdaemon/tests/nodes.rs::silent_or_malformed_channel_is_closed`.
-- 1.3.5 - On a hub, an upgrade to `/api/nodes/channel` without a key identity is refused with 401 before any upgrade. A standalone front door does not mount the route and proxies the request to its backend. A key revoked after the upgrade but before hello, or while the hello write is blocked by a test row lock that is then released, closes 4401 with no ack, and leaves no registry entry and no `connected` machine. While a test transaction holds `ACCESS EXCLUSIVE` on `api_keys` and blocks a registered channel's pre-ack check, the machine reads `connected: false`. A raw peer that resets its TCP connection while that check is blocked makes the ack send fail after the lock is released, which leaves no registry entry and the machine never reading `connected`. A `mark_live` call under a superseded `connection_id` returns `false` and leaves the successor not live. test: `crates/gdaemon/tests/nodes.rs::channel_requires_a_key_on_a_hub`.
+- 1.3.5 - On a hub, an upgrade to `/api/nodes/channel` without a key identity is refused with 401 before any upgrade. A standalone front door does not mount the route and proxies the request to its backend. A key revoked after the upgrade but before hello, or while the hello write is blocked by a test row lock that is then released, closes 4401 with no ack, and leaves no registry entry and no `connected` machine. While a test transaction holds `ACCESS EXCLUSIVE` on `api_keys` and blocks a registered channel's pre-ack check, the machine reads `connected: false`. A raw peer that resets its TCP connection while that check is blocked makes the ack send fail after the lock is released, which leaves no registry entry and the machine never reading `connected`. A `mark_live` call under a superseded `connection_id` returns `false` and leaves the successor not live. The bounded ack send is driven through the public `send_ack` with a `futures_util::sink` and a test-built registry. A sink whose send never completes makes `send_ack` return at the admission end, with no registry entry left for that `connection_id` and the machine never reading `connected`. With the close signal already fired, `send_ack` returns that code without sending, and the successor's entry is unchanged. A sink that completes accepts the ack while the machine still reads `connected: false`, and the machine reads `connected` once `send_ack` returns. test: `crates/gdaemon/tests/nodes.rs::channel_requires_a_key_on_a_hub`.
 - 1.3.6 - While a test transaction holds a row lock on the machine's `machines` row, a first connection's hello write blocks. A second connection for the same machine then registers. The first connection closes with 4409 and no ack while its write stays blocked, and the second's ack does not arrive while the lock is held. After the test releases the lock, the first write completes and releases the gate, the second receives its ack, and the row holds the second connection's `node_version` with the registry naming the second connection. A `registry.persist` call under the superseded `connection_id` returns `Skipped` and leaves the row unchanged. In the pre-ack variant, two upgrades authenticate first, and a test transaction then holds `ACCESS EXCLUSIVE` on `api_keys`. The test uses a recheck deadline long enough to keep the first connection's pre-ack check blocked through the replacement. The first connection's hello and write complete and its pre-ack check blocks. The second connection's hello then registers and replaces it. The first closes 4409 with no ack while its check is still blocked, and the machine reads `connected: false`. After the lock is released, the second connection receives its ack and becomes the live entry. test: `crates/gdaemon/tests/nodes.rs::replaced_channel_cannot_overwrite_successor_bookkeeping`.
 
 ### 1.4 `/api/machines` lists the caller's machines with connection state [category: code] (depends: 1.3)
@@ -1031,6 +1062,20 @@ Consumers unchanged:
   - A superseded or failed attempt never goes live.
   - 1.3.5 and 1.3.6 cover publication, ack failure, and pre-ack replacement,
     and 1.4.1 reads "acknowledged live channel".
+- 2026-10-05: The Adversary's recheck of `db0635d` confirmed NC-A9 and found
+  that the ack send had no deadline. The repair:
+  - The ack send is bounded by the admission end, which is the upgrade plus
+    the hello timeout plus the recheck deadline (14 s). No new timing is
+    added.
+  - On expiry the handler removes the entry and drops the transport.
+  - Every close-frame send is bounded by the recheck deadline.
+  - 1.3.5 drives a pending send through the public `send_ack`.
+  - The Adversary's preliminary recheck found that this close bound gave the
+    revoked-tick close a fresh 4 s, which allowed teardown at 33 s. The
+    Orchestrator confirmed at 12:54 CT that the 29 s bound stands. The
+    revoked tick's check, 4401 close, and drop now share one absolute
+    deadline, the tick plus 4 s, through the public `key_tick`, and 1.3.2
+    covers a slow check with a pending close.
 
 ## V2: Verification
 `kind: verification`
