@@ -4,8 +4,11 @@ Local stub. Computes the managed policy with compute_sandbox_paths and
 render_srt_settings for a temporary workspace, then classifies candidate paths
 with sandbox-runtime precedence as documented in sandbox_policy.py
 (allowRead wins over denyRead; denyWrite wins over allowWrite; reads outside
-denyRead are default-allowed). Only resolves path names: opens no candidate
-file, launches nothing, calls no daemon. It also matches the bundled
+denyRead are default-allowed). It resolves path names only, opens no candidate
+file and calls no daemon. compute_sandbox_paths runs one read-only
+`git rev-parse --git-dir --git-common-dir` in the temporary workspace per
+provider (sandbox.py:371-389); the workspace is not a repository, so that
+adds no paths. It also matches the bundled
 no-secret-read rule pattern against command strings.
 Run: uv run python <this file>
 """

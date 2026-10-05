@@ -40,7 +40,11 @@ Evidence labels:
 
 This spike made no live observation. The one live datum it cites comes from
 `.gobby/plans/research/srt-violation-false-positives-2026-10-01.md`. No probe
-reads a secret, launches a process, or calls the daemon. Evidence hashes were
+reads a secret or calls the daemon. One subprocess runs: for each provider,
+`probe_credential_paths.py` reaches `_git_metadata_write_paths`, which runs a
+read-only `git rev-parse --git-dir --git-common-dir` in the probe's temporary
+workspace (`src/gobby/agents/sandbox.py:371-389`, hash `e3f89142190c`). That workspace is not a
+repository, so the call adds no paths. Evidence hashes were
 taken at 7f681fe8ac.
 
 Rule claims describe bundled templates. Installed DB rows are authoritative, and
@@ -122,8 +126,9 @@ allow  mcp__claude-in-chrome__computer   browser automation
 
 1. Keep the guard as hygiene and document interactive sessions as an
    operator-trust surface (status quo).
-2. Run interactive sessions under SRT too, which closes the evasion class for
-   Model B at the cost of interactive friction.
+2. Run Gobby-launched interactive sessions under SRT too. That confines those
+   process trees at the cost of interactive friction. Same-user host processes
+   that Gobby did not launch keep full user authority.
 3. Enforce by executable identity, for example an SRT exec deny on provider
    binaries inside managed runs. It does not help Model B.
 
@@ -298,16 +303,18 @@ rule templates naming 'computer-use': none
 **Limit.**
 
 - `capture_output` takes a session id and authorizes neither the caller nor the
-  target (`src/gobby/mcp_proxy/tools/sessions/_terminal.py:746-769`, hash
-  `82b62325110e`). No rule template names it. An interactive or web-chat caller
-  can read any live session's pane or transcript tail, across projects. Web chat
-  is blocked from `send_keys`, and no rule blocks `capture_output` for it. This
-  pass did not check whether web chat exposes the tool.
+  target (`src/gobby/mcp_proxy/tools/sessions/_terminal.py:736-784`, hash
+  `7cab131062b4`). No rule template names it. An interactive caller can read
+  any live session's pane or transcript tail, across projects.
+- Web chat is blocked from `send_keys`, and no rule template blocks
+  `capture_output` for it. Whether a web-chat session can reach the tool depends
+  on its tool exposure and caller classification, which this pass did not
+  trace.
 - Interactive sessions can use raw `tmux send-keys`, `osascript` and browser
   automation without any guard.
 
-**Impact.** A non-agent caller can read another project's screen, and web chat
-can too. Model B can inject keystrokes into same-project sessions, including
+**Impact.** An interactive caller can read another project's screen. A
+web-chat caller can as well, if the tool reaches it. Model B can inject keystrokes into same-project sessions, including
 coordinator seats, and can automate the desktop.
 
 **Decision options.**
@@ -353,6 +360,16 @@ PipelineExecution.to_dict() carries resume_token: True
   (`src/gobby/mcp_proxy/tools/workflows/_pipeline_execution.py:176-178`, hash
   `37470f080f41`). `get_pipeline_status` omits tokens (`:819-831`, hash
   `d007263b9346`). An MCP-only agent therefore has no route to a token.
+- Tokens are single-use. Approval consumes the token and moves the step out of
+  `WAITING_APPROVAL` in one guarded `UPDATE`, which also clears
+  `approval_token`. A second use fails with "Invalid or already used approval
+  token" (`gatekeeper.py:170-185`, hash `8c292d81c08b`;
+  `src/gobby/storage/pipeline_steps.py:155-203`, hash `8d4c4731b5a1`). Bounded
+  coverage: `TestGetByToken.test_consume_step_approval_is_single_use` and
+  `test_consume_step_approval_rejects_non_waiting_step`
+  (`tests/storage/test_pipeline_storage.py:754-810`, hash `ef99e04f585c`).
+  Replay is closed. The limits below concern a stolen unused token and false
+  provenance.
 - The REST approve route is outside the agent token matrix (stub above).
 - `authorize_write_grant` records an asserting session. Managed children may
   only narrow a recorded grant (`src/gobby/agents/external_write_grants.py:65-106`,
@@ -382,8 +399,11 @@ free text.
 
 1. Derive `approved_by` from the authenticated request principal and drop
    `resume_token` from `to_dict`. The token model stays.
-2. Require human presence for gates that guard irreversible effects, through an
-   operator credential in the web UI or CLI.
+2. Require an operator credential, through the web UI or CLI, for gates that
+   guard irreversible effects. This establishes authorized operator access and
+   stops Model A. It proves no human presence against Model B, which shares the
+   user account and its credentials. Presence under Model B needs a channel
+   outside that account, such as an OS user-presence prompt or a second device.
 3. Document approvals as coordination signals, not security controls.
 
 **Recommendation.** Option 1 now. Josh decides option 2 per gate class
@@ -439,32 +459,47 @@ codex run.
   (`block-docker-policy-edits.yaml:1-27`, hash `f31ef9899d17`).
 - `provider_write_exceptions` makes the whole provider root writable
   (`sandbox_policy.py:60-73`, hash `48f4f5f4b5f6`; `:441-450`, hash
-  `506bb7b31d0f`). That root holds the hook configuration Gobby installs. Nothing
-  re-verifies hooks at session start: `validate_settings.py` is a manual
-  validator (`src/gobby/install/shared/hooks/validate_settings.py:1-23`, hash
+  `506bb7b31d0f`). That root holds the hook configuration Gobby installs, and
+  for Codex also the hook trust state. Codex records a trusted hash per command
+  hook. Gobby computes those hashes and writes `hooks.state.<key>.trusted_hash`
+  into `config.toml` (`src/gobby/cli/installers/codex.py:239-314`, hash
+  `1c9fd41182da`; `:359-393`, hash `b0f11249d3a4`). A managed codex run can
+  write both `hooks.json` and that trust state. Claude had no comparable native
+  trust record in this pass. Gobby's own `validate_settings.py` is a manual
+  validator and does not run at session start
+  (`src/gobby/install/shared/hooks/validate_settings.py:1-23`, hash
   `c7e8b1fd1c48`).
+- Agent-definition writes already refuse any request principal, so agent API
+  tokens cannot modify agent definitions
+  (`src/gobby/mcp_proxy/tools/workflows/__init__.py:226-237`, hash
+  `9b1bdaeda621`). Rule and pipeline mutations have no such guard.
 
 **Impact (static and stub, not exercised).**
 
-- A Model A agent can disable any rule for every session through the MCP proxy.
-  This pass did not check whether a later template sync restores a toggled rule.
-- A Model A agent can remove Gobby's hooks, or add a hook command. The provider
-  later runs that hook on the host, including in unsandboxed interactive
-  sessions. SRT enforces its policy as written; the policy grants a write to a
-  configuration file that the host executes.
+- Unless installed workflow or rule policy blocks it, a Model A agent can
+  disable a rule for every session through permitted MCP dispatch. This is a
+  static path: no live rule toggle was measured, and installed policy was not
+  read. This pass also did not check whether a later template sync restores a
+  toggled rule.
+- A Model A agent can remove Gobby's hooks, or add a hook command and, for
+  Codex, the matching trust state. Whether and when the provider then runs that
+  hook on the host, including in unsandboxed interactive sessions, is
+  provider-dependent and static here. SRT enforces its policy as written; the
+  policy grants a write to configuration that the host executes.
 
 **Decision options.**
 
-1. Make rule, agent-definition and pipeline mutations operator-only. Add a
-   `gobby-workflows` mutation list beside `TASK_MUTATION_TOOLS_BY_SERVER`,
-   enforced for spawned agents and agent-token callers. This matches the
-   matrix's stated intent.
+1. Make rule and pipeline mutations operator-only. Extend the principal-based
+   guard that already protects agent-definition writes to `toggle_rule`,
+   `update_rule`, `delete_rule` and `approve_pipeline`. A spawned-agent tool
+   list alone would miss agent-token callers that are not spawned agents. This
+   matches the matrix's stated intent.
 2. Keep `toggle_rule` as the escape hatch, but require operator approval and an
    audit record, and stop naming the escape hatch in block reasons.
-3. Protect hook configuration. Either `denyWrite` the hook-bearing files under
-   the writable provider roots (`denyWrite` wins), or give each managed run its
-   own provider config home. Before choosing, verify which files each provider
-   rewrites at runtime.
+3. Protect hook configuration and hook trust state. Either `denyWrite` the
+   hook-bearing and trust-bearing files under the writable provider roots
+   (`denyWrite` wins), or give each managed run its own provider config home.
+   Before choosing, verify which files each provider rewrites at runtime.
 4. Add a session-start hook-integrity check. It detects drift but does not
    prevent it.
 
@@ -478,18 +513,23 @@ they are routed here for disposition, not patched.
 
 | ID | Defect | Scenario | Severity |
 | --- | --- | --- | --- |
-| FW1 | A managed provider run can write the hook configuration that later unsandboxed sessions of the same provider execute | 5 | high |
-| FW2 | Agent-token and spawned-agent callers reach `gobby-workflows` rule and pipeline mutations through `/api/mcp/tools/call`, contrary to the matrix's stated exclusion | 5 | high |
-| FW3 | `capture_output` has no caller or target scope; web chat is blocked from `send_keys` only | 3 | medium |
+| FW1 | A managed provider run can write the hook configuration, and for Codex the hook trust state, that later sessions of the same provider may execute unsandboxed (provider-dependent, static) | 5 | high |
+| FW2 | Agent-token callers reach `gobby-workflows` rule and pipeline mutations through `/api/mcp/tools/call`, contrary to the matrix's stated exclusion; the principal guard on agent-definition writes is not applied to them (static, subject to installed policy) | 5 | high |
+| FW3 | `capture_output` has no caller or target scope; web-chat reach is untraced | 3 | medium |
 | FW4 | `approved_by` is caller text, and `PipelineExecution.to_dict` serializes `resume_token` | 4 | low |
 
 Decisions for Josh:
 
 - **D1.** Are interactive sessions an operator-trust surface (scenarios 1, 2B
-  and 3), or should they run under SRT?
+  and 3), or should they run under SRT? SRT would confine Gobby-launched
+  interactive process trees only. Other same-user processes stay outside every
+  Gobby boundary either way.
 - **D2.** Should user credential stores join managed `denyRead`, after a bounded
   live canary confirmation (scenario 2A)?
-- **D3.** Which pipeline gate classes require human presence (scenario 4)?
+- **D3.** Which pipeline gate classes require operator-credential approval
+  (scenario 4)? That covers Model A and assumes an operator-trusted host.
+  Presence against Model B needs a channel outside the user account and is a
+  separate decision.
 
 ## Criteria check
 
