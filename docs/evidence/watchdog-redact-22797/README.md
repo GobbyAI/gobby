@@ -128,3 +128,38 @@ Observed on 2026-09-29:
 
 The earlier inline receipt (comms_messages `dedc3eb8`) predates this decision and
 is superseded.
+
+## Five-minute load alarm (#23532, 2026-10-05)
+
+The load alarm now uses the five-minute average and a strict `> 30` comparison.
+It reports `ALARM[load]: 5-min load <reading> > 30`. This alarm uses one reading;
+the separate heavy-work hold requires two consecutive five-minute breaches.
+
+The fixture's fake `sysctl` supplies deterministic load readings. Added checks
+cover five-minute load 30.01 (alarm), exactly 30 (no alarm), and one-minute load
+40 with five-minute load 29 (no alarm). The original 25 alert, attachment,
+redaction, quiet-run and fallback checks remain included.
+
+TDD command, before and after the script change:
+
+```bash
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 bash docs/evidence/watchdog-redact-22797/test_watchdog.sh docs/evidence/watchdog-redact-22797/watchdog.sh
+```
+
+RED: 26 checks passed; the five-minute breach and one-minute-spike checks failed.
+GREEN: all 28 passed. ShellCheck and `bash -n` passed for both shell files.
+The test-quality auditor cannot analyze Bash (`NO_ANALYZABLE_FILES`); validation
+uses the native fixture runner. No Python or Rust tests or implementation changed.
+
+The installed script was replaced using the activation procedure above:
+
+- Pre-swap SHA-256: `6cace777c5d74263c3f91aa74bfa6f905f6e9250f9070c179b9d5a6d923ccd19`.
+- Rollback: `~/.gobby/watchdog/watchdog.sh.pre-23532`, with that same hash.
+- Staged with `install -m 700`, checked with `bash -n` and `cmp`, then atomically
+  renamed over the installed script in the same directory.
+- Post-swap installed and repo SHA-256:
+  `b621ca6447b6c9cbd3cfc5f507706fa6bbb50faeb2d62bbbb6a2d54836507e3f`.
+- Installed mode: 700; post-swap `cmp` and `bash -n` passed.
+
+No daemon restart was needed. No real credential file was read or printed;
+fixtures use their own temporary configuration and fake communications CLI.
