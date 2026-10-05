@@ -169,6 +169,22 @@ plan:
       subscriber-opted, local-auth surfaces. `file_facts` never reaches them
       (decision 8).
 
+Ruling by the Orchestrator (gobby#14972) on 2026-10-05 at 11:48 CT, on the
+enhancer pass and the writer-found ingress sites:
+
+13. **Hook ingress project resolution fails closed for foreign-origin
+    events** (sites 14 and 15, section 1.15).
+    - `ProjectIdResolver.resolve` raises the existing no-marker `ValueError`
+      with `FOREIGN_ORIGIN_DIAGNOSTIC`, so critical hooks block and the rest
+      degrade.
+    - Rejected: a skipped resolution, because `hook_manager.py` allows a
+      skipped event before any rule runs; and mapping ghook's
+      `X-Gobby-Project-Id` header to the project, because it needs new
+      route-to-delivery plumbing and hub-side validation.
+    - Consequence: until S2.11 (#21569), a node hook without an explicit
+      project id never registers its session, and its critical hooks block.
+      D1.4 owns the fix. The Orchestrator flags this to Josh at approval.
+
 ## Constraints
 `kind: framing`
 
@@ -1224,6 +1240,9 @@ Consumers unchanged:
 - A skipped resolution is not a safe alternative. `hook_manager.py` returns
   `HookResponse(decision="allow")` for one before any rule runs, git gates
   included.
+  - `resolve_hook_project_context` already returns a skipped resolution for
+    an unusable cwd (`/`) on either origin. That path reads no disk, predates
+    this plan and is not a site here.
 - ghook's `X-Gobby-Project-Id` header does not reach the hook thread:
   `adapter_execution.py::run_adapter_hook` submits `run_adapter` to
   `_HOOK_ADAPTER_EXECUTOR` without copying context, and `get_project_context(cwd)`
