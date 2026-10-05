@@ -1,0 +1,491 @@
+header:
+  plan_id: reviewer-landing
+  plan_hash: d51cc1af6f0e9ccbccbf991e8e8a643e23811d66a82d64fd9cfc61c798052322
+  root_task_ref: '23542'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-05T18:46:13Z'
+  task_tree_source: db
+  task_tree_source_hash: 6a3c232d933f507fb8ca8c713ef17135ee12761bd67ea2f6fd42e7bbea099990
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 7038ca17fe3c5dd941009fd68bc117b1b3ffe1aff092d21c20a61dccba8f3df9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23545'
+    validation_criteria_snippet: '1.1.1: A `landing_approval` is recorded from the
+      task''s creator or delegator and refused from any other session, the claimant
+      included. test: `tests/tasks/test...'
+    matched_artifact_ref: tests/tasks/test_close_receipts.py::test_landing_approval_comes_only_from_task_creator_or_delegator
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 16cbd644efc1a0db3604cdc7020903c28d417cce7fcee650ceaeeef9c3fe938d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23545'
+    validation_criteria_snippet: '1.1.1: A `landing_approval` is recorded from the
+      task''s creator or delegator and refused from any other session, the claimant
+      included. test: `tests/tasks/test...'
+    matched_artifact_ref: tests/tasks/test_close_receipts.py::test_landing_approval_requires_known_reasons
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 985baa3d32f42cd6a9f9d189e03ab13a34464a3057faf9e6458a96268dade9c5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23545'
+    validation_criteria_snippet: '1.1.1: A `landing_approval` is recorded from the
+      task''s creator or delegator and refused from any other session, the claimant
+      included. test: `tests/tasks/test...'
+    matched_artifact_ref: tests/tasks/test_close_receipts.py::test_tool_refuses_daemon_only_landing_kind
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 0823cc04c4cfe4bcf12368b6b0dc443aae5d716e9c89f7281cccea3a3591d862
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23545'
+    validation_criteria_snippet: '1.1.1: A `landing_approval` is recorded from the
+      task''s creator or delegator and refused from any other session, the claimant
+      included. test: `tests/tasks/test...'
+    matched_artifact_ref: tests/tasks/test_close_receipts.py::test_landing_receipt_is_recorded_once_per_author_and_commit
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: 51be5ea6e25e0d1d50e593691236cedd3381436c3bd006e30090f6c097145219
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23545'
+    validation_criteria_snippet: '1.1.1: A `landing_approval` is recorded from the
+      task''s creator or delegator and refused from any other session, the claimant
+      included. test: `tests/tasks/test...'
+    matched_artifact_ref: tests/tasks/test_close_receipts.py::test_reviewer_prompt_explains_landing_receipts
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.6
+  plan_node_hash: 3421f1edf08c52ca4b1af8d318e8e3d8b9fc3d1a6349b11520f5de203dae83e3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23545'
+    validation_criteria_snippet: '1.1.1: A `landing_approval` is recorded from the
+      task''s creator or delegator and refused from any other session, the claimant
+      included. test: `tests/tasks/test...'
+    matched_artifact_ref: tests/tasks/test_close_receipts.py::test_landing_approval_new_reasons_append_receipt
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 4a0e3e14842707666495e848e274cc6262e118f67cdea0ca3d4575cbe21929d1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23546'
+    validation_criteria_snippet: '1.2.1: `classify_paths` returns the strongest class:
+      a `crates/` path or `src/gobby/storage/schema_expected_identity.json` is cutover,
+      `src/gobby/cli/` is rest...'
+    matched_artifact_ref: tests/tasks/test_landing_policy.py::test_classify_paths_strongest_class_wins
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: ce3dd18e4e43d6171e262a3b0caad854123c8ee30b388227b8e6e81778340be1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23546'
+    validation_criteria_snippet: '1.2.1: `classify_paths` returns the strongest class:
+      a `crates/` path or `src/gobby/storage/schema_expected_identity.json` is cutover,
+      `src/gobby/cli/` is rest...'
+    matched_artifact_ref: tests/tasks/test_landing_policy.py::test_direct_commit_allows_listed_markdown_and_coverage
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 58497ebeccc94144ee6281c8dc5cc5f36f2c4a8bb9cd7736b5cb873014313777
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23546'
+    validation_criteria_snippet: '1.2.1: `classify_paths` returns the strongest class:
+      a `crates/` path or `src/gobby/storage/schema_expected_identity.json` is cutover,
+      `src/gobby/cli/` is rest...'
+    matched_artifact_ref: tests/tasks/test_landing_policy.py::test_unreadable_freeze_file_reads_as_frozen
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: e9dac94ed43139f105f211f2c433fd7ea4c32b1dd79edd4de29581272564dbf8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23546'
+    validation_criteria_snippet: '1.2.1: `classify_paths` returns the strongest class:
+      a `crates/` path or `src/gobby/storage/schema_expected_identity.json` is cutover,
+      `src/gobby/cli/` is rest...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_landing_tools.py::test_set_landing_freeze_records_setter_and_clearer
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: 08f1f349de2e4bdd38441ac09b52bf1a9ec6b8513597a1450483dd6b6bedaa81
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23546'
+    validation_criteria_snippet: '1.2.1: `classify_paths` returns the strongest class:
+      a `crates/` path or `src/gobby/storage/schema_expected_identity.json` is cutover,
+      `src/gobby/cli/` is rest...'
+    matched_artifact_ref: tests/workflows/test_task_enforcement_rules.py::TestRequireTasksSkillForMutations::test_real_registry_inventory_matches_independent_classification
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: 6457f2ace36c95a1dcd76949e6126b88910e38a21386d3aa145df91a3a90f0fd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23547'
+    validation_criteria_snippet: '1.3.1: Without the caller''s `independent_review_approval`
+      for the exact SHA, or when the caller claims the task, the call refuses and
+      the branch does not move....'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_refuses_without_callers_land_receipt
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: bbdfed1f0049ceb7eb864a3d6ecf0c8442bd881c0e4f6f1d234ceffe6bff1f17
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23547'
+    validation_criteria_snippet: '1.3.1: Without the caller''s `independent_review_approval`
+      for the exact SHA, or when the caller claims the task, the call refuses and
+      the branch does not move....'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_fast_forward_lands_exact_candidate
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: cae0debce416a4fef80c5d4ef84ac1c29fce1fd3e8e7cab009cabd19cf3c382e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23547'
+    validation_criteria_snippet: '1.3.1: Without the caller''s `independent_review_approval`
+      for the exact SHA, or when the caller claims the task, the call refuses and
+      the branch does not move....'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_reports_every_missing_approval_at_once
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.4
+  plan_node_hash: facd7c2ed140bd7f23a62d80d6c7fdac1196eb246c16027d42f0c23a778a1c65
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23547'
+    validation_criteria_snippet: '1.3.1: Without the caller''s `independent_review_approval`
+      for the exact SHA, or when the caller claims the task, the call refuses and
+      the branch does not move....'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_stacked_and_landed_candidates_never_overlap
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.5
+  plan_node_hash: d612b4e59645f0dd255706d700538a9fa157ecd88e02096b7d3fe3fd31022dd9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23547'
+    validation_criteria_snippet: '1.3.1: Without the caller''s `independent_review_approval`
+      for the exact SHA, or when the caller claims the task, the call refuses and
+      the branch does not move....'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_already_landed_candidate_records_landing_once
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.6
+  plan_node_hash: fcb85a13e4db41d711829573badfd5105ef77c1209cbe83861ac10b748dbb29b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23547'
+    validation_criteria_snippet: '1.3.1: Without the caller''s `independent_review_approval`
+      for the exact SHA, or when the caller claims the task, the call refuses and
+      the branch does not move....'
+    matched_artifact_ref: tests/storage/hub/test_postgres_placeholder_remap.py::test_main_checkout_landing_lock_key
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.7
+  plan_node_hash: 887e2e658a56315779c01cdae7874e7acc3b380b3105bf37bb5bd1ecf956ef23
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23547'
+    validation_criteria_snippet: '1.3.1: Without the caller''s `independent_review_approval`
+      for the exact SHA, or when the caller claims the task, the call refuses and
+      the branch does not move....'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_concurrent_landings_serialize_and_release_lock
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.8
+  plan_node_hash: e6308f522e7a691bfe50199e550e2e709b520bfe823c33231cf5d690c00427ea
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23547'
+    validation_criteria_snippet: '1.3.1: Without the caller''s `independent_review_approval`
+      for the exact SHA, or when the caller claims the task, the call refuses and
+      the branch does not move....'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_landing_branch_is_main_checkout_head
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.9
+  plan_node_hash: 9819fb7a7e6d1456e8785efef243788613f7d5fe13e1bc862351c950268578cc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23547'
+    validation_criteria_snippet: '1.3.1: Without the caller''s `independent_review_approval`
+      for the exact SHA, or when the caller claims the task, the call refuses and
+      the branch does not move....'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_refuses_unlinked_candidate
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.1
+  plan_node_hash: e7a7f6bb98a61294d5ad91cdfb8860a5a777950f4f58623818641dc9017bfae7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23548'
+    validation_criteria_snippet: '1.4.1: With the tip moved by disjoint paths, the
+      branch lands a two-parent merge commit (tip, SHA) with the landing message,
+      the receipt says `merge` and `rete...'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_moved_tip_with_disjoint_paths_lands_merge_commit
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.2
+  plan_node_hash: f1e4a98fe6e50fdaddc6ffa8ad8978c48f3873e6d44706c6c2d3630b2d4a82d6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23548'
+    validation_criteria_snippet: '1.4.1: With the tip moved by disjoint paths, the
+      branch lands a two-parent merge commit (tip, SHA) with the landing message,
+      the receipt says `merge` and `rete...'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_moved_tip_with_shared_paths_requires_base_update
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.3
+  plan_node_hash: d21ee6ff21e30fcc70bca973ab59be9652ef5decc96cab7bb5a8d2342840ce22
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23548'
+    validation_criteria_snippet: '1.4.1: With the tip moved by disjoint paths, the
+      branch lands a two-parent merge commit (tip, SHA) with the landing message,
+      the receipt says `merge` and `rete...'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_tip_race_recomputes_and_lands
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.4
+  plan_node_hash: 2653072b5c7663280f010ba854946d2f03b88883482d6d1035bb6e1573f4650a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23548'
+    validation_criteria_snippet: '1.4.1: With the tip moved by disjoint paths, the
+      branch lands a two-parent merge commit (tip, SHA) with the landing message,
+      the receipt says `merge` and `rete...'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_dirty_path_and_index_lock_refuse_without_ref_change
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.5
+  plan_node_hash: aa2ef65f2dfaa0c86b0b2528fff871f5796d32322349cd8593af42b3be4a2952
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23548'
+    validation_criteria_snippet: '1.4.1: With the tip moved by disjoint paths, the
+      branch lands a two-parent merge commit (tip, SHA) with the landing message,
+      the receipt says `merge` and `rete...'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_landing_merge_is_not_task_tagged
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.6
+  plan_node_hash: c9654f08b252e80c9a2f547298f4797715246764d9e32c8df6d37355a22c6343
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23548'
+    validation_criteria_snippet: '1.4.1: With the tip moved by disjoint paths, the
+      branch lands a two-parent merge commit (tip, SHA) with the landing message,
+      the receipt says `merge` and `rete...'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_ref_moved_before_failure_reports_landing
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.7
+  plan_node_hash: f99bac5af512f19a6202248291bac97b2fa2a067af263aaac28eee49278cfb01
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23548'
+    validation_criteria_snippet: '1.4.1: With the tip moved by disjoint paths, the
+      branch lands a two-parent merge commit (tip, SHA) with the landing message,
+      the receipt says `merge` and `rete...'
+    matched_artifact_ref: tests/tasks/test_land_commit.py::test_merge_landing_replay_preserves_retest_obligation
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.1
+  plan_node_hash: 13c7f23374b5ba3b13da3d76ed0b19fd5a0fe84886e3f6a3bf7739ab1b803c77
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23549'
+    validation_criteria_snippet: '1.5.1: In the main checkout, a commit touching only
+      `docs/x.md` and a root `NOTES.md` succeeds, and so does a commit adding a coverage
+      manifest and `.gobby/pla...'
+    matched_artifact_ref: tests/cli/installers/test_landing_guard_hook.py::test_direct_commit_allows_listed_markdown_and_coverage
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.2
+  plan_node_hash: 0dac9c0a61c750fdbb04c8b1f5cdf13795023e329d1c57852bfea199476a24a9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23549'
+    validation_criteria_snippet: '1.5.1: In the main checkout, a commit touching only
+      `docs/x.md` and a root `NOTES.md` succeeds, and so does a commit adding a coverage
+      manifest and `.gobby/pla...'
+    matched_artifact_ref: tests/cli/installers/test_landing_guard_hook.py::test_protected_branch_refuses_writes_from_any_worktree
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.3
+  plan_node_hash: 798e690e18f96ee75f4c3732ab788311802f383973d8d878b7d75b4e44cebc05
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23549'
+    validation_criteria_snippet: '1.5.1: In the main checkout, a commit touching only
+      `docs/x.md` and a root `NOTES.md` succeeds, and so does a commit adding a coverage
+      manifest and `.gobby/pla...'
+    matched_artifact_ref: tests/cli/installers/test_landing_guard_hook.py::test_land_commit_passes_installed_guard
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.4
+  plan_node_hash: 6516277a5dde6edd718d9ae272f0a5184a9fa0be0c857f8f8fd43196aa814c94
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23549'
+    validation_criteria_snippet: '1.5.1: In the main checkout, a commit touching only
+      `docs/x.md` and a root `NOTES.md` succeeds, and so does a commit adding a coverage
+      manifest and `.gobby/pla...'
+    matched_artifact_ref: tests/cli/installers/test_git_hooks_installer.py::TestHookTemplates::test_all_expected_hooks_defined
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.5
+  plan_node_hash: 5d0874c71a1f3e43608972026a99298c2de857035a3e6c5388924a80e46ccee6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23549'
+    validation_criteria_snippet: '1.5.1: In the main checkout, a commit touching only
+      `docs/x.md` and a root `NOTES.md` succeeds, and so does a commit adding a coverage
+      manifest and `.gobby/pla...'
+    matched_artifact_ref: tests/workflows/rules/test_landing_override_rule.py::test_landing_override_is_blocked_for_every_session
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.6
+  plan_node_hash: 5483a60ac09251f2e573c75eff8f1a0f917134fd96d3689b59650a0ad8fbfab2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23549'
+    validation_criteria_snippet: '1.5.1: In the main checkout, a commit touching only
+      `docs/x.md` and a root `NOTES.md` succeeds, and so does a commit adding a coverage
+      manifest and `.gobby/pla...'
+    matched_artifact_ref: tests/cli/installers/test_git_hooks_installer.py::test_missing_template_hook_is_stale_for_managed_install
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.7
+  plan_node_hash: d6488ea9900ffa0e2922f34471e26033d8d2ec3af98b2376ca5bf131c9c23724
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23549'
+    validation_criteria_snippet: '1.5.1: In the main checkout, a commit touching only
+      `docs/x.md` and a root `NOTES.md` succeeds, and so does a commit adding a coverage
+      manifest and `.gobby/pla...'
+    matched_artifact_ref: tests/cli/installers/test_git_hooks_installer.py::test_gobby_sections_chain_to_foreign_hook_content
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.8
+  plan_node_hash: cdff64ce484a4e404640ee46e989094ee2d2b5eadfdde42ea0a4db6f97e5afb5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23549'
+    validation_criteria_snippet: '1.5.1: In the main checkout, a commit touching only
+      `docs/x.md` and a root `NOTES.md` succeeds, and so does a commit adding a coverage
+      manifest and `.gobby/pla...'
+    matched_artifact_ref: tests/cli/installers/test_landing_guard_hook.py::test_guard_classifies_unusual_paths_fail_closed
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: b347f49fbe1637a26c1f355a27b17dec92ac8550443bbb4537d9e755ef4ef1e7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23550'
+    validation_criteria_snippet: '2.1.1: The closing reference names both new receipt
+      kinds, their authority, append-only approvals and the landing-before-close order.
+      behavior: "landing_approv...'
+    matched_artifact_ref: landing_approval
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: fce0f86565f5a52d682d829b4c3246d9daecf69021f71a5075a4ec58e238d192
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23550'
+    validation_criteria_snippet: '2.1.1: The closing reference names both new receipt
+      kinds, their authority, append-only approvals and the landing-before-close order.
+      behavior: "landing_approv...'
+    matched_artifact_ref: set_landing_freeze
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 21231b2a48fed14272399d0ead44a9a96752027064059467ad21eafa63a0acca
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23550'
+    validation_criteria_snippet: '2.1.1: The closing reference names both new receipt
+      kinds, their authority, append-only approvals and the landing-before-close order.
+      behavior: "landing_approv...'
+    matched_artifact_ref: base_update_required
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 6ace9de739db180dd1f95bdc3851d89589a5f7f4f5a48f6fb80003614be9c29f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23550'
+    validation_criteria_snippet: '2.1.1: The closing reference names both new receipt
+      kinds, their authority, append-only approvals and the landing-before-close order.
+      behavior: "landing_approv...'
+    matched_artifact_ref: retest_required
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: 5d398d34bb2dc2e44eb34cf3c3e5fe04ad24affcec6fc3b79bf51d3296f52129
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23550'
+    validation_criteria_snippet: '2.1.1: The closing reference names both new receipt
+      kinds, their authority, append-only approvals and the landing-before-close order.
+      behavior: "landing_approv...'
+    matched_artifact_ref: GOBBY_LAND_COMMIT
+  deferral_target: null
+  detail: ''
