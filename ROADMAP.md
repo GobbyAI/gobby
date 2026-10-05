@@ -188,7 +188,7 @@ its only open deliverable: the physical smoke per
 
 ### Stage 0 — terminal client and native PTY runtime (#21334)
 
-The client epic has landed (`.gobby/plans/herdr-client-completion.md`).
+The client epic has landed (`.gobby/plans/completed/herdr-client-completion.md`).
 Follow-on planning epics are #21357 (D1: native runtime completion — daemon/host
 hardening and the native-default flip), #20202 (D2: hub-wide roster, attach
 routing, and capability tokens for remote attach) and #21908 (D4: worktree
@@ -464,12 +464,12 @@ Completed plans: `.gobby/plans/completed/daemon-native-runtime-boundary.md`,
 `shared-remote-stack.md`, `machine-scoped-worktrees-clones.md`,
 `project-checkout-identity.md`, `two-daemon-hub.md`,
 `hub-owned-files-home.md`, `account-identity-machine-ownership.md`,
-`reactive-config-store.md`.
-
-Live plans: `.gobby/plans/herdr-terminal-client.md`,
+`reactive-config-store.md`, `herdr-terminal-client.md`,
 `herdr-terminal-client-qa-fixes.md`, `herdr-foundation-landing.md`,
-`herdr-client-completion.md`, `m0-shared-datastores-bridge.md`,
-`hub-pc-datastore-move.md`, `retire-legacy-wiki.md`.
+`herdr-client-completion.md`, `hub-pc-datastore-move.md`,
+`retire-legacy-wiki.md`.
+
+Live plans: `.gobby/plans/m0-shared-datastores-bridge.md`.
 
 Architecture and guides: `docs/architecture/hub-owned-files-home.md`,
 `docs/guides/shared-stack.md`, `docs/guides/remote-docker-acceptance.md`,

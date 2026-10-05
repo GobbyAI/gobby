@@ -70,8 +70,10 @@ The complete unauthenticated HTTP surface is:
 
 Every other `/api/*`, `/mcp*`, and `/memory*` request requires authentication.
 The standalone WebSocket server on port `60888` requires bearer auth during the
-handshake. The HTTP `/ws` proxy requires a valid browser cookie and injects the
-daemon's current token into the upstream connection.
+handshake. The HTTP `/ws` route serves the same WebSocket server directly: it
+accepts the handshake, then authenticates like any protected request (bearer
+token, then `X-Gobby-Local-Token`, then a browser session cookie; the first
+credential present decides) and closes with code `4401` when it fails.
 
 Unauthenticated protected API requests return `401` with:
 
