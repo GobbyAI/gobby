@@ -13,9 +13,9 @@ disk-reading rules). That task is deferred section D5 of
 plan of record `.gobby/plans/gdaemon-front-door.md`. The leaves expand under
 #23277 (PD ruling, 2026-10-04 19:44).
 
-**The problem.** Rule evaluation runs in the Python daemon. Today, 13 daemon
+**The problem.** Rule evaluation runs in the Python daemon. Today, 15 daemon
 sites read the agent's working tree from the evaluating machine's disk while
-they handle a hook. ghook never reads the edited file, and the envelope carries
+they handle a hook (§Site Disposition). ghook never reads the edited file, and the envelope carries
 no file fact. The daemon also resolves its checkout with its own machine id
 (`src/gobby/workflows/hooks.py::WorkflowHookHandler._resolve_project_path`
 calls `require_local_machine_id`). A hub that evaluates a node's hook therefore
@@ -150,6 +150,9 @@ plan:
     - Nothing else reads facts.
     - There is no total per-envelope cap. A patch over many large files is rare
       and is bounded by the per-path cap.
+    - `line_count` counts lines exactly as Python `str.splitlines()` counts the
+      decoded text, so a truncated fact and the consumer's `_line_count` agree
+      (1.1).
 12. **Spool hardening covers both surfaces.**
     - Write `content` and Edit `old_string`/`new_string` are already persisted
       today, in the ghook inbox spool and in the inbox quarantine. Verified at
@@ -188,7 +191,7 @@ plan:
 - **Monolith ceiling.** These targeted files are at or over 850 lines and are
   split in their owning sections:
   - `src/gobby/workflows/hooks.py` (852), in 1.6;
-  - `src/gobby/workflows/found_work_gate.py` (877), in 1.7.
+  - `src/gobby/workflows/found_work_gate.py` (877), in 1.9.
 
   These large files are deliberately not targeted:
   - `commit_guard.py` (956), `safe_evaluator.py` (887),
@@ -230,8 +233,8 @@ The evidence shows it does not:
   envelope's `SCHEMA_VERSION`.
 
 Disposition:
-- `file_facts` changes no corpus case, loader or replay, so 1.1–1.8 do not wait
-  on D1's corpus bump.
+- `file_facts` changes no corpus case, loader or replay, so 1.1–1.15 do not
+  wait on D1's corpus bump.
 - D1.7 itself stays owned by #23273 (Hub-side key validation, front-door
   identity, and shared-token cutover).
 - This plan keeps a D1 dependency only where one is real: D2 binds origin to
@@ -284,19 +287,21 @@ is unchanged except where `envelope-fact` applies.
 | 1 | `src/gobby/workflows/monolith_guard.py::_projection_for_path`, via `projected_monolith_paths` | `require-decompose-monolith-before-threshold-write` (before_tool writes) | `envelope-fact`. A foreign uncarried path is reported unverifiable, which is `fail-closed`. | 1.4, 1.5 |
 | 2 | `monolith_guard.py::outstanding_monolith_paths` | `require-monolith-resolution-before-commit`, `-before-task-transition`, `-before-turn-end` | `fail-closed`: every ledger guard path is reported unverifiable | 1.7 |
 | 3 | `src/gobby/workflows/rust_test_evidence.py::rust_edit_is_test_writing` via `_read_absolute_text` | `enforce-tdd-block`, `enforce-tdd-track-tests` | `envelope-fact`. A foreign uncarried path takes `degrade-existing`: no text means not test-only. | 1.4 |
-| 4 | `src/gobby/workflows/tdd_paths.py::tdd_path_identity`, `same_repo_worktree_root` (git identity) | `enforce-tdd-block` | `degrade-existing`: normalized-string identity, the existing `_GitLookupFailed` fallback | 1.7 |
+| 4 | `src/gobby/workflows/tdd_paths.py::tdd_path_identity`, `same_repo_worktree_root` (git identity) | `enforce-tdd-block` | `degrade-existing`: normalized-string identity, the existing `_GitLookupFailed` fallback | 1.8 |
 | 5 | `src/gobby/workflows/commit_guard.py::foreign_dirty_edit_conflict` | `block-cross-session-foreign-dirty-edit` | `fail-closed` on a database ledger claim by another session, with no git confirmation and no release | 1.6 |
 | 6 | `commit_guard.py::foreign_staged_commit_conflict` | `block-cross-session-foreign-staged-commit` | `fail-closed` on every parsed `git commit` | 1.6 |
 | 7 | `src/gobby/workflows/code_review_scope.py::inspect_commit_review_scope` | `require-code-review-skill` | `degrade-existing`: not inspected, and the defaults `commit_has_reviewable_paths=True` and `session_owned_reviewable_paths=None` keep the gate armed | 1.6 |
 | 8 | `src/gobby/workflows/ledger_reconcile.py::reconcile_edit_ledgers` | after_tool git activity | `skip`: no release. This follows from `project_path=None`, and 1.6 pins it with a test. | 1.6 |
-| 9 | `src/gobby/hooks/code_navigation_recovery.py::_verified_source_line_count`, `_ignore_decision`, `_git_ignored` | `prefer-gcode-for-source-read`, `navigation_requires_index` | `degrade-existing`: line count unverified, so the read counts as broad and gets the existing redirect. Not treated as ignored. | 1.7 |
-| 10 | `src/gobby/hooks/_path_scope.py::apply_path_scope_metadata`, `current_project_root` | normalization of write and navigation events | `degrade-existing`: no root found, so paths count as in-project and `canonical_repo_mutation` stays armed | 1.8 |
-| 11 | `src/gobby/hooks/event_handlers/_tool.py::ToolEventHandlerMixin._record_successful_file_mutation` and `_resolve_repo_edit_paths`, `_paths_landed_before_edit`, `_notify_code_index` | PostToolUse edits | `envelope-fact` for the ledger path (`relative_path`). `skip` for the git-log landed check and the gcode index notify. | 1.8 |
-| 12 | `src/gobby/workflows/engine/run_command_effects.py::RunCommandEffectsMixin._apply_run_command` (the impeccable `hook.mjs` spawn) | `impeccable/design-detector` | `skip`: advisory and documented fail-open. Audited as skipped. | 1.8 |
-| 13 | `src/gobby/workflows/found_work_gate.py::FoundWorkStopAnalyzer._terminal_failures`, `validation_cover.py::surviving_path_failure`, `_foreign_owned_dirty_paths` | `enforce-found-work-ladder` (turn_end) | `fail-closed`: recorded terminal failures stand, with no cover, clearance or git probe | 1.7 |
-| s1 | `src/gobby/workflows/engine/proxy_hooks.py::ProxyHooksMixin._run_rtk_proxy` | `rtk-command-rewrite` | `skip`: no rewrite, so the command runs as written | 1.8 |
+| 9 | `src/gobby/hooks/code_navigation_recovery.py::_verified_source_line_count`, `_ignore_decision`, `_git_ignored` | `prefer-gcode-for-source-read`, `navigation_requires_index` | `degrade-existing`: line count unverified, so the read counts as broad and gets the existing redirect. Not treated as ignored. | 1.10 |
+| 10 | `src/gobby/hooks/_path_scope.py::apply_path_scope_metadata`, `current_project_root` | normalization of write and navigation events | `degrade-existing`: no root found, so paths count as in-project and `canonical_repo_mutation` stays armed | 1.11 |
+| 11 | `src/gobby/hooks/event_handlers/_tool.py::ToolEventHandlerMixin._record_successful_file_mutation` and `_resolve_repo_edit_paths`, `_paths_landed_before_edit`, `_notify_code_index` | PostToolUse edits | `envelope-fact` for the ledger path (`relative_path`). `skip` for the git-log landed check and the gcode index notify. | 1.12 |
+| 12 | `src/gobby/workflows/engine/run_command_effects.py::RunCommandEffectsMixin._apply_run_command` (the impeccable `hook.mjs` spawn) | `impeccable/design-detector` | `skip`: advisory and documented fail-open. Audited as skipped. | 1.13 |
+| 13 | `src/gobby/workflows/found_work_gate.py::FoundWorkStopAnalyzer._terminal_failures` (transcript derivation via `derive_transcript_evidence`), `validation_cover.py::surviving_path_failure`, `_foreign_owned_dirty_paths` | `enforce-found-work-ladder` (turn_end) | `fail-closed`: when the gate needs terminal evidence (no task disposition), it reports the diagnostic as a terminal failure. No transcript derivation, cover, clearance or git probe runs. | 1.9 |
+| 14 | `src/gobby/hooks/project_context.py::ProjectIdResolver.resolve` (cwd-marker walk `get_project_context`, then `ensure_project_in_db` into `project_checkout_ingress.register_cwd_marker_checkout`: checkout validation, Cargo target linking, marker refresh) | hook ingress project resolution when no explicit or session project resolves (`resolve_hook_project_context`, `_session_end`, `_agent`, `_tool`) | `fail-closed`: the resolver raises the existing no-marker `ValueError` with `FOREIGN_ORIGIN_DIAGNOSTIC`, and the route's `_hook_exception_response` blocks critical hooks and degrades the rest. Explicit and session resolutions are database-only and unchanged. | 1.15 |
+| 15 | `src/gobby/hooks/startup_claim_preflight.py::_resolve_or_register_session` (resolver call and direct `get_project_context` walk) | AGY pre-invocation startup claim, before the delivery scope exists | `skip`: a `machine_id_error` envelope takes no lease, like the existing foreign `machine_id` rejection, and the hook continues to row 14 | 1.15 |
+| s1 | `src/gobby/workflows/engine/proxy_hooks.py::ProxyHooksMixin._run_rtk_proxy` | `rtk-command-rewrite` | `skip`: no rewrite, so the command runs as written | 1.14 |
 | s2 | `src/gobby/config/validation_detection.py::load_project_validation_detection` (through `found_work_gate.py::resolve_stop_validation_config`) | found-work and validation detection | `no-change`: `project_path=None` gives the built-in config | — |
-| s3 | `src/gobby/workflows/condition_helpers_paths.py::write_paths_within` (seat write scope) | `seat-write-scope` | `degrade-existing` through 1.8's `current_project_root` guard: no root, so relative allowed directories are unresolvable and the write is outside scope (the existing block) | 1.8 |
+| s3 | `src/gobby/workflows/condition_helpers_paths.py::write_paths_within` (seat write scope) | `seat-write-scope` | `degrade-existing` through 1.11's `current_project_root` guard: no root, so relative allowed directories are unresolvable and the write is outside scope (the existing block) | 1.11 |
 | s4 | `src/gobby/workflows/enforcement/blocking.py::plan_write_paths_allowed` (`realpath`) | plan-mode write gate | `no-change`: `project_path=None` skips the root comparison, so only plan artifacts and scratch paths pass | — |
 | s5 | `src/gobby/workflows/observer_plan_mode.py` Codex transcript read | plan-mode observer | Out of scope: a transcript is not the working tree. It belongs to S2.11 with session ingestion (D1). | D1 |
 
@@ -360,7 +365,26 @@ collection, verifies nothing on its own.
   - `rust_test_evidence._read_absolute_text` needs an absolute `.rs` path.
   - Both read text with `encoding="utf-8", errors="replace"`.
 - Provider tool input keys come from `TOOL_INPUT_SOURCES = ("tool_input", "toolArgs", "parameters", "args")`
-  (`src/gobby/hooks/_normalization_tool_input.py`), and a string value is JSON.
+  (`src/gobby/hooks/_normalization_tool_input.py`), and a string value is JSON,
+  except for apply_patch.
+- apply_patch input is freeform patch text, never JSON
+  (`src/gobby/hooks/_normalization_tools.py::normalize_tool_fields` skips the
+  decode when the compact tool name is `applypatch`).
+  - `_normalization_paths.py::_compact_tool_name` casefolds the tool name and
+    keeps only alphanumerics.
+  - `_extract_apply_patch_text` takes a raw string, or the first string among
+    `_APPLY_PATCH_TEXT_FIELDS` (`command`, `patch`, `content`, `text`, `diff`).
+  - `_parse_apply_patch_paths` strips each line, then matches
+    `_APPLY_PATCH_FILE_RE` and `_APPLY_PATCH_MOVE_RE`.
+  - `tests/hooks/test_normalization.py` pins a raw patch string normalizing to
+    a canonical Write.
+- Path transformations before the consumers: `_normalization_paths.py::_append_unique_path`
+  strips canonical paths, and `condition_helpers.py::_normalize_condition_path`
+  turns backslashes into slashes before `rust_edit_is_test_writing`.
+- Line counts: `monolith_guard.py::_line_count` is `len(text.splitlines())`
+  over text read with universal newlines. Python's `splitlines` breaks on
+  `\n`, `\r`, `\r\n` (one boundary), `\v`, `\f`, `\x1c`, `\x1d`, `\x1e`,
+  `\x85`, ` ` and ` `, and counts a final unterminated line.
 - Edit-text keys are the union of the consumers' sets:
   - `_TARGETED_EDIT_KEYS` in `monolith_guard.py`;
   - `_NEW_TEXT_KEYS`, `_OLD_TEXT_KEYS`, `_CONTENT_KEYS` and `_NESTED_EDIT_KEYS`
@@ -382,30 +406,47 @@ collection, verifies nothing on its own.
   - `GUARDED_EXTENSIONS`, mirroring `MONOLITH_SOURCE_EXTENSIONS`;
   - `CONTENT_CAP_BYTES = 262_144`.
 - Discovery:
-  1. Take the first present tool-input key. Decode a string value as JSON, and
-     return `None` if it is not an object.
+  1. Take the first present tool-input key.
+     - When the compact tool name (`input_data.tool_name`, casefolded,
+       alphanumerics only) is `applypatch`, the patch text is a raw string
+       value, or the first string among `command`, `patch`, `content`, `text`
+       and `diff` of an object value. Take its header paths (step 4), then go
+       to step 5.
+     - Otherwise decode a string value as JSON, and return `None` if it is not
+       an object.
   2. Walk only that value, objects and arrays, to depth 6.
   3. From each object that has a `PATH_KEYS` string and at least one
      `EDIT_TEXT_KEYS` key, take the path.
-  4. From a `patch` string, take each path after `*** Add File: `,
-     `*** Update File: `, `*** Delete File: ` and `*** Move to: `.
+  4. From patch text (step 1, or a `patch` string found in step 2), strip
+     each line and take each path after `*** Add File: `,
+     `*** Update File: `, `*** Delete File: ` and `*** Move to: `, matching
+     `_parse_apply_patch_paths`.
   5. Keep only paths whose lowercase suffix is in `GUARDED_EXTENSIONS`.
 - Resolution:
+  - The wire key is the raw path string exactly as it appeared. The
+    filesystem path is that string after the consumers' lexical
+    normalization: `trim()`, then backslashes to slashes.
   - An absolute path is used as-is.
   - A relative path joins `project_root` when present, otherwise
     `input_data.cwd`.
   - `relative_path` is the canonicalized path relative to the canonicalized
-    project root, in POSIX form, or `null` when the path is outside the root
-    or there is no root.
-- Fact per path, keyed by the raw path string exactly as it appeared:
+    project root, in POSIX form.
+    - For a missing target, canonicalize its deepest existing ancestor, then
+      append the missing suffix with lexical `.`/`..` normalization. A missing
+      in-root target therefore keeps its repo-relative identity.
+    - `null` means the path is outside the root or there is no root, never
+      merely that the file is missing.
+- Fact per path, keyed by the raw path string:
   `{ "relative_path": string|null, "exists": bool, "line_count": int, "content"?: string, "truncated": bool }`.
   - `exists` is true for a regular file, following symlinks, like Python's
     `is_file()`.
-  - For a regular file up to the cap, `content` is `String::from_utf8_lossy`
-    and `line_count` is a newline count, plus one when the file is non-empty
-    and the last byte is not `\n`.
-  - Over the cap, there is no `content`, `truncated` is true, and `line_count`
-    comes from a streamed newline count.
+  - For a regular file, read it whole and decode it with
+    `String::from_utf8_lossy`. `line_count` counts lines with the
+    `str.splitlines()` boundaries listed above: `\r\n` is one boundary, and a
+    final unterminated line counts.
+  - Up to the cap, `content` is the decoded text. Over the cap, there is no
+    `content` and `truncated` is true. The count is over the whole file either
+    way, so no streaming decoder state is needed.
   - A missing path or a non-regular file gets `exists: false`,
     `line_count: 0` and `truncated: false`.
   - Read errors are treated as missing.
@@ -431,10 +472,10 @@ from the Lane Manager.
 
 **Acceptance:**
 
-- 1.1.1 - Write, Edit, MultiEdit `edits[]` and apply_patch targets under every `TOOL_INPUT_SOURCES` key, including JSON-string tool input, yield facts keyed by the raw path. test: `crates/ghook/src/file_facts.rs::collects_write_edit_multiedit_and_patch_targets`.
+- 1.1.1 - Write, Edit, MultiEdit `edits[]` and apply_patch targets under every `TOOL_INPUT_SOURCES` key, including JSON-string tool input, a freeform apply_patch string, and each apply_patch object field (`command`, `patch`, `content`, `text`, `diff`), yield facts keyed by the raw path. A non-patch, non-JSON string yields no facts. test: `crates/ghook/src/file_facts.rs::collects_write_edit_multiedit_and_patch_targets`.
 - 1.1.2 - Read payloads, `tool_response` content, and paths outside `GUARDED_EXTENSIONS`, such as `.env`, `.json` and `.ipynb`, yield no facts and omit the field. test: `crates/ghook/src/file_facts.rs::ignores_reads_responses_and_unguarded_extensions`.
-- 1.1.3 - A file over 262,144 bytes carries `line_count` and `truncated: true` with no `content`. A missing path carries `exists: false`. test: `crates/ghook/src/file_facts.rs::caps_content_and_reports_missing_files`.
-- 1.1.4 - A relative path resolves against the project root, and `relative_path` is null outside the root. test: `crates/ghook/src/file_facts.rs::resolves_relative_paths_against_project_root`.
+- 1.1.3 - `line_count` equals Python `len(text.splitlines())` for empty, trailing-newline, LF, CRLF, CR and every other `splitlines` boundary. A file over 262,144 bytes, including one whose 1,000 lines are CR-separated, carries that count and `truncated: true` with no `content`. A missing path carries `exists: false`. test: `crates/ghook/src/file_facts.rs::caps_content_and_reports_missing_files`.
+- 1.1.4 - A relative path resolves against the project root. A missing in-root target, including one under missing parent directories, keeps its `relative_path`. A raw key with surrounding whitespace or backslashes reads the normalized file. `relative_path` is null outside the root, including through an existing symlinked ancestor that points outside. test: `crates/ghook/src/file_facts.rs::resolves_relative_paths_against_project_root`.
 - 1.1.5 - An envelope with `file_facts` validates against both byte-identical v1 schema copies, and one without it still validates. test: `crates/ghook/src/envelope.rs::envelope_with_file_facts_validates_against_v1_schema`.
 - 1.1.6 - `build_dispatch_envelope` attaches facts for a PreToolUse Edit payload and omits the field for a SessionStart payload. test: `crates/ghook/src/dispatch.rs::dispatch_envelope_attaches_file_facts_for_edits`.
 
@@ -579,8 +620,17 @@ Consumers unchanged:
     - `HookDelivery.origin_label` fills `{machine}`. It is the machine id, or
       `"unidentified (machine_id_error=<code>)"` when ghook sent only an
       error code.
-  - `fact_text(raw_path)` and `fact_for(raw_path)`: lookup by exact raw path
-    string, then by `relative_path`.
+  - `fact_for(raw_path)` and `fact_text(raw_path)` look a fact up in this
+    order:
+    1. the exact raw path string as a key;
+    2. a lexical alias: `normalize(s) = s.strip().replace("\\", "/")`
+       compared with the normalized keys and the normalized non-null
+       `relative_path` values. A unique fact matches. Aliases that reach
+       differing facts return `None` (unverified), never a choice by map
+       order.
+
+    No lookup uses `resolve`, `realpath`, suffix matching or the evaluator's
+    disk.
 - `_normalize_hook_request` adds `"file_facts": payload.get("file_facts")` to
   the normalized payload only when present.
 - `run_adapter_hook.run_adapter` enters `hook_delivery_scope(payload)` beside
@@ -598,6 +648,7 @@ then `uv run ruff check`, `uv run mypy src/`, and the scoped `gobby test-types a
 - 1.3.2 - Origin is foreign when `machine_id` differs, when `machine_id_error` is present, or when the daemon has no local id and the payload carries one. It is local otherwise, including when the payload has no machine identity. The diagnostic names the machine id or the error code. test: `tests/hooks/test_hook_delivery.py::test_origin_classification`.
 - 1.3.3 - Malformed `file_facts` entries are dropped without logging. test: `tests/hooks/test_hook_delivery.py::test_malformed_file_facts_are_dropped`.
 - 1.3.4 - The Rust `TOOL_INPUT_KEYS`, `PATH_KEYS`, `EDIT_TEXT_KEYS` and `GUARDED_EXTENSIONS` constants in `crates/ghook/src/file_facts.rs` match the Python consumer key sets and `MONOLITH_SOURCE_EXTENSIONS`. test: `tests/hooks/test_hook_delivery.py::test_ghook_file_fact_constants_match_python`.
+- 1.3.5 - `fact_for` finds a fact by exact raw key, then by a whitespace- or separator-normalized raw key or `relative_path`. Colliding aliases with differing facts return `None`. No lookup touches disk. test: `tests/hooks/test_hook_delivery.py::test_fact_lookup_aliases_are_lexical_and_unambiguous`.
 ### 1.4 Monolith projection and Rust TDD classification read `file_facts` [category: code] (depends: 1.3)
 `kind: deliverable`
 
@@ -619,7 +670,8 @@ Consumers unchanged:
   - `current_hook_delivery()` returns a `HookDelivery` with `origin_local`
     and `facts`;
   - `fact_for(raw_path)` and `fact_text(raw_path)` look a fact up by exact
-    raw path string, then by `relative_path`;
+    raw path string, then by an unambiguous lexical alias of a key or
+    `relative_path` (1.3.5);
   - a fact is `FileFact(relative_path, exists, line_count, content, truncated)`.
     `content` is `None` when the file is over the 256 KiB cap, and
     `relative_path` is `None` outside the project root.
@@ -653,6 +705,12 @@ Consumers unchanged:
     - A carried fact gives `text = fact.content`, a count of
       `_line_count(content)` or `fact.line_count` when truncated, and
       `relative = fact.relative_path`.
+      - A fact whose `relative_path` is `None` lies outside the project, so the
+        function returns `None`, as it does today for a path outside the root.
+      - `is_monolith_guard_path(relative)` filters before a `_FileProjection`
+        is built, exactly as on the disk path.
+      - A fact with `exists: false` projects from `text=None` and a count of 0,
+        like a missing file on disk.
     - Otherwise, a local origin reads disk as today.
     - Otherwise (foreign, uncarried) the projection is unverifiable. It is
       reported as `"<raw path> (unverifiable: foreign-origin hook)"` and counts
@@ -673,9 +731,9 @@ then `uv run ruff check`, `uv run mypy src/`, and the scoped `gobby test-types a
 
 **Acceptance:**
 
-- 1.4.1 - A carried fact wins over disk content. Projection works without a project root, and a truncated fact projects by line delta. test: `tests/workflows/test_monolith_guard.py::test_projection_prefers_envelope_facts`.
+- 1.4.1 - A carried fact wins over disk content. Projection works without a project root, and a truncated fact projects by line delta from its `line_count`, so an over-cap fact at the ceiling blocks. A foreign, rootless Write or apply_patch Add File to a missing in-root `src/` file whose proposed content reaches 1,000 lines blocks without evaluator disk access. A fact with a null `relative_path` is skipped. test: `tests/workflows/test_monolith_guard.py::test_projection_prefers_envelope_facts`.
 - 1.4.2 - A foreign uncarried guard path is reported unverifiable and blocks. A local uncarried path still reads disk. test: `tests/workflows/test_monolith_guard.py::test_uncarried_paths_follow_origin`.
-- 1.4.3 - Rust test-only classification reads the carried content at both PreToolUse and PostToolUse, and fails closed for truncated or foreign uncarried paths. test: `tests/workflows/test_rust_test_evidence.py::test_classification_reads_envelope_facts`.
+- 1.4.3 - Rust test-only classification reads the carried content at both PreToolUse and PostToolUse, and fails closed for truncated or foreign uncarried paths. A raw absolute key with backslash separators or surrounding whitespace, passed through `normalize_tool_fields` and `condition_helpers._is_tdd_test_path`, still uses the carried content, with disk access forbidden for both origins. test: `tests/workflows/test_rust_test_evidence.py::test_classification_reads_envelope_facts`.
 
 ### 1.5 Monolith projection applies MultiEdit edits [category: code] (depends: 1.4)
 `kind: deliverable`
@@ -768,8 +826,9 @@ Consumers unchanged:
        `ls-files`).
   4. It runs `reconcile_edit_ledgers` (git status plus releases) on after_tool
      git activity.
-- The gate block builds one `eval_context` dict, about 65 lines (approximate
-  hint: lines 517–582):
+- The gate block builds one `eval_context` dict, about 65 lines, ending
+  immediately before `pre_eval = deepcopy(variables)` (approximate hint: line
+  585):
   - it initializes `foreign_dirty_edit_conflict`, `foreign_landing_merge` and
     `session_owned_reviewable_paths`;
   - it fills the two BEFORE_TOOL conflict strings (under
@@ -793,18 +852,24 @@ Consumers unchanged:
 - The origin comes from `current_hook_delivery()` (1.3).
 
 **Implementation:**
-- Move the whole `eval_context` construction of `_evaluate_rules` out of
-  `src/gobby/workflows/hooks.py` into the new
+- Move only the contiguous initialization and git/review gate block of
+  `_evaluate_rules` out of `src/gobby/workflows/hooks.py` into the new
   `src/gobby/workflows/hook_gate_context.py`, as
   `async def git_gate_eval_context(db, event, *, session_id, project_path, variables, event_data) -> dict[str, Any]`
-  (new). That covers:
+  (new). The block runs from `eval_context = {...}` through the AFTER_TOOL
+  `is_foreign_landing_merge` assignment, ending immediately before
+  `pre_eval = deepcopy(variables)`. That covers:
   - the dict initialization;
   - the BEFORE_TOOL `foreign_staged_commit_conflict` and
     `foreign_dirty_edit_conflict`;
   - `commit_has_reviewable_paths` and `session_owned_reviewable_paths`;
   - the AFTER_TOOL `foreign_landing_merge`.
 
-  `foreign_landing_merge` moves unchanged.
+  `foreign_landing_merge` moves unchanged. `_evaluate_rules` receives the
+  returned dict and keeps augmenting it at the existing later sites.
+  `pre_eval`, observer execution, ledger reconciliation, `has_dirty_files`,
+  target-task state, found-work analysis and unclaimed-work analysis stay in
+  `hooks.py`, in their current order.
   - Keep the lazy `from gobby.workflows.commit_guard import …`,
     `code_review_scope` and `code_review_freshness` imports inside the
     function, so existing test patch targets still resolve.
@@ -841,43 +906,18 @@ Consumers unchanged:
 - 1.6.2 - A foreign-origin write to a path that another session's ledger claims blocks with the diagnostic and releases nothing. An unclaimed path passes. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_write_on_claimed_path_fails_closed`.
 - 1.6.3 - A foreign-origin event resolves no checkout and no git worktree root, even when this machine holds a checkout of the same project. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_event_resolves_no_local_checkout`.
 - 1.6.4 - A foreign-origin after_tool git event skips `reconcile_edit_ledgers`, and the code-review gate stays armed. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_event_skips_reconcile_and_keeps_review_gate`.
-- 1.6.5 - Local-origin gate values, including `foreign_landing_merge`, are byte-identical before and after the move. test: `tests/workflows/test_foreign_origin_gates.py::test_local_gate_context_unchanged_by_move`.
+- 1.6.5 - Local-origin gate values returned by `git_gate_eval_context`, including `foreign_landing_merge`, are byte-identical before and after the move, and the later `_evaluate_rules` augmentation runs in its existing order. test: `tests/workflows/test_foreign_origin_gates.py::test_local_gate_context_unchanged_by_move`.
 
-### 1.7 Foreign-origin events fail the disk-read gates closed [category: code] (depends: 1.5, 1.6)
+### 1.7 Foreign-origin monolith ledger recount is unverifiable [category: code] (depends: 1.5)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/workflows/monolith_guard.py::outstanding_monolith_paths`
-- `src/gobby/workflows/tdd_paths.py::tdd_path_identity`
-- `src/gobby/workflows/tdd_paths.py::same_repo_worktree_root`
-- `src/gobby/workflows/found_work_gate.py::FoundWorkStopAnalyzer._terminal_failures`
-- `src/gobby/workflows/found_work_gate.py::_project_verification_commands`
-- `src/gobby/workflows/found_work_gate.py::_project_command_prefix`
-- `src/gobby/workflows/found_work_project_commands.py`
-- `src/gobby/hooks/code_navigation_recovery.py::_verified_source_line_count`
-- `src/gobby/hooks/code_navigation_recovery.py::_ignore_decision`
-- `tests/workflows/test_monolith_guard.py::*` — scope-reason: adds foreign-origin recount tests
-- `tests/workflows/test_tdd_gate_worktree_paths.py::*` — scope-reason: adds the foreign-origin identity test
-- `tests/workflows/test_found_work_gate.py::*` — scope-reason: adds the foreign-origin terminal-failure test
-- `tests/hooks/test_code_navigation_recovery.py::*` — scope-reason: adds the foreign-origin navigation test
+- `tests/workflows/test_monolith_guard.py::*` — scope-reason: adds the foreign-origin recount test
 
 Consumers unchanged:
 - `src/gobby/workflows/safe_evaluator.py` — no-edit-reason: `_outstanding_monolith_paths` calls `outstanding_monolith_paths(variables, project_path)` with an unchanged signature.
-- `src/gobby/workflows/condition_helpers.py` — no-edit-reason: It calls `tdd_path_identity` with an unchanged signature.
-- `tests/workflows/engine/test_condition_git_off_loop.py` — no-edit-reason: Local-origin `tdd_path_identity` and `_git_identity` behavior is unchanged.
 - `tests/workflows/test_command_position_patterns.py` — no-edit-reason: It patches `outstanding_monolith_paths` by name; the symbol stays in `monolith_guard`.
-
-**Granularity:** one section for four sites (2, 4, 9 and 13 in §Site
-Disposition), each with its own owner.
-- The outcome: no rule condition reads the evaluator's disk or git for a
-  foreign-origin event. Guarding a subset leaves that invariant false, so no
-  single site is a verifiable outcome by itself.
-- Each change is an early `current_hook_delivery()` check. It routes either
-  to the shared unverifiable marker or to the site's existing fallback, and
-  every test uses one foreign `hook_delivery_scope` fixture.
-- There are four acceptance items and five production files. One of those
-  files is the `found_work_gate.py` decomposition target.
-- Split if review finds a site whose change goes beyond an origin check.
 
 **Research context:**
 - `src/gobby/workflows/monolith_guard.py::outstanding_monolith_paths(variables, project_path)`:
@@ -885,22 +925,123 @@ Disposition), each with its own owner.
   - Otherwise it recounts every `task_edited_files` path from disk.
   - It backs three rules in `require-same-session-decomposition.yaml`: commit,
     task transition and turn end.
+- The section follows 1.5 because both edit `monolith_guard.py` and
+  `test_monolith_guard.py`. Its foreign branch runs before the root check, so
+  it needs nothing from 1.6.
+- The origin comes from `current_hook_delivery()` (1.3).
+
+**Implementation:**
+- For a foreign-origin delivery, return each ledger path that passes
+  `is_monolith_guard_path` as `"<path> (unverifiable: foreign-origin hook)"`,
+  with no disk read. Local behavior is unchanged.
+
+**Focused verification (planned):**
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_monolith_guard.py -q`.
+
+**Acceptance:**
+
+- 1.7.1 - For a foreign-origin event, every guarded ledger path is reported unverifiable at commit, task transition and turn end, and no file is read. test: `tests/workflows/test_monolith_guard.py::test_foreign_outstanding_paths_are_unverifiable`.
+
+### 1.8 Foreign-origin TDD path identity runs no git [category: code] (depends: 1.3)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/workflows/tdd_paths.py::tdd_path_identity`
+- `src/gobby/workflows/tdd_paths.py::same_repo_worktree_root`
+- `tests/workflows/test_tdd_gate_worktree_paths.py::*` — scope-reason: adds the foreign-origin identity test
+
+Consumers unchanged:
+- `src/gobby/workflows/condition_helpers.py` — no-edit-reason: It calls `tdd_path_identity` with an unchanged signature.
+- `tests/workflows/engine/test_condition_git_off_loop.py` — no-edit-reason: Local-origin `tdd_path_identity` and `_git_identity` behavior is unchanged.
+
+**Research context:**
 - `src/gobby/workflows/tdd_paths.py`:
   - `tdd_path_identity` and `same_repo_worktree_root` call `_git_identity`
     (`lru_cache`, `git rev-parse --show-toplevel --git-common-dir`).
   - On `_GitLookupFailed` they fall back to normalized path strings.
   - The guard goes in the callers, because a check inside the cached function
     would cache a per-delivery answer.
+- The origin comes from `current_hook_delivery()` (1.3).
+
+**Implementation:**
+- For a foreign-origin delivery, `tdd_path_identity` and
+  `same_repo_worktree_root` take the existing `_GitLookupFailed` fallback
+  without calling `_git_identity`.
+
+**Focused verification (planned):**
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_tdd_gate_worktree_paths.py tests/workflows/engine/test_condition_git_off_loop.py -q`.
+
+**Acceptance:**
+
+- 1.8.1 - Foreign-origin TDD path identity uses the string fallback, and no git subprocess runs. test: `tests/workflows/test_tdd_gate_worktree_paths.py::test_foreign_origin_skips_git_identity`.
+
+### 1.9 Foreign-origin found-work terminal evidence fails closed [category: code] (depends: 1.3)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/workflows/found_work_gate.py::FoundWorkStopAnalyzer._terminal_failures`
+- `src/gobby/workflows/found_work_gate.py::_project_verification_commands`
+- `src/gobby/workflows/found_work_gate.py::_project_command_prefix`
+- `src/gobby/workflows/found_work_project_commands.py`
+- `tests/workflows/test_found_work_gate.py::*` — scope-reason: adds the foreign-origin terminal-evidence test and the local regression test
+
+**Research context:**
 - `src/gobby/workflows/found_work_gate.py` (877 lines):
-  - `FoundWorkStopAnalyzer._terminal_failures` returns `()` when `not project_path`,
-    so it fails open.
-  - Otherwise it builds failures from transcript validation runs. It clears
-    them through `green_covers_failure` / `surviving_path_failure`
-    (`validation_cover.py`: `os.path.lexists` plus `git ls-tree HEAD`) and
-    `_foreign_owned_dirty_paths` (git status).
+  - `FoundWorkStopAnalyzer.analyze` calls `_terminal_failures` only when the
+    turn has no task disposition (no claimed task and no labeled deferral).
+    It caches the result in `_found_work_terminal_validation_failures`.
+  - `_terminal_failures` returns `()` when `not project_path`, so it fails
+    open.
+  - Otherwise it loads the session and the stop validation config, then calls
+    `src/gobby/tasks/transcript_evidence.py::derive_transcript_evidence`. That
+    function first calls `src/gobby/sessions/machine_scope.py::require_local_session_ownership`,
+    which raises `RemoteSessionOwnershipError` for a session owned by another
+    machine. `_terminal_failures` catches `TranscriptEvidenceUnavailable` and
+    every other exception and returns `()`, so a remote-owned session fails
+    open too. Its `repo_path` parameter is a `str`, and a foreign event has
+    `project_path=None`.
+  - It clears failures through `green_covers_failure` /
+    `surviving_path_failure` (`validation_cover.py`: `os.path.lexists` plus
+    `git ls-tree HEAD`) and `_foreign_owned_dirty_paths` (git status).
   - `_project_verification_commands` and `_project_command_prefix` (lines
     834–877) read `.gobby/project.json`. They are only called inside this
     file.
+- Node transcript ingestion is deferred (D1.3).
+- The origin comes from `current_hook_delivery()` (1.3).
+
+**Implementation:**
+- `_terminal_failures`: for a foreign-origin delivery, return
+  `(FOREIGN_ORIGIN_DIAGNOSTIC.format(machine=…, gate="the found-work validation gate"),)`
+  before the `not project_path` early return.
+  - Load no session, config or transcript, and call no
+    `derive_transcript_evidence`. Never pass `None` as its `repo_path`.
+  - Never turn `RemoteSessionOwnershipError` or
+    `TranscriptEvidenceUnavailable` into an empty foreign-origin result.
+  - Run no cover, survival or foreign-dirty clearance probe.
+  - A turn with a task disposition never reaches this call, so it is
+    unaffected.
+- Move `_project_verification_commands` and `_project_command_prefix` out of
+  `src/gobby/workflows/found_work_gate.py` into the new
+  `src/gobby/workflows/found_work_project_commands.py`, imported back by
+  `found_work_gate`. This split is the `production-size-growth` disposition.
+
+**Focused verification (planned):**
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_found_work_gate.py -q`.
+
+**Acceptance:**
+
+- 1.9.1 - For a foreign-origin turn end with no task disposition, including a session owned by another machine with no local transcript evidence, the found-work gate reports the diagnostic as a terminal failure and blocks. No session load, transcript derivation, cover, `lexists`, `ls-tree` or status probe runs. test: `tests/workflows/test_found_work_gate.py::test_foreign_origin_terminal_evidence_fails_closed`.
+- 1.9.2 - Local-origin terminal failures, covers and clearances are unchanged after the helper move. test: `tests/workflows/test_found_work_gate.py::test_local_terminal_failures_unchanged_by_move`.
+
+### 1.10 Foreign-origin source reads are unverified [category: code] (depends: 1.3)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/hooks/code_navigation_recovery.py::_verified_source_line_count`
+- `src/gobby/hooks/code_navigation_recovery.py::_ignore_decision`
+- `tests/hooks/test_code_navigation_recovery.py::*` — scope-reason: adds the foreign-origin navigation test
+
+**Research context:**
 - `src/gobby/hooks/code_navigation_recovery.py`:
   - `_verified_source_line_count` reads file bytes. On `None` (unverified) the
     read counts as broad and gets the existing gcode redirect.
@@ -909,93 +1050,40 @@ Disposition), each with its own owner.
 - The origin comes from `current_hook_delivery()` (1.3).
 
 **Implementation:**
-- `outstanding_monolith_paths`: for a foreign-origin delivery, return each
-  ledger path that passes `is_monolith_guard_path` as
-  `"<path> (unverifiable: foreign-origin hook)"`, with no disk read. Local
-  behavior is unchanged.
-- `tdd_path_identity` and `same_repo_worktree_root`: for a foreign-origin
-  delivery, take the existing `_GitLookupFailed` fallback without calling
-  `_git_identity`.
-- `_terminal_failures`: for a foreign-origin delivery, do not take the
-  `not project_path` early return.
-  - Build the failures from the transcript as today.
-  - Treat every cover, survival and clearance check as unanswered: no green
-    covers, every path failure survives, and no foreign-dirty clearance.
-  - Append the diagnostic, with gate "the found-work validation gate", to each
-    failure.
-- Move `_project_verification_commands` and `_project_command_prefix` out of
-  `src/gobby/workflows/found_work_gate.py` into the new
-  `src/gobby/workflows/found_work_project_commands.py`, imported back by
-  `found_work_gate`. This split is the `production-size-growth` disposition.
-- `_verified_source_line_count` returns `None`, and `_ignore_decision` returns
-  "not ignored" without disk or git, for a foreign-origin delivery.
+- For a foreign-origin delivery, `_verified_source_line_count` returns `None`,
+  and `_ignore_decision` returns "not ignored" without disk or git.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_monolith_guard.py tests/workflows/test_tdd_gate_worktree_paths.py tests/workflows/engine/test_condition_git_off_loop.py tests/workflows/test_found_work_gate.py tests/hooks/test_code_navigation_recovery.py -q`.
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_code_navigation_recovery.py -q`.
 
 **Acceptance:**
 
-- 1.7.1 - For a foreign-origin event, every guarded ledger path is reported unverifiable at commit, task transition and turn end, and no file is read. test: `tests/workflows/test_monolith_guard.py::test_foreign_outstanding_paths_are_unverifiable`.
-- 1.7.2 - Foreign-origin TDD path identity uses the string fallback, and no git subprocess runs. test: `tests/workflows/test_tdd_gate_worktree_paths.py::test_foreign_origin_skips_git_identity`.
-- 1.7.3 - Foreign-origin terminal validation failures stand, carrying the diagnostic, with no cover, `lexists`, `ls-tree` or status probe. test: `tests/workflows/test_found_work_gate.py::test_foreign_origin_terminal_failures_stand`.
-- 1.7.4 - A foreign-origin source read is unverified and redirected, and no file, `.git` or `gcode.json` is read. test: `tests/hooks/test_code_navigation_recovery.py::test_foreign_origin_read_is_unverified`.
+- 1.10.1 - A foreign-origin source read is unverified and redirected, and no file, `.git` or `gcode.json` is read. test: `tests/hooks/test_code_navigation_recovery.py::test_foreign_origin_read_is_unverified`.
 
-### 1.8 Foreign-origin normalization and post-tool side effects touch no local disk [category: code] (depends: 1.3)
+### 1.11 Foreign-origin normalization skips checkout probes [category: code] (depends: 1.3)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/hooks/_path_scope.py::apply_path_scope_metadata`
 - `src/gobby/hooks/_path_scope.py::current_project_root`
-- `src/gobby/hooks/event_handlers/_tool.py::ToolEventHandlerMixin._record_successful_file_mutation`
-- `src/gobby/hooks/event_handlers/_tool.py::ToolEventHandlerMixin._resolve_repo_edit_paths`
-- `src/gobby/workflows/engine/run_command_effects.py::RunCommandEffectsMixin._apply_run_command`
-- `src/gobby/workflows/engine/proxy_hooks.py::ProxyHooksMixin._run_rtk_proxy`
-- `tests/hooks/test_path_scope.py::*` — scope-reason: adds the foreign-origin probe test
-- `tests/hooks/test_tool_handlers.py::*` — scope-reason: adds the foreign-origin ledger test
-- `tests/workflows/test_run_command_effect.py::*` — scope-reason: adds the foreign-origin skip test
-- `tests/workflows/test_proxy_hooks.py::*` — scope-reason: adds the foreign-origin skip test
+- `tests/hooks/test_path_scope.py::*` — scope-reason: adds the foreign-origin probe and project-root tests
 
 Consumers unchanged:
 - `src/gobby/hooks/_normalization_canonical.py` — no-edit-reason: It calls `apply_path_scope_metadata` with an unchanged signature; the origin comes from the delivery context.
 - `src/gobby/workflows/condition_helpers_paths.py` — no-edit-reason: It calls `current_project_root` with an unchanged signature; site s3 degrades through it.
-- `src/gobby/workflows/engine/effects.py` — no-edit-reason: It dispatches `_apply_run_command` with an unchanged signature.
-
-**Granularity:** one section for the hook paths that run outside rule
-conditions: sites 10 and s3 (normalization), 11 (post-tool ledger), 12
-(`run_command`) and s1 (rtk).
-- The outcome: no normalization step or side effect probes or spawns on the
-  evaluator for a foreign-origin event. As in 1.7, a subset leaves the
-  invariant false.
-- Each change is an early `current_hook_delivery()` check that takes an
-  existing skip or no-root branch.
-- There are four acceptance items in four production files.
-- The section depends only on 1.3. It shares no Target with 1.6 or 1.7.
-  `canonical_repo_mutation` stays armed for a foreign write with or without
-  this section: a hub path that does not exist finds no root, and one that
-  does exist resolves in-project.
 
 **Research context:**
 - `src/gobby/hooks/_path_scope.py::apply_path_scope_metadata` runs during
-  daemon normalization (`_normalization_canonical.py`). It probes `.git` files
-  and `commondir` (`_git_common_dir`, `checkout_root`) and walks up for
+  daemon normalization (`_normalization_canonical.py`), which the adapters
+  call from `handle_native`, inside 1.3's delivery scope. It probes `.git`
+  files and `commondir` (`_git_common_dir`, `checkout_root`) and walks up for
   `.gobby/project.json` (`find_project_root`) to set `canonical_repo_mutation`.
   When no root is found, paths count as in-project, which is fail-closed.
 - `current_project_root` falls back to `find_project_root`. The seat write
   scope (`condition_helpers_paths.py::write_paths_within`) uses it.
-- `src/gobby/hooks/event_handlers/_tool.py`:
-  - `_record_successful_file_mutation` records the edit ledger.
-  - `_resolve_repo_edit_paths` (`find_project_root` plus `resolve`, falling
-    back to cwd) makes paths repo-relative.
-  - `_paths_landed_before_edit` runs git log via `paths_committed_after_async`.
-  - `_notify_code_index` triggers gcode indexing on the evaluating machine.
-- `src/gobby/workflows/engine/run_command_effects.py::RunCommandEffectsMixin._apply_run_command`
-  spawns `node hook.mjs` (impeccable) with `cwd` set to the event cwd. It is
-  documented as fail-open.
-- `src/gobby/workflows/engine/proxy_hooks.py::ProxyHooksMixin._run_rtk_proxy`
-  checks `linked_worktree_root(cwd)` and spawns rtk in cwd.
-- Facts (1.1), served through 1.3's `current_hook_delivery().facts` and
-  `fact_for(raw_path)`, carry `relative_path` for guarded edits. The ledger stores
-  repo-relative paths.
+- `canonical_repo_mutation` stays armed for a foreign write with or without
+  this section: a hub path that does not exist finds no root, and one that
+  does exist resolves in-project. The section removes the probes.
 
 **Implementation:**
 - For a foreign-origin delivery (`current_hook_delivery()`):
@@ -1003,32 +1091,183 @@ conditions: sites 10 and s3 (normalization), 11 (post-tool ledger), 12
     project-root probe and takes the existing no-root branch.
   - `current_project_root` returns only an explicit `project_path` from event
     data, with no `find_project_root` walk.
+
+**Focused verification (planned):**
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_path_scope.py tests/hooks/test_normalization.py -q`.
+
+**Acceptance:**
+
+- 1.11.1 - Foreign-origin normalization performs no `.git`, `commondir` or project-root probe, and a write stays `canonical_repo_mutation`. test: `tests/hooks/test_path_scope.py::test_foreign_origin_skips_checkout_probes`.
+- 1.11.2 - For a foreign-origin delivery, `current_project_root` returns only an explicit event `project_path` and walks no directory, so a seat write with a relative allowed directory is outside scope. test: `tests/hooks/test_path_scope.py::test_foreign_origin_project_root_is_explicit_only`.
+
+### 1.12 Foreign-origin post-tool edits record fact paths without git or index [category: code] (depends: 1.3)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/hooks/event_handlers/_tool.py::ToolEventHandlerMixin._record_successful_file_mutation`
+- `src/gobby/hooks/event_handlers/_tool.py::ToolEventHandlerMixin._resolve_repo_edit_paths`
+- `tests/hooks/test_tool_handlers.py::*` — scope-reason: adds the foreign-origin ledger test
+
+**Research context:**
+- `src/gobby/hooks/event_handlers/_tool.py`:
+  - `_record_successful_file_mutation` records the edit ledger.
+  - `_resolve_repo_edit_paths` (`find_project_root` plus `resolve`, falling
+    back to cwd) makes paths repo-relative.
+  - `_paths_landed_before_edit` runs git log via `paths_committed_after_async`.
+  - `_notify_code_index` triggers gcode indexing on the evaluating machine.
+- Facts (1.1), served through 1.3's `current_hook_delivery().facts` and
+  `fact_for(raw_path)`, carry `relative_path` for guarded edits. The ledger
+  stores repo-relative paths.
+
+**Implementation:**
+- For a foreign-origin delivery:
   - `_resolve_repo_edit_paths` maps each path to its fact's `relative_path`
     when carried. Otherwise it keeps the raw path as given, with no
     `find_project_root` or `resolve`.
   - `_record_successful_file_mutation` skips `_paths_landed_before_edit` and
     `_notify_code_index`.
-  - `_apply_run_command` returns without spawning and records an audit entry
-    with reason `foreign-origin`.
-  - `_run_rtk_proxy` returns the command unrewritten.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_path_scope.py tests/hooks/test_tool_handlers.py tests/workflows/test_run_command_effect.py tests/workflows/test_proxy_hooks.py tests/hooks/test_normalization.py -q`.
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_tool_handlers.py -q`.
 
 **Acceptance:**
 
-- 1.8.1 - Foreign-origin normalization performs no `.git`, `commondir` or project-root probe, and a write stays `canonical_repo_mutation`. test: `tests/hooks/test_path_scope.py::test_foreign_origin_skips_checkout_probes`.
-- 1.8.2 - A foreign-origin edit records the ledger under the fact's `relative_path` and runs neither git log nor index notify. test: `tests/hooks/test_tool_handlers.py::test_foreign_mutation_records_fact_path_without_git_or_index`.
-- 1.8.3 - A foreign-origin `run_command` effect does not spawn and is audited as skipped. test: `tests/workflows/test_run_command_effect.py::test_foreign_origin_skips_run_command_spawn`.
-- 1.8.4 - A foreign-origin shell command is not rtk-rewritten, and no rtk process starts. test: `tests/workflows/test_proxy_hooks.py::test_foreign_origin_skips_rtk_rewrite`.
+- 1.12.1 - A foreign-origin edit records the ledger under the fact's `relative_path` and runs neither git log nor index notify. test: `tests/hooks/test_tool_handlers.py::test_foreign_mutation_records_fact_path_without_git_or_index`.
 
-## D1 Node git-state and disk gates run where the checkout lives (depends: 1.6, 1.7, 1.8)
+### 1.13 Foreign-origin run_command effects do not spawn [category: code] (depends: 1.3)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/workflows/engine/run_command_effects.py::RunCommandEffectsMixin._apply_run_command`
+- `tests/workflows/test_run_command_effect.py::*` — scope-reason: adds the foreign-origin skip test
+
+Consumers unchanged:
+- `src/gobby/workflows/engine/effects.py` — no-edit-reason: It dispatches `_apply_run_command` with an unchanged signature.
+
+**Research context:**
+- `src/gobby/workflows/engine/run_command_effects.py::RunCommandEffectsMixin._apply_run_command`
+  spawns `node hook.mjs` (impeccable) with `cwd` set to the event cwd. It is
+  documented as fail-open.
+
+**Implementation:**
+- For a foreign-origin delivery, `_apply_run_command` returns without
+  spawning and records an audit entry with reason `foreign-origin`.
+
+**Focused verification (planned):**
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_run_command_effect.py -q`.
+
+**Acceptance:**
+
+- 1.13.1 - A foreign-origin `run_command` effect does not spawn and is audited as skipped. test: `tests/workflows/test_run_command_effect.py::test_foreign_origin_skips_run_command_spawn`.
+
+### 1.14 Foreign-origin shell commands skip the rtk rewrite [category: code] (depends: 1.3)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/workflows/engine/proxy_hooks.py::ProxyHooksMixin._run_rtk_proxy`
+- `tests/workflows/test_proxy_hooks.py::*` — scope-reason: adds the foreign-origin skip test
+
+**Research context:**
+- `src/gobby/workflows/engine/proxy_hooks.py::ProxyHooksMixin._run_rtk_proxy`
+  checks `linked_worktree_root(cwd)` and spawns rtk in cwd.
+
+**Implementation:**
+- For a foreign-origin delivery, `_run_rtk_proxy` returns the command
+  unrewritten.
+
+**Focused verification (planned):**
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_proxy_hooks.py -q`.
+
+**Acceptance:**
+
+- 1.14.1 - A foreign-origin shell command is not rtk-rewritten, and no rtk process starts. test: `tests/workflows/test_proxy_hooks.py::test_foreign_origin_skips_rtk_rewrite`.
+
+### 1.15 Foreign-origin hook ingress resolves no project from local disk [category: code] (depends: 1.3)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/hooks/project_context.py::ProjectIdResolver.resolve`
+- `src/gobby/hooks/startup_claim_preflight.py::_resolve_or_register_session`
+- `tests/hooks/test_project_checkout_ingress.py::*` — scope-reason: adds the foreign-origin ingress tests
+- `tests/hooks/test_startup_claim_preflight.py::*` — scope-reason: adds the `machine_id_error` preflight test
+
+Consumers unchanged:
+- `src/gobby/hooks/hook_manager.py` — no-edit-reason: `_resolve_project_id` delegates to `ProjectIdResolver.resolve` with an unchanged signature, and `resolve_hook_project_context`, `_session_end`, `_agent` and `_tool` reach the guard through it.
+- `src/gobby/hooks/project_checkout_ingress.py` — no-edit-reason: `register_cwd_marker_checkout` is unchanged; a foreign delivery no longer reaches it.
+- `tests/hooks/test_hook_extracted_helpers.py` — no-edit-reason: It drives `ProjectIdResolver.resolve` outside a delivery scope, so local behavior is unchanged.
+- `tests/hooks/test_hook_manager.py` — no-edit-reason: `TestHookCheckoutIngress` uses local events, whose registration is unchanged.
+- `tests/integration/test_project_checkout_identity.py` — no-edit-reason: Local overlay resolution through `ProjectIdResolver.resolve` is unchanged.
+- `tests/storage/test_project_repo_path_isolation.py` — no-edit-reason: It calls `ensure_project_in_db` directly, which is unchanged.
+- `src/gobby/hooks/session_lookup.py` — no-edit-reason: It passes the `resolve_project_id` callback to `resolve_hook_project_context` with an unchanged signature.
+- `tests/hooks/test_hooks_manager.py` — no-edit-reason: It drives `HookManager._resolve_project_id` outside a delivery scope, so local resolution and the no-marker `ValueError` are unchanged.
+- `tests/hooks/test_session_activation_reconciliation.py` — no-edit-reason: It patches `resolve_hook_project_context` by name, which is unchanged.
+
+**Research context:**
+- `src/gobby/hooks/project_context.py::resolve_hook_project_context` tries an
+  explicit project id, then session and existing-session lookups, all
+  database-only. It then calls `resolve_project_id(None, cwd)`.
+- `ProjectIdResolver.resolve(None, cwd)` calls `get_project_context(cwd)`,
+  which walks up from `cwd` for `.gobby/project.json` on the evaluator's
+  disk. It then calls `ensure_project_in_db`, which delegates to
+  `src/gobby/hooks/project_checkout_ingress.py::register_cwd_marker_checkout`.
+  That validates a local checkout, links Cargo targets, registers the
+  checkout for this machine and can rewrite the marker (`_refresh_stale_marker`).
+  A foreign event whose cwd also exists on the hub therefore reads, and can
+  mutate, the hub's checkout.
+- Other hook callers reach the same method through
+  `HookManager._resolve_project_id`: `_session_end.py`, `_agent.py` and
+  `_tool.py` (`_notify_code_index` is skipped by 1.12).
+- With no marker found, `resolve` raises `ValueError("No .gobby/project.json found …")`.
+  The route catches it (`src/gobby/servers/routes/mcp/hooks.py`), and
+  `hook_responses.py::_hook_exception_response` blocks critical hooks and
+  degrades the rest.
+- A skipped resolution is not a safe alternative. `hook_manager.py` returns
+  `HookResponse(decision="allow")` for one before any rule runs, git gates
+  included.
+- ghook's `X-Gobby-Project-Id` header does not reach the hook thread:
+  `adapter_execution.py::run_adapter_hook` submits `run_adapter` to
+  `_HOOK_ADAPTER_EXECUTOR` without copying context, and `get_project_context(cwd)`
+  ignores the middleware context var when a cwd is given. Mapping the header
+  to a foreign project would need new plumbing (rejected; D1.4).
+- `src/gobby/hooks/startup_claim_preflight.py::_resolve_or_register_session`
+  runs in the route before `run_adapter_hook`, so outside the delivery scope.
+  A foreign `machine_id` is already rejected (`MachineOwnershipMismatchError`).
+  A `machine_id_error` envelope has no `machine_id`, so `require_local_machine_id`
+  resolves the local machine, and `_resolve_project_id` calls the resolver,
+  then `get_project_context(Path(workspace))`.
+
+**Implementation:**
+- `ProjectIdResolver.resolve`: after the explicit `project_id` return and the
+  no-`cwd` personal fallback, for a foreign-origin delivery
+  (`current_hook_delivery()`), raise `ValueError` with
+  `FOREIGN_ORIGIN_DIAGNOSTIC.format(machine=…, gate="hook project resolution")`.
+  - No `get_project_context`, `ensure_project_in_db`, checkout validation,
+    Cargo target linking or marker refresh runs.
+  - Explicit, session and existing-session resolutions are unchanged.
+  - Outside a delivery scope the default delivery is local, so non-hook
+    callers are unchanged.
+- `_resolve_or_register_session`: when `_payload_field(payload, "machine_id_error")`
+  is present, log the existing foreign-machine warning and return `None`
+  before `require_local_machine_id`. No lease is taken, and the hook
+  continues to the adapter, where the resolver guard applies.
+
+**Focused verification (planned):**
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_project_checkout_ingress.py tests/hooks/test_startup_claim_preflight.py tests/hooks/test_hook_extracted_helpers.py tests/hooks/test_hook_manager.py -q`.
+
+**Acceptance:**
+
+- 1.15.1 - A foreign-origin hook whose cwd also exists on this machine, with no explicit or session project, raises the foreign-origin diagnostic. Spies on `get_project_context`, checkout validation, Cargo target linking, `register` and marker refresh are never called. Foreign explicit and session resolutions, and local cwd-marker ingress, are unchanged. test: `tests/hooks/test_project_checkout_ingress.py::test_foreign_origin_resolves_no_project_from_local_disk`.
+- 1.15.2 - An AGY pre-invocation envelope with `machine_id_error` takes no startup-claim lease and reads no project marker. test: `tests/hooks/test_startup_claim_preflight.py::test_machine_id_error_takes_no_lease_and_reads_no_marker`.
+
+## D1 Node git-state and disk gates run where the checkout lives (depends: 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15)
 `kind: deferred`
 
 Under scope A, every git-state or disk gate fails closed or degrades for a
-foreign-origin event (sites 2, 4–10, 13, s1, s3 and s5). Node sessions
+foreign-origin event (sites 2, 4–10, 13–15, s1, s3 and s5). Node sessions
 therefore cannot commit, close a task with edits, or end a turn that holds
-guarded ledger paths or terminal failures. These gates need to be evaluated
+guarded ledger paths or lacks a task disposition. A node hook that carries no
+explicit project id cannot resolve its project (site 14), so its session never
+registers and its critical hooks block. These gates need to be evaluated
 against the node's own checkout. That is the node-local hook ingress and
 envelope ledger of S2.11 (#21569). #23274 (Node channel, relay backend, and
 `/api/machines`) owns the relay and channel, and has no gate item.
@@ -1037,6 +1276,9 @@ Obligations:
 - D1.1: each gate in §Site Disposition gives a real answer for a node event.
 - D1.2: the ledger reconciles against the node's git.
 - D1.3: Codex transcript and session ingestion work for node sessions.
+- D1.4: a node hook resolves its project from the node's own checkout
+  identity (for example ghook's `X-Gobby-Project-Id`, validated by the hub),
+  so node sessions register without the hub reading its own disk.
 
 *Candidate fourth item for Choice 5's required set (D3, D4 and D5 before
 nodes count as supported). Josh confirms it when S2.11 is planned.*
@@ -1050,6 +1292,7 @@ deferral:
     - D1.1
     - D1.2
     - D1.3
+    - D1.4
 ```
 
 ## D2 Origin binds to the authenticated machine identity (depends: 1.3)
@@ -1076,7 +1319,7 @@ deferral:
 D2.1: the origin is derived from the authenticated key's machine, and a
 conflicting payload `machine_id` blocks with a diagnostic.
 
-## D3 Node-to-hub end-to-end verification of `file_facts` (depends: 1.7, 1.8)
+## D3 Node-to-hub end-to-end verification of `file_facts` (depends: 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15)
 `kind: deferred`
 
 Once #23274 relays a node's hooks to the hub, an e2e test on the
@@ -1111,7 +1354,7 @@ D3.1: the hub-node e2e test above passes over the relay.
 
 After every leaf has landed:
 
-1. Run the focused suites of 1.3 to 1.8 together against the test hub.
+1. Run the focused suites of 1.3 to 1.15 together against the test hub.
 2. Run `cargo nextest run -p ghook` (heavy key).
 3. Rerun both corpus suites unchanged, as the D1.7 evidence:
    - `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_http_corpus.py -q`;
