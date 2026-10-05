@@ -6,11 +6,14 @@ import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.agents.cargo_target import checkout_cargo_target_dir
+from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.project_checkout_ingress import register_cwd_marker_checkout
+from gobby.hooks.project_context import ProjectIdResolver
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.projects import LocalProjectManager
 from tests.fixtures.isolated_checkout import (
@@ -55,6 +58,7 @@ def test_second_clone_conflict_warns_once_and_keeps_hook_alive(
     second = tmp_path / "second"
     for root in (first, second):
         root.mkdir()
+        (root / ".git").mkdir()
         write_project_marker(root, project_id=project.id, name=project.name)
     LocalProjectCheckoutManager(temp_db).register(machine_id, project.id, str(first))
 
@@ -85,6 +89,7 @@ def test_root_owned_by_another_project_warns_and_continues(
     newcomer = manager.create(name="ingress-newcomer")
     root = tmp_path / "shared"
     root.mkdir()
+    (root / ".git").mkdir()
     write_project_marker(root, project_id=newcomer.id, name=newcomer.name)
     LocalProjectCheckoutManager(temp_db).register(machine_id, owner.id, str(root))
 
@@ -97,6 +102,62 @@ def test_root_owned_by_another_project_warns_and_continues(
     assert len(warnings) == 1
     assert f"gobby projects rebind {newcomer.name} {root}" in warnings[0]
     assert LocalProjectCheckoutManager(temp_db).get(machine_id, newcomer.id) is None
+
+
+@pytest.mark.parametrize("checkout_kind", ["registered", "scratch", "second-clone", "overlay"])
+def test_index_notifications_require_admitted_checkout(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    ingress_logger: logging.Logger,
+    checkout_kind: str,
+) -> None:
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    project = LocalProjectManager(temp_db).create(name="index-admission")
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    write_project_marker(primary, project_id=project.id, name=project.name)
+    LocalProjectCheckoutManager(temp_db).register(machine_id, project.id, str(primary))
+    root = primary if checkout_kind == "registered" else tmp_path / checkout_kind
+    if root != primary:
+        root.mkdir()
+        write_project_marker(root, project_id=project.id, name=project.name)
+    if checkout_kind == "second-clone":
+        (root / ".git").mkdir()
+    if checkout_kind == "overlay":
+        insert_overlay(
+            temp_db, machine_id=machine_id, project_id=project.id, path=str(root), kind="worktree"
+        )
+    session_manager = MagicMock(db=temp_db)
+    resolver = ProjectIdResolver(session_manager=session_manager, logger=ingress_logger)
+    trigger = MagicMock()
+    handlers = EventHandlers(
+        session_manager=session_manager,
+        resolve_project_id=resolver.resolve,
+        code_index_trigger=trigger,
+        logger=ingress_logger,
+    )
+    with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
+        handlers._notify_code_index(root, "edited.py")
+    if checkout_kind in {"registered", "overlay"}:
+        trigger.notify_file_changed.assert_called_once_with(
+            file_path="edited.py", project_id=project.id, root_path=str(root)
+        )
+    else:
+        trigger.notify_file_changed.assert_not_called()
+        warnings = _warnings(caplog)
+        assert len(warnings) == 1
+        if checkout_kind == "scratch":
+            assert "ignored" in warnings[0].lower()
+            assert "rebind" not in warnings[0].lower()
+        else:
+            assert f"gobby projects rebind {project.name} {root}" in warnings[0]
+    assert resolver.resolve(None, str(root)) == project.id
+    checkout = LocalProjectCheckoutManager(temp_db).get(machine_id, project.id)
+    assert checkout is not None
+    assert checkout.root_path == str(primary)
 
 
 def test_overlay_cwd_leaves_tracked_marker_untouched(

@@ -6,7 +6,7 @@ import logging
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,10 +16,19 @@ from gobby.hooks.events import HookEventType
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.skills.parser import ParsedSkill
+from gobby.storage.projects import LocalProjectManager
+from tests.fixtures.isolated_checkout import (
+    insert_isolated_machine,
+    patch_local_machine_id,
+    write_project_marker,
+)
 
 from ._event_handler_helpers import make_event
 
 pytestmark = pytest.mark.unit
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 
 class TestToolHandlers:
@@ -960,21 +969,26 @@ class TestToolHandlerEdgeCases:
         )
 
     def test_after_tool_notifies_code_index_with_project_root_path(
-        self, mock_dependencies: dict[str, Any], tmp_path: Path
+        self,
+        mock_dependencies: dict[str, Any],
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test code index notification uses project root even when cwd is nested."""
         repo_root = tmp_path / "project"
         deep_cwd = repo_root / "src" / "pkg"
-        (repo_root / ".gobby").mkdir(parents=True)
-        (repo_root / ".gobby" / "project.json").write_text('{"id": "proj-1"}')
         deep_cwd.mkdir(parents=True)
+        machine_id = insert_isolated_machine(temp_db)
+        patch_local_machine_id(monkeypatch, machine_id)
+        project = LocalProjectManager(temp_db).create(name="nested-index-root")
+        write_project_marker(repo_root, project_id=project.id, name=project.name)
+        mock_dependencies["session_manager"].db = temp_db
         mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
         code_index_trigger = MagicMock()
-        resolve_project_id = MagicMock(return_value="proj-1")
         handlers = EventHandlers(
             **mock_dependencies,
             code_index_trigger=code_index_trigger,
-            resolve_project_id=resolve_project_id,
         )
         event = make_event(
             HookEventType.AFTER_TOOL,
@@ -988,12 +1002,9 @@ class TestToolHandlerEdgeCases:
 
         handlers.handle_after_tool(event)
 
-        resolve_project_id.assert_called_once_with(None, str(repo_root.resolve()))
-        assert resolve_project_id.call_count == 1
-        assert resolve_project_id.call_args is not None
         code_index_trigger.notify_file_changed.assert_called_once_with(
             file_path="src/pkg/edited.py",
-            project_id="proj-1",
+            project_id=project.id,
             root_path=str(repo_root.resolve()),
         )
         assert code_index_trigger.notify_file_changed.call_count == 1

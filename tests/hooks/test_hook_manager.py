@@ -2156,12 +2156,14 @@ class TestHookCheckoutIngress:
         assert event.project_id is None
         assert "project_id" not in event.data
 
+    @pytest.mark.parametrize("git_marker", ["directory", "file", None])
     def test_root_taken_refusal_warns_with_rebind_hint_and_keeps_owner(
         self,
         tmp_path: Path,
         temp_db: HubDatabase,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
+        git_marker: str | None,
     ) -> None:
         """A root owned by another project warns once and keeps the hook alive.
 
@@ -2169,6 +2171,10 @@ class TestHookCheckoutIngress:
         checkout and the operator rebinds explicitly (fdac8174ab, #21443).
         """
         machine_id = _pin_hook_machine(temp_db, monkeypatch)
+        if git_marker == "directory":
+            (tmp_path / ".git").mkdir()
+        elif git_marker == "file":
+            (tmp_path / ".git").write_text("gitdir: /unused/worktree/gitdir\n", encoding="utf-8")
         owner = LocalProjectManager(temp_db).create(name="hook-root-owner")
         LocalProjectCheckoutManager(temp_db).register(machine_id, owner.id, str(tmp_path))
         challenger = LocalProjectManager(temp_db).create(name="hook-root-challenger")
@@ -2189,8 +2195,12 @@ class TestHookCheckoutIngress:
             for record in caplog.records
             if record.levelno == logging.WARNING and "gobby projects rebind" in record.getMessage()
         ]
-        assert len(rebind_warnings) == 1
-        assert f"gobby projects rebind {challenger.name} {tmp_path}" in rebind_warnings[0]
+        if git_marker is not None:
+            assert len(rebind_warnings) == 1
+            assert f"gobby projects rebind {challenger.name} {tmp_path}" in rebind_warnings[0]
+        else:
+            assert rebind_warnings == []
+            assert "has no .git and is being ignored" in caplog.text
         assert event.project_id == challenger.id
         assert _checkout_root(temp_db, machine_id, challenger.id) is None
         assert _checkout_root(temp_db, machine_id, owner.id) == str(tmp_path)
