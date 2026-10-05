@@ -24,6 +24,17 @@ The activation survives compaction, resume and `/clear`. `apply_persona` is
 deleted with no alias, and every caller migrates. This is a functional
 expansion, not a rename.
 
+What users will see:
+- In a terminal pane, changing an active seat to another agent, or back to the
+  default agent, now needs a relaunch. If you pick a new agent for an attached
+  terminal in the web UI, you get an error that tells you to start a new
+  terminal session with that agent, and the current agent stays selected.
+  Picking an agent for a pane that still runs the default agent works as
+  before.
+- In web chat, switching agents keeps working. The switch restarts the chat's
+  CLI process with the new agent, and the conversation continues on the same
+  session.
+
 Josh's execution-model ruling governs the target (memory 556ec801). Every session
 is an interactive agent in a pane except one-shots, and every agent must be able
 to execute a step workflow. The spawned-only step gates are as-is gaps, not
@@ -42,8 +53,9 @@ enforces it (#22902 Constraints, boundary paragraph).
    - It acts on the caller's own session, resolved from session context. It
      takes no `session_id` parameter, because a session is bound to its pane.
    - The Python implementation takes an explicit `session_id` for one
-     in-process caller: the web-chat launch, which activates a session it has
-     just created.
+     in-process caller: the web-chat launch. It activates the conversation's
+     row, which is a new row on the first launch and the same row after a
+     `set_agent` switch (Decision 5).
    - Rejected: Orchestrator-targeted activation of another session. No flow in #22902,
      #22904 or #22895 needs it. It would also change another agent's rules and
      tool blocks mid-turn with no receipt.
@@ -118,8 +130,22 @@ enforces it (#22902 Constraints, boundary paragraph).
    - Any other change is refused with the typed error
      `role_change_requires_relaunch`: seat X to seat Y, or a seat back to the
      base agent. This follows runbooks decision 20, "a role change is a
-     relaunch". Rollback is therefore a pane relaunch, and there is no in-place
-     revert path.
+     relaunch". Rollback is therefore a relaunch, and there is no in-place
+     revert path inside a running CLI process.
+   - A relaunch starts a new CLI process for the role. A terminal pane relaunch
+     creates a new session. A web-chat `set_agent` switch stops the
+     conversation's CLI process, and the next launch starts a new one on the
+     conversation's row. That launch is the only caller that changes roles. It
+     calls `apply_agent_definition_impl(..., relaunch=True)` for seat X to seat Y
+     and for seat X to the base agent alike. The relaunch removes the previous
+     definition's recorded variables, ends its step instance (1.2), and applies
+     the new delta, so the row carries what a new row would. Variables written
+     at runtime stay with the conversation, as they do today.
+   - Rejected: a new row per web-chat switch. The launch binds the row by
+     conversation id (`chat/_session.py:314-330`), and `set_agent` keeps that id
+     stable. A new row would need a second successor-commit flow beside the
+     `/clear` one. Rejected: refusing the web-chat switch, which would regress
+     a working control (Orchestrator ruling, 2026-10-05 09:00 CT).
    - A spawned session (`is_spawned_agent` true, or an agent run bound) is
      refused with `spawned_session_definition_fixed`, because its definition is
      fixed at spawn. As a result, spawned-run resume (`resume_executor.py`, which
@@ -302,8 +328,27 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) and re-verified at
 - Spawned-run resume (`agents/resume_executor.py`) reuses the existing session
   (`existing_session_id`) and merges the spawn-time `initial_variables`.
 - Web chat:
+  - `handlers/session_config.py::handle_set_agent` cancels the active chat,
+    marks the row `paused`, stops the CLI process, and stores
+    `_pending_agents[conversation_id]`. It resets no variables (lines 546-655).
+  - The next `_create_chat_session_inner` rebinds the same `web_chat` row by
+    conversation id (`chat/_session.py:314-330` and 549-552). A pending
+    non-default agent with the persona surface sets `persona_selected`
+    (374-395).
   - `chat/_session_launch.py::start_hydrated_session` calls `apply_persona_impl`
-    for a persona-selected launch.
+    for a persona-selected launch, raises when it returns `success: false`
+    (lines 255-276), and then sets `skip_default_agent_activation`. A pending
+    `default` instead becomes the SessionStart input `agent_name_override`
+    (287-288), which `_session_start/flow.py:669` and `materialize.py:405`
+    pass to `activate_default_agent` with no role-change check.
+  - So under 1.1 as first drafted, a switch from seat X to seat Y would be
+    refused `role_change_requires_relaunch` and fail the launch, and a switch
+    from X to `default` would revert in place. Today both work, because
+    `apply_persona` writes only `_persona_name` (reviewer gobby#15396, B1).
+  - Today the web-chat launch is the only producer of the SessionStart input
+    `agent_name_override`. #22904's placed launch will pass it for a new
+    session (Constraints). The reconciler passes its own override to
+    `activate_default_agent` directly (`hooks/session_activation.py:201`).
   - `chat/_session.py::ChatSessionMixin._create_chat_session_inner` builds the
     system prompt with `build_session_persona_context`.
 - `compute_definition_hash(definition_json: str)`
@@ -396,6 +441,7 @@ Verified on 0.5.0 at 2aaa0b9ecc (Writer, 2026-09-28) and re-verified at
     - `sessions/clear_continuation.py` 860;
     - `_session.py` 776;
     - `routes/mcp/hooks.py` 775;
+    - `handlers/session_config.py` 723;
     - `_agent.py` 721;
     - `session_activation.py` 698;
     - `routes/llm.py` 575;
@@ -525,8 +571,10 @@ Targets:
 - `src/gobby/skills/discovery.py::get_session_skill_exclusions`
 - `src/gobby/servers/websocket/chat/_session_launch.py::start_hydrated_session`
 - `src/gobby/servers/websocket/chat/_session.py::ChatSessionMixin._create_chat_session_inner`
+- `src/gobby/servers/websocket/handlers/session_config.py::_set_attached_session_agent`
 - `tests/mcp_proxy/tools/test_apply_agent_definition.py`
 - `tests/hooks/test_session_start_reactivation.py`
+- `tests/servers/websocket/test_attached_session_agent.py::*` — scope-reason: the fixture seeds the target's variables at the base agent, plus the role-change refusal and current-agent echo case
 - `tests/mcp_proxy/tools/test_apply_persona.py::*` — operation: delete — scope-reason: replaced by test_apply_agent_definition.py
 - `tests/workflows/test_step_snapshot_semantics.py::*` — scope-reason: retarget module paths; persona switch tests become refusal and no-op tests
 - `tests/mcp_proxy/tools/skills/test_list_skills.py::*` — scope-reason: import the renamed delta builder
@@ -534,12 +582,16 @@ Targets:
 - `tests/servers/websocket/chat/test_servers_websocket_chat_session.py::*` — scope-reason: patch targets move to the new module
 - `tests/hooks/test_agent_events_coverage.py::*` — scope-reason: fixtures set _agent_type instead of the retired _persona_name
 - `tests/hooks/test_session_activation_reconciliation.py::*` — scope-reason: fixtures set _agent_type instead of the retired _persona_name
-- `tests/hooks/event_handlers/test_session_variable_preservation.py::*` — scope-reason: the always-reapply set gains the pin key
+- `tests/hooks/event_handlers/test_session_variable_preservation.py::*` — scope-reason: the always-reapply set gains the pin and key-list keys
+- `tests/hooks/event_handlers/test_activate_agent_override.py::*` — scope-reason: an override that is a role change on a seat row keeps the stored seat
 
-**Granularity:** nine production files, one behavior. The tool, its shared core,
-the two web-chat callers and the two `_persona_name` readers change together.
+**Granularity:** ten production files, one behavior. The tool, its shared
+core, the two web-chat callers, the attached-terminal handler and the two
+`_persona_name` readers change together.
 Deleting `apply_persona.py` breaks every importer in the same commit, so they
-cannot be split without a red tree.
+cannot be split without a red tree. The switch paths change in the same commit
+as the role-change refusal, because the refusal alone would break today's
+web-chat switch.
 
 **Research context:** the current code:
 - `apply_persona.py` (305 lines) holds:
@@ -594,9 +646,17 @@ Implementation:
     - it always writes both blocked-tools keys, as an empty list when absent;
     - it always writes `_active_skill_names` (`None` when the definition
       selects every skill) and `_skill_format` (`None` when it sets none);
-    - it writes `_agent_definition_hash`.
+    - it writes `_agent_definition_hash`;
+    - it writes `_agent_definition_keys`, the sorted names of its definition
+      variables: the `workflows.variables` keys, the selector-filtered default
+      keys, and `step_workflow_complete` when seeded. A relaunch clears these
+      keys (step 9).
   - `definition_pin(agent_body) -> str`: returns
     `compute_definition_hash(agent_body.model_dump_json())`.
+  - `is_role_change(db, variables, agent) -> bool`: true when the stored
+    `_agent_type` is not the base agent (absent, `default`, or
+    `ConfigRepository(db).read(resolve_secrets=False).values["default_agent"]`)
+    and differs from `agent`. Step 7 and the attached-terminal handler share it.
   - `build_persona_prompt_context`: moved from `build_session_persona_context`.
   - `colliding_definition_variable_error`: moved from
     `colliding_persona_variable_error`.
@@ -607,7 +667,8 @@ Implementation:
 - `build_session_persona_changes` is deleted.
 
 `apply_agent_definition_impl(agent, db, session_id=None, variables=None,
-task_id=None, task_manager=None, cli_source=None)`:
+task_id=None, task_manager=None, cli_source=None, *, relaunch=False)`. Only the
+web-chat launch passes `relaunch=True`. The registered tool never does.
 1. Resolve the session as today.
 2. Read the session variables and the session row.
 3. Refuse `spawned_session_definition_fixed` when `is_spawned_agent` is true or
@@ -620,14 +681,17 @@ task_id=None, task_manager=None, cli_source=None)`:
      new one, return `{success: true, status: "unchanged"}` without writing.
      This return comes before step 8, so `variables` and `task_id` are ignored
      (Decision 5).
-   - If the current `_agent_type` is not the base agent (absent, `default`, or
-     `ConfigRepository(db).read(resolve_secrets=False).values["default_agent"]`)
-     and differs from `agent`, refuse `role_change_requires_relaunch`, naming
-     both.
+   - If `is_role_change(db, variables, agent)` holds and `relaunch` is false,
+     refuse `role_change_requires_relaunch`, naming both. With `relaunch`
+     true, the role change proceeds.
    - The same agent with a different pin re-applies, as drift.
 8. Resolve `task_id`, or refuse `task_unresolved`.
 9. Build the changes with `build_definition_changes(is_spawned=False)` and add
-   `_agent_context_injected=False` and `_agent_identity_reinject=True`.
+   `_agent_context_injected=False` and `_agent_identity_reinject=True`. On a
+   relaunch role change, also set to `None` every name in the stored
+   `_agent_definition_keys` that the new delta does not write. Rules read
+   variables with `get`, so a cleared key reads as absent. The previous step
+   instance ends in 1.2.
 10. Refuse `variable_collision`.
 11. Run one `merge_variables`.
 
@@ -647,15 +711,37 @@ Callers:
   variables, tool restrictions and step workflow. A role change requires a
   relaunch."
 - `build_agent_changes` imports `build_definition_changes`.
-- `activate_default_agent` adds `_agent_definition_hash` to both its
-  `internal_keys` and `always_reapply` sets, so every re-activation refreshes
-  the pin (1.3 compares it first).
+- `activate_default_agent` adds `_agent_definition_hash` and
+  `_agent_definition_keys` to both its `internal_keys` and `always_reapply`
+  sets, so every re-activation refreshes the pin (1.3 compares it first) and
+  the key list.
 - `activate_default_agent` passes its `cli_source` to `resolve_agent`, so both
   entry points resolve `provider: inherit` to the session's CLI and compute the
   same pin for the same row.
 - `start_hydrated_session` calls `apply_agent_definition_impl` with the
-  explicit session id. `_create_chat_session_inner` calls
+  explicit session id and `relaunch=True` for every pending agent, including
+  the base agent. Whenever it applied one, it sets
+  `skip_default_agent_activation`, and it never sets `agent_name_override`.
+  `_create_chat_session_inner` sets `persona_selected` for a pending `default`
+  too (`default.yaml` declares `surfaces: [spawn, persona]`), and it calls
   `build_persona_prompt_context`.
+- `activate_default_agent` applies Decision 5 to its `agent_name_override`.
+  When `is_role_change` holds for the override, it logs a warning and
+  activates the stored seat instead, so SessionStart never changes roles. An
+  override on a base-agent row stays a first activation: that is #22904's
+  placed launch (Constraints). The reconciler passes the stored or run agent,
+  which is never a role change.
+- `_set_attached_session_agent`: after `_validate_persona_agent`, it reads the
+  target session's variables. When `is_role_change` holds, it writes no
+  command. It sends error code `ROLE_CHANGE_REQUIRES_RELAUNCH` with the text
+  "This terminal runs agent '<X>'. Switching to '<Y>' needs a relaunch: start
+  a new terminal session and select agent '<Y>' there." It then sends
+  `agent_changed` naming X for that `target_session_id`. The UI's existing
+  `handleAgentChanged` (`web/src/hooks/useChat/transportConversationEvents.ts:271-277`)
+  restores the label that `sendAgentChange` set optimistically
+  (`web/src/hooks/useChat/actionControls.ts`), so web/ needs no edit. From the
+  base agent, or for the same agent, it sends `/gobby persona <name>` as
+  today.
 - `_inject_agent_instructions_if_needed` resolves `agent_name` from
   `_agent_type` only. Its docstring bullet for `_persona_name` is removed.
 - `get_session_skill_exclusions` reads `_agent_type` only.
@@ -685,8 +771,20 @@ Tests: `test_apply_agent_definition.py` uses the `HubDatabase` fixtures of
   SessionStart `compact`.
 - The registry case lists the registered tools of
   `register_agent_spawn_tools` and asserts that `apply_persona` is absent.
+- The relaunch case seeds two seat rows, X declaring `workflows.variables`
+  `{x_only: 1}` and Y declaring none, activates X, and relaunches to Y and,
+  separately, to `default`.
+- The web-chat switch case mirrors the existing launch tests: it patches
+  `apply_agent_definition_impl` and asserts the call and `start_data`.
+- The override case extends `test_activate_agent_override.py`: a row stored at
+  seat X with an override naming seat Y keeps X, and a base-agent row with the
+  same override activates Y.
+- The attached-terminal case reuses `test_attached_session_agent.py`'s
+  `_attached_target` terminal and write-coordinator mocks. That fixture now
+  also seeds the target's variables, at the base agent for the existing
+  command cases and at seat X for the refusal.
 
-Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/test_session_start_reactivation.py tests/workflows/test_step_snapshot_semantics.py tests/mcp_proxy/tools/skills/test_list_skills.py tests/workflows/test_session_defaults.py tests/servers/websocket/chat/test_servers_websocket_chat_session.py tests/hooks/test_agent_events_coverage.py tests/hooks/test_session_activation_reconciliation.py tests/hooks/event_handlers/test_session_variable_preservation.py -q`.
+Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/test_session_start_reactivation.py tests/workflows/test_step_snapshot_semantics.py tests/mcp_proxy/tools/skills/test_list_skills.py tests/workflows/test_session_defaults.py tests/servers/websocket/chat/test_servers_websocket_chat_session.py tests/servers/websocket/test_set_agent.py tests/servers/websocket/test_attached_session_agent.py tests/hooks/test_agent_events_coverage.py tests/hooks/test_session_activation_reconciliation.py tests/hooks/event_handlers/test_session_variable_preservation.py tests/hooks/event_handlers/test_activate_agent_override.py tests/hooks/test_session_start_handlers.py tests/hooks/test_session_materialize.py -q`.
 Then run `uv run ruff check` and `uv run mypy` on the changed files, and
 `rg -w 'apply_persona|_persona_name|build_session_persona_changes' src tests --glob '!tests/mcp_proxy/tools/test_apply_agent_definition.py' --glob '!src/gobby/install/shared/workflows/rules' --glob '!tests/workflows/test_seat_rules.py' --glob '!src/gobby/install/shared/skills/gobby/references/agents/personas.md' --glob '!src/gobby/install/shared/skills/gobby/references/review/epic.md' --glob '!src/gobby/install/shared/workflows/review.yaml' --glob '!tests/skills/test_review_skill.py'`,
 which must print nothing. The first excluded file holds the retirement-absence
@@ -717,7 +815,7 @@ Consumers unchanged:
 - 1.1.3 - The same agent with the same pin returns `status: unchanged` without a
   write, even when the repeat call passes changed `variables` and a `task_id`
   (no task resolution, merge or reinjection). A seat-to-seat or seat-to-base
-  change returns `role_change_requires_relaunch`. test:
+  change through the tool returns `role_change_requires_relaunch`. test:
   `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_same_seat_noop_and_role_change_refused`.
 - 1.1.4 - A tool the seat blocks is refused by `_check_agent_tool_enforcement`
   after activation, and skill exclusions follow `_agent_type`. test:
@@ -750,6 +848,27 @@ Consumers unchanged:
   stays refused after a `compact` SessionStart. #23477 relies on this for the
   plan-family seats (Orchestrator, via gobby#15389, 2026-10-05). test:
   `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activated_seat_refuses_worktree_tools`.
+- 1.1.12 - On a row at seat X whose definition declares a variable that seat Y
+  does not, `relaunch=True` to Y writes Y's delta and key list and sets that
+  variable to `None`. `relaunch=True` from X to `default` writes the base
+  agent's delta the same way. The same calls without `relaunch` are refused
+  `role_change_requires_relaunch` and write nothing. test:
+  `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_relaunch_switches_seat_and_clears_previous_keys`.
+- 1.1.13 - A web-chat launch after `set_agent` from X to Y, and from X to
+  `default`, calls `apply_agent_definition_impl` with `relaunch=True`, sets
+  `skip_default_agent_activation`, sends no `agent_name_override`, and
+  completes. test:
+  `tests/servers/websocket/chat/test_servers_websocket_chat_session.py::test_agent_switch_relaunches_through_activation`.
+- 1.1.14 - `activate_default_agent` with an `agent_name_override` naming seat Y
+  keeps seat X on a row stored at X, and activates Y on a base-agent row.
+  test:
+  `tests/hooks/event_handlers/test_activate_agent_override.py::test_override_never_changes_role`.
+- 1.1.15 - `set_agent` for an attached terminal at seat X with agent Y writes no
+  terminal command. It sends `ROLE_CHANGE_REQUIRES_RELAUNCH`, whose text tells
+  the user to start a new terminal session with Y, and then `agent_changed`
+  naming X. From the base agent, the same request still writes
+  `/gobby persona Y`. test:
+  `tests/servers/websocket/test_attached_session_agent.py::test_attached_terminal_role_change_refused_before_write`.
 
 ### 1.2 Step workflows on interactive sessions [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -799,6 +918,13 @@ Implementation:
     event (Decision 8).
   - The helper stays in `session_activation.py`, so there is one step-instance
     writer for non-spawn paths.
+  - On a relaunch role change (1.1, step 7), the impl first deletes the
+    previous instance with `AgentStepInstanceManager.delete_for_session`, before
+    the merge. `_ensure_step_instance` returns early on any existing instance
+    (`session_activation.py:660-661`), so without the delete seat X's steps
+    would outlive X. Deleting first leaves only states the reconciler can
+    repair: if the merge then fails, the row is still X with no instance, and
+    the next reconcile recreates X's.
 - Scope:
   - `default.yaml` declares no `step_workflow`, so a plain session still gets
     none.
@@ -829,6 +955,10 @@ Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `tests/hooks/test_interactive_step_instance.py::test_spawned_step_instance_unchanged`.
 - 1.2.5 - The old no-instance non-goal test is inverted. test:
   `tests/workflows/test_step_snapshot_semantics.py::test_definition_activation_materializes_step_instance`.
+- 1.2.6 - A relaunch from seat X with steps to seat Y with steps leaves one
+  instance, Y's, at Y's first step. A relaunch from X to `default` leaves no
+  instance. test:
+  `tests/hooks/test_interactive_step_instance.py::test_relaunch_switch_replaces_step_instance`.
 
 ### 1.3 Definition drift receipt on re-activation [category: code] (depends: 1.1, 1.2)
 `kind: deliverable`
@@ -1352,6 +1482,13 @@ Targets:
 - `tests/workflows/test_agent_definitions_v2.py::*` — scope-reason: cover idle_ttl_seconds validation
 - `tests/mcp_proxy/tools/spawn_agent/test_factory.py::*` — scope-reason: cover idle_ttl_seconds persistence beside execution_mode
 - `tests/agents/watchdog/test_interactive_lifecycle_cleanup.py::*` — scope-reason: assert idle_ttl_seconds survives resume beside execution_mode
+
+**Landing order:** the workspace index pin plan
+(`.gobby/plans/workspace-index-pin.md`, reviewed under #23443 "Enhancer and
+adversary passes on the workspace index pin plan") also moves code out of
+`spawn_agent_impl` in its T1 and A1. It is Josh's priority 1, so its T1 and A1
+land first, and this leaf rebases its `spawn_agent_impl` move onto them
+(Orchestrator ruling, 2026-10-05 09:00 CT).
 
 **Research context:** existing model and inputs:
 - `AgentDefinitionBody` (`workflows/agent_models.py`, 270 lines) has
