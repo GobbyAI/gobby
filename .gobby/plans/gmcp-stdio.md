@@ -670,7 +670,13 @@ Targets:
 **Research context:**
 - `mcp_config_shared.py` (221 lines) resolves `gobby` next to `sys.executable`,
   then `which`. `_is_repairable_stale_gobby_mcp_server_config` repairs only
-  `uv run [--directory X] gobby mcp-server`. The TOML (203 lines) and JSON (420
+  `uv run [--directory X] gobby mcp-server`. Two other wrapper shapes exist:
+  - `_patch_mcp_config_for_isolation` persists
+    `uv run --project <main repo> gobby mcp-server` in each isolated
+    workspace's `.mcp.json` (`isolation_repair.py` lines 225 to 235);
+  - the Codex overrides run `uv run --no-sync --project <main repo> gobby mcp-server`.
+  After 1.7 deletes the command and 1.8 drops the main-repo grant, any
+  surviving entry of these shapes fails to start. The TOML (203 lines) and JSON (420
   lines) writers share those helpers. Codex keeps `required = true`, the 120 s
   startup, the 360 s tool timeout, and `default_tools_approval_mode`.
 - `spawn_executor_support.py::_codex_mcp_config_overrides` (599-line file)
@@ -697,14 +703,26 @@ Targets:
 - One helper, `gmcp_command()`, in `mcp_config_shared.py` returns the managed
   path. Every site above writes `{"command": gmcp_command(), "args": []}` (or
   the TOML and `-c` equivalents).
-- The stale-entry repair rewrites two shapes to that entry: today's
-  `uv run [--directory X] gobby mcp-server`, and a `gobby` command, bare or at
-  any path, with `["mcp-server"]`.
+- The stale-entry repair, which the JSON and TOML writers share, rewrites
+  every wrapper entry to that entry:
+  - a `uv` command whose arguments start with `run` and end with
+    `gobby mcp-server`, whatever flags lie between (none, `--directory X`,
+    `--project X`, or `--no-sync --project X`);
+  - a `gobby` command, bare or at any path, with `["mcp-server"]`.
+  The rewrite keeps the entry's `env`, timeouts, and other keys, and leaves
+  other servers alone.
+- `_patch_mcp_config_for_isolation` replaces the whole `gobby` entry, so
+  re-patching a workspace that holds the `--project` shape writes `gmcp`.
 - `provider_mcp_config_error` requires the `gmcp` entry.
 - `clients.md` describes `gmcp` as the stdio transport. `gmcp` does not start
   the daemon; it reports `DAEMON_UNAVAILABLE` with `gobby start` guidance.
 - **Landing gate.** The Merge Manager lands this leaf only after D1 confirms
   that `~/.gobby/bin/gmcp` is promoted on the hub.
+
+**Granularity:** one leaf. Every production target writes, repairs, or
+describes the one `gobby` MCP entry. If the sites switched separately, some
+spawns would launch `gmcp` while repairs and preflights still demanded the `uv`
+entry, so they land together.
 
 **Focused verification (planned):**
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/installers/ tests/agents/spawners/test_command_builder.py tests/agents/test_spawn_executor_support.py tests/agents/test_isolation.py tests/agents/test_local_context_setup.py -q`,
@@ -717,9 +735,9 @@ Consumers unchanged:
 **Acceptance:**
 
 - 1.6.1 - Fresh JSON and TOML installs write the managed `gmcp` path with no arguments, and Codex keeps `required`, both timeouts, and the approval mode. test: `tests/cli/installers/test_cli_installers_mcp_config.py::test_fresh_install_writes_gmcp_entry`.
-- 1.6.2 - The repair rewrites `uv run [--directory X] gobby mcp-server` entries and `gobby mcp-server` entries (bare or at any path) to `gmcp`, and leaves other servers alone. test: `tests/cli/installers/test_cli_installers_mcp_config.py::test_repair_rewrites_wrapper_entries_to_gmcp`.
+- 1.6.2 - In JSON and TOML configs, the repair rewrites `uv run gobby mcp-server`, `uv run --directory X gobby mcp-server`, `uv run --project X gobby mcp-server`, `uv run --no-sync --project X gobby mcp-server`, and `gobby mcp-server` entries (bare or at any path) to `gmcp`. It keeps each entry's `env` and timeouts and leaves other servers alone. test: `tests/cli/installers/test_cli_installers_mcp_config.py::test_repair_rewrites_wrapper_entries_to_gmcp`, parameterized over every shape and both formats.
 - 1.6.3 - Spawned Codex agents get `gmcp` through `-c` overrides with the same timeouts, environment forwarding, and approvals. test: `tests/agents/test_spawn_executor_support.py::test_codex_overrides_launch_gmcp`.
-- 1.6.4 - Isolated agents get a `gmcp` `.mcp.json`, and the preflight accepts it and rejects a `uv` entry. test: `tests/agents/test_isolation.py::test_isolation_writes_and_accepts_gmcp_entry`.
+- 1.6.4 - Isolated agents get a `gmcp` `.mcp.json`, re-patching a workspace that holds the `uv run --project` entry replaces it, and the preflight accepts the `gmcp` entry and rejects a `uv` entry. test: `tests/agents/test_isolation.py::test_isolation_writes_and_accepts_gmcp_entry`.
 - 1.6.5 - The chat SDK entry and the clients reference name `gmcp`. behavior: "gmcp" in `src/gobby/install/shared/skills/gobby/references/admin/clients.md`.
 
 ### 1.7 The Python wrapper and its setting are gone [category: code] (depends: 1.5, 1.6)
@@ -1010,6 +1028,39 @@ deferral:
     - D6.1
     - D6.2
 ```
+
+## Deferral Finalization
+`kind: framing`
+
+After Josh approves and expansion applies, the Orchestrator runs these steps
+(accepted by the Orchestrator at 12:26 CT on Adv4's finding F3). The plan's
+root is #23275. Drafting creates no tasks, labels, or edges.
+
+1. D2, #21570 (MCP front door flip):
+   - add `deferred-from:gmcp-stdio:D2`;
+   - set its null validation criteria to D2.1 and D2.2 as written here;
+   - add `cited-parent:#21544` to it, and `out-of-scope-for:#23275` to #21544
+     (Stage 2: strangler absorption of the Python daemon behind the front
+     door).
+   A #23275 blocked-by edge on #21570 would form a cycle: #23275 sits under
+   Stage 1 (#21543), which Stage 2 waits on. The cited-parent route validates
+   without that edge.
+2. D4, #23274 (Node channel, relay backend, and `/api/machines`):
+   - add `deferred-from:gmcp-stdio:D4`;
+   - append D4.1 and D4.2 to its validation criteria, keeping the existing
+     criteria;
+   - add a #23275 blocked-by edge on #23274. Both sit under #21555 (API keys
+     and node registration), which already waits on both.
+3. D3: expansion creates the task with `deferred-from:gmcp-stdio:D3`, criteria
+   D3.1 to D3.5, and `needs-planning`.
+   - Add its blocked-by edge on #23519 (Shared-token cutover: gdaemon validates
+     keys and Python trusts only the front door) before releasing it.
+   - D3.5 waits for Josh's CIMD versus DCR decision.
+4. D1, D5, and D6: expansion creates each task with its provenance label and
+   criteria. Confirm the edges: D1 is blocked by the 1.3 and 1.4 leaves, and D6
+   is blocked by the 1.6 leaf.
+5. Run `gobby-tasks:check_dependency_cycles`. Then confirm that every D1 to D6
+   deferral validates against #23275 before releasing any leaf.
 
 ## V1 Plan Changelog
 `kind: verification`
