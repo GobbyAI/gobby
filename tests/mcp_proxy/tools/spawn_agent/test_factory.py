@@ -557,6 +557,38 @@ class TestSpawnAgentDefaults:
 class TestSpawnAgentParamOverrides:
     """Tests for tool params overriding agent definition values."""
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("definition_mode", "override", "expected"),
+        [
+            ("one_shot", None, "one_shot"),
+            ("interactive", None, "interactive"),
+            ("one_shot", "interactive", "interactive"),
+            ("interactive", "one_shot", "one_shot"),
+        ],
+    )
+    async def test_execution_mode_is_persisted_for_watchdog_and_resume(
+        self,
+        mock_runner: MagicMock,
+        definition_mode: str,
+        override: str | None,
+        expected: str,
+    ) -> None:
+        body = make_agent_definition(
+            name="default",
+            provider="claude",
+            prompts={"agent": "Run the assigned task."},
+            execution_mode=definition_mode,
+        )
+        params: dict[str, object] = {}
+        if override is not None:
+            params["execution_mode"] = override
+        request = await self._spawn_request_for(mock_runner, body, params)
+        assert request.resume_metadata_json["execution_mode"] == expected
+        assert request.initial_variables["execution_mode"] == expected
+        if expected == "interactive":
+            assert "Remain available between turns" in request.prompt
+
     async def _spawn_request_for(
         self,
         mock_runner: MagicMock,

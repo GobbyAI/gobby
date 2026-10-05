@@ -246,7 +246,7 @@ class LifecycleReconciliation:
 
         handled = 0
         for run in runs:
-            if run.task_id is None:
+            if run.is_interactive or run.task_id is None:
                 continue
             try:
                 task = await self._run_db(task_manager.get_task, run.task_id)

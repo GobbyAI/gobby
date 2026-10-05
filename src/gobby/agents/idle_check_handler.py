@@ -285,6 +285,10 @@ class IdleCheckHandler:
             return 0
 
         run = latest_run
+        if run.is_interactive:
+            idle_detector.reset_idle(run.id)
+            self._recovery.discard(run.id)
+            return 0
         prompt_detector = self._prompt_detector.for_provider(run.provider)
         terminal = (
             None if self._terminal_services is None else self._terminal_services.terminal_for(run)

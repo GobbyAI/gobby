@@ -350,6 +350,7 @@ def create_spawn_agent_registry(
         cleanup_isolation_on_failure: bool = False,
         # Execution
         workflow: str | None = None,
+        execution_mode: Literal["one_shot", "interactive"] | None = None,
         provider: str | None = None,
         model: str | None = None,
         reasoning_effort: str | None = None,
@@ -383,6 +384,8 @@ def create_spawn_agent_registry(
             worktree_id: Existing worktree to reuse (full UUID or unique id prefix)
             cleanup_isolation_on_failure: Delete freshly created isolation if boot fails
             workflow: Workflow/pipeline to use
+            execution_mode: Run lifetime; defaults to the agent definition (one_shot).
+                Interactive standing seats remain available between turns until explicitly ended.
             provider: Required when model is supplied. Otherwise resolved from
                 the agent definition, then the spawning session (explicit
                 argument always wins).
@@ -642,6 +645,7 @@ def create_spawn_agent_registry(
             clone_storage=clone_storage,
             clone_manager=clone_manager,
             workflow=effective_workflow,
+            execution_mode=execution_mode,
             provider=provider,
             model=model,
             reasoning_effort=reasoning_effort,

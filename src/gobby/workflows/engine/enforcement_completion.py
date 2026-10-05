@@ -201,6 +201,16 @@ class EnforcementCompletionMixin:
                 terminal_reason=terminal_reason,
             )
             return
+        if getattr(run_row, "is_interactive", False) is True:
+            # Release the finished runbook's ownership without ending the seat.
+            await offload(
+                cleanup_agent_runtime_state,
+                self.db,
+                run_id=run_id,
+                child_session_id=cleanup_session_id,
+                terminal_reason=None,
+            )
+            return
         blocker_exit = variables.get("blocker_handed_off") is True and run_row is not None
         if blocker_exit:
             agent_run_task_dirty_paths = _facade_attr("agent_run_task_dirty_paths")

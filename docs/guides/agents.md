@@ -83,6 +83,7 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `surfaces` | `spawn`, `persona`, or both |
 | `prompts.persona` | Complete interactive guidance for the `persona` surface |
 | `prompts.agent` | Complete automated-run guidance for the `spawn` surface |
+| `execution_mode` | `one_shot` (default) or `interactive` for a standing spawned seat |
 | `provider` | Provider override or `inherit` |
 | `model` | Optional model override |
 | `reasoning_effort` | Optional normalized reasoning effort string |
@@ -94,7 +95,6 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `base_branch` | Branch used for new isolation, or `inherit` |
 | `timeout` | Runtime limit in seconds; `0` means unlimited |
 | `workflows` | Rule, skill, variable, and pipeline selectors |
-| `skills` | Metadata for baseline and allow-listed skill families |
 | `blocked_tools` / `blocked_mcp_tools` | Definition-level restrictions |
 | `spawnable_agents` | What a spawned run of this definition may spawn: `["*"]` any agent, named agents, or empty (the default) none. See [Spawn Scope](#spawn-scope) |
 | `send_message_targets` | `send_message` target modes a spawned agent may use (default `["parent"]`), enforced by the `scope-spawned-agent-send-message` rule |
@@ -262,6 +262,20 @@ workflow engine, `turn_start` resolves from the pre-turn boundary, while
 Ending a chat turn is separate from ending a spawned agent run. A spawned worker
 that has completed its workflow should call `gobby-agents:end_agent_run` so the
 run is marked successful and completion subscribers are notified.
+
+For a standing seat, pass `execution_mode="interactive"` to `spawn_agent`, or set
+`execution_mode: interactive` in its agent definition. The spawn argument overrides
+the definition. Use `timeout: 0` for an unlimited lifetime. The resolved mode is
+persisted in the run's launch snapshot and survives daemon-stop resume.
+
+Interactive seats remain available at idle prompts, after task closure, and after
+runbook completion. Completing a runbook releases its step instance and dispatch
+mutex while retaining the seat. The idle watchdog does not reprompt, recover,
+complete, or fail these seats for idleness or missing `end_agent_run`. End a seat
+explicitly with `end_agent_run`, `stop_agent`, or `kill_agent`; process-exit cleanup
+still applies. One-shot runs retain completed-turn recovery and bounded idle
+reprompts. This lifetime choice is separate from provider launch options such as
+`droid_mode`.
 
 Use `gobby-agents:stop_agent` when a parent wants to cancel a pending or running
 run. Use `gobby-agents:kill_agent` for targeted process termination and runtime

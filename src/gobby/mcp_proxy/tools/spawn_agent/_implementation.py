@@ -106,6 +106,7 @@ async def spawn_agent_impl(
     clone_storage: Any | None = None,
     clone_manager: Any | None = None,
     workflow: str | None = None,
+    execution_mode: Literal["one_shot", "interactive"] | None = None,
     provider: str | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
@@ -133,6 +134,11 @@ async def spawn_agent_impl(
     project_context_authoritative: bool = False,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
+    effective_execution_mode = execution_mode or (
+        agent_body.execution_mode if agent_body else "one_shot"
+    )
+    if effective_execution_mode not in {"one_shot", "interactive"}:
+        return {"success": False, "error": "execution_mode must be one_shot or interactive"}
     try:
         write_grant = await asyncio.to_thread(
             authorize_write_grant,
@@ -588,6 +594,12 @@ async def spawn_agent_impl(
         task_category=task_category,
     )
     enhanced_prompt = context_handler.build_context_prompt(prompt, isolation_ctx)
+    if effective_execution_mode == "interactive":
+        enhanced_prompt += (
+            "\n\nThis is an interactive standing seat. Remain available between turns and tasks. "
+            "An idle prompt, completed task, or finished runbook does not end this seat. "
+            "Call gobby-agents:end_agent_run only when explicitly directed to end the seat."
+        )
 
     run_id = reserved_run_id or str(uuid.uuid4())
     prepared_spawn = None
@@ -612,6 +624,7 @@ async def spawn_agent_impl(
         effective_workflow=effective_workflow,
         agent_display_name=agent_display_name,
         prewarm_pre_commit_store=prewarm_pre_commit_store,
+        execution_mode=effective_execution_mode,
         placement=placement_snapshot(placed.resolved) if placed is not None else None,
     )
 

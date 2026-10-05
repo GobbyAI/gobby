@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from gobby.agents.isolation import IsolationContext, SpawnConfig
 from gobby.agents.reasoning import SpawnReasoningResolution
@@ -35,6 +35,7 @@ async def build_spawn_context(
     effective_workflow: str | None,
     agent_display_name: str | None,
     prewarm_pre_commit_store: bool,
+    execution_mode: Literal["one_shot", "interactive"] = "one_shot",
     placement: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build workflow variables and the matching durable launch snapshot."""
@@ -58,6 +59,7 @@ async def build_spawn_context(
         effective_initial_variables.pop(LOCAL_CONTEXT_ROUTE_VARIABLE, None)
         effective_initial_variables.pop(LOCAL_CONTEXT_OBSERVATION_VARIABLE, None)
     effective_initial_variables.update(context_updates)
+    effective_initial_variables["execution_mode"] = execution_mode
     if reasoning.status != "not_requested":
         effective_initial_variables.update(
             {
@@ -129,6 +131,7 @@ async def build_spawn_context(
         placement=placement,
     )
     resume_metadata.update(context_updates)
+    resume_metadata["execution_mode"] = execution_mode
     return effective_initial_variables, resume_metadata
 
 

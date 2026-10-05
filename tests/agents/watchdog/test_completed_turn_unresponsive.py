@@ -2,7 +2,6 @@
 
 import logging
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -104,7 +103,18 @@ class _FakeHost:
 
 
 def _run() -> AgentRun:
-    return cast(AgentRun, SimpleNamespace(id="run-1", child_session_id="sess-1", task_id=None))
+    now = datetime.now(UTC)
+    return AgentRun(
+        id="run-1",
+        parent_session_id="parent-1",
+        child_session_id="sess-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        provider="codex",
+        prompt="test",
+        status="running",
+        created_at=now,
+        updated_at=now,
+    )
 
 
 async def _recover(host: _FakeHost) -> int:
