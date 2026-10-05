@@ -2619,6 +2619,13 @@ deferral:
     is refused before any write (2.1.7, 5.2.3).
   - 8.1 also removes the `FILES_ARCHIVE_RELPATH` import from
     `tests/cli/test_hub_files_restore.py`.
+- 2026-10-05 17:21 CDT: Adv1 verified `3aeb4c7` and asked that old-record
+  preservation cover only failures before the rename. `dd7449b` makes that
+  change (1.2, 1.2.4, 3.2).
+- 2026-10-05 17:21 CDT: Consensus between the Plan Writer gobby#15434 and
+  the Plan Adversary gobby#15401 on `dd7449b`. B1 to B5 are resolved, and
+  no blocking finding remains. Base validation exits 0 with no warnings.
+  The Adversary derives and applies M1 next.
 
 ## V2: Verification
 `kind: verification`
