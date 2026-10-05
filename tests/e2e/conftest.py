@@ -81,6 +81,7 @@ class DaemonHealthTimeoutError(AssertionError):
         process_status: str,
         log_tail: str,
         error_log_tail: str,
+        mcp_log_tail: str,
     ) -> None:
         self.port = port
         self.elapsed_seconds = elapsed_seconds
@@ -92,13 +93,15 @@ class DaemonHealthTimeoutError(AssertionError):
         self.process_status = process_status
         self.log_tail = log_tail
         self.error_log_tail = error_log_tail
+        self.mcp_log_tail = mcp_log_tail
         super().__init__(
             f"Isolated daemon on port {port} did not serve /api/auth/status after "
             f"{elapsed_seconds:.3f}s: attempts={attempts}, connect_refused={connect_refused}, "
             f"timed_out={timed_out}, transport_errors={transport_errors}, "
             f"last_status_code={last_status_code}, process={process_status}\n"
             f"--- daemon log tail ---\n{log_tail}\n"
-            f"--- daemon error log tail ---\n{error_log_tail}"
+            f"--- daemon error log tail ---\n{error_log_tail}\n"
+            f"--- mcp log tail ---\n{mcp_log_tail}"
         )
 
 
@@ -663,6 +666,10 @@ def wait_for_daemon_health(
         log_file.with_name("daemon_error.log") if log_file is not None else None,
         "daemon error log",
     )
+    mcp_log_tail = read_tail(
+        log_file.with_name("mcp.log") if log_file is not None else None,
+        "mcp log",
+    )
     exit_code = process.poll() if process is not None else None
     process_status = (
         "unavailable"
@@ -682,6 +689,7 @@ def wait_for_daemon_health(
         process_status=process_status,
         log_tail=log_tail,
         error_log_tail=error_log_tail,
+        mcp_log_tail=mcp_log_tail,
     )
 
 
