@@ -20,6 +20,18 @@ removal is installed and confirmed in the DB registry. Do not migrate its orches
 The checkout-field rename and removal of `herdr` code references belong to follow-up
 task #23437, **Rename checkout isolation to checkout_mode and remove herdr code references**.
 
+Relationship to #23003, **Research sandbox profile on researcher**: sequenced, not
+folded. #23003 is the D2 deferral of `.gobby/plans/agent-definition-profiles.md` and
+still names `sandbox_profile: research` from the #22899 design, which was replaced by
+the shipped definition field `network: none|trusted` (sync-owned: the definition
+storage refuses a non-sync write that widens `network`). Setting `network: trusted`
+on the bundled `researcher.yaml` already works without this plan, and that file is a
+Target of #22998, **Review and observation seats**, so folding it here would create a
+cross-plan shared target. This plan delivers per-launch selection for any definition,
+including `default` seats; #23003 stays owned by agent-definition-profiles, blocked by
+#22998, and neither blocks nor depends on this plan. Its stale `sandbox_profile`
+wording is routed to the Orchestrator for a description update.
+
 ## P1: Launch configuration
 `kind: framing`
 
@@ -37,28 +49,32 @@ Targets:
 Move the network and sandbox preflight from
 `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` into the new
 `src/gobby/mcp_proxy/tools/spawn_agent/_network_preflight.py`; the current
-implementation file has 912 lines and must stay below the production ceiling.
+implementation file has 913 lines and must stay below the production ceiling.
 Accept only `none`, `trusted`, or null at the core boundary. Resolve null after
 agent fallback chooses the final definition. Apply the explicit profile with the
 existing write-path grant, require SRT, and build the effective config before
-placement, checkout, session, or run allocation. Persist that effective config in
-the existing resume metadata path so resume does not recalculate a different
-policy. An unreadable Trusted seed refuses a trusted launch before allocation.
+placement, checkout, session, or run allocation. Resume needs no new code: the
+existing resume metadata already stores the effective config, so a regression test
+proves an overridden profile survives resume. An unreadable Trusted seed refuses a
+trusted launch before allocation.
 
 **Research context:** `definition_sandbox_config` already adds the Trusted seed,
-Git, and registry groups while keeping `allow_network=false`; `resolve_spawn_sandbox`
-combines that config with `apply_write_grant` and `require_managed_srt`.
-`spawn_agent_impl` calls this gate before `preflight_placement` and checkout
-creation, then passes the config to `build_spawn_context` for resume metadata.
-Reuse those paths. Observed: the installed profile is definition-only and the
-current implementation has 912 lines. Planned: focused sandbox and resume tests,
+Git, and registry groups while keeping `allow_network=false`; it is the only reader
+of `AgentDefinitionBody.network`. `resolve_spawn_sandbox` combines that config with
+`apply_write_grant` and `require_managed_srt`. `spawn_agent_impl` calls this gate
+before `preflight_placement` and checkout creation, then passes the config to
+`build_spawn_context`, which stores it as resume metadata `sandbox_config`;
+`resolve_resume_sandbox` (`src/gobby/agents/sandbox_gate.py`) gates that snapshot on
+resume and refuses a run without one. Reuse those paths. Observed: the installed
+profile is definition-only, no bundled definition sets `network: trusted`, and the
+current implementation has 913 lines. Planned: focused sandbox and resume tests,
 including placed and unplaced launches, then format, lint, and type checks.
 
 **Acceptance:**
 
 - 1.1.1 - Null inherits the final definition's profile; explicit `none` and `trusted` take precedence for one launch. behavior: "effective per-spawn SRT network profile".
 - 1.1.2 - Both profiles require SRT and preserve the write grant; Trusted-seed failure allocates no launch resources. behavior: "SRT profile and write-grant preflight".
-- 1.1.3 - Resume uses the saved effective sandbox config. behavior: "resume retains selected network profile".
+- 1.1.3 - Resume reuses the saved effective sandbox config, so an overridden profile survives resume without new resume code. behavior: "resume retains selected network profile".
 
 ### 1.2 Expose the choice on single-spawn surfaces (depends: 1.1) [category: code]
 `kind: deliverable`
@@ -82,7 +98,13 @@ refused. The CLI sends the flag only when present.
 **Research context:** MCP `create_spawn_agent_registry.spawn_agent` chooses its
 fallback body before calling `spawn_agent_impl`; HTTP `_do_spawn` calls the same
 core function. CLI `spawn_agent_cmd` posts to the MCP single-spawn endpoint.
-`AgentSpawnRequest` has a `web_chat` branch before managed launch. Observed:
+`AgentSpawnRequest` has a `web_chat` branch before managed launch. The agent
+capability matrix in `src/gobby/servers/auth_service.py` rejects managed agent
+tokens on `POST /api/agents/spawn` and `POST /api/pipelines/run`, pinned by
+`tests/servers/test_auth_service.py::test_agent_capability_matrix`; the CLI posts
+to `/api/mcp/gobby-agents/tools/spawn_agent` with `daemon_auth_headers`, which
+prefers a managed run token, and such calls get daemon-side `before_tool`
+enforcement (`_enforce_workflow_for_request`). Observed:
 none of these three surfaces has a network parameter. Planned: focused MCP,
 HTTP, and Click tests for valid/invalid values, null, fallback, `web_chat`, and
 the existing HTTP credential boundary.
@@ -132,13 +154,21 @@ rule and live MCP schema after an authorized coordinated restart.
 - 2.1.2 - A forged parent session ID never changes override authority. behavior: "verified caller identity".
 - 2.1.3 - Bundled default permits child spawning and bundled orchestrator is disabled with child-spawn configuration. file: `src/gobby/install/shared/workflows/agents/orchestrator.yaml`.
 
-## P3: Batch retirement
-`kind: framing`
+## D1 Batch spawn retirement (depends: 1.2, 2.1)
+`kind: deferred`
 
-### 3.1 Remove batch APIs and active references (depends: 1.2, 2.1) [category: code]
-`kind: deliverable`
+Batch retirement waits on an external prerequisite: the separate removal of the
+`merge-orchestrator` definition must be installed in the DB registry first. On
+2026-10-05 `uv run gobby agents show merge-orchestrator` still printed an installed,
+enabled global row (`source: installed`), its prompt dispatches `merge-worker`
+through `dispatch_batch`, and no open task owns its removal. The contract forbids a
+prose blocker for that wait, so this work is deferred; expansion creates its
+`planning` task, and its spec is written once the removal is installed. Do not move
+merge orchestration to another path.
 
-Targets:
+Expected scope for that planning pass, carried from the draft:
+
+Expected targets:
 - `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: remove the batch tool and its batch-only helpers
 - `src/gobby/servers/routes/agent_spawn.py::*` — scope-reason: remove the HTTP batch route and request and response models
 - `src/gobby/mcp_proxy/services/tool_execution.py::*` — scope-reason: remove the batch parent-session tool classification
@@ -163,8 +193,7 @@ Targets:
 - `tests/workflows/test_seat_rules.py::*` — scope-reason: remove batch permission cases
 - `tests/workflows/test_spawn_scope_rules.py::*` — scope-reason: retain single-spawn scope tests
 
-First verify the separate merge-orchestrator removal is installed in the DB
-registry. Then remove MCP `dispatch_batch` and HTTP `/api/agents/spawn/batch`,
+Once the removal is installed, remove MCP `dispatch_batch` and HTTP `/api/agents/spawn/batch`,
 their batch-only helpers/models, references in permissions and rules, and
 active guidance and tests. Historical completed plans and upstream attribution
 remain historical records. Do not move merge orchestration to another path.
@@ -183,13 +212,24 @@ removal, run focused route/registry/rule tests, grep active code and guidance
 for both retired names, then format, lint, type checks, and a coordinated live
 schema check.
 
-**Acceptance:**
+Obligations the planning pass keeps: D1.1, the MCP registry has no
+`dispatch_batch` tool and HTTP batch requests do not route; D1.2, permissions,
+rules, active guidance, and tests no longer refer to either retired API; D1.3,
+installed merge-orchestrator removal is confirmed before retirement, with no
+replacement merge orchestration.
 
-- 3.1.1 - The MCP registry has no `dispatch_batch` tool and HTTP batch requests do not route. behavior: "batch spawn APIs absent".
-- 3.1.2 - Permissions, rules, active guidance, and tests no longer refer to either retired API. behavior: "active batch references removed".
-- 3.1.3 - Installed merge-orchestrator removal is confirmed before retirement, with no replacement merge orchestration. behavior: "batch retirement prerequisite".
+```yaml
+deferral:
+  task_ref: "TBD-batch-retirement"
+  reason: "External prerequisite: the separate merge-orchestrator removal must be installed in the DB registry, and no task owns it yet."
+  owner: "orchestrator"
+  original_acceptance_items:
+    - D1.1
+    - D1.2
+    - D1.3
+```
 
-## V1: Verification
+## 3 End-to-end verification
 `kind: verification`
 
 Run `uv run gobby plans validate .gobby/plans/spawn-network-override.md -p
@@ -198,3 +238,14 @@ focused API, CLI, sandbox, resume, and authorization tests with isolated test
 state; repository format, lint, type, test-quality, and test-type checks; and
 installed-rule plus live-schema checks after a coordinated restart. Do not run
 the full pytest suite. `gclient` ordinary shell tabs and panes remain unchanged.
+
+## V1 Plan Changelog
+`kind: verification`
+
+- 2026-10-05, Lane 7 plan writer 2 (gobby#15413), #23444 writer pass before the
+  enhancer: added the #23003 relationship (sequenced, not folded); converted batch
+  retirement from deliverable 3.1 to deferred D1 because its merge-orchestrator
+  prerequisite is external and unowned; corrected 1.1 research context (913 lines,
+  resume already stores `sandbox_config`, so 1.1.3 is a regression test); cited the
+  agent capability matrix for the HTTP credential boundary in 1.2; renamed the
+  verification section to free the `V1` changelog ID.
