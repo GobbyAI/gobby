@@ -29,6 +29,7 @@ from gobby.storage.terminals import AttachLocator, TerminalManager
 from gobby.terminals.frame_client import FrameClient, FrameProtocolError
 from tests._timing import wait_for_awaited_condition, wait_for_condition
 from tests.e2e.conftest import (
+    E2E_HOST_OWNER_FILE,
     CLIEventSimulator,
     DaemonInstance,
     MCPTestClient,
@@ -103,13 +104,26 @@ def _gterm_bin_dir() -> Path:
     return selected.path.parent
 
 
-def _short_socket_dir() -> Path:
-    root = os.environ.get("CLAUDE_CODE_TMPDIR") or tempfile.gettempdir()
-    path = create_host_socket_dir(Path(root), prefix="")
+def _short_temp_root() -> Path:
+    return Path(os.environ.get("CLAUDE_CODE_TMPDIR") or tempfile.gettempdir())
+
+
+def _require_short_socket_path(path: Path) -> Path:
     if len(os.fsencode(path / "gterm-control.sock")) >= 104:
         shutil.rmtree(path)
-        pytest.fail(f"Permitted temp root is too long for AF_UNIX sockets: {root}")
+        pytest.fail(f"Permitted temp root is too long for AF_UNIX sockets: {path.parent}")
     return path
+
+
+def _short_socket_dir() -> Path:
+    """Return an unmarked short temp dir, e.g. for a tmux server socket."""
+    path = Path(tempfile.mkdtemp(prefix="", dir=_short_temp_root())).resolve()
+    return _require_short_socket_path(path)
+
+
+def _short_host_socket_dir() -> Path:
+    """Return a short gterm host socket dir carrying this process's owner marker."""
+    return _require_short_socket_path(create_host_socket_dir(_short_temp_root(), prefix=""))
 
 
 @pytest.fixture
@@ -119,7 +133,7 @@ def e2e_pre_daemon_setup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(_gterm_bin_dir()))
-    socket_dir = _short_socket_dir()
+    socket_dir = _short_host_socket_dir()
     token = uuid.uuid4().hex
     daemon_home = e2e_config[0].parent
     for directory in (daemon_home, daemon_home / ".gobby", socket_dir):
@@ -1025,3 +1039,15 @@ async def test_modes_and_transient_failures_on_a_live_external_pane(
     assert still.json()["state"] == "live"
     await viewer.detach()
     await viewer.close()
+
+
+def test_tmux_socket_dir_is_unmarked_and_host_socket_dir_is_marked() -> None:
+    tmux_dir = _short_socket_dir()
+    host_dir = _short_host_socket_dir()
+    try:
+        assert not (tmux_dir / E2E_HOST_OWNER_FILE).exists()
+        tmux_dir.rmdir()
+        assert (host_dir / E2E_HOST_OWNER_FILE).read_text() == str(os.getpid())
+    finally:
+        shutil.rmtree(tmux_dir, ignore_errors=True)
+        shutil.rmtree(host_dir, ignore_errors=True)
