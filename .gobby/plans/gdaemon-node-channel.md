@@ -76,6 +76,19 @@ approved key-cutover plan specified.
    `interactive` with key-cutover's native handler, which reads `api_key` from
    the node's own bootstrap. It relays everything else, including the
    `managed` kind and the authenticated handshake that follows the challenge.
+   The plan of record already routes the interactive challenge natively in
+   all modes (`.gobby/plans/gdaemon-front-door.md`, line 972); this decision
+   keeps that route on a node instead of relaying it.
+
+   1.5 proves the split against the real hub consumer: the native challenge,
+   then the relayed authenticated handshake, which returns a grant whose
+   principal carries the node's machine id. That holds because key-cutover
+   binds `HandshakeService.issue_for_operator` to the forwarded machine
+   (`.gobby/plans/gdaemon-key-cutover.md`, line 852). Before that, it
+   rejected any machine but the hub's own
+   (`src/gobby/runtime_grants/handshake.py`, line 125). Every leaf follows
+   #23523 (Live activation of the key cutover), so the plan uses the grant
+   assertion and not the challenge-only fallback.
 4. **A node holds no datastore credentials.** The S1.4 roadmap row
    (`docs/architecture/gobby-v1.0.0-roadmap.md`, "Nodes hold no datastore
    credentials"), key-cutover Decision 15, and the bootstrap that
@@ -179,6 +192,13 @@ approved key-cutover plan specified.
       `tokio-tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }`
       (lockfile 0.26.2), for the node client over a stream gdaemon dials and
       pins itself.
+    - 1.3 moves `futures-util = "0.3"` from gdaemon's `[dev-dependencies]`
+      (`crates/gdaemon/Cargo.toml`, line 51) to `[dependencies]`, without
+      adding another stream abstraction, and updates `Cargo.lock` if
+      resolution changes.
+    - 1.2 builds the pooled client from a clone of the pinned config with its
+      ALPN cleared, because hyper-rustls asserts an empty list; the original
+      config keeps `http/1.1` for manually dialed streams.
 14. **Run-mode parity uses one shared vector file.**
     - `tests/fixtures/bootstrap_run_modes.json` holds bootstrap mappings with
       either the expected mode and normalized `hub_daemon_url` or the expected
@@ -229,7 +249,7 @@ approved key-cutover plan specified.
   - `cargo build`, `clippy`, and `nextest` are heavy work under
     `.gobby/roles/_common.md`. They pause while the heavy-work hold is in
     force and need no other admission.
-  - After each dependency change, `cargo tree -p gdaemon -i aws-lc-rs` prints
+  - After each dependency change, `cargo tree -p gobby-daemon -i aws-lc-rs` prints
     nothing.
 - **No secret values in logs.** No new code logs the API key, a relayed
   `Authorization` value, or a channel bearer. The manual `Debug` that
@@ -432,7 +452,9 @@ Targets:
   `crates/gdaemon/tests/front_door.rs` (line 247) asserts the loopback body,
   which stays byte-identical.
 - `crates/gdaemon/src/front_door/tls.rs::pinned_client_config` (line 110) trusts
-  only the given leaf and sets ALPN `http/1.1`. The test helpers
+  only the given leaf and sets ALPN `http/1.1` (line 119). hyper-rustls
+  0.27.7's `ConnectorBuilder::with_tls_config` panics unless that list is
+  empty (`connector/builder.rs`, lines 60-64). The test helpers
   `crates/gdaemon/tests/common/mod.rs::{self_signed, start_tls_front_door, tls_connect, refused_addr, ws_backend, frame, read_exact_into}`
   already exist.
 - `serve.rs::run` (line 45) loads the bootstrap, binds `daemon_port` and
@@ -461,20 +483,29 @@ Targets:
     without `hub_cert`, naming `gobby auth login`. It then reads the PEM at
     `hub_cert` and builds the relay.
   - `lib.rs` registers `state`.
-- New `front_door/relay.rs` defines `HubRelay { origin, authority, host, tls, client }`:
+- New `front_door/relay.rs` defines `HubRelay { origin, authority, host, dial, tls, client }`:
+  - Origin parsing. `authority` is kept for `Host` and URL construction. `dial`
+    is derived separately from the unbracketed host and the explicit port,
+    defaulting to 443 for `https` and 80 for `http`. `host` is the unbracketed
+    DNS name or IP literal, from which rustls `ServerName` is built. The relay
+    splice and the 1.3 channel client share these parsed origin values.
+  - `tls` is the config from `pinned_client_config(pem)`, with its `http/1.1`
+    ALPN, and serves the manually dialed WebSocket and channel streams.
   - `client` is
-    `hyper_util::client::legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Body>`,
-    built from `pinned_client_config(pem)` with `https_or_http()` and
-    `enable_http1()`. Its pool idle timeout is 90 s, so sequential requests
-    reuse one TLS connection.
+    `hyper_util::client::legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Body>`.
+    It is built from a clone of `tls` whose `alpn_protocols` alone is cleared,
+    passed to `with_tls_config(...).https_or_http().enable_http1()`, because
+    hyper-rustls 0.27.7 asserts an empty ALPN list and supplies HTTP/1 itself.
+    Its pool idle timeout is 90 s, so sequential requests reuse one TLS
+    connection.
   - `HubRelay::forward(request)` rewrites the URI to `origin` plus the
     original path and query, and sets `Host` to `authority`. It strips
     hop-by-hop fields and trailers with `proxy::strip_hop_by_hop` and
     `strip_trailers`. A connect error maps to `unavailable(origin, Down)`, and
     a TLS or protocol error to `bad_gateway(origin, error)`.
-  - `HubRelay::splice(request, to_root_ws: bool)` dials `authority`. For
-    `https` it wraps the stream with `tokio_rustls::TlsConnector` and the
-    pinned config, using the host as the server name. It sets `Host`,
+  - `HubRelay::splice(request, to_root_ws: bool)` dials `dial`. For
+    `https` it wraps the stream with `tokio_rustls::TlsConnector` and `tls`,
+    using `host` as the server name. It sets `Host`,
     rewrites the path to `/ws` (keeping the query) when `to_root_ws`, and
     hands the stream to the split `ws` upgrade exchange.
 - `ws.rs` splits `splice` into a connect step and
@@ -496,15 +527,15 @@ Targets:
   both public ports, but the backend ports are unused.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gdaemon --test nodes --test front_door --test ws_golden_proxy --test http_contracts --test heartbeat`
-and `cargo clippy -p gdaemon --all-targets -- -D warnings` (heavy work), then
-`cargo tree -p gdaemon -i aws-lc-rs` prints nothing.
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test nodes --test front_door --test ws_golden_proxy --test http_contracts --test heartbeat`
+and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work), then
+`cargo tree -p gobby-daemon -i aws-lc-rs` prints nothing.
 
 **Acceptance:**
 
 - 1.2.1 - A node relays two sequential requests to a TLS hub stub over one pinned connection, with the bearer, path, and query unchanged and `Host` set to the hub's authority. When the hub refuses connections it answers 503 with `backend.target` equal to `hub_daemon_url`. test: `crates/gdaemon/tests/nodes.rs::node_relays_over_pinned_tls`.
 - 1.2.2 - A node whose `hub_cert` names a different certificate than the hub presents answers 502 and never forwards the request. test: `crates/gdaemon/tests/nodes.rs::node_refuses_an_unpinned_hub`.
-- 1.2.3 - A WebSocket upgrade relayed through the node to the hub stub replays the terminal golden corpus and a 1000 close frame byte-equal in both directions. An upgrade on the HTTP listener keeps its path, and an upgrade on the WebSocket listener reaches `/ws` with its query. test: `crates/gdaemon/tests/nodes.rs::node_relays_ws_over_pinned_tls`.
+- 1.2.3 - A WebSocket upgrade relayed through the node to the hub stub replays the terminal golden corpus and a 1000 close frame byte-equal in both directions. An upgrade on the HTTP listener keeps its path, and an upgrade on the WebSocket listener reaches `/ws` with its query. The same test also checks origin-to-dial-address derivation for omitted ports and bracketed IPv6, without binding privileged ports. test: `crates/gdaemon/tests/nodes.rs::node_relays_ws_over_pinned_tls`.
 - 1.2.4 - A node answers an `interactive` handshake challenge with `HMAC(node api_key, nonce)` without contacting the hub, and relays a `managed` challenge. test: `crates/gdaemon/tests/nodes.rs::node_answers_interactive_challenge_with_its_own_key`.
 - 1.2.5 - `AppState::from_bootstrap` refuses a node bootstrap with no `api_key`, or with an `https` hub and no `hub_cert`, and the error names `gobby auth login`. A spawned `gdaemon serve` with a node bootstrap and no `GOBBY_FRONT_DOOR_SECRET` starts and answers a relayed request. test: `crates/gdaemon/tests/nodes.rs::node_startup_requires_enrollment_but_no_secret`.
 
@@ -588,9 +619,16 @@ Targets:
   - **Node client.** A task loops `connect → hello → ack → ping every
     ping_interval` with these rules:
     - Each attempt reads `api_key` with key-cutover's `read_api_key_at`.
-    - It dials `wss://<authority>/api/nodes/channel` (or `ws://` for an
-      `http` hub) over the same pinned TLS setup as the relay, using
-      `tokio_tungstenite::client_async_with_config`.
+    - It dials the relay's `dial` address and requests
+      `wss://<authority>/api/nodes/channel` (or `ws://` for an `http` hub)
+      over the relay's `tls` config with `host` as the server name, using
+      `tokio_tungstenite::client_async_with_config`. It shares the relay's
+      parsed origin values (1.2): the URI authority for `Host` and the URL, the
+      separate dial address with the 443 or 80 default, and the unbracketed
+      host.
+    - It sends and receives with `futures_util::{SinkExt, StreamExt}`, because
+      `WebSocketStream` implements `Sink` and `Stream` rather than inherent
+      send and receive methods.
     - After any close or error it sleeps for the backoff, which starts at
       `backoff_start`, doubles up to `backoff_max`, and resets after an ack.
   - **`ChannelTiming`.** Its defaults are a 30 s ping, 1 s and 60 s backoff,
@@ -604,16 +642,20 @@ Targets:
   to the channel router after authentication and before the upgrade branch.
 - `serve.rs` builds `HubServices` from key-cutover's resolver pool in hub
   mode, spawns the node client in node mode, and aborts it at shutdown.
+- `crates/gdaemon/Cargo.toml` adds the `axum` `"ws"` feature and
+  `tokio-tungstenite` (Decision 13), and moves `futures-util = "0.3"` from
+  `[dev-dependencies]` to `[dependencies]`. `Cargo.lock` is updated if
+  resolution changes.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gdaemon --test nodes`
-and `cargo clippy -p gdaemon --all-targets -- -D warnings` (heavy work), then
-`cargo tree -p gdaemon -i aws-lc-rs` prints nothing.
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test nodes`
+and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work), then
+`cargo tree -p gobby-daemon -i aws-lc-rs` prints nothing.
 
 **Acceptance:**
 
-- 1.3.1 - A key-authenticated channel registers its machine and receives an ack carrying the machine id, and its hello writes `last_heartbeat_at` and `node_version`. A ping within the heartbeat write interval writes nothing. A second connection for the same machine replaces the first, which closes with 4409. When the first channel's cleanup runs after the second ack, the second stays registered. test: `crates/gdaemon/tests/nodes.rs::channel_registers_and_replaces`.
-- 1.3.2 - After the channel's key is revoked, the next ping closes the channel with 4401 and the machine leaves the registry. test: `crates/gdaemon/tests/nodes.rs::revoked_key_closes_channel_on_heartbeat`.
+- 1.3.1 - A key-authenticated channel registers its machine and receives an ack carrying the machine id, and its hello writes `last_heartbeat_at` and `node_version`. A ping within the heartbeat write interval writes nothing. After one heartbeat write interval, a ping advances `last_heartbeat_at` and preserves the channel's `node_version`; another ping within the next interval writes nothing. The test uses short constructor timings and reads the isolated schema's machine row to observe both writes and the suppression. A second connection for the same machine replaces the first, which closes with 4409. When the first channel's cleanup runs after the second ack, the second stays registered. test: `crates/gdaemon/tests/nodes.rs::channel_registers_and_replaces`.
+- 1.3.2 - With the node client's shortened `ChannelTiming`, revoking the channel's key immediately after an observed heartbeat causes the next scheduled heartbeat to close the channel with 4401 and remove the machine from the registry within one configured heartbeat interval. The test drives the scheduled heartbeat rather than manually sending the revocation-triggering ping. It measures the bound on a monotonic clock and asserts the close arrives in under one and a half intervals, so the first scheduled heartbeat after the revocation performed it; the half interval absorbs the hub's re-read. It does not pause tokio time, because paused time auto-advances past the idle timeout while the hub awaits its database query. test: `crates/gdaemon/tests/nodes.rs::revoked_key_closes_channel_on_heartbeat`.
 - 1.3.3 - The node client sends a hello with the gdaemon version and `<os>/<arch>`, pings at its interval, and reconnects after a close. Against a refusing hub its delays double from the start value to the ceiling, and they reset after an ack. It reads the key again on each attempt. test: `crates/gdaemon/tests/nodes.rs::node_channel_reconnects_with_backoff`.
 - 1.3.4 - A channel whose first frame is not a valid hello closes with 1008, and a registered channel silent past the idle timeout closes with 4408 and leaves the registry. test: `crates/gdaemon/tests/nodes.rs::silent_or_malformed_channel_is_closed`.
 - 1.3.5 - On a hub, an upgrade to `/api/nodes/channel` without a key identity is refused with 401 before any upgrade. A standalone front door does not mount the route and proxies the request to its backend. test: `crates/gdaemon/tests/nodes.rs::channel_requires_a_key_on_a_hub`.
@@ -663,7 +705,7 @@ Targets:
   - `/api/machines`.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gdaemon --test nodes`
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test nodes`
 (heavy work).
 
 **Acceptance:**
@@ -696,40 +738,68 @@ Targets:
   (`src/gobby/servers/websocket/handlers/core.py::_handle_ping`).
 - `src/gobby/storage/api_keys.py::ApiKeyManager` has `mint(user_id,
   machine_id, label)` and `revoke(key_id, user_id)`.
+- `tests/e2e/conftest.py::e2e_config` seeds the project
+  `00000000-0000-0000-0000-000000000e2e` through `_seed_e2e_runtime_state`
+  (line 568). The hub's handshake admits a project with a live `projects` row
+  (`src/gobby/runner_init/servers.py::_project_admitted`, line 591).
+- `src/gobby/runtime_grants/handshake.py::HandshakeService.issue_for_operator`
+  (line 125) rejects today any `machine_id` other than the hub's own with
+  `claims_mismatch`. key-cutover binds it to the forwarded machine and rejects
+  a body naming another (Decision 3).
 
 **Implementation:**
 - The test does its own setup:
-  - A fixture writes `hub: true` into the isolated hub bootstrap and spawns
-    the hub with `spawn_daemon_instance(..., tls="self-signed")`.
+  - It imports `_login`, `TEST_EMAIL`, and `e2e_pre_daemon_setup` from
+    `tests.e2e.test_auth_login`, the fixture through an explicit same-name
+    import, instead of copying them.
+  - The pair-test hub fixture takes `e2e_config` and `e2e_pre_daemon_setup` as
+    fixture dependencies, so the isolated schema is reset, the E2E project is
+    seeded, and the login user exists before the fixture writes `hub: true`
+    into the isolated hub bootstrap and spawns the hub with
+    `spawn_daemon_instance(..., tls="self-signed")`. All setup stays in
+    `tests/e2e/test_hub_node_pair.py`.
   - It writes a node home with
     `datastore_mode: remote`, `hub_daemon_url: https://127.0.0.1:<hub port>`,
     `bind_host: 127.0.0.1`, and two free ports.
-  - It enrolls with `gobby auth login`, accepting the hub's fingerprint.
+  - It enrolls with `gobby auth login`, accepting the hub's fingerprint. The
+    node's machine id is the node home's `machine_id` file, which login
+    creates through `require_machine_id`.
   - It starts a bare `gdaemon serve` from `select_test_gdaemon()`, with
     `GOBBY_HOME` set to the node home and no `GOBBY_PARENT_FD` or
     `GOBBY_FRONT_DOOR_SECRET`.
-  - It imports `_login` and `TEST_EMAIL` from `tests.e2e.test_auth_login`
-    instead of copying them.
 - Then it asserts these steps in order:
   1. Through the node's loopback front door with the node's `api_key`,
      `/api/health` reports `"mode": "hub"`.
   2. `/api/machines` lists the node's machine as `connected`.
   3. A WebSocket on the node's `websocket_port` receives a pong for a ping.
-  4. The test revokes the node's key with `ApiKeyManager.revoke`. Within
-     40 s, the node's machine reads `connected: false` through an observer
-     key that the test minted for the same user with `ApiKeyManager.mint`,
-     dialing the hub directly over the pinned certificate with
-     `ssl.create_default_context(cafile=…)`.
-  5. The next relayed request with the node's key answers 401.
+  4. Through the node's front door, the test sends
+     `POST /api/runtime/handshake/challenge` with
+     `{"nonce": <base64url of 32 random bytes>, "kind": "interactive"}` and no
+     `Authorization`, and checks the proof equals the hex
+     `HMAC-SHA256(node api_key, nonce)`. It then sends
+     `POST /api/runtime/handshake` through the node with the node's bearer and
+     `{"machine_id": <node machine id>, "project_id": "00000000-0000-0000-0000-000000000e2e", "session_id": null}`,
+     and asserts the returned `grant.principal.machine_id` is the node's
+     machine id. Both requests follow
+     `crates/gcore/src/grant/handshake.rs::challenge_and_handshake` and reuse
+     the test's HTTP client.
+  5. The test revokes the node's key with `ApiKeyManager.revoke`. Within one
+     default heartbeat interval (30 s), the node's machine reads
+     `connected: false` through an observer key that the test minted for the
+     same user with `ApiKeyManager.mint`, dialing the hub directly over the
+     pinned certificate with `ssl.create_default_context(cafile=…)`. The test
+     polls every 0.25 s against a 30 s monotonic deadline measured from the
+     revocation, and polls once more at the deadline.
+  6. The next relayed request with the node's key answers 401.
 - The test cleans up by terminating the node gdaemon.
 
 **Focused verification (planned):**
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_hub_node_pair.py -q`
-after `cargo build -p gdaemon` (heavy work).
+after `cargo build -p gobby-daemon` (heavy work).
 
 **Acceptance:**
 
-- 1.5.1 - Over self-signed TLS, an enrolled bare `gdaemon serve` node shows its machine as `connected` and relays one request (which reports the hub's mode) and one WebSocket upgrade (which receives the hub's pong). Revoking its key closes the channel within 40 s and makes the next relayed request fail with 401. test: `tests/e2e/test_hub_node_pair.py::test_node_enrolls_and_relays`.
+- 1.5.1 - Over self-signed TLS, an enrolled bare `gdaemon serve` node shows its machine as `connected` and relays one request (which reports the hub's mode) and one WebSocket upgrade (which receives the hub's pong). The native interactive challenge and the relayed authenticated handshake also complete together and return a grant bound to the enrolled node. Revoking its key closes the channel within one default heartbeat interval (30 s) and makes the next relayed request fail with 401. test: `tests/e2e/test_hub_node_pair.py::test_node_enrolls_and_relays`.
 
 Consumers unchanged:
 - `tests/contracts/test_http_corpus.py` — no-edit-reason: uses the single-daemon `daemon_instance`; the hub and node pairing belongs to the pair test.
@@ -746,6 +816,18 @@ Consumers unchanged:
   Orchestrator's 11:13 CT start with the Adversary gobby#15401. Targets and
   consumers were swept read-only on `0.5.0` at `973b1f4aa8`. The draft is
   narrative only, with no M1.
+- 2026-10-05: The single enhancer pass (run `852b6f37`) proposed NC-E01 to
+  NC-E08, and the Orchestrator gobby#14972 accepted all eight at 11:56 CT:
+  - the pooled client clears ALPN on a clone (NC-E01);
+  - Cargo selects `-p gobby-daemon` (NC-E02);
+  - the pair test depends on `e2e_pre_daemon_setup` (NC-E03);
+  - `futures-util` becomes a normal dependency (NC-E04);
+  - the revocation bound is one heartbeat interval, 30 s in the pair test
+    (NC-E05);
+  - the dial address is derived separately (NC-E06);
+  - 1.3.1 asserts the post-interval write (NC-E07);
+  - the pair test proves the challenge and handshake split with a grant bound
+    to the node (NC-E08).
 
 ## V2: Verification
 `kind: verification`
@@ -754,8 +836,8 @@ After every leaf has passed:
 
 1. Run the focused suites of 1.1 to 1.4 together against the test hub, with
    `DATABASE_URL` set.
-2. Rerun `cargo nextest run -p gdaemon --test front_door --test ws_golden_proxy --test http_contracts`
+2. Rerun `cargo nextest run -p gobby-daemon --test front_door --test ws_golden_proxy --test http_contracts`
    (heavy work), and confirm the loopback bodies are unchanged.
 3. Run `tests/e2e/test_hub_node_pair.py` and `tests/e2e/test_auth_login.py`
    against isolated daemons.
-4. Confirm `cargo tree -p gdaemon -i aws-lc-rs` prints nothing.
+4. Confirm `cargo tree -p gobby-daemon -i aws-lc-rs` prints nothing.
