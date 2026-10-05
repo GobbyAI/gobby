@@ -389,7 +389,7 @@ class ChatSessionMixin:
                     cli_source=effective_provider or "claude",
                     project_id=effective_project_for_agent,
                 )
-                if pending_agent and pending_agent != "default" and agent_body is not None:
+                if pending_agent and agent_body is not None:
                     try:
                         persona_selected = bool(agent_body.supports_surface("persona"))
                         if not persona_selected:
@@ -723,11 +723,13 @@ class ChatSessionMixin:
             try:
                 cli_source = effective_provider or "claude"
                 if persona_selected:
-                    from gobby.mcp_proxy.tools.apply_persona import build_session_persona_context
+                    from gobby.mcp_proxy.tools.apply_agent_definition import (
+                        build_persona_prompt_context,
+                    )
 
                     persona_context, _ = await run_db(
                         self,
-                        build_session_persona_context,
+                        build_persona_prompt_context,
                         agent_body,
                         session_manager.db,
                         cli_source=cli_source,

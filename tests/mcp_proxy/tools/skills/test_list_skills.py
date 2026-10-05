@@ -28,7 +28,7 @@ pytestmark = [pytest.mark.integration]
 async def test_help_lists_unselected_skills_and_honors_explicit_exclusions(
     populated_db: HubDatabase, include: list[str] | None, exclude: list[str]
 ) -> None:
-    from gobby.mcp_proxy.tools.apply_persona import build_session_persona_changes
+    from gobby.mcp_proxy.tools.apply_agent_definition import build_definition_changes
     from gobby.mcp_proxy.tools.skills import create_skills_registry
     from gobby.storage.definitions.agents import AgentDefinitionManager
     from gobby.workflows.agent_models import AgentDefinitionBody, AgentSelector
@@ -53,7 +53,7 @@ async def test_help_lists_unselected_skills_and_honors_explicit_exclusions(
         project_id=None,
     )
     variables = SessionVariableManager(populated_db)
-    changes, _ = build_session_persona_changes(agent, populated_db)
+    changes, _, _ = build_definition_changes(agent, session.id, populated_db)
     variables.merge_variables(session.id, changes)
     # Skills installed after activation must still obey current exclusions.
     LocalSkillManager(populated_db).create_skill(
@@ -74,7 +74,7 @@ async def test_help_lists_unselected_skills_and_honors_explicit_exclusions(
     agent.name = "unrestricted"
     agent.workflows.skill_selectors = None
     definitions.create(name=agent.name, source="custom", definition_json=agent.model_dump_json())
-    changes, _ = build_session_persona_changes(agent, populated_db)
+    changes, _, _ = build_definition_changes(agent, session.id, populated_db)
     variables.merge_variables(session.id, changes)
     result = await tool(enabled=True, session_id=session.id)
     assert {skill["name"] for skill in result["skills"]} == {

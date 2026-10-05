@@ -291,7 +291,7 @@ def _expected_for(project_id: str | None) -> dict[str, object]:
 
 def test_project_scoped_defaults_isolation(db: HubDatabase) -> None:
     """Alternating project A / B / none sees own overrides plus globals."""
-    from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
+    from gobby.mcp_proxy.tools.apply_agent_definition import build_definition_changes
     from gobby.workflows.state_manager import SessionVariableManager
     from gobby.workflows.variable_defaults import (
         load_variable_defaults,
@@ -330,7 +330,7 @@ def test_project_scoped_defaults_isolation(db: HubDatabase) -> None:
             assert merged[key] == value
         assert merged["_variable_defaults_loaded"] is True
 
-        changes, _, _ = build_persona_changes(agent_body=agent, session_id=session_id, db=db)
+        changes, _, _ = build_definition_changes(agent_body=agent, session_id=session_id, db=db)
         for key, value in expected.items():
             assert changes[key] == value
         assert changes.get("only_a") == expected.get("only_a")

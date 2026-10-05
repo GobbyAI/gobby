@@ -759,14 +759,14 @@ def test_parent_shaped_taskless_session_ignores_agent_run_step_fallback(
 
 
 @pytest.mark.asyncio
-async def test_interactive_persona_reconciliation_keeps_worker_rules_inactive(
+async def test_interactive_seat_reconciliation_keeps_seat_rules_active(
     db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
     tmp_path: Path,
 ) -> None:
-    """Persona prompt identity cannot become lifecycle, selector, or agent-scope identity."""
+    """An interactive seat retains its lifecycle identity and rule selectors."""
     agent_manager = AgentDefinitionManager(db)
     agent_manager.create(
         name="default",
@@ -848,8 +848,7 @@ async def test_interactive_persona_reconciliation_keeps_worker_rules_inactive(
             MARKER_COMPLETED: True,
             MARKER_VERSION: SESSION_ACTIVATION_CONTRACT_VERSION,
             MARKER_HASH: SESSION_ACTIVATION_CONTRACT_HASH,
-            "_agent_type": "default",
-            "_persona_name": "qa-reviewer",
+            "_agent_type": "qa-reviewer",
             "_active_rule_names": ["worker-safety-selector-rule"],
             "_active_skill_names": None,
             "_skill_format": None,
@@ -871,11 +870,10 @@ async def test_interactive_persona_reconciliation_keeps_worker_rules_inactive(
     response = await RuleEngine(db).evaluate(rule_event, session_id, variables)
 
     assert response.decision == "allow"
-    assert variables["_agent_type"] == "default"
-    assert variables["_persona_name"] == "qa-reviewer"
-    assert variables["_active_rule_names"] == ["qa-reviewer-scope-rule"]
+    assert variables["_agent_type"] == "qa-reviewer"
+    assert variables["_active_rule_names"] == ["worker-safety-selector-rule"]
     assert "qa_scope_matched" not in variables
-    assert "worker_selector_matched" not in variables
+    assert variables["worker_selector_matched"] is True
     assert AgentStepInstanceManager(db).get_for_session(session_id) is None
 
 

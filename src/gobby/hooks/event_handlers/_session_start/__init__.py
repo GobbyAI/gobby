@@ -135,11 +135,12 @@ class SessionStartMixin(EventHandlersBase):
         self,
         session_id: str,
         agent_name_override: str | None,
+        existing_vars: dict[str, Any] | None = None,
     ) -> str:
         """Determine which agent to activate."""
         from .agents import resolve_agent_name
 
-        return resolve_agent_name(self, session_id, agent_name_override)
+        return resolve_agent_name(self, session_id, agent_name_override, existing_vars)
 
     def _build_agent_changes(
         self,

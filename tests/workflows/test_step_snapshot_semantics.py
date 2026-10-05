@@ -35,6 +35,46 @@ LINEAGE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 PROJECT = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
+
+@pytest.fixture
+def snapshot_session_identity() -> Iterator[None]:
+    with (
+        patch("gobby.skills.manager.SkillManager.list_skills", return_value=[]),
+        patch(
+            "gobby.storage.sessions.SessionManager.get",
+            return_value=SimpleNamespace(
+                source="claude",
+                project_id=None,
+                agent_depth=0,
+                agent_run_id=None,
+            ),
+        ),
+        patch(
+            "gobby.storage.config_repository.ConfigRepository.read",
+            return_value=SimpleNamespace(
+                values={"default_agent": "default"},
+            ),
+        ),
+    ):
+        yield
+
+
+def _snapshot_delta(
+    body: AgentDefinitionBody, *args: Any, **kwargs: Any
+) -> tuple[dict[str, Any], set[str], None]:
+    from gobby.mcp_proxy.tools.apply_agent_definition import definition_pin
+
+    return (
+        {
+            "_agent_type": body.name,
+            "_agent_definition_hash": definition_pin(body),
+            "_agent_definition_keys": [],
+        },
+        set(),
+        None,
+    )
+
+
 _INSTANCE_SQL = """
 CREATE TABLE IF NOT EXISTS agent_step_instances (
     id uuid PRIMARY KEY,
@@ -170,8 +210,10 @@ def _schema_db(postgres_database_url: str, ddl: str) -> Iterator[PostgresHubData
 
 
 @pytest.fixture
-def snap_db(postgres_database_url: str) -> Iterator[PostgresHubDatabase]:
-    yield from _schema_db(postgres_database_url, _INSTANCE_SQL)
+def snap_db(
+    postgres_database_url: str, snapshot_session_identity: None
+) -> Iterator[PostgresHubDatabase]:
+    yield from _schema_db(postgres_database_url, _INSTANCE_SQL + _TYPED_SQL)
 
 
 @pytest.fixture
@@ -218,7 +260,7 @@ def _row_variables(row: Any) -> dict[str, Any]:
 
 
 def _persona_resolution(agent_body: AgentDefinitionBody, step_workflow_id: str | None) -> ExitStack:
-    """Resolve ``agent_body`` for apply_persona_impl without touching agent storage."""
+    """Resolve ``agent_body`` for apply_agent_definition_impl without touching agent storage."""
     row = MagicMock()
     row.step_workflow_id = step_workflow_id
     stack = ExitStack()
@@ -230,13 +272,13 @@ def _persona_resolution(agent_body: AgentDefinitionBody, step_workflow_id: str |
     )
     stack.enter_context(
         patch(
-            "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
-            return_value=({"_agent_type": agent_body.name}, set()),
+            "gobby.mcp_proxy.tools.apply_agent_definition.build_definition_changes",
+            side_effect=_snapshot_delta,
         )
     )
     stack.enter_context(
         patch(
-            "gobby.mcp_proxy.tools.apply_persona._resolve_session_identity",
+            "gobby.mcp_proxy.tools.apply_agent_definition._resolve_session_identity",
             return_value=(None, "claude"),
         )
     )
@@ -244,10 +286,13 @@ def _persona_resolution(agent_body: AgentDefinitionBody, step_workflow_id: str |
 
 
 @pytest.mark.asyncio
-async def test_persona_switch_leaves_existing_instance_untouched(
+@pytest.mark.parametrize("target", ["beta", "comms"])
+async def test_definition_switch_refused_leaves_instance_untouched(
     snap_db: PostgresHubDatabase,
+    target: str,
 ) -> None:
-    from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+    from gobby.mcp_proxy.tools.apply_agent_definition import apply_agent_definition_impl
+    from gobby.workflows.state_manager import SessionVariableManager
 
     manager = AgentStepInstanceManager(snap_db)
     first = build_step_instance(
@@ -255,43 +300,37 @@ async def test_persona_switch_leaves_existing_instance_untouched(
     )
     first.current_step = "implement"
     manager.save(first)
-
-    with _persona_resolution(_agent("beta", ["review"]), "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"):
-        result = await apply_persona_impl(agent="beta", db=snap_db, session_id=S1)
-    assert result["success"] is True
+    SessionVariableManager(snap_db).merge_variables(S1, {"_agent_type": "alpha"})
+    forbidden = RuntimeError("refused activation must not mutate step instances")
+    with (
+        _persona_resolution(_agent(target, ["review"]), LINEAGE),
+        patch.object(AgentStepInstanceManager, "save", side_effect=forbidden),
+        patch.object(AgentStepInstanceManager, "replace_for_session", side_effect=forbidden),
+        patch.object(AgentStepInstanceManager, "delete_for_session", side_effect=forbidden),
+        patch.object(AgentStepInstanceManager, "merge_variables", side_effect=forbidden),
+    ):
+        result = await apply_agent_definition_impl(agent=target, db=snap_db, session_id=S1)
+    assert result["error_code"] == "role_change_requires_relaunch"
     kept = manager.get_for_session(S1)
     assert kept is not None
     assert kept.id == first.id
     assert kept.agent_name == "alpha"
     assert kept.current_step == "implement"
     assert _snapshot_step_names(kept) == ["claim", "implement"]
-
-    with _persona_resolution(_stepless("comms"), None):
-        result = await apply_persona_impl(agent="comms", db=snap_db, session_id=S1)
-    assert result["success"] is True
-    kept = manager.get_for_session(S1)
-    assert kept is not None
-    assert kept.id == first.id
-    assert kept.agent_name == "alpha"
-    assert kept.current_step == "implement"
-    stored = snap_db.fetchone(
-        "SELECT variables FROM session_variables WHERE session_id = %s", (S1,)
-    )
-    assert stored is not None
-    assert _row_variables(stored)["_agent_type"] == "comms"
+    assert SessionVariableManager(snap_db).get_variables(S1)["_agent_type"] == "alpha"
 
 
 @pytest.mark.asyncio
 async def test_persona_without_agent_run_creates_no_step_instance(
     snap_db: PostgresHubDatabase,
 ) -> None:
-    from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+    from gobby.mcp_proxy.tools.apply_agent_definition import apply_agent_definition_impl
 
     manager = AgentStepInstanceManager(snap_db)
     assert manager.get_for_session(S1) is None
 
     with _persona_resolution(_agent("alpha", ["claim", "terminate"]), LINEAGE):
-        result = await apply_persona_impl(agent="alpha", db=snap_db, session_id=S1)
+        result = await apply_agent_definition_impl(agent="alpha", db=snap_db, session_id=S1)
 
     assert result["success"] is True
     assert manager.get_for_session(S1) is None
@@ -307,14 +346,14 @@ async def test_persona_without_agent_run_creates_no_step_instance(
 
 @pytest.mark.asyncio
 async def test_persona_switch_is_atomic_across_rows(snap_db: PostgresHubDatabase) -> None:
-    from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+    from gobby.mcp_proxy.tools.apply_agent_definition import apply_agent_definition_impl
     from gobby.workflows.state_manager import SessionVariableManager
 
     manager = AgentStepInstanceManager(snap_db)
     manager.save(
         build_step_instance(_agent("alpha", ["claim"]), session_id=S1, step_workflow_id=LINEAGE)
     )
-    SessionVariableManager(snap_db).merge_variables(S1, {"_agent_type": "alpha"})
+    SessionVariableManager(snap_db).merge_variables(S1, {"_agent_type": "default"})
 
     beta = _agent("beta", ["review"])
     row = MagicMock()
@@ -325,11 +364,11 @@ async def test_persona_switch_is_atomic_across_rows(snap_db: PostgresHubDatabase
             return_value=(beta, row),
         ),
         patch(
-            "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
-            return_value=({"_agent_type": "beta"}, set()),
+            "gobby.mcp_proxy.tools.apply_agent_definition.build_definition_changes",
+            side_effect=_snapshot_delta,
         ),
         patch(
-            "gobby.mcp_proxy.tools.apply_persona._resolve_session_identity",
+            "gobby.mcp_proxy.tools.apply_agent_definition._resolve_session_identity",
             return_value=(None, "claude"),
         ),
         patch.object(
@@ -339,7 +378,7 @@ async def test_persona_switch_is_atomic_across_rows(snap_db: PostgresHubDatabase
         ),
     ):
         with pytest.raises(RuntimeError, match="variable merge failed"):
-            await apply_persona_impl(agent="beta", db=snap_db, session_id=S1)
+            await apply_agent_definition_impl(agent="beta", db=snap_db, session_id=S1)
     remaining = manager.get_for_session(S1)
     assert remaining is not None
     assert remaining.agent_name == "alpha"
@@ -347,21 +386,21 @@ async def test_persona_switch_is_atomic_across_rows(snap_db: PostgresHubDatabase
         "SELECT variables FROM session_variables WHERE session_id = %s", (S1,)
     )
     assert stored is not None
-    assert _row_variables(stored)["_agent_type"] == "alpha"
+    assert _row_variables(stored)["_agent_type"] == "default"
 
 
 @pytest.mark.asyncio
-async def test_apply_persona_rejects_reserved_caller_variables(
+async def test_apply_agent_definition_rejects_reserved_caller_variables(
     snap_db: PostgresHubDatabase,
 ) -> None:
-    from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+    from gobby.mcp_proxy.tools.apply_agent_definition import apply_agent_definition_impl
     from gobby.workflows.state_manager import SessionVariableManager
 
     manager = AgentStepInstanceManager(snap_db)
     manager.save(
         build_step_instance(_agent("alpha", ["claim"]), session_id=S1, step_workflow_id=LINEAGE)
     )
-    SessionVariableManager(snap_db).merge_variables(S1, {"_agent_type": "alpha", "ok": 1})
+    SessionVariableManager(snap_db).merge_variables(S1, {"_agent_type": "default", "ok": 1})
     before = manager.get_for_session(S1)
     assert before is not None
 
@@ -374,11 +413,11 @@ async def test_apply_persona_rejects_reserved_caller_variables(
             return_value=(beta, row),
         ),
         patch(
-            "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
-            return_value=({"_agent_type": "beta"}, set()),
+            "gobby.mcp_proxy.tools.apply_agent_definition.build_definition_changes",
+            side_effect=_snapshot_delta,
         ),
         patch(
-            "gobby.mcp_proxy.tools.apply_persona._resolve_session_identity",
+            "gobby.mcp_proxy.tools.apply_agent_definition._resolve_session_identity",
             return_value=(None, "claude"),
         ),
     ):
@@ -386,7 +425,7 @@ async def test_apply_persona_rejects_reserved_caller_variables(
             {"_agent_type": "smuggled"},
             {"step_workflow_complete": True},
         ):
-            result = await apply_persona_impl(
+            result = await apply_agent_definition_impl(
                 agent="beta",
                 db=snap_db,
                 session_id=S1,
@@ -401,9 +440,9 @@ async def test_apply_persona_rejects_reserved_caller_variables(
                 (S1,),
             )
             assert stored is not None
-            assert _row_variables(stored)["_agent_type"] == "alpha"
+            assert _row_variables(stored)["_agent_type"] == "default"
 
-        result = await apply_persona_impl(
+        result = await apply_agent_definition_impl(
             agent="beta",
             db=snap_db,
             session_id=S1,
@@ -839,38 +878,33 @@ def test_project_scoped_override_is_snapshotted(typed_snap_db: PostgresHubDataba
 
 
 @pytest.mark.asyncio
-async def test_persona_same_agent_preserves_step_position(
-    snap_db: PostgresHubDatabase,
-) -> None:
-    from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+async def test_persona_same_agent_preserves_step_position(snap_db: PostgresHubDatabase) -> None:
+    from gobby.mcp_proxy.tools.apply_agent_definition import (
+        apply_agent_definition_impl,
+        definition_pin,
+    )
+    from gobby.workflows.state_manager import SessionVariableManager
 
     manager = AgentStepInstanceManager(snap_db)
+    body = _agent("alpha", ["claim", "implement"], {"goal": "ship"})
     instance = build_step_instance(
-        _agent("alpha", ["claim", "implement"], {"goal": "ship"}),
+        body,
         session_id=S1,
         step_workflow_id=LINEAGE,
         current_step="implement",
         variables={"goal": "ship", "progress": 2},
     )
     manager.save(instance)
-    row = MagicMock()
-    row.step_workflow_id = LINEAGE
-    with (
-        patch(
-            "gobby.workflows.agent_resolver.resolve_agent_with_row",
-            return_value=(_agent("alpha", ["claim", "implement", "review"]), row),
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
-            return_value=({"_agent_type": "alpha"}, set()),
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.apply_persona._resolve_session_identity",
-            return_value=(None, "claude"),
-        ),
-    ):
-        result = await apply_persona_impl(agent="alpha", db=snap_db, session_id=S1)
-    assert result["success"] is True
+    SessionVariableManager(snap_db).merge_variables(
+        S1,
+        {
+            "_agent_type": "alpha",
+            "_agent_definition_hash": definition_pin(body),
+        },
+    )
+    with _persona_resolution(body, LINEAGE):
+        result = await apply_agent_definition_impl(agent="alpha", db=snap_db, session_id=S1)
+    assert result["status"] == "unchanged"
     kept = manager.get_for_session(S1)
     assert kept is not None
     assert kept.current_step == "implement"
@@ -879,42 +913,17 @@ async def test_persona_same_agent_preserves_step_position(
 
 
 @pytest.mark.asyncio
-async def test_persona_switch_never_calls_step_instance_writers(
-    snap_db: PostgresHubDatabase,
-) -> None:
-    from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
-
-    manager = AgentStepInstanceManager(snap_db)
-    manager.save(
-        build_step_instance(_agent("alpha", ["claim"]), session_id=S1, step_workflow_id=LINEAGE)
-    )
-    forbidden = RuntimeError("apply_persona must not touch agent_step_instances")
-    with (
-        _persona_resolution(_agent("beta", ["review"]), "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
-        patch.object(AgentStepInstanceManager, "save", side_effect=forbidden),
-        patch.object(AgentStepInstanceManager, "replace_for_session", side_effect=forbidden),
-        patch.object(AgentStepInstanceManager, "delete_for_session", side_effect=forbidden),
-        patch.object(AgentStepInstanceManager, "merge_variables", side_effect=forbidden),
-    ):
-        result = await apply_persona_impl(agent="beta", db=snap_db, session_id=S1)
-    assert result["success"] is True
-    remaining = manager.get_for_session(S1)
-    assert remaining is not None
-    assert remaining.agent_name == "alpha"
-
-
-@pytest.mark.asyncio
 async def test_persona_stepless_switch_is_atomic_across_rows(
     snap_db: PostgresHubDatabase,
 ) -> None:
-    from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+    from gobby.mcp_proxy.tools.apply_agent_definition import apply_agent_definition_impl
     from gobby.workflows.state_manager import SessionVariableManager
 
     manager = AgentStepInstanceManager(snap_db)
     manager.save(
         build_step_instance(_agent("alpha", ["claim"]), session_id=S1, step_workflow_id=LINEAGE)
     )
-    SessionVariableManager(snap_db).merge_variables(S1, {"_agent_type": "alpha"})
+    SessionVariableManager(snap_db).merge_variables(S1, {"_agent_type": "default"})
     row = MagicMock()
     row.step_workflow_id = None
     with (
@@ -923,11 +932,11 @@ async def test_persona_stepless_switch_is_atomic_across_rows(
             return_value=(_stepless("comms"), row),
         ),
         patch(
-            "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
-            return_value=({"_agent_type": "comms"}, set()),
+            "gobby.mcp_proxy.tools.apply_agent_definition.build_definition_changes",
+            side_effect=_snapshot_delta,
         ),
         patch(
-            "gobby.mcp_proxy.tools.apply_persona._resolve_session_identity",
+            "gobby.mcp_proxy.tools.apply_agent_definition._resolve_session_identity",
             return_value=(None, "claude"),
         ),
         patch.object(
@@ -937,7 +946,7 @@ async def test_persona_stepless_switch_is_atomic_across_rows(
         ),
     ):
         with pytest.raises(RuntimeError, match="variable merge failed"):
-            await apply_persona_impl(agent="comms", db=snap_db, session_id=S1)
+            await apply_agent_definition_impl(agent="comms", db=snap_db, session_id=S1)
     remaining = manager.get_for_session(S1)
     assert remaining is not None
     assert remaining.agent_name == "alpha"
@@ -983,11 +992,11 @@ async def test_webchat_persona_failure_stops_runtime_and_skips_register() -> Non
             return_value=agent_body,
         ),
         patch(
-            "gobby.mcp_proxy.tools.apply_persona.build_session_persona_context",
+            "gobby.mcp_proxy.tools.apply_agent_definition.build_persona_prompt_context",
             return_value=("## Role\nPlanner", None),
         ),
         patch(
-            "gobby.mcp_proxy.tools.apply_persona.apply_persona_impl",
+            "gobby.mcp_proxy.tools.apply_agent_definition.apply_agent_definition_impl",
             new=AsyncMock(return_value={"success": False, "error": "snapshot failed"}),
         ),
     ):

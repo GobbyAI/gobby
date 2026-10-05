@@ -11,7 +11,6 @@ import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -24,7 +23,9 @@ from gobby.hooks.session_materialize import activate_deferred_session
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.definitions import AgentDefinitionBody, AgentStepWorkflowBody, WorkflowStep
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = [pytest.mark.unit]
@@ -55,25 +56,12 @@ def _make_event_handlers() -> EventHandlers:
 def _make_agent_body(
     name: str = "default",
     variables: dict[str, Any] | None = None,
-) -> MagicMock:
-    """Create a mock agent body with optional default variables."""
-    body = MagicMock()
-    body.name = name
-    body.prompt_for.return_value = None
-    body.workflows = MagicMock()
-    body.workflows.skill_format = None
-    body.workflows.variables = variables
-    body.workflows.rules = []
-    body.workflows.skills = []
-    body.workflows.rule_selectors = SimpleNamespace(include=[], exclude=[])
-    body.rules = []
-    body.variables = None
-    body.blocked_tools = []
-    body.blocked_mcp_tools = []
-    body.steps = None
-    body.step_variables = {}
-    body.step_workflow = None
-    return body
+) -> AgentDefinitionBody:
+    return make_agent_definition(
+        name=name,
+        prompts={"agent": "Work."},
+        workflows=make_agent_workflows(variables=variables or {}),
+    )
 
 
 def _get_merged_changes(mock_svm: MagicMock) -> dict[str, Any]:
@@ -244,12 +232,18 @@ class TestNewSessionGetsAllDefaults:
 class TestReturningSessionPreservesUserVariables:
     """Compact/restart must NOT overwrite user-facing variables already set."""
 
+    @patch(
+        "gobby.mcp_proxy.tools.apply_agent_definition.load_variable_defaults",
+        return_value={"mode_level": 2},
+    )
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
-    def test_preserves_mode_level(self, mock_resolve: MagicMock, mock_svm_cls: MagicMock) -> None:
+    def test_preserves_mode_level(
+        self, mock_resolve: MagicMock, mock_svm_cls: MagicMock, mock_defaults: MagicMock
+    ) -> None:
         """User-tuned mode_level should not reset on compact."""
         handlers = _make_event_handlers()
-        mock_resolve.return_value = _make_agent_body(variables={"mode_level": 2})
+        mock_resolve.return_value = _make_agent_body()
 
         mock_svm = MagicMock()
         mock_svm_cls.return_value = mock_svm
@@ -269,15 +263,21 @@ class TestReturningSessionPreservesUserVariables:
         changes = _get_merged_changes(mock_svm)
         # mode_level already exists -> must NOT be overwritten
         assert "mode_level" not in changes
+        assert changes["_agent_type"] == "default"
+        mock_defaults.assert_called_once()
 
+    @patch(
+        "gobby.mcp_proxy.tools.apply_agent_definition.load_variable_defaults",
+        return_value={"stop_attempts": 0},
+    )
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
     def test_preserves_stop_attempts(
-        self, mock_resolve: MagicMock, mock_svm_cls: MagicMock
+        self, mock_resolve: MagicMock, mock_svm_cls: MagicMock, mock_defaults: MagicMock
     ) -> None:
         """stop_attempts set during session should not be reset to default."""
         handlers = _make_event_handlers()
-        mock_resolve.return_value = _make_agent_body(variables={"stop_attempts": 0})
+        mock_resolve.return_value = _make_agent_body()
 
         mock_svm = MagicMock()
         mock_svm_cls.return_value = mock_svm
@@ -295,21 +295,21 @@ class TestReturningSessionPreservesUserVariables:
 
         changes = _get_merged_changes(mock_svm)
         assert "stop_attempts" not in changes
+        assert changes["_agent_type"] == "default"
+        mock_defaults.assert_called_once()
 
+    @patch(
+        "gobby.mcp_proxy.tools.apply_agent_definition.load_variable_defaults",
+        return_value={"stop_attempts": 0, "mode_level": 1, "chat_mode": "bypass"},
+    )
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
     def test_preserves_all_existing_user_variables(
-        self, mock_resolve: MagicMock, mock_svm_cls: MagicMock
+        self, mock_resolve: MagicMock, mock_svm_cls: MagicMock, mock_defaults: MagicMock
     ) -> None:
         """No existing user-facing variable should be overwritten."""
         handlers = _make_event_handlers()
-        mock_resolve.return_value = _make_agent_body(
-            variables={
-                "stop_attempts": 0,
-                "mode_level": 1,
-                "chat_mode": "bypass",
-            }
-        )
+        mock_resolve.return_value = _make_agent_body()
 
         mock_svm = MagicMock()
         mock_svm_cls.return_value = mock_svm
@@ -331,16 +331,23 @@ class TestReturningSessionPreservesUserVariables:
         changes = _get_merged_changes(mock_svm)
         for user_var in ("stop_attempts", "mode_level", "chat_mode"):
             assert user_var not in changes, f"{user_var} should NOT be overwritten"
+        assert changes["_agent_type"] == "default"
+        mock_defaults.assert_called_once()
 
+    @patch(
+        "gobby.mcp_proxy.tools.apply_agent_definition.load_variable_defaults",
+        return_value={"unlocked_tools": []},
+    )
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
     def test_ordinary_resume_preserves_schema_leases(
         self,
         mock_resolve: MagicMock,
         mock_svm_cls: MagicMock,
+        mock_defaults: MagicMock,
     ) -> None:
         handlers = _make_event_handlers()
-        mock_resolve.return_value = _make_agent_body(variables={"unlocked_tools": []})
+        mock_resolve.return_value = _make_agent_body()
         mock_svm = MagicMock()
         mock_svm_cls.return_value = mock_svm
         mock_svm.get_variables.return_value = {
@@ -356,6 +363,58 @@ class TestReturningSessionPreservesUserVariables:
         )
 
         assert "unlocked_tools" not in _get_merged_changes(mock_svm)
+        assert _get_merged_changes(mock_svm)["_agent_type"] == "default"
+        mock_defaults.assert_called_once()
+
+    @patch(
+        "gobby.mcp_proxy.tools.apply_agent_definition.load_variable_defaults",
+        return_value={"_agent_context_injected": False, "_agent_identity_reinject": False},
+    )
+    @patch("gobby.hooks.session_activation._session_is_spawned", return_value=True)
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    @patch("gobby.workflows.agent_resolver.resolve_agent")
+    def test_preserves_injection_and_step_completion_flags(
+        self,
+        mock_resolve: MagicMock,
+        mock_svm_cls: MagicMock,
+        mock_spawned: MagicMock,
+        mock_defaults: MagicMock,
+    ) -> None:
+        """A same-agent re-activation keeps runtime flags that its delta would seed."""
+        handlers = _make_event_handlers()
+        mock_resolve.return_value = make_agent_definition(
+            name="stepper",
+            prompts={"agent": "Work."},
+            step_workflow=AgentStepWorkflowBody(
+                steps=[WorkflowStep(name="work", instructions="Do the work")],
+            ),
+        )
+
+        mock_svm = MagicMock()
+        mock_svm_cls.return_value = mock_svm
+        mock_svm.get_variables.return_value = {
+            "_agent_type": "stepper",
+            "is_spawned_agent": True,
+            "assigned_task_id": "#1",
+            "step_workflow_complete": True,
+            "_agent_context_injected": True,
+            "_agent_identity_reinject": True,
+        }
+
+        handlers._activate_default_agent(
+            session_id="sess-compact",
+            cli_source="claude",
+            project_id=None,
+            agent_name_override=None,
+        )
+
+        changes = _get_merged_changes(mock_svm)
+        assert changes["_agent_type"] == "stepper"
+        assert "step_workflow_complete" not in changes
+        assert "_agent_context_injected" not in changes
+        assert "_agent_identity_reinject" not in changes
+        mock_spawned.assert_called()
+        mock_defaults.assert_called_once()
 
 
 class TestReturningSessionReappliesInternalKeys:
@@ -396,8 +455,10 @@ class TestReturningSessionReappliesInternalKeys:
         mock_svm = MagicMock()
         mock_svm_cls.return_value = mock_svm
         mock_svm.get_variables.return_value = {
-            "_agent_type": "old-agent",
+            "_agent_type": "default",
             "_active_rule_names": ["old-rule"],
+            "_agent_definition_hash": "old-pin",
+            "_agent_definition_keys": ["retired_key"],
             "is_spawned_agent": False,
             "mode_level": 1,
         }
@@ -414,6 +475,8 @@ class TestReturningSessionReappliesInternalKeys:
         assert "_agent_type" in changes
         assert "_active_rule_names" in changes
         assert "is_spawned_agent" in changes
+        assert changes["_agent_definition_hash"] != "old-pin"
+        assert "retired_key" in changes["_agent_definition_keys"]
         # User variable preserved
         assert "mode_level" not in changes
 
@@ -421,19 +484,18 @@ class TestReturningSessionReappliesInternalKeys:
 class TestMixedNewAndExistingVariables:
     """New defaults (not yet in session) should still be applied."""
 
+    @patch(
+        "gobby.mcp_proxy.tools.apply_agent_definition.load_variable_defaults",
+        return_value={"mode_level": 2, "brand_new_variable": "hello"},
+    )
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
     def test_new_defaults_added_existing_preserved(
-        self, mock_resolve: MagicMock, mock_svm_cls: MagicMock
+        self, mock_resolve: MagicMock, mock_svm_cls: MagicMock, mock_defaults: MagicMock
     ) -> None:
         """Variables not yet in session get their defaults; existing ones are kept."""
         handlers = _make_event_handlers()
-        mock_resolve.return_value = _make_agent_body(
-            variables={
-                "mode_level": 2,  # Already exists -> skip
-                "brand_new_variable": "hello",  # Not in session → apply
-            }
-        )
+        mock_resolve.return_value = _make_agent_body()
 
         mock_svm = MagicMock()
         mock_svm_cls.return_value = mock_svm
@@ -453,6 +515,7 @@ class TestMixedNewAndExistingVariables:
         assert "brand_new_variable" in changes
         assert changes["brand_new_variable"] == "hello"
         assert "mode_level" not in changes
+        mock_defaults.assert_called_once()
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")

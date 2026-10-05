@@ -8,7 +8,7 @@ import yaml
 
 from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
+from gobby.mcp_proxy.tools.apply_agent_definition import build_definition_changes
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
@@ -87,7 +87,7 @@ def test_spawn_activated_session_worktree_enforcement(
         project_id=None,
     )
     variables = SessionVariableManager(temp_db)
-    changes, _, _ = build_persona_changes(body, session.id, temp_db, is_spawned=True)
+    changes, _, _ = build_definition_changes(body, session.id, temp_db, is_spawned=True)
     variables.merge_variables(session.id, changes)
 
     data: dict[str, Any] = {"tool_name": tool, "tool_input": {}}
