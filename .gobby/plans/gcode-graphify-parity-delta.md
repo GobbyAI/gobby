@@ -86,74 +86,25 @@ decisions on 2026-10-05 from the sources cited.
    as one unit. The leaves expand under #22948 (Code index: communities and
    Graphify parity), the epic that already holds #22862.
 3. **The benchmark is the first leaf (Q2), and its protocol amends the frozen
-   matrix as follows.** `docs/evidence/wiki-bakeoff-code-2026-09/matrix.md`
-   stays the protocol for everything not named here.
-   - **A fresh runtime root.** The September root,
-     `/Users/josh/Projects/wiki-bakeoff-code-2026-09/`, stays read-only
-     input. Its provisioning cannot be rerun in place:
-     `provision_environment.py` (`init_runtime`, lines 365-369) refuses an
-     existing root, and `launch_services.py` (lines 33-35) asserts the
-     September owner task. So the rerun provisions a new root,
-     `/Users/josh/Projects/gcode-graphify-rerun-2026-10/`, from dated copies
-     of the repo scripts. The copies may change the runtime root, the owner
-     task (the 1.1 leaf's task), the compose project, container, volume and
-     network names, and the tool, source and contract pins. Every
-     containment assertion stays. The frozen corpora are copied from the
-     September root and verified against its manifests' hashes. The new root
-     archives the `0.5.0` source at the run's commit for schema setup, and
-     fresh ownership and service receipts name the 1.1 leaf's task. Results
-     land in `/Users/josh/Projects/gcode-graphify-rerun-2026-10/results/index-comparison/`.
-   - **Quiet load.** Every timed case starts only when the 5-minute load
-     average is under 5. That is the threshold the PD set in #22862's
-     description ("At quiet load (5-minute load under 5)"); this plan reuses
-     it unchanged. Both tools' timed runs follow it.
-   - **Current identities.** gcode is the installed binary at run start.
-     Graphify is the latest PyPI release at C0, not a hardcoded version.
-     Both identities are recorded the way the 09 report recorded them.
-   - **The gcode C7 marker is a tool-state row count.** The matrix's wrapper
-     accepts an output regex, a state-file glob, or a pinned fault-injection
-     seam (lines 565-570). gcode still prints no progress under a pipe: the
-     bar renders only on a terminal
-     (`crates/gcore/src/progress.rs::non_terminal_capture_suppresses_output`),
-     and gcode writes its state to PostgreSQL, not to files. It does commit
-     each file in its own transaction
-     (`crates/gcode/src/index/indexer/file.rs::index_file`, lines 47-64),
-     so the count of the C7 project's `code_indexed_file_states` rows rises
-     during a cold index. The rerun's marker is that count being above 0 and
-     below the clean C1 file count. A sidecar poller queries the isolated
-     PostgreSQL and signals the wrapper, which then sends the matrix's one
-     planned `SIGTERM`. The marker reads tool state and changes neither the
-     corpus nor the source, which is what the matrix's marker rules protect.
-     No production seam is added.
-   - **gcode C7 passes only on queryable equivalence.** The 09 report
-     defined a clean signature only for Graphify (`C7-summary.json`).
-     gcode commits facts per file and syncs the graph and vector projections
-     afterwards (`crates/gcode/src/commands/index.rs::run_index_locked`), so
-     equal facts alone do not prove a usable recovery. The matrix requires a
-     queryable result equivalent to clean C1 (lines 688-695). gcode's C7
-     passes only when all of these hold between the recovered state and a
-     separate fresh clean C1 state:
-     - **Facts.** For each fact table the index writes for the project
-       (`code_indexed_file_states`, `code_symbols`, `code_content_chunks`,
-       `code_imports`, `code_inheritance`, `code_calls`, and
-       `code_communities`), the sorted rows the project owns or references
-       hash equal per table, after project id, root path, row UUIDs and
-       timestamps are normalized.
-     - **Projections.** The recovery's `index --sync-projections` response
-       reports both projections synced. A fixed probe set, recorded before
-       either state is queried, returns byte-equal normalized output on both
-       states: the C8 deterministic retrieval queries, and `gcode graph`
-       reads (FalkorDB-backed, `crates/gcode/src/commands/graph/reads.rs`)
-       for five corpus symbols named in advance.
-     - **Vectors.** The C8 hybrid queries also match when the embedding
-       preflight passes. When it fails, the vector projection is recorded
-       `not-compared` with the preflight's reason.
-
-     Equal counts never pass C7 on their own. A degraded or unsupported
-     outcome is recorded as such.
-   - C0 runs as setup and preflight. C9 (presentation exports) is not rerun:
-     its missing surfaces are recorded dispositions, and no consumer needs
-     them (Decision 7).
+   matrix.** `docs/evidence/wiki-bakeoff-code-2026-09/matrix.md` stays the
+   protocol for everything 1.1 does not amend. Leaf 1.1 carries each
+   amendment in full, with its sources. In brief:
+   - the rerun provisions a fresh runtime root, because the September
+     provisioning refuses an existing root and asserts the September owner
+     task;
+   - every timed case starts at quiet load, the threshold #22862 set;
+   - both tools run at their current identities;
+   - gcode's C7 marker is a row count of its per-file state table, because
+     gcode prints no progress under a pipe and keeps its state in
+     PostgreSQL;
+   - gcode's C7 passes only on queryable equivalence with a fresh clean C1
+     state, because gcode syncs its projections after it commits facts;
+   - each C2-C6 case is checked for community-id stability against its own
+     starting state, because the matrix gives those cases separate
+     lineages;
+   - C0 runs as setup and preflight, and C9 (presentation exports) is not
+     rerun: its missing surfaces are recorded dispositions, and no consumer
+     needs them (Decision 7).
 4. **Size ties break on `community_id` (Q3).** Every read surface orders
    communities by `member_count` descending, then numeric `community_id`
    ascending. This supersedes the PD ruling that the communities view breaks
@@ -258,29 +209,69 @@ Targets:
 - Prior run: `docs/evidence/wiki-bakeoff-code-2026-09/graphify-gcode.md`
   (C0-C9 table at lines 62-75, C1-C6 measurements at lines 80-94, frozen
   identities at lines 42-48). Its runner scripts and results live in the
-  September root under `results/index-comparison/`: `run_index_cases.py`
-  (C1-C6), `run_c7.py`, `run_c8.py`, `run_c8_deterministic.py`,
-  `measurements.json`, `run-records.normalized.jsonl`, and `C7-summary.json`
-  (Graphify's clean and recovered signatures). They are outside the repo and
-  are cited by path and SHA-256, not targeted.
-- Protocol: `docs/evidence/wiki-bakeoff-code-2026-09/matrix.md`. C7 is at
-  lines 563-620. Its wrapper starts a separate process group, waits for the
-  marker, sends one `SIGTERM`, and uses `SIGKILL` only after a 30 s
-  deadline.
+  September root, `/Users/josh/Projects/wiki-bakeoff-code-2026-09/`, under
+  `results/index-comparison/`: `run_index_cases.py` (C1-C6), `run_c7.py`,
+  `run_c8.py`, `run_c8_deterministic.py`, `measurements.json`,
+  `run-records.normalized.jsonl`, and `C7-summary.json` (Graphify's clean
+  and recovered signatures). They are outside the repo and are cited by
+  path and SHA-256, not targeted.
+- Protocol: `docs/evidence/wiki-bakeoff-code-2026-09/matrix.md`. C2 to C6
+  (lines 365-562) are separate one-step lineages, not one serial state: C2
+  copies the sealed C1 state, C3 runs on an independent state built from
+  the baseline, and C4 to C6 each start from a fresh baseline copy. C7 is
+  at lines 563-696. Its wrapper accepts an output regex, a state-file glob,
+  or a pinned fault-injection seam as the marker (lines 565-570), starts a
+  separate process group, waits for the marker, sends one `SIGTERM`, and
+  uses `SIGKILL` only after a 30 s deadline. Native recovery is at lines
+  671-685, and the queryable-result requirement at lines 688-695.
 - Provisioning scripts in the repo:
   `docs/evidence/wiki-bakeoff-code-2026-09/launch_services.py`,
   `provision_environment.py`, `prepare_daemon.py`, and
-  `validate_environment.py`. The corpora `corpora/gcode/C0` to `C8` and
-  `C8-baseline`/`C8-change` survive in the September root, and the runners
-  above are copied from it into the fresh root.
-- gcode facts: `gcode 1.9.9`; per-file commit in
-  `crates/gcode/src/index/indexer/file.rs::index_file`; the
-  `code_indexed_file_states` writer is
-  `crates/gcode/src/index/api/file_state.rs`; the community refresh runs
-  inside `gcode index` through
+  `validate_environment.py`. They cannot provision the rerun in place:
+  `provision_environment.py::init_runtime` (lines 365-369) refuses an
+  existing root, and `launch_services.py` (lines 33-35) asserts the
+  September owner task #21942. They also pin the September identities:
+  `validate_environment.py` requires Graphify 0.9.55, gcode 1.7.0, contract
+  v8, and gcode source `7394b97c`, and `provision_environment.py` and
+  `prepare_daemon.py` archive and import that source. The corpora
+  `corpora/gcode/C0` to `C8` and `C8-baseline`/`C8-change` survive in the
+  September root.
+- gcode facts: `gcode 1.9.9`. gcode prints no progress under a pipe: the
+  bar renders only on a terminal
+  (`crates/gcore/src/progress.rs::non_terminal_capture_suppresses_output`).
+  It keeps its state in PostgreSQL, not in files, and commits each file in
+  its own transaction (`crates/gcode/src/index/indexer/file.rs::index_file`,
+  lines 47-64; the `code_indexed_file_states` writer is
+  `crates/gcode/src/index/api/file_state.rs`), so the project's
+  `code_indexed_file_states` row count rises during a cold index. It syncs
+  the graph and vector projections only after the facts commit
+  (`crates/gcode/src/commands/index.rs::run_index_locked`). The community
+  refresh runs inside `gcode index` through
   `crates/gcode/src/communities.rs::refresh_project_communities`, which did
-  not exist in the 09 run. So C2 to C6 now include it, and that cost is what
-  #22862 measures.
+  not exist in the 09 run. So C2 to C6 now include it, and that cost is
+  what #22862 (gcode community refresh: measure the unchanged-file cost
+  against the +250 ms budget, add the input-digest skip if over) measures.
+- Community ids: `crates/gcode/src/communities/remap.rs::assign_ids` keeps
+  the id of the prior community that a new community matches by Jaccard
+  overlap, and gives each unmatched community an id above both every prior
+  id and the stored watermark
+  `code_indexed_project_states.community_id_watermark`, which never falls.
+  The unit tests in `crates/gcode/src/communities/remap/tests.rs` cover
+  history across runs: `retired_ids_are_never_reissued`,
+  `watermark_is_monotone_across_runs`, and
+  `jaccard_beats_raw_overlap_on_swallow_case`.
+- Community evidence: the `communities` operation of `gcode evidence`
+  lists communities with empty `members`. With a `community_id` selector it
+  returns that one community, whose `members` carry `path` and
+  `content_hash`, cut to `max_members` (1 to 500, default 50) with
+  `members_truncated` set when cut (`crates/gcode/src/evidence/communities.rs`).
+  Items are atomic: `crates/gcode/src/evidence/mod.rs::EvidenceLibrary::paginate`
+  returns `NarrowingRequired` when any item exceeds `max_bytes` (default
+  16,384), and otherwise fills a page with whole items whose summed
+  serialized bytes, reported as `bounds.serialized_item_bytes`, stay within
+  `max_bytes`. The response envelope is not counted. A `read` request of
+  `kind: range` returns the file's indexed `content_hash`, and fails when
+  the file's bytes do not hash to it (`crates/gcode/src/evidence/source.rs`).
 - 09 numbers to compare against: C1 gcode 35.789 s versus Graphify 2.430 s;
   C2 0.117 s versus 2.108 s; C3 3.121 s versus 2.533 s; C4-C6 0.42-0.98 s
   versus 2.43-2.49 s; C8 6/14 for both.
@@ -289,45 +280,78 @@ Targets:
   (`docs/evidence/community-labels-2026-09/thresholds.md`, lines 192-197).
 
 **Implementation:**
-1. The repo's provisioning and validation scripts pin the September
-   identities: `validate_environment.py` requires Graphify 0.9.55, gcode
-   1.7.0, contract v8, and gcode source `7394b97c`, and
-   `provision_environment.py` and `prepare_daemon.py` archive and import
-   that source. Provision the fresh root of Decision 3 from dated copies of
-   those scripts kept in that root. The copies keep every isolation, corpus,
-   service-boundary, and receipt check; only the adaptations Decision 3
-   lists move. They provision a schema and an isolated native binary set
-   compatible with the copied gcode. The September scripts, root, and
-   results stay unchanged. The report records the copies' SHA-256 values,
-   their exact invocations, and the source and binary identities.
-2. C0: copy the installed `~/.gobby/bin/gcode` into the harness tools and
-   record its SHA-256, `gcode --version`, and `gcode contract`. Install the
-   latest Graphify release from PyPI into a fresh venv, and record the
-   package version, executable SHA-256, and lock SHA-256. Rerun the
-   embedding-identity preflight. The hybrid lane joins C8 only if it passes.
-   Establish the gcode C7 marker here, as the matrix requires: run one cold C1
-   index under the poller, and confirm a row count between 0 and the total
-   appears before the index completes.
-3. C1 to C6 for both tools, with the 09 argv shapes and corpora. Before each
-   timed case, record the 5-minute load average, and wait until it is under
-   5.
-4. C7 for both tools, each from a fresh baseline copy and fresh isolated
-   state. During C0, confirm an observable pre-completion Graphify marker
-   for the chosen release; the September regex is reused only if it is
-   observed again. gcode uses the Decision 3 row-count marker through the
-   dated wrapper copy. Preserve the partial state and logs after the one
-   `SIGTERM`. Recover each tool exactly once with its native command, as
-   `matrix.md` (lines 671-685) specifies:
+1. **Fresh root.** The September root stays read-only input, and its
+   scripts and results stay unchanged. Provision a new root,
+   `/Users/josh/Projects/gcode-graphify-rerun-2026-10/`, from dated copies
+   of the repo's provisioning and validation scripts and of the September
+   runners, kept in that root. The copies may move only the runtime root,
+   the owner task (this leaf's task), the compose project, container,
+   volume and network names, and the tool, source and contract pins. Every
+   isolation, corpus, service-boundary, containment, and receipt check
+   stays. Copy the frozen corpora from the September root and verify them
+   against its manifests' hashes. Archive the `0.5.0` source at the run's
+   commit for schema setup, and provision a schema and an isolated native
+   binary set compatible with the copied gcode. Fresh ownership and service
+   receipts name this leaf's task. Results land in
+   `/Users/josh/Projects/gcode-graphify-rerun-2026-10/results/index-comparison/`.
+   The report records the copies' SHA-256 values, their exact invocations,
+   and the source and binary identities.
+2. **C0.** Copy the installed `~/.gobby/bin/gcode` into the harness tools
+   and record its SHA-256, `gcode --version`, and `gcode contract`. Install
+   the latest Graphify release from PyPI into a fresh venv, with no
+   hardcoded version, and record the package version, executable SHA-256,
+   and lock SHA-256, as the 09 report did. Rerun the embedding-identity
+   preflight; the hybrid lane joins C8 only if it passes. Confirm an
+   observable pre-completion Graphify marker for the chosen release; the
+   September regex is reused only if it is observed again. Establish the
+   gcode C7 marker: a sidecar poller counts the C7 project's
+   `code_indexed_file_states` rows in the isolated PostgreSQL, and the
+   marker is that count being above 0 and below the clean C1 file count.
+   Run one cold C1 index under the poller and confirm such a count appears
+   before the index completes. The marker reads tool state and changes
+   neither the corpus nor the source, which is what the matrix's marker
+   rules protect. No production seam is added.
+3. **C1 to C6** for both tools, with the 09 argv shapes and corpora, each
+   case from the starting state the matrix names. Before each timed case of
+   either tool, record the 5-minute load average and wait until it is under
+   5, the quiet-load threshold in #22862's description. For gcode's C2 to
+   C6, read the case state's `code_communities` rows and its
+   `community_id_watermark` before the timed command starts and after it
+   ends, outside the timed window.
+4. **C7** for both tools, each from a fresh baseline copy and fresh
+   isolated state, through the dated wrapper copy and the C0 markers.
+   Preserve the partial state and logs after the one `SIGTERM`. Recover
+   each tool exactly once with its native command:
    - Graphify: `update --no-cluster`, then `check-update`, against the
      interrupted output.
    - gcode: `index --sync-projections` without `--full`, then `status`.
 
-   Build a separate fresh clean C1 state for each tool. Compare Graphify's
-   recovered state with it by the 09 signature, and gcode's by Decision 3's
-   queryable equivalence. Record the exact interruption, recovery, and
-   clean-build argv, and every protocol adaptation.
-5. C8: the 14 frozen questions, scored as in 09.
-6. Labels, each in its own untimed state, apart from the timed
+   Build a separate fresh clean C1 state for each tool. Graphify's
+   recovered state passes when it matches that state by the 09 signature
+   (`C7-summary.json`). gcode's recovered state passes only when all of
+   these hold between it and its clean state:
+   - **Facts.** For each fact table the index writes for the project
+     (`code_indexed_file_states`, `code_symbols`, `code_content_chunks`,
+     `code_imports`, `code_inheritance`, `code_calls`, and
+     `code_communities`), the sorted rows the project owns or references
+     hash equal per table, after project id, root path, row UUIDs and
+     timestamps are normalized.
+   - **Projections.** The recovery's `index --sync-projections` response
+     reports both projections synced. A fixed probe set, recorded in C0
+     before either state is queried, returns byte-equal normalized output
+     on both states: the C8 deterministic retrieval queries, and `gcode
+     graph` reads (FalkorDB-backed, `crates/gcode/src/commands/graph/reads.rs`)
+     for five corpus symbols named in advance.
+   - **Vectors.** The C8 hybrid queries also match when the embedding
+     preflight passed. When it failed, the vector projection is recorded
+     `not-compared` with the preflight's reason.
+
+   Equal counts never pass C7 on their own. A degraded or unsupported
+   outcome is recorded as such. Record the exact interruption, recovery,
+   and clean-build argv, and every protocol adaptation, with gcode's
+   row-count marker recorded as an amendment to the matrix.
+5. **C8**: the 14 frozen questions, scored as in 09.
+6. **Labels**, each in its own untimed state, apart from the timed
    `--code-only --no-cluster` C1 state (`matrix.md`, lines 338-350):
    - Graphify deterministic names: `extract --code-only` with clustering on,
      into its own output directory.
@@ -338,44 +362,73 @@ Targets:
    - gcode: each community's label and `label_source` from
      `gcode graph view --view=communities --format json` on the clean C1
      state.
-7. Parity+ properties. Each verdict names its evidence producer and its
+7. **Parity+ properties.** Each verdict names its evidence producer and its
    pass or absence condition, and says whether it was measured in this run
    or rests on earlier evidence:
    - **File-level projection, externals excluded.** Measured on the clean C1
      state: every member in `code_communities` is a file path that has a
      `code_indexed_file_states` row for the project, and none is an
      external module.
-   - **Monotone ids with Jaccard remap.** Measured from `code_communities`
-     after each of C1 to C6 on one gcode project. It passes when C2 leaves
-     every `(community_id, member_signature)` pair unchanged, a community
-     whose members are unchanged keeps its id, every id that first appears
-     is above every id seen before it, and no id that disappeared appears
-     again. One recycled id is an absence.
-   - **Confident label admission.** Missing: #22604 is held, and labels are
-     admitted on schema validation alone (Decision 8). The `label_source`
-     counts are context only.
+   - **Monotone ids with Jaccard remap.** Measured per case from step 3's
+     reads, each C2-C6 case against its own starting state only. C2 passes
+     when it leaves every `(community_id, member_signature)` pair and the
+     watermark unchanged. Each of C3 to C6 passes when a community whose
+     member set is unchanged keeps its id, every id absent from the
+     starting state is above the starting watermark, and the watermark
+     does not fall. An id absent from the starting state and at or below
+     its watermark is a recycled id, and one is an absence. Each case
+     records its counts of kept, remapped (id kept, members changed, with
+     the Jaccard of the old and new member sets), retired, and new
+     communities. A case whose remapped or retired count is 0 records that
+     behavior `not-exercised`. No matrix case spans two refreshes of one
+     state, so a retired id staying retired across runs rests on the
+     `remap/tests.rs` unit tests above, as earlier evidence.
+   - **Confident label admission.** Missing: #22604 (Gate generated names
+     through a Jev `choice` decision) is held, and a generated label is
+     admitted on schema validation alone, with `label_confidence` left
+     empty (`src/gobby/code_index/community_labeler.py`, lines 86-188). The
+     `label_source` counts are context only.
    - **Byte-bounded, replay-verifiable evidence.** Measured with the
-     `communities` evidence operation on the clean C1 state. Run one list
-     request and one detail request on the largest community, each twice
-     against the same binding, once at the default `max_bytes` (16,384) and
-     once at a `max_bytes` small enough to truncate. It passes when every
-     response stays within its `max_bytes`, a truncated response says so,
-     and the two runs return identical `evidence_id` lists.
+     `communities` evidence operation on the clean C1 state, every request
+     bound to that state's commit and tree. Each distinct request (binding,
+     selector, and `max_bytes`) runs twice, and both runs return identical
+     `items`, `bounds`, and `continuation`, or the identical error.
+     - List: at the default `max_bytes`, and at a `max_bytes` no smaller
+       than the largest list item and below the complete list's summed item
+       bytes, so that the list spans at least two pages. Each continuation
+       is followed to the end. Every page reports `bounds.serialized_item_bytes`
+       within `bounds.max_bytes`, and the pages together return every
+       community exactly once, matching `bounds.total_items`.
+     - Detail: the first community in list order, with `max_members` at its
+       member count (at most 500). A default-budget request gives its full
+       item size: `bounds.serialized_item_bytes` when it succeeds, or the
+       error's `item_bytes` when it returns `NarrowingRequired`. The same
+       request at a `max_bytes` one byte below that size returns
+       `NarrowingRequired` naming the community's `evidence_id`. At that
+       `max_bytes`, a request with `max_members` low enough for the item to
+       fit succeeds, with `members_truncated: true` and
+       `bounds.serialized_item_bytes` within `max_bytes`.
+     - Replay: for every member a successful detail returns, a one-line
+       `range` read of its `path` against the same binding succeeds and
+       returns the member's `content_hash`.
+
+     It passes when all of these hold. Identical `evidence_id` lists alone
+     show stable identity, not verifiable content.
 
    Index and retrieval scores never stand in for a property verdict.
 8. Write `docs/evidence/gcode-graphify-rerun-2026-10/report.md`: identities,
-   the load samples, the C1-C8 tables beside the 09 numbers, the C7 method
-   with the amendments, the label facts, the four property verdicts, and a
-   decision-input section for #22604.
+   the load samples, the C1-C8 tables beside the 09 numbers (C9 is not
+   rerun), the C7 method with the amendments, the label facts, the four
+   property verdicts, and a decision-input section for #22604.
 
 **Acceptance:**
 
 - 1.1.1 - The report records the fresh runtime root and its ownership receipt, the dated script copies' SHA-256 values, both tools' identities (gcode version, contract, and SHA-256 of the copied installed binary; Graphify's PyPI version and executable and lock SHA-256), the corpus commits, and a 5-minute load average under 5 before every timed case. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
 - 1.1.2 - The report gives C1 to C6 for both tools in the 09 table shape (seconds, changed files, symbols and chunks for gcode; nodes, edges and uncached files for Graphify) beside the 09 numbers, and states that gcode's C2 to C6 include the community refresh. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
-- 1.1.3 - The report gives C7 for both tools: the marker each used, the one planned `SIGTERM`, any safety `SIGKILL`, the native recovery commands, and whether the recovered state equals a fresh clean C1 state, by the 09 signature for Graphify and by Decision 3's fact, projection and vector checks for gcode, with the gcode row-count marker recorded as an amendment to the matrix. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+- 1.1.3 - The report gives C7 for both tools: the marker each used, the one planned `SIGTERM`, any safety `SIGKILL`, the native recovery commands, and whether the recovered state equals a fresh clean C1 state, by the 09 signature for Graphify and by step 4's fact, projection and vector checks for gcode, with the gcode row-count marker recorded as an amendment to the matrix. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
 - 1.1.4 - The report scores C8's 14 frozen questions for both tools as in 09, and states whether the gcode hybrid lane was included or excluded by the embedding preflight. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
 - 1.1.5 - The report records Graphify's deterministic community names, whether current Graphify emits semantic community names (yes, no, or `blocked-preflight` with the reason), and gcode's count of communities by `label_source`, each from its own untimed state, without comparing community counts, and a section that states the evidence for Josh's #22604 decision without making it. behavior: "Decision input for #22604" in `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
-- 1.1.6 - The report gives a verdict for each of the four parity+ properties with its evidence producer, its pass or absence condition, and whether it was measured in this run, and records the label-admission property as missing while #22604 is held. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+- 1.1.6 - The report gives a verdict for each of the four parity+ properties by step 7's producers and conditions, says whether each was measured in this run, records every remap or retirement behavior no case exercised as `not-exercised`, and records the label-admission property as missing while #22604 is held. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
 
 **Verification:** the dated copy of the environment validator passes
 against the final C0 identities and schema before C1, and every number in
@@ -424,7 +477,11 @@ Consumers unchanged:
 - `mcg/tests.rs::mcg_labels_nodes_from_stored_communities` already runs
   `label_communities` then `build_view_payload` through the `stored_community`
   helper. A new test can follow that path.
-- The surfaces that already conform are in Decision 4.
+- The report (`crates/gcode/src/graph/report/types.rs::GraphReportCommunities::from_rows`)
+  and the evidence operation (`crates/gcode/src/evidence/communities.rs`)
+  already sort by member count descending, then numeric `community_id`
+  ascending. The stored-row reader in `crates/gcode/src/db/communities.rs`
+  orders by `community_id` alone, feeds those consumers, and stays as is.
 - Rejected: parsing the integer back out of the `community:N` view id at sort
   time. The stored integer is already on hand at every construction site.
 
@@ -480,6 +537,20 @@ Consumers unchanged:
     untimed states (GP-A2);
   - 1.1 provisions a fresh runtime root with its own ownership receipts,
     and the September root stays read-only input (GP-A3).
+- 2026-10-05: The Adversary gobby#15401's review of `23e7d81790` raised
+  GP-A4 to GP-A6, and the Plan Writer accepted all three:
+  - 1.1 carries its whole protocol, with sources, and Decision 3 keeps a
+    summary; 1.2 states the conforming sorts itself, so neither leaf
+    depends on Decision text (GP-A4);
+  - the evidence probe follows the operation's atomic-item contract:
+    paginated list pages within `max_bytes`, a detail that returns
+    `NarrowingRequired` and then fits once narrowed, each request run twice,
+    and every member's `content_hash` replayed through a bound `read`
+    (GP-A5);
+  - community-id stability is checked per C2-C6 case against that case's
+    own starting state and the stored watermark, with unexercised remap or
+    retirement recorded as such and multi-run history resting on the
+    `remap/tests.rs` unit tests (GP-A6).
 
 ## V2: Verification
 `kind: verification`
