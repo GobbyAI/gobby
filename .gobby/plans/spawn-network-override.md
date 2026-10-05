@@ -33,9 +33,12 @@ gate exists in either direction, so neither plan carries a deferral or dependenc
 edge for the other.
 
 Authority ships before exposure: 1.2 lands the override-authority predicate and its
-`before_tool` rule, and 2.1 adds the `network` parameter together with a factory
-guard that calls the same predicate, so no build advertises `network` without
-enforcement. Three of the orderings and mechanisms below are Orchestrator rulings
+`before_tool` rule, and 2.1 adds the `network` parameter together with a spawn
+caller guard that calls the same predicate, so no build advertises `network`
+without enforcement. That guard also enforces `spawnable_agents` on every
+`spawn_agent` entry path, folding in #23463, **Pipeline MCP steps bypass
+limit-spawnable-agents, so a spawned agent can spawn any agent through a
+pipeline**. Four of the orderings and mechanisms below are Orchestrator rulings
 recorded in the V1 Plan Changelog for Josh's review before implementation.
 
 ## P1: Effective profile and override authority
@@ -127,15 +130,16 @@ authorized coordinated restart.
 - 1.2.2 - A forged parent session ID or a run-less non-root session never gains override authority. behavior: "verified caller identity".
 - 1.2.3 - Bundled default permits child spawning, and override authority leaves seat-spawn policy in force. behavior: "definition and seat spawn policy".
 
-## P2: Single-spawn surfaces
+## P2: Spawn caller guard and single-spawn surfaces
 `kind: framing`
 
-### 2.1 Expose the choice on single-spawn surfaces (depends: 1.2) [category: code]
+### 2.1 Guard spawn callers and expose the choice on single-spawn surfaces (depends: 1.2) [category: code]
 `kind: deliverable`
 
 Targets:
-- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: add the MCP parameter, the authority guard, and the override after fallback resolution
-- `src/gobby/servers/routes/agent_spawn.py::*` — scope-reason: validate, guard, and apply the HTTP single-spawn field
+- `src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py::*` — scope-reason: add the spawn caller guard beside the existing spawn admission guards
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: add the MCP parameter, call the caller guard, and apply the override after fallback resolution
+- `src/gobby/servers/routes/agent_spawn.py::*` — scope-reason: validate and apply the HTTP single-spawn field
 - `src/gobby/cli/agents.py::*` — scope-reason: parse and forward the CLI flag
 - `src/gobby/install/shared/skills/gobby/references/agents/spawning.md`
 - `docs/guides/agents.md`
@@ -143,7 +147,7 @@ Targets:
 - `tests/mcp_proxy/tools/spawn_agent/test_factory.py::*` — scope-reason: test MCP parsing, fallback, guard, and refusal before allocation
 - `tests/servers/routes/test_agent_spawn_routes.py::*` — scope-reason: test HTTP parsing, web-chat rejection, and credentials
 - `tests/cli/test_cli_agents.py::*` — scope-reason: test CLI flag parsing and forwarding
-- `tests/workflows/test_mcp_step.py::*` — scope-reason: prove a pipeline MCP step cannot bypass override authority
+- `tests/workflows/test_mcp_step.py::*` — scope-reason: prove a pipeline MCP step cannot bypass spawnable_agents or override authority
 
 Add optional `network: Literal["none", "trusted"] | None` to MCP `spawn_agent`
 and the single-agent HTTP request, and `--network none|trusted` to `gobby agents
@@ -151,23 +155,36 @@ spawn`. The CLI sends the flag only when present. Reject an explicit network val
 for HTTP `web_chat`, which does not launch an SRT agent. Keep direct HTTP spawn
 restricted to operator credentials; managed agent credentials remain refused.
 
-When `network` is explicit, the MCP factory and the HTTP route run one authority
-guard before applying the 1.1 helper and before any launch allocation. The guard
-resolves the caller from the request principal (`get_request_principal`, the
-pattern in `_terminal_termination.py`) and the current session context, never
-from `parent_session_id`:
+Add one spawn caller guard in `_spawn_guards.py`. MCP `spawn_agent` calls it on
+every call, after loading the requested definition and before fallback, task
+admission, or any launch allocation. HTTP `_do_spawn` needs no guard call: the
+agent capability matrix already limits that route to operator credentials, which
+pass every check. `dispatch_batch` reaches spawning through the `spawn_agent` closure,
+so each batch suggestion passes the same guard until D1 retires batch spawning.
+The guard resolves the caller from the request principal
+(`get_request_principal`, the pattern in `_terminal_termination.py`) and the
+current session context, first match wins, and never from `parent_session_id`:
 
-- principal `None` (local operator credentials) with no session context: allowed;
-- principal `None` with a session context: the 1.2 predicate on that session;
-- managed agent token claims: the 1.2 predicate on the token's session;
-- no request principal (`LookupError`, an internal caller such as a pipeline
-  step) with a seeded session: the 1.2 predicate on that session;
-- no request principal and no session: refused.
+1. Managed agent token claims: the token's session. `auth_service.py` already
+   refuses a request whose session header differs from the token's session.
+2. A session context, from a local operator wrapper header or a pipeline
+   step's seeded session: that session.
+3. Principal `None` with no session context: the local operator.
+4. No request principal (`LookupError`) and no session: a daemon-internal
+   caller, such as a pipeline step from a sessionless cron run.
 
-The guard keeps the 1.2 `before_tool` rule in place and also covers pipeline MCP
-steps, which call tools with `enforce_workflow=False` under the pipeline's seeded
-session. After the guard passes and fallback has chosen the final definition,
-the surface applies the 1.1 helper and calls `spawn_agent_impl` with the copy.
+The local operator and a root session pass every check. A caller session runs
+the existing `spawn_target_allowed` with the target agent, so its definition's
+`spawnable_agents` must allow the target and every agent in the target's
+fallback chain; the refusal names `spawnable_agents`. When `network` is
+explicit, the caller must also pass the 1.2 network predicate. A daemon-internal
+caller keeps today's plain spawns, and its explicit `network` is refused because
+no daemon path needs one. An unresolvable or inconsistent identity raises and
+refuses. The guard keeps both `before_tool` rules, `limit-spawnable-agents` and
+1.2's network rule, and also covers pipeline MCP steps, which call tools with
+`enforce_workflow=False` under the pipeline's seeded session. After the guard
+passes and fallback has chosen the final definition, the surface applies the 1.1
+helper and calls `spawn_agent_impl` with the copy.
 HTTP creates or reuses its per-project `web_launcher` parent session before
 resolving the body; that reused row is not a launch allocation, so a refusal
 after it is acceptable. Update the existing spawning reference, agents guide,
@@ -191,22 +208,32 @@ enforcement (`_enforce_workflow_for_request`). Pipeline MCP steps
 with `resolve_and_seed_contexts` and call `tool_proxy.call_tool(...,
 enforce_workflow=False)`, so `before_tool` rules do not run there.
 `get_request_principal` raises `LookupError` for internal callers, returns `None`
-for local operator requests, and returns token claims for managed agents.
+for local operator requests, and returns token claims for managed agents;
+`auth_service.py` rejects a session reference that differs from the token's
+`session_id`. `limit-spawnable-agents.yaml` calls `spawn_target_allowed` only as a
+`before_tool` rule, so a non-seat spawned agent can author and run a pipeline
+whose `spawn_agent` step targets an agent its `spawnable_agents` excludes.
+`dispatch_batch` in `_factory.py` calls the `spawn_agent` closure per suggestion.
 Observed: none of these three surfaces has a network parameter; `_factory.py`
-has 844 lines and stays under the production ceiling after this change. Planned:
-focused MCP, HTTP, Click, and pipeline-step tests for valid and invalid values,
-null, fallback in both directions, explicit `none` on a trusted final
-definition, a later omitted launch inheriting the original profile, `web_chat`,
-the HTTP credential boundary, and denied-authority and unreadable-Trusted-seed
-refusals that never reach placement, checkout creation, child-session creation,
-or runner launch.
+has 844 lines and `_spawn_guards.py` 466, so both stay under the production
+ceiling after this change. Planned: focused MCP, HTTP, Click, and pipeline-step
+tests for valid and invalid values, null, fallback in both directions, explicit
+`none` on a trusted final definition, a later omitted launch inheriting the
+original profile, `web_chat`, the HTTP credential boundary, a pipeline-step
+spawn of a disallowed agent that fails before the fix, an allowed pipeline-step
+spawn, root, operator, and daemon-internal callers, forged and unresolved
+identity, and denied-authority and unreadable-Trusted-seed refusals that never
+reach placement, checkout creation, child-session creation, or runner launch.
 
 **Acceptance:**
 
 - 2.1.1 - MCP, HTTP, and CLI expose only `none|trusted`, with omission/null inheriting the final definition, including after fallback in both directions. behavior: "single-spawn network input".
 - 2.1.2 - HTTP `web_chat` rejects explicit network and managed credentials cannot call the direct HTTP spawn route. behavior: "HTTP spawn boundary".
 - 2.1.3 - An explicit override from an unauthorized caller, including through a pipeline MCP step, refuses before placement, checkout, child session, or launch. behavior: "override authority at the spawn boundary".
-- 2.1.4 - The spawning reference, agents guide, and sandboxing guide document the parameter, flag, inheritance, lifetime, and authority limits. file: `docs/guides/sandboxing.md`.
+- 2.1.4 - A spawned agent whose `spawnable_agents` excludes an agent cannot spawn it through a pipeline MCP step, and the refusal names `spawnable_agents`; a regression test fails before the fix. behavior: "spawnable_agents on every entry path".
+- 2.1.5 - The same caller can still spawn an allowed agent through a pipeline MCP step, and the root and operator paths are unchanged. behavior: "allowed spawns unchanged".
+- 2.1.6 - A spawned caller with unresolved or forged identity is refused. behavior: "spawn caller identity fails closed".
+- 2.1.7 - The spawning reference, agents guide, and sandboxing guide document the parameter, flag, inheritance, lifetime, and authority limits. file: `docs/guides/sandboxing.md`.
 
 ## D1 Batch spawn retirement (depends: 1.2, 2.1)
 `kind: deferred`
@@ -218,10 +245,15 @@ enabled global row (`source: installed`), and its prompt dispatches `merge-worke
 through `dispatch_batch`. #23460, **Plan the merge-orchestrator removal with no
 replacement merge orchestration**, owns planning that removal and names this D1 as
 its downstream dependent; it is the prerequisite, not the owner of D1.1-D1.3. The
-contract forbids a prose blocker for that wait, so this work is deferred. Expansion
-creates its `planning` task under this plan's epic, blocked by #23460 and by the
-removal leaf that #23460's plan expands into, and its spec is written once the
-removal is installed. Do not move merge orchestration to another path.
+contract forbids a prose blocker for that wait, so this work is deferred.
+Expansion creates its `planning` task under this plan's epic with the
+`needs-planning` hold label and `blocked-by` edges to the 1.2 and 2.1 leaves
+only; expansion cannot add edges to tasks outside this plan. At finalization the
+Orchestrator adds `blocked-by` #23460 and, once #23460's plan is expanded, each
+removal implementation task, and verifies those edges. The hold label keeps
+automated dispatch from selecting the task even after its blockers close; it
+stays on until the installed removal is evidenced, and only then is the spec
+written. Do not move merge orchestration to another path.
 
 Expected scope for that planning pass, carried from the draft:
 
@@ -337,3 +369,15 @@ remain unchanged.
   - Also: #23003 note refreshed to its corrected spec; D1 names #23460 as its
     blocking prerequisite and keeps its own placeholder `task_ref`, as the
     Orchestrator confirmed.
+- 2026-10-05, Lane 7 plan writer 2 (gobby#15413), #23444 fold of #23463,
+  **Pipeline MCP steps bypass limit-spawnable-agents**: the Orchestrator ruled
+  that 2.1 absorbs that fix, avoiding a prerequisite that the contract would have
+  forced into a deferral, and will close #23463 as a duplicate once expansion
+  creates the 2.1 leaf. 2.1's caller guard now lives in `_spawn_guards.py`, runs
+  on every MCP `spawn_agent` call (and each `dispatch_batch` suggestion through
+  it), and enforces `spawnable_agents` through `spawn_target_allowed` as well as
+  the 1.2 network predicate. Agent-token identity comes first, and a sessionless
+  daemon-internal caller keeps plain spawns. The HTTP route drops its guard call
+  because the capability matrix already limits it to operators. Acceptance
+  2.1.4-2.1.6 carry #23463's criteria; documentation moved to 2.1.7. This is
+  the fourth Orchestrator ruling for Josh's review.
