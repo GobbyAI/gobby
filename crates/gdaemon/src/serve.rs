@@ -228,6 +228,9 @@ pub async fn serve(
     tls: Option<Arc<ServerConfig>>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
+    // Stage 1 has no timer-driven Rust jobs yet. Strangler ports register here.
+    let mut heartbeat = crate::heartbeat::HeartbeatHost::new();
+    heartbeat.start()?;
     let acceptor = tls.map(TlsAcceptor::from);
     let mut accept_loops = JoinSet::new();
     for PublicListener { listener, backend } in listeners {
@@ -239,12 +242,18 @@ pub async fn serve(
             acceptor.clone(),
         ));
     }
-    tokio::select! {
+    let result = tokio::select! {
         () = shutdown => Ok(()),
         Some(finished) = accept_loops.join_next() => {
-            finished.context("front door accept loop panicked")?
+            match finished {
+                Ok(result) => result,
+                Err(error) => Err(error).context("front door accept loop panicked"),
+            }
         }
-    }
+    };
+    accept_loops.abort_all();
+    heartbeat.stop().await?;
+    result
 }
 
 /// Accept connections forever. The loop itself never reads: the first-byte
