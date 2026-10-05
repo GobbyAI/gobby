@@ -15,10 +15,12 @@ cites it and never edits it. Its counts are historical. The source trace was
 taken at `cf88559ef2`.
 
 The plan does three things:
-- It stops new drift. gcode becomes the only owner of vector-sync completion,
-  through a compare-and-set that mirrors the graph one (1.1, 1.2). A re-parse
-  of an existing content version marks its vectors pending when the stored
-  symbols change (1.3).
+- It stops new drift on both projection flags. gcode becomes the only owner
+  of vector-sync completion, through a compare-and-set that mirrors the graph
+  one (1.1). The graph CLI honors its existing compare-and-set (1.4), and the
+  Python worker stops marking either flag after a native call (1.2). A
+  re-parse of an existing content version marks a projection pending when
+  that projection's stored input changes (1.3).
 - `gcode vector reconcile` replaces `gcode vector cleanup-orphans`. A
   read-only dry-run inventories stale points and missing vectors for one
   project collection (2.1). `--apply`, run under the maintenance lease,
@@ -29,7 +31,7 @@ The plan does three things:
   under the project's current indexing config (3.1, 3.2).
 
 Ownership:
-- The `gobby-code` crate implements 1.1, 1.3, P2 and P3.
+- The `gobby-code` crate implements 1.1, 1.3, 1.4, P2 and P3.
 - The Python daemon implements 1.2.
 - 4.1 is documentation.
 - The Orchestrator routes the leaves to developer seats.
@@ -63,15 +65,30 @@ Out of scope:
    on every version that has `vectors_synced = true` and at least one symbol
    point missing, whichever machine references it, including none. Versions
    with the flag already false are pending: they are reported and left alone.
-   The daemon sync worker re-embeds; reconcile never embeds.
-4. **Completion ownership.** The gcode completion compare-and-set owns
-   `vectors_synced = true`. The Python worker stops marking vectors synced
-   (`sync_worker.py:583`). Its attempt mark (`sync_worker.py:497`) stays,
-   because it only clears the flag; the native command marks again and
-   captures the attempt it completes.
-5. **Re-parse reset.** Writing facts for an existing version compares the
-   stored vector-text map before and after the write. When they differ, it
-   resets that version's vector flag in the same transaction.
+   Reconcile never embeds. The reset makes every affected version repairable
+   through existing scheduling. The daemon worker selects only versions its
+   own machine's file states reference (`_storage/files.py:198-209`):
+   - a version this machine references drains through the local worker;
+   - a version only another machine references drains through that
+     machine's worker;
+   - a retained version that no machine references stays pending until a
+     machine adopts it, and adoption keeps the false flag.
+4. **Completion ownership.** The gcode completion compare-and-sets own
+   `vectors_synced = true` and `graph_synced = true` after a projection
+   write. The Python worker stops marking either flag after a native call
+   (`sync_worker.py:583` and `:677`). Its attempt marks (`:497` and `:599`)
+   stay, because they only clear the flag; the native command marks again
+   and captures the attempt it completes.
+5. **Re-parse reset.** Writing facts for an existing version reads that
+   version's stored facts before and after the write, and resets each flag
+   in the same transaction when its own projection input changed:
+   - vectors: the `BTreeMap<symbol id, vector_text_for_symbol>`;
+   - graph: the imports, calls and inheritance rows, and per symbol the
+     fields the graph writes (`id`, `name`, `qualified_name`, `kind`,
+     `language`, `line_start`, `line_end`; `mutation.rs:745-757`).
+
+   A full `Symbol` comparison is never used, because `updated_at` changes on
+   every upsert.
 6. **`vector cleanup-orphans` is removed.** Its path-level authority deletes
    the points of retained versions, and its payload-filtered scroll misses
    legacy points that carry no payload. `graph cleanup-orphans` is unchanged.
@@ -92,12 +109,22 @@ Out of scope:
     treated as gitignore-excluded.
 11. **Automation.** An hourly automated apply is deferred (D1) until the live
     procedure has run once.
-12. **Routed outside this plan** (to the Orchestrator):
-    - The graph CLI's `sync_file` (`commands/graph/lifecycle.rs`) ignores the
-      `mark_graph_synced` result and returns Synced. The Python worker then
-      marks `current.id` graph-synced, which is the same race as S2.
-    - `graph_synced` is not reset when a same-hash re-parse rewrites graph
-      facts.
+12. **Graph flag parity.** S6 and S7 are the same flag-race class as S1 and
+    S2 on the graph side. Fixing only the vector flag would leave the class
+    half fixed, so `graph_synced` gets the same rules: the graph CLI reports
+    a failed compare-and-set as a superseded skip (1.4), the worker leaves
+    completion to gcode (1.2), and a re-parse resets the flag when the graph
+    input changes (1.3). `graph rebuild` keeps ignoring the result. It runs
+    under the exclusive project lock (`lifecycle.rs:446`), and a failed
+    compare-and-set there leaves the row pending, which is safe.
+13. **No-graph shortcut.** The worker marks a file graph-synced without a
+    native call when `_file_needs_graph_sync` is false (`sync_worker.py:587-594`).
+    The shortcut stays: removing it would make `sync_no_fact_file` write
+    `CodeFile` nodes for files the daemon never projects today. Its mark
+    becomes a compare-and-set on the snapshot fields the decision used,
+    `symbol_count` and `language`. A same-hash re-parse rewrites both
+    (`index/api.rs:274-279`), so a concurrent re-parse that adds symbols
+    leaves the row pending for the next scan.
 
 ## As-Is Facts
 `kind: framing`
@@ -128,8 +155,10 @@ Source mechanisms at `cf88559ef2`:
   5. Imports, calls and inheritance.
   6. Chunks.
 
-  A new version is inserted with false and NULL flags. A `--full` re-parse
-  skips adoption (`index/indexer/pipeline.rs:152-167`).
+  A new version is inserted with false and NULL flags. On conflict,
+  `upsert_file` rewrites `language`, `symbol_count`, `byte_size` and the
+  timestamps, and keeps both flags (`index/api.rs:274-279`). A `--full`
+  re-parse skips adoption (`index/indexer/pipeline.rs:152-167`).
 - **Completion marks.** `mark_vector_sync_attempted` and
   `mark_vectors_synced` (`db/queries.rs:235-275`) match on project and path
   through this machine's file state. Neither checks a hash or an attempt.
@@ -145,7 +174,23 @@ Source mechanisms at `cf88559ef2`:
     `mark_vector_sync_attempted(current.id)` (:497), then runs gcode with
     `--allow-missing-indexed-file`, then
     `mark_vectors_synced(current.id, current.content_hash)` (:583).
-  - `_storage/files.py::mark_vectors_synced` is the only Python mark.
+  - `_storage/files.py::mark_vectors_synced` is the only Python vector mark.
+- **Graph completion.**
+  - `projection/sync.rs::sync_graph_file` honors the graph compare-and-set
+    and reports a skip when it fails.
+  - The graph CLI's `sync_file_graph` discards the `mark_graph_synced`
+    result on both of its paths: the no-graph-facts path
+    (`commands/graph/lifecycle.rs:239-245`) and the projection path
+    (`:264-270`). It returns `Synced` or `SkippedNoGraphFacts` either way.
+  - The Python worker marks `current.id` graph-synced after any
+    non-degraded native result (`sync_worker.py:672-681`). It also marks
+    without a native call when `_file_needs_graph_sync` is false
+    (`:587-594`): no symbols, or a language outside `_GRAPH_SYNC_LANGUAGES`.
+  - `_storage/files.py::mark_graph_synced(file_id, content_hash)` matches
+    the version row only and stamps a Python-side attempt time.
+  - `db/queries.rs::dirty_graph_sync_for_file` joins any machine's file
+    state, so it skips versions no state references. Inheritance promotion
+    in `index/indexer/local_imports.rs` is its only production caller.
 - **Locks.** File writers take a shared project key plus an exclusive file
   key. `lease_project_lock(..., IndexLockPolicy::maintenance_try())` takes the
   exclusive project key. Content GC (`content_gc.rs:201`) and retire-files
@@ -219,6 +264,13 @@ Source-proven mechanisms (frequency unmeasured):
 - **S5.** Content GC history protection ignores paths. Any path in history
   with equal content protects a candidate. History also protects paths now
   excluded by config.
+- **S6.** The S2 race on the graph flag. The graph CLI's discarded
+  compare-and-set result reaches the worker as success, and the worker then
+  marks `current.id` graph-synced even when the native command projected a
+  newer version.
+- **S7.** A same-version re-parse that changes imports, calls, inheritance
+  or projected symbol fields keeps `graph_synced = true`, so the graph keeps
+  the old facts.
 
 Hypotheses and the evidence that settles each:
 
@@ -243,7 +295,12 @@ Hypotheses and the evidence that settles each:
   - `vector/code_symbols/embedding.rs` (752, untouched);
   - `cli.rs` (657), `contract.rs` (647), `dispatch.rs` (598);
   - `retire_files.rs` (558), `qdrant.rs` (553);
+  - `commands/graph/lifecycle.rs` (625), `index/indexer/file.rs` (288);
   - `src/gobby/code_index/sync_worker.py` (728).
+
+  `models.rs` (951 lines) is already above that trigger and below the
+  1,000-line ceiling. 1.3 changes only three `derive` lines there, with no
+  net line change.
 
   New logic goes in new modules: `commands/vector/reconcile.rs`,
   `commands/receipt.rs` and `commands/status/content_gc/history.rs`.
@@ -264,8 +321,9 @@ Hypotheses and the evidence that settles each:
 ## P1: Stop New Drift
 `kind: framing`
 
-**Goal:** completion is a compare-and-set owned by gcode, and a re-parse can
-no longer leave new symbol IDs unembedded behind a true flag.
+**Goal:** completion of both projection flags is a compare-and-set owned by
+gcode, and a re-parse can no longer leave changed projection input behind a
+true flag.
 
 ### 1.1 Vector completion compare-and-set [category: code]
 `kind: deliverable`
@@ -282,7 +340,6 @@ Targets:
 - `crates/gcode/src/vector/code_symbols/tests.rs::*` — scope-reason: `accept_with_timeout` and `read_http_request` become `pub(crate)` for the projection and reconcile tests
 
 Consumers unchanged:
-- `crates/gcode/src/commands/graph/lifecycle.rs` — no-edit-reason: the graph-side analog is routed to the Orchestrator (Decision Record 12).
 - `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: it already passes `--allow-missing-indexed-file`, and the skip payload keys are unchanged.
 - `crates/gcode/src/vector/code_symbols/lifecycle.rs` — no-edit-reason: upsert batching is unchanged.
 
@@ -339,16 +396,16 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
   reports a skip and the new current version stays pending. test:
   `crates/gcode/src/projection/sync/tests.rs::vector_sync_file_skips_when_state_moves_during_upsert`.
 
-### 1.2 Sync worker leaves vector completion to gcode [category: code] (depends: 1.1)
+### 1.2 Sync worker leaves projection completion to gcode [category: code] (depends: 1.1, 1.4)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/code_index/sync_worker.py::_sync_file`
 - `src/gobby/code_index/_storage/files.py::CodeIndexFileStorageMixin`
-- `tests/code_index/test_sync_worker.py::*` — scope-reason: drop `mark_vectors_synced` assertions and fakes, add the two completion tests
-- `tests/code_index/test_sync_worker_breaker.py::*` — scope-reason: drop `mark_vectors_synced` fakes and assertions
+- `tests/code_index/test_sync_worker.py::*` — scope-reason: drop `mark_vectors_synced` assertions and fakes, move `mark_graph_synced` assertions to the shortcut-only snapshot call, add the four completion tests
+- `tests/code_index/test_sync_worker_breaker.py::*` — scope-reason: drop `mark_vectors_synced` fakes and assertions; graph-mark counts drop to shortcut calls only
 - `tests/test_runner_code_index_shutdown.py::*` — scope-reason: its storage fake defines `mark_vectors_synced`
-- `tests/code_index/test_code_index_storage.py::test_stale_content_hash_rejects_sync_marks_and_summary`
+- `tests/code_index/test_code_index_storage.py::*` — scope-reason: the stale-hash test at 1689 calls the new `mark_graph_synced(file)` signature; add the shortcut snapshot test
 
 Consumers unchanged:
 - `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: `vector_sync_file` already returns the native payload; 1.1 owns the native skip payload.
@@ -356,15 +413,24 @@ Consumers unchanged:
 
 **Research context:** `_sync_file` (`sync_worker.py:466-689`) treats a
 native result that passes `_require_projection_success` as terminal, then
-marks `current.id` synced at :583. `_storage/files.py:211` is the only
-definition, and the test references sit in the four test files above.
+marks `current.id` vector-synced at :583 and graph-synced at :677. See As-Is
+Facts (graph completion) for the no-graph shortcut at :587-594.
+`_storage/files.py:211` (`mark_vectors_synced`) and `:234`
+(`mark_graph_synced`) are the only definitions, and the test references sit
+in the four test files above.
 
 Implementation:
-- Delete the `storage.mark_vectors_synced` call at :583. Keep breaker
-  bookkeeping and `did_work = True`.
+- Delete the `storage.mark_vectors_synced` call at :583 and the
+  `storage.mark_graph_synced` call at :677. Keep breaker bookkeeping and
+  `did_work = True`.
 - Delete `CodeIndexFileStorageMixin.mark_vectors_synced` and every test
   reference and fake.
-- Keep `mark_vector_sync_attempted` (:497) and `requeue_vector_sync`.
+- `CodeIndexFileStorageMixin.mark_graph_synced(file: IndexedFile) -> bool`
+  serves only the shortcut (Decision Record 13). It runs
+  `UPDATE code_indexed_files SET graph_synced = TRUE, graph_sync_attempted_at = %s WHERE id = %s AND content_hash = %s AND symbol_count = %s AND language = %s`
+  with the snapshot's values. The shortcut at :592 passes `current`.
+- Keep `mark_vector_sync_attempted` (:497), `mark_graph_sync_attempted`
+  (:599), `requeue_vector_sync` and `requeue_graph_sync`.
 
 Planned verification:
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_sync_worker.py tests/code_index/test_sync_worker_breaker.py tests/test_runner_code_index_shutdown.py tests/code_index/test_code_index_storage.py -q`,
@@ -379,15 +445,28 @@ then `uv run ruff check src/ && uv run mypy src/`.
 - 1.2.2 - A native `{"status": "skipped", "reason": "sync_superseded"}`
   result raises no error and leaves the file pending for the next scan.
   test: `tests/code_index/test_sync_worker.py::test_superseded_vector_skip_keeps_file_pending`.
+- 1.2.3 - A successful native graph result leaves `graph_synced` as gcode
+  wrote it. The worker calls no graph mark after a native call. test:
+  `tests/code_index/test_sync_worker.py::test_graph_sync_leaves_completion_to_native_cas`.
+- 1.2.4 - A native graph `sync_superseded` skip raises no error and leaves
+  the file pending. test:
+  `tests/code_index/test_sync_worker.py::test_superseded_graph_skip_keeps_file_pending`.
+- 1.2.5 - The shortcut mark returns false and leaves `graph_synced = false`
+  when the row's `symbol_count` or `language` no longer matches the
+  snapshot, and marks the row when both match. test:
+  `tests/code_index/test_code_index_storage.py::test_no_graph_shortcut_mark_rejects_changed_snapshot`.
 
-### 1.3 Re-parse vector reset [category: code] (depends: 1.1)
+### 1.3 Re-parse projection reset [category: code] (depends: 1.1)
 `kind: deliverable`
 
 Targets:
 - `crates/gcode/src/index/indexer/file.rs::write_parsed_file_facts`
 - `crates/gcode/src/index/indexer/sink.rs::CodeFactSink`
 - `crates/gcode/src/index/indexer/sink.rs::PostgresCodeFactSink`
-- `crates/gcode/src/db/queries.rs::read_symbols_for_file`
+- `crates/gcode/src/db/queries.rs::read_graph_file_facts`
+- `crates/gcode/src/models.rs::ImportRelation`
+- `crates/gcode/src/models.rs::CallRelation`
+- `crates/gcode/src/models.rs::InheritanceRelation`
 - `crates/gcode/src/vector/code_symbols.rs::*` — scope-reason: re-export `vector_text_for_symbol` as `pub(crate)` outside `cfg(test)`
 - `crates/gcode/src/db/queries_cas_tests.rs::*` — scope-reason: add the version-dirty query test
 - `crates/gcode/src/index/indexer/tests/facts.rs::*` — scope-reason: `RecordingCodeFactSink` implements the two new trait methods; add the reset unit tests
@@ -397,60 +476,142 @@ Targets:
 Consumers unchanged:
 - `crates/gcode/src/index/indexer/pipeline.rs` — no-edit-reason: adoption and `--full` routing are unchanged.
 - `crates/gcode/src/vector/code_symbols/embedding.rs` — no-edit-reason: `vector_text_for_symbol` is already `pub`.
+- `crates/gcode/src/index/indexer/local_imports.rs` — no-edit-reason: inheritance promotion keeps `dirty_graph_sync_for_file` and its file-state join.
+- `crates/gcode/src/graph/code_graph/write/mutation.rs` — no-edit-reason: the symbol fields the graph writes define the graph comparison key and are read only.
 
-**Research context:** see As-Is Facts (fact write order). `read_symbols_for_file`
-(`db/queries.rs:390`, private) reads one version's symbols over any
-`GenericClient`, and `db/mod.rs` re-exports `queries::*`. Vector text
-(`embedding.rs:401-432`) covers name, qualified name, kind, language, path,
-range, signature, docstring and summary. Upserts preserve stored summaries.
+**Research context:** see As-Is Facts (fact write order, graph completion).
+`read_graph_file_facts` (`db/queries.rs:82-110`) resolves this machine's
+current hash, then calls the private version-keyed readers
+`read_imports_for_file`, `read_symbols_for_file`, `read_calls_for_file` and
+`read_inheritance_for_file`. Each reader has an `ORDER BY`. `db/mod.rs`
+re-exports `queries::*`. Vector text (`embedding.rs:401-432`) covers name,
+qualified name, kind, language, path, range, signature, docstring and
+summary. Upserts preserve stored summaries. `ImportRelation`,
+`CallRelation` and `InheritanceRelation` derive only `Debug, Clone`; their
+enum fields `CallTargetKind` and `HeritageKind` already derive
+`PartialEq, Eq`.
 
 Implementation:
-- `read_symbols_for_file` becomes `pub(crate)`.
-- New `pub(crate) fn dirty_vector_sync_for_version(conn, project_id, file_path, content_hash) -> anyhow::Result<bool>`
-  runs `UPDATE code_indexed_files SET vectors_synced = false, vector_sync_attempted_at = NULL`
-  on that version row, with no file-state join.
-- `CodeFactSink` gains `read_version_symbols(project_id, file_path, content_hash) -> Vec<Symbol>`
-  and `dirty_vector_sync_for_version(project_id, file_path, content_hash)`.
+- New `pub(crate) fn read_version_graph_facts(conn, project_id, file_path, content_hash) -> anyhow::Result<GraphFileFacts>`
+  holds the four reader calls. `read_graph_file_facts` resolves the hash
+  and delegates to it. The four readers stay private.
+- `ImportRelation`, `CallRelation` and `InheritanceRelation` derive
+  `PartialEq, Eq` on their existing `derive` lines.
+- New `pub(crate) fn dirty_version_sync(conn, project_id, file_path, content_hash, vectors: bool, graph: bool) -> anyhow::Result<bool>`
+  updates that version row with no file-state join. For each flag passed
+  true, it sets the flag false and its attempt NULL. It leaves the other
+  flag's columns as they are.
+- `CodeFactSink` gains `read_version_facts(project_id, file_path, content_hash) -> GraphFileFacts`
+  and `dirty_version_sync(project_id, file_path, content_hash, vectors, graph)`.
   `PostgresCodeFactSink` delegates both to `db`.
 - `write_parsed_file_facts` reads `before` first.
-  - When `before` is empty, it dirties only if the parse produced symbols.
-  - Otherwise it re-reads the symbols after the chunk write and compares
-    `BTreeMap<id, vector_text_for_symbol>` of before and after. It dirties
-    when they differ.
-  - The reset joins the sink's transaction. `FileIndexCounts` is unchanged.
+  - When all four `before` lists are empty, it skips the re-read. The
+    vector flag is dirtied if the parse produced symbols. The graph flag is
+    dirtied if the parse produced any symbol, import, call or inheritance
+    row.
+  - Otherwise it re-reads `after` once the fact writes finish, and compares:
+    - vectors: `BTreeMap<id, vector_text_for_symbol>` of the definitions;
+    - graph: the imports, calls and inheritance lists, and the per-symbol
+      tuple `(id, name, qualified_name, kind, language, line_start, line_end)`.
+  - It calls `dirty_version_sync` once with the flags whose input differs.
+    The reset joins the sink's transaction. `FileIndexCounts` is unchanged.
+  - Cost: four indexed reads per indexed file, plus four more when the
+    version already has facts. An `ORDER BY` tie can reorder rows and
+    dirty the graph flag spuriously. That over-reset is safe and costs one
+    graph re-sync.
 - In `gcode-development-guide.md` item 5, a re-parse of an existing version
-  keeps its sync flags unless the stored vector text changed. When it did,
-  the vector flag resets to pending.
+  keeps its sync flags unless that projection's stored input changed. When
+  it did, that flag resets to pending.
 
 Planned verification:
-`GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'test(facts) | test(serial_db) | test(dirty_vector_sync)'`,
+`GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'test(facts) | test(serial_db) | test(dirty_version_sync)'`,
 then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
 
 **Acceptance:**
 
-- 1.3.1 - Re-writing a version whose symbol set changes dirties its vector
-  flag once. test:
-  `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed_vector_text_dirties_version`.
-- 1.3.2 - Re-writing a version with identical symbols leaves the flag
-  alone. test:
-  `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_identical_symbols_keeps_vector_flag`.
-- 1.3.3 - An empty stored set with an empty parse does not dirty. test:
-  `crates/gcode/src/index/indexer/tests/facts.rs::empty_reparse_of_empty_version_keeps_vector_flag`.
-- 1.3.4 - A non-empty stored set with an empty parse dirties. test:
-  `crates/gcode/src/index/indexer/tests/facts.rs::reparse_that_drops_all_symbols_dirties_version`.
-- 1.3.5 - A `--full` re-index that changes symbol IDs of a synced version
-  leaves that version `vectors_synced = false` with a NULL attempt. test:
-  `crates/gcode/src/index/indexer/tests/serial_db.rs::full_reindex_with_changed_symbol_ids_marks_vectors_pending`.
-- 1.3.6 - `dirty_vector_sync_for_version` changes only the named version,
-  even when no file state references it. test:
-  `crates/gcode/src/db/queries_cas_tests.rs::dirty_vector_sync_for_version_touches_only_that_version`.
+- 1.3.1 - Re-writing a version whose symbol set changes dirties both
+  flags in one call. test:
+  `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed_symbol_set_dirties_both_flags`.
+- 1.3.2 - Re-writing a version with identical stored facts and identical
+  vector text leaves both flags alone. test:
+  `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_identical_facts_keeps_both_flags`.
+- 1.3.3 - An empty stored version with an empty parse does not dirty. test:
+  `crates/gcode/src/index/indexer/tests/facts.rs::empty_reparse_of_empty_version_keeps_flags`.
+- 1.3.4 - A non-empty stored version with an empty parse dirties both
+  flags. test:
+  `crates/gcode/src/index/indexer/tests/facts.rs::reparse_that_drops_all_facts_dirties_both_flags`.
+- 1.3.5 - A `--full` re-index that changes symbol IDs of a version synced
+  on both flags leaves it `vectors_synced = false` and
+  `graph_synced = false`, each with a NULL attempt. test:
+  `crates/gcode/src/index/indexer/tests/serial_db.rs::full_reindex_with_changed_symbol_ids_marks_projections_pending`.
+- 1.3.6 - `dirty_version_sync` changes only the named version and only the
+  named flags, even when no file state references the version. test:
+  `crates/gcode/src/db/queries_cas_tests.rs::dirty_version_sync_touches_only_named_flags_and_version`.
+- 1.3.7 - A re-parse that keeps the symbol ID set but changes a stored
+  docstring dirties only the vector flag, with a NULL vector attempt. test:
+  `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed_docstring_dirties_vectors_only`.
+- 1.3.8 - A re-parse that keeps the symbols but changes a call or an import
+  dirties only the graph flag, with a NULL graph attempt. test:
+  `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed_calls_dirties_graph_only`.
+
+### 1.4 Graph CLI honors the completion compare-and-set [category: code]
+`kind: deliverable`
+
+Targets:
+- `crates/gcode/src/commands/graph/lifecycle.rs::GraphFileSyncOutcome`
+- `crates/gcode/src/commands/graph/lifecycle.rs::sync_file_graph`
+- `crates/gcode/src/commands/graph/lifecycle.rs::sync_file`
+- `crates/gcode/src/commands/graph/tests.rs::*` — scope-reason: add the superseded payload test and a `serial_db` module with the completion test
+
+Consumers unchanged:
+- `src/gobby/code_index/gcode_gateway.py` — no-edit-reason: `graph_sync_file` returns the native payload and keys on no skip reason.
+
+**Research context:** see As-Is Facts (graph completion).
+`projection/sync.rs::sync_graph_file` already honors the compare-and-set
+(`:625-633`), and 1.1 does not change its graph path. `rebuild_project_graph`
+also discards the result (`lifecycle.rs:346` and `:364`) and stays as it
+is (Decision Record 12). `sync_file_graph` needs FalkorDB
+(`code_graph::require_graph_reads`, `code_graph::sync_file_graph`), so the
+completion step becomes a function that PostgreSQL alone can test. The
+skip payload shape follows `skipped_no_graph_facts_payload`, and
+`no_graph_facts_skip_payload_is_terminal_success_shape` is the test
+pattern.
+
+Implementation:
+- `GraphFileSyncOutcome` gains `SkippedSuperseded`.
+- New `fn complete_graph_sync(conn, project_id, file_path, attempt: &GraphSyncAttempt, outcome: GraphFileSyncOutcome) -> anyhow::Result<GraphFileSyncOutcome>`
+  calls `mark_graph_synced` with the attempt. It returns `outcome` on
+  success and `SkippedSuperseded` on failure. Both completion sites in
+  `sync_file_graph` (no graph facts and projected) call it.
+- New `skipped_superseded_payload(ctx, file_path)`: `status: "skipped"`,
+  `reason: "sync_superseded"`, `synced_files: 0`, `skipped_files: 1`,
+  `degraded: false`, `error: null`, and summary
+  `skipped graph sync for <path>: superseded by a newer index`.
+- `sync_file` prints it with the file-lock fields and exits 0. Text
+  format prints a one-line skip like the other two skips.
+
+Planned verification:
+`GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'test(commands::graph)'`,
+then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
+
+**Acceptance:**
+
+- 1.4.1 - The superseded skip payload is a terminal success shape with
+  reason `sync_superseded` and no degradation. test:
+  `crates/gcode/src/commands/graph/tests.rs::superseded_skip_payload_is_terminal_success_shape`.
+- 1.4.2 - After this machine's state moves to another hash, completing
+  the old attempt returns `SkippedSuperseded`, and the new current row is
+  `graph_synced = false` with a NULL attempt. Completing a current attempt
+  returns the given outcome and marks the row. test:
+  `crates/gcode/src/commands/graph/tests.rs::graph_completion_reports_superseded_after_state_moves`.
 
 ## P2: Vector Reconcile
 `kind: framing`
 
 **Goal:** one command proves the vector projection matches PostgreSQL for a
-project. It deletes only what PostgreSQL disowns and returns missing vectors
-to the sync worker, under the lease and with a receipt.
+project. Under the lease and with a receipt, it deletes only what PostgreSQL
+disowns. It also makes every version with missing vectors repairable by the
+existing sync scheduling (Decision Record 3).
 
 ### 2.1 `gcode vector reconcile` dry-run [category: code] (depends: 1.3)
 `kind: deliverable`
@@ -486,7 +647,6 @@ Targets:
 Consumers unchanged:
 - `tests/skills/reference_library_helpers.py` — no-edit-reason: it reads the contract, enums and audit generically.
 - `tests/skills/test_reference_library.py` — no-edit-reason: it asserts the binding these targets keep consistent.
-- `crates/gcode/src/commands/graph/lifecycle.rs` — no-edit-reason: `graph cleanup-orphans` stays.
 - `tests/ai/test_tool_chat_tools.py` — no-edit-reason: its `cleanup-orphans` entry is the graph command.
 - `crates/CHANGELOG.md` — no-edit-reason: historical entries.
 - `crates/gcode/tests/fixtures/retired-code-index-skill.md` — no-edit-reason: a retired fixture.
@@ -532,7 +692,9 @@ Implementation:
   points:
   - `synced_missing_current`: flag true and referenced by a state.
   - `synced_missing_retained`: flag true and referenced by none.
-  - `pending`: flag false.
+  - `pending_current`: flag false and referenced by a state.
+  - `pending_retained`: flag false and referenced by none. These wait for
+    adoption (Decision Record 3).
 - **Digest.** `inventory_digest` is `sha256:` plus the hex SHA-256 of the
   sorted orphan IDs and the sorted synced-missing version IDs. The two
   groups are each newline-terminated and separated by one `--` line.
@@ -567,8 +729,8 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
 - 2.1.1 - Only point IDs absent from PostgreSQL are orphans, and each lands
   in its class (four seeded points, one per class, plus live points). test:
   `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::dry_run_classifies_only_ids_absent_from_postgres`.
-- 2.1.2 - Synced versions missing points are split by state reference;
-  versions with the flag false report as pending. test:
+- 2.1.2 - Versions missing points are split by flag and by state
+  reference into the four missing classes. test:
   `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::dry_run_splits_missing_vectors_by_flag_and_reference`.
 - 2.1.3 - The digest does not depend on scroll order and changes when any
   orphan or synced-missing version changes. test:
@@ -645,19 +807,26 @@ Implementation:
      is busy; rerun the dry-run" and makes no mutation and no receipt.
   3. Rebuild the inventory under the lease. A digest that differs from
      `--expect-digest` refuses with both digests and makes no mutation.
-  4. In one transaction, run `UPDATE code_indexed_files SET vectors_synced = false, vector_sync_attempted_at = NULL WHERE id = ANY($1) AND vectors_synced`
-     for the synced-missing version IDs.
-  5. Write the receipt: digest, project, collection, `version_ids_reset`,
-     orphan IDs per class, `deleted: []`, `complete: false`.
-  6. Delete orphan IDs with `delete_symbol_vectors` in batches of 256. Append
+  4. Check any existing receipt with `read_existing`. One for the same
+     project, collection and digest is overwritten by this run. One for any
+     other identity, or an unreadable file, is refused with no mutation.
+  5. Write the initial receipt: digest, project, collection, the planned
+     `version_ids` and orphan IDs per class, `versions_reset: []`,
+     `deleted: []`, `complete: false`. Planned and confirmed lists stay
+     separate. A write failure exits nonzero with no mutation.
+  6. In one transaction, run `UPDATE code_indexed_files SET vectors_synced = false, vector_sync_attempted_at = NULL WHERE id = ANY($1) AND vectors_synced RETURNING id`
+     for the synced-missing version IDs. Record the returned IDs as
+     `versions_reset` and rewrite the receipt.
+  7. Delete orphan IDs with `delete_symbol_vectors` in batches of 256. Append
      each batch to `deleted` and rewrite the receipt after it.
-  7. On success, set `complete: true` and exit 0.
-- **Failure.** A Qdrant error stops the batch loop, leaves `complete: false`,
-  prints the error with the receipt path, and exits nonzero. A rerun starts
-  over from the dry-run.
-- **Existing receipt.** A receipt already present for the same project,
-  collection and digest is overwritten by the rerun. A receipt for a
-  different digest is refused.
+  8. On success, set `complete: true` and exit 0.
+- **Failure.**
+  - A Qdrant error stops the batch loop, leaves `complete: false`, prints
+    the error with the receipt path, and exits nonzero.
+  - A receipt rewrite failure after step 6 stops before the next mutation.
+    It prints the confirmed `versions_reset` count and `deleted` IDs on
+    stderr with the receipt path, and exits nonzero.
+  - A rerun starts over from the dry-run.
 - **Output.** The JSON keys add `mode: "apply"`, `receipt`, `deleted_points`,
   `versions_reset` and `complete`. The `gcode-cli.md` version-13 note
   extends to the apply flags. `recovery.md` gives the apply command and
@@ -696,6 +865,17 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
 - 2.2.6 - The flag reset leaves pending versions and other projects'
   versions unchanged. test:
   `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_resets_only_synced_missing_versions`.
+- 2.2.7 - When the initial receipt cannot be written (a private receipt
+  directory with mode 0500), apply exits nonzero, changes no flag and
+  sends no Qdrant delete. test:
+  `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_makes_no_mutation_when_initial_receipt_write_fails`.
+- 2.2.8 - An existing receipt for a different digest is refused before any
+  flag reset or Qdrant delete. test:
+  `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_refuses_foreign_receipt_before_mutation`.
+- 2.2.9 - A retained version with no file state that apply reset stays
+  `vectors_synced = false` when this machine later adopts it, so the
+  worker's pending query selects it. test:
+  `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_reset_survives_adoption_of_retained_version`.
 
 ## P3: Path-Aware Content Retention
 `kind: framing`
@@ -774,6 +954,7 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
 
 Targets:
 - `crates/gcode/src/index/walker/classification.rs::passes_path_filters`
+- `crates/gcode/src/index/walker/classification.rs::explicit_path_visible`
 - `crates/gcode/src/index/walker.rs::*` — scope-reason: re-export `HistoryPathEligibility` as `pub(crate)`
 - `crates/gcode/src/index/indexer/util.rs::effective_excludes`
 - `crates/gcode/src/index/indexer.rs::*` — scope-reason: re-export `effective_excludes` as `pub(crate)`
@@ -802,10 +983,15 @@ Implementation:
   - `passes_path_filters` holds;
   - the path is allowlisted or not `is_hidden_path`;
   - if the file exists now and `respect_gitignore` is set,
-    `explicit_path_visible` holds.
+    `explicit_path_visible` holds with no size limit.
 
   A missing path is never gitignore-excluded. Content checks (generated
   bundle, size) are skipped.
+- `explicit_path_visible` sets `max_filesize = Some(MAX_FILE_SIZE)`
+  (`classification.rs:105-107`), so a large current file would fail the
+  visibility walk. It gains a `max_filesize: Option<u64>` parameter. The
+  classifier caller (`:57`) passes `Some(MAX_FILE_SIZE)`, which keeps
+  indexing unchanged. `HistoryPathEligibility` passes `None`.
 - `effective_excludes` becomes `pub(crate)`, re-exported from `indexer`.
 - `discover_content_gc(ctx: &Context, retention_days)` takes the project from
   `ctx.project_id`. An ineligible candidate is collected without a history
@@ -834,6 +1020,11 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
 - 3.2.4 - An existing gitignored file is ineligible when `respect_gitignore`
   is set, and eligible when it is not. test:
   `crates/gcode/src/index/walker/tests/classification.rs::history_eligibility_respects_gitignore_for_existing_files`.
+- 3.2.5 - An existing file that is not ignored and is larger than
+  `MAX_FILE_SIZE` stays eligible with `respect_gitignore` set, so history
+  at that path still protects an old candidate. Classification still
+  excludes that file from indexing. test:
+  `crates/gcode/src/index/walker/tests/classification.rs::history_eligibility_ignores_file_size`.
 
 ## P4: Documentation
 `kind: framing`
@@ -861,6 +1052,9 @@ Implementation:
 - Each `vector cleanup-orphans` mention becomes `vector reconcile`: a
   read-only inventory by default, and `--apply --expect-digest --receipt`
   under the maintenance lease through the reviewed procedure.
+- The apply text says the flag reset makes versions repairable. A version
+  drains through the worker of a machine whose file state references it,
+  and a retained version stays pending until it is adopted.
 - Remove the claim that `gcode prune` composes projection cleanup.
 - The prune paragraph says history protects a version only at its own path,
   and only while the path passes the current excludes, hidden and gitignore
@@ -948,9 +1142,13 @@ drop is part of it.
    step 1.
 4. **Verify.** Run a dry-run and confirm zero orphans and zero synced-missing
    versions, except points recreated by a detached writer, which are listed
-   and handled by the next pass. Once the sync worker drains, `pending`
-   returns to its pre-apply level. Send the receipt path and the
-   verification output to the Orchestrator.
+   and handled by the next pass. The reset versions now report as pending:
+   - `pending_current` falls as the workers of the referencing machines
+     drain. Recheck it after this machine's worker drains, and report any
+     remainder with its version IDs.
+   - `pending_retained` stays until adoption and is not a failure.
+
+   Send the receipt path and the verification output to the Orchestrator.
 
 ## Rollout
 `kind: framing`
@@ -959,17 +1157,16 @@ drop is part of it.
    live only after a rebuild and promotion through `promote_workspace_binary_set`.
    The 1.2 Python change becomes live only after a daemon restart, which
    happens only with the Orchestrator's global announcement.
-2. 1.1 and 1.2 are safe in either activation order:
-   - With the old gcode and the new worker, the old native command still
-     marks completion.
-   - With the new gcode and the old worker, the S2 race persists until the
-     restart, and nothing breaks.
+2. 1.1, 1.4 and 1.2 are safe in either activation order:
+   - With the old gcode and the new worker, the old native commands still
+     mark completion. A graph completion the old CLI loses leaves the row
+     pending, because its compare-and-set dirties the current row.
+   - With the new gcode and the old worker, the S2 and S6 races persist
+     until the restart, and nothing breaks.
 3. Run Live Maintenance Procedure step 0 before promoting the gcode that
    carries P3. P3 changes what the hourly prune collects.
 4. Run the Live Maintenance Procedure after P2 is promoted. D1 waits for its
    receipt.
-5. Route the graph-side analog (Decision Record 12) to the Orchestrator when
-   the plan is sent for approval.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -981,6 +1178,20 @@ drop is part of it.
   - The dry-run evidence is JSON on stdout.
   - The completion fix is split into the Rust compare-and-set (1.1) and the
     Python worker change (1.2).
+- 2026-10-05 15:35 CDT: Enhancer pass applied. plan-enhancer-taskless-old
+  ran once (run b54d93ac) on `05371c4296`. The Orchestrator gobby#14972
+  accepted all four suggestions and folded the two graph routing items into
+  this plan:
+  - E1: 2.2 checks an existing receipt and writes the initial receipt
+    before any mutation, and defines rewrite failure (2.2.7, 2.2.8).
+  - E2: history eligibility drops the visibility walk's size limit (3.2.5).
+  - E3: Decision Record 3, the P2 goal, the live verify step and 4.1 state
+    repair liveness. Pending splits into `pending_current` and
+    `pending_retained` (2.2.9).
+  - E4: same-ID text-change tests (1.3.7).
+  - Graph parity: S6 and S7 in As-Is Facts, Decision Records 12 and 13,
+    new leaf 1.4, 1.2 covers both Python marks, and 1.3 resets both flags
+    (1.3.8).
 
 ## V2: Verification
 `kind: verification`
@@ -990,7 +1201,7 @@ leaf lands:
 
 ```bash
 cargo nextest run -p gobby-code
-GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'test(serial_db) | test(mark_vectors_synced) | test(dirty_vector_sync) | test(history) | test(reconcile)'
+GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test cargo nextest run -p gobby-code -E 'test(serial_db) | test(mark_vectors_synced) | test(dirty_version_sync) | test(commands::graph) | test(history) | test(reconcile)'
 cargo clippy -p gobby-code && cargo fmt -p gobby-code -- --check
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_sync_worker.py tests/code_index/test_sync_worker_breaker.py tests/test_runner_code_index_shutdown.py tests/code_index/test_code_index_storage.py tests/skills/test_reference_library.py -q
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
