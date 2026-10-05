@@ -107,8 +107,8 @@ Rulings of record, verbatim:
    excluded, because a stacked lane branch lands them together. An overlap is
    a non-empty intersection of changed paths, each side measured from its
    merge base with the tip.
-7. **Guard and direct-commit allowance (pending Josh, Orchestrator 12:09
-   CT).** A `reference-transaction` hook refuses every update of the branch
+7. **Guard and direct-commit allowance (Josh decision 7, 12:24 CT: "guard,
+   direct commits for Markdown only").** A `reference-transaction` hook refuses every update of the branch
    checked out in the main worktree unless `GOBBY_LAND_COMMIT=1` is set or
    every changed path is a `*.md` file at the repository root or under
    `.gobby/plans/`, `.gobby/roles/` or `docs/`. Plan writers and the
@@ -118,8 +118,6 @@ Rulings of record, verbatim:
    `GOBBY_LAND_COMMIT`. Consequence: plan coverage manifests (`*.yaml`) and
    research attachments (`*.svg`, `*.txt`) under `.gobby/plans/` land through
    `land_commit`.
-   - Alternative (report §3): every commit goes through `land_commit`, so each
-     plan or doc commit first needs an Adversary or reviewer receipt.
 
 Out of scope: the needs-review handoff (Josh dropped decisions 2 and 6),
 task-close-reviewer retirement, and `main`/push routing. This plan has no
@@ -664,7 +662,9 @@ and a read-through against the shipped tool schemas.
 `kind: verification`
 
 - 2026-10-05: First draft by the Lane 7 Plan Writer gobby#15429 on #23527,
-  rescoped to M3 by Josh's 11:56 CT ruling. Decision 7 is pending Josh.
+  rescoped to M3 by Josh's 11:56 CT ruling.
+- 2026-10-05: Josh ruled decision 7 at 12:24 CT ("guard, direct commits for
+  Markdown only"); Decision Record item 7 is adopted.
 
 ## V2: Verification
 `kind: verification`
