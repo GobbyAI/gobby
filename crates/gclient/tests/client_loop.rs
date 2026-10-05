@@ -9747,6 +9747,34 @@ fn shown_terminals(workspace: &Workspace<LiveDaemon>, chrome: &Chrome) -> Vec<St
         .collect()
 }
 
+/// The loop caps the sidebar at 540 of the window's reported pixels before
+/// its first frame: the test backend reports 640 pixels over 120 columns,
+/// so the cap is 101 columns.
+#[tokio::test]
+async fn live_loop_caps_the_sidebar_from_the_window_pixels() {
+    let mock = MockDaemon::start("local-token").await;
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(8);
+    drop(input_tx);
+    let mut switch = TerminalGuard::recording().0;
+    run_live_loop(
+        &mut workspace,
+        &mut terminal,
+        &mut chrome,
+        input_rx,
+        &mut switch,
+    )
+    .await
+    .expect("live loop exits cleanly");
+    assert_eq!(chrome.sidebar.max_width, 101);
+    mock.shutdown().await;
+}
+
 /// 2.2.1: against eight roster terminals and no snapshot, the loop opens one
 /// tab holding one shell it spawned into the project checkout; the eight are
 /// agent rows only and never panes.

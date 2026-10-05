@@ -687,6 +687,27 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_drag_release_saves_the_width() {
+        let home = tempfile::tempdir().expect("temp gobby home");
+        let (mut ws, mut chrome, _, _, (col, row)) = split_chrome();
+        ws.set_gobby_home(home.path().to_path_buf());
+        chrome.gesture = Some(MouseGesture::SidebarDrag);
+        chrome.sidebar.width = 30;
+        let up = event(
+            MouseEventKind::Up(MouseButton::Left),
+            col,
+            row,
+            KeyModifiers::NONE,
+        );
+        assert_eq!(route_mouse(&ws, &mut chrome, &up), MouseOutcome::Handled);
+        let saved = crate::prefs::load_prefs(home.path()).expect("load prefs");
+        assert_eq!(
+            saved.sidebar_width, 30,
+            "a restart reopens at the dragged width"
+        );
+    }
+
+    #[test]
     fn route_mouse_forwards_reports_and_captures_the_button() {
         let (mut ws, mut chrome, (fcol, frow), other, (col, row)) = split_chrome();
         let focused = chrome.focused_pane().expect("focused pane");
