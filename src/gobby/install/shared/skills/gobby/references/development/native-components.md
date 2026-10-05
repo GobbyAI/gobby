@@ -43,11 +43,13 @@ and its supported Zig/SDK toolchain; a library-only build does not validate it.
 `gclient` builds without Zig. See
 [rebuild and reinstall](../../../../../../../../docs/guides/gterminal-development-guide.md#rebuild-and-reinstall).
 
-gcode database tests apply schema in a dedicated database's `public` namespace.
-Use an owned disposable `_test` database on the isolated hub, explicitly set
-`GCODE_POSTGRES_TEST_DATABASE_URL`, enable its `pg_search` extension, and supply
-a temporary `GOBBY_HOME`/fixture machine identity. Do not reset the shared Python
-test database when Rust provisioning reports foreign lineage. See
+gcode database tests read only `GCODE_POSTGRES_TEST_DATABASE_URL`. Point it at
+`gobby_gcode_test` on the isolated hub. The fixture creates a cohort keyed by
+compiled schema version and a 32-character schema root-hash prefix, enables
+`pg_search`, applies the schema in `public`, and seeds the fixture machine.
+Supply a temporary `GOBBY_HOME`/fixture machine identity. Keep DB modules named
+`serial_db` and gated on `gcode_postgres_tests` for nextest serialization and CI
+selection. Never reset Python's test database or prune shared cohorts. See
 [database fixtures](../../../../../../../../docs/guides/gcode-development-guide.md#contributor-database-fixtures).
 
 Managed macOS SRT runs permit sockets inside their canonical current-run temp

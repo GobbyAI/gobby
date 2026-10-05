@@ -117,19 +117,21 @@ isolated roots and linked worktrees; standalone-only identity is rejected.
 
 ### Contributor database fixtures
 
-`crates/gcode/src/test_env.rs` applies the current schema in the selected test
-database's `public` namespace. This differs from Python's per-test schema
-isolation. Use an owned disposable database on the isolated test hub, with a name
-ending in `_test`, and set `GCODE_POSTGRES_TEST_DATABASE_URL` explicitly.
-Provision `pg_search` in that database before the test; an extension available in
-the server image is not automatically enabled in each newly created database.
-Use a temporary `GOBBY_HOME` containing a fixture `machine_id`.
+`crates/gcode/src/test_env.rs` reads only `GCODE_POSTGRES_TEST_DATABASE_URL`.
+Point it at `gobby_gcode_test` on the isolated test hub. The fixture selects
+`gobby_gcode_test_v<compiled schema version>_<32-character root hash prefix>`
+on that hub, creates the database and enables `pg_search` when absent, then
+applies the schema in `public` and seeds the fixture machine. Supply a temporary
+`GOBBY_HOME` containing a fixture `machine_id`. Same-identity runners share a
+cohort; different versions or migration roots use separate databases.
 
-If provisioning reports unrecognized lineage, do not reset a shared test
-database. Create a fresh owned test database and remove it after validation.
-If `pg_search` is missing, distinguish an available-but-not-enabled extension
-from an image lacking it. Count database-gated tests only after an enabled,
-passing run; an ignored test is not coverage.
+The guard accepts the exact base name or its underscore namespace; it refuses
+Python's `gobby_test` and unrelated databases. Never reset or prune shared cohort
+databases: another lane may still use them. The hub must have `pg_search`
+available to enable in each cohort. DB suites compile only with the DSN set at
+build time and use `mod serial_db` so nextest serializes them and CI's
+postgres-backed job selects them. CI's Check & Test job has no DSN. Count
+DB-gated tests only after an enabled, passing run.
 
 ## Indexing Pipeline
 

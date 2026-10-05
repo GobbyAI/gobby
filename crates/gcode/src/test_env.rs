@@ -13,7 +13,7 @@ pub fn postgres_test_database_url(purpose: &str) -> String {
 }
 
 /// Resolve the test database URL and refuse any database but
-/// `gobby_gcode_test` unless `GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE` overrides
+/// the `gobby_gcode_test` namespace unless `GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE` overrides
 /// the guard. Only the gcode-specific variable is read: the pytest stack's
 /// `DATABASE_URL` and `GOBBY_POSTGRES_TEST_*` point at gobby_test, and the
 /// operator's bootstrap.yaml points at the live hub.
@@ -33,7 +33,58 @@ fn resolve_postgres_test_database_url(purpose: &str) -> String {
              {GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV}=1 to bypass this guard"
         );
     }
-    database_url
+    let config = database_url
+        .parse::<postgres::Config>()
+        .expect("validated test DSN");
+    if config.get_dbname().is_some_and(is_gcode_test_database) {
+        let identity = gobby_core::schema::schema_identity();
+        database_url_for_name(
+            &database_url,
+            &schema_test_database_name(identity.latest_asset.version, &identity.root_hash),
+        )
+    } else {
+        database_url
+    }
+}
+
+// A 128-bit hash prefix keeps cohort names below PostgreSQL's 63-byte limit.
+fn schema_test_database_name(version: i32, root_hash: &str) -> String {
+    format!(
+        "{GCODE_POSTGRES_TEST_DATABASE}_v{version}_{}",
+        &root_hash[..32]
+    )
+}
+
+fn is_gcode_test_database(name: &str) -> bool {
+    name == GCODE_POSTGRES_TEST_DATABASE
+        || name.starts_with(&format!("{GCODE_POSTGRES_TEST_DATABASE}_"))
+}
+
+fn database_url_for_name(database_url: &str, name: &str) -> String {
+    if let Ok(mut url) = reqwest::Url::parse(database_url) {
+        url.set_path(&format!("/{name}"));
+        // PostgreSQL URI queries treat '+' literally, unlike form encoding.
+        if let Some(query) = url.query().map(|query| query.replace('+', "%2B")) {
+            url.set_query(Some(&query));
+        }
+        let options: Vec<_> = url
+            .query_pairs()
+            .filter(|(key, _)| key != "dbname")
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect();
+        if url.query().is_some() {
+            url.query_pairs_mut().clear().extend_pairs(options);
+            let query = url
+                .query()
+                .expect("preserved DSN query")
+                .replace('+', "%20");
+            url.set_query(Some(&query));
+        }
+        url.to_string()
+    } else {
+        // libpq keyword strings use the last value for a repeated option.
+        format!("{database_url} dbname='{}'", name.replace('\'', "\\'"))
+    }
 }
 
 fn postgres_test_database_url_from_sources() -> Option<String> {
@@ -58,7 +109,7 @@ pub fn destructive_postgres_test_allowed(database_url: &str) -> Result<(), Strin
         .parse::<postgres::Config>()
         .map_err(|error| format!("database URL could not be parsed: {error}"))?;
     match config.get_dbname() {
-        Some(GCODE_POSTGRES_TEST_DATABASE) => Ok(()),
+        Some(name) if is_gcode_test_database(name) => Ok(()),
         Some(name) => Err(format!(
             "database name `{name}` is not the dedicated `{GCODE_POSTGRES_TEST_DATABASE}`"
         )),
@@ -97,8 +148,12 @@ fn provision_code_index_schema(database_url: &str) -> Result<(), String> {
         eprintln!("skipping code-index test schema provisioning: {reason}");
         return Ok(());
     }
+    let _provisioning_lock = ensure_test_database_exists(database_url)?;
     let mut client = gobby_core::postgres::connect_readwrite(database_url)
         .map_err(|error| format!("connect to the test database: {error:#}"))?;
+    client
+        .batch_execute("CREATE EXTENSION IF NOT EXISTS pg_search")
+        .map_err(|error| format!("install test pg_search extension: {error:#}"))?;
     {
         let mut runner = gobby_core::schema::SchemaRunner::new(&mut client, "public")
             .map_err(|error| format!("schema runner: {error:#}"))?;
@@ -110,6 +165,34 @@ fn provision_code_index_schema(database_url: &str) -> Result<(), String> {
     let machine_id = gobby_core::machine::read_local_machine_id()
         .map_err(|error| format!("read local machine id: {error:#}"))?;
     seed_test_machine(&mut client, &machine_id)
+}
+
+/// Keep this connection alive to serialize database, extension and schema setup.
+fn ensure_test_database_exists(database_url: &str) -> Result<postgres::Client, String> {
+    let config = database_url
+        .parse::<postgres::Config>()
+        .map_err(|error| error.to_string())?;
+    let name = config.get_dbname().ok_or("test database name is missing")?;
+    let admin_url = database_url_for_name(database_url, "postgres");
+    let mut admin = gobby_core::postgres::connect_readwrite(&admin_url)
+        .map_err(|error| format!("connect to test hub for provisioning: {error:#}"))?;
+    admin
+        .execute("SELECT pg_advisory_lock(hashtext($1))", &[&name])
+        .map_err(|error| format!("lock test database creation: {error:#}"))?;
+    let exists = admin
+        .query_opt("SELECT 1 FROM pg_database WHERE datname = $1", &[&name])
+        .map_err(|error| format!("inspect test database: {error:#}"))?
+        .is_some();
+    if !exists {
+        admin
+            .batch_execute(&format!(
+                "CREATE DATABASE \"{}\"",
+                name.replace('"', "\"\"")
+            ))
+            .map_err(|error| format!("create schema-versioned test database: {error:#}"))?;
+    }
+    // The connection owns the advisory lock, including on error paths.
+    Ok(admin)
 }
 
 /// Register `machine_id` in `machines` under a synthetic test owner.
@@ -325,17 +408,23 @@ mod tests {
 
     #[test]
     #[serial_test::serial(serial_db)]
-    fn resolve_passes_explicit_test_database_unchanged() {
+    fn resolve_selects_compiled_schema_database() {
         with_postgres_test_env(
             &[(
                 GCODE_POSTGRES_TEST_DATABASE_URL_ENV,
                 Some("postgresql://localhost/gobby_gcode_test"),
             )],
             || {
-                assert_eq!(
-                    resolve_postgres_test_database_url("guard tests"),
-                    "postgresql://localhost/gobby_gcode_test"
-                );
+                assert_eq!(resolve_postgres_test_database_url("guard tests"), {
+                    let identity = gobby_core::schema::schema_identity();
+                    format!(
+                        "postgresql://localhost/{}",
+                        schema_test_database_name(
+                            identity.latest_asset.version,
+                            &identity.root_hash
+                        )
+                    )
+                });
             },
         );
     }
@@ -347,11 +436,26 @@ mod tests {
             GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV,
             Option::<&str>::None,
             || {
-                assert!(
-                    destructive_postgres_test_allowed("postgresql://localhost/gobby_gcode_test")
-                        .is_ok()
-                );
-                for name in ["gobby_test", "gcode_test", "gobby"] {
+                for name in [
+                    "gobby_gcode_test",
+                    "gobby_gcode_test_v458",
+                    "gobby_gcode_test_v459",
+                ] {
+                    assert!(
+                        destructive_postgres_test_allowed(&format!(
+                            "postgresql://localhost/{name}"
+                        ))
+                        .is_ok(),
+                        "{name}"
+                    );
+                }
+                for name in [
+                    "gobby_test",
+                    "gcode_test",
+                    "gobby",
+                    "gobby_gcode_testing",
+                    "gobby_gcode_testevil",
+                ] {
                     let error = destructive_postgres_test_allowed(&format!(
                         "postgresql://localhost/{name}"
                     ))
@@ -364,6 +468,139 @@ mod tests {
                 }
             },
         );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    fn schema_database_selection_preserves_options_and_ignores_newer_target() {
+        let identity = gobby_core::schema::schema_identity();
+        let version = identity.latest_asset.version;
+        let name = schema_test_database_name(version, &identity.root_hash);
+        for source in [
+            format!("postgresql://fixture:secret@127.0.0.1:60892/gobby_gcode_test_v{}?application_name=fixture+app&sslmode=disable&options=-c%20statement_timeout%3D1000", version + 1),
+            "host=127.0.0.1 port=60892 user=fixture password=secret dbname=gobby_gcode_test application_name=fixture+app sslmode=disable options='-c statement_timeout=1000'".to_string(),
+        ] {
+            with_postgres_test_env(&[(GCODE_POSTGRES_TEST_DATABASE_URL_ENV, Some(&source))], || {
+                let first = resolve_postgres_test_database_url("schema cohorts");
+                let second = resolve_postgres_test_database_url("schema cohorts");
+                assert_eq!(first, second, "same compiled schema shares a target");
+                let config = first.parse::<postgres::Config>().expect("selected DSN");
+                assert_eq!(config.get_dbname(), Some(name.as_str()));
+                assert_eq!(config.get_user(), Some("fixture"));
+                assert_eq!(config.get_password(), Some(b"secret".as_slice()));
+                assert_eq!(config.get_ports(), &[60892]);
+                assert_eq!(config.get_application_name(), Some("fixture+app"));
+                assert_eq!(config.get_options(), Some("-c statement_timeout=1000"));
+                assert_eq!(config.get_ssl_mode(), postgres::config::SslMode::Disable);
+            });
+        }
+    }
+
+    #[test]
+    fn schema_database_cohorts_separate_divergent_roots_at_the_same_version() {
+        let identity = gobby_core::schema::schema_identity();
+        let first = schema_test_database_name(identity.latest_asset.version, &identity.root_hash);
+        let mut other_root = identity.root_hash.clone();
+        other_root.replace_range(
+            ..1,
+            if other_root.starts_with('0') {
+                "1"
+            } else {
+                "0"
+            },
+        );
+        let second = schema_test_database_name(identity.latest_asset.version, &other_root);
+        assert_ne!(
+            first, second,
+            "divergent migration roots must not share a database"
+        );
+        assert_eq!(
+            first,
+            schema_test_database_name(identity.latest_asset.version, &identity.root_hash)
+        );
+        assert!(
+            first.len() <= 63,
+            "PostgreSQL must not truncate the cohort name"
+        );
+        assert!(is_gcode_test_database(&first));
+        assert!(is_gcode_test_database(&second));
+    }
+
+    #[test]
+    #[cfg(gcode_postgres_tests)]
+    #[serial_test::serial(serial_db)]
+    fn serial_db_newer_schema_database_does_not_poison_compiled_schema_cohort() -> anyhow::Result<()>
+    {
+        let identity = gobby_core::schema::schema_identity();
+        let version = identity.latest_asset.version;
+        let source = postgres_test_database_url_from_sources().expect("DB test DSN");
+        // Only this unique disposable probe database carries the simulated
+        // future receipt. Never alter or drop another runner's shared cohort.
+        let future_name = format!(
+            "gobby_gcode_test_v{}_probe_{}",
+            version + 1,
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        );
+        let future_url = database_url_for_name(&source, &future_name);
+        struct ProbeDatabase {
+            admin: postgres::Client,
+            name: String,
+        }
+        impl Drop for ProbeDatabase {
+            fn drop(&mut self) {
+                if let Err(error) = self
+                    .admin
+                    .batch_execute(&format!("DROP DATABASE \"{}\"", self.name))
+                {
+                    if std::thread::panicking() {
+                        eprintln!("probe database cleanup failed: {error}");
+                    } else {
+                        panic!("probe database cleanup failed: {error}");
+                    }
+                }
+            }
+        }
+        let _probe = ProbeDatabase {
+            admin: ensure_test_database_exists(&future_url).map_err(anyhow::Error::msg)?,
+            name: future_name,
+        };
+        (|| -> anyhow::Result<()> {
+            let mut future = gobby_core::postgres::connect_readwrite(&future_url)?;
+            future.batch_execute("CREATE EXTENSION IF NOT EXISTS pg_search; CREATE TABLE schema_migrations (version integer PRIMARY KEY)")?;
+            future.execute(
+                "INSERT INTO schema_migrations(version) VALUES ($1)",
+                &[&(version + 1)],
+            )?;
+            let error = gobby_core::schema::SchemaRunner::new(&mut future, "public")?
+                .apply()
+                .expect_err("future schema refuses this older runner");
+            assert!(
+                error.to_string().contains("newer than this runner"),
+                "{error}"
+            );
+            temp_env::with_var(
+                GCODE_POSTGRES_TEST_DATABASE_URL_ENV,
+                Some(future_url.as_str()),
+                || {
+                    let selected = postgres_test_database_url("schema cohort regression");
+                    assert_eq!(
+                        selected
+                            .parse::<postgres::Config>()
+                            .expect("cohort DSN")
+                            .get_dbname(),
+                        Some(schema_test_database_name(version, &identity.root_hash).as_str())
+                    );
+                    assert_eq!(postgres_test_database_url("same process"), selected);
+                    let mut current = gobby_core::postgres::connect_readwrite(&selected)
+                        .expect("compiled cohort connection");
+                    gobby_core::schema::SchemaRunner::new(&mut current, "public")
+                        .expect("compiled runner")
+                        .apply()
+                        .expect("compiled schema remains applicable");
+                },
+            );
+            Ok(())
+        })()
     }
 
     #[test]

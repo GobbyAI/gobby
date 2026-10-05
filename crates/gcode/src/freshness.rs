@@ -492,8 +492,11 @@ mod tests {
                 (status, ctx)
             });
 
+            // Allow connection/setup latency while keeping the lock held until
+            // freshness finishes. The status proves the busy-lock behavior;
+            // the timeout bounds a regression that waits for this holder.
             let completed_while_locked = done_rx
-                .recv_timeout(std::time::Duration::from_millis(400))
+                .recv_timeout(std::time::Duration::from_secs(30))
                 .is_ok();
             drop(holder);
             let (status, ctx) = handle.join().expect("freshness thread joins");
@@ -503,7 +506,7 @@ mod tests {
             ));
             assert!(
                 completed_while_locked,
-                "file-scoped navigation must not wait for a full project refresh"
+                "file-scoped navigation must finish while the project lock is held"
             );
             assert_eq!(visible_symbol_names(&ctx, "src/lib.rs"), ["stale_name"]);
             assert_eq!(
