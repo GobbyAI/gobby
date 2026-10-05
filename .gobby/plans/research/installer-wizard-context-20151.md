@@ -128,3 +128,101 @@ Joining a hub today (`docs/guides/shared-stack.md` §Client setup):
   a `$secret:` reference, SecretStore or a hidden prompt.
 - Memory dd938a6e: `--ide-settings` is tri-state and consent-gated.
 - #20145 (closed): the optional API-key prompt for every embedding provider.
+
+## Orchestrator rulings (gobby#14972, 16:33 CT, 2026-10-05; all recommendations accepted)
+
+- Q1 (Josh approves at plan approval): option (a). The wizard automates the remote-datastore
+  bridge:
+  - it prompts for the hub origin and DSN;
+  - it checks only that the copied `.secret_kek` and `local_cli_token` are present and never
+    reads them;
+  - it runs remote preflight, then folds in auth-login enrollment.
+  The DSN, kek and token inputs retire with S4.1b #21579. Rejected alternative (b): collect
+  only the thin-node inputs and leave the bridge fields manual.
+- Q2: "Will other machines join this hub?", default No. Yes runs `expose_datastores` with
+  bind and host prompts, and has flag parity.
+- Q3: show the re-embed count and confirm. Start the switch after the daemon starts, or print
+  the exact `gobby embeddings switch` command when the daemon is down. Non-interactive runs
+  need an explicit confirm flag. A non-catalog target on an existing install is refused with
+  a typed remedy that points at local-inference-runtime-foundation 3.2.
+- Q4: identity, files_home, rtk, voice, IDE settings, git hooks and project init keep
+  today's orchestration and consumers.
+- Q5: managed hub is typed-unavailable, with an expansion placeholder deferral resolved
+  through `deferral_task_map`.
+- Q6: Python in `src/gobby/cli/`. The reconciler operations are the seam S3.1 #21571
+  inventories later. The expansion root is #23371. #21295 is out of scope; it sits in
+  Josh's deferred bucket #22978.
+- Q7 (Josh approves at plan approval): the role step defaults to the current role. A role
+  change on an existing install is refused with a typed remedy naming
+  `.gobby/plans/hub-pc-datastore-move.md` or a fresh GOBBY_HOME. Only solo to hub and hub to
+  solo happen in place, and they only toggle exposure.
+- The scope boundary cites inference 2.3 and 5.2.
+
+## Draft structure (writer's working plan; plan file not yet written)
+
+Plan file: `.gobby/plans/installer-wizard.md`, Plan ID `installer-wizard`. Model the format
+on `.gobby/plans/content-ownership-rules.md`:
+- header: `Plan artifact:`, Plan ID, Overview, Decision Record, Constraints;
+- `## P1: ...` with `kind: framing`;
+- deliverables `### 1.N Title [category: code] (depends: ...)` with `kind: deliverable`,
+  Targets, Research context, Implementation, Focused verification, and Acceptance
+  (`- 1.N.M - ... test: \`path::test\``);
+- `## V1 Plan Changelog`;
+- `## V2: Verification`.
+More than six acceptance items needs a Granularity statement.
+
+Planned deliverables (steps are built and unit-tested in their own modules; `install.py`
+is touched only in 1.7):
+- 1.1 CLI hook installers write only changed files. Every run today backs up and rewrites
+  `settings.json` (`installers/claude.py:251-266`, then the atomic write at line 341), and
+  `installers/shared.py::_install_file` always unlinks and copies. Add one shared
+  write-if-changed helper and use it across claude, codex, grok, qwen, droid, agy and the
+  shared content. Back up only when the content changes.
+- 1.2 Role step:
+  - read the current role from bootstrap (`BootstrapConfig.run_mode`);
+  - the ternary choice is hub/solo, join self-hosted, or join managed (typed-unavailable);
+  - a role change on an existing install is refused with a remedy (Q7);
+  - writes go through `config/bootstrap_io.py::update_bootstrap_yaml`.
+- 1.3 Hub sharing toggle: "Will other machines join this hub?" Solo to hub uses
+  `cli/datastores.py::expose_datastores`. Hub to solo needs a new reverse operation: reset
+  `services_bind_address` to 127.0.0.1, set `hub: false`, and unpublish the endpoints.
+  Check `validate_bind_address` and `_commit_shared_endpoints`.
+- 1.4 Join self-hosted step:
+  - prompt for the `hub_daemon_url` origin and DSN, and write the remote bootstrap;
+  - check that `.secret_kek` and `local_cli_token` are present (existence only);
+  - run `run_remote_preflight`, then `auth_login.enroll`.
+  Secret answers take file or stdin flags, never plaintext argv (memory afc4bcca); this is
+  a writer decision, flagged for the Adversary.
+- 1.5 Embedding step:
+  - snapshot defaults (`_install_state._embedding_state`); unchanged means no-op;
+  - a fresh install uses the existing `set_embedding_bootstrap_values`;
+  - a changed api_key only goes through a SecretStore write (non-structural);
+  - a structural change needs a catalog key, a collection count N from Qdrant, a confirmation,
+    and the switch start after daemon start (or the printed command);
+  - a non-catalog target gets a typed refusal citing inference 3.2;
+  - new flags: `--embedding-catalog` and `--confirm-reembed`.
+- 1.6 UI exposure step: the default comes from `ui_exposure._read_intent` and
+  `get_ui_exposure_status`; a change uses enable or disable; no change is a no-op. Flag:
+  `--expose-ui/--no-expose-ui`.
+- 1.7 Wizard composition and flag parity in `cli/install.py::install`:
+  - order: role, datastores, embedding, UI exposure, CLI hooks;
+  - the unlisted steps keep their place (Q4);
+  - non-interactive runs use the same steps;
+  - end-to-end no-op test: two runs with defaults mutate no bootstrap, config, secret or
+    hook file. Test homes: `tests/cli/test_cli_install.py` and
+    `tests/cli/test_install_state.py`.
+- 1.8 Docs [docs]: `docs/guides/shared-stack.md` (Hub setup and Client setup) and
+  `src/gobby/install/shared/skills/gobby/references/intro/onboarding.md`.
+- Deferred section for join managed hub: `kind: deferred` with deferral YAML and a
+  placeholder task_ref. Read `docs/contracts/plan-coverage.md` §Deferrals (line 289)
+  first.
+
+Tests that exist: `tests/cli/test_install_state.py`, `test_install_embedding_wizard.py`,
+`test_cli_install.py`, `test_auth_login.py`, `test_datastores_expose.py`,
+`tests/cli/installers/test_cli_installers_claude.py`, `test_codex_installer.py`,
+`test_grok_installer.py`, `test_qwen_installer.py`, `test_cli_installers_droid.py`,
+`test_cli_installers_agy.py`, `test_shared.py`, `test_embedding_installer.py`, and
+`test_ui_exposure.py` (find its path).
+
+Line counts: no target reaches 850. The largest are `installers/codex.py` 794,
+`installers/embedding.py` 760, `cli/datastores.py` 668 and `cli/install.py` 638.
