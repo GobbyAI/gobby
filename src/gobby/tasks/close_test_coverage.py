@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import ast
+import logging
 import posixpath
+import re
 from collections.abc import Iterable
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
 from gobby.tasks.command_equivalence import pytest_targets
-from gobby.tasks.related_tests import derive_related_test_terms, find_related_test_files
+from gobby.tasks.related_tests import RELATED_TEST_MAX_FILES
 from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 
 _TEST_TYPES_AUDIT_MATCHER = "gobby-test-types-audit"
+logger = logging.getLogger(__name__)
 _TEST_TYPES_BASELINE = ".gobby/test-types-baseline.json"
 # Flags that change only how the audit reports. ``--min-severity`` cannot weaken the
 # ratchet: its default is already the loosest choice, so an explicit value is at least
@@ -34,27 +38,166 @@ def changed_python_test_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:
     return tuple(sorted(python_tests))
 
 
-def related_python_source_tests(
-    changed_paths: Iterable[str], base_dir: str | Path = "."
-) -> dict[str, tuple[str, ...]]:
-    """Select existing tests using filename-stem terms, avoiding broad directory terms."""
-    base = Path(base_dir)
-    sources = {
-        normalized
-        for path in changed_paths
-        if (normalized := _normalize_repo_path(path)) is not None
-        and normalized.endswith(".py")
-        and not normalized.startswith("tests/")
-    }
-    return {
-        source: tuple(
-            test.relative_to(base).as_posix()
-            for test in find_related_test_files(
-                derive_related_test_terms(PurePosixPath(source).stem), base_dir=base
-            )
+def changed_python_source_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:
+    """Pure source-path selection, safe for the rootless event-loop probe."""
+    return tuple(
+        sorted(
+            {
+                normalized
+                for path in changed_paths
+                if (normalized := _normalize_repo_path(path)) is not None
+                and normalized.endswith(".py")
+                and not normalized.startswith("tests/")
+            }
         )
-        for source in sorted(sources)
-    }
+    )
+
+
+def _module_name(path: str) -> str:
+    parts = list(PurePosixPath(path).with_suffix("").parts)
+    if parts and parts[0] == "src":
+        parts.pop(0)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def _module_imports(
+    path: Path,
+    module: str,
+    relevant_prefixes: set[str] | None = None,
+    parent_import: re.Pattern[str] | None = None,
+) -> set[str]:
+    """Read imports without importing/executing repository modules."""
+    try:
+        text = path.read_text(encoding="utf-8")
+        if (
+            relevant_prefixes is not None
+            and not any(prefix in text for prefix in relevant_prefixes)
+            and not (
+                parent_import is not None
+                and parent_import.search(text)
+                and any(prefix.rpartition(".")[2] in text for prefix in relevant_prefixes)
+            )
+        ):
+            return set()
+        tree = ast.parse(text)
+    except (OSError, UnicodeError, SyntaxError) as exc:
+        logger.debug("Cannot select related tests from %s: %s", path, exc)
+        return set()
+    package = module if path.stem == "__init__" else module.rpartition(".")[0]
+    imports: set[str] = set()
+    pending: list[ast.AST] = [tree]
+    while pending:
+        node = pending.pop()
+        # Imports only occur in statement bodies; skip expression subtrees.
+        pending.extend(
+            child
+            for child in ast.iter_child_nodes(node)
+            if isinstance(child, (ast.stmt, ast.ExceptHandler, ast.match_case))
+        )
+        if isinstance(node, ast.Import):
+            imports.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            prefix = node.module or ""
+            if node.level:
+                parts = package.split(".") if package else []
+                prefix = ".".join(
+                    parts[: len(parts) - node.level + 1] + ([prefix] if prefix else [])
+                )
+            if prefix:
+                imports.add(prefix)
+                imports.update(
+                    f"{prefix}.{alias.name}" for alias in node.names if alias.name != "*"
+                )
+    return imports
+
+
+def related_python_source_tests(
+    changed_paths: Iterable[str], base_dir: str | Path
+) -> dict[str, tuple[str, ...]]:
+    """Select exact imports and mirrored package filenames in one test-tree scan.
+
+    Sibling facade modules importing a changed module count as related, including
+    relative imports. Generic filenames never match unrelated package names.
+    Call only in the rooted, off-thread close evaluation.
+    """
+    base = Path(base_dir)
+    sources = changed_python_source_paths(changed_paths)
+    selected: dict[str, tuple[str, ...]] = dict.fromkeys(sources, ())
+    if not sources or not (base / "tests").is_dir():
+        return selected
+    packages: dict[Path, dict[str, set[str]]] = {}
+    families: dict[str, dict[str, int]] = {}
+    for source in sources:
+        source_path = PurePosixPath(source)
+        if source_path.stem == "__init__":
+            continue  # Package initializers have no unambiguous module-owned filename.
+        module = _module_name(source)
+        parent = base / source_path.parent
+        if parent not in packages:
+            packages[parent] = {
+                _module_name(path.relative_to(base).as_posix()): _module_imports(
+                    path, _module_name(path.relative_to(base).as_posix())
+                )
+                for path in parent.glob("*.py")
+                if path.is_file() and path.stem != "__init__"
+            }
+        family = {module: 0}
+        while importers := {
+            sibling: 1 + min(family[dependency] for dependency in imports.intersection(family))
+            for sibling, imports in packages[parent].items()
+            if sibling not in family and imports.intersection(family)
+        }:
+            family.update(importers)
+        families[source] = family
+    prefixes = {module for family in families.values() for module in family}
+    parents = {parent_module for module in prefixes if (parent_module := module.rpartition(".")[0])}
+    parent_import = (
+        re.compile(
+            r"(?m)^[ \t]*from[ \t]+(?:"
+            + "|".join(re.escape(parent) for parent in sorted(parents))
+            + r")[ \t]+import\b"
+        )
+        if parents
+        else None
+    )
+    candidates = sorted(
+        path
+        for path in (base / "tests").rglob("*.py")
+        if path.is_file() and (path.name.startswith("test_") or path.name.endswith("_test.py"))
+    )
+    tests = [
+        (
+            path.relative_to(base).as_posix(),
+            _module_imports(
+                path, _module_name(path.relative_to(base).as_posix()), prefixes, parent_import
+            ),
+        )
+        for path in candidates
+    ]
+    for source, family in families.items():
+        source_path = PurePosixPath(source)
+        module = _module_name(source)
+        package_parts = module.split(".")[:-1]
+        if package_parts and package_parts[0] == "gobby":
+            package_parts.pop(0)
+        mirror_parent = PurePosixPath("tests", *package_parts)
+        ranked: list[tuple[int, str]] = []
+        for test, imports in tests:
+            test_path = PurePosixPath(test)
+            ranks = [2 * family[imported] + 1 for imported in imports.intersection(family)]
+            if test_path.parent == mirror_parent:
+                ranks.extend(
+                    2 * distance
+                    for member, distance in family.items()
+                    if (stem := member.rpartition(".")[2].lstrip("_"))
+                    and (test_path.stem == f"{stem}_test" or test_path.stem == f"test_{stem}")
+                )
+            if ranks:
+                ranked.append((min(ranks), test))
+        selected[source] = tuple(test for _, test in sorted(ranked)[:RELATED_TEST_MAX_FILES])
+    return selected
 
 
 def pytest_module_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:

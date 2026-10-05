@@ -11,13 +11,14 @@ from typing import Any, Literal
 
 from gobby.config.shell_lexing import parse_shell_command
 from gobby.tasks.close_test_coverage import (
-    changed_python_test_paths as _changed_python_test_paths,
-)
-from gobby.tasks.close_test_coverage import pytest_module_paths as _pytest_module_paths
-from gobby.tasks.close_test_coverage import (
+    changed_python_source_paths,
     related_python_source_tests,
     uncovered_pytest_paths,
 )
+from gobby.tasks.close_test_coverage import (
+    changed_python_test_paths as _changed_python_test_paths,
+)
+from gobby.tasks.close_test_coverage import pytest_module_paths as _pytest_module_paths
 from gobby.tasks.close_test_coverage import (
     test_types_audit_targets as _test_types_audit_targets,
 )
@@ -289,7 +290,15 @@ def _evaluate_validation_commands(
     category = (task_category or "").strip().casefold()
     changed_paths = tuple(changed_paths)
     changed_python_test_paths = _changed_python_test_paths(changed_paths)
-    source_tests = related_python_source_tests(changed_paths, base_dir=close_root or ".")
+    source_tests = (
+        related_python_source_tests(changed_paths, base_dir=close_root) if close_root else {}
+    )
+    # Rootless probes only inspect paths; selection runs in the rooted to_thread call.
+    related_tests_required = (
+        any(source_tests.values())
+        if close_root
+        else bool(changed_python_source_paths(changed_paths))
+    )
     test_types_audit_required = bool(changed_python_test_paths)
     details = _validation_details(evidence)
 
@@ -427,7 +436,7 @@ def _evaluate_validation_commands(
         )
 
     # Exempt tasks still need the command record for their explicit criteria review.
-    if not has_attributed_edits and not test_types_audit_required and not source_tests:
+    if not has_attributed_edits and not test_types_audit_required and not related_tests_required:
         return CloseGateResult(
             item=9,
             name="validation_commands",
@@ -436,7 +445,11 @@ def _evaluate_validation_commands(
             details={**details, "skip_reason": "no-edit"},
         )
 
-    if category in _AUTO_PASS_CATEGORIES and not test_types_audit_required and not source_tests:
+    if (
+        category in _AUTO_PASS_CATEGORIES
+        and not test_types_audit_required
+        and not related_tests_required
+    ):
         return CloseGateResult(
             item=9,
             name="validation_commands",
