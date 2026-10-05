@@ -73,6 +73,62 @@ _STDIO_DEFAULT_PREFLIGHT_PATH = "/api/health"
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("capacity", [1, 3])
+@pytest.mark.parametrize("preview", [True, False])
+async def test_busy_response_reports_project_capacity_and_all_occupied_reviews(
+    monkeypatch: pytest.MonkeyPatch, capacity: int, preview: bool
+) -> None:
+    reviews = tuple(
+        replace(
+            _review(status="running", run_id=_FIRST_REVIEW_RUN_ID),
+            id=f"review-{index}",
+            task_id=f"other-{index}",
+            task_ref=f"#{100 + index}",
+        )
+        for index in range(capacity)
+    )
+    blocker = TaskCloseReviewBusyError(reviews[0], active_reviews=reviews, max_concurrency=capacity)
+    store = _Store(reviews[0])
+    monkeypatch.setattr(store, "get_admission_blocker", lambda *_args, **_kwargs: blocker)
+
+    def refuse(**_kwargs: Any) -> tuple[TaskCloseReview, bool]:
+        raise blocker
+
+    monkeypatch.setattr(store, "create_or_get_active", refuse)
+    _patch_store(monkeypatch, store)
+    evaluation = _evaluation()
+    registry = SimpleNamespace(call=AsyncMock())
+    ctx = _ctx(registry=registry, validation_config=_capacity(capacity))
+    result = (
+        orchestration.project_busy_review_response(ctx, evaluation)
+        if preview
+        else await launch_close_review(
+            ctx,
+            evaluation=evaluation,
+            close_arguments=_arguments(),
+            evaluate_close=_revalidate(evaluation),
+        )
+    )
+
+    assert result is not None
+    assert result["error"] == "close_review_busy"
+    assert result["error_class"] == "retryable_capacity"
+    assert result["required_actions"] == [
+        "Wait for the active project close review, then retry close_task."
+    ]
+    assert result["project_review_capacity"] == capacity
+    assert result["active_review_count"] == capacity
+    assert result["active_task_refs"] == [review.task_ref for review in reviews]
+    assert result["active_review_ids"] == [review.id for review in reviews]
+    assert f"capacity is full (capacity {capacity}, active count {capacity})" in result["message"]
+    for review in reviews:
+        assert review.task_ref in result["message"]
+        assert review.id in result["message"]
+    assert store.created_arguments is None
+    registry.call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_other_task_busy_response_never_launches_a_reviewer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -82,7 +138,7 @@ async def test_other_task_busy_response_never_launches_a_reviewer(
     _patch_store(monkeypatch, store)
 
     def busy_create(**_kwargs: Any) -> tuple[TaskCloseReview, bool]:
-        raise TaskCloseReviewBusyError(active)
+        raise TaskCloseReviewBusyError(active, active_reviews=(active,), max_concurrency=1)
 
     monkeypatch.setattr(store, "create_or_get_active", busy_create)
     evaluation = _evaluation()
@@ -139,7 +195,9 @@ async def test_preview_reports_same_task_terminal_review_with_live_run_busy(
     monkeypatch.setattr(
         store,
         "get_admission_blocker",
-        lambda _project_id, *, task_id, max_concurrency: terminal,
+        lambda _project_id, *, task_id, max_concurrency: TaskCloseReviewBusyError(
+            terminal, active_reviews=(terminal,), max_concurrency=max_concurrency
+        ),
     )
     _patch_store(monkeypatch, store)
     evaluation = _evaluation()
@@ -152,6 +210,10 @@ async def test_preview_reports_same_task_terminal_review_with_live_run_busy(
     assert result["preview"] is True
     assert result["error"] == "close_review_busy"
     assert result["active_review_status"] == "invalid"
+    assert result["project_review_capacity"] == 3
+    assert result["active_review_count"] == 1
+    assert "previous close-review run" in result["message"]
+    assert "capacity is full" not in result["message"]
     assert store.created_arguments is None
 
 
@@ -1957,12 +2019,18 @@ class _Store:
 
     def get_admission_blocker(
         self, _project_id: str, *, task_id: str, max_concurrency: int
-    ) -> TaskCloseReview | None:
+    ) -> TaskCloseReviewBusyError | None:
         # The fake holds one review, so another task's live review fills one slot.
         self.admission_checks.append((task_id, max_concurrency))
         review = self.review
         blocks = review.task_id != task_id and review.active and max_concurrency <= 1
-        return review if blocks else None
+        return (
+            TaskCloseReviewBusyError(
+                review, active_reviews=(review,), max_concurrency=max_concurrency
+            )
+            if blocks
+            else None
+        )
 
     def get_delivered_rejected_verdict(
         self,

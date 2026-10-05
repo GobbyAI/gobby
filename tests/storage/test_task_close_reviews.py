@@ -111,10 +111,13 @@ def test_project_admission_refuses_other_task_without_queued_run(
         store.create_or_get_active(**other_intent)
 
     assert raised.value.active_review.id == first.id
-    assert (
-        store.get_admission_blocker(str(sample_project["id"]), task_id=other.id, max_concurrency=1)
-        == first
+    blocker = store.get_admission_blocker(
+        str(sample_project["id"]), task_id=other.id, max_concurrency=1
     )
+    assert blocker is not None
+    assert blocker.active_review == first
+    assert blocker.active_reviews == (first,)
+    assert blocker.max_concurrency == 1
     assert (
         temp_db.fetchone("SELECT id FROM agent_runs WHERE id = %s", (other_intent["run"].id,))
         is None
@@ -126,9 +129,11 @@ def test_project_admission_refuses_other_task_without_queued_run(
     with pytest.raises(TaskCloseReviewBusyError) as terminal_busy:
         store.create_or_get_active(**other_intent)
     assert terminal_busy.value.active_review.id == first.id
-    assert store.get_admission_blocker(
+    terminal_blocker = store.get_admission_blocker(
         str(sample_project["id"]), task_id=other.id, max_concurrency=1
-    ) == store.get(first.id)
+    )
+    assert terminal_blocker is not None
+    assert terminal_blocker.active_review == store.get(first.id)
     assert runs.complete(first.agent_run_id) is not None
     second, second_created = store.create_or_get_active(**other_intent)
     assert second_created is True
@@ -151,6 +156,14 @@ def test_configured_capacity_admits_other_tasks_until_full(
 
     assert second_created is True
     assert raised.value.active_review.id == first.id
+    assert raised.value.max_concurrency == 2
+    assert raised.value.active_reviews == (first, second)
+    blocker = store.get_admission_blocker(
+        project_id, task_id=third_intent["task_id"], max_concurrency=2
+    )
+    assert blocker is not None
+    assert blocker.active_reviews == raised.value.active_reviews
+    assert blocker.max_concurrency == raised.value.max_concurrency
     assert (
         temp_db.fetchone("SELECT id FROM agent_runs WHERE id = %s", (third_intent["run"].id,))
         is None

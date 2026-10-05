@@ -84,12 +84,21 @@ def project_review_capacity(ctx: RegistryContext) -> int:
 
 
 def busy_review_response(
-    task_id: str, active_review: TaskCloseReview, *, preview: bool
+    task_id: str, blocker: TaskCloseReviewBusyError, *, preview: bool
 ) -> dict[str, Any]:
     """Tell the caller to retry without reserving a deferred reviewer run."""
+    active_review = blocker.active_review
+    count = len(blocker.active_reviews)
+    refs = ", ".join(f"{review.task_ref} ({review.id})" for review in blocker.active_reviews)
+    reason = (
+        f"The previous close-review run for {active_review.task_ref} is still active"
+        if active_review.task_id == task_id
+        else "The project's close-review capacity is full"
+    )
     message = (
-        f"A task-close reviewer for {active_review.task_ref} is already active in this project. "
-        "Wait for it to finish, then retry close_task. No review was queued for this task."
+        f"{reason} (capacity {blocker.max_concurrency}, active count {count}). "
+        f"Occupied reviews: {refs}. Wait for an occupied review to finish, then retry close_task. "
+        "No review was queued for this task."
     )
     return {
         "success": False,
@@ -105,6 +114,10 @@ def busy_review_response(
         "active_review_id": active_review.id,
         "active_task_ref": active_review.task_ref,
         "active_review_status": active_review.status,
+        "project_review_capacity": blocker.max_concurrency,
+        "active_review_count": count,
+        "active_task_refs": [review.task_ref for review in blocker.active_reviews],
+        "active_review_ids": [review.id for review in blocker.active_reviews],
     }
 
 
@@ -263,7 +276,7 @@ async def launch_close_review(
         evaluation.extra["stale_state"] = True
         return evaluation.response(preview=bool(close_arguments.get("preview")))
     except TaskCloseReviewBusyError as exc:
-        return busy_review_response(task.id, exc.active_review, preview=False)
+        return busy_review_response(task.id, exc, preview=False)
     if not created:
         return pending_review_response(review)
 
