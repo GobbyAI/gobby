@@ -23,7 +23,7 @@ from gobby.hooks.session_materialize import activate_deferred_session
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
-from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.definitions import AgentDefinitionBody, AgentStepWorkflowBody, WorkflowStep
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
@@ -364,6 +364,56 @@ class TestReturningSessionPreservesUserVariables:
 
         assert "unlocked_tools" not in _get_merged_changes(mock_svm)
         assert _get_merged_changes(mock_svm)["_agent_type"] == "default"
+        mock_defaults.assert_called_once()
+
+    @patch(
+        "gobby.mcp_proxy.tools.apply_agent_definition.load_variable_defaults",
+        return_value={"_agent_context_injected": False, "_agent_identity_reinject": False},
+    )
+    @patch("gobby.hooks.session_activation._session_is_spawned", return_value=True)
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    @patch("gobby.workflows.agent_resolver.resolve_agent")
+    def test_preserves_injection_and_step_completion_flags(
+        self,
+        mock_resolve: MagicMock,
+        mock_svm_cls: MagicMock,
+        mock_spawned: MagicMock,
+        mock_defaults: MagicMock,
+    ) -> None:
+        """A same-agent re-activation keeps runtime flags that its delta would seed."""
+        handlers = _make_event_handlers()
+        mock_resolve.return_value = make_agent_definition(
+            name="stepper",
+            prompts={"agent": "Work."},
+            step_workflow=AgentStepWorkflowBody(
+                steps=[WorkflowStep(name="work", instructions="Do the work")],
+            ),
+        )
+
+        mock_svm = MagicMock()
+        mock_svm_cls.return_value = mock_svm
+        mock_svm.get_variables.return_value = {
+            "_agent_type": "stepper",
+            "is_spawned_agent": True,
+            "assigned_task_id": "#1",
+            "step_workflow_complete": True,
+            "_agent_context_injected": True,
+            "_agent_identity_reinject": True,
+        }
+
+        handlers._activate_default_agent(
+            session_id="sess-compact",
+            cli_source="claude",
+            project_id=None,
+            agent_name_override=None,
+        )
+
+        changes = _get_merged_changes(mock_svm)
+        assert changes["_agent_type"] == "stepper"
+        assert "step_workflow_complete" not in changes
+        assert "_agent_context_injected" not in changes
+        assert "_agent_identity_reinject" not in changes
+        mock_spawned.assert_called()
         mock_defaults.assert_called_once()
 
 

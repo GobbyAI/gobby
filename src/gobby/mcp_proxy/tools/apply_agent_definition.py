@@ -249,9 +249,6 @@ def commit_definition_changes(
             "is_spawned_agent",
             "_agent_definition_hash",
             "_agent_definition_keys",
-            "_agent_context_injected",
-            "_agent_identity_reinject",
-            "step_workflow_complete",
         } | (definition_variable_names or set())
         delta = {
             key: value
@@ -359,8 +356,8 @@ async def apply_agent_definition_impl(
     changes, rules, skills = build_definition_changes(
         body, session_id, db, all_skills=all_skills, is_spawned=False
     )
-    changes.update(_agent_context_injected=False, _agent_identity_reinject=True)
-    collision = colliding_definition_variable_error(variables, changes=changes, extra_vars=extra)
+    overlays = {"_agent_context_injected": False, "_agent_identity_reinject": True, **extra}
+    collision = colliding_definition_variable_error(variables, changes=changes, extra_vars=overlays)
     if collision:
         return _refusal("variable_collision", collision)
     committed = commit_definition_changes(
@@ -372,7 +369,7 @@ async def apply_agent_definition_impl(
         relaunch=relaunch,
         same_pin_noop=True,
         definition_variable_names=set(body.workflows.variables),
-        overlays={**extra, **(variables or {})},
+        overlays={**overlays, **(variables or {})},
     )
     if committed["status"] != "applied":
         return _activation_receipt(committed["status"], committed["agent"], agent)

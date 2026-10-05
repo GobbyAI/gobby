@@ -188,6 +188,8 @@ async def test_activation_preserves_runtime_defaults(
         "task_claimed": False,
         "claimed_tasks": {},
         "task_edited_files": {},
+        "_agent_context_injected": False,
+        "_agent_identity_reinject": False,
     }.items():
         defaults.create(name=name, default_value=value)
     apply = apply_definition()
@@ -200,11 +202,16 @@ async def test_activation_preserves_runtime_defaults(
         "task_edited_files": {"u1": ["src/example.py"]},
     }
     manager = SessionVariableManager(temp_db)
-    manager.merge_variables(session_id, runtime)
+    manager.merge_variables(
+        session_id,
+        {**runtime, "_agent_context_injected": True, "_agent_identity_reinject": False},
+    )
     result = await apply(agent="x", db=temp_db, session_id=session_id)
     assert result["status"] == "applied"
     stored = manager.get_variables(session_id)
     assert {key: stored[key] for key in runtime} == runtime
+    assert stored["_agent_context_injected"] is False
+    assert stored["_agent_identity_reinject"] is True
 
 
 @pytest.mark.asyncio
