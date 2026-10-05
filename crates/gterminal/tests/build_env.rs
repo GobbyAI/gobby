@@ -198,7 +198,7 @@ fn zig_env_wins_without_probing_path() {
     let zig = resolve_zig(
         Some(OsString::from("/custom/zig")),
         || panic!("ZIG set: the PATH zig is never asked"),
-        Path::new("/absent/zig"),
+        &[Path::new("/absent/zig")],
     );
     assert_eq!(zig, Ok(OsString::from("/custom/zig")));
 }
@@ -206,16 +206,16 @@ fn zig_env_wins_without_probing_path() {
 #[test]
 fn a_path_zig_016_is_used_before_the_homebrew_keg() {
     let keg = tempfile::NamedTempFile::new().expect("keg stand-in");
-    let zig = resolve_zig(None, version("0.16.0\n"), keg.path());
+    let zig = resolve_zig(None, version("0.16.0\n"), &[keg.path()]);
     assert_eq!(zig, Ok(OsString::from("zig")));
 }
 
 #[test]
 fn another_path_zig_falls_back_to_the_homebrew_keg() {
     let keg = tempfile::NamedTempFile::new().expect("keg stand-in");
-    let zig = resolve_zig(None, version("0.17.0\n"), keg.path());
+    let zig = resolve_zig(None, version("0.17.0\n"), &[keg.path()]);
     assert_eq!(zig, Ok(keg.path().as_os_str().to_owned()));
-    let zig = resolve_zig(None, || None, keg.path());
+    let zig = resolve_zig(None, || None, &[keg.path()]);
     assert_eq!(
         zig,
         Ok(keg.path().as_os_str().to_owned()),
@@ -224,13 +224,41 @@ fn another_path_zig_falls_back_to_the_homebrew_keg() {
 }
 
 #[test]
+fn an_intel_keg_serves_when_the_apple_silicon_keg_is_absent() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let apple_silicon = dir.path().join("opt-homebrew-zig");
+    let intel = tempfile::NamedTempFile::new().expect("Intel keg stand-in");
+    let zig = resolve_zig(
+        None,
+        version("0.17.0\n"),
+        &[apple_silicon.as_path(), intel.path()],
+    );
+    assert_eq!(zig, Ok(intel.path().as_os_str().to_owned()));
+    let first = tempfile::NamedTempFile::new().expect("Apple silicon keg stand-in");
+    let zig = resolve_zig(None, version("0.17.0\n"), &[first.path(), intel.path()]);
+    assert_eq!(
+        zig,
+        Ok(first.path().as_os_str().to_owned()),
+        "with both kegs present the first wins"
+    );
+}
+
+#[test]
 fn no_zig_016_anywhere_names_the_brew_fix() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let keg = dir.path().join("zig");
-    assert!(!keg.exists());
-    let message = resolve_zig(None, version("0.17.0\n"), &keg).expect_err("no Zig 0.16");
+    let apple_silicon = dir.path().join("opt-homebrew-zig");
+    let intel = dir.path().join("usr-local-zig");
+    let kegs = [apple_silicon.as_path(), intel.as_path()];
+    let message = resolve_zig(None, version("0.17.0\n"), &kegs).expect_err("no Zig 0.16");
     assert!(message.contains("brew install zig@0.16"), "{message}");
     assert!(message.contains("0.17.0"), "names the PATH zig: {message}");
-    let message = resolve_zig(None, || None, &keg).expect_err("no zig at all");
+    for keg in kegs {
+        let keg = keg.display().to_string();
+        assert!(
+            message.contains(&keg),
+            "names every keg it tried: {message}"
+        );
+    }
+    let message = resolve_zig(None, || None, &kegs).expect_err("no zig at all");
     assert!(message.contains("PATH zig is missing"), "{message}");
 }

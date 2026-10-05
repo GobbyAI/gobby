@@ -11,10 +11,13 @@ binaries on purpose: the Ghostty VT engine sits behind `gobby-terminal`'s
 ## Build
 
 Zig 0.16.0 is a **build-time** dependency only for `vt-engine` (the `gterm`
-binary and its CI jobs). `gobby-client` never invokes Zig.
+binary and its CI jobs). `gobby-client` never invokes Zig. The build takes `ZIG`
+when set, else the PATH `zig` when it reports 0.16, else Homebrew's keg-only
+`zig@0.16` under `/opt/homebrew` or `/usr/local`, and otherwise fails naming
+`brew install zig@0.16`.
 
 ```bash
-# Host (requires zig 0.16.0 on PATH)
+# Host (requires Zig 0.16.0, found as above)
 cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 
 # Workspace client (Zig-free)
@@ -133,8 +136,8 @@ Editing this path, note that the trap lives in the build, not in the code. The
 `gterm` binary carries `required-features = ["vt-engine"]`, so a plain
 `cargo build -p gobby-terminal` builds the library alone, emits no `gterm`, exits
 0, and leaves the installed binary untouched: a green build that changed nothing.
-Name the binary and the feature, the way `gobby install` does, with Zig 0.16 on
-`PATH`:
+Name the binary and the feature, the way `gobby install` does, with Zig 0.16
+available as Build describes:
 
 ```bash
 cargo build --release -p gobby-terminal --features vt-engine --bin gterm

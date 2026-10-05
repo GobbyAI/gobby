@@ -42,8 +42,11 @@ GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60
 
 `gobby-terminal` builds a vendored Zig library (libghostty-vt) whenever the
 `vt-engine` feature is on, which the `gterm` binary requires. That build needs
-Zig 0.16 on PATH and compiles against whatever macOS SDK Command Line Tools
-ships, including 27; no `DEVELOPER_DIR` or Xcode selection is involved.
+Zig 0.16: `ZIG` when set, else the PATH `zig` when it is 0.16, else Homebrew's
+keg-only `zig@0.16` under `/opt/homebrew` or `/usr/local`
+(`crates/gterminal/build_zig.rs`). It compiles against whatever macOS SDK
+Command Line Tools ships, including 27; no `DEVELOPER_DIR` or Xcode selection is
+involved.
 
 ```bash
 cargo build --release -p gobby-terminal --features vt-engine --bin gterm
