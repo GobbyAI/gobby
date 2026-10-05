@@ -1,0 +1,647 @@
+header:
+  plan_id: apply-agent-definition
+  plan_hash: d7eec2aff150a6f68fdd571f45d1181d6a4e0a87a786c6a6ff83a10cdea847b4
+  root_task_ref: '23499'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-05T15:17:36Z'
+  task_tree_source: db
+  task_tree_source_hash: 69a9c7bafcd5ebb7f227e780822b34362e1d1f4431a93f98f13b8f8044f22705
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: a3c3da319ac2a78a5c2c8058ff48e1d8e2e27dc8757cb4733b4232a7e87f8d78
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activation_writes_full_delta_and_agent_type
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 783ca9eddb3f8c5650027abc8d624675d9e621dc08a00e0e0194125e1260472c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_apply_agent_definition.py::test_refusals_write_nothing
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: e4a55ff5259202277b1954e6a0ac1a3dec4b945286ae390c0f6776464c7b6ced
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_apply_agent_definition.py::test_same_seat_noop_and_role_change_refused
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 76fc4dcf19578aa945caa830a305f01383038e2514182c2ef8e0fe50a0e20614
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_apply_agent_definition.py::test_blocked_tools_and_skill_exclusions_follow_seat
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: cd3071ebabe61e5e4b363ba09dcfbd0b791dff34290f84e1cada06eeae8c6f7d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/hooks/test_session_start_reactivation.py::test_compact_sessionstart_keeps_seat_skills_and_rules
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.6
+  plan_node_hash: 2ad15d81c82ac3df4cb9fe6a614b07f3cb8d53d546dc1e0fba7c50ee2d2f7738
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/servers/websocket/chat/test_servers_websocket_chat_session.py::test_web_chat_launch_uses_apply_agent_definition
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.7
+  plan_node_hash: 1c964276d0d50aef6beab210cb6047dd19f07615779d94124a073bf6dedf6d8d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_apply_agent_definition.py::test_registry_exposes_apply_agent_definition_only
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.8
+  plan_node_hash: 27792a8adeeba7190960e7185761cf3b46d84b410f3cad8130db468d11b8327d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/hooks/test_session_start_reactivation.py::test_inherit_provider_pin_is_stable_across_entry_points
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.9
+  plan_node_hash: d46cc10b3250d0a52ef4bb34ffde49fb510d1defe14be876cf5bfce994d4ecb8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activation_clears_inherited_skill_restriction
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.10
+  plan_node_hash: ff99ac7c2328898bac49bf4f7458c841361e05f7352cca0ce194054d1efc36e9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/hooks/test_session_start_reactivation.py::test_reactivation_clears_dropped_skill_restriction
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.11
+  plan_node_hash: 9d455b3444cb2e0efb62550017ba456e637f7c4cd0022630e103334fb8cebad0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activated_seat_refuses_worktree_tools
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.12
+  plan_node_hash: 0287c17f9f83735eef9c0f8a199ea2d21c29a72f50cfa9cd6de361c23c70552f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_apply_agent_definition.py::test_relaunch_switches_seat_and_clears_previous_keys
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.13
+  plan_node_hash: 3f1c21428da26b14d0425b940c348d681852752cf7af63fdd6004104499187cc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/servers/websocket/chat/test_servers_websocket_chat_session.py::test_agent_switch_relaunches_through_activation
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.14
+  plan_node_hash: 797bc4fc376d24922cf0eac6bd026172772d27ff569985c6f3dea702687bdf7b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/hooks/event_handlers/test_activate_agent_override.py::test_override_never_changes_role
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.15
+  plan_node_hash: f250b024d016be0eb12c1a1cfc79100ac5dc4f5b42104171ffdb7ad8b383fa4d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/servers/websocket/test_attached_session_agent.py::test_attached_terminal_role_change_refused_before_write
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.16
+  plan_node_hash: 71572c1d79a0a750ec2a819b1fcb8fd7892fc64c60057886d6e150d10aa05c54
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/hooks/test_session_start_reactivation.py::test_drift_then_relaunch_clears_retired_definition_key
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.17
+  plan_node_hash: db33f0c0b7b7632bae1e2b9a9cf4cda2d60c28cdcb62aea6dde9c255c91b1f3c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activation_over_configured_base_clears_base_keys
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.18
+  plan_node_hash: a3459a9402e383d354332a04c0ba6ad6510ba365e26026e0dbc3e163906fc1bb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_apply_agent_definition.py::test_concurrent_activations_recheck_permission_under_lock
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.19
+  plan_node_hash: ec76e4c3f81a84fcc26e0515c2492b15f273276ffdf0e576b0c0fc2b9689811b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
+      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+      in one merge. test: `...'
+    matched_artifact_ref: tests/hooks/test_session_start_reactivation.py::test_stale_sessionstart_behind_relaunch_keeps_current_seat
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: e5209c41dfad2e651d7d00833833099b9a17e759394c5ebbf9aee4d442ee69ac
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23504'
+    validation_criteria_snippet: '1.2.1: An interactive seat whose definition declares
+      steps gets an instance at the first step on activation, with no task claimed.
+      test: `tests/hooks/test_inte...'
+    matched_artifact_ref: tests/hooks/test_interactive_step_instance.py::test_interactive_seat_with_step_workflow_gets_instance_without_task
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 46f340b94a1e74668b340b3c4c77dd2946b8903a43d4feaafd0ec4471fe6e3c6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23504'
+    validation_criteria_snippet: '1.2.1: An interactive seat whose definition declares
+      steps gets an instance at the first step on activation, with no task claimed.
+      test: `tests/hooks/test_inte...'
+    matched_artifact_ref: tests/hooks/test_interactive_step_instance.py::test_seat_without_step_workflow_gets_none
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: ad1e6a3de0dfdc07916d6cc475ed232da1d4a23b2a4a216d365a6df10545e90f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23504'
+    validation_criteria_snippet: '1.2.1: An interactive seat whose definition declares
+      steps gets an instance at the first step on activation, with no task claimed.
+      test: `tests/hooks/test_inte...'
+    matched_artifact_ref: tests/hooks/test_interactive_step_instance.py::test_reconcile_repairs_missing_instance_after_failed_save
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: b24972eded8e6c5494f5ade1f84479fb51cb620ff72d7e4e1cb5c06cff0de33e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23504'
+    validation_criteria_snippet: '1.2.1: An interactive seat whose definition declares
+      steps gets an instance at the first step on activation, with no task claimed.
+      test: `tests/hooks/test_inte...'
+    matched_artifact_ref: tests/hooks/test_interactive_step_instance.py::test_spawned_step_instance_unchanged
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: a3e976e622b205c6069388b1fadc6c9f8ef36d1dab866b692f3a298f23ed27ab
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23504'
+    validation_criteria_snippet: '1.2.1: An interactive seat whose definition declares
+      steps gets an instance at the first step on activation, with no task claimed.
+      test: `tests/hooks/test_inte...'
+    matched_artifact_ref: tests/workflows/test_step_snapshot_semantics.py::test_definition_activation_materializes_step_instance
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.6
+  plan_node_hash: 9d067e82ff818a0883c043a2a80c0098b86197edd8ec7b42becfee84d7d7588d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23504'
+    validation_criteria_snippet: '1.2.1: An interactive seat whose definition declares
+      steps gets an instance at the first step on activation, with no task claimed.
+      test: `tests/hooks/test_inte...'
+    matched_artifact_ref: tests/hooks/test_interactive_step_instance.py::test_relaunch_switch_replaces_step_instance
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.7
+  plan_node_hash: e67cfbc1fb12d72ee9277b18ca4ad1ca0bd3402ed84da198a33dd145cfb053d3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23504'
+    validation_criteria_snippet: '1.2.1: An interactive seat whose definition declares
+      steps gets an instance at the first step on activation, with no task claimed.
+      test: `tests/hooks/test_inte...'
+    matched_artifact_ref: tests/hooks/test_interactive_step_instance.py::test_activation_over_configured_base_replaces_base_instance
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.8
+  plan_node_hash: 2d331b8efe2b5c5ff21dca4bdd48d4fdd1913d2e8ae74ab228d80fa106d357dc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23504'
+    validation_criteria_snippet: '1.2.1: An interactive seat whose definition declares
+      steps gets an instance at the first step on activation, with no task claimed.
+      test: `tests/hooks/test_inte...'
+    matched_artifact_ref: tests/hooks/test_interactive_step_instance.py::test_switch_serializes_with_stale_reconcile
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: b4bdeca5f4b0391df5053aafad2c8e4403e083b8aa35dcc44e540da9339a291e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23505'
+    validation_criteria_snippet: '1.3.1: A resume or compact SessionStart whose seat
+      definition changed applies the current row, stores the new pin, and injects
+      the drift line exactly once, inc...'
+    matched_artifact_ref: tests/hooks/test_session_start_reactivation.py::test_reactivation_reports_definition_drift_once
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: 0bacdcd59c933f109ed036faf2a89fcc61f0e77210131538af5bb588ce87e6e6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23505'
+    validation_criteria_snippet: '1.3.1: A resume or compact SessionStart whose seat
+      definition changed applies the current row, stores the new pin, and injects
+      the drift line exactly once, inc...'
+    matched_artifact_ref: tests/hooks/test_session_start_reactivation.py::test_unchanged_pin_injects_no_drift_line
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: 5887299a5f64cb4b05c2cc7fbf3cd74ac42c6f6bc104c54062626c364e07f1cc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23505'
+    validation_criteria_snippet: '1.3.1: A resume or compact SessionStart whose seat
+      definition changed applies the current row, stores the new pin, and injects
+      the drift line exactly once, inc...'
+    matched_artifact_ref: tests/hooks/test_session_start_reactivation.py::test_drift_reactivation_keeps_running_step_instance
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.4
+  plan_node_hash: f3602cc937b13b617d8ab6bf4e7a4b151bacdf9807eaa5bf6d454b6689aeabe3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23505'
+    validation_criteria_snippet: '1.3.1: A resume or compact SessionStart whose seat
+      definition changed applies the current row, stores the new pin, and injects
+      the drift line exactly once, inc...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_apply_agent_definition.py::test_same_seat_changed_row_reports_drift_once
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.1
+  plan_node_hash: e974c4d8f88840b69dc3c1f4cd931cb24ceaeda4e204fe2e35d0822f1f053b14
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/hooks/test_clear_successor_seat.py::test_clear_successor_inherits_agent_type_and_pin
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.2
+  plan_node_hash: 60a667c9d855ad9ffeac301945611247f9db035dfee35d7bf44e10653bdd1c48
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/hooks/test_clear_successor_seat.py::test_clear_successor_gets_fresh_step_instance
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.3
+  plan_node_hash: 82c8618e8edf4d029cde3e4c2b6de88b0c7b39ba9baf5a3bd0be69d083a24e2a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/hooks/test_clear_successor_seat.py::test_base_agent_clear_successor_unchanged
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.4
+  plan_node_hash: 761a515099c30d29c45ae89a9960623ca9824ab0cf9dfff1a68e078636297315
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/hooks/test_clear_successor_seat.py::test_spawned_interactive_seat_keeps_run_binding_after_clear
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.5
+  plan_node_hash: e73c5745df149e72ad370503d74bf03512eb09cd0f1389ce2171a3c85dd50383
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/hooks/test_session_end_handlers.py::test_staged_clear_end_hands_run_to_successor
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.6
+  plan_node_hash: 1510ab872316838b03a90dd42fe5abf2b438466cf844ac89d129c2ad3a97c4a2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/hooks/test_clear_successor_seat.py::test_superseding_successor_takes_the_run
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.7
+  plan_node_hash: cd31d8c9d8c6a772456755c41fa9d85b262466267bad76c6dff63faa7f61b9ba
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/hooks/test_clear_successor_seat.py::test_clear_successor_keeps_spawn_depth
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.1
+  plan_node_hash: eff70eaef1680734382e4627cae549ea93f95adf942deaa2e10612b5cdf845cd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23507'
+    validation_criteria_snippet: '1.5.1: Every `rules/roles/` condition matches a
+      seat through `_agent_type` alone, and a context that carries only `_persona_name`
+      matches none of them. test: `...'
+    matched_artifact_ref: tests/workflows/test_seat_rules.py::test_persona_name_alone_matches_no_seat_rule
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.2
+  plan_node_hash: d46e959d8d562ee82b7e1be0f6c495240108b2b45ed81373073766cf7b126127
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23507'
+    validation_criteria_snippet: '1.5.1: Every `rules/roles/` condition matches a
+      seat through `_agent_type` alone, and a context that carries only `_persona_name`
+      matches none of them. test: `...'
+    matched_artifact_ref: tests/workflows/test_seat_rules.py::test_seat_common_matches_spawned_and_skips_non_seats
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.1
+  plan_node_hash: 4996446f2ea8f7bc51bf169b1ec21b4c2ad45d58bb6aa2bc74a74cf48b38cfae
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23508'
+    validation_criteria_snippet: '1.6.1: After a staged clear, a wrapper `call_tool`
+      for a session-scoped tool that carries the pane''s frozen headers and token
+      is admitted, where today it is re...'
+    matched_artifact_ref: tests/servers/test_managed_clear_identity.py::test_successor_tool_call_is_attributed_to_successor
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.2
+  plan_node_hash: 036c4ee4c3da8d9c7f1efa3774d0fba7b8edd0a76ef6cf582401ce8f21e1e865
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23508'
+    validation_criteria_snippet: '1.6.1: After a staged clear, a wrapper `call_tool`
+      for a session-scoped tool that carries the pane''s frozen headers and token
+      is admitted, where today it is re...'
+    matched_artifact_ref: tests/servers/test_managed_clear_identity.py::test_successor_hook_and_variables_follow_run
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.3
+  plan_node_hash: 2e88e1d9cc80ae447901cb78bc24ef7fecb3e9806501816413a3aa1c8c2c9aa9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23508'
+    validation_criteria_snippet: '1.6.1: After a staged clear, a wrapper `call_tool`
+      for a session-scoped tool that carries the pane''s frozen headers and token
+      is admitted, where today it is re...'
+    matched_artifact_ref: tests/servers/test_managed_clear_identity.py::test_no_forwarding_without_live_run_binding
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.4
+  plan_node_hash: 96120636aef56839f7b5da7ad4898b0575a739e014ee29cffce3063268edd129
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23508'
+    validation_criteria_snippet: '1.6.1: After a staged clear, a wrapper `call_tool`
+      for a session-scoped tool that carries the pane''s frozen headers and token
+      is admitted, where today it is re...'
+    matched_artifact_ref: tests/servers/test_managed_clear_identity.py::test_successor_chat_completion_keeps_issued_grant
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 63ab05ec46fa6bd0cb3b43f792e087adb113c76fed4c98054ece322b4877613c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23509'
+    validation_criteria_snippet: '2.1.1: `idle_ttl_seconds` accepts a positive integer
+      with `execution_mode: interactive`, and rejects zero, a negative value, and
+      any value on a `one_shot` defi...'
+    matched_artifact_ref: tests/workflows/test_agent_definitions_v2.py::test_idle_ttl_requires_interactive_execution_mode
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 8d7ef11c773c80df68675e0e6033751888d88d137ff34050658531e6d45a996f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23509'
+    validation_criteria_snippet: '2.1.1: `idle_ttl_seconds` accepts a positive integer
+      with `execution_mode: interactive`, and rejects zero, a negative value, and
+      any value on a `one_shot` defi...'
+    matched_artifact_ref: tests/mcp_proxy/tools/spawn_agent/test_factory.py::test_idle_ttl_is_persisted_only_for_interactive_runs
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: ce4a1551b91d91dcf2f571a41a6d999e2515bba6001b0ede920872c476baef8e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23509'
+    validation_criteria_snippet: '2.1.1: `idle_ttl_seconds` accepts a positive integer
+      with `execution_mode: interactive`, and rejects zero, a negative value, and
+      any value on a `one_shot` defi...'
+    matched_artifact_ref: tests/agents/watchdog/test_interactive_lifecycle_cleanup.py::test_missing_interactive_terminal_resumes_after_task_close
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: 0ccec116b1e81d58ebfc5c38256a0b5dc9da7d86f9c80e40586d30809795eb5d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23510'
+    validation_criteria_snippet: '3.1.1: The persona reference calls `apply_agent_definition`
+      and names the relaunch refusal. behavior: "apply_agent_definition" in `src/gobby/install/shared/ski...'
+    matched_artifact_ref: apply_agent_definition
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: 8be4d63875e33c02488a46d7ae13e8a2fb891d071c738bdd9509b5122ee47475
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23510'
+    validation_criteria_snippet: '3.1.1: The persona reference calls `apply_agent_definition`
+      and names the relaunch refusal. behavior: "apply_agent_definition" in `src/gobby/install/shared/ski...'
+    matched_artifact_ref: tests/skills/test_review_skill.py::test_epic_review_references_pin_routing_and_verdict_mapping
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: 0ecf80f6dc58141b3793ab0f7353a7835ded4b4f097796a2453ec092db1aefb7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23510'
+    validation_criteria_snippet: '3.1.1: The persona reference calls `apply_agent_definition`
+      and names the relaunch refusal. behavior: "apply_agent_definition" in `src/gobby/install/shared/ski...'
+    matched_artifact_ref: role_change_requires_relaunch
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.4
+  plan_node_hash: 0500ca98e3ef286d9ae78f3dd4879418ee95d620f37c1dcd65c87d771a6c4b26
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23510'
+    validation_criteria_snippet: '3.1.1: The persona reference calls `apply_agent_definition`
+      and names the relaunch refusal. behavior: "apply_agent_definition" in `src/gobby/install/shared/ski...'
+    matched_artifact_ref: docs/guides/workflows-overview.md
+  deferral_target: null
+  detail: ''
+- section_id: D1
+  item_id: D1.1
+  plan_node_hash: 355c27fc205b29ab47298483ecf5edf30e8a4497fc88001b8ee7acf1375368a4
+  status: deferred
+  leaves: []
+  deferral_target: '#23511'
+  detail: deferral is valid
+- section_id: D2
+  item_id: D2.1
+  plan_node_hash: 0184a39128cf3ad2b07b249a41af9cbe4b2162b7a9de55a15d8162c065d1b1cc
+  status: deferred
+  leaves: []
+  deferral_target: '#23512'
+  detail: deferral is valid
+- section_id: D2
+  item_id: D2.2
+  plan_node_hash: 669cfee5a301927a0c8f184713fa751d941068ea275e7fdd3e068e2f15e47663
+  status: deferred
+  leaves: []
+  deferral_target: '#23512'
+  detail: deferral is valid
+- section_id: D3
+  item_id: D3.1
+  plan_node_hash: f60578f22f0e13a79cac42f3ac77fd46fd2f1b45541a973dc3606975d9733385
+  status: deferred
+  leaves: []
+  deferral_target: '#23497'
+  detail: deferral is valid
+- section_id: D3
+  item_id: D3.2
+  plan_node_hash: df7ad1bc7f16119677686a033e33988d0e83b4680f777bc798b818b30a764650
+  status: deferred
+  leaves: []
+  deferral_target: '#23497'
+  detail: deferral is valid
