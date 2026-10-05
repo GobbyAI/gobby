@@ -15,6 +15,201 @@ use crate::{db, models};
 use super::{LabelSource, StoredCommunity, read_for_context, refresh_project_communities};
 
 #[test]
+#[serial_test::serial(serial_db, serial_env)]
+fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
+    use crate::config::ServiceConfigSelection;
+    use crate::freshness::{FreshnessScope, FreshnessStatus, ensure_fresh};
+    use crate::index::api::{IndexOptions, IndexRequest};
+    use gobby_core::grant::{DirectConnections, managed_direct_grant, write_managed_bootstrap};
+
+    let (mut owner, database_url, parent_id, _parent_cleanup) = seeded_project("managed-offsets");
+    let tmp = tempfile::tempdir().expect("temporary workspace");
+    let tmp_root = tmp.path().canonicalize().expect("canonical temp root");
+    let parent_root = tmp_root.join("parent");
+    let admitted_root = tmp_root.join("admitted");
+    let foreign_root = tmp_root.join("foreign");
+    let rel = "src/lib.rs";
+    for root in [&parent_root, &admitted_root, &foreign_root] {
+        fs::create_dir_all(root.join("src")).expect("create source directory");
+        fs::create_dir_all(root.join(".gobby")).expect("create identity directory");
+        fs::write(root.join(rel), "pub fn located() {}\n").expect("write source");
+        fs::write(
+            root.join(".gobby/project.json"),
+            serde_json::json!({"id": parent_id}).to_string(),
+        )
+        .expect("write project identity");
+        if root != &parent_root {
+            fs::write(
+                root.join(".gobby/isolation.json"),
+                serde_json::json!({
+                    "parent_project_id": parent_id,
+                    "parent_project_path": parent_root,
+                })
+                .to_string(),
+            )
+            .expect("write overlay marker");
+        }
+    }
+    let admitted_id = crate::project::code_index_id_for_root(&admitted_root);
+    let foreign_id = crate::project::code_index_id_for_root(&foreign_root);
+    let _admitted_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: admitted_id.clone(),
+    };
+    let mut managed = managed_overlay_principal(
+        &mut owner,
+        &database_url,
+        &parent_id,
+        &parent_root,
+        &admitted_root,
+        db::id_param(&admitted_id).expect("admitted overlay UUID"),
+    );
+    let mut parent_ctx = test_context(database_url, &parent_id, ProjectIndexScope::Single);
+    parent_ctx.project_root = parent_root.clone();
+    api::index_files(
+        IndexRequest {
+            project_root: parent_root.clone(),
+            path_filter: None,
+            explicit_files: vec![PathBuf::from(rel)],
+            full: true,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &parent_ctx,
+        IndexOptions::default(),
+    )
+    .expect("index parent under owner before managed reads");
+
+    let home = tmp_root.join("home");
+    fs::create_dir_all(&home).expect("create isolated home");
+    fs::write(home.join("machine_id"), managed.machine_id.to_string())
+        .expect("write fixture machine identity");
+    let mut grant = managed_direct_grant(
+        &parent_id,
+        &managed.machine_id.to_string(),
+        &DirectConnections::postgres(&managed.managed_database_url),
+    );
+    grant.principal.kind = gobby_core::grant::PrincipalKind::ToolChat;
+    grant.principal.execution_id = Some(managed.execution_id.to_string());
+    grant.principal.session_id = Some(managed.session_id.to_string());
+    grant.principal.code_overlay_project_id = Some(admitted_id.clone());
+    let grant = grant.with_checksum();
+    let bootstrap = write_managed_bootstrap(&home, &grant).expect("write fixture grant");
+    // Keep a temporary local endpoint bound but non-serving so grant acquisition
+    // cannot reach the user's daemon, including inherited daemon URL overrides.
+    let daemon = std::net::TcpListener::bind("127.0.0.1:0").expect("isolated endpoint");
+    let daemon_url = format!("http://{}", daemon.local_addr().expect("endpoint address"));
+    temp_env::with_vars(
+        [
+            ("GOBBY_HOME", Some(home.as_os_str())),
+            (
+                gobby_core::grant::MANAGED_BOOTSTRAP_ENV,
+                Some(bootstrap.as_os_str()),
+            ),
+            ("GOBBY_DAEMON_URL", Some(std::ffi::OsStr::new(&daemon_url))),
+            ("GOBBY_AGENT_RUN_ID", None),
+            ("GOBBY_MANAGED_EXECUTION_ID", None),
+            ("GOBBY_AGENT_API_TOKEN", None),
+            ("GCODE_FRESHNESS_INFLIGHT", None),
+        ],
+        || {
+            let resolve = |root: &Path| {
+                Context::resolve_with_services(
+                    Some(root.to_str().expect("UTF-8 root")),
+                    true,
+                    ServiceConfigSelection::database_only(),
+                )
+            };
+            // A foreign overlay is denied even before the admitted overlay has
+            // index metadata; the frozen UUID remains an actionable diagnostic.
+            let error = resolve(&foreign_root).expect_err("deny unindexed foreign overlay");
+            let typed = error
+                .downcast_ref::<crate::cli_error::CliError>()
+                .expect("typed denial");
+            assert_eq!(typed.code, "code_overlay_mismatch");
+            assert!(typed.message.contains(&admitted_id));
+            assert!(
+                typed
+                    .message
+                    .contains(foreign_root.to_str().expect("foreign root"))
+            );
+            assert_eq!(crate::dispatch::classify_run_error(&error).exit, 2);
+
+            let parent_ctx = resolve(&parent_root).expect("parent remains readable");
+            let parent_symbols =
+                crate::visibility::visible_symbols_for_file(managed.client(), &parent_ctx, rel)
+                    .expect("read parent through managed role");
+            assert_eq!(parent_symbols.len(), 1);
+            assert_eq!(parent_symbols[0].name, "located");
+            assert_eq!(parent_symbols[0].line_start, 1);
+
+            let ctx = resolve(&admitted_root).expect("resolve admitted managed overlay");
+            let mut context_connection =
+                db::connect_readonly(&ctx.database_url).expect("connect from managed context");
+            let context_role: String = context_connection
+                .query_one("SELECT session_user::text", &[])
+                .expect("inspect context login")
+                .get(0);
+            assert_eq!(context_role, managed.role_name);
+            drop(context_connection);
+            let refresh = || {
+                ensure_fresh(&ctx, FreshnessScope::Files(vec![PathBuf::from(rel)]))
+                    .expect("managed refresh")
+            };
+            assert_eq!(refresh(), FreshnessStatus::Checked);
+            let symbols = crate::visibility::visible_symbols_for_file(managed.client(), &ctx, rel)
+                .expect("read admitted symbols");
+            assert_eq!(symbols.len(), 1);
+            assert_eq!(symbols[0].name, "located");
+            assert_eq!(symbols[0].line_start, 1);
+            assert_eq!(symbols[0].byte_start, 0);
+
+            fs::write(admitted_root.join(rel), "// moved\n\npub fn located() {}\n")
+                .expect("move function in admitted overlay");
+            assert_eq!(refresh(), FreshnessStatus::Checked);
+            let symbols = crate::visibility::visible_symbols_for_file(managed.client(), &ctx, rel)
+                .expect("read refreshed symbols");
+            assert_eq!(symbols.len(), 1);
+            assert_eq!(symbols[0].name, "located");
+            assert_eq!(symbols[0].line_start, 3);
+            assert_eq!(symbols[0].byte_start, 10);
+
+            let error = resolve(&foreign_root).expect_err("deny foreign overlay before freshness");
+            let typed = error
+                .downcast_ref::<crate::cli_error::CliError>()
+                .expect("typed denial");
+            assert_eq!(typed.code, "code_overlay_mismatch");
+            assert_eq!(typed.exit_status, 2);
+            assert!(
+                typed
+                    .message
+                    .contains(admitted_root.to_str().expect("admitted root"))
+            );
+            assert!(
+                typed
+                    .message
+                    .contains(foreign_root.to_str().expect("foreign root"))
+            );
+            assert!(
+                typed
+                    .recovery
+                    .as_deref()
+                    .is_some_and(|text| text.contains("lane manager"))
+            );
+            assert!(!typed.message.contains("serving existing index"));
+            let foreign_count: i64 = owner
+                .query_one(
+                    "SELECT count(*) FROM code_indexed_projects WHERE id = $1",
+                    &[&db::id_param(&foreign_id).expect("foreign overlay UUID")],
+                )
+                .expect("foreign overlay remains untouched")
+                .get(0);
+            assert_eq!(foreign_count, 0);
+        },
+    );
+}
+
+#[test]
 #[serial_test::serial(serial_db)]
 fn refresh_writes_rows_watermark_and_signature() {
     let (mut conn, database_url, project_id, _cleanup) = seeded_project("refresh-writes");
@@ -1506,12 +1701,16 @@ fn managed_overlay_principal(
     let mut config = database_url
         .parse::<postgres::Config>()
         .expect("parse test database URL");
-    config.user(&role_name).password(password);
+    config.user(&role_name).password(&password);
     let client = config
         .connect(postgres::NoTls)
         .expect("connect as managed gcode principal");
     ManagedPrincipal {
         client: Some(client),
+        managed_database_url: format!(
+            "{database_url}{}user={role_name}&password={password}",
+            if database_url.contains('?') { '&' } else { '?' }
+        ),
         database_url: database_url.to_string(),
         role_name,
         execution_id,
@@ -1602,6 +1801,7 @@ struct ProjectCleanup {
 
 struct ManagedPrincipal {
     client: Option<postgres::Client>,
+    managed_database_url: String,
     database_url: String,
     role_name: String,
     execution_id: uuid::Uuid,

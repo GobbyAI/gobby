@@ -358,6 +358,12 @@ impl Context {
             .flatten();
 
         let mut conn = db::connect_readonly(&database_url)?;
+        super::managed_scope::validate(
+            &mut conn,
+            &acquired.bundle.principal,
+            &project_id,
+            &identity.root,
+        )?;
         validate_parent_code_index(&mut conn, &index_scope)?;
         let (embedding, indexing, code_vectors) =
             services_from_acquired_settings(&acquired, services)?;
