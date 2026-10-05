@@ -936,28 +936,37 @@ Implementation:
 - **Receipt persistence.** The apply sequence writes every receipt through a
   `persist: &mut dyn FnMut(&ReconcileReceipt) -> anyhow::Result<()>`
   argument. The command passes a closure over `receipt::write_atomic` and
-  the validated path. Tests pass a recorder that keeps each persisted
-  receipt and fails at a chosen write. No filesystem fault can target the
-  write that follows the committed reset, so this argument is the test hook.
+  the validated path. Tests pass a recorder that keeps each receipt it
+  accepts and fails at a chosen write. It can fail before recording the
+  receipt, or record it and then fail. The second mode models
+  `write_atomic` publishing the file and then failing the parent-directory
+  sync (`retire_files.rs:498-558`, lines 550-552, excerpt_hash
+  `c35b043387dc39bb051800482df45690f0d45991dcd1032d764e4bb0902e5131`). No
+  filesystem fault can target the write that follows the committed reset,
+  so this argument is the test hook.
 - **Failure.**
   - A Qdrant error stops the batch loop, leaves `complete: false`, prints
     the error with the receipt path, and exits nonzero.
-  - A receipt rewrite failure after step 6 stops before the next mutation.
-    It prints the confirmed `versions_reset` count and `deleted` IDs on
-    stderr with the receipt path, and exits nonzero. The last persisted
-    receipt stays `complete: false`. When the failing write is the final
-    `complete: true` one, every delete has run and the exit is still
-    nonzero.
+  - Any `persist` error after step 6 stops before the next mutation. It
+    prints the confirmed `versions_reset` count and `deleted` IDs on stderr
+    with the receipt path, reports that write as unconfirmed, and exits
+    nonzero. The file then holds either the last acknowledged receipt or
+    the new one, which may read `complete: true`. A published file cannot
+    be rolled back, and none is attempted.
+  - Success is exit 0 with the apply payload on stdout. A nonzero exit
+    prints no apply payload, and a receipt that reads `complete: true` does
+    not prove success on its own.
   - A rerun starts over from the dry-run.
 - **Output.** The JSON keys add `mode: "apply"`, `receipt`, `deleted_points`,
   `versions_reset` and `complete`. The `gcode-cli.md` version-13 note
   extends to the apply flags. `recovery.md` gives the apply command and
-  states that it runs only through the Live Maintenance Procedure.
+  states that it runs only through the Live Maintenance Procedure, and that
+  a nonzero exit is unconfirmed whatever the receipt reads.
 
 **Granularity:** nine production files, one outcome: guarded apply. The
 receipt extraction exists only so apply and retire-files share one set of
 location checks. Shipping it alone leaves no consumer, and shipping apply
-without it duplicates security checks. Its twelve acceptance items are the
+without it duplicates security checks. Its thirteen acceptance items are the
 guards and failure boundaries of that one sequence.
 
 Planned verification:
@@ -1000,19 +1009,26 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
   worker's pending query selects it. test:
   `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_reset_survives_adoption_of_retained_version`.
 - 2.2.10 - When the receipt write right after the committed flag reset
-  fails, apply exits nonzero and sends no Qdrant delete. The flags stay
-  reset. Stderr gives the receipt path and the confirmed `versions_reset`
-  count, and the last persisted receipt is the initial one. test:
+  fails before recording, apply exits nonzero and sends no Qdrant delete.
+  The flags stay reset. Stderr gives the receipt path and the confirmed
+  `versions_reset` count, and the last recorded receipt is the initial
+  one. test:
   `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_stops_before_deletes_when_reset_receipt_write_fails`.
 - 2.2.11 - With 257 orphan IDs (two batches), when the write after the first
-  batch fails, apply exits nonzero and sends no second delete. Stderr lists
-  the first batch's IDs. The last persisted receipt has `versions_reset`
-  filled, `deleted: []` and `complete: false`. test:
+  batch fails before recording, apply exits nonzero and sends no second
+  delete. Stderr lists the first batch's IDs. The last recorded receipt has
+  `versions_reset` filled, `deleted: []` and `complete: false`. test:
   `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_stops_after_first_batch_when_receipt_write_fails`.
-- 2.2.12 - When only the final `complete: true` write fails, apply exits
-  nonzero after every delete. The last persisted receipt lists every batch
-  with `complete: false`. test:
+- 2.2.12 - When only the final `complete: true` write fails before
+  recording, apply exits nonzero after every delete. The last recorded
+  receipt lists every batch with `complete: false`. test:
   `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_exits_nonzero_when_final_receipt_write_fails`.
+- 2.2.13 - When a write records its receipt and then fails, apply still
+  exits nonzero, prints no apply payload, and reports the write as
+  unconfirmed. The test runs twice. On the write after the reset, no Qdrant
+  delete follows. On the final write, the recorded receipt reads
+  `complete: true` and the exit is still nonzero. test:
+  `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_reports_unconfirmed_when_published_receipt_write_fails`.
 
 ## P3: Path-Aware Content Retention
 `kind: framing`
@@ -1311,7 +1327,9 @@ drop is part of it.
 
    Busy (the hourly prune holds the lease) and digest mismatch both leave
    everything untouched. On busy, rerun later. On a mismatch, return to
-   step 1.
+   step 1. Any other nonzero exit is unconfirmed, even when the receipt
+   reads `complete: true`. Send its stderr with the receipt, and let the
+   step 4 dry-run show the actual state.
 4. **Verify.** Run a dry-run and confirm zero orphans and zero synced-missing
    versions, except points recreated by a detached writer, which are listed
    and handled by the next pass. The reset versions now report as pending:
