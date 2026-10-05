@@ -5149,8 +5149,7 @@ class TestRecoverTaskFromFailedAgent:
             task_manager=None,
             terminal_services=_fake_terminal_services(temp_db),
         )
-        result = await mon._recover_task_from_failed_agent("00000000-0000-0000-0000-0000000000ff")
-        assert result is None
+        await mon._recover_task_from_failed_agent("00000000-0000-0000-0000-0000000000ff")
         assert mon._task_manager is None
 
     @pytest.mark.asyncio
@@ -5248,8 +5247,8 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
             ),
         ):
 
-            async def run_checks() -> list[None]:
-                return await asyncio.gather(*(monitor.check_periodic_enters() for _ in range(20)))
+            async def run_checks() -> None:
+                await asyncio.gather(*(monitor.check_periodic_enters() for _ in range(20)))
 
             checks = asyncio.create_task(run_checks())
             assert await asyncio.to_thread(list_active_started.wait, 1)
@@ -5518,9 +5517,7 @@ class TestCleanupAgentFdClose:
             terminal_id="gobby-no-fd",
         )
 
-        result = await monitor._cleanup_agent(run, terminal_payload="test cleanup", is_success=True)
-
-        assert result is None
+        await monitor._cleanup_agent(run, terminal_payload="test cleanup", is_success=True)
         assert run.id not in monitor._master_fds
 
 

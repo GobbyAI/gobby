@@ -8,6 +8,7 @@ import os
 import signal
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import click
@@ -15,6 +16,39 @@ import psutil
 import pytest
 
 pytestmark = pytest.mark.unit
+
+
+class _ProcessStub:
+    """Stateful process fake for port-holder termination tests."""
+
+    def __init__(
+        self, pid: int, *, port: int | None = None, children: list[_ProcessStub] | None = None
+    ) -> None:
+        self.pid = pid
+        self.info = {"name": "python"}
+        self.port = port
+        self._children = children or []
+        self.state = "running"
+        self.connections_read = 0
+
+    def name(self) -> str:
+        return "python"
+
+    def cmdline(self) -> list[str]:
+        return ["python", "-m", "gobby.runner"]
+
+    def net_connections(self) -> list[SimpleNamespace]:
+        self.connections_read += 1
+        return [SimpleNamespace(laddr=SimpleNamespace(port=self.port), status=psutil.CONN_LISTEN)]
+
+    def children(self, recursive: bool = False) -> list[_ProcessStub]:
+        return self._children
+
+    def terminate(self) -> None:
+        self.state = "terminated"
+
+    def kill(self) -> None:
+        self.state = "killed"
 
 
 def test_process_start_matches_tolerates_subsecond_drift() -> None:
@@ -37,14 +71,18 @@ def test_terminate_ui_process_tolerates_process_races() -> None:
     proc.children.side_effect = psutil.NoSuchProcess(pid=1)
     proc.terminate.side_effect = psutil.AccessDenied(pid=1)
     child.kill.side_effect = psutil.NoSuchProcess(pid=2)
+    survivor = _ProcessStub(3)
 
-    with patch("gobby.cli.utils_ui.psutil.wait_procs", return_value=([], [child])) as wait_procs:
+    with patch(
+        "gobby.cli.utils_ui.psutil.wait_procs", return_value=([], [child, survivor])
+    ) as wait_procs:
         _terminate_ui_process(proc)
 
     proc.children.assert_called_once_with(recursive=True)
     proc.terminate.assert_called_once_with()
     wait_procs.assert_called_once_with([proc], timeout=3)
     child.kill.assert_called_once_with()
+    assert survivor.state == "killed"
 
 
 @pytest.fixture(autouse=True)
@@ -1240,53 +1278,29 @@ def test_kill_port_holder_finds_process(monkeypatch: pytest.MonkeyPatch) -> None
     from gobby.cli.utils import _kill_port_holder
 
     monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
-
-    conn = MagicMock()
-    conn.laddr = MagicMock()
-    conn.laddr.port = 5173
-    conn.status = psutil.CONN_LISTEN
-
-    child = MagicMock()
-    parent_proc = MagicMock()
-    parent_proc.children.return_value = [child]
-
-    fake_proc = MagicMock()
-    fake_proc.pid = 55555
-    fake_proc.name.return_value = "node"
-    fake_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
-    fake_proc.net_connections.return_value = [conn]
-
+    child = _ProcessStub(55556)
+    parent = _ProcessStub(55555, port=5173, children=[child])
     with (
-        patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]),
-        patch("gobby.cli.utils.psutil.Process", return_value=parent_proc),
+        patch("gobby.cli.utils.psutil.process_iter", return_value=[parent]),
+        patch("gobby.cli.utils.psutil.Process", return_value=parent),
         patch("gobby.cli.utils.psutil.wait_procs", return_value=([], [])),
     ):
         _kill_port_holder(5173)
 
-    assert parent_proc.children.call_count == 1
-    parent_proc.terminate.assert_called_once()
-    child.terminate.assert_called_once()
+    assert parent.state == "terminated"
+    assert child.state == "terminated"
 
 
 def test_kill_port_holder_no_match(monkeypatch: pytest.MonkeyPatch) -> None:
     from gobby.cli.utils import _kill_port_holder
 
     monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
-
-    conn = MagicMock()
-    conn.laddr = MagicMock()
-    conn.laddr.port = 9999  # Different port
-    conn.status = psutil.CONN_LISTEN
-
-    fake_proc = MagicMock()
-    fake_proc.pid = 55555
-    fake_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
-    fake_proc.net_connections.return_value = [conn]
-
-    with patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]):
+    parent = _ProcessStub(55555, port=9999)
+    with patch("gobby.cli.utils.psutil.process_iter", return_value=[parent]):
         _kill_port_holder(5173)
-        fake_proc.net_connections.assert_called_once()
-        assert fake_proc.net_connections.call_count == 1
+
+    assert parent.state == "running"
+    assert parent.connections_read == 1
 
 
 def test_kill_port_holder_access_denied(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1294,47 +1308,39 @@ def test_kill_port_holder_access_denied(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
 
-    fake_proc = MagicMock()
-    fake_proc.pid = 55555
-    fake_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
-    fake_proc.net_connections.side_effect = psutil.AccessDenied(55555)
+    class DeniedProcess(_ProcessStub):
+        def net_connections(self) -> list[SimpleNamespace]:
+            raise psutil.AccessDenied(self.pid)
 
-    with patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]):
+    denied = DeniedProcess(55555, port=5173)
+    parent = _ProcessStub(55556, port=5173)
+    with (
+        patch("gobby.cli.utils.psutil.process_iter", return_value=[denied, parent]),
+        patch("gobby.cli.utils.psutil.Process", return_value=parent),
+        patch("gobby.cli.utils.psutil.wait_procs", return_value=([], [])),
+    ):
         _kill_port_holder(5173)
-        fake_proc.net_connections.assert_called_once()
+
+    assert denied.state == "running"
+    assert parent.state == "terminated"
 
 
 def test_kill_port_holder_kills_alive_procs(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When wait_procs returns alive processes, they get killed."""
+    """Processes surviving graceful termination get killed."""
     from gobby.cli.utils import _kill_port_holder
 
     monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
-
-    conn = MagicMock()
-    conn.laddr = MagicMock()
-    conn.laddr.port = 5173
-    conn.status = psutil.CONN_LISTEN
-
-    child = MagicMock()
-    parent_proc = MagicMock()
-    parent_proc.children.return_value = [child]
-
-    alive_proc = MagicMock()
-
-    fake_proc = MagicMock()
-    fake_proc.pid = 55555
-    fake_proc.name.return_value = "node"
-    fake_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
-    fake_proc.net_connections.return_value = [conn]
-
+    child = _ProcessStub(55556)
+    parent = _ProcessStub(55555, port=5173, children=[child])
     with (
-        patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]),
-        patch("gobby.cli.utils.psutil.Process", return_value=parent_proc),
-        patch("gobby.cli.utils.psutil.wait_procs", return_value=([], [alive_proc])),
+        patch("gobby.cli.utils.psutil.process_iter", return_value=[parent]),
+        patch("gobby.cli.utils.psutil.Process", return_value=parent),
+        patch("gobby.cli.utils.psutil.wait_procs", return_value=([parent], [child])),
     ):
         _kill_port_holder(5173)
-    alive_proc.kill.assert_called_once()
-    assert alive_proc.kill.call_count == 1
+
+    assert parent.state == "terminated"
+    assert child.state == "killed"
 
 
 # ---------------------------------------------------------------------------
