@@ -341,6 +341,7 @@ jobs:
       - name: Build gdaemon schema authority and the gcode CLI
         run: |
           cargo build -p gobby-daemon -p gobby-code
+          cargo build -p gobby-daemon --example pid_claim_fixture
           echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
 
       - name: Verify packaged gdaemon schema identity

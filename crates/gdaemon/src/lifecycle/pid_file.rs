@@ -60,7 +60,7 @@ pub struct PidFileClaim {
     file: Option<File>,
     pid_file: PathBuf,
     pub role: Role,
-    pub generation: u64,
+    pub generation: i64,
 }
 
 impl PidFileClaim {
@@ -210,22 +210,47 @@ fn write_record(file: &mut File, record: &Value) -> io::Result<()> {
     file.sync_all()
 }
 
-fn next_generation(record: &Option<Value>) -> io::Result<u64> {
+/// Standalone writers clear their record on failure before dropping the flock.
+/// Admission refusals run first so another issuer's reservation stays intact.
+/// Held-claim conversion deliberately does not use this failure boundary.
+fn acquire_record<T>(
+    file: &mut File,
+    action: impl FnOnce(&mut File) -> io::Result<T>,
+) -> io::Result<T> {
+    match action(file) {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            file.set_len(0)?;
+            file.sync_all()?;
+            Err(error)
+        }
+    }
+}
+
+fn next_generation(record: &Option<Value>) -> io::Result<i64> {
     let generation = record.as_ref().and_then(|r| r.get("generation"));
     let generation = generation
-        .and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok()))
+        .and_then(|value| match value {
+            Value::Bool(value) => Some(i64::from(*value)),
+            Value::String(value) => value.trim().parse().ok(),
+            _ => value.as_i64().or_else(|| {
+                let number = value.as_f64()?;
+                (number.is_finite() && number >= i64::MIN as f64 && number < -(i64::MIN as f64))
+                    .then_some(number.trunc() as i64)
+            }),
+        })
         .unwrap_or(0);
     generation
         .checked_add(1)
         .ok_or_else(|| invalid("generation overflow"))
 }
 
-fn role_record(role: &str, generation: u64, ack: Value) -> Value {
+fn role_record(role: &str, generation: i64, ack: Value) -> Value {
     json!({"version":1,"state":role,"role":role,"pid":std::process::id(),
         "boot_id":current_boot_id(),"generation":generation,"reservation":null,"ack":ack})
 }
 
-fn write_role(file: &mut File, role: Role, generation: u64, ack: Value) -> io::Result<()> {
+fn write_role(file: &mut File, role: Role, generation: i64, ack: Value) -> io::Result<()> {
     write_record(file, &role_record("transitioning", generation, Value::Null))?;
     write_record(file, &role_record(role.name(), generation, ack))
 }
@@ -328,10 +353,13 @@ pub fn claim_pid_file(pid_file: &Path, role: Role) -> io::Result<Option<PidFileC
         return Ok(None);
     }
     let generation = next_generation(&record)?;
-    write_role(&mut file, role, generation, Value::Null)?;
-    if role == Role::Daemon {
-        write_pid(pid_file)?;
-    }
+    acquire_record(&mut file, |file| {
+        write_role(file, role, generation, Value::Null)?;
+        if role == Role::Daemon {
+            write_pid(pid_file)?;
+        }
+        Ok(())
+    })?;
     Ok(Some(PidFileClaim {
         file: Some(file),
         pid_file: pid_file.into(),
@@ -377,9 +405,8 @@ pub fn probe_daemon_lock(pid_file: &Path) -> io::Result<ProbeState> {
 }
 
 fn unlink_matching_nonce(path: &Path, nonce: &str) {
-    if fs::read_to_string(path).is_ok_and(|s| s == nonce) {
-        let _ = fs::remove_file(path);
-    }
+    // Python uses the same owner/mode/content validation as one-shot consume.
+    let _ = consume_nonce(path, nonce);
 }
 
 fn create_nonce(path: &Path, nonce: &str) -> io::Result<()> {
@@ -391,20 +418,31 @@ fn create_nonce(path: &Path, nonce: &str) -> io::Result<()> {
     let result = (|| {
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
         file.write_all(nonce.as_bytes())?;
-        file.sync_all()
+        file.sync_all()?;
+        validate_nonce_owner(&fs::metadata(path)?)
     })();
     if result.is_err() {
-        let _ = fs::remove_file(path);
+        // Only unlink the inode created here, even if the path was replaced.
+        if let (Ok(created), Ok(current)) = (file.metadata(), fs::symlink_metadata(path))
+            && created.dev() == current.dev()
+            && created.ino() == current.ino()
+        {
+            let _ = fs::remove_file(path);
+        }
     }
     result
 }
 
-fn consume_nonce(path: &Path, expected: &str) -> io::Result<()> {
-    let info = fs::metadata(path)?;
+fn validate_nonce_owner(info: &fs::Metadata) -> io::Result<()> {
     // SAFETY: getuid has no arguments or memory preconditions.
     if info.uid() != unsafe { libc::getuid() } || info.mode() & 0o7777 != 0o600 {
         return Err(invalid("nonce file failed owner/mode validation"));
     }
+    Ok(())
+}
+
+fn consume_nonce(path: &Path, expected: &str) -> io::Result<()> {
+    validate_nonce_owner(&fs::metadata(path)?)?;
     if fs::read_to_string(path)? != expected {
         return Err(invalid("nonce content does not match the reservation"));
     }
@@ -415,7 +453,7 @@ fn mint_reservation(
     file: &mut File,
     pid_file: &Path,
     backend: &str,
-    generation: u64,
+    generation: i64,
 ) -> io::Result<ServiceReservation> {
     let mut bytes = [0_u8; 16];
     OsRng.try_fill_bytes(&mut bytes).map_err(io::Error::other)?;
@@ -457,7 +495,9 @@ pub fn reserve_service_start(pid_file: &Path, backend: &str) -> io::Result<Servi
     if other_pid_alive(pid_file) {
         return Err(invalid("a live process still owns the pid file"));
     }
-    mint_reservation(&mut file, pid_file, backend, next_generation(&record)?)
+    acquire_record(&mut file, |file| {
+        mint_reservation(file, pid_file, backend, next_generation(&record)?)
+    })
 }
 
 /// Explicit input keeps tests and async callers from mutating process-global env.
@@ -492,8 +532,11 @@ pub fn convert_or_acquire_service_claim(
         Value::Null
     };
     let generation = next_generation(&record)?;
-    write_role(&mut file, Role::Daemon, generation, ack)?;
-    write_pid(pid_file)?;
+    acquire_record(&mut file, |file| {
+        write_role(file, Role::Daemon, generation, ack)?;
+        write_pid(pid_file)?;
+        Ok(())
+    })?;
     Ok(PidFileClaim {
         file: Some(file),
         pid_file: pid_file.into(),

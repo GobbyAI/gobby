@@ -242,6 +242,7 @@ fn cancel_and_stale_cleanup_touch_only_matching_nonce() -> anyhow::Result<()> {
     cancel_service_reservation(&path)?;
     assert_eq!(fs::read_to_string(&reserved.nonce_path)?, "other owner");
     assert!(reserve_service_start(&path, "systemd").is_err());
+    assert_eq!(probe_daemon_lock(&path)?, ProbeState::Absent);
     assert_eq!(fs::read_to_string(&reserved.nonce_path)?, "other owner");
     let claim = claim_pid_file(&path, Role::Maintenance)?.expect("failure released flock");
     drop(claim);
@@ -270,6 +271,7 @@ fn failed_pid_publication_releases_only_its_descriptor() -> anyhow::Result<()> {
     fs::create_dir(&path)?;
     assert!(claim_pid_file(&path, Role::Daemon).is_err());
     assert!(path.is_dir());
+    assert_eq!(probe_daemon_lock(&path)?, ProbeState::Absent);
     let mut claim =
         claim_pid_file(&path, Role::Maintenance)?.expect("failed writer released flock");
     assert_eq!(probe_daemon_lock(&path)?, ProbeState::Maintenance);
@@ -283,6 +285,53 @@ fn failed_pid_publication_releases_only_its_descriptor() -> anyhow::Result<()> {
     assert_eq!(probe_daemon_lock(&path)?, ProbeState::Transitioning);
     let claim = claim_pid_file(&path, Role::Maintenance)?.expect("retry recovers transition");
     assert_eq!(probe_daemon_lock(&path)?, ProbeState::Maintenance);
+    drop(claim);
+    fs::remove_file(&nonce_path)?;
+    let reserved = reserve_service_start(&path, "launchd")?;
+    assert!(convert_or_acquire_service_claim(&path, Some(&reserved.nonce_path)).is_err());
+    assert_eq!(probe_daemon_lock(&path)?, ProbeState::Absent);
+    assert!(!reserved.nonce_path.exists());
+    Ok(())
+}
+
+#[test]
+fn generation_coercions_match_python_int() -> anyhow::Result<()> {
+    for (previous, expected) in [
+        (json!(3.0), 4),
+        (json!(true), 2),
+        (json!(" 5 "), 6),
+        (json!(-2), -1),
+        (json!([3]), 1),
+    ] {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("gobby.pid");
+        let mut previous_record = decode_record(DAEMON).expect("golden");
+        previous_record["generation"] = previous;
+        fs::write(
+            path.with_extension("pid.lock"),
+            encode_record(&previous_record)?,
+        )?;
+        let claim = claim_pid_file(&path, Role::Maintenance)?.expect("claim");
+        assert_eq!(claim.generation, expected);
+        assert_eq!(record(&path)?["generation"], expected);
+    }
+    Ok(())
+}
+
+#[test]
+fn cleanup_preserves_matching_nonce_with_foreign_permissions() -> anyhow::Result<()> {
+    let dir = TempDir::new()?;
+    let path = dir.path().join("gobby.pid");
+    let reserved = reserve_service_start(&path, "systemd")?;
+    fs::set_permissions(&reserved.nonce_path, fs::Permissions::from_mode(0o644))?;
+    assert_eq!(cancel_service_reservation(&path)?, ProbeState::Absent);
+    assert_eq!(fs::read_to_string(&reserved.nonce_path)?, reserved.nonce);
+    let mut stale = decode_record(RESERVATION).expect("golden");
+    stale["reservation"]["nonce_path"] = json!(reserved.nonce_path);
+    stale["reservation"]["nonce"] = json!(reserved.nonce);
+    fs::write(path.with_extension("pid.lock"), encode_record(&stale)?)?;
+    let claim = claim_pid_file(&path, Role::Maintenance)?.expect("stale admission");
+    assert!(reserved.nonce_path.exists());
     drop(claim);
     Ok(())
 }

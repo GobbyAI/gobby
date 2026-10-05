@@ -51,11 +51,19 @@ def _daemon_probe(pid: int = 4242) -> SingletonProbe:
     return SingletonProbe(state=ProbeState.DAEMON, pid=pid, role="daemon")
 
 
+def _rust_pid_claim_peer() -> Path:
+    root = Path(__file__).resolve().parents[1]
+    target = Path(os.environ.get("CARGO_TARGET_DIR", str(root / "target")))
+    if not target.is_absolute():
+        target = root / target
+    return target / "debug/examples/pid_claim_fixture"
+
+
 @pytest.mark.skipif(os.name != "posix", reason="Rust flock capability is Unix-only")
 @pytest.mark.parametrize("role", ["daemon", "maintenance"])
 def test_probe_reports_gdaemon_claim(tmp_path: Path, role: str) -> None:
     """Build peer first: cargo build -p gobby-daemon --example pid_claim_fixture."""
-    peer = Path(__file__).resolve().parents[1] / "target/debug/examples/pid_claim_fixture"
+    peer = _rust_pid_claim_peer()
     assert peer.is_file(), "build the Rust pid_claim_fixture example before this focused test"
     pid_file = tmp_path / "gobby.pid"
     env = dict(os.environ)
@@ -108,7 +116,7 @@ def test_pid_record_goldens_are_python_canonical(name: str) -> None:
 @pytest.mark.skipif(os.name != "posix", reason="Rust flock capability is Unix-only")
 @pytest.mark.parametrize("marker", ["1", "0", "true"])
 def test_gdaemon_converts_python_reservation(tmp_path: Path, marker: str) -> None:
-    peer = Path(__file__).resolve().parents[1] / "target/debug/examples/pid_claim_fixture"
+    peer = _rust_pid_claim_peer()
     assert peer.is_file(), "build the Rust pid_claim_fixture example before this focused test"
     pid_file = tmp_path / "雪-😀.pid"
     reserved = reserve_service_start(pid_file, backend="launchd")
