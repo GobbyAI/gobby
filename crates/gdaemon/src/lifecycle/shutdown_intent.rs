@@ -60,7 +60,8 @@ impl IntentMarker {
         let Some(timestamp) = timestamp.filter(|value| value.is_finite()) else {
             return Ok(None);
         };
-        if !now.is_finite() || now - timestamp >= 120.0 {
+        let age = now - timestamp;
+        if !now.is_finite() || !(0.0..120.0).contains(&age) {
             return Ok(None);
         }
         self.consumed.insert(digest);

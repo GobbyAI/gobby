@@ -499,6 +499,53 @@ raise SystemExit(0 if n!=2 else 1)
 }
 
 #[tokio::test]
+async fn future_shutdown_marker_uses_crash_backoff() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let script = "import os,pathlib,json,time; p=pathlib.Path(os.environ['GOBBY_HOME']); (p/'shutdown_intent_active.json').write_text(json.dumps({'intent':'restart','timestamp':time.time()+1})); raise SystemExit(1)";
+        let mut supervisor = db.supervisor(home.path(), script).await?;
+        let mut state = supervisor.subscribe();
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(rx).await });
+        let _abort = AbortOnDrop(task.abort_handle());
+        assert_eq!(
+            wait_for_status(&mut state, |status| matches!(status, BackendStatus::Backoff { .. })).await?,
+            BackendStatus::Backoff { delay: Duration::from_secs(1) }
+        );
+        stop.send(true)?;
+        assert_eq!(timeout(Duration::from_secs(5), task).await???, SupervisorExit::Stopped);
+        assert!(home.path().join("shutdown_intent_active.json").is_file());
+        Ok(())
+    }).await
+}
+
+#[tokio::test]
+async fn future_shutdown_marker_is_inert_until_its_timestamp() -> Result<()> {
+    for intent in ["restart", "stop"] {
+        let home = TempDir::new()?;
+        let path = home.path().join("shutdown_intent_active.json");
+        let mut marker = IntentMarker::new(home.path());
+        marker.before_spawn().await?;
+        let raw = serde_json::to_vec(&json!({"intent": intent, "timestamp": 1000.0}))?;
+        fs::write(&path, &raw)?;
+        assert_eq!(marker.after_exit(999.0).await?, None);
+        assert_eq!(fs::read(&path)?, raw, "future marker is preserved");
+        let expected = if intent == "restart" {
+            Intent::Restart
+        } else {
+            Intent::Stop
+        };
+        assert_eq!(marker.after_exit(1000.0).await?, Some(expected));
+        assert_eq!(
+            marker.after_exit(1000.0).await?,
+            None,
+            "fresh action is one-use"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn shutdown_marker_is_fresh_changed_and_used_once() -> anyhow::Result<()> {
     let home = TempDir::new()?;
     let path = home.path().join("shutdown_intent_active.json");
