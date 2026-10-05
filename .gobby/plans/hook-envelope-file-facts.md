@@ -85,6 +85,12 @@ plan:
      (`canonical_file_paths`), ledger recounts, and in-process adapter events
      that have no envelope.
    - A foreign-origin path with no fact is unverified.
+   - A truncated fact carries the count but not the content. For content it
+     counts as uncarried: a local origin reads disk, exactly as for an
+     uncarried path, and a foreign origin has none (decision 11).
+   - ghook carries a fact only for a path it resolved against a known project
+     root (1.1). With no root, the path is uncarried, so unknown scope is never
+     read as "outside the project".
    - This refines the approved "never the disk" rule. Without it, Bash-derived
      monolith checks and web-chat sessions, which have no ghook, would lose
      their guard on the local machine.
@@ -126,6 +132,10 @@ plan:
      is decoded first.
    - Inside it, ghook takes the path of every object that has both a path key
      and an edit-text key, plus `patch` headers.
+   - ghook sees the raw provider payload, before daemon normalization. Its key
+     sets therefore mirror the raw ingress contracts: every path alias in
+     `_normalization_paths._PATH_FIELDS`, the `_TOOL_INPUT_FIELD_ALIASES`
+     sources, and the tool-name keys `normalize_tool_fields` accepts (1.1).
    - Read payloads and `tool_response` objects are never walked. Read carries
      no edit key, and `tool_response` sits outside the tool input.
    - Both PreToolUse and PostToolUse carry facts for write tools. Each
@@ -141,10 +151,20 @@ plan:
 11. **Truncation (256 KiB per path, by byte size).**
     - Over the cap, the fact carries `line_count` and `truncated: true` and no
       `content`.
-    - Monolith: projects by line delta from `line_count`. This is the existing
-      `text is None` branch of `_apply_targeted_edit` and `_apply_patch_projection`.
-    - `rust_test_evidence`: fails closed (no text, so the change is not
-      test-only). This is the existing `on_disk is None` path.
+    - A local origin reads disk for a truncated path (decision 6), so the
+      local guards keep full text.
+    - Monolith, foreign origin:
+      - A full-content Write projects from its own content, and an apply_patch
+        projects from hunk counts (`_apply_patch_projection`). Neither needs
+        the old text.
+      - A targeted edit, including each MultiEdit element, is unverifiable.
+        Without text, neither the occurrence count of a `replace_all` nor the
+        line delta at the replacement edges can be computed.
+      - The gap matters only below the ceiling. `projected_monolith_paths`
+        reports any path whose current count is 1,000 or more, so a truncated
+        file already at the ceiling is reported anyway.
+    - `rust_test_evidence`, foreign origin: the prior text is unknown, so the
+      change is not test-only (1.4). That holds for a full-content Write too.
     - `_record_successful_file_mutation`: reads only `relative_path`, so it is
       unaffected.
     - Nothing else reads facts.
@@ -184,6 +204,38 @@ enhancer pass and the writer-found ingress sites:
     - Consequence: until S2.11 (#21569), a node hook without an explicit
       project id never registers its session, and its critical hooks block.
       D1.4 owns the fix. The Orchestrator flags this to Josh at approval.
+
+Writer repair of Adversary finding A3-F4 (2026-10-05). The Orchestrator
+accepted it and ruled on the uncarried case at 12:29 CT:
+
+14. **Foreign ledger attribution and ownership carry no checkout identity**
+    (sites 5 and 11, sections 1.6 and 1.12).
+    - The ledger keys checkout rows by an absolute root that the evaluator
+      resolves on its own disk (`task_claim_state.py::normalize_task_checkout_root`).
+      A node's root string can equal a hub checkout path, so a node row keyed by
+      it could be released by the hub's git. Node checkout identity is D1.2.
+    - Post-tool: a foreign edit records its paths with `checkout_root=None`,
+      an existing path of `state_manager.py::SessionVariableManager.record_edited_files`.
+      That records session and task attribution (`session_edited_files`,
+      `session_dirty_files`, `task_edited_files`, `task_edited_file_times`)
+      and no checkout row, with no root normalization. A carried path records
+      its fact's `relative_path`. An uncarried path records its raw string.
+    - Pre-tool: the dirty-edit gate matches each carried `relative_path`
+      against every other active session's task paths across all checkouts of
+      the project (`task_claim_state.py::task_edited_file_set`, which reads
+      the root-free `task_edited_files`). A hub worktree's claim on the same
+      relative path therefore blocks a node write. That over-block is the
+      accepted fail-closed cost.
+    - An uncarried foreign mutation path, such as a shell-derived write or a
+      non-source extension that ghook never captures, has no repo identity.
+      The gate blocks it whenever another active session in the project holds
+      any claim. This is fail-closed per Decision 2, the same posture as
+      decision 13.
+    - Rejected: skipping the check for uncarried paths, because it fails open;
+      and path-only facts for every edit target, because they add ghook
+      mechanism that S2.11 makes redundant.
+    - This gate relaxes at S2.11 (#21569), when nodes get their own ledger
+      (D1.2).
 
 ## Constraints
 `kind: framing`
@@ -300,24 +352,24 @@ is unchanged except where `envelope-fact` applies.
 
 | # | Site (`0.5.0`) | Trigger | Disposition | Owner |
 | --- | --- | --- | --- | --- |
-| 1 | `src/gobby/workflows/monolith_guard.py::_projection_for_path`, via `projected_monolith_paths` | `require-decompose-monolith-before-threshold-write` (before_tool writes) | `envelope-fact`. A foreign uncarried path is reported unverifiable, which is `fail-closed`. | 1.4, 1.5 |
+| 1 | `src/gobby/workflows/monolith_guard.py::_projection_for_path`, via `projected_monolith_paths` | `require-decompose-monolith-before-threshold-write` (before_tool writes) | `envelope-fact`. A foreign uncarried path, or a targeted edit on a foreign truncated fact, is reported unverifiable, which is `fail-closed`. | 1.4, 1.5 |
 | 2 | `monolith_guard.py::outstanding_monolith_paths` | `require-monolith-resolution-before-commit`, `-before-task-transition`, `-before-turn-end` | `fail-closed`: every ledger guard path is reported unverifiable | 1.7 |
-| 3 | `src/gobby/workflows/rust_test_evidence.py::rust_edit_is_test_writing` via `_read_absolute_text` | `enforce-tdd-block`, `enforce-tdd-track-tests` | `envelope-fact`. A foreign uncarried path takes `degrade-existing`: no text means not test-only. | 1.4 |
+| 3 | `src/gobby/workflows/rust_test_evidence.py::rust_edit_is_test_writing` via `_read_absolute_text` | `enforce-tdd-block`, `enforce-tdd-track-tests` | `envelope-fact`. A foreign uncarried or truncated path has unknown prior text and is `fail-closed`: the change is not test-only, for a full-content Write too. | 1.4 |
 | 4 | `src/gobby/workflows/tdd_paths.py::tdd_path_identity`, `same_repo_worktree_root` (git identity) | `enforce-tdd-block` | `degrade-existing`: normalized-string identity, the existing `_GitLookupFailed` fallback | 1.8 |
-| 5 | `src/gobby/workflows/commit_guard.py::foreign_dirty_edit_conflict` | `block-cross-session-foreign-dirty-edit` | `fail-closed` on a database ledger claim by another session, with no git confirmation and no release | 1.6 |
+| 5 | `src/gobby/workflows/commit_guard.py::foreign_dirty_edit_conflict` | `block-cross-session-foreign-dirty-edit` | `fail-closed` on another session's ledger claim on a carried `relative_path` in any checkout of the project, or on any claim when a mutation path is uncarried (decision 14). No git confirmation and no release. | 1.6 |
 | 6 | `commit_guard.py::foreign_staged_commit_conflict` | `block-cross-session-foreign-staged-commit` | `fail-closed` on every parsed `git commit` | 1.6 |
 | 7 | `src/gobby/workflows/code_review_scope.py::inspect_commit_review_scope` | `require-code-review-skill` | `degrade-existing`: not inspected, and the defaults `commit_has_reviewable_paths=True` and `session_owned_reviewable_paths=None` keep the gate armed | 1.6 |
 | 8 | `src/gobby/workflows/ledger_reconcile.py::reconcile_edit_ledgers` | after_tool git activity | `skip`: no release. This follows from `project_path=None`, and 1.6 pins it with a test. | 1.6 |
-| 9 | `src/gobby/hooks/code_navigation_recovery.py::_verified_source_line_count`, `_ignore_decision`, `_git_ignored` | `prefer-gcode-for-source-read`, `navigation_requires_index` | `degrade-existing`: line count unverified, so the read counts as broad and gets the existing redirect. Not treated as ignored. | 1.10 |
-| 10 | `src/gobby/hooks/_path_scope.py::apply_path_scope_metadata`, `current_project_root` | normalization of write and navigation events | `degrade-existing`: no root found, so paths count as in-project and `canonical_repo_mutation` stays armed | 1.11 |
-| 11 | `src/gobby/hooks/event_handlers/_tool.py::ToolEventHandlerMixin._record_successful_file_mutation` and `_resolve_repo_edit_paths`, `_paths_landed_before_edit`, `_notify_code_index` | PostToolUse edits | `envelope-fact` for the ledger path (`relative_path`). `skip` for the git-log landed check and the gcode index notify. | 1.12 |
+| 9 | `src/gobby/hooks/code_navigation_recovery.py::_verified_source_line_count`, `_ignore_decision`, `_git_ignored` | `prefer-gcode-for-source-read`, `navigation_requires_index` | `degrade-existing`: line count unverified, so the read counts as broad and gets the existing redirect. Not treated as ignored. Path handling in `annotate_navigation` and `navigation_requires_index` is lexical through 1.11. | 1.10 |
+| 10 | `src/gobby/hooks/_path_scope.py` path primitives (`current_project_root`, `_resolve_base_dir`, `resolve_tool_path`, `checkout_root`, `_is_project_managed_path`), reached from `apply_path_scope_metadata`, `annotate_navigation` and `navigation_requires_index` | normalization of write and navigation events, and navigation rule conditions | `degrade-existing`: path handling is lexical, with no `.git`, `commondir`, symlink, home or project-root probe. Every path counts as project-managed, so `canonical_repo_mutation` stays armed. | 1.11 |
+| 11 | `src/gobby/hooks/event_handlers/_tool.py::ToolEventHandlerMixin._record_successful_file_mutation` and `_resolve_repo_edit_paths`, `_paths_landed_before_edit`, `_notify_code_index` | PostToolUse edits | `envelope-fact` for the ledger path (`relative_path`; an uncarried path keeps its raw string), recorded with no checkout root (decision 14). `skip` for checkout resolution, the git-log landed check and the gcode index notify. | 1.12 |
 | 12 | `src/gobby/workflows/engine/run_command_effects.py::RunCommandEffectsMixin._apply_run_command` (the impeccable `hook.mjs` spawn) | `impeccable/design-detector` | `skip`: advisory and documented fail-open. Audited as skipped. | 1.13 |
 | 13 | `src/gobby/workflows/found_work_gate.py::FoundWorkStopAnalyzer._terminal_failures` (transcript derivation via `derive_transcript_evidence`), `validation_cover.py::surviving_path_failure`, `_foreign_owned_dirty_paths` | `enforce-found-work-ladder` (turn_end) | `fail-closed`: when the gate needs terminal evidence (no task disposition), it reports the diagnostic as a terminal failure. No transcript derivation, cover, clearance or git probe runs. | 1.9 |
 | 14 | `src/gobby/hooks/project_context.py::ProjectIdResolver.resolve` (cwd-marker walk `get_project_context`, then `ensure_project_in_db` into `project_checkout_ingress.register_cwd_marker_checkout`: checkout validation, Cargo target linking, marker refresh) | hook ingress project resolution when no explicit or session project resolves (`resolve_hook_project_context`, `_session_end`, `_agent`, `_tool`) | `fail-closed`: the resolver raises the existing no-marker `ValueError` with `FOREIGN_ORIGIN_DIAGNOSTIC`, and the route's `_hook_exception_response` blocks critical hooks and degrades the rest. Explicit and session resolutions are database-only and unchanged. | 1.15 |
 | 15 | `src/gobby/hooks/startup_claim_preflight.py::_resolve_or_register_session` (resolver call and direct `get_project_context` walk) | AGY pre-invocation startup claim, before the delivery scope exists | `skip`: a `machine_id_error` envelope takes no lease, like the existing foreign `machine_id` rejection, and the hook continues to row 14 | 1.15 |
 | s1 | `src/gobby/workflows/engine/proxy_hooks.py::ProxyHooksMixin._run_rtk_proxy` | `rtk-command-rewrite` | `skip`: no rewrite, so the command runs as written | 1.14 |
 | s2 | `src/gobby/config/validation_detection.py::load_project_validation_detection` (through `found_work_gate.py::resolve_stop_validation_config`) | found-work and validation detection | `no-change`: `project_path=None` gives the built-in config | — |
-| s3 | `src/gobby/workflows/condition_helpers_paths.py::write_paths_within` (seat write scope) | `seat-write-scope` | `degrade-existing` through 1.11's `current_project_root` guard: no root, so relative allowed directories are unresolvable and the write is outside scope (the existing block) | 1.11 |
+| s3 | `src/gobby/workflows/condition_helpers_paths.py::write_paths_within` (seat write scope) | `seat-write-scope` | `fail-closed`: `write_paths_within` returns `False` before any path probe, so the write is outside scope (the existing block) | 1.11 |
 | s4 | `src/gobby/workflows/enforcement/blocking.py::plan_write_paths_allowed` (`realpath`) | plan-mode write gate | `no-change`: `project_path=None` skips the root comparison, so only plan artifacts and scratch paths pass | — |
 | s5 | `src/gobby/workflows/observer_plan_mode.py` Codex transcript read | plan-mode observer | Out of scope: a transcript is not the working tree. It belongs to S2.11 with session ingestion (D1). | D1 |
 
@@ -405,8 +457,29 @@ collection, verifies nothing on its own.
   - `_TARGETED_EDIT_KEYS` in `monolith_guard.py`;
   - `_NEW_TEXT_KEYS`, `_OLD_TEXT_KEYS`, `_CONTENT_KEYS` and `_NESTED_EDIT_KEYS`
     in `rust_test_evidence.py`.
-- Path keys are `file_path`, `path`, `notebook_path` and `filePath`
-  (`rust_test_evidence._EDIT_PATH_KEYS`).
+- ghook sees the raw provider payload, before `normalize_tool_fields` runs, so
+  its keys must cover the raw ingress contracts as well as the consumers:
+  - Path aliases: `src/gobby/hooks/_normalization_paths.py::_PATH_FIELDS`
+    (`file_path`, `filePath`, `path`, `AbsolutePath`, `DirectoryPath`,
+    `target_file`, `targetFile`, `TargetFile`, and the old, source, new,
+    target and destination path pairs), plus `notebook_path` from
+    `rust_test_evidence._EDIT_PATH_KEYS`.
+  - Tool-input aliases: `src/gobby/hooks/_normalization_tools.py::_TOOL_INPUT_FIELD_ALIASES`
+    maps `cmd` and `CommandLine` to `command`, `Cwd` to `cwd`, and
+    `TargetFile`, `AbsolutePath` and `DirectoryPath` to `file_path`, each with
+    `setdefault`. `tests/hooks/test_normalization.py::test_pascal_case_tool_input_aliases_preserve_raw_payload`
+    pins it.
+  - Tool name: `normalize_tool_fields` uses `tool_name`, else
+    `function_name`, else `toolName`.
+- ghook can run managed with `GOBBY_PROJECT_ID` and no project root
+  (`crates/ghook/src/dispatch.rs::managed_context`, `run_gobby_owned`), for
+  example from an unmarked cwd. The daemon may still resolve that project's
+  root, so a fact must never claim "outside the project" when ghook simply has
+  no root (A3-F5).
+- Relative tool paths resolve against the tool cwd: `workdir`, then `cwd`
+  inside the tool input, then the event `cwd`
+  (`src/gobby/hooks/_path_scope.py::current_tool_cwd`). In a nested cwd that
+  differs from the project root.
 - Extensions come from `monolith_guard.MONOLITH_SOURCE_EXTENSIONS`.
 
 **Implementation:**
@@ -418,21 +491,29 @@ collection, verifies nothing on its own.
   - `EDIT_TEXT_KEYS`: `content`, `old_string`, `new_string`, `old_str`,
     `new_str`, `oldStr`, `newStr`, `old_text`, `new_text`, `oldText`,
     `newText`, `old`, `new`, `replacement`, `edits`, `changes`;
-  - `PATH_KEYS`;
+  - `PATH_KEYS`: `_PATH_FIELDS` plus `notebook_path`;
+  - `TOOL_NAME_KEYS`: `tool_name`, `function_name`, `toolName`, in that
+    precedence;
+  - `PATCH_TEXT_KEYS`: `command`, `cmd`, `CommandLine`, `patch`, `content`,
+    `text`, `diff`, in that order. These are `_APPLY_PATCH_TEXT_FIELDS` with
+    the two raw `command` aliases placed where normalization's `setdefault`
+    puts them;
+  - `CWD_KEYS`: `workdir`, `cwd`, `Cwd`;
   - `GUARDED_EXTENSIONS`, mirroring `MONOLITH_SOURCE_EXTENSIONS`;
   - `CONTENT_CAP_BYTES = 262_144`.
+- `collect` returns `None` when `project_root` is `None`. With no root there
+  is no repo identity, so every path stays uncarried (decision 6).
 - Discovery:
   1. Take the first present tool-input key.
-     - When the compact tool name (`input_data.tool_name`, casefolded,
-       alphanumerics only) is `applypatch`, the patch text is a raw string
-       value, or the first string among `command`, `patch`, `content`, `text`
-       and `diff` of an object value. Take its header paths (step 4), then go
-       to step 5.
+     - When the compact tool name (the first present `TOOL_NAME_KEYS` string,
+       casefolded, alphanumerics only) is `applypatch`, the patch text is a
+       raw string value, or the first string among `PATCH_TEXT_KEYS` of an
+       object value. Take its header paths (step 4), then go to step 5.
      - Otherwise decode a string value as JSON, and return `None` if it is not
        an object.
   2. Walk only that value, objects and arrays, to depth 6.
-  3. From each object that has a `PATH_KEYS` string and at least one
-     `EDIT_TEXT_KEYS` key, take the path.
+  3. From each object that has at least one `EDIT_TEXT_KEYS` key, take every
+     `PATH_KEYS` string it holds.
   4. From patch text (step 1, or a `patch` string found in step 2), strip
      each line and take each path after `*** Add File: `,
      `*** Update File: `, `*** Delete File: ` and `*** Move to: `, matching
@@ -443,15 +524,16 @@ collection, verifies nothing on its own.
     filesystem path is that string after the consumers' lexical
     normalization: `trim()`, then backslashes to slashes.
   - An absolute path is used as-is.
-  - A relative path joins `project_root` when present, otherwise
-    `input_data.cwd`.
+  - A relative path joins the tool cwd: the first `CWD_KEYS` string in the
+    tool input, else `input_data.cwd`, mirroring `current_tool_cwd`. With no
+    cwd, the path is uncarried.
   - `relative_path` is the canonicalized path relative to the canonicalized
     project root, in POSIX form.
     - For a missing target, canonicalize its deepest existing ancestor, then
       append the missing suffix with lexical `.`/`..` normalization. A missing
       in-root target therefore keeps its repo-relative identity.
-    - `null` means the path is outside the root or there is no root, never
-      merely that the file is missing.
+    - `null` means only that the path was verified to lie outside the root.
+      It never means a missing root (no facts at all) or a missing file.
 - Fact per path, keyed by the raw path string:
   `{ "relative_path": string|null, "exists": bool, "line_count": int, "content"?: string, "truncated": bool }`.
   - `exists` is true for a regular file, following symlinks, like Python's
@@ -463,9 +545,11 @@ collection, verifies nothing on its own.
   - Up to the cap, `content` is the decoded text. Over the cap, there is no
     `content` and `truncated` is true. The count is over the whole file either
     way, so no streaming decoder state is needed.
-  - A missing path or a non-regular file gets `exists: false`,
-    `line_count: 0` and `truncated: false`.
-  - Read errors are treated as missing.
+  - A path that is absent (`NotFound`, including a dangling symlink) or not a
+    regular file gets `exists: false`, `line_count: 0` and
+    `truncated: false`. `exists: false` is the verified new-file case.
+  - Any other metadata or read error omits that path's fact, so the path is
+    uncarried. An unreadable existing file is never reported as missing.
   - The function returns `None` when no path qualifies, so the field is
     omitted.
 - `Envelope` gains `#[serde(skip_serializing_if = "Option::is_none")] pub file_facts: Option<BTreeMap<String, FileFact>>`.
@@ -488,10 +572,10 @@ from the Lane Manager.
 
 **Acceptance:**
 
-- 1.1.1 - Write, Edit, MultiEdit `edits[]` and apply_patch targets under every `TOOL_INPUT_SOURCES` key, including JSON-string tool input, a freeform apply_patch string, and each apply_patch object field (`command`, `patch`, `content`, `text`, `diff`), yield facts keyed by the raw path. A non-patch, non-JSON string yields no facts. test: `crates/ghook/src/file_facts.rs::collects_write_edit_multiedit_and_patch_targets`.
+- 1.1.1 - Write, Edit, MultiEdit `edits[]` and apply_patch targets under every `TOOL_INPUT_SOURCES` key yield facts keyed by the raw path. This covers JSON-string tool input, a freeform apply_patch string, and each apply_patch object field in `PATCH_TEXT_KEYS`, including `cmd` and `CommandLine`. It covers apply_patch named under `tool_name`, `function_name` or `toolName`, and Write and Edit targets under the raw path aliases `TargetFile`, `AbsolutePath`, `target_file` and `targetFile`. A non-patch, non-JSON string yields no facts. test: `crates/ghook/src/file_facts.rs::collects_write_edit_multiedit_and_patch_targets`.
 - 1.1.2 - Read payloads, `tool_response` content, and paths outside `GUARDED_EXTENSIONS`, such as `.env`, `.json` and `.ipynb`, yield no facts and omit the field. test: `crates/ghook/src/file_facts.rs::ignores_reads_responses_and_unguarded_extensions`.
-- 1.1.3 - `line_count` equals Python `len(text.splitlines())` for empty, trailing-newline, LF, CRLF, CR and every other `splitlines` boundary. A file over 262,144 bytes, including one whose 1,000 lines are CR-separated, carries that count and `truncated: true` with no `content`. A missing path carries `exists: false`. test: `crates/ghook/src/file_facts.rs::caps_content_and_reports_missing_files`.
-- 1.1.4 - A relative path resolves against the project root. A missing in-root target, including one under missing parent directories, keeps its `relative_path`. A raw key with surrounding whitespace or backslashes reads the normalized file. `relative_path` is null outside the root, including through an existing symlinked ancestor that points outside. test: `crates/ghook/src/file_facts.rs::resolves_relative_paths_against_project_root`.
+- 1.1.3 - `line_count` equals Python `len(text.splitlines())` for empty, trailing-newline, LF, CRLF, CR and every other `splitlines` boundary. A file over 262,144 bytes, including one whose 1,000 lines are CR-separated, carries that count and `truncated: true` with no `content`. A missing path carries `exists: false`. An existing file that cannot be read gets no fact. test: `crates/ghook/src/file_facts.rs::caps_content_and_reports_missing_files`.
+- 1.1.4 - A relative path resolves against the tool cwd, including a nested cwd below the root and a `workdir` key. A missing in-root target, including one under missing parent directories, keeps its `relative_path`. A raw key with surrounding whitespace or backslashes reads the normalized file. `relative_path` is null only outside the root, including through an existing symlinked ancestor that points outside. With no project root, as in a managed run from an unmarked cwd, `collect` returns `None`. test: `crates/ghook/src/file_facts.rs::resolves_relative_paths_against_project_root`.
 - 1.1.5 - An envelope with `file_facts` validates against both byte-identical v1 schema copies, and one without it still validates. test: `crates/ghook/src/envelope.rs::envelope_with_file_facts_validates_against_v1_schema`.
 - 1.1.6 - `build_dispatch_envelope` attaches facts for a PreToolUse Edit payload and omits the field for a SessionStart payload. test: `crates/ghook/src/dispatch.rs::dispatch_envelope_attaches_file_facts_for_edits`.
 
@@ -615,8 +699,9 @@ Consumers unchanged:
 
 **Implementation:**
 - New module `src/gobby/hooks/hook_delivery.py` (new symbols):
-  - `FileFact`, a frozen dataclass: `relative_path: str | None`, `exists`,
-    `line_count`, `content: str | None`, `truncated`.
+  - `FileFact`, a frozen dataclass: `relative_path: str | None` (`None` only
+    for a path verified outside the project root), `exists`, `line_count`,
+    `content: str | None`, `truncated`.
   - `HookDelivery`, a frozen dataclass: `origin_local: bool`,
     `origin_machine_id: str | None`, `facts: Mapping[str, FileFact]`.
   - `LOCAL_DELIVERY`, the default: local, no facts.
@@ -663,13 +748,15 @@ then `uv run ruff check`, `uv run mypy src/`, and the scoped `gobby test-types a
 - 1.3.1 - `file_facts` reaches rule evaluation through the delivery context, also on the workflow runtime and rule-engine threads, and never appears in `HookEvent.data`, `HookEvent.metadata`, the broadcast payload or the webhook payload. test: `tests/hooks/test_hook_delivery.py::test_file_facts_reach_rules_but_not_event_payloads`.
 - 1.3.2 - Origin is foreign when `machine_id` differs, when `machine_id_error` is present, or when the daemon has no local id and the payload carries one. It is local otherwise, including when the payload has no machine identity. The diagnostic names the machine id or the error code. test: `tests/hooks/test_hook_delivery.py::test_origin_classification`.
 - 1.3.3 - Malformed `file_facts` entries are dropped without logging. test: `tests/hooks/test_hook_delivery.py::test_malformed_file_facts_are_dropped`.
-- 1.3.4 - The Rust `TOOL_INPUT_KEYS`, `PATH_KEYS`, `EDIT_TEXT_KEYS` and `GUARDED_EXTENSIONS` constants in `crates/ghook/src/file_facts.rs` match the Python consumer key sets and `MONOLITH_SOURCE_EXTENSIONS`. test: `tests/hooks/test_hook_delivery.py::test_ghook_file_fact_constants_match_python`.
+- 1.3.4 - The Rust constants in `crates/ghook/src/file_facts.rs` match the raw ingress contracts and the consumers. `TOOL_INPUT_KEYS` equals `TOOL_INPUT_SOURCES`. `PATH_KEYS` equals `_PATH_FIELDS` plus `_EDIT_PATH_KEYS`. `TOOL_NAME_KEYS` equals `normalize_tool_fields`' precedence. `PATCH_TEXT_KEYS` equals `_APPLY_PATCH_TEXT_FIELDS` plus the `_TOOL_INPUT_FIELD_ALIASES` sources mapped to `command`. `CWD_KEYS` equals `current_tool_cwd`'s keys plus the `Cwd` alias. `EDIT_TEXT_KEYS` covers every consumer edit-text key. `GUARDED_EXTENSIONS` equals `MONOLITH_SOURCE_EXTENSIONS`. test: `tests/hooks/test_hook_delivery.py::test_ghook_file_fact_constants_match_python`.
 - 1.3.5 - `fact_for` finds a fact by exact raw key, then by a whitespace- or separator-normalized raw key or `relative_path`. Colliding aliases with differing facts return `None`. No lookup touches disk. test: `tests/hooks/test_hook_delivery.py::test_fact_lookup_aliases_are_lexical_and_unambiguous`.
 ### 1.4 Monolith projection and Rust TDD classification read `file_facts` [category: code] (depends: 1.3)
 `kind: deliverable`
 
 Targets:
+- `src/gobby/workflows/monolith_guard.py::_FileProjection`
 - `src/gobby/workflows/monolith_guard.py::_projection_for_path`
+- `src/gobby/workflows/monolith_guard.py::_apply_targeted_edit`
 - `src/gobby/workflows/monolith_guard.py::projected_monolith_paths`
 - `src/gobby/workflows/rust_test_evidence.py::rust_edit_is_test_writing`
 - `src/gobby/workflows/rust_test_evidence.py::_read_absolute_text`
@@ -689,8 +776,9 @@ Consumers unchanged:
     raw path string, then by an unambiguous lexical alias of a key or
     `relative_path` (1.3.5);
   - a fact is `FileFact(relative_path, exists, line_count, content, truncated)`.
-    `content` is `None` when the file is over the 256 KiB cap, and
-    `relative_path` is `None` outside the project root.
+    `content` is `None` when the file is over the 256 KiB cap.
+    `relative_path` is `None` only for a path verified outside the project
+    root. ghook sends no fact when it has no root (1.1).
 - Monolith (`src/gobby/workflows/monolith_guard.py`):
   - `projected_monolith_paths(tool_input, project_path, event_data)` returns
     `[]` when `_project_root(project_path)` is `None`. For a foreign event,
@@ -698,7 +786,13 @@ Consumers unchanged:
   - `_projection_for_path(root, raw_path)` reads disk and returns
     `_FileProjection(relative, count, count, text)`.
   - `_apply_targeted_edit` falls back to a line delta when `text` is `None`.
+    It assumes one occurrence for `replace_all`, and the delta
+    (`_line_count(new) - _line_count(old)`) is approximate at the
+    replacement edges. So a text-free projection cannot verify a targeted
+    edit (A3-F1).
   - `_apply_patch_projection` always uses counts.
+  - The result reports a path whose current or projected count is 1,000 or
+    more.
   - `_line_count` is `len(text.splitlines())`.
   - It is called from `safe_evaluator.py::_projected_monolith_paths` for the
     `require-decompose-monolith-before-threshold-write` rule.
@@ -709,6 +803,11 @@ Consumers unchanged:
   - `_before_and_after` applies the edit forward when `old` is found
     (PreToolUse) and in reverse when `new` is found (PostToolUse). Facts
     captured at either phase therefore keep today's semantics.
+  - For a full-content Write (`change.old is None`), `_before_and_after`
+    treats `on_disk is None` as an empty prior file. `_read_absolute_text`
+    returns `None` for a missing file, a relative path and a read error
+    alike. A test-only Write over an unknown production file can therefore
+    classify as test writing (A3-F2).
   - It is called from `condition_helpers.py::_is_tdd_test_path` for the
     `enforce-tdd-block` and `enforce-tdd-track-tests` rules.
 - Lookup order is Decision 6: an envelope fact first on every machine, local
@@ -717,27 +816,46 @@ Consumers unchanged:
 
 **Implementation:**
 - `monolith_guard`:
+  - `_FileProjection` gains `text_unknown: bool = False` and
+    `unverifiable: bool = False`.
   - `_projection_for_path` first consults `current_hook_delivery()`:
-    - A carried fact gives `text = fact.content`, a count of
-      `_line_count(content)` or `fact.line_count` when truncated, and
-      `relative = fact.relative_path`.
-      - A fact whose `relative_path` is `None` lies outside the project, so the
-        function returns `None`, as it does today for a path outside the root.
-      - `is_monolith_guard_path(relative)` filters before a `_FileProjection`
-        is built, exactly as on the disk path.
-      - A fact with `exists: false` projects from `text=None` and a count of 0,
-        like a missing file on disk.
-    - Otherwise, a local origin reads disk as today.
-    - Otherwise (foreign, uncarried) the projection is unverifiable. It is
-      reported as `"<raw path> (unverifiable: foreign-origin hook)"` and counts
-      as reaching the ceiling.
-  - `projected_monolith_paths` no longer returns `[]` for a missing root when
-    the delivery carries facts or is foreign. It projects from the facts and
-    marks foreign uncarried paths.
-- `rust_test_evidence._read_absolute_text` returns the carried fact's
-  `content`, which is `None` when truncated or missing. It reads disk only
-  when uncarried and the origin is local, and returns `None` when uncarried
-  and the origin is foreign.
+    - A carried fact whose `relative_path` is `None` lies outside the
+      project, so the function returns `None`, as it does today for a path
+      outside the root. `is_monolith_guard_path(relative)` filters before a
+      `_FileProjection` is built, exactly as on the disk path.
+    - A carried, untruncated fact gives `text = fact.content`, a count of
+      `_line_count(content)`, and `relative = fact.relative_path`.
+    - A fact with `exists: false` projects from `text=None` and a count of 0,
+      like a missing file on disk.
+    - A truncated fact with local origin takes the disk path, exactly as an
+      uncarried path does, so text and count both come from disk.
+    - A truncated fact with foreign origin projects from `text=None`,
+      `fact.line_count` and `text_unknown=True`.
+    - An uncarried path with local origin reads disk as today.
+    - An uncarried path with foreign origin gives an `unverifiable`
+      projection keyed by the raw path.
+  - `_apply_targeted_edit`: when `projection.text is None` and
+    `projection.text_unknown`, it sets `projection.unverifiable = True` and
+    returns without a delta. A full-content Write and a patch still set an
+    exact projected count.
+  - `projected_monolith_paths` reports each unverifiable projection as
+    `"<path> (unverifiable: foreign-origin hook)"`, which counts as reaching
+    the ceiling. It no longer returns `[]` for a missing root when the
+    delivery carries facts or is foreign. It projects from the facts and
+    marks the unverifiable paths.
+- `rust_test_evidence`:
+  - `_read_absolute_text` returns the prior text, `None` for a verified
+    missing file, or the module sentinel `UNKNOWN_PRIOR_TEXT` (new):
+    - a carried, untruncated fact gives its `content`, and `exists: false`
+      gives `None`;
+    - a truncated or uncarried path reads disk when the origin is local, and
+      is unknown when it is foreign;
+    - on disk, an absolute path that is absent gives `None`, and a relative
+      path, an existing non-regular file or a read error is unknown.
+  - `rust_edit_is_test_writing` returns `False` on `UNKNOWN_PRIOR_TEXT`
+    before `_change_is_test_only`, so neither a full-content Write nor a
+    targeted Edit is classified without its prior text. The verified new-file
+    case keeps today's empty-prior semantics.
 - Tests set the delivery through `hook_delivery_scope` with a synthetic
   payload. They need no ghook.
 
@@ -747,9 +865,11 @@ then `uv run ruff check`, `uv run mypy src/`, and the scoped `gobby test-types a
 
 **Acceptance:**
 
-- 1.4.1 - A carried fact wins over disk content. Projection works without a project root, and a truncated fact projects by line delta from its `line_count`, so an over-cap fact at the ceiling blocks. A foreign, rootless Write or apply_patch Add File to a missing in-root `src/` file whose proposed content reaches 1,000 lines blocks without evaluator disk access. A fact with a null `relative_path` is skipped. test: `tests/workflows/test_monolith_guard.py::test_projection_prefers_envelope_facts`.
+- 1.4.1 - A carried fact wins over disk content. Projection works without a daemon-side project root (`project_path=None`). An over-cap fact at the ceiling blocks. A foreign Write or apply_patch Add File to a missing in-root `src/` file whose proposed content reaches 1,000 lines blocks without evaluator disk access. A fact with a null `relative_path` is skipped. test: `tests/workflows/test_monolith_guard.py::test_projection_prefers_envelope_facts`.
 - 1.4.2 - A foreign uncarried guard path is reported unverifiable and blocks. A local uncarried path still reads disk. test: `tests/workflows/test_monolith_guard.py::test_uncarried_paths_follow_origin`.
-- 1.4.3 - Rust test-only classification reads the carried content at both PreToolUse and PostToolUse, and fails closed for truncated or foreign uncarried paths. A raw absolute key with backslash separators or surrounding whitespace, passed through `normalize_tool_fields` and `condition_helpers._is_tdd_test_path`, still uses the carried content, with disk access forbidden for both origins. test: `tests/workflows/test_rust_test_evidence.py::test_classification_reads_envelope_facts`.
+- 1.4.3 - Rust test-only classification reads the carried content at both PreToolUse and PostToolUse. A raw absolute key with backslash separators or surrounding whitespace, passed through `normalize_tool_fields` and `condition_helpers._is_tdd_test_path`, still uses the carried content, with disk access forbidden for both origins. The prior file is a production file over the cap. A foreign truncated or uncarried path is not test-only, for both a full-content Write of only `#[cfg(test)]` code and a targeted Edit, at both phases. A local truncated path classifies from disk, with today's semantics. A verified missing file (`exists: false`) keeps the new-file result. A relative uncarried path, or an existing file that cannot be read, is not test-only. test: `tests/workflows/test_rust_test_evidence.py::test_classification_reads_envelope_facts`.
+- 1.4.4 - The guarded file is over 256 KiB with 900 lines, each containing `marker`. A foreign `replace_all` Edit that turns `marker` into two lines is reported unverifiable, both below and across the ceiling, and so is a foreign non-`replace_all` Edit. A foreign full-content Write projects its exact count. With local origin, the same truncated fact projects from disk text and reports the true 1,800 lines. test: `tests/workflows/test_monolith_guard.py::test_truncated_fact_targeted_edits_are_unverifiable_when_foreign`.
+- 1.4.5 - A local managed envelope from an unmarked cwd carries no facts (1.1.4). An absolute in-project Write or Edit then projects from disk and blocks at the 1,000-line boundary. A carried fact with a null `relative_path` stays excluded. test: `tests/workflows/test_monolith_guard.py::test_rootless_envelope_keeps_disk_guard`.
 
 ### 1.5 Monolith projection applies MultiEdit edits [category: code] (depends: 1.4)
 `kind: deliverable`
@@ -782,13 +902,16 @@ Targets:
   projection.
 - Sequential application matches MultiEdit semantics.
 - Text comes from 1.4's fact lookup in `_projection_for_path` when carried.
+  Over a foreign truncated fact, the first element marks the projection
+  unverifiable (1.4's `_apply_targeted_edit`), and later elements leave it
+  so.
 
 **Focused verification (planned):**
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_monolith_guard.py -q`.
 
 **Acceptance:**
 
-- 1.5.1 - A MultiEdit whose sequential edits take a 990-line file to 1,000 or more lines is reported, and one that stays below 1,000 is not. test: `tests/workflows/test_monolith_guard.py::test_multiedit_edits_project_sequentially`.
+- 1.5.1 - A MultiEdit whose sequential edits take a 990-line file to 1,000 or more lines is reported, and one that stays below 1,000 is not. Over a foreign truncated fact, a MultiEdit, including one whose element sets `replace_all`, is reported unverifiable (1.4). Over a local truncated fact, it projects from disk text. test: `tests/workflows/test_monolith_guard.py::test_multiedit_edits_project_sequentially`.
 - 1.5.2 - NotebookEdit `.ipynb` targets stay outside the guard. test: `tests/workflows/test_monolith_guard.py::test_notebook_targets_are_not_guarded`.
 
 ### 1.6 Foreign-origin events resolve no checkout and fail the git gates closed [category: code] (depends: 1.3)
@@ -861,9 +984,21 @@ Consumers unchanged:
   - Reconcile is skipped.
 - Read-only helpers reused from `src/gobby/workflows/commit_guard.py`:
   - `parse_git_commit_invocations` detects a commit;
-  - `_canonical_mutation_paths` and `_active_foreign_path_owners` give DB
-    ownership without git;
-  - `_format_conflict_reason` builds the existing conflict text.
+  - `ForeignPathOwner`, `_format_ref`, `_format_session_ref` and
+    `_format_dirty_edit_reason` build the existing owner text.
+- The local ownership helpers need a checkout and touch disk (A3-F4):
+  - `_canonical_mutation_paths(event, project_path: str)` resolves the root,
+    the cwd and each path with `Path.resolve`.
+  - `_active_foreign_path_owners` and `_active_path_owners` need
+    `checkout_root: str` and read checkout-scoped rows through
+    `task_claim_state.py::task_edited_file_set_for_checkout`, which resolves
+    every root (`normalize_task_checkout_root`).
+  - Neither is usable for a foreign event, which has no checkout (decision
+    14). `task_claim_state.py::task_edited_file_set` reads the root-free
+    `task_edited_files`, which `record_edited_files` writes for every edit in
+    every checkout.
+- `foreign_dirty_edit_conflict` returns `""` unless `canonical_repo_mutation`
+  is true, and returns `""` after logging when database inspection fails.
 - `commit_guard.py` is 956 lines and is not edited.
 - The origin comes from `current_hook_delivery()` (1.3).
 
@@ -899,10 +1034,26 @@ Consumers unchanged:
     `FOREIGN_ORIGIN_DIAGNOSTIC.format(gate="the git commit guard", …)` when
     `parse_git_commit_invocations` finds a commit in a BEFORE_TOOL shell
     command, and `""` otherwise.
-  - `foreign_dirty_edit_conflict` becomes the diagnostic plus the existing
-    owner text when `_active_foreign_path_owners` reports another session's
-    claim on a canonical mutation path. It is `""` when nothing is claimed.
-    There is no git call and no release.
+  - `foreign_dirty_edit_conflict` (decision 14) applies under the existing
+    `canonical_repo_mutation` precondition and database-error handling:
+    - The mutation paths are the raw `canonical_file_paths` (or
+      `canonical_file_path`). Each maps through `fact_for` to its
+      `relative_path`, normalized with `normalize_task_edited_path`. A fact
+      with a null `relative_path` lies outside the project and is skipped. A
+      path with no fact is uncarried.
+    - New `foreign_claim_owners(db, *, session_id, project_id) -> dict[str, tuple[ForeignPathOwner, ...]]`
+      in `hook_gate_context.py` runs the `_active_path_owners` query: open
+      tasks in the project claimed by other sessions in an active status.
+      It takes each owner's paths from `task_edited_file_set(variables, task_id)`,
+      every path the task recorded in any checkout, with no root
+      normalization. The roughly 20-line query is duplicated because
+      `commit_guard.py` is not edited.
+    - The gate blocks when a carried `relative_path` is among the owners'
+      paths, or when any mutation path is uncarried and any owner exists. The
+      reason is the diagnostic plus `_format_dirty_edit_reason` over the
+      matching owners (all owners for the uncarried case).
+    - It is `""` when nothing matches. There is no git call, no release and
+      no `Path.resolve`.
   - The code-review values keep the armed defaults.
 - `_resolve_project_path` returns `None` for a foreign-origin event, before
   any checkout lookup.
@@ -919,7 +1070,7 @@ Consumers unchanged:
 **Acceptance:**
 
 - 1.6.1 - A foreign-origin `git commit` blocks with `FOREIGN_ORIGIN_DIAGNOSTIC`, and no git subprocess runs. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_commit_fails_closed_without_git`.
-- 1.6.2 - A foreign-origin write to a path that another session's ledger claims blocks with the diagnostic and releases nothing. An unclaimed path passes. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_write_on_claimed_path_fails_closed`.
+- 1.6.2 - A foreign-origin write blocks with the diagnostic and releases nothing when its carried `relative_path` is claimed by another session. That includes a claim recorded in a different checkout, so two checkouts with the same relative path both count. A nested cwd maps to the same relative identity. An uncarried path, such as a `.md` target or a shell-derived write, blocks when another session holds any claim and passes when none does. A fact with a null `relative_path`, or an unclaimed carried path, passes. Spies show no `Path.resolve`, `normalize_task_checkout_root`, git call or release. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_write_on_claimed_path_fails_closed`.
 - 1.6.3 - A foreign-origin event resolves no checkout and no git worktree root, even when this machine holds a checkout of the same project. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_event_resolves_no_local_checkout`.
 - 1.6.4 - A foreign-origin after_tool git event skips `reconcile_edit_ledgers`, and the code-review gate stays armed. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_event_skips_reconcile_and_keeps_review_gate`.
 - 1.6.5 - Local-origin gate values returned by `git_gate_eval_context`, including `foreign_landing_merge`, are byte-identical before and after the move, and the later `_evaluate_rules` augmentation runs in its existing order. test: `tests/workflows/test_foreign_origin_gates.py::test_local_gate_context_unchanged_by_move`.
@@ -996,6 +1147,7 @@ Consumers unchanged:
 
 Targets:
 - `src/gobby/workflows/found_work_gate.py::FoundWorkStopAnalyzer._terminal_failures`
+- `src/gobby/workflows/found_work_gate.py::_analysis_cache_key`
 - `src/gobby/workflows/found_work_gate.py::_project_verification_commands`
 - `src/gobby/workflows/found_work_gate.py::_project_command_prefix`
 - `src/gobby/workflows/found_work_project_commands.py`
@@ -1006,6 +1158,12 @@ Targets:
   - `FoundWorkStopAnalyzer.analyze` calls `_terminal_failures` only when the
     turn has no task disposition (no claimed task and no labeled deferral).
     It caches the result in `_found_work_terminal_validation_failures`.
+  - A cache hit returns before `_terminal_failures` runs. The key,
+    `_analysis_cache_key(message, user_prompt, variables, *, close_at, boot_at)`,
+    hashes the message, prompt, activity revision, claim, fix-commit,
+    owner-handoff, close and boot inputs, and no origin. A cached local result
+    can therefore answer a foreign stop, and a cached foreign diagnostic can
+    answer a local one (A3-F7).
   - `_terminal_failures` returns `()` when `not project_path`, so it fails
     open.
   - Otherwise it loads the session and the stop validation config, then calls
@@ -1036,6 +1194,10 @@ Targets:
   - Run no cover, survival or foreign-dirty clearance probe.
   - A turn with a task disposition never reaches this call, so it is
     unaffected.
+- `_analysis_cache_key` adds `"origin"` to its hashed payload: `None` for a
+  local delivery, or `HookDelivery.origin_label` for a foreign one. It reads
+  `current_hook_delivery()` itself, so its signature and callers are
+  unchanged. A cached result is reused only by a stop from the same origin.
 - Move `_project_verification_commands` and `_project_command_prefix` out of
   `src/gobby/workflows/found_work_gate.py` into the new
   `src/gobby/workflows/found_work_project_commands.py`, imported back by
@@ -1048,6 +1210,7 @@ Targets:
 
 - 1.9.1 - For a foreign-origin turn end with no task disposition, including a session owned by another machine with no local transcript evidence, the found-work gate reports the diagnostic as a terminal failure and blocks. No session load, transcript derivation, cover, `lexists`, `ls-tree` or status probe runs. test: `tests/workflows/test_found_work_gate.py::test_foreign_origin_terminal_evidence_fails_closed`.
 - 1.9.2 - Local-origin terminal failures, covers and clearances are unchanged after the helper move. test: `tests/workflows/test_found_work_gate.py::test_local_terminal_failures_unchanged_by_move`.
+- 1.9.3 - With otherwise identical inputs, a seeded empty local cache entry does not answer a foreign stop, which still reports the diagnostic. A seeded foreign diagnostic does not answer a local stop, which recomputes its own result. A same-origin repeat reuses the cache. test: `tests/workflows/test_found_work_gate.py::test_analysis_cache_is_origin_scoped`.
 
 ### 1.10 Foreign-origin source reads are unverified [category: code] (depends: 1.3)
 `kind: deliverable`
@@ -1063,6 +1226,11 @@ Targets:
     read counts as broad and gets the existing gcode redirect.
   - `_ignore_decision` reads `.git` and `.gobby/gcode.json`, and `_git_ignored`
     runs `git check-ignore`.
+  - `annotate_navigation`, `navigation_requires_index` and `_outage_roots`
+    also resolve paths and probe checkouts through `current_project_root`,
+    `current_tool_cwd`, `resolve_tool_path` and `checkout_root`. 1.11 makes
+    those primitives lexical for a foreign delivery, so these callers need no
+    edit (A3-F3).
 - The origin comes from `current_hook_delivery()` (1.3).
 
 **Implementation:**
@@ -1076,79 +1244,129 @@ Targets:
 
 - 1.10.1 - A foreign-origin source read is unverified and redirected, and no file, `.git` or `gcode.json` is read. test: `tests/hooks/test_code_navigation_recovery.py::test_foreign_origin_read_is_unverified`.
 
-### 1.11 Foreign-origin normalization skips checkout probes [category: code] (depends: 1.3)
+### 1.11 Foreign-origin path handling is lexical and probes no checkout [category: code] (depends: 1.10)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/hooks/_path_scope.py::apply_path_scope_metadata`
 - `src/gobby/hooks/_path_scope.py::current_project_root`
-- `tests/hooks/test_path_scope.py::*` — scope-reason: adds the foreign-origin probe and project-root tests
+- `src/gobby/hooks/_path_scope.py::_resolve_base_dir`
+- `src/gobby/hooks/_path_scope.py::resolve_tool_path`
+- `src/gobby/hooks/_path_scope.py::checkout_root`
+- `src/gobby/hooks/_path_scope.py::_is_project_managed_path`
+- `src/gobby/workflows/condition_helpers_paths.py::write_paths_within`
+- `tests/hooks/test_path_scope.py::*` — scope-reason: adds the foreign-origin lexical-path and no-probe tests
 
 Consumers unchanged:
-- `src/gobby/hooks/_normalization_canonical.py` — no-edit-reason: It calls `apply_path_scope_metadata` with an unchanged signature; the origin comes from the delivery context.
-- `src/gobby/workflows/condition_helpers_paths.py` — no-edit-reason: It calls `current_project_root` with an unchanged signature; site s3 degrades through it.
-
+- `src/gobby/hooks/_normalization_canonical.py` — no-edit-reason: It calls `apply_path_scope_metadata` and `annotate_navigation` with unchanged signatures; the origin comes from the delivery context.
+- `tests/workflows/test_condition_helpers_paths.py` — no-edit-reason: It drives `write_paths_within` outside a delivery scope, so local containment is unchanged.
 **Research context:**
 - `src/gobby/hooks/_path_scope.py::apply_path_scope_metadata` runs during
   daemon normalization (`_normalization_canonical.py`), which the adapters
-  call from `handle_native`, inside 1.3's delivery scope. It probes `.git`
-  files and `commondir` (`_git_common_dir`, `checkout_root`) and walks up for
-  `.gobby/project.json` (`find_project_root`) to set `canonical_repo_mutation`.
-  When no root is found, paths count as in-project, which is fail-closed.
-- `current_project_root` falls back to `find_project_root`. The seat write
-  scope (`condition_helpers_paths.py::write_paths_within`) uses it.
-- `canonical_repo_mutation` stays armed for a foreign write with or without
-  this section: a hub path that does not exist finds no root, and one that
-  does exist resolves in-project. The section removes the probes.
+  call from `handle_native`, inside 1.3's delivery scope. It sets
+  `canonical_repo_mutation` and `canonical_code_navigation_repo_scope`.
+- Every caller funnels through a few primitives in `_path_scope.py`, each of
+  which touches the evaluator's disk (A3-F3):
+  - `_resolve_base_dir` and `resolve_tool_path` call `expanduser()` and
+    `resolve(strict=False)`. `current_tool_cwd` uses `_resolve_base_dir`.
+  - `current_project_root` falls back to a `find_project_root` walk.
+  - `checkout_root` probes `is_dir` and `.git`.
+  - `_is_project_managed_path` calls `_shares_git_repository`
+    (`_git_common_dir`: `.git` and `commondir`). Its classifiers
+    `_is_gobby_home_path`, `_is_agent_state_home_path` and
+    `_temp_scratchpad_roots` resolve hub home and temp paths.
+- The callers: `apply_path_scope_metadata`, `paths_may_touch_project` and
+  `code_navigation_may_touch_project` here; `annotate_navigation`,
+  `navigation_requires_index` and `_outage_roots` in
+  `code_navigation_recovery.py`; `_resolved_write_paths` and
+  `write_paths_within` in `src/gobby/workflows/condition_helpers_paths.py`
+  (the seat write scope, site s3).
+- Today, with no root found, every non-external path counts as in-project,
+  so `canonical_repo_mutation` stays armed.
 
 **Implementation:**
 - For a foreign-origin delivery (`current_hook_delivery()`):
-  - `apply_path_scope_metadata` skips every `.git`, `commondir` and
-    project-root probe and takes the existing no-root branch.
-  - `current_project_root` returns only an explicit `project_path` from event
-    data, with no `find_project_root` walk.
+  - `_resolve_base_dir` and `resolve_tool_path` are lexical. A `~`-prefixed
+    path is unresolvable (`None`), because the evaluator's home is not the
+    node's. A relative path joins its base, or is `None` without one. The
+    result is `Path(os.path.normpath(...))`, with no `expanduser` or
+    `resolve`.
+  - `current_project_root` returns only an explicit event `project_path`,
+    through the lexical `_resolve_base_dir`, with no `find_project_root`
+    walk.
+  - `checkout_root` returns `None` with no probe, so navigation sets no
+    `canonical_gcode_project_hint`.
+  - `_is_project_managed_path` returns `True` before any classifier. Every
+    foreign write therefore counts as `canonical_repo_mutation`, including a
+    write to a node scratchpad (an accepted over-block), and navigation
+    counts as repo-scoped.
+  - `write_paths_within` returns `False` before `_resolved_write_paths`, so
+    a foreign seat write is outside scope.
+- Local behavior is unchanged.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_path_scope.py tests/hooks/test_normalization.py -q`.
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_path_scope.py tests/hooks/test_normalization.py tests/hooks/test_code_navigation_recovery.py -q`.
 
 **Acceptance:**
 
-- 1.11.1 - Foreign-origin normalization performs no `.git`, `commondir` or project-root probe, and a write stays `canonical_repo_mutation`. test: `tests/hooks/test_path_scope.py::test_foreign_origin_skips_checkout_probes`.
-- 1.11.2 - For a foreign-origin delivery, `current_project_root` returns only an explicit event `project_path` and walks no directory, so a seat write with a relative allowed directory is outside scope. test: `tests/hooks/test_path_scope.py::test_foreign_origin_project_root_is_explicit_only`.
+- 1.11.1 - A foreign-origin Write, Read and shell-navigation event is normalized, and `navigation_requires_index` and `write_paths_within` are evaluated on it, under one spy set. No `Path.resolve`, `Path.expanduser`, `Path.is_dir`, `Path.exists`, `find_project_root` or `.git`/`commondir` read occurs. A write stays `canonical_repo_mutation`, including a scratchpad path. A `~` path is unresolvable. No gcode project hint is set. test: `tests/hooks/test_path_scope.py::test_foreign_origin_path_handling_probes_nothing`.
+- 1.11.2 - For a foreign-origin delivery, `current_project_root` returns only an explicit event `project_path`, lexically, and `write_paths_within` is `False`, so the seat write is outside scope. Local results for the same inputs are unchanged. test: `tests/hooks/test_path_scope.py::test_foreign_origin_project_root_is_explicit_only`.
 
 ### 1.12 Foreign-origin post-tool edits record fact paths without git or index [category: code] (depends: 1.3)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/hooks/event_handlers/_tool.py::ToolEventHandlerMixin._record_successful_file_mutation`
-- `src/gobby/hooks/event_handlers/_tool.py::ToolEventHandlerMixin._resolve_repo_edit_paths`
 - `tests/hooks/test_tool_handlers.py::*` — scope-reason: adds the foreign-origin ledger test
+
+Consumers unchanged:
+- `src/gobby/workflows/state_manager.py` — no-edit-reason: `SessionVariableManager.record_edited_files(checkout_root=None)` already records session and task attribution with no checkout row, and `normalize_task_checkout_root(None)` returns before any `resolve`.
 
 **Research context:**
 - `src/gobby/hooks/event_handlers/_tool.py`:
-  - `_record_successful_file_mutation` records the edit ledger.
-  - `_resolve_repo_edit_paths` (`find_project_root` plus `resolve`, falling
-    back to cwd) makes paths repo-relative.
+  - `_record_successful_file_mutation` takes the mutation paths, maps each
+    through `_resolve_repo_edit_paths` to `(repo_root, relative_path)`, groups
+    them by checkout root, and calls `record_edited_files` per root.
+  - `_resolve_repo_edit_paths` (`expanduser`, `resolve`, `find_project_root`
+    and `get_project_context`, falling back to cwd) finds the root on the
+    evaluator's disk.
   - `_paths_landed_before_edit` runs git log via `paths_committed_after_async`.
   - `_notify_code_index` triggers gcode indexing on the evaluating machine.
+  - `_mark_session_had_edits_if_claimed` is a database flag.
+- `state_manager.py::SessionVariableManager.record_edited_files` with
+  `checkout_root=None` writes `session_edited_files`, `session_dirty_files`,
+  `task_edited_files` and `task_edited_file_times`, and no
+  `task_edited_file_checkouts` or `session_dirty_file_checkouts` row
+  (decision 14).
+  - The hook gate values `has_dirty_files`, `has_target_task_dirty_files`
+    and `target_task_has_edits` read these root-free lists, so they stay
+    armed for the node session.
+  - Checkout-scoped lookups (`_active_path_owners`) and reconcile releases
+    never see the rows.
+  - Close-time readers of `task_edited_file_set`
+    (`_lifecycle_close_finalization.py`, `_stage_review.py`,
+    `run_completion.py`, `_live_session_recovery.py`) are node close paths,
+    in D1 scope.
 - Facts (1.1), served through 1.3's `current_hook_delivery().facts` and
   `fact_for(raw_path)`, carry `relative_path` for guarded edits. The ledger
   stores repo-relative paths.
 
 **Implementation:**
-- For a foreign-origin delivery:
-  - `_resolve_repo_edit_paths` maps each path to its fact's `relative_path`
-    when carried. Otherwise it keeps the raw path as given, with no
-    `find_project_root` or `resolve`.
-  - `_record_successful_file_mutation` skips `_paths_landed_before_edit` and
-    `_notify_code_index`.
+- For a foreign-origin delivery, `_record_successful_file_mutation` does not
+  call `_resolve_repo_edit_paths`:
+  - Each mutation path maps through `fact_for` to its `relative_path`. A fact
+    with a null `relative_path` is outside the project and is skipped. An
+    uncarried path keeps its raw string (decision 14).
+  - It calls `record_edited_files(session_id, paths, checkout_root=None, edited_at=…)`
+    once.
+  - It skips `_paths_landed_before_edit` and `_notify_code_index`, and keeps
+    `_mark_session_had_edits_if_claimed`.
 
 **Focused verification (planned):**
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_tool_handlers.py -q`.
 
 **Acceptance:**
 
-- 1.12.1 - A foreign-origin edit records the ledger under the fact's `relative_path` and runs neither git log nor index notify. test: `tests/hooks/test_tool_handlers.py::test_foreign_mutation_records_fact_path_without_git_or_index`.
+- 1.12.1 - A foreign-origin edit records the fact's `relative_path`, and an uncarried path's raw string, with no checkout root. A nested cwd records the same relative path. `task_edited_file_checkouts` and `session_dirty_file_checkouts` gain no row, while `has_dirty_files` stays armed. Spies show no `Path.resolve`, `find_project_root`, git log or index notify, inside `record_edited_files` too. test: `tests/hooks/test_tool_handlers.py::test_foreign_mutation_records_fact_path_without_git_or_index`.
 
 ### 1.13 Foreign-origin run_command effects do not spawn [category: code] (depends: 1.3)
 `kind: deliverable`
@@ -1293,7 +1511,10 @@ envelope ledger of S2.11 (#21569). #23274 (Node channel, relay backend, and
 
 Obligations:
 - D1.1: each gate in §Site Disposition gives a real answer for a node event.
-- D1.2: the ledger reconciles against the node's git.
+- D1.2: the ledger reconciles against the node's git, and node edits record
+  under a machine-scoped checkout identity. The project-wide and
+  uncarried-path ownership blocks of decision 14 then relax to the
+  node's own checkout.
 - D1.3: Codex transcript and session ingestion work for node sessions.
 - D1.4: a node hook resolves its project from the node's own checkout
   identity (for example ghook's `X-Gobby-Project-Id`, validated by the hub),
