@@ -45,7 +45,8 @@ from that:
   claims.
 - Gate 9 (rule 1) checks only the task's live pairs, the attribution
   owner's plus any untransferred predecessor pairs, per checkout, and names
-  no foreign owner. Close ends the task's live tags in every linked session.
+  no foreign owner. Close ends the task's live tags in every session holding
+  one.
 - One ledger carries ownership: `session_dirty_files` holds the live pairs,
   each tagged with the one task it is live for, and `task_edited_files` is
   the append-only per-task history. The edit-time, checkout-mirror,
@@ -201,7 +202,14 @@ sha256 of the path's bytes, held in memory only for the duration of the call
    no-longer-claiming predecessor sessions into the claimant's ledger, still
    tagged with the task. A predecessor's pair tagged with another task never
    moves, even when the predecessor's history names the claimed task.
-   Ownership never duplicates across two live sessions.
+   Ownership never duplicates across two live sessions. Predecessors are the
+   sessions whose `session_dirty_files` holds a pair tagged with the task,
+   found by one jsonb query over `session_variables` (`task_tag_holders`,
+   1.4). The tag is therefore the recovery authority, and the best-effort
+   `session_tasks` link, which a claim survives losing, plays no part
+   (CO-A3-F10). Rejected: making every claim source write its link durably,
+   which needs a change at each claim source and leaves the tag
+   unauthoritative.
    Each move is one hub transaction under a new `SessionVariablePairMutation`
    lock that takes both rows' session-variable advisory keys in session-id
    order. Eligibility is rechecked inside it, a failure is reported in the
@@ -257,9 +265,8 @@ sha256 of the path's bytes, held in memory only for the duration of the call
    reconciliation drops the pair, when the pair transfers to a claimant
    (Decision 2), when the session mutates it for another task, or when the
    task closes. At close, `_cleanup_closed_claim` sets the task's tags to
-   null in the attribution owner's ledger and in every other session linked
-   to the task, so a clean untransferred predecessor pair never stays live
-   for a closed task. A nulled pair stays in its session's live set, and
+   null in every session that holds one, found by `task_tag_holders`, so a
+   clean untransferred predecessor pair never stays live for a closed task. A nulled pair stays in its session's live set, and
    history is untouched. A claim released without closing (live-session
    recovery, a spawn handoff, a claim observer) keeps the tag, so the next
    claimant can take the pair.
@@ -421,8 +428,10 @@ mechanism, its replacement, and the tests deleted or changed.
   - Change `tests/mcp_proxy/tools/tasks/test_mcp_close_checklist.py`,
     `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py`
     and `tests/mcp_proxy/tools/tasks/test_close_attribution.py` (1.7).
-- **Claim-time scope check** (`_claim_scope_conflicts` and its helpers).
-  - Replacement: rule 3 (Decision 19).
+- **Claim-time scope check** (`_claim_scope_conflicts` and its helpers), and
+  its link-based session discovery `_task_attribution_sessions`.
+  - Replacement: rule 3 (Decision 19). Sessions holding a task's pairs are
+    found by their tags through `task_tag_holders` (Decision 2).
   - Delete `test_claim_task_blocks_foreign_owner_of_declared_or_attributed_path`
     and `test_claim_task_with_empty_scope_does_not_guess_conflicts` in
     `tests/mcp_proxy/tools/test_claim_task.py`, and its scope-check patches
@@ -489,7 +498,7 @@ and close checks only the uncommitted work live for the task it closes.
 Targets:
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_paths.py::*` — operation: delete — scope-reason: retires release_task_paths, inspect_task_path_ownership and their private helpers with the module
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle.py::create_lifecycle_registry`
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py::*` — scope-reason: deletes four scope-check helpers, their call in register_claim_task and their commit_guard imports
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py::*` — scope-reason: deletes four scope-check helpers, their call in register_claim_task, their commit_guard imports and the link-based _task_attribution_sessions
 - `src/gobby/workflows/enforcement/blocking.py::TASK_MUTATION_TOOLS_BY_SERVER`
 - `src/gobby/install/shared/skills/gobby/references/tasks/implementation.md`
 - `docs/reference-audit/tasks.json::*` — scope-reason: drops the two retired tool rows
@@ -514,7 +523,9 @@ Targets:
   `_DECLARED_AFFECTED_FILE_SOURCES` serve only that check. The module imports
   `DirtyEditOwnershipInspectionError`, `ForeignPathOwner` and
   `foreign_owned_dirty_paths` from `commit_guard` for it.
-  `_task_attribution_sessions` (lines 71-84) stays; 1.8 uses it.
+  `_task_attribution_sessions` (lines 71-84) has no other caller. Its
+  discovery through best-effort `session_tasks` links is replaced by the tag
+  query `task_tag_holders` (1.4, Decision 2).
 - `enforcement/blocking.py::TASK_MUTATION_TOOLS_BY_SERVER` lists
   `release_task_paths` under `gobby-tasks`.
 - Docs naming the tools: `references/tasks/implementation.md` (skill
@@ -531,8 +542,8 @@ Targets:
 - Delete `_lifecycle_paths.py`, and drop its import and registration from
   `create_lifecycle_registry`.
 - In `_lifecycle_claim.py`, delete the four scope-check helpers, the constant,
-  the call and its error branch in `claim_task`, and the three `commit_guard`
-  imports.
+  the call and its error branch in `claim_task`, the three `commit_guard`
+  imports, and `_task_attribution_sessions`.
 - Remove `release_task_paths` from `TASK_MUTATION_TOOLS_BY_SERVER`.
 - Remove both tools from `implementation.md` and `tasks.json`. In
   `implementation.md`, replace the release advice with: "Dirty paths you did
@@ -966,14 +977,13 @@ and the module helper `_session_dirty_file_checkouts`) into the new
   `evaluation.resolved_session_id` when one session closes another's task.
   `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_closed_task_cleanup_removes_only_its_edit_entry`
   pins the removal of the closed task's `task_edited_files` row.
-- `_lifecycle_claim.py::_task_attribution_sessions(ctx, task_id,
-  claimed_by_session_id)` returns the given session plus every session
-  linked to the task. `claim_task` (line 358) and `create_task(claim=true)`
-  (`_crud.py`) link the session as `"claimed"` before setting
-  `claimed_tasks`, and `observers.detect_task_claim` adds a claim only after
-  one of them succeeded, so every session that can tag a pair with the task
-  is linked to it. The link is best-effort (a failure is logged), the same
-  dependency the 1.8 transfer has.
+- `session_tasks` links cannot find every session holding a task's tags.
+  `claim_task` catches a `link_task(..., "claimed")` failure (lines 356-360)
+  and still merges `claimed_tasks`, and `create_task(claim=true)`
+  (`_crud.py`) catches both of its links the same way, so an unlinked session
+  can tag pairs. `session_variables.variables` is `jsonb`
+  (`crates/gcore/assets/schema/baseline.sql` line 3446, primary key
+  `session_id`), so the tags themselves can be queried.
 - `worktree_checkpoint.py::_authorized_task_paths` keeps a pre-#21897 legacy
   branch reading `legacy_variables.get("task_edited_files")` (line 514).
 - `task_recovery.py::TaskRecoveryHandler._clear_claim_session_variables`'
@@ -996,6 +1006,14 @@ and the module helper `_session_dirty_file_checkouts`) into the new
   pair tagged with the task to null and returns the count. It runs under
   `_mutate_variables` like the other mutators, so a concurrent record on the
   same row is never overwritten, and it never touches `task_edited_files`.
+  `task_tag_holders(task_id) -> list[str]` returns the session ids whose
+  `session_dirty_files` holds a pair tagged with the task, from one read:
+  `SELECT session_id FROM session_variables WHERE jsonb_path_exists(variables,
+  '$.session_dirty_files.*.* ? (@ == $task)', jsonb_build_object('task',
+  %s::text))`. A null tag, another task's tag and an old-shape value never
+  match. No index serves the wildcard path, so the read scans
+  `session_variables`; only claim transfer, gate 9 and close cleanup run it.
+  A query error propagates to the caller.
 - In `task_claim_state.py`, add `task_live_checkout_paths(variables, task_id)
   -> frozenset[tuple[str, str]]`: the `session_dirty_files` pairs tagged with
   the task. History never contributes (Decision 16).
@@ -1037,16 +1055,18 @@ and the module helper `_session_dirty_file_checkouts`) into the new
 - `_cleanup_closed_claim`: after merging `remove_claimed_task` into
   `evaluation.edit_session_id` (the attribution owner, which may differ from
   the closer `resolved_session_id`), call `end_task_tags(session_id, task_id)`
-  for every session `_task_attribution_sessions(ctx, task_id,
-  evaluation.edit_session_id)` returns. That covers the owner, a predecessor
-  whose clean pair was never transferred (gate 9 lets that close pass, 1.7)
-  and a pair under a deleted root, which `untransferred_task_pairs` skips.
+  for every session `task_tag_holders(task_id)` returns. That covers the
+  owner, a predecessor whose clean pair was never transferred (gate 9 lets
+  that close pass, 1.7) whether or not it has a `session_tasks` link, and a
+  pair under a deleted root, which `untransferred_task_pairs` skips.
   The nulled pairs stay in each session's `session_dirty_files`, so session
   ownership holds until reconciliation finds them clean, and every
   `task_edited_files` row stays. The closer's own ledger changes only when
-  the closer is one of those sessions. Then clear the owner's `had_edits`
-  when no task left in its `claimed_tasks` has live pairs. Other claim
-  releases leave tags unchanged (Decision 8).
+  the closer holds a tag. Then clear the owner's `had_edits` when no task
+  left in its `claimed_tasks` has live pairs. Other claim releases leave
+  tags unchanged (Decision 8). The close has already committed, so a
+  cleanup error is logged, as today; any tag it leaves sits on a pair gate
+  9 found clean.
 - Delete the legacy branch of `_authorized_task_paths`; fix the
   `task_recovery` docstring.
 
@@ -1080,7 +1100,8 @@ the isolation prefix.
 - 1.4.7 - Old-shape values (`session_dirty_files` as a list or as `{root: [rel]}`, `task_edited_files` with list values) read as empty, and no retired variable name remains in `src/`. test: `tests/workflows/test_task_claim_state.py::test_old_shape_ledger_values_read_as_empty`.
 - 1.4.8 - `outstanding_monolith_paths` reports only live pairs: a pair whose task closed and whose live pair was released is not reported after the file grows past the ceiling while another session owns it, while an over-budget pair live for one of the session's tasks is reported. test: `tests/workflows/test_monolith_guard.py::test_outstanding_monolith_paths_ignores_released_history`.
 - 1.4.9 - `end_task_tags(session_id, task_id)` sets only the pairs tagged with the task to null, keeps them in `session_dirty_files`, leaves pairs tagged with another task and every `task_edited_files` row unchanged, and returns the count; afterwards `task_live_checkout_paths` for the task is empty. test: `tests/workflows/test_session_variable_manager.py::test_end_task_tags_nulls_only_that_tasks_pairs`.
-- 1.4.10 - Closer C closes a task whose attribution owner O is another session, while predecessor P, linked to the task and no longer claiming it, holds a clean untransferred pair tagged with it. `_cleanup_closed_claim` merges `remove_claimed_task` into O only, calls `end_task_tags` for O and P and never for C, and clears O's `had_edits` only when no task left in O's `claimed_tasks` has live pairs. test: `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_closed_task_cleanup_ends_task_tags_in_linked_sessions`, which replaces `test_closed_task_cleanup_removes_only_its_edit_entry`.
+- 1.4.10 - Closer C closes a task whose attribution owner O is another session, while predecessor P, which no longer claims the task and has no `session_tasks` link to it, holds a clean untransferred pair tagged with it. `_cleanup_closed_claim` merges `remove_claimed_task` into O only, calls `end_task_tags` for O and P (the holders `task_tag_holders` returns) and never for C, and clears O's `had_edits` only when no task left in O's `claimed_tasks` has live pairs. test: `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_closed_task_cleanup_ends_task_tags_in_tag_holders`, which replaces `test_closed_task_cleanup_removes_only_its_edit_entry`.
+- 1.4.11 - `task_tag_holders(task_id)` returns exactly the sessions with a `session_dirty_files` pair tagged with the task, including one with no `session_tasks` row, and never one whose matching pairs are null-tagged, tagged with another task, or stored in an old shape. test: `tests/workflows/test_session_variable_manager.py::test_task_tag_holders_finds_unlinked_holders`.
 
 ### 1.5 The recorder records only content-changing writes [category: code] (depends: 1.4)
 `kind: deliverable`
@@ -1422,17 +1443,24 @@ only inside the file) into the new
 - After 1.8, a claim whose pair transfer failed still succeeds, and the
   predecessor keeps the task's live pairs until a `claim_task` retry moves
   them. `_lifecycle_claim.untransferred_task_pairs(ctx, *, task_id,
-  claimant_session_id)` returns those pairs by predecessor ref, read-only.
+  claimant_session_id)` returns those pairs by predecessor ref, read-only,
+  or None when the tag-holder inventory cannot be read.
   `capture_attribution` (line 135) reads only the claimant's variables, so
   without them gate 9 would pass over the predecessor's dirt.
+- `_evaluate_close` turns only `KeyError`, `TypeError` and `ValueError` from
+  `_capture_attribution` into the gate 2 `session_variable_lookup_failed`
+  failure; any other exception escapes the evaluation.
 
 **Implementation:**
 - `CloseAttributionSnapshot.clean_proof_paths` becomes `live_pairs:
   frozenset[tuple[str, str]]`, from
   `task_live_checkout_paths(owner_variables, task_id)`, and the snapshot
-  gains `untransferred_pairs: frozenset[tuple[str, str, str]]` (predecessor
-  ref, root, rel), from `untransferred_task_pairs(ctx, task_id=task_id,
-  claimant_session_id=owner_session_id)`. The fingerprint captures both.
+  gains `untransferred_pairs: frozenset[tuple[str, str, str]] | None`
+  (predecessor ref, root, rel), from `untransferred_task_pairs(ctx,
+  task_id=task_id, claimant_session_id=owner_session_id)`. The fingerprint
+  captures both. None fails closed: gate 9 reports
+  `task_clean_proof_unavailable`, as for a git status failure, and the close
+  is refused until the inventory reads.
 - `capture_attribution` drops the linked-commit fallback for gate 9 and deletes
   `_linked_commit_clean_proof_paths`. Committed paths are clean, so the
   fallback never proved anything gate 9 needs.
@@ -1471,7 +1499,8 @@ Consumers unchanged:
 - 1.7.2 - Gate 9 checks pairs in a task worktree and in the main checkout against their own roots, and passes when the task's live pairs are clean even though another session's dirty path shares a relative name. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_checks_live_pairs_per_checkout_root`.
 - 1.7.3 - The #22642 shape closes: a session whose only touch was `git restore --staged` on a pre-staged path has no live pairs, so gate 9 passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_passes_when_index_only_touch_recorded_nothing`.
 - 1.7.4 - Git status failure for any root reports `task_clean_proof_unavailable`, and `CloseEvaluationFingerprint.capture` changes when the live pairs change. test: `tests/mcp_proxy/tools/tasks/test_close_attribution.py::test_live_pairs_feed_fingerprint_and_unavailable_proof`.
-- 1.7.5 - After a claim whose pair transfer failed, gate 9 refuses the close with the untransferred-pair text naming the ended predecessor's dirty pair; a `claim_task` retry moves the pair, the next close fails with the live-pair text, and the close passes once the pair is committed. A live predecessor that still claims the task, a clean untransferred pair, and a pair under a deleted checkout root never block. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_refuses_close_until_failed_transfer_is_retried`.
+- 1.7.5 - CO-A3-F10 sequence: the ended predecessor has no `session_tasks` link to the task (its claim link failed) and holds a dirty pair tagged with it. After a claim whose pair transfer failed, gate 9 refuses the close with the untransferred-pair text naming that pair; a `claim_task` retry whose transfer fails again leaves the same refusal; a retry that succeeds takes the `already_claimed` return and moves the pair, the next close fails with the live-pair text, and the close passes once the pair is committed. A live predecessor that still claims the task, a clean untransferred pair, and a pair under a deleted checkout root never block. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_refuses_close_until_failed_transfer_is_retried`.
+- 1.7.6 - When `task_tag_holders` raises, `untransferred_task_pairs` returns None and gate 9 fails with `task_clean_proof_unavailable`, so the close is refused; the next close after the inventory reads evaluates normally. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_fails_closed_when_tag_holder_inventory_fails`.
 
 ### 1.8 Claim transfers a predecessor's live pairs [category: code] (depends: 1.1, 1.4)
 `kind: deliverable`
@@ -1488,12 +1517,13 @@ Targets:
 
 **Research context:**
 - `_lifecycle_claim.py::register_claim_task.claim_task` links the session
-  (`link_task(..., "claimed")`, line 358) and merges `add_claimed_task`
-  (task_claim_state, sets `claimed_tasks[task] = ref` and `active_task_id`)
-  into the claimant's variables (line 383).
-- `_task_attribution_sessions(ctx, task_id, claimed_by_session_id)` (lines
-  71-84) returns the prior claimer plus every session linked to the task
-  through `session_task_manager.get_task_sessions`.
+  (`link_task(..., "claimed")`, line 358, best-effort: a failure is caught
+  and logged) and merges `add_claimed_task` (task_claim_state, sets
+  `claimed_tasks[task] = ref` and `active_task_id`) into the claimant's
+  variables (line 383).
+- After 1.4, `SessionVariableManager.task_tag_holders(task_id)` returns
+  every session holding a pair tagged with the task, link or no link; 1.1
+  deletes the link-based `_task_attribution_sessions`.
 - A session is live when its status is in
   `storage/sessions/_constants.py::LIVE_SESSION_STATUS_ORDER`.
 - After 1.4, `task_claim_state.task_live_checkout_paths(variables, task_id)`
@@ -1559,23 +1589,26 @@ Targets:
      `task_edited_files` (gate 12, Decision 16) unchanged.
   4. Write both changed rows and return the number of pairs moved.
   Any exception rolls back both rows.
-- Add `_transfer_task_dirty_pairs(ctx, *, task_id, claimant_session_id,
-  prior_claimer) -> list[str]`. It calls `transfer_task_pairs` for each
-  session from `_task_attribution_sessions` other than the claimant, and
-  returns one `"<session ref>: <error>"` entry per failed transfer. A
-  completed transfer leaves the predecessor no live pairs, so a repeat is a
-  no-op.
+- Add `_transfer_task_dirty_pairs(ctx, *, task_id, claimant_session_id) ->
+  list[str]`. It calls `transfer_task_pairs` for each session
+  `ctx.session_var_manager.task_tag_holders(task_id)` returns other than the
+  claimant, and returns one `"<session ref>: <error>"` entry per failed
+  transfer, or one `"tag holders: <error>"` entry when the holder query
+  fails. A completed transfer leaves the predecessor no live pairs, so a
+  repeat is a no-op.
 - Add `untransferred_task_pairs(ctx, *, task_id, claimant_session_id) ->
-  dict[str, frozenset[tuple[str, str]]]`, read-only, for gate 9 (1.7). For
-  each session from `_task_attribution_sessions` other than the claimant, it
-  reads the status with `ctx.session_manager.get` (live when the status is in
-  `LIVE_SESSION_STATUS_ORDER`) and the variables with
+  dict[str, frozenset[tuple[str, str]]] | None`, read-only, for gate 9
+  (1.7). For each session `task_tag_holders(task_id)` returns other than the
+  claimant, it reads the status with `ctx.session_manager.get` (live when
+  the status is in `LIVE_SESSION_STATUS_ORDER`) and the variables with
   `ctx.session_var_manager.get_variables`. When `releases_task_ownership`
   holds, it keeps the session's `task_live_checkout_paths(variables,
   task_id)` whose root directory still exists, keyed by the session's ref. A
   live predecessor that still claims the task contributes nothing, and a
   pair under a deleted checkout can never be committed or reconciled by its
-  ended holder, so it is dropped.
+  ended holder, so it is dropped. Any exception from the holder query or a
+  holder's status or variables read is logged and returns None, which gate
+  9 treats as unavailable (1.7).
 - `claim_task` calls `_transfer_task_dirty_pairs` after the claimant's
   variables merge. Before the `already_claimed` early return, it calls
   `_transfer_task_dirty_pairs` again, which retries any
@@ -1601,7 +1634,7 @@ Targets:
 - 1.8.3 - `transfer_task_pairs` moves the pairs in one transaction and leaves the claimant's `session_edited_files` unchanged. A failure injected after the claimant's row is written and before the predecessor's row is written rolls both rows back, leaving exactly one live holder, and a second call completes the move. test: `tests/workflows/test_session_variable_manager.py::test_transfer_task_pairs_rolls_back_on_failure`.
 - 1.8.4 - While one thread holds a `SessionVariablePairMutation` transaction open, another thread's `_mutate_variables` on either row waits until it commits and then sees the transferred ledger. test: `tests/workflows/test_session_variable_manager.py::test_single_row_mutation_waits_on_pair_lock`.
 - 1.8.5 - `advisory_lock_keys(SessionVariablePairMutation(b, a))` equals the `SessionVariableMutation` keys of `a` then `b`, and taking a `SessionVariableMutation` lock after the pair lock raises `LockAcquisitionOrderError`. test: `tests/storage/test_manager_surface_parity.py::test_session_variable_pair_lock_keys_match_single_row_keys_in_sorted_order`.
-- 1.8.6 - When a claim's transfer fails, the result carries `pair_transfer_errors` and its message invites a retry; a later `claim_task` by the same session takes the `already_claimed` return, completes the transfer, and reports no `pair_transfer_errors`. test: `tests/mcp_proxy/tools/test_claim_task.py::test_already_claimed_retry_completes_failed_pair_transfer`.
+- 1.8.6 - The predecessor has no `session_tasks` link to the task (its claim link failed). When a claim's transfer fails, the result carries `pair_transfer_errors` and its message invites a retry; a later `claim_task` by the same session takes the `already_claimed` return, finds the predecessor by its tag, completes the transfer, and reports no `pair_transfer_errors`. test: `tests/mcp_proxy/tools/test_claim_task.py::test_already_claimed_retry_completes_failed_pair_transfer`.
 - 1.8.7 - F9 regression: session S mutates p under task A and q under A, releases A without closing (both stay tagged A), then mutates p for task B (p retags to B); in a variant, S commits p under A, reconciliation releases it, and S mutates p again for B. When another session claims A, only q transfers, p stays with S tagged B, `untransferred_task_pairs` for A never names p, and A's close is not blocked by p while S's close of B still is. test: `tests/mcp_proxy/tools/test_claim_task.py::test_claim_transfers_only_pairs_live_for_the_claimed_task`.
 
 ## V1 Plan Changelog
@@ -1662,6 +1695,19 @@ Targets:
   which no longer call the owner's pairs the closer's. 1.4 also replaces
   `test_closed_task_cleanup_removes_only_its_edit_entry`, which pinned the
   deleted removal of a closed task's rows.
+- 2026-10-05: Adversary finding CO-A3-F10 accepted. `session_tasks` links
+  are best-effort: `claim_task` and `create_task(claim=true)` catch a link
+  failure and still set `claimed_tasks`. Link-based predecessor discovery
+  could therefore miss a tag holder at transfer, retry, gate 9 and close
+  cleanup. The task tag is now the recovery authority. The new
+  `EditLedgerMixin.task_tag_holders` is one jsonb query over
+  `session_variables`. It replaces `_task_attribution_sessions`, which 1.1
+  deletes, and `_transfer_task_dirty_pairs` drops its `prior_claimer`
+  parameter (Decision 2, Decision 8, 1.1, 1.4, 1.8). An inventory failure
+  fails gate 9 closed as `task_clean_proof_unavailable` (1.7). New
+  regressions: 1.4.11 (unlinked holders found), 1.7.6 (fail-closed). The
+  1.7.5, 1.8.6 and 1.4.10 predecessors are now unlinked. The sweep also
+  updated the Retired Mechanisms claim-scope bullet and the Overview.
 
 ## V2: Verification
 `kind: verification`
