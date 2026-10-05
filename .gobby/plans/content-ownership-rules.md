@@ -189,7 +189,8 @@ sha256 of the path's bytes, held in memory only for the duration of the call
 `kind: framing`
 
 1. **R1, rule 2 scope (Orchestrator gobby#14972, 2026-10-05 13:03 CT). This
-   interprets Josh's verbatim rule 2; Josh rules on it at approval.** Rule 2
+   interprets Josh's verbatim rule 2; Josh approved it on 2026-10-05 at
+   15:54 CT (Telegram, relayed by the Orchestrator).** Rule 2
    blocks a commit only when a committed path is dirty and is held in another
    live session's `session_dirty_files`. Paths no live session mutated commit
    freely. A merge commit is exempt only for the paths the merge brings in,
@@ -298,8 +299,9 @@ sha256 of the path's bytes, held in memory only for the duration of the call
     (the `cp` destination), else its paths. Execute-kind segments (`git add`,
     index-only `git restore`) contribute none (1.5).
 12. **W3, merges and rule 3 (Orchestrator, 2026-10-05: accepted). This
-    interprets Josh's verbatim rule 3; Josh rules on it at approval, alongside
-    Decision 1.** While `MERGE_HEAD` exists in a checkout, writes to paths in
+    interprets Josh's verbatim rule 3; Josh approved it with Decision 1 on
+    2026-10-05 at 15:54 CT (Telegram, relayed by the Orchestrator).** While
+    `MERGE_HEAD` exists in a checkout, writes to paths in
     that checkout's merge set (`git diff --name-only --no-renames HEAD
     MERGE_HEAD`, Decision 1) are exempt from rule 3, so the Merge Manager can
     resolve conflicts with edit tools. The recorder then records them for the
@@ -647,7 +649,7 @@ isolation prefix.
 
 - 1.2.1 - The sessions registry built by `create_session_messages_registry` has no `capture_baseline_dirty_files` tool. test: `tests/mcp_proxy/tools/test_internal_action_tools.py::test_sessions_registry_omits_capture_baseline_dirty_files`.
 - 1.2.2 - Session activation on a fresh session writes no `baseline_dirty_files` variable and does not report it missing. test: `tests/hooks/test_session_activation_reconciliation.py::test_activation_seeds_no_baseline_dirty_files`.
-- 1.2.3 - `rg -n "baseline_dirty_files|capture_baseline_dirty_files|GIT_STATUS_UNAVAILABLE_MARKER" src/ docs/guides docs/reference-audit` prints nothing. test: `tests/hooks/test_session_activation_reconciliation.py::test_baseline_dirty_tracking_invariant_still_seeds_edit_ledgers`.
+- 1.2.3 - `rg -n "baseline_dirty_files|capture_baseline_dirty_files|GIT_STATUS_UNAVAILABLE_MARKER" src/ docs/guides docs/reference-audit -g '!src/gobby/workflows/hooks.py'` prints nothing. `hooks.py` is excluded because its line 408 comment is fixed in 1.6, which runs after 1.2; V2 step 2 sweeps the whole tree. test: `tests/hooks/test_session_activation_reconciliation.py::test_baseline_dirty_tracking_invariant_still_seeds_edit_ledgers`.
 
 ### 1.3 Rules 2 and 3 judge live session ownership [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -672,12 +674,16 @@ Rules 2 and 3 share the owner lookup, the formatter, the stale-holder release
 and the pair resolver, and neither verifies without them. The parsing split
 is mechanical and forced by the size lint.
 
-Split `commit_guard.py` (956 lines): move the commit-parsing half, lines 45-322
-(`_GIT_GLOBAL_OPTIONS_WITH_VALUE`, `GitCommitInvocation`,
+Split `commit_guard.py` (956 lines): move exactly these commit-parsing
+symbols (`_GIT_GLOBAL_OPTIONS_WITH_VALUE`, `GitCommitInvocation`,
 `parse_git_commit_invocations`, the shell helpers `_SHELL_KEYWORDS` through
-`_join_chdir`, and `resolve_commit_inspect_cwd`), into the new
+`_join_chdir`, and `resolve_commit_inspect_cwd`, all within lines 45-322)
+into the new
 `src/gobby/workflows/git_commit_parsing.py`, and move their tests into the new
-`tests/workflows/test_git_commit_parsing.py`.
+`tests/workflows/test_git_commit_parsing.py`. The symbol list governs:
+`ForeignPathOwner`, `CheckoutPathOwnership` and
+`DirtyEditOwnershipInspectionError` (lines 70-92) sit inside that span and
+stay in `commit_guard.py`.
 
 **Research context:**
 - Today's rule 3 is `commit_guard.foreign_dirty_edit_conflict` (lines
@@ -1176,7 +1182,9 @@ _ShellSegmentMetadata | None`, called from the original function.
 - `tests/hooks/test_normalization.py::TestExternalNavigationScope.test_git_restore_pathspecs_without_separator_are_write_paths`
   pins `git restore --staged src/gobby/x.py` and `git restore --staged --
   notes.md` as write-kind; both become execute-kind. `git restore -s HEAD~1
-  --worktree a.md b.md` stays write-kind.
+  --worktree a.md b.md` stays write-kind. The test is renamed
+  `test_git_restore_index_only_pathspecs_are_execute_kind` so its name
+  matches the new assertion.
 - The #22642 case: `git restore --staged tests/e2e/test_terminal_client_stack.py`
   in a checkout where that path was staged before the claim; the path flipped
   from staged to unstaged and was recorded as an edit.
@@ -1254,7 +1262,7 @@ with the isolation prefix.
 - 1.5.1 - #22642 regression: in a temporary git checkout where a tracked file is staged, a Bash `git restore --staged <path>` call records no pair in `session_dirty_files`, `task_edited_files` or `session_edited_files`. test: `tests/hooks/test_tool_handlers.py::test_git_restore_staged_records_no_attribution`.
 - 1.5.2 - A Write or Edit that leaves a clean path's bytes unchanged records nothing, and one that changes them records the pair. test: `tests/hooks/test_tool_handlers.py::test_recorder_records_only_content_changes`.
 - 1.5.3 - A Write creating a new untracked file records it. A path the session owns under task A, rewritten with the same bytes while task B is active, records nothing in B's ledger, while a real change records it for B. test: `tests/hooks/test_tool_handlers.py::test_recorder_handles_untracked_and_owned_paths`.
-- 1.5.4 - `git restore --staged` and `git restore -S` without `--worktree`/`-W` normalize to execute-kind; `git restore --staged --worktree` and `git restore -W` stay write-kind. test: `tests/hooks/test_normalization.py::TestExternalNavigationScope.test_git_restore_pathspecs_without_separator_are_write_paths`.
+- 1.5.4 - `git restore --staged` and `git restore -S` without `--worktree`/`-W` normalize to execute-kind; `git restore --staged --worktree` and `git restore -W` stay write-kind. test: `tests/hooks/test_normalization.py::TestExternalNavigationScope.test_git_restore_index_only_pathspecs_are_execute_kind`.
 - 1.5.5 - Mixed shell segments publish `canonical_write_file_paths` as the union of write-kind targets: `cp a b && git restore -- c` gives `[b, c]`, `mv a b && echo x > d` and `rm e && echo x > d` include `d` with the `mv` or `rm` paths, and `git add x && git restore -- y` and `git restore --staged x && echo z > y` give `[y]` only. test: `tests/hooks/test_normalization.py::test_mixed_segments_publish_union_of_write_kind_targets`.
 - 1.5.6 - In a temporary git checkout, a Bash `git add <foreign path> && git restore -- <own path>` call, where `<own path>` is already in the session's ledger and the restore changes it, records `<own path>` and nothing for the `git add` path. test: `tests/hooks/test_tool_handlers.py::test_recorder_ignores_execute_segment_paths_in_mixed_command`.
 - 1.5.7 - A failed Bash call `echo changed > <path> && false` records the pair, and a failed call that leaves the bytes unchanged records nothing. test: `tests/hooks/test_tool_handlers.py::test_failed_write_call_records_only_changed_bytes`.
@@ -1450,11 +1458,19 @@ only inside the file) into the new
 - `_evaluate_close` turns only `KeyError`, `TypeError` and `ValueError` from
   `_capture_attribution` into the gate 2 `session_variable_lookup_failed`
   failure; any other exception escapes the evaluation.
+- Reconciliation (`hooks.py` lines 613-620) runs only after the session's
+  own git activity, so an owner's live pair can outlive a deleted checkout
+  root; after 1.4 reconciliation releases such pairs when it runs. Git
+  status under a missing root fails, which would make the proof unavailable
+  with no way to commit the pair.
 
 **Implementation:**
 - `CloseAttributionSnapshot.clean_proof_paths` becomes `live_pairs:
   frozenset[tuple[str, str]]`, from
-  `task_live_checkout_paths(owner_variables, task_id)`, and the snapshot
+  `task_live_checkout_paths(owner_variables, task_id)` without pairs whose
+  root directory no longer exists, which are dropped as reconciliation
+  releases them and as `untransferred_task_pairs` skips them (Orchestrator
+  ruling on CR7 LOW-2, 2026-10-05), and the snapshot
   gains `untransferred_pairs: frozenset[tuple[str, str, str]] | None`
   (predecessor ref, root, rel), from `untransferred_task_pairs(ctx,
   task_id=task_id, claimant_session_id=owner_session_id)`. The fingerprint
@@ -1498,7 +1514,7 @@ Consumers unchanged:
 - 1.7.1 - Gate 9 fails with "Files created or mutated for the task are uncommitted: <root>/<rel> ... Commit them and retry." for a live pair, with no owner lookup and no `release_task_paths` advice. test: `tests/mcp_proxy/tools/tasks/test_mcp_close_checklist.py::test_uncommitted_task_edits_names_dirty_paths`.
 - 1.7.2 - Gate 9 checks pairs in a task worktree and in the main checkout against their own roots, and passes when the task's live pairs are clean even though another session's dirty path shares a relative name. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_checks_live_pairs_per_checkout_root`.
 - 1.7.3 - The #22642 shape closes: a session whose only touch was `git restore --staged` on a pre-staged path has no live pairs, so gate 9 passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_passes_when_index_only_touch_recorded_nothing`.
-- 1.7.4 - Git status failure for any root reports `task_clean_proof_unavailable`, and `CloseEvaluationFingerprint.capture` changes when the live pairs change. test: `tests/mcp_proxy/tools/tasks/test_close_attribution.py::test_live_pairs_feed_fingerprint_and_unavailable_proof`.
+- 1.7.4 - Git status failure for any existing root reports `task_clean_proof_unavailable`, while an owner's live pair under a deleted checkout root is dropped from `live_pairs` and never makes the proof unavailable, and `CloseEvaluationFingerprint.capture` changes when the live pairs change. test: `tests/mcp_proxy/tools/tasks/test_close_attribution.py::test_live_pairs_feed_fingerprint_and_unavailable_proof`.
 - 1.7.5 - CO-A3-F10 sequence: the ended predecessor has no `session_tasks` link to the task (its claim link failed) and holds a dirty pair tagged with it. After a claim whose pair transfer failed, gate 9 refuses the close with the untransferred-pair text naming that pair; a `claim_task` retry whose transfer fails again leaves the same refusal; a retry that succeeds takes the `already_claimed` return and moves the pair, the next close fails with the live-pair text, and the close passes once the pair is committed. A live predecessor that still claims the task, a clean untransferred pair, and a pair under a deleted checkout root never block. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_refuses_close_until_failed_transfer_is_retried`.
 - 1.7.6 - When `task_tag_holders` raises, `untransferred_task_pairs` returns None and gate 9 fails with `task_clean_proof_unavailable`, so the close is refused; the next close after the inventory reads evaluates normally. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_fails_closed_when_tag_holder_inventory_fails`.
 
@@ -1720,6 +1736,22 @@ Targets:
   `1b12887613` is stale. The whole `## M1 Task Manifest` block is removed
   unedited and its bytes stay in Git history (stale-M1 route, memory
   f5577ae0). The Adversary re-derives M1 after the repair.
+- 2026-10-05: CR7 bounce repairs, with Josh's approval of Decisions 1 and
+  12 (Telegram, 15:54 CT, relayed by the Orchestrator) recorded in the
+  Decision Record.
+  - B1: acceptance 1.2.3's sweep excludes `src/gobby/workflows/hooks.py`,
+    whose line 408 comment 1.6 fixes after 1.2 closes. V2 step 2 keeps the
+    full sweep.
+  - LOW-1: the 1.3 `commit_guard.py` split names its symbol list as
+    governing; `ForeignPathOwner`, `CheckoutPathOwnership` and
+    `DirtyEditOwnershipInspectionError` stay.
+  - LOW-2 (Orchestrator ruling: drop): gate 9 drops an owner's live pair
+    under a deleted checkout root, as reconciliation and
+    `untransferred_task_pairs` do, and 1.7.4 pins it. Naming the root in
+    the unavailable text was the alternative, rejected because nothing can
+    commit such a pair.
+  - LOW-3: 1.5.4's test is renamed
+    `test_git_restore_index_only_pathspecs_are_execute_kind`.
 
 ## V2: Verification
 `kind: verification`
