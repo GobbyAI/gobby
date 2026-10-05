@@ -855,6 +855,11 @@ async def _preflight_srt(
             f"managed SRT preflight timed out after {elapsed:.1f}s "
             f"(bound {SRT_PREFLIGHT_TIMEOUT_SECONDS:g}s)"
         ) from exc
+    except asyncio.CancelledError:
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+        raise
     except OSError as exc:
         raise SrtRuntimeError("managed SRT preflight execution failed") from exc
     if process.returncode != 0:

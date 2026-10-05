@@ -1249,7 +1249,11 @@ def _install_fake_preflight(
     monkeypatch.setattr(
         srt_runtime,
         "asyncio",
-        SimpleNamespace(wait_for=simulated_wait_for, subprocess=asyncio.subprocess),
+        SimpleNamespace(
+            wait_for=simulated_wait_for,
+            subprocess=asyncio.subprocess,
+            CancelledError=asyncio.CancelledError,
+        ),
     )
 
 
@@ -1264,6 +1268,33 @@ async def test_preflight_slower_than_twenty_seconds_passes_within_ceiling(
 
     assert process.returncode == 0
     assert not process.killed
+
+
+async def test_cancelled_preflight_kills_and_reaps_before_reraising(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    process = _FakePreflightProcess()
+    communicating = asyncio.Event()
+
+    async def blocked_communicate() -> tuple[bytes, bytes]:
+        communicating.set()
+        await asyncio.Event().wait()
+        return b"", b""
+
+    monkeypatch.setattr(process, "communicate", blocked_communicate)
+    _install_fake_preflight(monkeypatch, process, simulated_seconds=1.0)
+    task = asyncio.create_task(
+        srt_runtime._preflight_srt(_enforced_srt_launch(), str(tmp_path), {})
+    )
+    await communicating.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert process.killed
+    assert process.reaped
 
 
 async def test_preflight_over_ceiling_fails_closed_with_elapsed_and_bound(
