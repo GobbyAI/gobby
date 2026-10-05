@@ -11,6 +11,7 @@ import shlex
 import shutil
 import sys
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -55,6 +56,10 @@ from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.utils import spawn
 
 SRT_POLICY_SCHEMA_VERSION = 1
+# Ceiling for the Node --preflight probe. It normally finishes in a few seconds,
+# but under heavy host load a passing preflight exceeded the former 20 s bound
+# (#23414). Past this ceiling the spawn still fails closed.
+SRT_PREFLIGHT_TIMEOUT_SECONDS = 90.0
 
 logger = logging.getLogger(__name__)
 _verification_cache_lock = threading.Lock()
@@ -837,12 +842,24 @@ async def _preflight_srt(
         )
     except OSError as exc:
         raise SrtRuntimeError("managed SRT preflight could not start") from exc
+    started = time.monotonic()
     try:
-        _, stderr = await asyncio.wait_for(process.communicate(), timeout=20)
+        _, stderr = await asyncio.wait_for(
+            process.communicate(), timeout=SRT_PREFLIGHT_TIMEOUT_SECONDS
+        )
     except TimeoutError as exc:
+        elapsed = time.monotonic() - started
         process.kill()
         await process.wait()
-        raise SrtRuntimeError("managed SRT preflight timed out") from exc
+        raise SrtRuntimeError(
+            f"managed SRT preflight timed out after {elapsed:.1f}s "
+            f"(bound {SRT_PREFLIGHT_TIMEOUT_SECONDS:g}s)"
+        ) from exc
+    except asyncio.CancelledError:
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+        raise
     except OSError as exc:
         raise SrtRuntimeError("managed SRT preflight execution failed") from exc
     if process.returncode != 0:

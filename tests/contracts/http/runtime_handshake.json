@@ -34,9 +34,9 @@
           "runner_protocol": 1,
           "baseline_version": 420,
           "baseline_checksum": "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55",
-          "latest_version": 458,
-          "latest_checksum": "5252f4b282dd302cd629af2d7a7782bd08fe1b232b3bf55e606a02f911e9be7a",
-          "assets_root_hash": "18d854707189ca1670a0dcd51b7ba694be070f19678b461bcfe91d8466adaec8"
+          "latest_version": 459,
+          "latest_checksum": "d0b0e50196714c6d02cb82ccf2868c1bad4aed977ade712578426128521ebb9b",
+          "assets_root_hash": "ff018bf399e3157f8383c31cfe07073d6cd5300f5e7bde0c7fdacbeba2e70f43"
         },
         "principal": {
           "kind": "interactive",

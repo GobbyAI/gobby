@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 192,
+  "site_count": 190,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -1381,26 +1381,6 @@
         "arg-type"
       ],
       "statement": "store = TaskValidationBackoffStore ( FakeDb ( ) )"
-    },
-    {
-      "fingerprint": "565508ce009654456b05db39e7df7884267d4304782aab72d49cc997d2ceb1ce",
-      "path": "tests/storage/test_context_usage_snapshot.py",
-      "symbol": "test_token_breakdown_ignores_malformed_token_values",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "snapshot = ContextUsageSnapshot . from_token_breakdown ( source = \"web_chat\" , context_window = 200_000 , uncached_prompt_tokens = \"not-a-number\" , cache_read_tokens = object ( ) , cache_creation_tokens = \"5\" , output_tokens = - 3 , )"
-    },
-    {
-      "fingerprint": "565508ce009654456b05db39e7df7884267d4304782aab72d49cc997d2ceb1ce",
-      "path": "tests/storage/test_context_usage_snapshot.py",
-      "symbol": "test_token_breakdown_ignores_malformed_token_values",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "snapshot = ContextUsageSnapshot . from_token_breakdown ( source = \"web_chat\" , context_window = 200_000 , uncached_prompt_tokens = \"not-a-number\" , cache_read_tokens = object ( ) , cache_creation_tokens = \"5\" , output_tokens = - 3 , )"
     },
     {
       "fingerprint": "0b0211e9151e44c8eee7b24cc29817bb9c58a11dff0ea26b89256dc34069ef49",

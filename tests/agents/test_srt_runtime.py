@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
 import shutil
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -37,6 +38,7 @@ from gobby.agents.srt_runtime import (
     render_srt_settings,
     verify_srt_installation,
 )
+from gobby.utils import spawn
 from gobby.utils.dependency_requirements import (
     SRT_RELEASE,
     DependencyStatus,
@@ -1197,3 +1199,129 @@ async def test_prepare_sandbox_launch_forwards_pre_commit_prewarm_opt_out(
         )
 
     assert forwarded == [True, False]
+
+
+class _FakePreflightProcess:
+    def __init__(self, *, returncode: int = 0, stderr: bytes = b"") -> None:
+        self._final_returncode = returncode
+        self._stderr = stderr
+        self.returncode: int | None = None
+        self.killed = False
+        self.reaped = False
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        self.returncode = self._final_returncode
+        return b"", self._stderr
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+    async def wait(self) -> int | None:
+        self.reaped = True
+        return self.returncode
+
+
+def _install_fake_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+    process: _FakePreflightProcess,
+    *,
+    simulated_seconds: float,
+) -> None:
+    """Run the preflight against a fake that takes ``simulated_seconds`` to finish.
+
+    The fake ``wait_for`` times out exactly when the bound is below the simulated
+    duration, so slow preflights are exercised without sleeping in the test.
+    """
+
+    async def fake_exec(*_command: str, **_kwargs: Any) -> _FakePreflightProcess:
+        return process
+
+    async def simulated_wait_for(
+        awaitable: Coroutine[Any, Any, tuple[bytes, bytes]], timeout: float
+    ) -> tuple[bytes, bytes]:
+        if timeout < simulated_seconds:
+            awaitable.close()
+            raise TimeoutError
+        return await awaitable
+
+    monkeypatch.setattr(spawn, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(
+        srt_runtime,
+        "asyncio",
+        SimpleNamespace(
+            wait_for=simulated_wait_for,
+            subprocess=asyncio.subprocess,
+            CancelledError=asyncio.CancelledError,
+        ),
+    )
+
+
+async def test_preflight_slower_than_twenty_seconds_passes_within_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    process = _FakePreflightProcess()
+    _install_fake_preflight(monkeypatch, process, simulated_seconds=25.0)
+
+    await srt_runtime._preflight_srt(_enforced_srt_launch(), str(tmp_path), {})
+
+    assert process.returncode == 0
+    assert not process.killed
+
+
+async def test_cancelled_preflight_kills_and_reaps_before_reraising(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    process = _FakePreflightProcess()
+    communicating = asyncio.Event()
+
+    async def blocked_communicate() -> tuple[bytes, bytes]:
+        communicating.set()
+        await asyncio.Event().wait()
+        return b"", b""
+
+    monkeypatch.setattr(process, "communicate", blocked_communicate)
+    _install_fake_preflight(monkeypatch, process, simulated_seconds=1.0)
+    task = asyncio.create_task(
+        srt_runtime._preflight_srt(_enforced_srt_launch(), str(tmp_path), {})
+    )
+    await communicating.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert process.killed
+    assert process.reaped
+
+
+async def test_preflight_over_ceiling_fails_closed_with_elapsed_and_bound(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    process = _FakePreflightProcess()
+    _install_fake_preflight(monkeypatch, process, simulated_seconds=120.0)
+
+    with pytest.raises(
+        SrtRuntimeError,
+        match=r"^managed SRT preflight timed out after \d+\.\ds \(bound 90s\)$",
+    ):
+        await srt_runtime._preflight_srt(_enforced_srt_launch(), str(tmp_path), {})
+
+    assert process.killed
+    assert process.reaped
+
+
+async def test_preflight_nonzero_exit_still_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    process = _FakePreflightProcess(returncode=1, stderr=b"sandbox denied\n")
+    _install_fake_preflight(monkeypatch, process, simulated_seconds=1.0)
+
+    with pytest.raises(SrtRuntimeError, match=r"^managed SRT preflight failed: sandbox denied$"):
+        await srt_runtime._preflight_srt(_enforced_srt_launch(), str(tmp_path), {})
+
+    assert not process.killed
