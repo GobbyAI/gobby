@@ -199,7 +199,8 @@ wrong against the code at `48071323c9`:
   or `~/.gobby/break_glass`, or touches port 60891.
 - **Rust.** Load the `rust` skill before editing `crates/`, where
   `crates/CLAUDE.md` governs. `cargo build`, `clippy`, and `nextest` are heavy
-  keys: they run one at a time, and only on request to the Lane Manager.
+  work under `.gobby/roles/_common.md`: they pause while the heavy-work hold is
+  in force and need no other admission.
 - **No secret values in logs or debug output.** No new code logs the API key,
   the derived signing key, the front-door secret, or the break-glass value.
   `HubDatabaseBootstrap` gains `api_key`, so its derived `Debug` becomes a
@@ -263,7 +264,7 @@ Targets:
 - `src/gobby/agents/sandbox_credentials.py`
 - `tests/utils/test_break_glass.py`
 - `tests/servers/test_break_glass.py`
-- `tests/agents/test_sandbox_policy.py::*` — scope-reason: the credential-root case asserts that the break-glass file is denied for reads and writes
+- `tests/agents/test_sandbox_policy.py::*` — scope-reason: the credential-root case asserts that the break-glass file and the bound startup bootstrap are denied for reads and writes
 - `tests/test_runner_front_door.py::*` — scope-reason: gains the case proving `run_gobby` creates the credential before the front door starts, including with `--config` outside `GOBBY_HOME`
 - `docs/guides/admin-operations.md`
 - `docs/contracts/secrets.md`
@@ -361,7 +362,10 @@ Targets:
   `_credential_roots` and `_gcode_runtime_root` into the new
   `src/gobby/agents/sandbox_credentials.py` as `credential_roots()` and
   `gcode_runtime_root()`. `sensitive_roots` and `sensitive_write_roots` import
-  them. `credential_roots()` adds `gobby_home / BREAK_GLASS_FILENAME`. The
+  them. `credential_roots()` keeps its `get_gobby_home()` roots and adds
+  `daemon_bootstrap_path()` and `break_glass_path()`, so with `--config`
+  outside `GOBBY_HOME` the startup bootstrap and break-glass file stay denied
+  even under an allowed workspace. The
   credential list then lives in one module that 1.3 edits again without
   touching `sandbox_policy.py`.
 - `docs/guides/admin-operations.md` gains a "Break-glass access" section: where
@@ -382,7 +386,7 @@ then `uv run ruff check` and `uv run mypy` on the touched modules.
 - 1.1.2 - With the database getter raising, a loopback request carrying the break-glass header is admitted to a non-grant route, while a non-loopback peer with the header and a loopback peer with a wrong or missing header get 401. The database getter is never called on the admitted path. test: `tests/servers/test_break_glass.py::test_break_glass_admits_only_loopback_holder_without_database`.
 - 1.1.3 - On a grant route, the break-glass header yields the operator bearer principal and the request is still refused without a grant. test: `tests/servers/test_break_glass.py::test_break_glass_still_requires_grant_on_grant_routes`.
 - 1.1.4 - `run_gobby` creates the credential before it starts the front door, in the startup bootstrap's directory even when `--config` lies outside a different `GOBBY_HOME`, and an `AuthService` built with defaults in that process admits that file's value. A creation failure does not stop startup. test: `tests/test_runner_front_door.py::test_run_gobby_creates_break_glass_before_front_door`.
-- 1.1.5 - Managed sandboxes may neither read nor write the break-glass file. test: `tests/agents/test_sandbox_policy.py::test_break_glass_file_is_a_credential_root`.
+- 1.1.5 - Managed sandboxes may neither read nor write the break-glass file or the startup bootstrap, including when the daemon bootstrap is bound to a directory outside a different `GOBBY_HOME` and inside an allowed root. test: `tests/agents/test_sandbox_policy.py::test_break_glass_file_is_a_credential_root`.
 - 1.1.6 - The admin guide documents break-glass access. behavior: "Break-glass access" in `docs/guides/admin-operations.md`.
 
 ### 1.2 Managed capability tokens sign with a key derived from the bootstrap API key [category: code] (depends: 1.1)
@@ -897,7 +901,7 @@ examples are 1.5; the CLI is 1.4.
 
 **Focused verification (planned):**
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/ tests/storage/test_storage_auth.py tests/storage/test_managed_credentials.py tests/storage/test_revisioned_config_store.py tests/config/ tests/utils/ tests/agents/test_agent_constants.py tests/agents/test_spawn_executor.py tests/agents/test_isolation.py tests/agents/test_sandbox.py tests/agents/test_sandbox_policy.py tests/cli/ tests/hooks/ tests/terminals/ tests/mcp_proxy/test_workspaces_registry.py tests/test_runner_front_door.py tests/test_runner_init.py tests/contracts/ -q`.
-Heavy keys from the Lane Manager: `cargo nextest run -p gdaemon -p gobby-core -p gclient -p gcode -p ghook -p gterminal` and
+Heavy work: `cargo nextest run -p gdaemon -p gobby-core -p gclient -p gcode -p ghook -p gterminal` and
 `cargo clippy --workspace --all-targets -- -D warnings`. The e2e files run in
 V2.
 
@@ -1083,8 +1087,7 @@ isolated copy and never touches the running daemon, `~/.gobby`, or port
    clone, not a worktree, so the daemon's worktree guard does not apply. Use
    the e2e suite's isolated-daemon arrangement: a temporary `GOBBY_HOME`, free
    ports, and a fresh database on the test hub.
-2. Build `gdaemon`, `gcode`, and `ghook` with heavy keys from the Lane Manager,
-   and install them with
+2. Build `gdaemon`, `gcode`, and `ghook` (heavy work), and install them with
    `promote_workspace_binary_set(…, bin_dir=<isolated home>/bin)`.
 3. Start at the tip. Confirm that a `gobby_` key authenticates, that
    `break_glass` exists with mode 0600, and that no `local_cli_token` exists.
@@ -1151,9 +1154,9 @@ After every leaf has passed:
 1. Run the focused suites of 1.1 to 1.4 together against the test hub.
 2. Run both corpus suites:
    - `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_http_corpus.py -q`;
-   - `cargo test -p gdaemon --test http_contracts` (heavy key).
+   - `cargo test -p gdaemon --test http_contracts` (heavy work).
 3. Run the e2e files that 1.2 and 1.3 target against isolated test daemons.
 4. Rerun `tests/runtime_grants/test_golden_vectors.py` and
-   `cargo nextest run -p gobby-core grant` (heavy key) unchanged (Decision 1).
+   `cargo nextest run -p gobby-core grant` (heavy work) unchanged (Decision 1).
 5. After D1: a CLI call authenticates with the bootstrap key, and a spawned
    agent's capability survives a daemon restart.
