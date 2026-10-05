@@ -1345,3 +1345,345 @@ After every leaf has passed:
 5. Run `gobby tokens ledger --task <a task closed after deploy>` and confirm
    that `attribution_since` falls inside the deploy window and that coverage
    lists every source present.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Usage ledger schema and the claim-interval trigger
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: Claiming a task, re-claiming it from another session,
+    and clearing `claimed_by_session_id` produce, in order, an interval for the first
+    session, then one for the second, then no open interval. Each release time is
+    greater than or equal to its claim time. test: `tests/storage/test_schema_usage_ledger.py::test_trigger_tracks_holder_changes`.
+
+    1.1.2: Closing a task that keeps `claimed_by_session_id` closes its open interval.
+    Reopening it opens a new one. A second open interval for one task is rejected
+    by the partial unique index. test: `tests/storage/test_schema_usage_ledger.py::test_close_and_reopen_follow_holder`.
+
+    1.1.3: `sync_task_claim_interval` opens an interval for an open, held task that
+    has none (the migration seed), and a second call is a no-op. test: `tests/storage/test_schema_usage_ledger.py::test_sync_seeds_current_holder_idempotently`.
+
+    1.1.4: `token_events.api_calls` rejects a negative value. `session_reported_usage`
+    rejects an unknown `cost_unit`, a unit without an amount, and `observed_at` before
+    `started_at`. Its rows and intervals cascade when their session is deleted. test:
+    `tests/storage/test_schema_usage_ledger.py::test_ledger_columns_constrain_values`.
+
+    1.1.5: `provider_capacity_snapshots.details` defaults to `{}`, and the packaged
+    schema identity reports version 460. test: `tests/storage/test_schema_usage_ledger.py::test_capacity_details_default_and_identity`.'
+  labels:
+  - covers:provider-usage-spend:1.1:1.1.1
+  - covers:provider-usage-spend:1.1:1.1.2
+  - covers:provider-usage-spend:1.1:1.1.3
+  - covers:provider-usage-spend:1.1:1.1.4
+  - covers:provider-usage-spend:1.1:1.1.5
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Per-call identity and `api_calls`
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '2.1.1: A Codex rollout fixture with three `token_count` lines,
+    one of which repeats the previous cumulative total, yields two ledger rows whose
+    ids are the cumulative key. Their summed tokens equal the final `total_token_usage`
+    (input minus cached, cached, and output). test: `tests/sessions/test_usage_call_identity.py::test_codex_cumulative_id_dedupes_repeats`.
+
+    2.1.2: A Codex `token_count` without `total_token_usage` keeps the index id. test:
+    `tests/sessions/test_usage_call_identity.py::test_codex_without_cumulative_keeps_index_id`.
+
+    2.1.3: `api_call_count` returns 2 for a Claude message with two `message` iterations
+    and one `advisor_message`, 1 without iterations, `modelCalls` for a Grok turn,
+    None for a Grok turn with `usageIsIncomplete`, and None for Droid and Qwen. test:
+    `tests/sessions/test_usage_call_identity.py::test_api_call_count_per_source`.
+
+    2.1.4: The live writer and the rebuild writer both persist `api_calls`, and `list_session_events`
+    returns it. test: `tests/sessions/test_usage_call_identity.py::test_writers_persist_api_calls`.
+
+    2.1.5: The audit deduplicates parsed events by `message_id`, so a Codex session
+    with repeated totals shows no drift. A stored row with NULL `message_id` is drift,
+    and `--fix` replaces it with keyed rows. test: `tests/sessions/test_usage_call_identity.py::test_audit_dedupes_and_flags_unkeyed_rows`.
+
+    2.1.6: Stored rows whose token totals equal the transcript''s still drift when
+    they keep a pre-460 identity. This covers a Claude row and a Grok row with valid
+    ids and NULL `api_calls`, and a Codex rollout without repeated totals whose rows
+    keep index ids. They are reported `stale`. `--fix` rewrites them to keyed rows
+    with `api_calls`, and a second audit reports `stale=0` and `missing=0`. test:
+    `tests/sessions/test_usage_call_identity.py::test_audit_flags_equal_total_identity_drift`.
+
+    2.1.7: `--fix` is safe against live ingestion. In a fixture that interleaves the
+    audit with processor inserts, a row inserted after the audit''s stored-row read
+    survives `--fix`, and `sessions.usage_*` afterwards equals `get_session_totals`
+    including it. A line appended after the stored-row read but before the transcript
+    read is reported `missing`, never `stale`, and nothing deletes it. A line appended
+    after the transcript read is outside that pass: that audit does not report it,
+    and a following audit reports it `missing` while it is still not ingested. Only
+    pre-read rows that are unkeyed or absent from the derived set are deleted. A pre-read
+    row with the same key but NULL `api_calls` is corrected in place to `api_calls`
+    1, keeps its `id`, and is still present after `--fix`. test: `tests/sessions/test_usage_call_identity.py::test_fix_never_deletes_rows_ingested_during_audit`.'
+  labels:
+  - covers:provider-usage-spend:2.1:2.1.1
+  - covers:provider-usage-spend:2.1:2.1.2
+  - covers:provider-usage-spend:2.1:2.1.3
+  - covers:provider-usage-spend:2.1:2.1.4
+  - covers:provider-usage-spend:2.1:2.1.5
+  - covers:provider-usage-spend:2.1:2.1.6
+  - covers:provider-usage-spend:2.1:2.1.7
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Claude subagent calls enter the parent ledger
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: A parent transcript with one subagent file that holds
+    two API calls yields two parent-session rows tagged with `agent_id`, through both
+    the live path and the rebuild. `sessions.usage_*` includes them. test: `tests/sessions/test_claude_subagent_usage.py::test_subagent_calls_join_parent_ledger`.
+
+    2.2.2: Lines appended to the subagent file between two live passes are read once.
+    Rereading from offset 0 after a simulated restart inserts nothing new. test: `tests/sessions/test_claude_subagent_usage.py::test_live_offsets_read_each_line_once`.
+
+    2.2.6: Two usage-bearing messages without an API id, appended to one subagent
+    file in separate live passes, stay two rows with distinct ids. A simulated restart
+    and the rebuild assign the same two ids and the same totals. Truncating the file
+    below its cursor, or replacing it with a new inode, resets that file to offset
+    0 and index 0, so the next pass reads the new content and the cursor is never
+    stranded. test: `tests/sessions/test_claude_subagent_usage.py::test_subagent_identity_is_stable_across_passes`.
+
+    2.2.3: The parent''s context occupancy snapshot and published tail occupancy are
+    unchanged by subagent rows. test: `tests/sessions/test_claude_subagent_usage.py::test_subagent_rows_never_touch_occupancy`.
+
+    2.2.4: Two subagents whose messages lack an API id get distinct agent-scoped fallback
+    ids, and the audit includes subagent rows without reporting drift. test: `tests/sessions/test_claude_subagent_usage.py::test_fallback_ids_are_agent_scoped_and_audited`.
+
+    2.2.5: With the parent transcript unchanged, two complete usage lines appended
+    to a subagent file are ingested by the next normal live pass. The parent gains
+    exactly two rows, `sessions.usage_*` includes them, and the parent''s occupancy
+    is unchanged. A further idle pass inserts nothing and leaves `sessions.usage_*`
+    unchanged. test: `tests/sessions/test_claude_subagent_usage.py::test_idle_parent_pass_ingests_subagent_appends`.'
+  labels:
+  - covers:provider-usage-spend:2.2:2.2.1
+  - covers:provider-usage-spend:2.2:2.2.2
+  - covers:provider-usage-spend:2.2:2.2.6
+  - covers:provider-usage-spend:2.2:2.2.3
+  - covers:provider-usage-spend:2.2:2.2.4
+  - covers:provider-usage-spend:2.2:2.2.5
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Provider-reported run totals
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '2.3.1: Claude `cost-state` lines from two process runs, one
+    repeated with a larger cumulative cost, yield two runs. Each run keeps its largest
+    reading and its own `startTime`, and a resumed run does not carry the earlier
+    run''s cost. test: `tests/sessions/test_reported_usage.py::test_claude_cost_state_runs_are_per_start_time`.
+
+    2.3.2: A Grok turn converts `costUsdTicks` to USD exactly, and a turn flagged
+    `usageIsIncomplete` stores `cost_complete` false. test: `tests/sessions/test_reported_usage.py::test_grok_turn_runs_convert_ticks`.
+
+    2.3.3: A Droid sidecar yields one `factory_credits` run, and a missing sidecar
+    yields none. test: `tests/sessions/test_reported_usage.py::test_droid_sidecar_run`.
+
+    2.3.4: Upserting an older reading after a newer one leaves the newer one, and
+    the live path, rebuild, and `audit --fix` produce identical rows. A plain audit
+    reports a session whose run is missing as `missing` and writes nothing. `--fix`
+    upserts the run, and a second audit reports `stale=0` and `missing=0`. Two cost-state
+    records that tie on `totalCostUSD` resolve to the one with the larger `observed_at`
+    on both the live path and the rebuild. test: `tests/sessions/test_reported_usage.py::test_upsert_keeps_newest_and_paths_agree`.
+
+    2.3.5: With the Droid transcript unchanged, rewriting its sidecar with a larger
+    `factoryCredits` and a later mtime refreshes the `droid:session` run on the next
+    normal live pass. A further pass with the sidecar unchanged leaves the row untouched,
+    with the same `xmin`. test: `tests/sessions/test_reported_usage.py::test_idle_pass_refreshes_droid_sidecar`.
+
+    2.3.6: Appending only a Claude `cost-state` line to an otherwise idle parent transcript:
+    the next live pass leaves through the `if not stats_records` exit, upserts the
+    run, and advances the offset. Replaying that pass from the earlier offset changes
+    nothing. When `_persist_ledger_batch` raises on that exit, the byte offset and
+    parser state stay unchanged, and the next pass ingests the line. test: `tests/sessions/test_reported_usage.py::test_cost_state_only_append_reaches_the_ledger`.'
+  labels:
+  - covers:provider-usage-spend:2.3:2.3.1
+  - covers:provider-usage-spend:2.3:2.3.2
+  - covers:provider-usage-spend:2.3:2.3.3
+  - covers:provider-usage-spend:2.3:2.3.4
+  - covers:provider-usage-spend:2.3:2.3.5
+  - covers:provider-usage-spend:2.3:2.3.6
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: '`UsageLedgerStore`, `get_usage_ledger`, and `/api/admin/usage/ledger`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '2.3'
+  validation_criteria: '3.1.1: The fixture is ingested through the real parsers and
+    `_persist_usage_events`. It has two Claude calls with distinct usage, the first
+    written as two content-block lines sharing one `message.id`, and three Codex `token_count`
+    lines, one repeating a cumulative total. The ledger has exactly four rows, and
+    its totals equal the hand-computed sums of the four distinct calls. test: `tests/storage/test_usage_ledger.py::test_fixture_calls_are_counted_once`.
+
+    3.1.2: Paging that fixture at `limit=1` returns four pages whose rows, unioned,
+    equal the single `limit=1000` page with no duplicates. While the data is unchanged,
+    every page carries identical totals. test: `tests/storage/test_usage_ledger.py::test_paging_neither_loses_nor_double_counts`.
+
+    3.1.3: Re-ingesting the same transcripts through the rebuild (`_persist_session_transcript`)
+    leaves the rows and totals unchanged, and a cursor issued before the rebuild resumes
+    at the same row. test: `tests/storage/test_usage_ledger.py::test_rebuild_keeps_rows_totals_and_cursor`.
+
+    3.1.4: With two tasks claimed in sequence by one session, and an overlap where
+    the later claim wins, each call is attributed to exactly one task. A reported
+    run that spans both claims is `unattributed` for both tasks. `attribution_since`
+    is the first `claimed_at`. test: `tests/storage/test_usage_ledger.py::test_task_scope_latest_claim_wins`.
+
+    3.1.5: Coverage reports Codex spend as `unknown` with its reason, `api_calls_complete`
+    false when a Droid row is in scope, and the count of unkeyed rows. test: `tests/storage/test_usage_ledger.py::test_coverage_reports_missing_data`.
+
+    3.1.6: `get_usage_ledger` resolves `#N` task refs in the calling project, refuses
+    a session from another project, and returns an error for a malformed cursor. The
+    HTTP route returns the same page for UUIDs and 400 for a malformed cursor. test:
+    `tests/mcp_proxy/tools/test_usage_ledger_tool.py::test_ledger_tool_and_route_scope_and_errors`.
+
+    3.1.7: Four session scopes keep unknown spend separate from reported spend. A
+    Claude session with token rows and no `cost-state` reports spend `unknown` with
+    reason `no reported run`. A Droid session with no sidecar reports the same. A
+    Grok session whose one complete turn has `costUsdTicks` 0 reports `reported` with
+    1 run, 0 incomplete, and 0 usd. A Grok session whose one turn is flagged `usageIsIncomplete`
+    reports 1 incomplete run. The reported-spend sums contain only what the runs state.
+    test: `tests/storage/test_usage_ledger.py::test_spend_unknown_is_distinct_from_reported_zero`.
+
+    3.1.8: Extending the 3.1.2 fixture after page one is read: an appended Claude
+    call raises the totals returned with page two and appears on a later page. A subagent
+    row inserted with a timestamp before the cursor is counted in the totals but absent
+    from the remaining pages. A traversal restarted without a cursor returns every
+    row exactly once. test: `tests/storage/test_usage_ledger.py::test_paging_is_a_live_traversal`.'
+  labels:
+  - covers:provider-usage-spend:3.1:3.1.1
+  - covers:provider-usage-spend:3.1:3.1.2
+  - covers:provider-usage-spend:3.1:3.1.3
+  - covers:provider-usage-spend:3.1:3.1.4
+  - covers:provider-usage-spend:3.1:3.1.5
+  - covers:provider-usage-spend:3.1:3.1.6
+  - covers:provider-usage-spend:3.1:3.1.7
+  - covers:provider-usage-spend:3.1:3.1.8
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: '`gobby tokens ledger` and `gobby tokens quota`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: `gobby tokens ledger --session` and `--task` print
+    the store''s totals for the 3.1 fixture, and `--json` round-trips the page dict.
+    Passing both scopes, or neither, is a usage error. test: `tests/cli/test_tokens_ledger_cli.py::test_ledger_command_prints_scope_totals`.
+
+    3.2.2: `gobby tokens quota codex` prints each window with its reset time and alert
+    level, and the balance, from a stubbed two-window daemon response, and an unreachable
+    daemon exits 1. test: `tests/cli/test_tokens_ledger_cli.py::test_quota_command_reads_daemon_snapshot`.
+
+    3.2.3: For the 3.1.7 scopes, `gobby tokens ledger --session` prints `unknown (no
+    reported run)` for the Claude session without `cost-state`, `0 usd` over 1 run
+    for the zero-cost Grok session, and 1 incomplete run for the incomplete Grok session.
+    test: `tests/cli/test_tokens_ledger_cli.py::test_ledger_command_keeps_unknown_spend_distinct`.'
+  labels:
+  - covers:provider-usage-spend:3.2:3.2.1
+  - covers:provider-usage-spend:3.2:3.2.2
+  - covers:provider-usage-spend:3.2:3.2.3
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Codex `rate_limits` observations in `ProviderCapacityService`
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '2.3'
+  validation_criteria: '4.1.1: `observation_from_rate_limits` maps the live sample
+    to one `weekly` window (80/100 percent, ISO reset) with credits and plan in `details`,
+    and returns None for a null or windowless value. test: `tests/providers/test_codex_quota_observation.py::test_rate_limits_map_to_windows_and_details`.
+
+    4.1.2: A caught-up live Codex batch writes the newest reading, and `get("codex")`
+    returns it as `available` with `details`. A catch-up pass and a rebuild write
+    nothing. test: `tests/providers/test_codex_quota_observation.py::test_live_caught_up_batch_observes_newest_reading`.
+
+    4.1.3: An older line timestamp, an earlier weekly `resets_at`, or an earlier `five_hour`
+    `resets_at` with the weekly unchanged does not replace the stored row. A two-window
+    reading with only the five-hour window at 100% stores state `exhausted`. test:
+    `tests/providers/test_codex_quota_observation.py::test_stale_readings_are_rejected`.
+
+    4.1.4: A stored row older than 900 s, or past a window''s `resets_at`, reads as
+    `stale` with its reason. Codex without a row reads as `unknown` "no Codex rate_limits
+    observed yet". Claude reads as `unknown` with the statusline reason. test: `tests/providers/test_codex_quota_observation.py::test_observed_provider_freshness_and_reasons`.
+
+    4.1.5: A processor rebuilt through `_build_message_processor` keeps `provider_capacity_service`.
+    test: `tests/providers/test_codex_quota_observation.py::test_rebuilt_processor_keeps_capacity_service`.'
+  labels:
+  - covers:provider-usage-spend:4.1:4.1.1
+  - covers:provider-usage-spend:4.1:4.1.2
+  - covers:provider-usage-spend:4.1:4.1.3
+  - covers:provider-usage-spend:4.1:4.1.4
+  - covers:provider-usage-spend:4.1:4.1.5
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Quota edge alerts to the operator channel
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: Replaying the incident readings (a weekly window only)
+    sends exactly three alerts: weekly warn at 95%, weekly exhausted at 100%, and
+    drawing_credits when the balance first falls. A later window then sends one reset
+    alert. Repeated readings at the same level send nothing. test: `tests/providers/test_quota_alerts.py::test_incident_replay_alerts_on_edges_only`.
+
+    4.2.2: A stale lower reading inside a window does not lower the stored level or
+    re-alert. test: `tests/providers/test_quota_alerts.py::test_level_is_monotonic_within_window`.
+
+    4.2.3: The sink sends to `operator_alert_channel` through `CommunicationsManager.send_message`.
+    It only logs when comms is disabled, the channel is empty, or the manager is None.
+    A raising send is logged and does not fail `observe`. A send that never completes
+    is cut off at `ALERT_SEND_TIMEOUT_SECONDS` and logged. `observe` returns, and
+    the provider lock is free, before the send finishes. test: `tests/providers/test_quota_alerts.py::test_sink_degrades_without_raising`.
+
+    4.2.4: Alert text contains no session id, message content, or credential-shaped
+    value. test: `tests/providers/test_quota_alerts.py::test_alert_text_is_minimal`.
+
+    4.2.5: In a two-window fixture the weekly window stays at 20% with an unchanged
+    `resets_at`. The five-hour window rising to 92% and then 100% sends a warn alert
+    and an exhausted alert, both naming `five_hour`, while the provider reads `exhausted`
+    and the weekly sends nothing. When the five-hour `resets_at` advances and its
+    use falls, one `five_hour` reset alert is sent and the weekly state is unchanged.
+    A reached flag turning on sends one `limit_reached` alert, and repeating it sends
+    nothing. test: `tests/providers/test_quota_alerts.py::test_windows_alert_independently`.'
+  labels:
+  - covers:provider-usage-spend:4.2:4.2.1
+  - covers:provider-usage-spend:4.2:4.2.2
+  - covers:provider-usage-spend:4.2:4.2.3
+  - covers:provider-usage-spend:4.2:4.2.4
+  - covers:provider-usage-spend:4.2:4.2.5
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Observability guide and skill references
+  category: docs
+  task_type: chore
+  depends_on:
+  - '3.2'
+  - '4.2'
+  validation_criteria: '5.1.1: The reference audit passes with every audited anchor
+    present, and the guide names one tool for each of quota, occupancy, and spend.
+    test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.'
+  labels:
+  - covers:provider-usage-spend:5.1:5.1.1
+  tdd: false
+  source_section: '5.1'
+  assigned_agent: tech-writer
+```
