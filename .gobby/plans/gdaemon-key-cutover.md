@@ -260,7 +260,7 @@ Targets:
 - `src/gobby/utils/local_token.py::*` — scope-reason: adds `bind_daemon_bootstrap` and `daemon_bootstrap_path`
 - `src/gobby/servers/auth_service.py::*` — scope-reason: `AuthService.__init__` gains `break_glass_file`, and `_legacy_rejection` and `_accepted_bearer` admit the break-glass header before any database read
 - `src/gobby/runner.py::*` — scope-reason: only `run_gobby` changes; it binds the startup bootstrap and creates the credential before the front door starts, and its signature is unchanged
-- `src/gobby/agents/sandbox_policy.py::*` — scope-reason: `_credential_roots` and `_gcode_runtime_root` move to `sandbox_credentials.py` (split below), and `sensitive_roots` and `sensitive_write_roots` call them there
+- `src/gobby/agents/sandbox_policy.py::*` — scope-reason: `_credential_roots` and `_gcode_runtime_root` move to `sandbox_credentials.py` (split below), and `sensitive_roots`, `sensitive_write_roots`, and `gcode_runtime_write_exceptions` call them there
 - `src/gobby/agents/sandbox_credentials.py`
 - `tests/utils/test_break_glass.py`
 - `tests/servers/test_break_glass.py`
@@ -311,7 +311,8 @@ Targets:
 - `src/gobby/agents/sandbox_policy.py` is 935 lines.
   `_credential_roots` (`bootstrap.yaml`, `.secret_kek`, `local_cli_token`,
   `tools/srt`) and `_gcode_runtime_root` feed `sensitive_roots` and
-  `sensitive_write_roots`. Nothing else calls the two helpers. Tests steer the
+  `sensitive_write_roots`, and `gcode_runtime_write_exceptions` also calls
+  `_gcode_runtime_root`. Nothing else calls the two helpers. Tests steer the
   gobby home with the `GOBBY_HOME` environment variable and patch no module
   attribute, so moving the helpers moves no patch path.
   `tests/agents/test_sandbox.py` and `tests/agents/test_external_write_grants.py`
@@ -361,8 +362,8 @@ Targets:
 - **Split `src/gobby/agents/sandbox_policy.py`** (935 lines): move
   `_credential_roots` and `_gcode_runtime_root` into the new
   `src/gobby/agents/sandbox_credentials.py` as `credential_roots()` and
-  `gcode_runtime_root()`. `sensitive_roots` and `sensitive_write_roots` import
-  them. `credential_roots()` keeps its `get_gobby_home()` roots and adds
+  `gcode_runtime_root()`. `sensitive_roots`, `sensitive_write_roots`, and
+  `gcode_runtime_write_exceptions` import them. `credential_roots()` keeps its `get_gobby_home()` roots and adds
   `daemon_bootstrap_path()` and `break_glass_path()`, so with `--config`
   outside `GOBBY_HOME` the startup bootstrap and break-glass file stay denied
   even under an allowed workspace. The
@@ -396,9 +397,9 @@ Targets:
 - `src/gobby/utils/local_token.py::*` — scope-reason: adds `MANAGED_TOKEN_KEY_LABEL`, `derive_managed_signing_key`, and `read_managed_signing_key`; `_issue_managed_api_token`, the three issuers, `verify_agent_api_token`, and `classify_agent_api_token` take `signing_key: bytes` in place of `operator_token`; the `operator_token_unavailable` code becomes `signing_key_unavailable`
 - `src/gobby/servers/auth_service.py::*` — scope-reason: `AuthService.__init__` gains `bootstrap_file`, the new `managed_signing_key()` caches the derived key, and `_classify_agent_token` verifies with it
 - `src/gobby/runtime_grants/launch.py::*` — scope-reason: `materialize_managed_launch` takes `signing_key` and passes it to the three issuers
-- `src/gobby/runtime_grants/maintenance.py::*` — scope-reason: the `HandshakeMaintenanceLaunchFactory.operator_token` field becomes `signing_key`
+- `src/gobby/runtime_grants/maintenance.py::*` — scope-reason: the `HandshakeMaintenanceLaunchFactory.operator_token` field is removed; `open()` reads `read_managed_signing_key()` on every launch and fails closed with `signing_key_unavailable` before issuing a grant
 - `src/gobby/runtime_grants/handshake.py::*` — scope-reason: `challenge_proof` takes the signing key for `kind: managed` while the interactive branch keeps the operator token until 1.3, `_recompute_capability_signature` takes the signing key, and the unread `HandshakeService.operator_token` field is deleted
-- `src/gobby/runner_init/servers.py::*` — scope-reason: `_handshake_factory` and the maintenance launch factory take `server.auth_service.managed_signing_key()`
+- `src/gobby/runner_init/servers.py::*` — scope-reason: `_handshake_factory` stops reading and passing the operator token, and the maintenance launch factory is built without a key
 - `src/gobby/servers/routes/runtime_handshake.py::*` — scope-reason: the challenge route passes the managed signing key for `kind: managed`
 - `src/gobby/agents/constants.py::*` — scope-reason: the `get_terminal_env_vars` parameter `operator_token` becomes `signing_key`
 - `src/gobby/agents/spawn.py::*` — scope-reason: both signing sites read `read_managed_signing_key()` in place of `read_local_api_token()`
@@ -417,7 +418,7 @@ Targets:
 - `tests/mcp_proxy/test_workspaces_registry.py::*` — scope-reason: signs agent tokens with the derived key its `AuthService` reads
 - `tests/runner_init/test_grant_issuance.py::*` — scope-reason: verifies issued capabilities with the derived key
 - `tests/runtime_grants/test_maintenance_principal.py::*` — scope-reason: `_recompute_capability_signature` and `verify_agent_api_token` take the derived key
-- `tests/runtime_grants/test_maintenance_launch.py::*` — scope-reason: the factory field is `signing_key`
+- `tests/runtime_grants/test_maintenance_launch.py::*` — scope-reason: the factory is built without a key and signs with the key read at `open()`; gains 1.2.7
 - `tests/servers/routes/test_agents_routes.py::*` — scope-reason: signs agent tokens with the derived key its `AuthService` reads
 - `tests/servers/routes/test_api_keys.py::*` — scope-reason: its managed-capability rejection case signs with the derived key
 - `tests/servers/routes/test_runtime_config.py::*` — scope-reason: issues and verifies capabilities with the derived key
@@ -452,7 +453,10 @@ call-site swaps.
   - `runner_init/servers.py::_handshake_factory` builds `HandshakeService` with
     `operator_token=server.auth_service.local_token() or ""`, and builds
     `HandshakeMaintenanceLaunchFactory(operator_token=…)` the same way.
-    `HandshakeService.operator_token` is never read.
+    `HandshakeService.operator_token` is never read. The maintenance factory
+    stores its value and signs every launch with it in `open()`, so a key
+    captured at init would outlive a 1.4 rotation and every nightly repair,
+    prune, and maintenance launch would fail until restart.
   - `servers/routes/runtime_handshake.py` reads `local_token()` for the
     challenge and answers 503 "operator token unavailable" without it.
   - `AuthService._classify_agent_token` calls
@@ -508,11 +512,19 @@ call-site swaps.
   Delete `HandshakeService.operator_token` and stop passing it in
   `_handshake_factory`.
 - Rename `operator_token` to `signing_key` in
-  `materialize_managed_launch`, `HandshakeMaintenanceLaunchFactory`, and
-  `get_terminal_env_vars`. The call sites in `spawn.py`, `code_index.py`, and
-  `_managed_tool_chat_lease.py` call `read_managed_signing_key()` where they
-  called `read_local_api_token()`, and keep their existing
-  fail-closed branches with `signing_key_unavailable` wording.
+  `materialize_managed_launch` and `get_terminal_env_vars`. The call sites in
+  `spawn.py`, `code_index.py`, and `_managed_tool_chat_lease.py` call
+  `read_managed_signing_key()` where they called `read_local_api_token()`, and
+  keep their existing fail-closed branches with `signing_key_unavailable`
+  wording.
+- `HandshakeMaintenanceLaunchFactory` loses its key field and constructor
+  argument. `open()`, which `open_async` delegates to, calls
+  `read_managed_signing_key()` on every launch, as
+  those call sites do, and passes the result to `materialize_managed_launch`.
+  When it returns `None`, `open()` raises
+  `HandshakeRejection(..., code="signing_key_unavailable")` before
+  `issue_for_maintenance`, so no grant is issued.
+  `runner_init/servers.py` builds the factory without a key.
 - `routes/runtime_handshake.py` answers 503 `signing_key_unavailable` when a
   managed challenge finds no signing key. The interactive challenge keeps its
   operator-token path until 1.3 moves it into gdaemon.
@@ -531,6 +543,7 @@ then `uv run ruff check` and `uv run mypy` on the touched modules.
 - 1.2.4 - The managed challenge proof uses the derived key and the interactive proof is unchanged. test: `tests/servers/routes/test_runtime_handshake.py::test_managed_challenge_uses_derived_signing_key`.
 - 1.2.5 - With no bootstrap `api_key`, issuance fails closed with `signing_key_unavailable` and every presented capability is rejected. test: `tests/utils/test_local_token.py::test_missing_bootstrap_key_refuses_issuance_and_verification`.
 - 1.2.6 - With the daemon bootstrap bound outside a different `GOBBY_HOME` whose own bootstrap carries another key, a capability from `read_managed_signing_key()` verifies in an `AuthService` built with defaults, and one signed with the `GOBBY_HOME` key is rejected. test: `tests/servers/test_auth_service.py::test_managed_signing_uses_the_daemon_bootstrap`.
+- 1.2.7 - A maintenance launch opened after the bootstrap `api_key` is replaced by rename, with the same factory instance and no restart, carries a capability that an `AuthService` over that bootstrap accepts. With no bootstrap `api_key`, `open()` raises `signing_key_unavailable` and issues no grant. test: `tests/runtime_grants/test_maintenance_launch.py::test_launch_signs_with_current_bootstrap_key`.
 
 ### 1.3 Shared-token cutover: gdaemon validates keys and Python trusts only the front door [category: code] (depends: 1.1, 1.2)
 `kind: deliverable`
@@ -597,8 +610,8 @@ Targets:
 - `crates/gterminal/tests/host_lifecycle.rs::*` — scope-reason: writes or reads the token file; provisions a bootstrap carrying `api_key` instead
 - `crates/gterminal/tests/host_support/mod.rs::*` — scope-reason: writes or reads the token file; provisions a bootstrap carrying `api_key` instead
 - `crates/gterminal/tests/terminal_theme.rs::*` — scope-reason: writes or reads the token file; provisions a bootstrap carrying `api_key` instead
-- `src/gobby/runner_front_door.py::*` — scope-reason: `FrontDoorChild` generates the per-boot secret once and passes it to every gdaemon child in `GOBBY_FRONT_DOOR_SECRET`
-- `src/gobby/runner_init/servers.py::*` — scope-reason: `_bind_runtime_grants` binds the front-door secret into `AuthService`, `init_servers` wires the WebSocket identity callback, and `_handshake_factory` stops reading the operator token
+- `src/gobby/runner_front_door.py::*` — scope-reason: `FrontDoorChild` generates the per-boot secret once and passes it to every gdaemon child in `GOBBY_FRONT_DOOR_SECRET`, and the missing-gdaemon `FrontDoorStartupError` stops offering `front_door.enabled: false` as an equivalent
+- `src/gobby/runner_init/servers.py::*` — scope-reason: `_bind_runtime_grants` binds the front-door secret into `AuthService`, and `init_servers` wires the WebSocket identity callback
 - `src/gobby/servers/auth_service.py::*` — scope-reason: adds the front-door identity check; removes `token_file`, `verify_bearer`, `verify_ws_token`, `refresh`, `_token_hash_snapshot`, `local_token`, and the `X-Gobby-Local-Token` alias
 - `src/gobby/servers/middleware/auth.py::*` — scope-reason: `_LOGIN_GUIDANCE` names `gobby auth login`; `dispatch` carries the forwarded identity
 - `src/gobby/servers/websocket/auth.py::*` — scope-reason: `AuthMixin._authenticate` passes the handshake headers to the identity callback
@@ -833,6 +846,10 @@ examples are 1.5; the CLI is 1.4.
   reads the principal from `_front_door_identity` (Decision 8); the cookie
   path is unchanged. With `front_door.enabled: false`, Python accepts only
   break-glass, cookies, and managed capabilities.
+  `FrontDoorChild.from_bootstrap`'s missing-gdaemon `FrontDoorStartupError`
+  says so: it tells the operator to run `gobby install`, and that
+  `front_door.enabled: false` admits only the break-glass header, cookies,
+  and managed capabilities, so API-key bearers are refused.
 - **Readers.** As the plan of record: gcore's three readers become
   `read_api_key`, `read_api_key_for`, and `read_api_key_at` and read `api_key`
   from the bootstrap; every caller follows. gclient keeps `--token-file` as an
