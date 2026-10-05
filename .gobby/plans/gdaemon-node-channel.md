@@ -158,8 +158,8 @@ approved key-cutover plan specified.
    - **Close codes.** 4401 when the key is revoked (Python's
      authentication-close code), 4409 when a newer connection replaces the
      channel, 4408 when the hub hears nothing within the idle timeout, 1008
-     when the first frame is not a valid hello, and 1011 when the hello's
-     bookkeeping write fails before the ack.
+     when the first frame is not a valid hello, and 1011 when admission
+     cannot prove the key or record the hello before the ack (Decision 10).
    - **Reconnect.** The node reconnects after any close or error with backoff:
      1 s, doubling to 60 s, and reset after an ack. It reads `api_key` from its
      bootstrap on each attempt, so a rotation (key-cutover 1.4) takes effect
@@ -167,35 +167,61 @@ approved key-cutover plan specified.
 10. **Heartbeat bookkeeping on the hub.**
     - The hub writes `machines.last_heartbeat_at` and `node_version` at hello,
       then on a ping only when at least 60 s have passed since its last write.
-    - **Revocation runs on the hub's clock.** Peer traffic does not drive it.
-      From the ack, the hub re-reads the key row every key-recheck interval
-      (30 s, one heartbeat interval), whether or not the peer sends anything.
-      A revoked or missing row removes the channel's registry entry and then
-      closes it with 4401. So a revocation closes the channel at the first
-      recheck after it, at most one interval later; the close follows that
-      recheck by one key-row query. A silent peer, or one sending only Pong
-      frames, is closed the same way.
-    - A database error on a recheck keeps the channel open and is retried at
-      the next recheck. This is the one case where the bound can be exceeded:
-      relayed requests already fail closed through the resolver's 503, and the
-      channel carries no commands in Stage 1.
+    - **Revocation runs on the hub's clock, within 29 s.** The Orchestrator
+      ruled this schedule on 2026-10-05 at 12:38 CT. It keeps the parent's
+      30 s bound (`.gobby/plans/gdaemon-api-keys-nodes.md`, lines 1020 and
+      1027) and NC-E05 unchanged:
+      - Peer traffic does not drive revocation. The hub re-reads the key row
+        every 25 s (the key-recheck interval), on ticks anchored at the
+        upgrade, whether or not the peer sends anything.
+      - Each key check has a hard 4 s deadline (the recheck deadline) covering
+        both pool acquisition and the query.
+      - A revoked or missing row removes the channel's registry entry and
+        then closes it with 4401.
+      - So a revocation closes the channel within 25 s + 4 s = 29 s at any
+        phase, including during hello and before the ack. A silent peer, or
+        one sending only Pong frames, is closed the same way.
+    - **Admission proves the key before the ack.** The upgrade's key check
+      happens in the front door. The hub then waits for hello, registers the
+      machine, and writes its hello bookkeeping, all within the 10 s hello
+      timeout from the upgrade. It checks the key once more under the 4 s
+      deadline and only then sends the ack. Admission therefore ends within
+      14 s, before the first recheck tick at 25 s.
+      - A key revoked at any point before that check closes 4401 with no ack.
+      - A missed hello timeout, a failed hello write, or a check that errors
+        or times out closes 1011 with no ack. An unproven key never yields an
+        acknowledged channel.
+      - A registry entry reads `connected` only once the ack is sent.
+    - **The database-error exception.** On an established channel, a recheck
+      that errors or misses its 4 s deadline keeps the channel open, and the
+      next tick retries it. This is the one case in which the 29 s bound can
+      be exceeded: relayed requests already fail closed through the
+      resolver's 503, and the channel carries no commands in Stage 1.
+    - **Bookkeeping never blocks the key timer.** Every `machines` write runs
+      in a spawned task, and the channel's select loop never awaits one. At
+      most one heartbeat write is in flight per connection. A due write is
+      skipped while the previous one is still running.
     - The hub closes a channel that sends nothing within 90 s (three ping
       intervals), so a partitioned node stops reading as `connected`. Any
       received frame resets that timer. It governs liveness only, not
       revocation.
     - **A replaced connection cannot overwrite its successor's bookkeeping.**
-      The registry keeps one async write gate per machine, shared by that
-      machine's successive connections, for the hub's lifetime. A connection
-      writes `machines` only while holding the gate and only if the registry
-      still names its `connection_id`. A write in flight at replacement
-      finishes before the successor's hello write, which waits on the gate. A
-      write that starts after replacement is skipped. The successor sends its
-      ack only after its own hello write. No schema field is added.
+      - The registry keeps one async write gate per machine, shared by that
+        machine's successive connections, for the hub's lifetime.
+      - A spawned write takes the gate and runs only if the registry still
+        names its `connection_id`. It holds the gate until the database
+        operation actually completes, even after its channel has closed.
+      - A write in flight at replacement therefore finishes before the
+        successor's hello write, which waits on the gate. A write that starts
+        after replacement is skipped.
+      - The successor sends its ack only after its own hello write. No schema
+        field is added.
 11. **Timings are constructor arguments, not configuration.**
     - `ChannelTiming` carries the ping interval, the backoff start and
       ceiling, the ack and hello timeouts, the idle timeout, the key-recheck
-      interval, and the heartbeat write interval. `ChannelTiming::default()`
-      holds the values above.
+      interval and deadline, and the heartbeat write interval.
+      `ChannelTiming::default()` holds the values above. The node's ack
+      timeout is 15 s, longer than the hub's 14 s admission.
     - Tests build short timings.
     - No bootstrap key is added.
 12. **`/api/machines` follows the API-key routes' house style.**
@@ -649,8 +675,12 @@ Targets:
     stored `connection_id` is its own.
   - `persist(machine_id, connection_id, write)` clones the slot's gate, awaits
     it, and runs `write` only if `current` still names `connection_id`. It
-    otherwise returns `Skipped` without touching the database.
-  - `is_connected(machine_id) -> bool` and `connected_ids()` report `current`.
+    otherwise returns `Skipped` without touching the database. Callers run it
+    in a spawned task, which keeps the gate until the database operation
+    completes.
+  - `ChannelHandle` also carries `live: bool`, which `mark_live(machine_id,
+    connection_id)` sets when the ack is sent. `is_connected(machine_id) ->
+    bool` and `connected_ids()` report only live entries.
   - No `std` lock is held across an await.
 - `nodes/channel.rs` holds the hub endpoint, the node client, and
   `ChannelTiming`:
@@ -658,25 +688,35 @@ Targets:
     `X-Gobby-Machine-Id` and `X-Gobby-Key-Id`. A request without them is 401
     `missing_auth` before the upgrade. After the upgrade the handler runs
     these steps:
-    1. It waits up to `hello_timeout` for a valid hello and otherwise closes
-       1008.
-    2. It registers the machine.
-    3. Through `registry.persist`, it writes `last_heartbeat_at = now()` and
-       `node_version`. A database error closes 1011 and removes the entry
-       before any ack, and the node reconnects with backoff.
-    4. If its close signal has already fired (it was replaced during step 3),
-       it closes with that code and sends no ack. Otherwise it sends the ack
-       and starts the recheck timer with
-       `tokio::time::interval_at(ack + key_recheck, key_recheck)` and
-       `MissedTickBehavior::Delay`.
-    5. It then selects over four events:
+    1. At the upgrade it creates the recheck timer with
+       `tokio::time::interval_at(upgrade + key_recheck, key_recheck)` and
+       `MissedTickBehavior::Delay`. It also sets the admission deadline,
+       `upgrade + hello_timeout`.
+    2. It waits for a valid hello until the admission deadline. An invalid
+       first frame closes 1008, and a missed deadline closes 1011.
+    3. It registers the machine. In a spawned task through
+       `registry.persist`, it writes `last_heartbeat_at = now()` and
+       `node_version`. It waits for that task's result, its close signal, or
+       the admission deadline:
+       - The close signal (it was replaced) closes with that code and no ack.
+       - A write error or a missed deadline removes the entry and closes 1011
+         with no ack. A still-running write keeps its gate until it completes.
+    4. It runs the key check `SELECT 1 FROM api_keys WHERE id = $1 AND
+       revoked_at IS NULL` under `recheck_deadline`, which covers pool
+       acquisition and the query:
+       - No row removes the entry and closes 4401 with no ack.
+       - An error or a timeout removes the entry and closes 1011 with no ack.
+       - Otherwise it calls `registry.mark_live` and sends the ack.
+    5. It then selects over four events and never awaits bookkeeping:
        - **A received frame.** Any frame resets the `idle_timeout` deadline.
-         On a ping, when `heartbeat_write` has elapsed since its last write,
-         it writes `last_heartbeat_at` and `node_version` through
+         On a ping, when `heartbeat_write` has elapsed since the last write
+         started and no heartbeat write is in flight, it spawns the
+         `last_heartbeat_at` and `node_version` write through
          `registry.persist`.
-       - **A recheck tick.** It runs `SELECT 1 FROM api_keys WHERE id = $1 AND
-         revoked_at IS NULL`. No row removes the registry entry and then
-         closes 4401. A query error keeps the channel until the next tick.
+       - **A recheck tick.** It runs the step 4 key check under
+         `recheck_deadline`. No row removes the registry entry and then
+         closes 4401. An error or a timeout keeps the channel until the next
+         tick (Decision 10's database-error exception).
        - **The idle deadline.** It removes the entry and closes 4408.
        - **The close signal.** It closes with the signal's code (4409).
     6. On exit it calls `registry.remove(machine_id, connection_id)`, which is
@@ -699,8 +739,8 @@ Targets:
     - After any close or error it sleeps for the backoff, which starts at
       `backoff_start`, doubles up to `backoff_max`, and resets after an ack.
   - **`ChannelTiming`.** Its defaults are a 30 s ping, 1 s and 60 s backoff,
-    10 s ack and hello timeouts, a 90 s idle timeout, a 30 s key recheck, and
-    a 60 s heartbeat write interval.
+    a 15 s ack timeout, a 10 s hello timeout, a 90 s idle timeout, a 25 s key
+    recheck with a 4 s recheck deadline, and a 60 s heartbeat write interval.
 - `state.rs` changes as follows:
   - `ModeServices::Hub(HubServices { db: Pool, registry: Arc<Registry> })`.
   - `NodeServices` gains the channel task's `JoinHandle`.
@@ -722,11 +762,15 @@ and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work), th
 **Acceptance:**
 
 - 1.3.1 - A key-authenticated channel registers its machine and receives an ack carrying the machine id, and its hello writes `last_heartbeat_at` and `node_version`. A ping within the heartbeat write interval writes nothing. After one heartbeat write interval, a ping advances `last_heartbeat_at` and preserves the channel's `node_version`; another ping within the next interval writes nothing. The test uses short constructor timings and reads the isolated schema's machine row to observe both writes and the suppression. A second connection for the same machine replaces the first, which closes with 4409. When the first channel's cleanup runs after the second ack, the second stays registered. test: `crates/gdaemon/tests/nodes.rs::channel_registers_and_replaces`.
-- 1.3.2 - With a short key-recheck interval T counted from the ack, and an idle timeout above 2T, the test revokes the channel's key a quarter interval after the ack. The 4401 close arrives within T of the revocation on a monotonic clock, and the machine is already absent from the registry when it arrives. The first recheck after the revocation falls 0.75T after it and the second 1.75T after it, so only the first scheduled recheck fits that bound. The test runs this for three peers: the node client sending its scheduled pings, a raw peer that sends nothing after hello, and a raw peer that sends only Pong frames. It does not pause tokio time, because paused time auto-advances past the timers while the hub awaits its database query. test: `crates/gdaemon/tests/nodes.rs::revoked_key_closes_channel_on_heartbeat`.
+- 1.3.2 - The test uses a short key-recheck interval R anchored at the upgrade, a recheck deadline D below 0.75R, and an idle timeout above 2R:
+  - **First-check proof.** It revokes the channel's key R/4 after its upgrade completes. The 4401 close arrives within R + D of the revocation on a monotonic clock, and the machine is already absent from the registry. The first recheck after the revocation falls 0.75R after it and the second 1.75R after it, so only the first scheduled recheck fits that bound. This runs for three peers: the node client sending its scheduled pings, a raw peer silent after hello, and a raw peer sending only Pong frames.
+  - **Bookkeeping never blocks revocation.** While a test transaction holds a row lock on the machine's `machines` row, a due heartbeat write blocks. The key is then revoked, and the channel still closes 4401 within R + D.
+  - **Unproven checks.** While a test transaction holds `ACCESS EXCLUSIVE` on `api_keys`, a tick's check times out after D and the channel stays open. After the lock is released, the next tick proves the key again.
+  - It does not pause tokio time, because paused time auto-advances past the timers while the hub awaits its database query. test: `crates/gdaemon/tests/nodes.rs::revoked_key_closes_channel_on_heartbeat`.
 - 1.3.3 - The node client sends a hello with the gdaemon version and `<os>/<arch>`, pings at its interval, and reconnects after a close. Against a refusing hub its delays double from the start value to the ceiling, and they reset after an ack. It reads the key again on each attempt. test: `crates/gdaemon/tests/nodes.rs::node_channel_reconnects_with_backoff`.
 - 1.3.4 - A channel whose first frame is not a valid hello closes with 1008, and a registered channel silent past the idle timeout closes with 4408 and leaves the registry. test: `crates/gdaemon/tests/nodes.rs::silent_or_malformed_channel_is_closed`.
-- 1.3.5 - On a hub, an upgrade to `/api/nodes/channel` without a key identity is refused with 401 before any upgrade. A standalone front door does not mount the route and proxies the request to its backend. test: `crates/gdaemon/tests/nodes.rs::channel_requires_a_key_on_a_hub`.
-- 1.3.6 - While a test transaction holds a row lock on the machine's `machines` row, a first connection's hello write blocks. A second connection for the same machine then registers, and its ack does not arrive while the lock is held. After the test releases the lock, the first connection closes with 4409 without an ack, the second receives its ack, and the row holds the second connection's `node_version` with the registry naming the second connection. A `registry.persist` call under the superseded `connection_id` returns `Skipped` and leaves the row unchanged. test: `crates/gdaemon/tests/nodes.rs::replaced_channel_cannot_overwrite_successor_bookkeeping`.
+- 1.3.5 - On a hub, an upgrade to `/api/nodes/channel` without a key identity is refused with 401 before any upgrade. A standalone front door does not mount the route and proxies the request to its backend. A key revoked after the upgrade but before hello, or while the hello write is blocked by a test row lock that is then released, closes 4401 with no ack, and leaves no registry entry and no `connected` machine. test: `crates/gdaemon/tests/nodes.rs::channel_requires_a_key_on_a_hub`.
+- 1.3.6 - While a test transaction holds a row lock on the machine's `machines` row, a first connection's hello write blocks. A second connection for the same machine then registers. The first connection closes with 4409 and no ack while its write stays blocked, and the second's ack does not arrive while the lock is held. After the test releases the lock, the first write completes and releases the gate, the second receives its ack, and the row holds the second connection's `node_version` with the registry naming the second connection. A `registry.persist` call under the superseded `connection_id` returns `Skipped` and leaves the row unchanged. test: `crates/gdaemon/tests/nodes.rs::replaced_channel_cannot_overwrite_successor_bookkeeping`.
 
 ### 1.4 `/api/machines` lists the caller's machines with connection state [category: code] (depends: 1.3)
 `kind: deliverable`
@@ -866,10 +910,8 @@ Targets:
   - The test polls the node's `/api/health` through its loopback front door
     until it answers 200.
   - It then polls the observer's `GET /api/machines/{node id}` until it reads
-    `connected: true`.
-  - Right after that, it records the node's hello timestamp from the same
-    response's `last_heartbeat_at`. No later heartbeat write can exist yet,
-    because the write interval is 60 s.
+    `connected: true`. That means the hub has sent the ack, because an entry
+    reads `connected` only once acknowledged (1.3).
   - A readiness timeout fails the test with the node's captured stderr.
 - Then it asserts these steps in order:
   1. Through the node's loopback front door with the node's `api_key`,
@@ -890,18 +932,13 @@ Targets:
      the test's HTTP client.
   5. The test revokes the node's key with `ApiKeyManager.revoke`. Within one
      default heartbeat interval (30 s), the node's machine reads
-     `connected: false` through the observer. The timing works as follows:
-     - **Revocation phase.** The hub rechecks the key every 30 s from the
-       channel's ack (1.3), and the hello write stamps `last_heartbeat_at`
-       just before that ack. So the test waits, when needed, until the wall
-       clock is between 2 s and 20 s past a recheck boundary
-       (hello timestamp + 30k s), and only then revokes. The first recheck
-       after the revocation therefore falls between 10 s and 28 s after it.
-     - **Deadline.** From the revocation's return, the test polls the
-       observer's `GET /api/machines/{node id}` every 0.25 s on a monotonic
-       clock. It passes only on a response received before the 30 s deadline
-       that reads `connected: false`. A response received after the
-       deadline proves nothing, and the test fails.
+     `connected: false` through the observer. The hub's schedule (Decision 10)
+     closes the channel within 29 s of a revocation at any phase, so the test
+     needs no phase control. From the revocation's return, it polls the
+     observer's `GET /api/machines/{node id}` every 0.25 s on a monotonic
+     clock. It passes only on a response received before the 30 s deadline
+     that reads `connected: false`. A response received after the deadline
+     proves nothing, and the test fails.
   6. The next relayed request with the node's key answers 401.
 
 **Focused verification (planned):**
@@ -910,7 +947,7 @@ after `cargo build -p gobby-daemon` (heavy work).
 
 **Acceptance:**
 
-- 1.5.1 - Over self-signed TLS, an enrolled bare `gdaemon serve` node, observed ready and registered within bounded waits, shows its machine as `connected` and relays one request (which reports the hub's mode) and one WebSocket upgrade (which receives the hub's pong). The native interactive challenge and the relayed authenticated handshake also complete together and return a grant bound to the enrolled node. Revoking its key at a controlled phase closes the channel within one default heartbeat interval (30 s), proved only by an observation received before that deadline, and makes the next relayed request fail with 401. test: `tests/e2e/test_hub_node_pair.py::test_node_enrolls_and_relays`.
+- 1.5.1 - Over self-signed TLS, an enrolled bare `gdaemon serve` node, observed ready and registered within bounded waits, shows its machine as `connected` and relays one request (which reports the hub's mode) and one WebSocket upgrade (which receives the hub's pong). The native interactive challenge and the relayed authenticated handshake also complete together and return a grant bound to the enrolled node. Revoking its key closes the channel within one default heartbeat interval (30 s), proved only by an observation received before that deadline, and makes the next relayed request fail with 401. test: `tests/e2e/test_hub_node_pair.py::test_node_enrolls_and_relays`.
 
 Consumers unchanged:
 - `tests/contracts/test_http_corpus.py` — no-edit-reason: uses the single-daemon `daemon_instance`; the hub and node pairing belongs to the pair test.
@@ -955,6 +992,19 @@ Consumers unchanged:
     (Decision 10, 1.3.6).
   - NC-A7: the pair test observes listener readiness and channel registration
     separately, with bounded waits.
+- 2026-10-05: The Adversary's recheck of `9713912` reopened NC-A2 and NC-A3
+  and raised NC-A8. The Orchestrator's final ruling at 12:40 CT keeps the
+  30 s bound and NC-E05, and supersedes its interim message.
+  - The timing contract: rechecks every 25 s anchored at the upgrade, a 4 s
+    budget per check covering pool acquisition and the query, timeouts and
+    errors under the parent's database-error exception, and a normal close
+    within 29 s. Repairs follow that contract.
+  - NC-A2: `machines` bookkeeping runs in spawned tasks that hold the gate
+    until the write completes, and the select loop never awaits it.
+  - NC-A8: admission rechecks the key before the ack within a 14 s
+    admission, and `connected` starts only at the ack.
+  - NC-A3: 1.3.2 adds blocked-write and timeout coverage, and the pair test
+    drops its phase logic and requires an observation before 30 s.
 
 ## V2: Verification
 `kind: verification`
