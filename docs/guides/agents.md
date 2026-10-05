@@ -273,7 +273,9 @@ runbook completion. Completing a runbook releases its step instance and dispatch
 mutex while retaining the seat. The idle watchdog does not reprompt, recover,
 complete, or fail these seats for idleness or missing `end_agent_run`. End a seat
 explicitly with `end_agent_run`, `stop_agent`, or `kill_agent`; process-exit cleanup
-still applies. One-shot runs retain completed-turn recovery and bounded idle
+still applies. Provider quota exhaustion, terminal provider errors, and a full context
+window still fail a seat; a provider capacity error gets bounded continue prompts that
+never ask the seat to end its run. One-shot runs retain completed-turn recovery and bounded idle
 reprompts. This lifetime choice is separate from provider launch options such as
 `droid_mode`.
 

@@ -184,6 +184,9 @@ async def test_interactive_seat_still_handles_provider_failures(
         assert stored.status == "running"
         state = monitor._idle_check_handler._recovery._capacity_recovery[run.id]
         assert state.successful_reprompts == 1
+        reprompts = [text for kind, text in _runtime_of(monitor).write_log if kind == "text"]
+        assert len(reprompts) == 1
+        assert "end_agent_run" not in reprompts[0]
     else:
         assert stored.status == "error"
         assert stored.error
