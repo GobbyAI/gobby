@@ -79,8 +79,10 @@ returned no files, so no ref adds 459 or later. The Orchestrator assigned 459 to
 `460_code_overlay_pins.sql`. A rerun later on 2026-10-05, after #23439 landed
 `459_session_usage_bigint.sql`, found no 460 or later. If another migration lands first, the executor
 repeats that all-ref sweep and takes the next free number.
-The migration source requires its catalog, grant, schema-contract, CLI-contract,
-and Python expected-identity carriers in the same deliverable.
+The migration source requires its embedded migration entry, catalog, grant,
+schema-contract, CLI-contract, Python expected-identity, HTTP runtime-handshake,
+and runtime-grant golden carriers in the same deliverable, the same set the 458
+and 459 landings changed.
 
 The code index source is the PostgreSQL hub. The current overlay catalog resolves
 inherited rows from the parent's current selectors, and overlay reconcile consults
@@ -143,7 +145,7 @@ every `repair_isolation_environment` call record into it through the existing
 `complete_spawn_phase_timings` adds `spawn_wall` and `unattributed`:
 `unattributed` is wall time minus top-level phases, with the nested isolation
 subphases left out of the sum so no time counts twice. `_implementation.py` is
-912 lines, so move the `prepare_environment` call and the prepare-failure
+926 lines, so move the `prepare_environment` call and the prepare-failure
 response out of `spawn_agent_impl` into the new
 `src/gobby/mcp_proxy/tools/spawn_agent/_isolation_prepare.py`, which also times
 `isolation_prepare`. Handler selection stays in place: `spawn_agent_impl` and
@@ -280,7 +282,7 @@ change the selection. A reused agent worktree rebases onto the selected commit.
 Integration workspace refresh keeps its current merged-commit behavior and is
 re-pinned under B2.
 
-`_implementation.py` is 913 lines, so move the requested-base resolution (the
+`_implementation.py` is 926 lines, so move the requested-base resolution (the
 explicit argument, the agent definition's default, and `inherit` as omitted) out
 of `spawn_agent_impl` into T1's
 `src/gobby/mcp_proxy/tools/spawn_agent/_isolation_prepare.py`, returning `None`
@@ -380,10 +382,17 @@ for all sources, the migrated tests, and the extraction's merge behavior.
 Targets:
 - `crates/gcore/assets/schema/migrations/460_code_overlay_pins.sql`
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: generated schema catalog entries change together
+- `crates/gcore/src/schema/assets.rs::MIGRATIONS`
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: grant the exact pin-table read and write surface
 - `crates/gcore/tests/schema_contract.rs::*` — scope-reason: verify migration, constraints, and grants
 - `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: verify installed schema identity and CLI contract
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: generated schema identity fields change together
+- `tests/contracts/http/runtime_handshake.json::*` — scope-reason: schema identity carriers
+- `tests/runtime_grants/golden/brokered_datastores.json::*` — scope-reason: schema identity carriers
+- `tests/runtime_grants/golden/direct_datastores.json::*` — scope-reason: schema identity carriers
+- `tests/runtime_grants/golden/old_client_new_grant.json::*` — scope-reason: schema identity carriers
+- `tests/runtime_grants/golden/payload_skew_unknown_field.json::*` — scope-reason: schema identity carriers
+- `tests/runtime_grants/golden/unavailable_datastores.json::*` — scope-reason: schema identity carriers
 - `crates/gcore/src/project.rs::*` — scope-reason: parse and validate base commit and ancestor checkout identity
 - `src/gobby/utils/project_context.py::*` — scope-reason: persist and read the isolation marker's pin provenance
 - `crates/gcode/src/index/api/file_state.rs::*` — scope-reason: one compare-and-set writer sets or clears a selector's Git blob ID
@@ -430,9 +439,13 @@ migration lands first, repeat the R2 all-ref sweep and take the next free number
 Planned checks: schema contracts, marker tests, and `cargo test -p gobby-code` for
 selector writes, the trigger, and each write outcome.
 
-**Granularity:** Schema, grants, generated catalog, expected identity, marker,
-and selector storage form one atomic data contract. The carrier count is required
-by the repository's schema contract, not independent implementation work.
+**Granularity:** Schema, the embedded migration list, grants, generated catalog,
+schema identity carriers, marker, and selector storage form one atomic data
+contract. The identity carriers are the Python expected identity, the HTTP runtime
+handshake contract, and five runtime-grant goldens, each embedding the latest
+migration version, its checksum, and the assets root hash; migrations 458 and 459
+changed the same set. The carrier count is required by the repository's schema
+contract, not independent implementation work.
 
 Consumers unchanged:
 - `crates/gcode/src/index/indexer/sink.rs` — no-edit-reason: PostgresCodeFactSink::upsert_file keeps calling upsert_file_state, and the migration trigger clears a stale blob ID on its content-hash updates.
