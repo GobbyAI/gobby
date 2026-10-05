@@ -273,7 +273,7 @@ fn menu_bar_menus_regroup_items_per_title() {
         labels(&view),
         [
             "  Appearance: Dark ▸",
-            "  Theme: Classic ▸",
+            "  Theme: Restored ▸",
             "  Monochrome",
             "  Sidebar ▸"
         ]
@@ -878,7 +878,8 @@ fn appearance_row_opens_its_choices_beside_it_and_saves_the_pick() {
 }
 
 #[test]
-fn theme_row_lists_every_theme_and_each_pick_draws_and_saves() {
+fn theme_row_lists_the_offered_themes_and_each_pick_draws_and_saves() {
+    use crate::theme::ThemeKind;
     let mut ws = Workspace::scripted();
     let home = tempfile::tempdir().expect("temp gobby home");
     ws.set_gobby_home(home.path().to_path_buf());
@@ -896,43 +897,71 @@ fn theme_row_lists_every_theme_and_each_pick_draws_and_saves() {
         .items
         .iter()
         .any(|item| item.action == MenuAction::OpenSubmenu(Submenu::Theme)));
-    let listed: Vec<MenuAction> = theme_menu(&ws, &chrome)
-        .items
-        .into_iter()
-        .map(|item| item.action)
-        .collect();
-    let every: Vec<MenuAction> = ThemeName::ALL.map(MenuAction::SetTheme).to_vec();
-    assert_eq!(listed, every, "every shipped theme, in catalog order");
 
-    for name in ThemeName::ALL {
-        let action = MenuAction::SetTheme(name);
-        assert!(apply_local_menu_action(&mut ws, &mut chrome, &action));
-        assert_eq!(chrome.theme.name, name, "drawn at once");
-        assert_eq!(
-            chrome.theme.kind,
-            crate::theme::ThemeKind::Dark,
-            "the appearance holds"
-        );
-        assert_eq!(
-            theme_row_label(&chrome),
-            format!("  Theme: {} ▸", name.label())
-        );
-        let choices = theme_menu(&ws, &chrome);
-        let marked: Vec<&str> = choices
-            .items
-            .iter()
-            .filter(|item| !item.enabled)
-            .map(|item| item.label)
+    // System under a dark host, then a light one, lists only the themes it
+    // can draw there.
+    for (appearance, kind) in [
+        ("dark", ThemeKind::Dark),
+        ("light", ThemeKind::Light),
+        ("system", ThemeKind::Dark),
+        ("system", ThemeKind::Light),
+    ] {
+        let case = format!("{appearance} {kind:?}");
+        chrome.prefs.theme = appearance.to_owned();
+        chrome.prefs.palette = ThemeName::Restored;
+        chrome.set_theme(kind);
+        let hosted = appearance == "system";
+        let offered: Vec<ThemeName> = ThemeName::ALL
+            .into_iter()
+            .filter(|name| name.offered(kind, hosted))
             .collect();
+        let listed: Vec<MenuAction> = theme_menu(&ws, &chrome)
+            .items
+            .into_iter()
+            .map(|item| item.action)
+            .collect();
+        let expected: Vec<MenuAction> = offered.iter().copied().map(MenuAction::SetTheme).collect();
         assert_eq!(
-            marked,
-            [format!("● {}", name.label())],
-            "the pick is marked"
+            listed, expected,
+            "{case}: the offered themes, in catalog order"
         );
-        let saved = crate::prefs::load_prefs(home.path()).expect("load prefs");
-        assert_eq!(saved.palette, name);
-        assert_eq!(saved.theme, "dark");
+
+        for name in offered {
+            let action = MenuAction::SetTheme(name);
+            assert!(apply_local_menu_action(&mut ws, &mut chrome, &action));
+            assert_eq!(chrome.theme.name, name, "{case}: drawn at once");
+            assert_eq!(chrome.theme.kind, kind, "{case}: the appearance holds");
+            assert_eq!(chrome.theme.hosted, hosted, "{case}");
+            assert_eq!(
+                theme_row_label(&chrome),
+                format!("  Theme: {} ▸", name.label())
+            );
+            let choices = theme_menu(&ws, &chrome);
+            let marked: Vec<&str> = choices
+                .items
+                .iter()
+                .filter(|item| !item.enabled)
+                .map(|item| item.label)
+                .collect();
+            assert_eq!(
+                marked,
+                [format!("● {}", name.label())],
+                "{case}: the pick is marked"
+            );
+            let saved = crate::prefs::load_prefs(home.path()).expect("load prefs");
+            assert_eq!(saved.palette, name);
+            assert_eq!(saved.theme, appearance);
+        }
     }
+
+    // A pick an appearance does not offer stays saved and draws Restored,
+    // which the row and the menu then show.
+    chrome.prefs.theme = "dark".to_owned();
+    chrome.prefs.palette = ThemeName::Ink;
+    chrome.set_theme(ThemeKind::Dark);
+    assert_eq!(chrome.theme.name, ThemeName::Restored);
+    assert_eq!(chrome.prefs.palette, ThemeName::Ink);
+    assert_eq!(theme_row_label(&chrome), "  Theme: Restored ▸");
 }
 
 /// View › Sidebar › a section cascades two deep with every menu behind it

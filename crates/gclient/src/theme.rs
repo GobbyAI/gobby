@@ -13,7 +13,7 @@ use ratatui::style::Color;
 
 mod catalog;
 
-pub use catalog::ThemeName;
+pub use catalog::{Fills, LightReading, ModelHue, Oklch, ThemeName, LIGHT_READING};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeKind {
@@ -56,6 +56,17 @@ impl Token {
             hue: BRAND_HUE,
             lightness,
             chroma: NEUTRAL_CHROMA,
+            icon: "",
+            position_cue: None,
+        }
+    }
+
+    const fn fill(name: &'static str, colour: Oklch) -> Self {
+        Self {
+            name,
+            hue: colour.hue,
+            lightness: colour.lightness,
+            chroma: colour.chroma,
             icon: "",
             position_cue: None,
         }
@@ -151,6 +162,16 @@ pub struct Theme {
     pub success: Token,
     pub identifier: Token,
     pub neutrals: Neutrals,
+    /// Section header rows, the tab row and the menu bar.
+    pub band: Token,
+    /// The selected and active sidebar rows, the active tab and the open
+    /// menu title.
+    pub selection: Token,
+    /// The model line.
+    pub model: Token,
+    /// System: drawn over the host terminal's ground, which gclient leaves
+    /// in place.
+    pub hosted: bool,
 }
 
 impl Theme {
@@ -159,7 +180,52 @@ impl Theme {
         Self::named(ThemeName::default(), kind)
     }
 
+    /// `name` on its own ground in Dark or Light.
     pub fn named(name: ThemeName, kind: ThemeKind) -> Self {
+        Self::drawn(name, kind, None)
+    }
+
+    /// `name` in System, over the host terminal, whose background `host`
+    /// gives Host-matched its hue.
+    pub fn hosted(name: ThemeName, kind: ThemeKind, host: Option<(u8, u8, u8)>) -> Self {
+        Self::drawn(name, kind, Some(host))
+    }
+
+    fn drawn(name: ThemeName, kind: ThemeKind, host: Option<Option<(u8, u8, u8)>>) -> Self {
+        let hosted = host.is_some();
+        // A theme not offered here, or a System-only one under a light OS
+        // appearance, draws Restored, which every appearance offers.
+        let (name, fills) = match name
+            .fills(kind, hosted)
+            .filter(|_| name.offered(kind, hosted))
+        {
+            Some(fills) => (name, fills),
+            None => (
+                ThemeName::Restored,
+                ThemeName::Restored
+                    .fills(kind, hosted)
+                    .expect("Restored has fills in every appearance"),
+            ),
+        };
+        let fills = match name {
+            ThemeName::HostMatched => host_matched(fills, host.flatten()),
+            _ => fills,
+        };
+        let mut theme = Self::contract(name, kind, fills);
+        match name.ground(kind) {
+            Some(ground) if !hosted => theme.neutrals.panel_bg = Token::fill("panel_bg", ground),
+            _ => {}
+        }
+        theme.hosted = hosted;
+        theme
+    }
+
+    /// The design contract's tokens in `kind`, on Restored's ground, with
+    /// `name`'s fills and model colour.
+    fn contract(name: ThemeName, kind: ThemeKind, fills: Fills) -> Self {
+        let band = Token::fill("band", fills.band);
+        let selection = Token::fill("selection", fills.selection);
+        let model = Token::fill("model", name.model().colour(kind));
         match kind {
             ThemeKind::Dark => Self {
                 name,
@@ -188,6 +254,10 @@ impl Theme {
                     subtext0: Token::neutral("subtext0", 0.76),
                     text: Token::neutral("text", 0.92),
                 },
+                band,
+                selection,
+                model,
+                hosted: false,
             },
             ThemeKind::Light => Self {
                 name,
@@ -216,8 +286,43 @@ impl Theme {
                     subtext0: Token::neutral("subtext0", 0.40),
                     text: Token::neutral("text", 0.20),
                 },
+                band,
+                selection,
+                model,
+                hosted: false,
             },
         }
+    }
+
+    /// The fill unfocused panes take in Dark and Light: the ground at its
+    /// own hue and chroma, stepped toward mid-grey (lighter in Dark, darker
+    /// in Light) until, as `paint` draws them, it stands
+    /// `UNFOCUSED_CONTRAST` off the ground, so the step survives monochrome.
+    /// Focus reads by lightness alone and pane text keeps its full colour.
+    /// System draws none: focus there is the border and title, as Josh
+    /// picked.
+    pub fn unfocused(&self, paint: impl Fn(Token) -> Color) -> Option<Token> {
+        if self.hosted {
+            return None;
+        }
+        let ground = self.neutrals.panel_bg;
+        let step = match self.kind {
+            ThemeKind::Dark => 1,
+            ThemeKind::Light => -1,
+        };
+        let mut fill = ground;
+        for k in 1..=400 {
+            let thousandths = (ground.lightness * 1000.0).round() as i32 + step * k;
+            fill = Token {
+                name: "unfocused",
+                lightness: thousandths as f32 / 1000.0,
+                ..ground
+            };
+            if painted_contrast(paint(fill), paint(ground)) >= UNFOCUSED_CONTRAST {
+                break;
+            }
+        }
+        Some(fill)
     }
 
     pub fn states(&self) -> [&Token; 4] {
@@ -251,8 +356,31 @@ impl Theme {
 
     /// Foreground, background, and the 16 ANSI slots, applied through
     /// `gobby_terminal::terminal_theme` so hosted terminals inherit the map.
+    /// Bright black (dim text) starts at overlay1 and Light's bright green
+    /// is the success green, so every slot keeps its floor on the unfocused
+    /// fill.
     pub fn terminal_theme(&self) -> TerminalTheme {
         let n = &self.neutrals;
+        let bright_green = match self.kind {
+            ThemeKind::Dark => self.accent,
+            ThemeKind::Light => self.success,
+        };
+        // Bright black reads at AA on the unfocused fill as on the ground:
+        // overlay1, stepped away from the ground until it does there.
+        let bright_black = self.unfocused(Token::color).map_or(n.overlay1, |fill| {
+            let step = match self.kind {
+                ThemeKind::Dark => 1,
+                ThemeKind::Light => -1,
+            };
+            let from = (n.overlay1.lightness * 1000.0).round() as i32;
+            (0..=400)
+                .map(|k| Token {
+                    lightness: (from + step * k) as f32 / 1000.0,
+                    ..n.overlay1
+                })
+                .find(|token| contrast_ratio(token.rgb(), fill.rgb()) >= TEXT_CONTRAST)
+                .unwrap_or(n.overlay1)
+        });
         let slots: [Token; 16] = [
             n.surface_dim,
             self.destructive,
@@ -262,9 +390,9 @@ impl Theme {
             self.destructive,
             self.info,
             n.subtext0,
-            n.overlay0,
+            bright_black,
             self.destructive,
-            self.accent,
+            bright_green,
             self.warning,
             self.info,
             self.destructive,
@@ -305,17 +433,165 @@ pub struct Palette {
     pub dim: Color,
     /// Refs and branches: the one non-state hue.
     pub identifier: Color,
-    /// The menu bar's ground: the light theme's accent in both themes.
-    pub bar: Color,
-    /// The menu bar's ink: the light theme's `panel_bg` in both themes.
-    pub bar_ink: Color,
-    /// Ink of the open title, which sits on `bar_ink`: the light theme's text.
-    pub bar_open_ink: Color,
+    /// Section header rows, the tab row and the menu bar.
+    pub band: Color,
+    /// The selected and active sidebar rows, the active tab and the open
+    /// menu title.
+    pub selection: Color,
+    /// The model line.
+    pub model: Color,
+    /// What the ground's ink becomes on `band`.
+    pub band_ink: FillInk,
+    /// What the ground's ink becomes on `selection`.
+    pub selection_ink: FillInk,
+    /// Unfocused panes' ground; none in System (`Theme::unfocused`).
+    pub unfocused: Option<Color>,
     /// The line under the menu bar and the rule between tabs: a tinted
     /// near-black under the dark theme's ground, in every theme.
     pub line: Color,
     /// The wordmark and the marks' braille: accent in dark, text in light.
     pub wordmark: Color,
+}
+
+/// WCAG 2.2 AA for text, and the floor for glyphs and other non-text marks.
+pub const TEXT_CONTRAST: f64 = 4.5;
+pub const GLYPH_CONTRAST: f64 = 3.0;
+/// How far an unfocused pane's ground stands off the focused one.
+pub const UNFOCUSED_CONTRAST: f64 = 1.15;
+
+/// The colours one side (dark or light) draws text and glyphs in.
+#[derive(Debug, Clone, Copy)]
+struct Ink {
+    text: Color,
+    subtext0: Color,
+    model: Color,
+    identifier: Color,
+    accent: Color,
+    warning: Color,
+    success: Color,
+    destructive: Color,
+    info: Color,
+    overlay1: Color,
+    overlay0: Color,
+    dim: Color,
+}
+
+impl Ink {
+    /// `kind`'s ink, with `name`'s model colour; states and neutrals are
+    /// the design contract's in every theme.
+    fn of(name: ThemeName, kind: ThemeKind, paint: &impl Fn(Token) -> Color) -> Self {
+        let side = Theme::new(kind);
+        let n = &side.neutrals;
+        Self {
+            text: paint(n.text),
+            subtext0: paint(n.subtext0),
+            model: paint(Token::fill("model", name.model().colour(kind))),
+            identifier: paint(side.identifier),
+            accent: paint(side.accent),
+            warning: paint(side.warning),
+            success: paint(side.success),
+            destructive: paint(side.destructive),
+            info: paint(side.info),
+            overlay1: paint(n.overlay1),
+            overlay0: paint(n.overlay0),
+            dim: paint(n.dim),
+        }
+    }
+}
+
+/// The ink that reads on one fill. Whichever side's text reads better on
+/// the fill draws there, so a light bar in a dark theme takes the light
+/// theme's ink; a colour under its floor on the fill falls back along the
+/// theme-mapping board's chain, words to AA and glyphs to 3:1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FillInk {
+    pub fill: Color,
+    /// The default foreground on the fill.
+    pub text: Color,
+    /// Each ground colour paired with the one that takes its place; words
+    /// first, so a colour two roles share takes the stricter floor.
+    swaps: [(Color, Color); 12],
+}
+
+impl FillInk {
+    fn on(fill: Color, own: &Ink, dark: &Ink, light: &Ink) -> Self {
+        let ink = if painted_contrast(dark.text, fill) >= painted_contrast(light.text, fill) {
+            dark
+        } else {
+            light
+        };
+        let pick = |floor: f64, chain: &[Color]| {
+            chain
+                .iter()
+                .copied()
+                .find(|&colour| painted_contrast(colour, fill) >= floor)
+                .unwrap_or(chain[chain.len() - 1])
+        };
+        Self {
+            fill,
+            text: ink.text,
+            swaps: [
+                (own.text, ink.text),
+                (own.subtext0, pick(TEXT_CONTRAST, &[ink.subtext0, ink.text])),
+                (
+                    own.model,
+                    pick(TEXT_CONTRAST, &[ink.model, ink.subtext0, ink.text]),
+                ),
+                (
+                    own.identifier,
+                    pick(TEXT_CONTRAST, &[ink.identifier, ink.text]),
+                ),
+                // Accent marks the cursor and names a selected project.
+                (own.accent, pick(TEXT_CONTRAST, &[ink.accent, ink.text])),
+                (own.warning, pick(GLYPH_CONTRAST, &[ink.warning, ink.text])),
+                (own.success, pick(GLYPH_CONTRAST, &[ink.success, ink.text])),
+                (
+                    own.destructive,
+                    pick(GLYPH_CONTRAST, &[ink.destructive, ink.text]),
+                ),
+                (own.info, pick(GLYPH_CONTRAST, &[ink.info, ink.text])),
+                (
+                    own.overlay1,
+                    pick(GLYPH_CONTRAST, &[ink.overlay1, ink.subtext0, ink.text]),
+                ),
+                // Rules and idle glyphs, which need no floor.
+                (own.overlay0, ink.overlay0),
+                (own.dim, ink.dim),
+            ],
+        }
+    }
+
+    /// The colour a cell drawn in `fg` takes on the fill.
+    pub fn ink(&self, fg: Color) -> Color {
+        if fg == Color::Reset {
+            return self.text;
+        }
+        self.swaps
+            .iter()
+            .find(|(from, _)| *from == fg)
+            .map_or(fg, |&(_, to)| to)
+    }
+}
+
+/// Host-matched's fills at the host terminal's hue, at no more chroma than
+/// the host's own; neutral until the host answers.
+fn host_matched(fills: Fills, host: Option<(u8, u8, u8)>) -> Fills {
+    let (chroma, hue) = host.map_or((0.0, BRAND_HUE), |rgb| {
+        let (_, chroma, hue) = srgb_to_oklch(rgb);
+        (
+            (chroma as f32).min(fills.band.chroma),
+            hue.round() as u16 % 360,
+        )
+    });
+    let at = |colour: Oklch| Oklch {
+        chroma,
+        hue,
+        ..colour
+    };
+    Fills {
+        band: at(fills.band),
+        selection: at(fills.selection),
+    }
 }
 
 /// The menu bar's underline and tab rule, and the light theme's mark ink.
@@ -325,7 +601,7 @@ impl Palette {
     /// Every herdr palette name paired with the token it resolves to.
     /// `mauve` is a neutral (the violet is `identifier`); `red` is the
     /// magenta-pink destructive token; `teal` and `blue` are both info.
-    pub fn entries(theme: &Theme) -> [(&'static str, Token); 20] {
+    pub fn entries(theme: &Theme) -> [(&'static str, Token); 23] {
         let n = &theme.neutrals;
         let (ink, glint) = match theme.kind {
             ThemeKind::Dark => (n.panel_bg, n.text),
@@ -352,6 +628,9 @@ impl Palette {
             ("glint", glint),
             ("dim", n.dim),
             ("identifier", theme.identifier),
+            ("band", theme.band),
+            ("selection", theme.selection),
+            ("model", theme.model),
         ]
     }
 
@@ -378,8 +657,14 @@ impl Palette {
             ThemeKind::Dark => (n.panel_bg, n.text),
             ThemeKind::Light => (LINE, n.panel_bg),
         };
-        // The menu bar is the light version whatever the theme.
-        let light = Theme::new(ThemeKind::Light);
+        let dark_ink = Ink::of(theme.name, ThemeKind::Dark, &paint);
+        let light_ink = Ink::of(theme.name, ThemeKind::Light, &paint);
+        let own = match theme.kind {
+            ThemeKind::Dark => &dark_ink,
+            ThemeKind::Light => &light_ink,
+        };
+        let band = paint(theme.band);
+        let selection = paint(theme.selection);
         let wordmark = match theme.kind {
             ThemeKind::Dark => theme.accent,
             ThemeKind::Light => n.text,
@@ -405,26 +690,46 @@ impl Palette {
             glint: paint(glint),
             dim: paint(n.dim),
             identifier: paint(theme.identifier),
-            bar: paint(light.accent),
-            bar_ink: paint(light.neutrals.panel_bg),
-            bar_open_ink: paint(light.neutrals.text),
+            band,
+            selection,
+            model: paint(theme.model),
+            band_ink: FillInk::on(band, own, &dark_ink, &light_ink),
+            selection_ink: FillInk::on(selection, own, &dark_ink, &light_ink),
+            unfocused: theme.unfocused(&paint).map(&paint),
             line: paint(LINE),
             wordmark: paint(wordmark),
         }
     }
 }
 
+fn linear(channel: u8) -> f64 {
+    let c = f64::from(channel) / 255.0;
+    if c <= 0.040_45 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 /// WCAG 2.2 relative luminance of an sRGB triple.
 pub fn relative_luminance((r, g, b): (u8, u8, u8)) -> f64 {
-    fn linear(channel: u8) -> f64 {
-        let c = f64::from(channel) / 255.0;
-        if c <= 0.040_45 {
-            c / 12.92
-        } else {
-            ((c + 0.055) / 1.055).powf(2.4)
-        }
-    }
     0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+}
+
+/// OKLCH lightness, chroma and hue in degrees of an sRGB triple.
+fn srgb_to_oklch((r, g, b): (u8, u8, u8)) -> (f64, f64, f64) {
+    let (r, g, b) = (linear(r), linear(g), linear(b));
+    let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();
+    let m = (0.211_903_498_2 * r + 0.680_699_545_1 * g + 0.107_396_956_6 * b).cbrt();
+    let s = (0.088_302_461_9 * r + 0.281_718_837_6 * g + 0.629_978_700_5 * b).cbrt();
+    let lightness = 0.210_454_255_3 * l + 0.793_617_785_0 * m - 0.004_072_046_8 * s;
+    let a = 1.977_998_495_1 * l - 2.428_592_205_0 * m + 0.450_593_709_9 * s;
+    let b = 0.025_904_037_1 * l + 0.782_771_766_2 * m - 0.808_675_766_0 * s;
+    (
+        lightness,
+        a.hypot(b),
+        b.atan2(a).to_degrees().rem_euclid(360.0),
+    )
 }
 
 /// WCAG 2.2 contrast ratio between two sRGB triples (>= 1.0).
@@ -433,6 +738,16 @@ pub fn contrast_ratio(a: (u8, u8, u8), b: (u8, u8, u8)) -> f64 {
     let lb = relative_luminance(b);
     let (hi, lo) = if la >= lb { (la, lb) } else { (lb, la) };
     (hi + 0.05) / (lo + 0.05)
+}
+
+/// `contrast_ratio` of two painted colours; 1.0 when either is not RGB.
+fn painted_contrast(a: Color, b: Color) -> f64 {
+    match (a, b) {
+        (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) => {
+            contrast_ratio((ar, ag, ab), (br, bg, bb))
+        }
+        _ => 1.0,
+    }
 }
 
 fn srgb_encode(channel: f64) -> u8 {

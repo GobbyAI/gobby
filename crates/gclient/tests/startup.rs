@@ -707,7 +707,14 @@ fn appearance_and_theme_persist_under_their_own_keys() {
     }
     save_prefs(&home, &ClientPrefs::default()).expect("save defaults");
     let text = fs::read_to_string(&path).expect("read prefs");
-    assert!(text.contains("palette = \"classic\"\n"), "{text}");
+    assert!(text.contains("palette = \"restored\"\n"), "{text}");
+    // `classic`, which every prefs file saved before the named themes holds,
+    // loads as Restored.
+    fs::write(&path, "[ui]\ntheme = \"dark\"\npalette = \"classic\"\n").expect("write classic");
+    assert_eq!(
+        load_prefs(&home).expect("classic loads").palette,
+        ThemeName::Restored
+    );
 
     fs::write(&path, "[ui]\ntheme = \"dark\"\npalette = \"nope\"\n").expect("write typo");
     let message = load_prefs(&home)

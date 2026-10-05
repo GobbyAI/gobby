@@ -69,7 +69,7 @@ Logs go to `~/.gobby/logs/gclient.log`.
        └────────────────────┘
 ```
 
-The accent menu bar occupies row 0, the tab bar row 1, the panes the middle,
+The menu bar occupies row 0, the tab bar row 1, the panes the middle,
 and the status bar the last row. With default pane gaps, every pane draws all
 four edges. This example shows the sidebar hidden for clarity. By default it
 starts pinned in a saved column beside the content. `prefix+b` unpins it; a
@@ -86,7 +86,7 @@ when those conditions are absent. Slashes below separate alternative labels:
 | Gobby | Settings, Reload config, Quit |
 | File | New terminal, New tab, New workspace…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
 | Edit | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name (when named), Send right-clicks to pane / Use gclient menu |
-| View | Appearance: Dark / Light / System ▸, Theme: Classic ▸, Monochrome, Sidebar ▸ |
+| View | Appearance: Dark / Light / System ▸, Theme: Restored ▸, Monochrome, Sidebar ▸ |
 | Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (Even horizontal, Even vertical, Main horizontal, Main vertical, Tiled, New grid…) |
 | Agent | Respond, Mark seen, Take control, Release control, Take back, Detach, Open alert target, Next attention, Previous attention |
 | Help | Keys, Alerts…, Daemon, About Gobby |
@@ -95,8 +95,8 @@ A row ending in `▸` opens a submenu beside its menu, which stays drawn with
 that row lit. `→` or `l` opens the submenu under the cursor, `←` or `h`
 returns to the menu it came from, a click on a row of any open menu acts on
 it, and `esc` closes them all. **View › Appearance** holds Dark, Light, and
-System. **View › Theme** lists every named theme, each drawn in the
-appearance in force; a pick redraws at once and is saved. **View ›
+System. **View › Theme** lists the themes the appearance in force offers
+(**Themes**, below); a pick redraws at once and is saved. **View ›
 Monochrome** toggles monochrome (below). **View › Sidebar** holds:
 
 | Sidebar row | Items |
@@ -127,6 +127,32 @@ explicit colours, so a terminal setting that applies opacity to explicit cells
 terminal's own background and foreground and only picks the palette from the
 OS appearance.
 
+**Themes.** A theme sets two fills and a model colour. The header fill takes
+the sidebar's section headings, the tab row, and the menu bar. The selection
+fill takes the selected and active sidebar rows, the active tab, and the open
+menu's title. The model colour takes the model line of the Agents rows. In
+Dark and Light a theme also sets its own ground. Restored is the default.
+Each appearance offers its own list under **View › Theme** and the `Theme`
+setting:
+
+| Appearance | Themes |
+| --- | --- |
+| Dark, Light | Restored, Moss, Your proposal, Staircase, Inverse bar, Gobby bar, Contrast chrome, Moss chrome, Moss band |
+| System | Restored, Moss, Your proposal, Inverse bar, Gobby bar, Contrast chrome, Moss chrome, Ink, Host-matched |
+
+While the OS appearance is light, System draws each theme's Light fills and
+does not offer Ink or Host-matched. A saved theme that the appearance in
+force does not offer draws as Restored and stays saved, so it returns when
+an appearance that offers it does. Host-matched tints its fills with the host
+terminal's own background hue at chroma 0.03 at most, or less where the
+host's own chroma is lower. Until the host reports its background, those
+fills are gray.
+
+In Dark and Light, an unfocused pane sits on its own fill, a step in
+lightness off the ground with the ground's hue, and its text keeps full
+colour. The fill runs under the pane's scrollbar lane too. System marks focus
+by the pane border alone. A tab with one pane draws no fill.
+
 The five layouts under **Arrange ▸** redistribute a tab's panes into the
 chosen layout. Window › Arrange ▸ arranges the active tab; the same submenu in
 a tab's or a pane's right-click menu arranges that tab, bringing it forward
@@ -138,9 +164,10 @@ About Gobby** shows the versions, URL, and machine.
 
 **Sidebar.** Shown and pinned by default. Its side and pinned state are saved
 in preferences; unpinned it opens as an overlay on the saved side.
-Four sections, each under a bold heading with no fill: Machines, Projects,
-Agents, and Terminals. A selected row carries a filled marker, so the two never
-read alike, in any theme or in monochrome. The Terminals heading is hidden
+Four sections, each under a bold heading on the theme's header fill:
+Machines, Projects, Agents, and Terminals. The selected row and the active
+row sit on the selection fill, and the selected row also leads with the `▸`
+marker. The Terminals heading is hidden
 while no bare terminal is open. Each section's view options live in its own
 **View › Sidebar** submenu. Machines and Projects together
 never take more than the top half of the sidebar (each scrolls inside its cap);
@@ -173,9 +200,10 @@ second after the section scrolls or while the navigate cursor is in it.
   definition goes (`#14069: Assistant`). Otherwise the agent definition names
   the row, or the provider when there is none; the provider is not repeated
   beside the title. The third line is the model, led by its family
-  (`claude-opus-5.5`, `gpt-6.1-sol`) with the effort appended, one neutral
-  shade quieter than the title. The provider and model are identified by
-  their words, never by a colour: every hue in the sidebar belongs to a state.
+  (`claude-opus-5.5`, `gpt-6.1-sol`) with the effort appended, in the
+  theme's model colour, a muted teal or clay that no state uses. The provider
+  and model are identified by their words: the model colour is the same for
+  every provider.
   Runs can nest under their
   parent session. Selecting one in another workspace switches to that workspace
   and focuses its existing pane. If the
@@ -703,7 +731,7 @@ the `Done` and `Close` buttons. Rows are clickable. Every change is written to
 | Row | Default | Effect |
 | --- | --- | --- |
 | Appearance | `dark` | `dark`, `light`, or `system`; system follows OS appearance while the client is open (dark if the OS does not specify one); saved as `theme`; also changed by **View › Appearance** |
-| Theme | Classic | The named theme drawn in that appearance; saved as `palette`; also changed by **View › Theme** |
+| Theme | Restored | The named theme drawn in that appearance, stepping through the themes it offers (see **Themes**); saved as `palette` (`classic`, from earlier versions, loads as Restored); also changed by **View › Theme** |
 | Monochrome | off | Draw the client's chrome in grays; states keep their glyphs; also changed by **View › Monochrome** |
 | Mouse capture | on | Off leaves selection and scrolling to your terminal emulator |
 | Pane scrollbars | on | Draw a scrollbar lane beside scrolled panes; its thumb is dim at rest and brightens while the pane is focused or for a second after it scrolls |
@@ -727,7 +755,7 @@ order) and the `[ui.project_labels]` table (your label per project id).
 ```toml
 [ui]
 theme = "dark"
-palette = "classic"
+palette = "restored"
 mouse_capture = true
 pane_scrollbars = true
 pane_gaps = true

@@ -524,3 +524,105 @@ fn srt_lock_draws_red_and_unrestricted_addresses_draw_no_mark() {
         );
     }
 }
+
+/// Dark and Light set an unfocused pane on its fill, over the ground and
+/// unpainted cells alike, and leave the cells it painted itself; the
+/// focused pane, System and a lone pane draw no fill (#23416).
+#[test]
+fn unfocused_panes_take_the_fill_in_dark_and_light_only() {
+    use crate::theme::{Theme, ThemeKind, ThemeName};
+    const OWN: Color = Color::Rgb(0x40, 0x10, 0x10);
+
+    // Each pane paints its first cell in its own colour and its second on
+    // the ground; the rest it leaves.
+    let draw_painted = |ws: &Workspace, chrome: &Chrome| {
+        let ground = chrome.palette.panel_bg;
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_panes(frame, ws, chrome, &mut |frame, rect, _| {
+                    let buffer = frame.buffer_mut();
+                    buffer[(rect.x, rect.y)].set_bg(OWN);
+                    buffer[(rect.x + 1, rect.y)].set_bg(ground);
+                })
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    };
+    let cells = |buffer: &ratatui::buffer::Buffer, info: &PaneInfo| {
+        let rect = info.inner_rect;
+        [
+            (rect.x, rect.y),
+            (rect.x + 1, rect.y),
+            (rect.x + 2, rect.y + 1),
+        ]
+        .map(|at| buffer[at].bg)
+    };
+
+    let (ws, mut chrome) = scripted();
+    chrome.compute_view(&ws, Rect::new(0, 0, 120, 40));
+    let host = Some((0x1e, 0x1e, 0x2e));
+    for theme in [
+        Theme::named(ThemeName::Restored, ThemeKind::Dark),
+        Theme::named(ThemeName::Moss, ThemeKind::Light),
+        Theme::hosted(ThemeName::Restored, ThemeKind::Dark, host),
+    ] {
+        let case = format!("{:?} hosted={}", theme.kind, theme.hosted);
+        chrome.palette = theme.palette();
+        chrome.theme = theme;
+        let buffer = draw_painted(&ws, &chrome);
+        let ground = chrome.palette.panel_bg;
+        let focused = info_of(&ws, &chrome, "term-beta");
+        let unfocused = info_of(&ws, &chrome, "term-alpha");
+        assert!(focused.is_focused && !unfocused.is_focused, "{case}");
+        assert_eq!(
+            cells(&buffer, &focused),
+            [OWN, ground, Color::Reset],
+            "{case}: the focused pane"
+        );
+        let expected = match chrome.palette.unfocused {
+            Some(fill) => [OWN, fill, fill],
+            None => [OWN, ground, Color::Reset],
+        };
+        assert_eq!(
+            chrome.palette.unfocused.is_none(),
+            chrome.theme.hosted,
+            "{case}"
+        );
+        assert_eq!(
+            cells(&buffer, &unfocused),
+            expected,
+            "{case}: the unfocused pane"
+        );
+        // The fill runs under the scrollbar lane, so no seam of ground.
+        if let Some(fill) = chrome.palette.unfocused {
+            let body = pane_layout::pane_inner_rect(unfocused.rect, unfocused.borders);
+            assert!(
+                body.right() > unfocused.inner_rect.right(),
+                "{case}: no lane"
+            );
+            for y in body.top()..body.bottom() {
+                let lane = &buffer[(body.right() - 1, y)];
+                assert_eq!(lane.bg, fill, "{case}: lane row {y}");
+            }
+        }
+    }
+
+    // A lone pane is never unfocused.
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut()
+        .set_roster(json!({"epoch": "e1", "seq": 1, "entries": []}));
+    ws.reconcile_subscribe_first().unwrap();
+    ws.open_terminal("term-alpha", "native", "epoch").unwrap();
+    let mut chrome = Chrome::dark();
+    let alpha = ws.pane_for_terminal("term-alpha").unwrap();
+    chrome.open_pane(alpha, "alpha");
+    chrome.compute_view(&ws, Rect::new(0, 0, 120, 40));
+    let buffer = draw_painted(&ws, &chrome);
+    let lone = info_of(&ws, &chrome, "term-alpha");
+    assert_eq!(
+        cells(&buffer, &lone),
+        [OWN, chrome.palette.panel_bg, Color::Reset],
+        "a lone pane"
+    );
+}

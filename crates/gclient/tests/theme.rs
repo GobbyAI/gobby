@@ -87,17 +87,22 @@ fn tokens_match_design_contract_and_survive_monochrome() {
 
         // Every herdr palette name resolves to a contract token.
         let entries = Palette::entries(theme);
-        assert_eq!(entries.len(), 20);
+        assert_eq!(entries.len(), 23);
         for (name, token) in entries {
-            assert!(
-                [
+            let hues: &[u16] = if name == "model" {
+                // The model-line board's slate teal and clay.
+                &[200, 30]
+            } else {
+                &[
                     BRAND_HUE,
                     INFO_HUE,
                     WARNING_HUE,
                     DESTRUCTIVE_HUE,
-                    IDENTIFIER_HUE
+                    IDENTIFIER_HUE,
                 ]
-                .contains(&token.hue),
+            };
+            assert!(
+                hues.contains(&token.hue),
                 "{kind:?} {name} hue {}",
                 token.hue
             );
@@ -271,7 +276,14 @@ fn tokens_match_design_contract_and_survive_monochrome() {
         assert_eq!(tt.palette[2], Some(theme.success.rgb_color()));
         assert_eq!(tt.palette[3], Some(theme.warning.rgb_color()));
         assert_eq!(tt.palette[4], Some(theme.info.rgb_color()));
-        assert_eq!(tt.palette[10], Some(theme.accent.rgb_color()));
+        // Light's bright green is the success green, which keeps its floor
+        // on the unfocused pane fill; bright black is overlay1 (#23416).
+        let bright_green = match kind {
+            ThemeKind::Dark => theme.accent,
+            ThemeKind::Light => theme.success,
+        };
+        assert_eq!(tt.palette[10], Some(bright_green.rgb_color()));
+        assert_eq!(tt.palette[8], Some(theme.neutrals.overlay1.rgb_color()));
         assert!(tt.palette[..16].iter().all(Option::is_some));
     }
 }
@@ -287,7 +299,7 @@ fn palette_entries_bind_the_same_tokens_the_render_paints_with() {
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
         let theme = Theme::new(kind);
         let palette = theme.palette();
-        assert_eq!(Palette::entries(&theme).len(), 20);
+        assert_eq!(Palette::entries(&theme).len(), 23);
         for (name, token) in Palette::entries(&theme) {
             let painted = match name {
                 "accent" => palette.accent,
@@ -310,6 +322,9 @@ fn palette_entries_bind_the_same_tokens_the_render_paints_with() {
                 "glint" => palette.glint,
                 "dim" => palette.dim,
                 "identifier" => palette.identifier,
+                "band" => palette.band,
+                "selection" => palette.selection,
+                "model" => palette.model,
                 // Every new role has to be bound here, or a capture
                 // would silently fall back to naming it by raw colour value.
                 other => panic!("{kind:?} palette role {other} has no field in this map"),
@@ -386,7 +401,8 @@ fn identifier_is_the_board_violet_and_reads_as_aa_text_on_every_surface() {
 }
 
 /// Loading prefs (startup and Reload config) draws the saved theme in the
-/// saved appearance, never the theme the chrome held before.
+/// saved appearance, never the theme the chrome held before. A saved theme
+/// Light does not offer draws Restored and stays saved.
 #[test]
 fn applying_prefs_draws_the_saved_theme_in_the_saved_appearance() {
     for name in ThemeName::ALL {
@@ -396,7 +412,12 @@ fn applying_prefs_draws_the_saved_theme_in_the_saved_appearance() {
             palette: name,
             ..ClientPrefs::default()
         });
-        assert_eq!(chrome.theme.name, name);
+        let drawn = if name.offered(ThemeKind::Light, false) {
+            name
+        } else {
+            ThemeName::Restored
+        };
+        assert_eq!(chrome.theme.name, drawn, "{name:?}");
         assert_eq!(chrome.theme.kind, ThemeKind::Light);
         assert_eq!(chrome.prefs.palette, name);
     }

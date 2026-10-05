@@ -382,18 +382,19 @@ parity_tests! {
 
             let workspace_x = find_symbol_x(&terminal, body.y, body.width, "p");
             let workspace_style = style_at(&terminal, workspace_x, body.y);
-            assert_eq!(workspace_style.fg, Some(p.text));
+            assert_eq!(workspace_style.fg, Some(p.selection_ink.ink(p.text)));
             assert!(workspace_style.add_modifier.contains(Modifier::BOLD));
             assert!(!workspace_style.add_modifier.contains(Modifier::DIM));
-            assert_eq!(workspace_style.bg, Some(p.surface0));
+            assert_eq!(workspace_style.bg, Some(p.selection));
 
             let agent_x = find_symbol_x(&terminal, body.y + 1, body.width, "N");
             let agent_style = style_at(&terminal, agent_x, body.y + 1);
-            // Secondary text is subtext0 on every ground (#23280 Option B).
-            assert_eq!(agent_style.fg, Some(p.subtext0));
+            // Secondary text is subtext0 on every ground (#23280 Option B),
+            // inked for the selection fill the active row sits on (#23416).
+            assert_eq!(agent_style.fg, Some(p.selection_ink.ink(p.subtext0)));
             assert!(!agent_style.add_modifier.contains(Modifier::DIM));
             assert!(!agent_style.add_modifier.contains(Modifier::BOLD));
-            assert_eq!(agent_style.bg, Some(p.surface0));
+            assert_eq!(agent_style.bg, Some(p.selection));
         }
 
         fn occurrence_false_removes_default_workspace_bold_and_agent_dim() {
@@ -435,12 +436,12 @@ parity_tests! {
             let p = palette();
 
             // #23280 Option B: project names are bold accent in every state,
-            // so the active card is told apart by its surface0 fill.
+            // so the active card is told apart by the selection fill (#23416).
             let active = style_at(&terminal, find_symbol_x(&terminal, first_row, 25, "o"), first_row);
-            assert_eq!(active.fg, Some(p.accent));
+            assert_eq!(active.fg, Some(p.selection_ink.ink(p.accent)));
             assert!(active.add_modifier.contains(Modifier::BOLD));
             assert!(!active.add_modifier.contains(Modifier::DIM));
-            assert_eq!(active.bg, Some(p.surface0));
+            assert_eq!(active.bg, Some(p.selection));
 
             let inactive = style_at(&terminal, find_symbol_x(&terminal, second_row, 25, "t"), second_row);
             assert_eq!(inactive.fg, Some(p.accent));
@@ -468,10 +469,10 @@ parity_tests! {
 
             for style in [h, i] {
                 // herdr: the configured `#abcdef`.
-                assert_eq!(style.fg, Some(p.text));
+                assert_eq!(style.fg, Some(p.selection_ink.ink(p.text)));
                 assert!(style.add_modifier.contains(Modifier::BOLD));
                 assert!(!style.add_modifier.contains(Modifier::DIM));
-                assert_eq!(style.bg, Some(p.surface0));
+                assert_eq!(style.bg, Some(p.selection));
             }
         }
 

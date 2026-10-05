@@ -139,7 +139,12 @@ fn observable_state(fixture: &LiveMenuFixture) -> String {
         fixture.chrome.toasts.len(),
         fixture.chrome.alert_log.len(),
         fixture.chrome.tabs().tabs.len(),
-    ) + &format!(":{:?}", fixture.chrome.focused_pane())
+    ) + &format!(
+        ":{:?}:{:?}:{:?}",
+        fixture.chrome.focused_pane(),
+        fixture.chrome.theme.name,
+        fixture.chrome.prefs.palette,
+    )
 }
 
 #[test]
@@ -234,7 +239,7 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
         labels(MenuBarMenu::View),
         [
             "  Appearance: Dark ▸",
-            "  Theme: Classic ▸",
+            "  Theme: Restored ▸",
             "  Monochrome",
             "  Sidebar ▸"
         ]

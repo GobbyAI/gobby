@@ -1,47 +1,47 @@
 # gclient screen golden: pane_edges
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
-00 : bar_ink/bar+b*120
+00 : subtext0/surface0+b*120
 01 |                                                                                                                        |
 01 : text/panel_bg*120
 02 | alpha      │ +                                                                                                         |
-02 : text/surface1+b*12 line/surface0*1 overlay1/surface0*3 text/surface0*104
+02 : text/selection+b*12 line/surface0*1 overlay1/surface0*3 text/surface0*104
 03 |┌ ○ #1742: Codex ───────────────────────────────────────────────────────────────────────────────────────────── gclient ┐|
 03 : overlay0/panel_bg*120
 04 |│                                                                                                                      │|
-04 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+04 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 05 |│                                                                                                                      │|
-05 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+05 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 06 |│                                                                                                                      │|
-06 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+06 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 07 |│                                                                                                                      │|
-07 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+07 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 08 |│                                                                                                                      │|
-08 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+08 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 09 |│                                                                                                                      │|
-09 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+09 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 10 |│                                                                                                                      │|
-10 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+10 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 11 |│                                                                                                                      │|
-11 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+11 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 12 |│                                                 waiting for frames                                                   │|
-12 : overlay0/panel_bg*1 text/panel_bg*49 overlay0/panel_bg*18 text/panel_bg*51 overlay0/panel_bg*1
+12 : overlay0/panel_bg*1 text/unfocused*49 overlay0/unfocused*18 text/unfocused*51 overlay0/panel_bg*1
 13 |│                                                                                                                      │|
-13 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+13 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 14 |│                                                                                                                      │|
-14 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+14 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 15 |│                                                                                                                      │|
-15 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+15 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 16 |│                                                                                                                      │|
-16 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+16 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 17 |│                                                                                                                      │|
-17 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+17 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 18 |│                                                                                                                      │|
-18 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+18 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 19 |│                                                                                                                      │|
-19 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+19 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 20 |│                                                                                                                      │|
-20 : overlay0/panel_bg*1 text/panel_bg*118 overlay0/panel_bg*1
+20 : overlay0/panel_bg*1 text/unfocused*118 overlay0/panel_bg*1
 21 |├ ○ term-bet · Focused ────────────────────────────────────────────────────────────────────────────────────────────────┤|
 21 : accent/panel_bg*1 accent/panel_bg+b*22 accent/panel_bg*97
 22 |│                                                                                                                      │|

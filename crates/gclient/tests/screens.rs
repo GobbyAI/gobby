@@ -645,11 +645,12 @@ fn render(ws: &Workspace, chrome: &mut Chrome) -> Terminal<TestBackend> {
 }
 
 /// `Palette::entries` resolved to the colours the render actually paints
-/// with, then the chrome's own fields no herdr name covers: the bar and its
-/// inks, the line and the wordmark. Those come after the entries, so where
-/// one repeats a token (`bar_open_ink` is the dark `surface_dim`) the
-/// capture keeps naming the entry. A monochrome chrome paints each token at
-/// its own lightness with no chroma, so its roles are those grays.
+/// with, then the chrome's own fields no herdr name covers: the inks on the
+/// header and selection fills, the unfocused pane fill, the line and the
+/// wordmark. Those come after the entries, so where one repeats a token (an
+/// ink is usually the theme's own `text`) the capture keeps naming the
+/// entry. A monochrome chrome paints each token at its own lightness with no
+/// chroma, so its roles are those grays.
 fn roles(chrome: &Chrome) -> Vec<(&'static str, Color)> {
     let palette = &chrome.palette;
     let monochrome = chrome.prefs.monochrome;
@@ -667,12 +668,11 @@ fn roles(chrome: &Chrome) -> Vec<(&'static str, Color)> {
             (name, token.color())
         })
         .chain([
-            ("bar", palette.bar),
-            ("bar_ink", palette.bar_ink),
-            ("bar_open_ink", palette.bar_open_ink),
-            ("line", palette.line),
-            ("wordmark", palette.wordmark),
+            ("band_ink", palette.band_ink.text),
+            ("selection_ink", palette.selection_ink.text),
         ])
+        .chain(palette.unfocused.map(|fill| ("unfocused", fill)))
+        .chain([("line", palette.line), ("wordmark", palette.wordmark)])
         .collect()
 }
 
@@ -884,9 +884,9 @@ fn agent_rows_golden() {
         .lines()
         .find(|line| line.starts_with("11 :"))
         .expect("model slug style");
-    // The model is secondary text in subtext0, never dimmed (#23280 Option B).
-    assert!(slug_style.contains("subtext0/panel_bg*5"), "{slug_style}");
-    assert!(!slug_style.contains("subtext0/panel_bg+d"), "{slug_style}");
+    // The model takes the theme's model colour, never dimmed (#23416).
+    assert!(slug_style.contains("model/panel_bg*5"), "{slug_style}");
+    assert!(!slug_style.contains("model/panel_bg+d"), "{slug_style}");
 }
 
 #[test]

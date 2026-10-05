@@ -4,7 +4,7 @@
 
 use crate::app::{Pane, PaneId};
 use crate::theme::Palette;
-use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
+use crate::ui::chrome::{Chrome, WorkspaceView};
 use crate::ui::hit::Hit;
 use crate::ui::marks::{self, MarkPalette};
 use crate::ui::pane_chrome::{
@@ -18,7 +18,7 @@ use crate::ui::text::{display_width, truncate_end};
 use gobby_terminal::layout::ScrollMetrics;
 use gobby_terminal::selection::Selection;
 use ratatui::layout::{Alignment, Direction, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Borders, Paragraph};
 use ratatui::Frame;
@@ -80,7 +80,6 @@ pub fn render_panes<W: WorkspaceView>(
         return;
     };
     let multi_pane = tab.layout.pane_count() > 1;
-    let terminal_active = chrome.mode == Mode::Terminal;
 
     let mut resolved: Vec<PaneInfo> = Vec::with_capacity(chrome.view.pane_infos.len());
     let mut labels: Vec<PaneCorners> = Vec::with_capacity(chrome.view.pane_infos.len());
@@ -95,11 +94,9 @@ pub fn render_panes<W: WorkspaceView>(
         let metrics =
             pane_layout::metrics_for(pane.scroll_offset, pane.max_scroll, info.inner_rect.height);
         let mut info = info.clone();
-        info.scrollbar_rect = pane_layout::scrollbar_gutter(
-            pane_layout::pane_inner_rect(info.rect, info.borders),
-            chrome.prefs.pane_scrollbars,
-            metrics,
-        );
+        let body = pane_layout::pane_inner_rect(info.rect, info.borders);
+        info.scrollbar_rect =
+            pane_layout::scrollbar_gutter(body, chrome.prefs.pane_scrollbars, metrics);
 
         content(frame, info.inner_rect, pane_id);
         render_pane_note(frame, info.inner_rect, pane, &chrome.palette);
@@ -112,14 +109,20 @@ pub fn render_panes<W: WorkspaceView>(
         }
         render_pane_scrollbar(frame, &info, metrics, &chrome.palette, pane.scrolled_at);
 
-        let should_dim = !info.is_focused && multi_pane && !terminal_active;
-        if should_dim {
-            let inner = info.inner_rect;
+        // Dark and Light set an unfocused pane on its own fill, a step off
+        // the ground, with its text at full colour; System marks focus by
+        // the border alone. The fill runs under the scrollbar lane too, and
+        // cells the pane painted itself keep their own.
+        let unfocused = chrome.palette.unfocused;
+        if let Some(fill) = unfocused.filter(|_| !info.is_focused && multi_pane) {
+            let ground = chrome.palette.panel_bg;
             let buf = frame.buffer_mut();
-            for y in inner.y..inner.y + inner.height {
-                for x in inner.x..inner.x + inner.width {
+            for y in body.top()..body.bottom() {
+                for x in body.left()..body.right() {
                     let cell = &mut buf[(x, y)];
-                    cell.set_style(cell.style().add_modifier(Modifier::DIM));
+                    if cell.bg == Color::Reset || cell.bg == ground {
+                        cell.bg = fill;
+                    }
                 }
             }
         }

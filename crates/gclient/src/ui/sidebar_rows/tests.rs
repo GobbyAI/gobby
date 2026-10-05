@@ -204,8 +204,8 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
         .spans
         .iter()
         .all(|span| !span.style.add_modifier.contains(Modifier::DIM)));
-    // The model is secondary text in every palette, grays included, and
-    // never takes a state hue (#23280 Option B).
+    // The model takes the theme's model colour in every palette, grays
+    // included, and never a state hue (#23416's model-line board).
     let mut mono = Chrome::dark();
     mono.prefs.monochrome = true;
     mono.set_theme(ThemeKind::Dark);
@@ -214,7 +214,7 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
     for chrome in [Chrome::dark(), light, mono] {
         let p = &chrome.palette;
         let model = row_third_line(&rows[0], 34, &chrome).spans[1].style.fg;
-        assert_eq!(model, Some(p.subtext0));
+        assert_eq!(model, Some(p.model));
         assert!(model != Some(p.text) && model != Some(p.overlay1));
     }
     assert_eq!(rows[1].model_slug, "gpt-5");
@@ -734,13 +734,13 @@ fn option_b_chromes() -> Vec<(&'static str, Chrome)> {
 
 /// #23280 item 4, Josh's approved Option B board: project names are bold
 /// accent, refs and branches take the identifier hue, names and the live
-/// task are text, and everything secondary is subtext0. No text is drawn in
-/// overlay0 or overlay1, which fail AA on the sidebar's grounds.
+/// task are text, the model line takes the theme's model colour (#23416),
+/// and everything else secondary is subtext0. No text is drawn in overlay0
+/// or overlay1, which fail AA on the sidebar's grounds.
 #[test]
 fn sidebar_rows_paint_the_option_b_roles() {
     for (case, chrome) in option_b_chromes() {
         let p = chrome.palette;
-        let light = chrome.theme.kind == ThemeKind::Light;
         let project = SidebarRow {
             id: "proj-gobby".into(),
             label: "gobby".into(),
@@ -759,8 +759,9 @@ fn sidebar_rows_paint_the_option_b_roles() {
         assert_role(&line, " ↓1", p.subtext0, false, case);
         assert_role(&line, ")", p.subtext0, false, case);
 
-        // Light accent on the selection fill is 4.02:1, under AA, so a
-        // selected project name falls back to bold text in light only.
+        // A selected project name is accent too; the sidebar re-inks it on
+        // the selection fill, where accent may fall under AA
+        // (`sidebar::tests::agent_quiet_lines_meet_aa_on_every_row_fill`).
         let selected = SidebarRow {
             id: "proj-site".into(),
             label: "gobby-site".into(),
@@ -770,20 +771,8 @@ fn sidebar_rows_paint_the_option_b_roles() {
             ..project.clone()
         };
         let line = row_line(&selected, 30, &chrome, 0);
-        let selected_name = if light { p.text } else { p.accent };
-        assert_role(&line, "gobby-site", selected_name, true, case);
+        assert_role(&line, "gobby-site", p.accent, true, case);
         assert_role(&line, "main", p.identifier, false, case);
-        let quiet = SidebarRow {
-            selected: false,
-            ..selected
-        };
-        assert_role(
-            &row_line(&quiet, 30, &chrome, 0),
-            "gobby-site",
-            p.accent,
-            true,
-            case,
-        );
 
         let worktree = SidebarRow {
             id: "wt-chrome".into(),
@@ -816,7 +805,7 @@ fn sidebar_rows_paint_the_option_b_roles() {
         assert_role(&second, "Working task 23280", p.text, false, case);
         assert_role(&second, " gclient", p.subtext0, false, case);
         let third = row_third_line(&agent, 30, &chrome);
-        assert_role(&third, "claude-opus-5.5-high", p.subtext0, false, case);
+        assert_role(&third, "claude-opus-5.5-high", p.model, false, case);
 
         let idle = SidebarRow {
             definition: "Codex".into(),
@@ -835,7 +824,7 @@ fn sidebar_rows_paint_the_option_b_roles() {
         let second = row_second_line(&idle, 30, &chrome);
         assert_role(&second, "No assigned task", p.subtext0, false, case);
         let third = row_third_line(&idle, 30, &chrome);
-        assert_role(&third, "gpt-5-codex-high", p.subtext0, false, case);
+        assert_role(&third, "gpt-5-codex-high", p.model, false, case);
 
         let machine = SidebarRow {
             kind: RowKind::Machine,

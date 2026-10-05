@@ -373,31 +373,71 @@ pub(super) fn appearance_items(chrome: &Chrome) -> Vec<MenuItem> {
 
 /// Each named theme, in `ThemeName::ALL` order, with its View row and its
 /// marked and plain choice.
-const THEMES: [(ThemeName, &str, (&str, &str)); ThemeName::ALL.len()] = [(
-    ThemeName::Classic,
-    "  Theme: Classic ▸",
-    ("● Classic", "  Classic"),
-)];
+const THEMES: [(ThemeName, &str, (&str, &str)); ThemeName::ALL.len()] = [
+    (
+        ThemeName::Restored,
+        "  Theme: Restored ▸",
+        ("● Restored", "  Restored"),
+    ),
+    (ThemeName::Moss, "  Theme: Moss ▸", ("● Moss", "  Moss")),
+    (
+        ThemeName::YourProposal,
+        "  Theme: Your proposal ▸",
+        ("● Your proposal", "  Your proposal"),
+    ),
+    (
+        ThemeName::Staircase,
+        "  Theme: Staircase ▸",
+        ("● Staircase", "  Staircase"),
+    ),
+    (
+        ThemeName::InverseBar,
+        "  Theme: Inverse bar ▸",
+        ("● Inverse bar", "  Inverse bar"),
+    ),
+    (
+        ThemeName::GobbyBar,
+        "  Theme: Gobby bar ▸",
+        ("● Gobby bar", "  Gobby bar"),
+    ),
+    (
+        ThemeName::ContrastChrome,
+        "  Theme: Contrast chrome ▸",
+        ("● Contrast chrome", "  Contrast chrome"),
+    ),
+    (
+        ThemeName::MossChrome,
+        "  Theme: Moss chrome ▸",
+        ("● Moss chrome", "  Moss chrome"),
+    ),
+    (
+        ThemeName::MossBand,
+        "  Theme: Moss band ▸",
+        ("● Moss band", "  Moss band"),
+    ),
+    (ThemeName::Ink, "  Theme: Ink ▸", ("● Ink", "  Ink")),
+    (
+        ThemeName::HostMatched,
+        "  Theme: Host-matched ▸",
+        ("● Host-matched", "  Host-matched"),
+    ),
+];
 
-/// The View menu's theme row, naming the theme in force.
+/// The theme drawn, which is Restored where the saved one is not offered.
 pub(in crate::app::live_loop) fn theme_row_label(chrome: &Chrome) -> &'static str {
     THEMES
         .iter()
-        .find(|(name, ..)| *name == chrome.prefs.palette)
+        .find(|(name, ..)| *name == chrome.theme.name)
         .map_or(THEMES[0].1, |(_, row, _)| row)
 }
 
-/// Every named theme; each draws in the appearance in force.
+/// Only the themes offered where the chrome draws now.
 pub(super) fn theme_items(chrome: &Chrome) -> Vec<MenuItem> {
+    let theme = &chrome.theme;
     THEMES
         .iter()
-        .map(|(name, _, labels)| {
-            choice(
-                *labels,
-                *name == chrome.prefs.palette,
-                MenuAction::SetTheme(*name),
-            )
-        })
+        .filter(|(name, ..)| name.offered(theme.kind, theme.hosted))
+        .map(|(name, _, labels)| choice(*labels, *name == theme.name, MenuAction::SetTheme(*name)))
         .collect()
 }
 

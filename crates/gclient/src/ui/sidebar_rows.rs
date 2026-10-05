@@ -10,7 +10,7 @@
 //! whole before the name truncates.
 
 use crate::app::sidebar_model::ProjectEntry;
-use crate::theme::{Palette, ThemeKind};
+use crate::theme::Palette;
 use crate::ui::chrome::{terminal_address, Chrome, RowState, WorkspaceView};
 use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar::machine_admits;
@@ -304,7 +304,7 @@ pub(crate) fn row_line_with_scrolling<'a>(
     let (glyph, glyph_color) = state_dot(row.state, p);
     let glyph = (glyph, Style::default().fg(glyph_color));
     let marker_style = if row.selected {
-        Style::default().fg(p.accent).bg(p.surface1)
+        Style::default().fg(p.accent).bg(p.selection)
     } else {
         Style::default()
     };
@@ -321,15 +321,9 @@ pub(crate) fn row_line_with_scrolling<'a>(
     let title_style = emphasis(Style::default().fg(p.text));
     let identifier_style = Style::default().fg(p.identifier);
     let secondary_style = Style::default().fg(p.subtext0);
-    // Project names are bold accent. Light accent on the selection fill is
-    // 4.02:1, under AA, so a selected one falls back to text there.
-    let project_style = Style::default()
-        .fg(if row.selected && chrome.theme.kind == ThemeKind::Light {
-            p.text
-        } else {
-            p.accent
-        })
-        .add_modifier(Modifier::BOLD);
+    // Project names are bold accent; on the selection fill the sidebar
+    // re-inks them to the theme's fallback wherever accent falls under AA.
+    let project_style = Style::default().fg(p.accent).add_modifier(Modifier::BOLD);
     let prefix_style = Style::default().fg(p.overlay0);
     let marker = if row.selected { "▸" } else { " " };
     let mut spans = vec![Span::styled(marker, marker_style)];
@@ -691,11 +685,11 @@ pub fn row_third_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> L
     let budget = usize::from(width).saturating_sub(indent);
     Line::from(vec![
         Span::raw(" ".repeat(indent.min(usize::from(width)))),
-        // The slug names the provider's family itself (`claude-…`, `gpt-…`);
-        // it sits a neutral tier below the title so no state hue is borrowed.
+        // The theme's model colour, a muted hue no state uses (the
+        // model-line board, #23416).
         Span::styled(
             truncate_end(&row.model_slug, budget),
-            Style::default().fg(chrome.palette.subtext0),
+            Style::default().fg(chrome.palette.model),
         ),
     ])
 }

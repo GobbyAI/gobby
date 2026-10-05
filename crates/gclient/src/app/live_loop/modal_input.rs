@@ -401,10 +401,16 @@ fn step_settings_row<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, delta: isize
             chrome.set_theme(kind);
         }
         SettingsRow::Theme => {
-            let names = ThemeName::ALL;
+            // Steps through the themes offered where the chrome draws now,
+            // from the one drawn.
+            let theme = &chrome.theme;
+            let names: Vec<ThemeName> = ThemeName::ALL
+                .into_iter()
+                .filter(|name| name.offered(theme.kind, theme.hosted))
+                .collect();
             let index = names
                 .iter()
-                .position(|name| *name == prefs.palette)
+                .position(|name| *name == theme.name)
                 .unwrap_or(0);
             let next = (index as isize + delta).rem_euclid(names.len() as isize) as usize;
             prefs.palette = names[next];
@@ -610,14 +616,18 @@ mod tests {
     }
 
     #[test]
-    fn theme_setting_cycles_every_theme_and_keeps_the_appearance() {
+    fn theme_setting_cycles_the_offered_themes_and_keeps_the_appearance() {
         let ws = Workspace::scripted();
         let mut chrome = Chrome::dark();
         chrome.settings.selected = SettingsRow::ALL
             .iter()
             .position(|row| *row == SettingsRow::Theme)
             .expect("theme row");
-        let names = ThemeName::ALL;
+        let names: Vec<ThemeName> = ThemeName::ALL
+            .into_iter()
+            .filter(|name| name.offered(crate::theme::ThemeKind::Dark, false))
+            .collect();
+        assert!(!names.contains(&ThemeName::Ink), "Ink is System only");
         for step in 1..=names.len() {
             step_settings_row(&ws, &mut chrome, 1);
             let name = names[step % names.len()];
@@ -632,5 +642,12 @@ mod tests {
             names[names.len() - 1],
             "back past the first"
         );
+
+        // A saved theme this appearance does not offer steps on from
+        // Restored, the theme drawn in its place.
+        chrome.prefs.palette = ThemeName::Ink;
+        chrome.set_theme(crate::theme::ThemeKind::Dark);
+        step_settings_row(&ws, &mut chrome, 1);
+        assert_eq!(chrome.prefs.palette, names[1]);
     }
 }
