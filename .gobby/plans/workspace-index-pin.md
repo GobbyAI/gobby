@@ -24,6 +24,11 @@ or mismatched ancestor paths become explicit child indexing gaps. A selected com
 with no matching live indexed checkout has no inherited rows and uses the cold path.
 Ask continues to read the caller's live index; its commit IDs do not select an index.
 
+The pin governs every read lane, including graph and vector, and remains a
+content-GC root until the child overlay is purged. When a source projection moves,
+stale graph and vector rows are excluded immediately, and the existing
+projection-sync lifecycle materializes only the missing pinned paths for the child.
+
 ## R2 Constraints and evidence
 `kind: framing`
 
@@ -33,10 +38,43 @@ Memory 9644c698 requires a load-matched comparison before attributing a slowdown
 to host load. Memory f1e1200c requires reused worktree conflicts to preserve
 continuation ancestry and return a recoverable error.
 
-The current checkout has migration 458 as its head. A read-only `git for-each-ref`
-and `git ls-tree` sweep checked all 432 refs on 2026-10-04 UTC and found maximum
-migration 458. Reserve `459_code_overlay_pins.sql` for this plan; if another
-migration lands first, use the next free number after repeating the all-ref sweep.
+Idle baseline, observed on #23433 at 2026-10-05 02:17 CDT (run
+`d50ddf68-0066-4ce2-b39f-316bdbc36b41`): a Claude worktree spawn with base branch
+`0.5.0`, forked at `084f759f15`, no other agents running, a healthy parent index at
+that commit, and no content difference from the indexed parent commit. The
+`spawn_agent` call took 33.9 s wall. `phase_timings_ms` recorded
+`code_index_status` 979 ms, `code_index_index` 7,064 ms,
+`code_index_search_content` 192 ms, `_preflight_srt` 1,234 ms, and every other
+timed phase under 100 ms; the timed phases sum to 9.7 s, leaving about 24 s in no
+timed phase. The daemon log timeline: 02:17:35 worktree start, 02:17:38 isolation
+sidecar written, 02:17:58 MCP config written, 02:18:08 SRT verification,
+02:18:09 Claude trust pre-approved and timings logged. The parent index's
+`last_indexed_at` advanced to 07:18:54 UTC, after the spawn.
+
+Attribution. The 7.064 s `code_index_index` on a zero-diff fork is this plan's
+defect against Josh's 2026-10-05 contract that a new worktree should "copy, clone,
+fork, or mirror" its fork commit's index: overlay reconcile runs full discovery,
+compares against the parent's moving HEAD and status, and runs community
+partitioning before its unchanged check (P3 and P4 remove each). The untimed 24 s
+falls before `phase_timings_ms` exists: `spawn_agent` prepares isolation
+before it creates the timing map (`src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`,
+observed by the enhancer with `gcode evidence`, excerpt hashes `77ee4ba3…` and
+`e4911299…`). Between the sidecar write and the MCP config write, isolation repair
+copies hooks, rewrites the marker, awaits the Python environment preseed, then
+writes MCP config (`src/gobby/agents/isolation_repair.py`, excerpt `aea53db5…`);
+the preseed runs `uv sync --offline --frozen --link-mode copy`
+(`src/gobby/agents/python_env_seed.py`, excerpt `e612a216…`). The 20 s gap is
+therefore most plausibly Python environment seeding, and worktree creation
+explains most of the preceding 3 s. That attribution is inferred from source and
+log order, not measured; this plan measures it. Attributing isolation cost is in
+scope. Optimizing Python environment seeding is outside this index-pin plan.
+
+The current checkout has migration 458 as its head. Observed 2026-10-05:
+`git log --all --diff-filter=A --name-only --format= -- 'crates/gcore/assets/schema/migrations/459_*' 'crates/gcore/assets/schema/migrations/46*'`
+returned no files, so no ref adds 459 or later. The Orchestrator assigned 459 to
+#23439 (bigint session usage counters) and 460 to this plan:
+`460_code_overlay_pins.sql`. If another migration lands first, the executor
+repeats that all-ref sweep and takes the next free number.
 The migration source requires its catalog, grant, schema-contract, CLI-contract,
 and Python expected-identity carriers in the same deliverable.
 
@@ -48,46 +86,149 @@ before growth. Facts and entry points were checked with `gcode outline`, `gcode
 grep`, and the supplied 2026-10-04 research note. All checks below are planned
 unless explicitly marked observed.
 
-## P1: Select and record the fork commit
+## P1: Measure spawn isolation cost
 `kind: framing`
 
-### A1 Worktree ref selection and refresh
+### T1 Isolation subphase timing and wall residual
+`kind: deliverable`
+`category: code`
+`implementation_domain: backend`
+
+Targets:
+- `src/gobby/agents/spawn_timing.py::*` — scope-reason: add isolation phase keys, spawn wall time, and the unattributed residual
+- `src/gobby/agents/isolation_models.py::*` — scope-reason: SpawnConfig carries the spawn timing map into prepare_environment
+- `src/gobby/agents/isolation_repair.py::*` — scope-reason: time each repair step into the supplied timing map
+- `src/gobby/agents/isolation_worktree.py::*` — scope-reason: pass the SpawnConfig timing map into repair
+- `src/gobby/agents/isolation_clone.py::CloneIsolationHandler.prepare_environment`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_worktree_reuse.py::*` — scope-reason: reused-worktree repair records the same subphases
+- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::*` — scope-reason: create the timing map at entry and move isolation preparation out
+- `src/gobby/mcp_proxy/tools/spawn_agent/_isolation_prepare.py`
+- `src/gobby/agents/spawn_models.py::*` — scope-reason: SpawnRequest carries the spawn start for the wall residual
+- `src/gobby/mcp_proxy/tools/spawn_agent/_request.py::*` — scope-reason: pass the spawn start into SpawnRequest
+- `src/gobby/agents/spawn_executor.py::*` — scope-reason: the timing log computes wall time and residual
+- `tests/agents/test_spawn_isolation_timing.py`
+
+**Research context:** Observed with `gcode outline` and source reads on
+2026-10-05: `spawn_agent_impl`
+(`src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`) calls
+`handler.prepare_environment(spawn_config)` before it creates
+`phase_timings_ms`, so worktree creation and isolation repair never reach the
+spawn timing log. `repair_isolation_environment`
+(`src/gobby/agents/isolation_repair.py`) runs `_copy_cli_hooks`,
+`ensure_project_json_for_isolation`, `preseed_isolated_python_environment`
+(which runs `uv sync --offline --frozen --link-mode copy`),
+`_patch_mcp_config_for_isolation`, and `apply_isolation_git_hygiene`, in that
+order. Its callers are `WorktreeIsolationHandler` and `CloneIsolationHandler`
+(two calls each), `spawn_agent/_worktree_reuse.py`, and one reuse site inside
+`spawn_agent_impl`; `src/gobby/agents/isolation.py` only re-exports it.
+`complete_spawn_phase_timings` (`src/gobby/agents/spawn_timing.py`) emits only
+`SPAWN_PHASES` keys, and `spawn_executor.py` logs them in its `finally` block,
+timing only its own span. R2 records the idle baseline this deliverable
+explains: 33.9 s wall, 9.7 s timed, about 24 s untimed, with a 20 s gap between
+the isolation sidecar write and the MCP config write.
+
+Approach: create the timing map and record the spawn start at
+`spawn_agent_impl` entry. Carry the map on `SpawnConfig` as a new
+`phase_timings_ms` field with an empty default, so `prepare_environment` and
+every `repair_isolation_environment` call record into it through the existing
+`phase_timings_ms: MutableMapping[str, float] | None = None` idiom that
+`ensure_isolation_code_index` uses. New keys: `isolation_prepare` for the whole
+`prepare_environment` call, and its nested `isolation_hook_copy`,
+`isolation_project_marker`, `python_env_seed`, `isolation_mcp_config`, and
+`isolation_git_hygiene`. `SpawnRequest` gains the spawn start, and
+`complete_spawn_phase_timings` adds `spawn_wall` and `unattributed`:
+`unattributed` is wall time minus top-level phases, with the nested isolation
+subphases left out of the sum so no time counts twice. `_implementation.py` is
+912 lines, so move the isolation handler selection, the `prepare_environment`
+call, and the prepare-failure response out of `spawn_agent_impl` into the new
+`src/gobby/mcp_proxy/tools/spawn_agent/_isolation_prepare.py`, which also times
+`isolation_prepare`. This deliverable changes no isolation behavior and has no
+dependencies; it lands first so every later deliverable is measured against an
+attributed baseline. Rejected: deriving phases from log timestamps (neither
+structured nor testable) and a context variable for the timing map (hidden
+coupling where an explicit field already fits). Optimizing Python environment
+seeding is outside this plan.
+
+Planned checks: focused isolated pytest for
+`tests/agents/test_spawn_isolation_timing.py` and `tests/agents/test_isolation.py`,
+then one load-matched idle zero-diff Claude worktree spawn after landing whose
+subphase breakdown and residual are recorded on the T1 leaf.
+
+**Granularity:** Eleven production files change, but they carry one timing map
+through one spawn path; splitting them would land phase keys with no writer or
+writers with no log. The `_implementation.py` move is required by the
+1,000-line ceiling.
+
+**Acceptance:**
+
+- T1.1 - Spawn timing reports `isolation_prepare` and the five repair subphases for worktree, clone, and reused-worktree spawns. test: `tests/agents/test_spawn_isolation_timing.py::test_spawn_timing_attributes_isolation_repair`.
+- T1.2 - The timing log reports `spawn_wall` and an `unattributed` residual equal to wall time minus top-level phases, excluding nested subphases. test: `tests/agents/test_spawn_isolation_timing.py::test_idle_baseline_breakdown_is_complete`.
+- T1.3 - Prepare-failure responses are unchanged after the move, and `_implementation.py` stays below 1,000 lines. test: `tests/agents/test_spawn_isolation_timing.py::test_prepare_failure_response_unchanged_after_move`.
+
+## P2: Select and record the fork commit
+`kind: framing`
+
+### A1 Worktree ref selection and refresh (depends: T1)
 `kind: deliverable`
 `category: code`
 `implementation_domain: backend`
 
 Targets:
 - `src/gobby/worktrees/git/_lifecycle.py::create_worktree`
-- `src/gobby/worktrees/git/_branch.py::*` — scope-reason: consolidate branch and remote-tip resolution
 - `src/gobby/worktrees/base_branch.py::*` — scope-reason: validate explicit ref forms and selected commit
 - `src/gobby/worktrees/creation.py::*` — scope-reason: creation, cleanup, and result provenance share the selected commit
 - `src/gobby/agents/isolation_worktree.py::*` — scope-reason: preparation and cleanup share fork provenance
 - `src/gobby/agents/worktree_reuse.py::*` — scope-reason: refresh, conflict, and pin provenance share one continuation path
-- `src/gobby/build/workspace_services.py::*` — scope-reason: integration workspace creation and refresh use the same resolved commit
+- `src/gobby/mcp_proxy/tools/worktrees/_create.py::*` — scope-reason: omitted base selects the caller's HEAD and remote-style refs are accepted
+- `src/gobby/cli/worktrees.py::*` — scope-reason: CLI creation defaults to the caller's HEAD
+- `src/gobby/servers/routes/source_control_worktrees.py::*` — scope-reason: client worktree creation forks the exact selected commit
+- `src/gobby/hooks/event_handlers/_misc.py::*` — scope-reason: the worktree hook drops its clean-branch origin fallback
 - `tests/worktrees/test_fork_commit.py`
 - `tests/agents/test_worktree_fork_commit.py`
+- `tests/mcp_proxy/tools/test_worktrees_create.py::*` — scope-reason: omitted versus explicit base cases
+- `tests/hooks/test_misc_handlers.py::*` — scope-reason: hook exact-HEAD case
+- `tests/servers/test_source_control_worktrees.py`
 
-**Research context:** `create_worktree` currently defaults `base_branch` to main
-and may choose an origin tip; `WorktreeIsolationHandler.prepare_environment` has
-an unpushed-commit switch; `sync_reused_worktree_to_base` already returns a
-recoverable conflict. Resolve the selected commit once from the caller checkout,
-carry it through creation and refresh, and reject an existing branch whose tip
-would change the selection. The integration path must retain merged commits.
-Treat explicit local and remote refs distinctly: fetch only the remote ref.
-Planned check: isolated focused pytest for local HEAD, unpushed commits, explicit
-local/remote refs, mismatched existing branch, reuse conflict, and integration
-refresh.
+**Research context:** Agent spawns already select the caller's current branch
+and preserve unpushed commits: `src/gobby/agents/isolation_worktree.py` replaces
+a default `main` with the current branch and chooses the local ref when it has
+unpushed commits (enhancer `gcode evidence`, excerpt `1067bfea…`). The remaining
+clean-branch path in `src/gobby/worktrees/git/_lifecycle.py::create_worktree`
+fetches and selects `origin/<branch>` (excerpt `bf8e75ed…`). Direct MCP, CLI,
+and client-route creation still default to `main`, and the MCP surface in
+`src/gobby/mcp_proxy/tools/worktrees/_create.py` rejects remote-style refs
+(excerpt `beecb577…`). The worktree hook in
+`src/gobby/hooks/event_handlers/_misc.py` uses the current branch but falls back
+to origin when clean (excerpt `6b9c7c6c…`). `sync_reused_worktree_to_base`
+already returns a recoverable conflict.
 
-**Granularity:** These entry points share one selected-commit contract and one
-refresh outcome; splitting them would leave a creation path with different fork
-semantics. The two new test files cover the public and agent entry points.
+The default-path delta is to resolve the caller checkout's `HEAD^{commit}` once
+and pass that exact SHA through creation, eliminating the clean-branch fetch and
+its race. Bare explicit refs are local only; `origin/<name>` and
+`refs/remotes/origin/<name>` are explicit remote refs and fetch only that ref.
+Align the MCP, CLI, client-route, and hook surfaces with that rule while keeping
+an explicitly supplied local `main` distinguishable from an omitted base. Reuse
+the existing `get_local_commit` in `src/gobby/worktrees/git/_branch.py`
+unchanged; add no second branch-resolution abstraction. Reject an existing
+branch whose tip would change the selection. A reused agent worktree rebases
+onto the selected commit. Integration workspace refresh keeps its current
+merged-commit behavior and is re-pinned under B2. Planned check: isolated
+focused pytest for local HEAD, unpushed commits, explicit local and remote refs,
+mismatched existing branch, reuse conflict, and each public creation surface.
+
+**Granularity:** These entry points share one selected-commit contract;
+splitting them would leave a creation surface with different fork semantics.
+The seven acceptance items are one rule checked at each surface that applies it.
 
 **Acceptance:**
 
 - A1.1 - Default worktrees fork the caller's local HEAD without fetch, including unpushed commits. test: `tests/worktrees/test_fork_commit.py::test_default_uses_caller_head_without_fetch`.
 - A1.2 - Explicit local and remote refs resolve to one commit, with remote fetch only for remote selection. test: `tests/worktrees/test_fork_commit.py::test_explicit_refs_select_commit`.
 - A1.3 - Existing branches cannot silently change the selected commit. test: `tests/worktrees/test_fork_commit.py::test_existing_branch_mismatch_is_rejected`.
-- A1.4 - Reused worktrees rebase and report recoverable conflicts while integration refresh keeps merged commits. test: `tests/agents/test_worktree_fork_commit.py::test_refresh_preserves_workspace_ancestry`.
+- A1.4 - Reused worktrees rebase onto the selected commit and report recoverable conflicts. test: `tests/agents/test_worktree_fork_commit.py::test_refresh_preserves_workspace_ancestry`.
+- A1.5 - Public creation surfaces distinguish an omitted base, which uses the caller's HEAD, from an explicit local `main`. test: `tests/mcp_proxy/tools/test_worktrees_create.py::test_omitted_base_uses_project_head_and_explicit_main_stays_main`.
+- A1.6 - The worktree hook forks the exact local HEAD without an origin fallback. test: `tests/hooks/test_misc_handlers.py::TestWorktreeHandlers::test_worktree_create_uses_exact_local_head`.
+- A1.7 - Client worktree creation forks the exact selected commit. test: `tests/servers/test_source_control_worktrees.py::test_create_client_worktree_uses_exact_selected_commit`.
 
 ### A2 Local clone selection and Git module extraction (depends: A1)
 `kind: deliverable`
@@ -121,7 +262,7 @@ extraction's merge behavior.
 - A2.2 - Explicit local/remote clone refs select their resolved tips; external URL clones report a cold-index source. test: `tests/clones/test_fork_commit.py::test_clone_ref_sources`.
 - A2.3 - The extracted merge path preserves merge behavior and keeps the Git module below 1,000 lines. test: `tests/clones/test_fork_commit.py::test_extracted_merge_path`.
 
-## P2: Persist and read a pinned index
+## P3: Persist and read a pinned index
 `kind: framing`
 
 ### B1 Pin schema, marker, and clean Git blob selectors (depends: A1, A2)
@@ -130,7 +271,7 @@ extraction's merge behavior.
 `implementation_domain: backend`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/459_code_overlay_pins.sql`
+- `crates/gcore/assets/schema/migrations/460_code_overlay_pins.sql`
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: generated schema catalog entries change together
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: grant the exact pin-table read and write surface
 - `crates/gcore/tests/schema_contract.rs::*` — scope-reason: verify migration, constraints, and grants
@@ -149,8 +290,8 @@ machine, overlay project, and path with source project and content hash. Its FK
 must keep the source content version valid. Store `base_commit` and the ancestor
 checkout path/identity in the isolation marker, validating partial markers.
 Dirty or untracked content never receives a qualifying blob ID. Update every
-schema carrier with migration 459 (or the next free number after another all-ref
-sweep). Planned checks: schema contracts, marker tests, and `cargo test -p
+schema carrier with migration 460 (459 belongs to #23439; if another migration
+lands first, repeat the R2 all-ref sweep and take the next free number). Planned checks: schema contracts, marker tests, and `cargo test -p
 gobby-code` for selector writes.
 
 **Granularity:** Schema, grants, generated catalog, expected identity, marker,
@@ -177,6 +318,7 @@ Targets:
 - `src/gobby/agents/code_index.py::*` — scope-reason: preflight and pin invocation share one gcode runtime
 - `src/gobby/worktrees/creation.py::*` — scope-reason: direct creation and cleanup share pin lifecycle
 - `src/gobby/mcp_proxy/tools/_clones_creation.py::*` — scope-reason: pin after direct clone creation
+- `src/gobby/build/workspace_services.py::*` — scope-reason: integration workspace creation and refresh re-pin their merged commit
 - `crates/gcode/src/commands/pin/tests.rs`
 - `tests/agents/test_code_index_pin.py`
 
@@ -186,20 +328,35 @@ ID to `git ls-tree` at the selected commit and exclude ancestor dirty,
 untracked, ignored, and mismatched paths. Copy qualifying selectors into
 overlay-owned base rows and persist every tracked gap for child indexing. A
 matching live indexed checkout is required; an explicit ref without one starts
-with no inherited selectors. Run this step at every worktree and clone creation
-entry point and after reused-worktree rebase. Pin replacement must be atomic.
+with no inherited selectors. Pin replacement must be atomic.
+
+Each path has one pin owner. Agent worktree and clone creation and reuse write
+complete marker provenance under A1 and A2;
+`src/gobby/agents/code_index.py::ensure_isolation_code_index` is the single
+agent-path owner: it reads that marker and runs pin immediately before
+`gcode index`, including after a reused-worktree rebase. Direct worktree
+creation pins in `src/gobby/worktrees/creation.py`, direct clone creation pins
+in `src/gobby/mcp_proxy/tools/_clones_creation.py`, and integration workspace
+creation and refresh re-pin in `src/gobby/build/workspace_services.py`, keeping
+the integration workspace's merged commits. Individual isolation handlers never
+invoke pin. A failed pin never falls through to the moving parent's rows: it
+records a cold pin, with no inherited selectors, and the child indexes locally.
 Planned checks: Rust PostgreSQL tests for clean, stale, dirty, and nested-overlay
-selectors, plus focused Python call-path tests.
+selectors, plus focused Python call-path and pin-failure tests.
 
 **Granularity:** Pin selection and atomic replacement are one lifecycle
-transaction; the Python callers exercise that same command at creation.
+transaction; the Python callers exercise that same command at creation. Nine
+production files change because each creation path gets exactly one pin call;
+splitting callers from the command would ship a pin nothing invokes.
 
 **Acceptance:**
 
 - B2.1 - The pin copies clean effective selectors, including inherited rows from an author overlay, at the selected commit. test: `crates/gcode/src/commands/pin/tests.rs::pin_inherits_effective_selectors`.
 - B2.2 - Dirty, untracked, ignored, and mismatched files are excluded and tracked gaps persist for indexing. test: `crates/gcode/src/commands/pin/tests.rs::pin_records_only_safe_selectors_and_gaps`.
 - B2.3 - No matching live indexed checkout produces a cold pin; re-pin atomically replaces prior rows. test: `crates/gcode/src/commands/pin/tests.rs::pin_cold_and_replacement`.
-- B2.4 - All creation and reuse paths invoke pin with the resolved commit before child indexing. test: `tests/agents/test_code_index_pin.py::test_creation_paths_pin_selected_commit`.
+- B2.4 - Agent spawns pin from the marker in `ensure_isolation_code_index` immediately before `gcode index`, and isolation handlers never invoke pin. test: `tests/agents/test_code_index_pin.py::test_agent_preflight_pins_marker_before_index`.
+- B2.5 - A pin failure records a cold pin and indexes locally, never exposing moving-parent rows. test: `tests/agents/test_code_index_pin.py::test_pin_failure_forces_cold_index_without_parent_fallthrough`.
+- B2.6 - Direct worktree creation, direct clone creation, and integration refresh each pin the selected commit before returning, and integration refresh keeps its merged commits. test: `tests/agents/test_code_index_pin.py::test_direct_paths_pin_before_return`.
 
 ### B3 Scoped PostgreSQL and BM25 reads (depends: B2)
 `kind: deliverable`
@@ -252,12 +409,16 @@ Targets:
 
 **Research context:** Graph and vector projections currently hold only a source
 project's current per-path version. PostgreSQL facts become available before
-projection completion. Filter existing source projection results to pinned IDs;
-if a source projection moved, queue re-projection of only those pinned paths into
-the child overlay. Keep text and BM25 search available with an explicit degraded
-projection state during recovery. Planned check: Rust projection tests that move
-one ancestor path, verify immediate text reads, and observe eventual graph/vector
-recovery without rebuilding unchanged paths.
+projection completion. R1 makes graph and vector availability part of the pin
+contract, so filtering alone is incomplete: it prevents stale answers but loses
+graph and vector results once a parent projection moves. Filter existing source
+projection results to pinned IDs; if a source projection moved, submit the
+affected pinned paths through the existing idempotent projection-sync request
+for the child overlay, and introduce no new worker or queue. Keep text and BM25
+search available with an explicit degraded projection state during recovery.
+Planned check: Rust projection tests that move one ancestor path, verify
+immediate text reads, and observe eventual graph/vector recovery without
+rebuilding unchanged paths.
 
 **Granularity:** Projection reconciliation has one background lifecycle and two
 projection backends; shared recovery state keeps their failure handling coherent.
@@ -267,6 +428,7 @@ projection backends; shared recovery state keeps their failure handling coherent
 - B4.1 - Graph and vector results grant access only to source versions named by pins or child-owned selectors. test: `crates/gcode/src/cli/tests/projection.rs::projection_reads_respect_pin_versions`.
 - B4.2 - A moved source projection reprojects only affected pinned paths in background. test: `crates/gcode/src/projection/sync/tests.rs::reproject_only_moved_pinned_paths`.
 - B4.3 - PostgreSQL/BM25 remain usable while projections recover and search reports degraded state. test: `crates/gcode/src/cli/tests/projection.rs::text_search_survives_projection_recovery`.
+- B4.4 - Repeated reads while recovery is pending deduplicate the same child, path, and target work and never admit stale projection rows. test: `crates/gcode/src/projection/sync/tests.rs::pinned_recovery_reuses_idempotent_sync`.
 
 ### B5 Pin-aware retention and overlay purge (depends: B3)
 `kind: deliverable`
@@ -281,18 +443,23 @@ Targets:
 - `crates/gcode/src/commands/status/prune/tests.rs::*` — scope-reason: exercise overlay purge and source retention
 
 **Research context:** Old content versions currently age out after the normal
-unreferenced-content period. Treat any live child pin as a content reference,
-including when the source project is otherwise stale. Remove child pin rows when
-the child overlay is purged, then allow normal pruning on the next pass. Planned
-check: focused Rust PostgreSQL GC/prune tests for retained, released, and
-overlay-of-overlay versions.
+unreferenced-content period. R1 makes a live pin a content-GC root. Pins join the
+existing reachability predicate as a content reference, including when the
+source project is otherwise stale; add no new retention policy or TTL. Child
+purge deletes the child's pin rows inside the existing purge transaction, and
+normal pruning collects released versions on the next pass. In an
+overlay-of-overlay chain, purging an intermediate overlay must not collect a
+source version a live descendant still pins. Planned check: focused Rust
+PostgreSQL GC/prune tests for retained, released, and overlay-of-overlay
+versions.
 
 **Acceptance:**
 
 - B5.1 - Prune retains pinned versions and their source-project facts while any child pin exists. test: `crates/gcode/src/commands/status/content_gc/tests.rs::pinned_version_survives_prune`.
 - B5.2 - Child purge removes its pins and later prune can collect unreferenced source facts. test: `crates/gcode/src/commands/status/prune/tests.rs::purged_overlay_releases_pins`.
+- B5.3 - Purging an intermediate overlay cannot collect a source version still pinned by a live descendant. test: `crates/gcode/src/commands/status/prune/tests.rs::nested_pin_chain_preserves_source_version`.
 
-## P3: Make unchanged overlay indexing cheap
+## P4: Make unchanged overlay indexing cheap
 `kind: framing`
 
 ### C1 Candidate-only reconciliation and import resolution (depends: B2, B3)
@@ -340,17 +507,30 @@ Targets:
 - `tests/agents/test_code_overlay_index_timing.py`
 - `docs/guides/code-index.md`
 - `docs/guides/gcode-development-guide.md`
-- `docs/plans/gcode-ask-fix.md`
 
-**Research context:** The existing partition signature is computed after
-Leiden, so an early skip needs a separate fingerprint of its inputs. Persist
-and compare that fingerprint before `build_partition`; refresh when inputs
-change. Rename `code_index_index` to `code_overlay_index` in the spawn writer
-and phase catalog. Document pinned workspace semantics, the cold fallback,
-projection recovery, and Ask's live-index scope. Planned check: focused Rust
-community tests proving zero Leiden calls for unchanged inputs; Python phase
-tests; a measured pin, no-change and one-file overlay pass, and cold index
-against the 34.9 s and 71.6 s observations. The 2 s target is comparative.
+**Research context:** `refresh_project_communities`
+(`crates/gcode/src/communities.rs`) loads imports and runs `build_partition`
+before it compares the stored partition signature, so the existing signature is
+computed after Leiden and an early skip needs a separate fingerprint of the
+partition inputs. Persist and compare that fingerprint before `build_partition`;
+refresh when inputs change. Rejected (enhancer E5, Orchestrator ruling
+2026-10-05): seeding the child's communities from the ancestor at pin time and
+skipping refresh when C1 reports zero change. The existing Overlay
+`seed_from_parent` (`crates/gcode/src/db/communities.rs`) copies the parent's
+current partition, which can include dirty or moved-HEAD content, so a skip would
+serve communities that do not match the pinned inputs; the fingerprint is
+computed from the child's effective inputs and stays correct for cold and first
+runs. Rename `code_index_index` to `code_overlay_index` in the spawn writer
+(`src/gobby/agents/code_index.py`) and the `SPAWN_PHASES` catalog
+(`src/gobby/agents/spawn_timing.py`, which T1 already extends). Document pinned
+workspace semantics, the cold fallback, projection recovery, and Ask's
+live-index scope. Planned check: focused Rust community tests proving zero
+Leiden calls for unchanged inputs; Python phase tests; then a load-matched idle
+zero-diff spawn using T1's timing, reporting wall time, every named phase,
+isolation subphases, and the residual against R2's 33.9 s and 7.064 s baseline,
+plus measured pin, one-file overlay, and cold index passes against the 34.9 s and
+71.6 s observations. The 2 s target is comparative. No spawn improvement is
+claimed without that measured breakdown.
 
 **Granularity:** This deliverable closes the end-to-end performance contract;
 the fingerprint and named timing phase make the result independently measurable.
@@ -360,9 +540,35 @@ the fingerprint and named timing phase make the result independently measurable.
 - C2.1 - An unchanged index run performs no Leiden pass. test: `crates/gcode/src/communities/refresh_tests.rs::unchanged_inputs_skip_leiden`.
 - C2.2 - Spawn timing reports `code_overlay_index`. test: `tests/agents/test_code_overlay_index_timing.py::test_spawn_phase_uses_overlay_name`.
 - C2.3 - Guides state the workspace pin and Ask live-index contracts. file: `docs/guides/code-index.md`.
-- C2.4 - Pin, no-change, one-file, and cold measurements are recorded against the observed spawn timings. behavior: "benchmarked workspace indexing" in `docs/guides/gcode-development-guide.md`.
+- C2.4 - A load-matched zero-diff spawn records wall time, every named phase, isolation subphases, and the residual against the 33.9 s and 7.064 s idle baseline, and pin, one-file, and cold measurements are recorded against the 34.9 s and 71.6 s observations. behavior: "benchmarked workspace indexing" in `docs/guides/gcode-development-guide.md`.
 
-## V1 Verification and release
+## V1 Plan Changelog
+`kind: verification`
+
+- 2026-10-04: Initial draft under #23433 (`9c8ef7912f`), from the 2026-10-04
+  research note and Josh's 2026-10-05 design contract.
+- 2026-10-05: Enhancer pass for #23443 (Writer gobby#15400; run `f2fd1c3f`,
+  `plan-enhancer-taskless-old`). Five suggestions; the Orchestrator gobby#14972
+  accepted all as the Writer recommended. E1: B2 names one pin owner per path
+  (`ensure_isolation_code_index` for agent spawns, `creation.py`,
+  `_clones_creation.py`, and `workspace_services.py`, moved from A1), and a pin
+  failure forces a cold index (B2.4-B2.6). E2: A1 is rewritten against current
+  code, since agent spawns already fork the current branch with unpushed commits;
+  the delta is one exact `HEAD^{commit}` and aligned MCP, CLI, route, and hook
+  surfaces (A1.4 narrowed, A1.5-A1.7 added, `_branch.py` dropped). E3: R2 records
+  and attributes the #23433 idle baseline (7.064 s zero-diff `code_index_index`;
+  about 24 s untimed, most plausibly Python environment seeding during isolation
+  repair), and new first deliverable T1 measures isolation subphases and the wall
+  residual; C2.4 requires the measured breakdown. E4: R1 makes the pin govern
+  graph and vector reads and act as a GC root; B4 reuses the existing projection
+  sync request (B4.4) and B5 covers nested pin chains (B5.3). E5: the core
+  (pin-time community seeding with a zero-change skip) is rejected because
+  `seed_from_parent` copies the parent's current, possibly dirty partition; its
+  side edit drops `docs/plans/gcode-ask-fix.md` from C2. Migration renumbered
+  459 to 460 on the Orchestrator's ruling (459 belongs to #23439), after an
+  all-ref `git log --all --diff-filter=A` sweep found no 459 or later.
+
+## V2: Verification
 `kind: verification`
 
 Each behavior deliverable runs its focused isolated-hub pytest with
@@ -373,4 +579,7 @@ contract tests where Rust or DDL changed. Final checks include Ruff, mypy on
 Never run the full pytest suite. After crate changes, rebuild and promote the
 coherent Rust binary set with `promote_workspace_binary_set`; coordinate any
 daemon restart with a global notice and a quiet window. Record exact commands,
-results, and load-matched timings on the task deliverables.
+results, and load-matched timings on the task deliverables. T1 lands first; its
+idle zero-diff breakdown is the baseline, and no deliverable claims a spawn
+improvement without a load-matched breakdown (wall, named phases, isolation
+subphases, residual) against it.
