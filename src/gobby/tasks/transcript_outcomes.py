@@ -23,6 +23,7 @@ from gobby.tasks.command_equivalence import parse_validation_shell
 EvidenceOutcome = Literal["success", "failure", "unknown"]
 
 _EXIT_CODE_KEYS = ("exit_code", "exitCode")
+_ERROR_EXIT_HEADER = re.compile(r"Exit code (-?\d+)")
 _SUCCESS_STATUSES = {"completed", "ok", "passed", "success", "succeeded"}
 _FAILURE_STATUSES = {"error", "failed", "failure"}
 _OUTPUT_CHAR_LIMIT = 16_000
@@ -326,11 +327,24 @@ def _find_exit_code(result: Any) -> int | None:
         if not isinstance(value, dict):
             continue
         metadata = extract_result_metadata("bash", value)
-        candidates = [metadata.get("exit_code"), *(value.get(key) for key in _EXIT_CODE_KEYS)]
+        candidates = [
+            metadata.get("exit_code"),
+            *(value.get(key) for key in _EXIT_CODE_KEYS),
+            _error_header_exit_code(value),
+        ]
         for candidate in candidates:
             if isinstance(candidate, int) and not isinstance(candidate, bool):
                 return candidate
     return None
+
+
+def _error_header_exit_code(value: dict[str, Any]) -> int | None:
+    """Claude records a failed Bash status only as the error content's first line."""
+    content = value.get("content")
+    if value.get("is_error") is not True or not isinstance(content, str):
+        return None
+    header = _ERROR_EXIT_HEADER.fullmatch(content.split("\n", 1)[0].strip())
+    return int(header[1]) if header else None
 
 
 def _walk_values(value: Any, *, depth: int = 0) -> Iterable[Any]:

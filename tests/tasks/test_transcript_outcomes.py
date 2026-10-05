@@ -10,6 +10,8 @@ import pytest
 from gobby.tasks.command_equivalence import command_covers
 from gobby.tasks.transcript_outcomes import (
     classify_validation_command_equivalence,
+    extract_outcome,
+    extract_output,
     is_unexecuted_tool_result,
     wrapped_validation_command,
 )
@@ -199,6 +201,75 @@ def test_unflagged_droid_hook_denial_is_unexecuted() -> None:
     result = {"tool_result": {"content": _HOOK_BLOCKED, "is_error": False}}
 
     assert is_unexecuted_tool_result(result) is True
+
+
+_NEXTEST_PACKAGE_ERROR = (
+    "error: package ID specification `gterminal` did not match any packages\n\n"
+    "help: a package with a similar name exists: `termina`\n"
+    "error: command `/Users/josh/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo test "
+    "--no-run --message-format json-render-diagnostics --package gterminal --test build_env` "
+    "exited with code 101"
+)
+
+
+def _claude_bash_result(content: str, *, is_error: bool) -> dict[str, object]:
+    """A parsed Claude Bash result: a failed status lives only in the content text."""
+    return {
+        "tool_result": {
+            "type": "tool_result",
+            "tool_use_id": "toolu-bash",
+            "content": content,
+            "is_error": is_error,
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    ("content", "is_error", "expected"),
+    [
+        pytest.param(
+            f"Exit code 101\n{_NEXTEST_PACKAGE_ERROR}",
+            True,
+            ("failure", 101, None),
+            id="cargo-package-error",
+        ),
+        pytest.param(
+            "Exit code 2\nERROR: file or directory not found: tests/gone.py",
+            True,
+            ("failure", 2, None),
+            id="pytest-usage-error",
+        ),
+        pytest.param(_PERMISSION_DENIED, True, ("failure", None, None), id="error-without-header"),
+        pytest.param(
+            "error: boom\nExit code 1", True, ("failure", None, None), id="header-not-first-line"
+        ),
+        pytest.param(
+            "Exit code 1\nprinted by the command",
+            False,
+            ("success", None, None),
+            id="unflagged-output",
+        ),
+    ],
+)
+def test_claude_bash_error_header_supplies_the_exit_code(
+    content: str, is_error: bool, expected: tuple[str, int | None, str | None]
+) -> None:
+    """Claude records a failed Bash status only as its error content's first line (#23529)."""
+    result = _claude_bash_result(content, is_error=is_error)
+
+    assert extract_outcome(result, extract_output(result)[0]) == expected
+
+
+def test_runner_reported_failure_keeps_the_claude_error_exit_code() -> None:
+    """A runner-reported red still carries the header status to exit-code consumers (#23529)."""
+    output = "FAILED tests/test_x.py::test_y - AssertionError\n1 failed in 0.10s"
+    result = _claude_bash_result(f"Exit code 1\n{output}", is_error=True)
+
+    assert extract_outcome(result, output, aggregate_status_is_trustworthy=False) == (
+        "failure",
+        1,
+        None,
+    )
 
 
 @pytest.mark.parametrize(
