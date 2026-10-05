@@ -428,7 +428,7 @@ spawn.
 
 | Item | Runtime work | Evidence |
 | --- | --- | --- |
-| L2 | Idle-TTL enforcement for interactive runs whose `resume_metadata` carries `idle_ttl_seconds`. The reader is `_handle_idle_check`'s interactive branch: once the run's idle time reaches the TTL, the run wraps up, saves and calls `end_agent_run`. Interactive runs without the key keep #23442's no-idle-end behavior. After 1.4, a seat's run points at its current `/clear` successor, so the idle clock follows the live session. The Orchestrator files it under #22691 | `_handle_idle_check` returns early for every interactive run (`idle_check_handler.py:481`); `last_session_activity(session_id)` and `session.updated_at` already give the idle clock there |
+| L2 | Idle-TTL enforcement for interactive runs whose `resume_metadata` carries `idle_ttl_seconds`. The reader is `_handle_idle_check`'s interactive branch: once the run's idle time reaches the TTL, the run wraps up, saves and calls `end_agent_run`. Interactive runs without the key keep #23442's no-idle-end behavior. After 1.4, a seat's run points at its current `/clear` successor, so the idle clock follows the live session. Carried as deferral D3; its task goes under #22691 at expansion, after Josh approves this plan | `_handle_idle_check` returns early for every interactive run (`idle_check_handler.py:481`); `last_session_activity(session_id)` and `session.updated_at` already give the idle clock there |
 | L3 | `end_agent_run` closes the pane and terminal | It terminates the runtime but never calls `pane_close`; `sweep_dead_panes` is lazy |
 | P1 | Orphan terminal reaper for live terminals whose session ended | No sweep covers them |
 | P2 | Failed Stop leaves a seat `active` for 30–90 minutes | `handle_stop` pauses only when `turn_disposition != "unknown"` |
@@ -437,8 +437,9 @@ spawn.
 
 Confirmed by the PD (gobby#14730, 2026-09-28): "separate" in R4 means sibling
 tasks under #22691, which the PD files at the appropriate stage. Since the
-2026-10-05 revision (Decision 9), this plan carries only the `idle_ttl_seconds`
-declaration and its spawn-time persistence.
+2026-10-05 revision (Decision 9), this plan carries the `idle_ttl_seconds`
+declaration and its spawn-time persistence (2.1), and carries L2 as deferral D3
+(Orchestrator ruling, 2026-10-05). The other items stay sibling tasks.
 
 ## Cross-Plan Correction: #22902
 `kind: framing`
@@ -1139,10 +1140,10 @@ Implementation:
 - `build_spawn_context` gains `idle_ttl_seconds: int | None = None` and writes
   `resume_metadata["idle_ttl_seconds"]` when it is set. It writes no session
   variable, because the reader is the watchdog, and the watchdog reads the run.
-- No reader is added here. The reader is the L2 sibling (Runtime Lifecycle
-  Boundary), which the Orchestrator files under #22691: `_handle_idle_check`'s
-  interactive branch (`idle_check_handler.py:481`) ends the run once its idle
-  time reaches `idle_ttl_seconds`.
+- No reader is added here. The reader is deferral D3 (R4 item L2):
+  `_handle_idle_check`'s interactive branch (`idle_check_handler.py:481`) ends
+  the run once its idle time reaches `idle_ttl_seconds`. Its task goes under
+  #22691 at expansion, after Josh approves this plan.
 - No spawn-time TTL override is added: no caller needs one.
 
 Tests:
@@ -1164,7 +1165,7 @@ Then run `uv run ruff check` and `uv run mypy` on the changed files.
 
 Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py` — no-edit-reason: passes the spawn-time execution_mode through unchanged; the TTL comes from the definition only.
-- `src/gobby/storage/agents/_models.py` — no-edit-reason: is_interactive keeps reading execution_mode; the TTL reader belongs to the L2 sibling.
+- `src/gobby/storage/agents/_models.py` — no-edit-reason: is_interactive keeps reading execution_mode; the TTL reader belongs to deferral D3.
 - `src/gobby/dispatch/spawn.py` — no-edit-reason: calls spawn_agent_impl, whose signature and result shape are unchanged.
 - `src/gobby/feedback/agent.py` — no-edit-reason: calls spawn_agent_impl, whose signature and result shape are unchanged.
 - `src/gobby/scheduler/executor.py` — no-edit-reason: calls spawn_agent_impl, whose signature and result shape are unchanged.
@@ -1340,6 +1341,45 @@ deferral:
   the role-contract tests are deleted with them.
 - D2.2 - A hand-launched pane that calls `apply_agent_definition` for its seat
   runs with no role file.
+
+## D3 Idle-TTL enforcement, R4 item L2 (depends: 2.1)
+`kind: deferred`
+
+Once 2.1 stores `idle_ttl_seconds` in the run's `resume_metadata`, the
+watchdog enforces it:
+- Reader: the interactive branch of `IdleCheckHandler._handle_idle_check`
+  (`idle_check_handler.py:481`). Today that branch resets the idle detector and
+  returns for every interactive run.
+- Idle clock: the run's `child_session_id` session, through
+  `last_session_activity(session_id)` and `session.updated_at`, which the
+  handler already reads. After 1.4, that session is the seat's current `/clear`
+  successor.
+- Once the idle time reaches `idle_ttl_seconds`, the run takes the reprompt
+  path that one-shot runs use today. The agent is reprompted to wrap up, save
+  and call `end_agent_run`, and the existing completion path ends the run when
+  the reprompts are exhausted.
+- An interactive run without the key keeps #23442's behavior: idleness never
+  ends it.
+
+The Orchestrator's ruling (2026-10-05) places this work under #22691 (Lane 3 -
+Runbooks), not under this plan's epic. The task is created at expansion, after
+Josh approves this plan.
+
+```yaml
+deferral:
+  task_ref: "TBD-under-22691-at-expansion"
+  reason: "Orchestrator ruling (2026-10-05, R4): runtime lifecycle enforcement is parented under #22691 (Lane 3 - Runbooks) and created at expansion after Josh approves this plan."
+  owner: "orchestrator"
+  original_acceptance_items:
+    - D3.1
+    - D3.2
+```
+
+- D3.1 - An interactive run whose `resume_metadata` carries `idle_ttl_seconds`
+  and whose session has been idle that long is reprompted to wrap up, save and
+  call `end_agent_run`, and then ends.
+- D3.2 - An interactive run without `idle_ttl_seconds` is never ended for
+  idleness.
 
 ## V1: Verification
 `kind: verification`
