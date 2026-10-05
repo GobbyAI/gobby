@@ -1,0 +1,563 @@
+header:
+  plan_id: provider-usage-spend
+  plan_hash: 0925f146686921d86996841ede6e76d2fb78da89031041c1c9fa7514f7b33316
+  root_task_ref: '23591'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-05T22:44:21Z'
+  task_tree_source: db
+  task_tree_source_hash: 72fa7e92aa462403aedde5c412a0bfbc9a97553774e913b8f0e87b1ea14f5476
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 7c36514a4a7d5143223844e3b343ae8c131e30153548d282a6e3aa5ec01d0f16
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23597'
+    validation_criteria_snippet: '1.1.1: Claiming a task, re-claiming it from another
+      session, and clearing `claimed_by_session_id` produce, in order, an interval
+      for the first session, then on...'
+    matched_artifact_ref: tests/storage/test_schema_usage_ledger.py::test_trigger_tracks_holder_changes
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: bcc9b77e313cad44d65e4ab9bf5425c5ef9bbd131731a2848a9d6e5d78d6f0b7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23597'
+    validation_criteria_snippet: '1.1.1: Claiming a task, re-claiming it from another
+      session, and clearing `claimed_by_session_id` produce, in order, an interval
+      for the first session, then on...'
+    matched_artifact_ref: tests/storage/test_schema_usage_ledger.py::test_close_and_reopen_follow_holder
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: c2fe5e147108fd92e3cb3addfec202e5b0ea03630f5ad20a9d9ee5ebd1858175
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23597'
+    validation_criteria_snippet: '1.1.1: Claiming a task, re-claiming it from another
+      session, and clearing `claimed_by_session_id` produce, in order, an interval
+      for the first session, then on...'
+    matched_artifact_ref: tests/storage/test_schema_usage_ledger.py::test_sync_seeds_current_holder_idempotently
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 5b1c0e69bcef8c634e9ad57d28239502d7660eb29315eda8673bd5f17bc5cda0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23597'
+    validation_criteria_snippet: '1.1.1: Claiming a task, re-claiming it from another
+      session, and clearing `claimed_by_session_id` produce, in order, an interval
+      for the first session, then on...'
+    matched_artifact_ref: tests/storage/test_schema_usage_ledger.py::test_ledger_columns_constrain_values
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: 68bcaf7643858873ea7c2f3c385f3b9aca1d2011e13792de7a051c486df77d42
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23597'
+    validation_criteria_snippet: '1.1.1: Claiming a task, re-claiming it from another
+      session, and clearing `claimed_by_session_id` produce, in order, an interval
+      for the first session, then on...'
+    matched_artifact_ref: tests/storage/test_schema_usage_ledger.py::test_capacity_details_default_and_identity
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: c5a844c570b32a48b83108624ecdbc7929aedc68699b7988e80c545fc8399eec
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23598'
+    validation_criteria_snippet: '2.1.1: A Codex rollout fixture with three `token_count`
+      lines, one of which repeats the previous cumulative total, yields two ledger
+      rows whose ids are the cum...'
+    matched_artifact_ref: tests/sessions/test_usage_call_identity.py::test_codex_cumulative_id_dedupes_repeats
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 08abb2e94a69e758ebcb38b3f56be0bf676dfda219a54fcf11430804cc67012e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23598'
+    validation_criteria_snippet: '2.1.1: A Codex rollout fixture with three `token_count`
+      lines, one of which repeats the previous cumulative total, yields two ledger
+      rows whose ids are the cum...'
+    matched_artifact_ref: tests/sessions/test_usage_call_identity.py::test_codex_without_cumulative_keeps_index_id
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 7fa430cb9eb182b8db85d57d266324c72539d693c8531ac96e9fff993cdfde6b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23598'
+    validation_criteria_snippet: '2.1.1: A Codex rollout fixture with three `token_count`
+      lines, one of which repeats the previous cumulative total, yields two ledger
+      rows whose ids are the cum...'
+    matched_artifact_ref: tests/sessions/test_usage_call_identity.py::test_api_call_count_per_source
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: bf35d6d9afe92b5ac131af1f9b4920a7230b42449a89a0700bf0f713fb4b6ba8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23598'
+    validation_criteria_snippet: '2.1.1: A Codex rollout fixture with three `token_count`
+      lines, one of which repeats the previous cumulative total, yields two ledger
+      rows whose ids are the cum...'
+    matched_artifact_ref: tests/sessions/test_usage_call_identity.py::test_writers_persist_api_calls
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: 82f2c3939203c225f3c43bd05e79eefd44ad9ecf46ec481dcf1eaccfa52c5162
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23598'
+    validation_criteria_snippet: '2.1.1: A Codex rollout fixture with three `token_count`
+      lines, one of which repeats the previous cumulative total, yields two ledger
+      rows whose ids are the cum...'
+    matched_artifact_ref: tests/sessions/test_usage_call_identity.py::test_audit_dedupes_and_flags_unkeyed_rows
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.6
+  plan_node_hash: 6c8339f18ad829753df0598bd00da11b544d7bb3e6a0eb8e3cbf15621bc6bdcc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23598'
+    validation_criteria_snippet: '2.1.1: A Codex rollout fixture with three `token_count`
+      lines, one of which repeats the previous cumulative total, yields two ledger
+      rows whose ids are the cum...'
+    matched_artifact_ref: tests/sessions/test_usage_call_identity.py::test_audit_flags_equal_total_identity_drift
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.7
+  plan_node_hash: 4833828bc057063f462a54d068f6b583beedc915b91815037aab53f3b975b65f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23598'
+    validation_criteria_snippet: '2.1.1: A Codex rollout fixture with three `token_count`
+      lines, one of which repeats the previous cumulative total, yields two ledger
+      rows whose ids are the cum...'
+    matched_artifact_ref: tests/sessions/test_usage_call_identity.py::test_fix_never_deletes_rows_ingested_during_audit
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: e42ebdf48490536571588c26f2bb92823391d2ff7a2805a018c8024561bf1b1a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23599'
+    validation_criteria_snippet: '2.2.1: A parent transcript with one subagent file
+      that holds two API calls yields two parent-session rows tagged with `agent_id`,
+      through both the live path an...'
+    matched_artifact_ref: tests/sessions/test_claude_subagent_usage.py::test_subagent_calls_join_parent_ledger
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 4bea052e389981b39ce7b645bf9cd2388d60b6e0a49df9488655471d48fb864a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23599'
+    validation_criteria_snippet: '2.2.1: A parent transcript with one subagent file
+      that holds two API calls yields two parent-session rows tagged with `agent_id`,
+      through both the live path an...'
+    matched_artifact_ref: tests/sessions/test_claude_subagent_usage.py::test_live_offsets_read_each_line_once
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.6
+  plan_node_hash: d3a0ac00deee094236aaa49aa8bc92c0388f2dd977557cd13a8a57c31aa37f14
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23599'
+    validation_criteria_snippet: '2.2.1: A parent transcript with one subagent file
+      that holds two API calls yields two parent-session rows tagged with `agent_id`,
+      through both the live path an...'
+    matched_artifact_ref: tests/sessions/test_claude_subagent_usage.py::test_subagent_identity_is_stable_across_passes
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: 29aa71439b7187f986b19529ec7c179176f75f243b77abb7b21474ed8c6e58ae
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23599'
+    validation_criteria_snippet: '2.2.1: A parent transcript with one subagent file
+      that holds two API calls yields two parent-session rows tagged with `agent_id`,
+      through both the live path an...'
+    matched_artifact_ref: tests/sessions/test_claude_subagent_usage.py::test_subagent_rows_never_touch_occupancy
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: 9cd66bd77bec93c6c0941a4a130fb12bd450ba7ecca5b1bd261b99987ea713ee
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23599'
+    validation_criteria_snippet: '2.2.1: A parent transcript with one subagent file
+      that holds two API calls yields two parent-session rows tagged with `agent_id`,
+      through both the live path an...'
+    matched_artifact_ref: tests/sessions/test_claude_subagent_usage.py::test_fallback_ids_are_agent_scoped_and_audited
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: 62c3f15644d6c0858944cd29dffac70c02f285572de19e9aba6ea90a2269a39b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23599'
+    validation_criteria_snippet: '2.2.1: A parent transcript with one subagent file
+      that holds two API calls yields two parent-session rows tagged with `agent_id`,
+      through both the live path an...'
+    matched_artifact_ref: tests/sessions/test_claude_subagent_usage.py::test_idle_parent_pass_ingests_subagent_appends
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: bc1ca1b852f20fba8b801a528411b3a18bda9daf459690f89f78eee6d2a58381
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23600'
+    validation_criteria_snippet: '2.3.1: Claude `cost-state` lines from two process
+      runs, one repeated with a larger cumulative cost, yield two runs. Each run keeps
+      its largest reading and its ...'
+    matched_artifact_ref: tests/sessions/test_reported_usage.py::test_claude_cost_state_runs_are_per_start_time
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: bad07c0e2c2717253b80fc8a2ac593f7acd77b3b880254ff088958c05a957585
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23600'
+    validation_criteria_snippet: '2.3.1: Claude `cost-state` lines from two process
+      runs, one repeated with a larger cumulative cost, yield two runs. Each run keeps
+      its largest reading and its ...'
+    matched_artifact_ref: tests/sessions/test_reported_usage.py::test_grok_turn_runs_convert_ticks
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: 28ddeded4c2216d16814cb491dd788f86af40573da7a3a9700ba59f5b295441f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23600'
+    validation_criteria_snippet: '2.3.1: Claude `cost-state` lines from two process
+      runs, one repeated with a larger cumulative cost, yield two runs. Each run keeps
+      its largest reading and its ...'
+    matched_artifact_ref: tests/sessions/test_reported_usage.py::test_droid_sidecar_run
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.4
+  plan_node_hash: 018582dc90d8937339ecc00fe4f4285b8260412216221a1d0f4c282484ea82f3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23600'
+    validation_criteria_snippet: '2.3.1: Claude `cost-state` lines from two process
+      runs, one repeated with a larger cumulative cost, yield two runs. Each run keeps
+      its largest reading and its ...'
+    matched_artifact_ref: tests/sessions/test_reported_usage.py::test_upsert_keeps_newest_and_paths_agree
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.5
+  plan_node_hash: cd60180bab01e9dc7a3a338943d4d974945e531442c5954f43ddbe4217bf28fd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23600'
+    validation_criteria_snippet: '2.3.1: Claude `cost-state` lines from two process
+      runs, one repeated with a larger cumulative cost, yield two runs. Each run keeps
+      its largest reading and its ...'
+    matched_artifact_ref: tests/sessions/test_reported_usage.py::test_idle_pass_refreshes_droid_sidecar
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.6
+  plan_node_hash: f3c6af01a988d6f57ef876499ad057709e1e08e19aaefb422765bc9c3e8699e6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23600'
+    validation_criteria_snippet: '2.3.1: Claude `cost-state` lines from two process
+      runs, one repeated with a larger cumulative cost, yield two runs. Each run keeps
+      its largest reading and its ...'
+    matched_artifact_ref: tests/sessions/test_reported_usage.py::test_cost_state_only_append_reaches_the_ledger
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: e5dcec2c3f54328a93371d891bce494af96d4a757efaaf17fbb77443ea36ba5e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23601'
+    validation_criteria_snippet: '3.1.1: The fixture is ingested through the real
+      parsers and `_persist_usage_events`. It has two Claude calls with distinct usage,
+      the first written as two cont...'
+    matched_artifact_ref: tests/storage/test_usage_ledger.py::test_fixture_calls_are_counted_once
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: 206a84b5ad7170bd6b5eb19ccddcd688ac1eb41c85d1faf800d74b20b2d6bde3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23601'
+    validation_criteria_snippet: '3.1.1: The fixture is ingested through the real
+      parsers and `_persist_usage_events`. It has two Claude calls with distinct usage,
+      the first written as two cont...'
+    matched_artifact_ref: tests/storage/test_usage_ledger.py::test_paging_neither_loses_nor_double_counts
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: f1ad28b949c412b356f4a5d05a5c2a790e6ea96f843cbd73a03929289a0342ea
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23601'
+    validation_criteria_snippet: '3.1.1: The fixture is ingested through the real
+      parsers and `_persist_usage_events`. It has two Claude calls with distinct usage,
+      the first written as two cont...'
+    matched_artifact_ref: tests/storage/test_usage_ledger.py::test_rebuild_keeps_rows_totals_and_cursor
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.4
+  plan_node_hash: cdf772d82d89d3d5c4128c4c494462d2be3627c449801676af31380327663312
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23601'
+    validation_criteria_snippet: '3.1.1: The fixture is ingested through the real
+      parsers and `_persist_usage_events`. It has two Claude calls with distinct usage,
+      the first written as two cont...'
+    matched_artifact_ref: tests/storage/test_usage_ledger.py::test_task_scope_latest_claim_wins
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.5
+  plan_node_hash: 2f26407834c136b2be1560bbda7389acae988b373a7b54d37944e8c24201a691
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23601'
+    validation_criteria_snippet: '3.1.1: The fixture is ingested through the real
+      parsers and `_persist_usage_events`. It has two Claude calls with distinct usage,
+      the first written as two cont...'
+    matched_artifact_ref: tests/storage/test_usage_ledger.py::test_coverage_reports_missing_data
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.6
+  plan_node_hash: 28658605f18ba8469ab781e2642c85d966690e50d81d19cef169eb151ffa8765
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23601'
+    validation_criteria_snippet: '3.1.1: The fixture is ingested through the real
+      parsers and `_persist_usage_events`. It has two Claude calls with distinct usage,
+      the first written as two cont...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_usage_ledger_tool.py::test_ledger_tool_and_route_scope_and_errors
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.7
+  plan_node_hash: a2573181ec1dda1dd4da91047241d850e60f6a6f7745a8767f49bd73702a1daf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23601'
+    validation_criteria_snippet: '3.1.1: The fixture is ingested through the real
+      parsers and `_persist_usage_events`. It has two Claude calls with distinct usage,
+      the first written as two cont...'
+    matched_artifact_ref: tests/storage/test_usage_ledger.py::test_spend_unknown_is_distinct_from_reported_zero
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.8
+  plan_node_hash: d71fcdc90dfd20bd3aa868d856709b8f4d87a79996ab4535228c34a38902373a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23601'
+    validation_criteria_snippet: '3.1.1: The fixture is ingested through the real
+      parsers and `_persist_usage_events`. It has two Claude calls with distinct usage,
+      the first written as two cont...'
+    matched_artifact_ref: tests/storage/test_usage_ledger.py::test_paging_is_a_live_traversal
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: 62fbbf61b3c2fb6bea0146049395e505a833c6dbba7999d263b5080142ef7212
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23602'
+    validation_criteria_snippet: '3.2.1: `gobby tokens ledger --session` and `--task`
+      print the store''s totals for the 3.1 fixture, and `--json` round-trips the
+      page dict. Passing both scopes, ...'
+    matched_artifact_ref: tests/cli/test_tokens_ledger_cli.py::test_ledger_command_prints_scope_totals
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: ab1bb65a823676660d1c825107fb66256e59c5211017d58bf0f8da3280494835
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23602'
+    validation_criteria_snippet: '3.2.1: `gobby tokens ledger --session` and `--task`
+      print the store''s totals for the 3.1 fixture, and `--json` round-trips the
+      page dict. Passing both scopes, ...'
+    matched_artifact_ref: tests/cli/test_tokens_ledger_cli.py::test_quota_command_reads_daemon_snapshot
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: 7215dd9602649ab2cf25f584a75d91eaf83a8a6f291b569753f04d1013cfec76
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23602'
+    validation_criteria_snippet: '3.2.1: `gobby tokens ledger --session` and `--task`
+      print the store''s totals for the 3.1 fixture, and `--json` round-trips the
+      page dict. Passing both scopes, ...'
+    matched_artifact_ref: tests/cli/test_tokens_ledger_cli.py::test_ledger_command_keeps_unknown_spend_distinct
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: cc04b2fc4c264f90436c250861aadb39069d999370ff245242e376a213afcda7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23603'
+    validation_criteria_snippet: '4.1.1: `observation_from_rate_limits` maps the live
+      sample to one `weekly` window (80/100 percent, ISO reset) with credits and plan
+      in `details`, and returns N...'
+    matched_artifact_ref: tests/providers/test_codex_quota_observation.py::test_rate_limits_map_to_windows_and_details
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: 15670b6cd422f889a24193c6a00125539f95726c221e7d15d1f64492a8b48945
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23603'
+    validation_criteria_snippet: '4.1.1: `observation_from_rate_limits` maps the live
+      sample to one `weekly` window (80/100 percent, ISO reset) with credits and plan
+      in `details`, and returns N...'
+    matched_artifact_ref: tests/providers/test_codex_quota_observation.py::test_live_caught_up_batch_observes_newest_reading
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: 4ea40af1023c024847f37d2f43419fb26736a84bd5f5fb7e4989009e566a2978
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23603'
+    validation_criteria_snippet: '4.1.1: `observation_from_rate_limits` maps the live
+      sample to one `weekly` window (80/100 percent, ISO reset) with credits and plan
+      in `details`, and returns N...'
+    matched_artifact_ref: tests/providers/test_codex_quota_observation.py::test_stale_readings_are_rejected
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.4
+  plan_node_hash: 41411ca1e5d696b78382b017337197fddc69edc69d45414188181e1802df698d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23603'
+    validation_criteria_snippet: '4.1.1: `observation_from_rate_limits` maps the live
+      sample to one `weekly` window (80/100 percent, ISO reset) with credits and plan
+      in `details`, and returns N...'
+    matched_artifact_ref: tests/providers/test_codex_quota_observation.py::test_observed_provider_freshness_and_reasons
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.5
+  plan_node_hash: 7f9023ef1f06debea1ed7b25177a2a0eff42ca2e2f59e91cc1dee8fdf437c8d7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23603'
+    validation_criteria_snippet: '4.1.1: `observation_from_rate_limits` maps the live
+      sample to one `weekly` window (80/100 percent, ISO reset) with credits and plan
+      in `details`, and returns N...'
+    matched_artifact_ref: tests/providers/test_codex_quota_observation.py::test_rebuilt_processor_keeps_capacity_service
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.1
+  plan_node_hash: e3ef470eb776cd3739950fb1021fe1b862bc4fb02d98b8909356ea2cd1f2c0e3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23604'
+    validation_criteria_snippet: '4.2.1: Replaying the incident readings (a weekly
+      window only) sends exactly three alerts: weekly warn at 95%, weekly exhausted
+      at 100%, and drawing_credits whe...'
+    matched_artifact_ref: tests/providers/test_quota_alerts.py::test_incident_replay_alerts_on_edges_only
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.2
+  plan_node_hash: ec67e60be57a0d840a8d0bbf528b5a4af1df681c92b911dca66d47d7efc3cff0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23604'
+    validation_criteria_snippet: '4.2.1: Replaying the incident readings (a weekly
+      window only) sends exactly three alerts: weekly warn at 95%, weekly exhausted
+      at 100%, and drawing_credits whe...'
+    matched_artifact_ref: tests/providers/test_quota_alerts.py::test_level_is_monotonic_within_window
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.3
+  plan_node_hash: 0a53e897196a04e4a438cb84d726d2b6e49da7bb84231f681a8dcaf30f07d498
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23604'
+    validation_criteria_snippet: '4.2.1: Replaying the incident readings (a weekly
+      window only) sends exactly three alerts: weekly warn at 95%, weekly exhausted
+      at 100%, and drawing_credits whe...'
+    matched_artifact_ref: tests/providers/test_quota_alerts.py::test_sink_degrades_without_raising
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.4
+  plan_node_hash: dc43b27d182befb8a40a9213b352a418d1ae2ecd4cf6dac6ca95b5f3bad4f4a1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23604'
+    validation_criteria_snippet: '4.2.1: Replaying the incident readings (a weekly
+      window only) sends exactly three alerts: weekly warn at 95%, weekly exhausted
+      at 100%, and drawing_credits whe...'
+    matched_artifact_ref: tests/providers/test_quota_alerts.py::test_alert_text_is_minimal
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.5
+  plan_node_hash: 869e5b9a0068bc851ec0cadcce01ceddb1b9cd8569f5ddc0e7fedc2d0bbd2cd6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23604'
+    validation_criteria_snippet: '4.2.1: Replaying the incident readings (a weekly
+      window only) sends exactly three alerts: weekly warn at 95%, weekly exhausted
+      at 100%, and drawing_credits whe...'
+    matched_artifact_ref: tests/providers/test_quota_alerts.py::test_windows_alert_independently
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: 71327519851619cd740c079c0e9548151455a72d933b22b0cfa17b8339c7d1c7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23605'
+    validation_criteria_snippet: '5.1.1: The reference audit passes with every audited
+      anchor present, and the guide names one tool for each of quota, occupancy, and
+      spend. test: `tests/skills/...'
+    matched_artifact_ref: tests/skills/test_reference_library.py::test_reference_contract_3_2_1
+  deferral_target: null
+  detail: ''
