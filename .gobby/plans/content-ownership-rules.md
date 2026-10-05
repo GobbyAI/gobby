@@ -1708,6 +1708,13 @@ Targets:
   regressions: 1.4.11 (unlinked holders found), 1.7.6 (fail-closed). The
   1.7.5, 1.8.6 and 1.4.10 predecessors are now unlinked. The sweep also
   updated the Retired Mechanisms claim-scope bullet and the Overview.
+- 2026-10-05: V1 consensus. The Adversary (gobby#15470) confirmed
+  consensus on `a75b9beee4` with CO-A3-F1 to F10 resolved and no remaining
+  findings, after verifying the committed diff, the source call sites and a
+  clean base validation. Decisions 1 (R1, landing-merge exception) and 12
+  (W3, merge-set exemption from rule 3) remain flagged for Josh at
+  approval. M1 is derived next by the Adversary through the
+  handoff-manifest route.
 
 ## V2: Verification
 `kind: verification`
