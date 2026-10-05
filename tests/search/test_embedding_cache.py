@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, patch
@@ -16,6 +16,7 @@ from gobby.ai.embedding_cache import (
     _cache,
     _cache_key,
     _inflight,
+    generate_cached_embeddings,
 )
 from gobby.ai.embeddings import (
     EmbeddingGenerationError,
@@ -234,7 +235,7 @@ async def test_batch_dedup_within_request() -> None:
     assert results[0] != results[2]  # "alpha" != "beta"
 
 
-async def _cancel_embedding_tasks(tasks: list[asyncio.Task[list[float]]]) -> None:
+async def _cancel_embedding_tasks(tasks: Sequence[asyncio.Task[object]]) -> None:
     for task in tasks:
         if not task.done():
             task.cancel()
@@ -338,6 +339,54 @@ async def test_cancelled_producer_releases_key_and_waiting_peer_recovers() -> No
         finally:
             release.set()
             await _cancel_embedding_tasks(tasks)
+
+
+@pytest.mark.asyncio
+async def test_wrong_dim_fill_is_not_cached_and_fails_all_waiters() -> None:
+    """A fill with any wrong-dimension vector caches nothing and fails every waiter."""
+    peer_lookup = asyncio.Event()
+    release = asyncio.Event()
+    tasks: list[asyncio.Task[list[list[float]]]] = []
+    lookup_count = 0
+
+    def tracking_key(text: str, model: str, api_base: str | None) -> str:
+        nonlocal lookup_count
+        lookup_count += 1
+        if lookup_count == 3:
+            peer_lookup.set()
+        return _cache_key(text, model, api_base)
+
+    async def fetch(texts: list[str]) -> list[list[float]]:
+        await release.wait()
+        return [[0.5, 0.0, 0.0] for _text in texts]
+
+    def generate(texts: list[str]) -> asyncio.Task[list[list[float]]]:
+        task = asyncio.create_task(
+            generate_cached_embeddings(
+                texts, model="test-model", api_base=None, expected_dim=4, fetch=fetch
+            )
+        )
+        tasks.append(task)
+        return task
+
+    with patch("gobby.ai.embedding_cache._cache_key", new=tracking_key):
+        try:
+            producer = generate(["a", "b"])
+            peer = generate(["a"])
+            async with asyncio.timeout(2):
+                await peer_lookup.wait()
+            release.set()
+            async with asyncio.timeout(2):
+                results = await asyncio.gather(producer, peer, return_exceptions=True)
+        finally:
+            release.set()
+            await _cancel_embedding_tasks(tasks)
+
+    assert [type(result) for result in results] == [EmbeddingGenerationError] * 2
+    for text in ("a", "b"):
+        key = _cache_key(text, "test-model", None)
+        assert key not in _cache, f"wrong-dimension fill for {text!r} was cached"
+        assert key not in _inflight
 
 
 @pytest.mark.asyncio
