@@ -16,6 +16,7 @@ use gobby_terminal::layout::NavDirection;
 use crate::daemon::Daemon;
 use crate::key_input::KeyInput;
 use crate::prefs::save_prefs;
+use crate::theme::ThemeName;
 use crate::ui::dialogs::{CloseTarget, Dialog, OrphanRow, RenameKind};
 use crate::ui::navigator::{
     navigator_rows, NavigatorRow, NavigatorState, NavigatorStateFilter, NavigatorTarget,
@@ -378,17 +379,17 @@ pub(super) fn activate_settings_row<W: WorkspaceView>(ws: &W, chrome: &mut Chrom
     step_settings_row(ws, chrome, 1);
 }
 
-/// Change the selected row by `delta`: booleans flip, the theme and the
-/// passthrough modifier cycle, and the sidebar width steps by that many
-/// columns. The change applies to the chrome at once and is written to the
-/// prefs file.
+/// Change the selected row by `delta`: booleans flip, the appearance, the
+/// theme and the passthrough modifier cycle, and the sidebar width steps by
+/// that many columns. The change applies to the chrome at once and is written
+/// to the prefs file.
 fn step_settings_row<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, delta: isize) {
     let Some(row) = SettingsRow::ALL.get(chrome.settings.selected) else {
         return;
     };
     let prefs = &mut chrome.prefs;
     match row {
-        SettingsRow::Theme => {
+        SettingsRow::Appearance => {
             let choices = ["dark", "light", "system"];
             let index = choices
                 .iter()
@@ -398,6 +399,16 @@ fn step_settings_row<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, delta: isize
             prefs.theme = choices[next].to_owned();
             let kind = prefs.theme_kind();
             chrome.set_theme(kind);
+        }
+        SettingsRow::Theme => {
+            let names = ThemeName::ALL;
+            let index = names
+                .iter()
+                .position(|name| *name == prefs.palette)
+                .unwrap_or(0);
+            let next = (index as isize + delta).rem_euclid(names.len() as isize) as usize;
+            prefs.palette = names[next];
+            chrome.set_theme(chrome.theme.kind);
         }
         SettingsRow::Monochrome => {
             prefs.monochrome = !prefs.monochrome;
@@ -585,7 +596,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn theme_setting_cycles_through_system_in_both_directions() {
+    fn appearance_setting_cycles_through_system_in_both_directions() {
         let ws = Workspace::scripted();
         let mut chrome = Chrome::dark();
         step_settings_row(&ws, &mut chrome, 1);
@@ -596,5 +607,30 @@ mod tests {
         assert_eq!(chrome.prefs.theme, "dark");
         step_settings_row(&ws, &mut chrome, -1);
         assert_eq!(chrome.prefs.theme, "system");
+    }
+
+    #[test]
+    fn theme_setting_cycles_every_theme_and_keeps_the_appearance() {
+        let ws = Workspace::scripted();
+        let mut chrome = Chrome::dark();
+        chrome.settings.selected = SettingsRow::ALL
+            .iter()
+            .position(|row| *row == SettingsRow::Theme)
+            .expect("theme row");
+        let names = ThemeName::ALL;
+        for step in 1..=names.len() {
+            step_settings_row(&ws, &mut chrome, 1);
+            let name = names[step % names.len()];
+            assert_eq!(chrome.prefs.palette, name);
+            assert_eq!(chrome.theme.name, name, "drawn at once");
+            assert_eq!(chrome.theme.kind, crate::theme::ThemeKind::Dark);
+            assert_eq!(chrome.prefs.theme, "dark");
+        }
+        step_settings_row(&ws, &mut chrome, -1);
+        assert_eq!(
+            chrome.theme.name,
+            names[names.len() - 1],
+            "back past the first"
+        );
     }
 }

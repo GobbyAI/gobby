@@ -3,10 +3,11 @@
 
 use gobby_client::app::ControlState;
 use gobby_client::theme::{
-    contrast_ratio, relative_luminance, Palette, Theme, ThemeKind, BRAND_HUE, DESTRUCTIVE_HUE,
-    IDENTIFIER_HUE, INFO_HUE, WARNING_HUE,
+    contrast_ratio, relative_luminance, Palette, Theme, ThemeKind, ThemeName, BRAND_HUE,
+    DESTRUCTIVE_HUE, IDENTIFIER_HUE, INFO_HUE, WARNING_HUE,
 };
 use gobby_client::ui::chrome::RowState;
+use gobby_client::ui::settings::ClientPrefs;
 use gobby_client::ui::status::{
     control_indicator, render_toast_notification, state_dot, state_label, toast_cue, Toast,
     ToastKind,
@@ -381,5 +382,22 @@ fn identifier_is_the_board_violet_and_reads_as_aa_text_on_every_surface() {
                 surface.name
             );
         }
+    }
+}
+
+/// Loading prefs (startup and Reload config) draws the saved theme in the
+/// saved appearance, never the theme the chrome held before.
+#[test]
+fn applying_prefs_draws_the_saved_theme_in_the_saved_appearance() {
+    for name in ThemeName::ALL {
+        let mut chrome = Chrome::dark();
+        chrome.apply_prefs(ClientPrefs {
+            theme: "light".to_string(),
+            palette: name,
+            ..ClientPrefs::default()
+        });
+        assert_eq!(chrome.theme.name, name);
+        assert_eq!(chrome.theme.kind, ThemeKind::Light);
+        assert_eq!(chrome.prefs.palette, name);
     }
 }

@@ -2,7 +2,7 @@
 //! Client-local preferences (theme, keymap path, layout knobs) and the
 //! settings overlay that edits them. Nothing here reaches the daemon.
 
-use crate::theme::ThemeKind;
+use crate::theme::{ThemeKind, ThemeName};
 use crate::ui::chrome::Chrome;
 use crate::ui::widgets::{
     action_button_row_rects, centered_popup_rect, modal_choice_rows, modal_stack_areas,
@@ -149,7 +149,11 @@ impl AgentSort {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ClientPrefs {
+    /// The appearance: `dark`, `light` or `system`. The key predates named
+    /// themes, which `palette` picks.
     pub theme: String,
+    /// The named theme drawn in that appearance.
+    pub palette: ThemeName,
     /// Draw gclient's chrome in grays (`Palette::monochrome`); pane
     /// contents keep their apps' colours.
     pub monochrome: bool,
@@ -191,6 +195,7 @@ impl Default for ClientPrefs {
     fn default() -> Self {
         Self {
             theme: "dark".to_string(),
+            palette: ThemeName::default(),
             monochrome: false,
             mouse_capture: true,
             keybinds: String::new(),
@@ -235,6 +240,7 @@ impl ClientPrefs {
 /// Rows of the settings overlay, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsRow {
+    Appearance,
     Theme,
     Monochrome,
     MouseCapture,
@@ -251,7 +257,8 @@ pub enum SettingsRow {
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 13] = [
+    pub const ALL: [SettingsRow; 14] = [
+        SettingsRow::Appearance,
         SettingsRow::Theme,
         SettingsRow::Monochrome,
         SettingsRow::MouseCapture,
@@ -277,6 +284,7 @@ pub struct SettingsState {
 
 fn row_label(row: SettingsRow) -> &'static str {
     match row {
+        SettingsRow::Appearance => "Appearance",
         SettingsRow::Theme => "Theme",
         SettingsRow::Monochrome => "Monochrome",
         SettingsRow::MouseCapture => "Mouse capture",
@@ -303,7 +311,8 @@ fn on_off(value: bool) -> &'static str {
 
 fn row_value(row: SettingsRow, prefs: &ClientPrefs) -> String {
     match row {
-        SettingsRow::Theme => prefs.theme.clone(),
+        SettingsRow::Appearance => prefs.theme.clone(),
+        SettingsRow::Theme => prefs.palette.label().to_string(),
         SettingsRow::Monochrome => on_off(prefs.monochrome).to_string(),
         SettingsRow::MouseCapture => on_off(prefs.mouse_capture).to_string(),
         SettingsRow::PaneScrollbars => on_off(prefs.pane_scrollbars).to_string(),
@@ -471,6 +480,7 @@ mod tests {
         assert_eq!(
             labels,
             [
+                "Appearance",
                 "Theme",
                 "Monochrome",
                 "Mouse capture",
@@ -501,7 +511,11 @@ mod tests {
         let loaded = crate::prefs::load_prefs(home.path()).expect("load prefs");
         assert_eq!(loaded.sidebar_side, SidebarSide::Right);
         assert!(loaded.sidebar_pinned);
-        assert_eq!(row_value(SettingsRow::Theme, &prefs), "dark");
+        assert_eq!(row_value(SettingsRow::Appearance, &prefs), "dark");
+        assert_eq!(
+            row_value(SettingsRow::Theme, &prefs),
+            ThemeName::default().label()
+        );
         assert_eq!(row_value(SettingsRow::Monochrome, &prefs), "off");
         prefs.monochrome = true;
         assert_eq!(row_value(SettingsRow::Monochrome, &prefs), "on");

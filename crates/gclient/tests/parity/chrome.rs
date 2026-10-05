@@ -1683,6 +1683,7 @@ fn rendered_settings_hits_match_drawn_rows() {
     assert_eq!(view.settings_dialog_area, popup);
     assert_eq!(view.settings_row_hit_areas.len(), SettingsRow::ALL.len());
     let labels = [
+        "Appearance",
         "Theme",
         "Monochrome",
         "Mouse capture",

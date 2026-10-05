@@ -1,6 +1,7 @@
 //! Context-menu item definitions.
 
 use crate::app::{ControlState, PaneId};
+use crate::theme::ThemeName;
 use crate::ui::chrome::attention_pane;
 use crate::ui::hit::SidebarSection;
 use crate::ui::settings::AgentSort;
@@ -235,6 +236,7 @@ pub fn attention_id<W: WorkspaceView>(ws: &W, entry_id: &str) -> Option<String> 
 pub(super) fn submenu_items(chrome: &Chrome, submenu: &Submenu) -> Vec<MenuItem> {
     match submenu {
         Submenu::Arrange(target) => arrange_items(target),
+        Submenu::Appearance => appearance_items(chrome),
         Submenu::Theme => theme_items(chrome),
         Submenu::Sidebar => sidebar_items(chrome),
         Submenu::Section(SidebarSection::Machines) => {
@@ -336,35 +338,65 @@ pub(in crate::app::live_loop) fn toggle(
     item(if on { marked } else { plain }, action)
 }
 
-/// Each theme preference with its View row and its marked and plain choice.
-const THEMES: [(&str, &str, (&str, &str)); 3] = [
-    ("dark", "  Theme: Dark ▸", ("● Dark", "  Dark")),
-    ("light", "  Theme: Light ▸", ("● Light", "  Light")),
-    ("system", "  Theme: System ▸", ("● System", "  System")),
+/// Each appearance with its View row and its marked and plain choice.
+const APPEARANCES: [(&str, &str, (&str, &str)); 3] = [
+    ("dark", "  Appearance: Dark ▸", ("● Dark", "  Dark")),
+    ("light", "  Appearance: Light ▸", ("● Light", "  Light")),
+    ("system", "  Appearance: System ▸", ("● System", "  System")),
 ];
 
-/// The preference in force, read the way `ClientPrefs::theme_kind` reads it:
-/// anything but light or system draws dark.
-fn theme_in_force(chrome: &Chrome) -> usize {
-    THEMES
+/// The appearance in force, read the way `ClientPrefs::theme_kind` reads
+/// it: anything but light or system draws dark.
+fn appearance_in_force(chrome: &Chrome) -> usize {
+    APPEARANCES
         .iter()
         .position(|(value, ..)| value.eq_ignore_ascii_case(&chrome.prefs.theme))
         .unwrap_or(0)
 }
 
-/// The View menu's one theme row, naming the preference in force.
-pub(in crate::app::live_loop) fn theme_row_label(chrome: &Chrome) -> &'static str {
-    THEMES[theme_in_force(chrome)].1
+/// The View menu's appearance row, naming the appearance in force.
+pub(in crate::app::live_loop) fn appearance_row_label(chrome: &Chrome) -> &'static str {
+    APPEARANCES[appearance_in_force(chrome)].1
 }
 
 /// Dark, Light and System; System follows the terminal's appearance.
-pub(super) fn theme_items(chrome: &Chrome) -> Vec<MenuItem> {
-    let chosen = theme_in_force(chrome);
-    THEMES
+pub(super) fn appearance_items(chrome: &Chrome) -> Vec<MenuItem> {
+    let chosen = appearance_in_force(chrome);
+    APPEARANCES
         .iter()
         .enumerate()
         .map(|(index, (value, _, labels))| {
-            choice(*labels, index == chosen, MenuAction::SetTheme(value))
+            choice(*labels, index == chosen, MenuAction::SetAppearance(value))
+        })
+        .collect()
+}
+
+/// Each named theme, in `ThemeName::ALL` order, with its View row and its
+/// marked and plain choice.
+const THEMES: [(ThemeName, &str, (&str, &str)); ThemeName::ALL.len()] = [(
+    ThemeName::Classic,
+    "  Theme: Classic ▸",
+    ("● Classic", "  Classic"),
+)];
+
+/// The View menu's theme row, naming the theme in force.
+pub(in crate::app::live_loop) fn theme_row_label(chrome: &Chrome) -> &'static str {
+    THEMES
+        .iter()
+        .find(|(name, ..)| *name == chrome.prefs.palette)
+        .map_or(THEMES[0].1, |(_, row, _)| row)
+}
+
+/// Every named theme; each draws in the appearance in force.
+pub(super) fn theme_items(chrome: &Chrome) -> Vec<MenuItem> {
+    THEMES
+        .iter()
+        .map(|(name, _, labels)| {
+            choice(
+                *labels,
+                *name == chrome.prefs.palette,
+                MenuAction::SetTheme(*name),
+            )
         })
         .collect()
 }

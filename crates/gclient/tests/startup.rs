@@ -12,6 +12,7 @@ use gobby_client::startup::{
     ProbeEnv, Ready, StartupError,
 };
 use gobby_client::teardown::{ModeBackend, RecordingBackend, TerminalGuard};
+use gobby_client::theme::ThemeName;
 use gobby_client::ui::keymap::{default_prefix, Action, Keymap, HERDR_PREFIX};
 use gobby_client::ui::settings::{
     render_settings, AgentSort, ClientPrefs, PassthroughModifier, TitleScrolling,
@@ -675,6 +676,45 @@ fn prefs_round_trip_and_reject_unknown_keys() {
         .expect_err("unknown table must fail")
         .to_string();
     assert!(message.contains("keymapp"), "{message}");
+}
+
+/// Appearance keeps the `theme` key it had before named themes, so a file
+/// written then loads unchanged; the named theme saves as `palette`.
+#[test]
+fn appearance_and_theme_persist_under_their_own_keys() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let home = dir.path().join("home");
+    let path = prefs_path(&home);
+    fs::create_dir_all(path.parent().expect("client dir")).expect("create client dir");
+
+    fs::write(&path, "[ui]\ntheme = \"system\"\n").expect("write an older prefs file");
+    let older = load_prefs(&home).expect("an older file loads");
+    assert_eq!(older.theme, "system");
+    assert!(older.follows_system());
+    assert_eq!(older.palette, ThemeName::default());
+
+    for name in ThemeName::ALL {
+        let prefs = ClientPrefs {
+            theme: "light".to_string(),
+            palette: name,
+            ..ClientPrefs::default()
+        };
+        save_prefs(&home, &prefs).expect("save");
+        let text = fs::read_to_string(&path).expect("read prefs");
+        assert!(text.contains("theme = \"light\"\n"), "{text}");
+        assert!(text.contains("palette = \""), "{text}");
+        assert_eq!(load_prefs(&home).expect("reload"), prefs, "{name:?}");
+    }
+    save_prefs(&home, &ClientPrefs::default()).expect("save defaults");
+    let text = fs::read_to_string(&path).expect("read prefs");
+    assert!(text.contains("palette = \"classic\"\n"), "{text}");
+
+    fs::write(&path, "[ui]\ntheme = \"dark\"\npalette = \"nope\"\n").expect("write typo");
+    let message = load_prefs(&home)
+        .expect_err("an unknown theme must fail")
+        .to_string();
+    assert!(message.contains("nope"), "{message}");
+    assert!(message.contains("line 3"), "{message}");
 }
 
 #[test]

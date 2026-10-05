@@ -7839,7 +7839,8 @@ async fn settings_toggle_switches_mouse_capture_and_saves_prefs() {
         async move {
             tokio::task::yield_now().await;
             send_chord(&input_tx, KeyCode::Char('s'), KeyModifiers::NONE).await;
-            // Theme, then Monochrome, then Mouse capture.
+            // Appearance, Theme, then Monochrome, then Mouse capture.
+            send_key(&input_tx, KeyCode::Down, KeyModifiers::NONE).await;
             send_key(&input_tx, KeyCode::Down, KeyModifiers::NONE).await;
             send_key(&input_tx, KeyCode::Down, KeyModifiers::NONE).await;
             send_key(&input_tx, KeyCode::Char(' '), KeyModifiers::NONE).await;

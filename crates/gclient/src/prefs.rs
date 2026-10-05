@@ -4,6 +4,7 @@
 //! key is optional and unknown keys are rejected by name, so a typo never
 //! silently falls back to a default.
 
+use crate::theme::ThemeName;
 use crate::ui::settings::{
     AgentSort, ClientPrefs, PassthroughModifier, SidebarSide, TitleScrolling,
 };
@@ -56,7 +57,9 @@ impl Default for StatusPrefs {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct UiPrefs {
+    /// The appearance, under the key it had before named themes.
     theme: String,
+    palette: ThemeName,
     monochrome: bool,
     mouse_capture: bool,
     /// Retired: every pane draws its edges. Still declared so a file that
@@ -92,6 +95,7 @@ impl From<&ClientPrefs> for UiPrefs {
     fn from(prefs: &ClientPrefs) -> Self {
         Self {
             theme: prefs.theme.clone(),
+            palette: prefs.palette,
             monochrome: prefs.monochrome,
             mouse_capture: prefs.mouse_capture,
             _pane_borders: false,
@@ -140,6 +144,7 @@ impl From<PrefsFile> for ClientPrefs {
         let PrefsFile { ui, keymap, status } = file;
         Self {
             theme: ui.theme,
+            palette: ui.palette,
             monochrome: ui.monochrome,
             keybinds: keymap.path,
             mouse_capture: ui.mouse_capture,

@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::{ControlState, Workspace};
+use crate::theme::ThemeName;
 use crate::ui::settings::AgentSort;
 use crate::ui::Action;
 
@@ -265,16 +266,22 @@ fn menu_bar_menus_regroup_items_per_title() {
         ]
     );
 
-    // View is the theme submenu, the monochrome toggle and the sidebar
-    // submenu, all against one margin.
+    // View is the appearance and theme submenus, the monochrome toggle and
+    // the sidebar submenu, all against one margin.
     let view = menu(&ws, &chrome, MenuBarMenu::View);
     assert_eq!(
         labels(&view),
-        ["  Theme: Dark ▸", "  Monochrome", "  Sidebar ▸"]
+        [
+            "  Appearance: Dark ▸",
+            "  Theme: Classic ▸",
+            "  Monochrome",
+            "  Sidebar ▸"
+        ]
     );
     assert_eq!(
         actions(&view),
         [
+            MenuAction::OpenSubmenu(Submenu::Appearance),
             MenuAction::OpenSubmenu(Submenu::Theme),
             MenuAction::ToggleMonochrome,
             MenuAction::OpenSubmenu(Submenu::Sidebar),
@@ -811,7 +818,7 @@ fn pin_sidebar_pins_the_overlay_into_a_saved_column() {
 /// first level with the row and the one in force marked; a pick redraws the
 /// chrome in it and saves it.
 #[test]
-fn theme_row_opens_its_choices_beside_it_and_saves_the_pick() {
+fn appearance_row_opens_its_choices_beside_it_and_saves_the_pick() {
     let mut ws = Workspace::scripted();
     let home = tempfile::tempdir().expect("temp gobby home");
     ws.set_gobby_home(home.path().to_path_buf());
@@ -829,22 +836,22 @@ fn theme_row_opens_its_choices_beside_it_and_saves_the_pick() {
         (10, 1),
     );
     let view = chrome.menu.as_mut().expect("view menu");
-    let theme_row = view
+    let appearance_row = view
         .items
         .iter()
-        .position(|item| item.action == MenuAction::OpenSubmenu(Submenu::Theme))
-        .expect("theme row");
-    assert_eq!(view.items[theme_row].label, "  Theme: Dark ▸");
-    view.selected = theme_row;
-    let row = view.item_rects[theme_row];
+        .position(|item| item.action == MenuAction::OpenSubmenu(Submenu::Appearance))
+        .expect("appearance row");
+    assert_eq!(view.items[appearance_row].label, "  Appearance: Dark ▸");
+    view.selected = appearance_row;
+    let row = view.item_rects[appearance_row];
 
-    let (kind, action) = activate_menu(&mut chrome).expect("the theme row is live");
+    let (kind, action) = activate_menu(&mut chrome).expect("the appearance row is live");
     assert_eq!(kind, ContextMenuKind::MenuBar(MenuBarMenu::View));
-    assert_eq!(action, MenuAction::OpenSubmenu(Submenu::Theme));
+    assert_eq!(action, MenuAction::OpenSubmenu(Submenu::Appearance));
     assert!(apply_local_menu_action(&mut ws, &mut chrome, &action));
     assert_eq!(chrome.mode, Mode::ContextMenu);
-    let choices = chrome.menu.as_mut().expect("theme choices");
-    assert_eq!(choices.kind, ContextMenuKind::Submenu(Submenu::Theme));
+    let choices = chrome.menu.as_mut().expect("appearance choices");
+    assert_eq!(choices.kind, ContextMenuKind::Submenu(Submenu::Appearance));
     assert_eq!(
         choices.item_rects[0].x,
         row.right() + 2,
@@ -861,13 +868,71 @@ fn theme_row_opens_its_choices_beside_it_and_saves_the_pick() {
 
     choices.selected = 1;
     let (kind, action) = activate_menu(&mut chrome).expect("light is a pick");
-    assert_eq!(kind, ContextMenuKind::Submenu(Submenu::Theme));
-    assert_eq!(action, MenuAction::SetTheme("light"));
+    assert_eq!(kind, ContextMenuKind::Submenu(Submenu::Appearance));
+    assert_eq!(action, MenuAction::SetAppearance("light"));
     assert!(apply_local_menu_action(&mut ws, &mut chrome, &action));
     assert_eq!(chrome.theme.kind, crate::theme::ThemeKind::Light);
-    assert_eq!(theme_row_label(&chrome), "  Theme: Light ▸");
+    assert_eq!(appearance_row_label(&chrome), "  Appearance: Light ▸");
     let saved = crate::prefs::load_prefs(home.path()).expect("load prefs");
     assert_eq!(saved.theme, "light");
+}
+
+#[test]
+fn theme_row_lists_every_theme_and_each_pick_draws_and_saves() {
+    let mut ws = Workspace::scripted();
+    let home = tempfile::tempdir().expect("temp gobby home");
+    ws.set_gobby_home(home.path().to_path_buf());
+    let mut chrome = Chrome::dark();
+    let theme_menu = |ws: &Workspace, chrome: &Chrome| {
+        build_menu(ws, chrome, ContextMenuKind::Submenu(Submenu::Theme), (0, 1))
+    };
+    let view = build_menu(
+        &ws,
+        &chrome,
+        ContextMenuKind::MenuBar(MenuBarMenu::View),
+        (0, 1),
+    );
+    assert!(view
+        .items
+        .iter()
+        .any(|item| item.action == MenuAction::OpenSubmenu(Submenu::Theme)));
+    let listed: Vec<MenuAction> = theme_menu(&ws, &chrome)
+        .items
+        .into_iter()
+        .map(|item| item.action)
+        .collect();
+    let every: Vec<MenuAction> = ThemeName::ALL.map(MenuAction::SetTheme).to_vec();
+    assert_eq!(listed, every, "every shipped theme, in catalog order");
+
+    for name in ThemeName::ALL {
+        let action = MenuAction::SetTheme(name);
+        assert!(apply_local_menu_action(&mut ws, &mut chrome, &action));
+        assert_eq!(chrome.theme.name, name, "drawn at once");
+        assert_eq!(
+            chrome.theme.kind,
+            crate::theme::ThemeKind::Dark,
+            "the appearance holds"
+        );
+        assert_eq!(
+            theme_row_label(&chrome),
+            format!("  Theme: {} ▸", name.label())
+        );
+        let choices = theme_menu(&ws, &chrome);
+        let marked: Vec<&str> = choices
+            .items
+            .iter()
+            .filter(|item| !item.enabled)
+            .map(|item| item.label)
+            .collect();
+        assert_eq!(
+            marked,
+            [format!("● {}", name.label())],
+            "the pick is marked"
+        );
+        let saved = crate::prefs::load_prefs(home.path()).expect("load prefs");
+        assert_eq!(saved.palette, name);
+        assert_eq!(saved.theme, "dark");
+    }
 }
 
 /// View › Sidebar › a section cascades two deep with every menu behind it

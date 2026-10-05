@@ -11,6 +11,10 @@
 use gobby_terminal::terminal_theme::{DefaultColorKind, RgbColor, TerminalTheme};
 use ratatui::style::Color;
 
+mod catalog;
+
+pub use catalog::ThemeName;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeKind {
     Dark,
@@ -138,6 +142,7 @@ pub struct FocusRing {
 
 #[derive(Debug, Clone)]
 pub struct Theme {
+    pub name: ThemeName,
     pub kind: ThemeKind,
     pub accent: Token,
     pub info: Token,
@@ -149,9 +154,15 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// The default theme in `kind`.
     pub fn new(kind: ThemeKind) -> Self {
+        Self::named(ThemeName::default(), kind)
+    }
+
+    pub fn named(name: ThemeName, kind: ThemeKind) -> Self {
         match kind {
             ThemeKind::Dark => Self {
+                name,
                 kind,
                 accent: Token::state("accent", BRAND_HUE, 0.82, 0.20, "", None),
                 info: Token::state("info", INFO_HUE, 0.70, 0.16, "i", Some("leading")),
@@ -179,6 +190,7 @@ impl Theme {
                 },
             },
             ThemeKind::Light => Self {
+                name,
                 kind,
                 accent: Token::state("accent", BRAND_HUE, 0.50, 0.18, "", None),
                 info: Token::state("info", INFO_HUE, 0.40, 0.14, "i", Some("leading")),

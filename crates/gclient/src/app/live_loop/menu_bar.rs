@@ -5,8 +5,8 @@ use crate::ui::menu_bar::MenuBarMenu;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
 use super::menu::{
-    arrange_row, blocked_entry, enabled_if, item, passthrough_label, theme_row_label, toggle,
-    ArrangeTarget, MenuAction, MenuItem, Submenu,
+    appearance_row_label, arrange_row, blocked_entry, enabled_if, item, passthrough_label,
+    theme_row_label, toggle, ArrangeTarget, MenuAction, MenuItem, Submenu,
 };
 
 pub fn menu_bar_items<W: WorkspaceView>(
@@ -42,6 +42,10 @@ pub fn menu_bar_items<W: WorkspaceView>(
         // Each section's options live under Sidebar ▸ in a submenu of their
         // own; the state legend is Help › Keys.
         MenuBarMenu::View => vec![
+            item(
+                appearance_row_label(chrome),
+                MenuAction::OpenSubmenu(Submenu::Appearance),
+            ),
             item(
                 theme_row_label(chrome),
                 MenuAction::OpenSubmenu(Submenu::Theme),

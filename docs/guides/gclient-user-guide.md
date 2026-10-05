@@ -86,7 +86,7 @@ when those conditions are absent. Slashes below separate alternative labels:
 | Gobby | Settings, Reload config, Quit |
 | File | New terminal, New tab, New workspace…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
 | Edit | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name (when named), Send right-clicks to pane / Use gclient menu |
-| View | Theme: Dark / Light / System ▸, Monochrome, Sidebar ▸ |
+| View | Appearance: Dark / Light / System ▸, Theme: Classic ▸, Monochrome, Sidebar ▸ |
 | Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (Even horizontal, Even vertical, Main horizontal, Main vertical, Tiled, New grid…) |
 | Agent | Respond, Mark seen, Take control, Release control, Take back, Detach, Open alert target, Next attention, Previous attention |
 | Help | Keys, Alerts…, Daemon, About Gobby |
@@ -94,8 +94,10 @@ when those conditions are absent. Slashes below separate alternative labels:
 A row ending in `▸` opens a submenu beside its menu, which stays drawn with
 that row lit. `→` or `l` opens the submenu under the cursor, `←` or `h`
 returns to the menu it came from, a click on a row of any open menu acts on
-it, and `esc` closes them all. **View › Theme** holds Dark, Light, and System.
-**View › Monochrome** toggles monochrome (below). **View › Sidebar** holds:
+it, and `esc` closes them all. **View › Appearance** holds Dark, Light, and
+System. **View › Theme** lists every named theme, each drawn in the
+appearance in force; a pick redraws at once and is saved. **View ›
+Monochrome** toggles monochrome (below). **View › Sidebar** holds:
 
 | Sidebar row | Items |
 | --- | --- |
@@ -110,15 +112,15 @@ A `✓` marks the value or toggle in force. The attention legend lives in
 **Help › Keys**, where it opens first.
 
 **Monochrome.** **View › Monochrome**, or `Monochrome` in settings, draws the
-client's own chrome in grays: every theme token keeps its lightness and drops
-its hue. Pane contents keep their own colours. The choice is saved as
+client's own chrome in grays: every token of the theme in force keeps its
+lightness and drops its hue. Pane contents keep their own colours. The choice is saved as
 `monochrome = true` under `[ui]` in `~/.gobby/client/prefs.toml`. The glyph
 carries the state: several states share a gray (in Dark, active and needs
 you sit at the same lightness), so read `⍾`, `▶`, `○`, and the rest, and
 the `needs you` words, rather than the shade.
 
-Dark and Light paint their own ground: every cell and every pane's default
-colours take the theme's text and background, whatever background and
+The Dark and Light appearances paint their own ground: every cell and every
+pane's default colours take the theme's text and background, whatever background and
 foreground the hosting terminal (Ghostty included) configures. Those cells are
 explicit colours, so a terminal setting that applies opacity to explicit cells
 (Ghostty's `background-opacity-cells`) still applies. System keeps the hosting
@@ -700,14 +702,15 @@ the `Done` and `Close` buttons. Rows are clickable. Every change is written to
 
 | Row | Default | Effect |
 | --- | --- | --- |
-| Theme | `dark` | `dark`, `light`, or `system`; system follows OS appearance while the client is open (dark if the OS does not specify one); also changed by **View › Theme** |
+| Appearance | `dark` | `dark`, `light`, or `system`; system follows OS appearance while the client is open (dark if the OS does not specify one); saved as `theme`; also changed by **View › Appearance** |
+| Theme | Classic | The named theme drawn in that appearance; saved as `palette`; also changed by **View › Theme** |
 | Monochrome | off | Draw the client's chrome in grays; states keep their glyphs; also changed by **View › Monochrome** |
 | Mouse capture | on | Off leaves selection and scrolling to your terminal emulator |
 | Pane scrollbars | on | Draw a scrollbar lane beside scrolled panes; its thumb is dim at rest and brightens while the pane is focused or for a second after it scrolls |
 | Pane gaps | on | Leave a gap between split panes |
 | Confirm close | on | Ask before closing a pane, terminal, tab, or project |
 | Hide tab bar with one tab | off | Hide the tab bar when a project has a single tab |
-| Sidebar width | 26 | Columns; also set by dragging the sidebar edge |
+| Sidebar width | 26 | Columns, up to 540 of the pixels the terminal reports for its window; that cap is never under 36 columns, and is 36 when the terminal reports no pixels. Also set by dragging the sidebar edge, which saves the width on release |
 | Sidebar side | `left` | Put the overlay or pinned sidebar on the left or right |
 | Sidebar pinned | on | Keep the sidebar in its own column; also changed by **View › Sidebar › Pin sidebar** |
 | Right-click passthrough | none | Modifier that sends a right-click to the pane's application instead of opening the pane menu (`shift`, `alt`, `ctrl`, or none) |
@@ -724,6 +727,7 @@ order) and the `[ui.project_labels]` table (your label per project id).
 ```toml
 [ui]
 theme = "dark"
+palette = "classic"
 mouse_capture = true
 pane_scrollbars = true
 pane_gaps = true
@@ -818,7 +822,7 @@ close.
 | **Gobby** on the menu bar (click) | Settings, Reload config, Quit |
 | **File** on the menu bar (click) | New terminal, New tab, New workspace…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
 | **Edit** on the menu bar (click) | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name, Send right-clicks to pane / Use gclient menu |
-| **View** on the menu bar (click) | Theme ▸, Monochrome, Sidebar ▸ (Show sidebar, Pin sidebar, Machines ▸, Projects ▸, Agents ▸, Terminals ▸) |
+| **View** on the menu bar (click) | Appearance ▸, Theme ▸, Monochrome, Sidebar ▸ (Show sidebar, Pin sidebar, Machines ▸, Projects ▸, Agents ▸, Terminals ▸) |
 | **Window** on the menu bar (click) | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (five layouts, New grid…) |
 | **Agent** on the menu bar (click) | Respond, Mark seen, Take / Release control, Take back, Detach, Open alert target, Next / Previous attention |
 | **Help** on the menu bar (click) | Keys, Alerts…, Daemon, About Gobby |

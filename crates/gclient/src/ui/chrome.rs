@@ -431,9 +431,10 @@ impl Chrome {
         self.host_colors = self.host_colors.with_color(kind, color);
     }
 
-    /// Draw in `kind`, in grays when `prefs.monochrome` is set.
+    /// Draw the preferred theme in `kind`, in grays when `prefs.monochrome`
+    /// is set.
     pub fn set_theme(&mut self, kind: ThemeKind) {
-        self.theme = Theme::new(kind);
+        self.theme = Theme::named(self.prefs.palette, kind);
         self.palette = if self.prefs.monochrome {
             Palette::monochrome(&self.theme)
         } else {
@@ -444,14 +445,14 @@ impl Chrome {
     /// Adopt loaded prefs: the theme and the sidebar width take effect at
     /// once; the rest is read from `prefs` wherever it applies.
     pub fn apply_prefs(&mut self, prefs: ClientPrefs) {
-        self.prefs.monochrome = prefs.monochrome;
-        self.set_theme(prefs.theme_kind());
         self.sidebar.width = prefs.sidebar_width;
         self.sidebar.side = prefs.sidebar_side;
         self.sidebar.pinned = prefs.sidebar_pinned;
         self.sidebar.project_order = prefs.project_order.clone();
         self.sidebar.project_labels = prefs.project_labels.clone();
         self.prefs = prefs;
+        // After the prefs land: the theme reads its name and monochrome there.
+        self.set_theme(self.prefs.theme_kind());
     }
 
     /// The focused project's tab bar.
