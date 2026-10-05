@@ -46,10 +46,8 @@ design, the plan of record's 4.4, and the PD disposition in
 Decisions 2 and 3 to Josh at approval, because they change behavior that the
 approved key-cutover plan specified.
 
-1. **Every leaf waits on key-cutover's live activation.** The Orchestrator
-   ruled on 2026-10-05 at 11:13 CT that implementation leaves depending on the
-   key cutover take blocks edges to #23523 (Live activation of the key
-   cutover). All five leaves depend on it:
+1. **The plan expands only after key-cutover's live activation closes.** All
+   five leaves build on the key cutover:
    - 1.1 edits `HubDatabaseBootstrap`, which key-cutover 1.3 (#23519) gives
      `api_key` and a manual `Debug`.
    - 1.2 to 1.4 edit `serve.rs`, `front_door/mod.rs`, `front_door/proxy.rs`,
@@ -57,9 +55,13 @@ approved key-cutover plan specified.
      also rely on its key resolver and its resolved identity headers.
    - 1.5 runs against a hub whose front door validates keys.
 
-   The plan parser cannot name another plan's task, so the Orchestrator wires
-   the five edges at expansion (the precedent is the 4.3-on-3.3 edges in
-   `.gobby/plans/gdaemon-front-door.md`, lines 427-428).
+   The Orchestrator ruled on 2026-10-05 at 12:11 CT that
+   `docs/contracts/plan-coverage.md` (lines 321-324) has no exception for
+   external edges. So the five deliverables stay active, fully specified
+   leaves with no external edges and no typed deferrals. The plan expands only
+   after #23523 (Live activation of the key cutover) closes, so no leaf has an
+   open external prerequisite at expansion. Expansion is the Orchestrator's
+   action, and the Orchestrator holds it to that gate.
 2. **Node mode supersedes key-cutover Decision 15 and is exempt from its
    Decision 6.** A node's gdaemon validates nothing and holds no table. It
    builds no key resolver and needs no `GOBBY_FRONT_DOOR_SECRET`, because no
@@ -106,10 +108,18 @@ approved key-cutover plan specified.
      port is configured.
    - **`Host`.** `Host` is rewritten to the hub's authority, because the hub's
      Python sees the request as addressed to itself.
-   - **Peer header.** `observe_peer` still runs on the node, and the hub
-     overwrites `X-Forwarded-For` with the node's address. So the loopback
-     break-glass (key-cutover Decision 4) is never admitted through a node,
-     which is intended: break-glass is host-local.
+   - **Break-glass.** The node removes `X-Gobby-Break-Glass` from every relayed
+     request and upgrade. `observe_peer` still runs on the node, and the hub
+     overwrites `X-Forwarded-For` with its own transport peer. That peer is
+     loopback whenever the node shares the hub's host and dials it at a
+     loopback address, over `http` (Decision 6) or `https` (the pair test
+     dials `https://127.0.0.1`). Python admits
+     break-glass for a matching header from a loopback peer (key-cutover
+     Decision 4; `.gobby/plans/gdaemon-key-cutover.md`, lines 360-367), and the
+     hub's front door forwards the header untouched (same plan, lines 797-799).
+     So only the node's removal keeps break-glass from being admitted through a
+     node. Break-glass is host-local, and direct loopback break-glass at the
+     hub is unchanged.
 6. **Pinning.**
    - An `https` hub requires `hub_cert`. The relay and the channel trust only
      that certificate, through `front_door/tls.rs::pinned_client_config`.
@@ -119,9 +129,11 @@ approved key-cutover plan specified.
    - A node refuses to start without `api_key` (it has not enrolled), or with
      an `https` hub and no `hub_cert`. Both messages name `gobby auth login`.
 7. **The typed 503 names the relay target.** `health::unavailable` and
-   `health::bad_gateway` take the target as text. Loopback callers pass the
-   socket address's text, so their output is byte-identical. A node passes
-   `hub_daemon_url`.
+   `health::bad_gateway` take `target: impl std::fmt::Display` and render it
+   with `to_string()`, as today. Every existing caller passes a `SocketAddr`
+   unchanged: `proxy::forward`, `ws::splice`, and `routes.rs::compare`
+   (line 165). So their output is byte-identical and they need no edit for
+   this. A node passes `hub_daemon_url` as `&str`.
 8. **Node routes are native mode routes, not route families.**
    `front_door/routes.rs` families default to `proxy` and forward to Python,
    which has no node or machines routes. So `/api/nodes/channel` and
@@ -145,8 +157,9 @@ approved key-cutover plan specified.
      ack, and ping/pong exist in Stage 1; S2.7 and S2.8 add commands.
    - **Close codes.** 4401 when the key is revoked (Python's
      authentication-close code), 4409 when a newer connection replaces the
-     channel, 4408 when the hub hears nothing within the idle timeout, and
-     1008 when the first frame is not a valid hello.
+     channel, 4408 when the hub hears nothing within the idle timeout, 1008
+     when the first frame is not a valid hello, and 1011 when the hello's
+     bookkeeping write fails before the ack.
    - **Reconnect.** The node reconnects after any close or error with backoff:
      1 s, doubling to 60 s, and reset after an ack. It reads `api_key` from its
      bootstrap on each attempt, so a rotation (key-cutover 1.4) takes effect
@@ -154,17 +167,35 @@ approved key-cutover plan specified.
 10. **Heartbeat bookkeeping on the hub.**
     - The hub writes `machines.last_heartbeat_at` and `node_version` at hello,
       then on a ping only when at least 60 s have passed since its last write.
-    - On every ping it re-reads the key row. A revoked or missing row closes
-      the channel with 4401.
-    - A database error on a ping keeps the channel open and is retried at the
-      next ping. Relayed requests already fail closed through the resolver's
-      503, and the channel carries no commands in Stage 1.
+    - **Revocation runs on the hub's clock.** Peer traffic does not drive it.
+      From the ack, the hub re-reads the key row every key-recheck interval
+      (30 s, one heartbeat interval), whether or not the peer sends anything.
+      A revoked or missing row removes the channel's registry entry and then
+      closes it with 4401. So a revocation closes the channel at the first
+      recheck after it, at most one interval later; the close follows that
+      recheck by one key-row query. A silent peer, or one sending only Pong
+      frames, is closed the same way.
+    - A database error on a recheck keeps the channel open and is retried at
+      the next recheck. This is the one case where the bound can be exceeded:
+      relayed requests already fail closed through the resolver's 503, and the
+      channel carries no commands in Stage 1.
     - The hub closes a channel that sends nothing within 90 s (three ping
-      intervals), so a partitioned node stops reading as `connected`.
+      intervals), so a partitioned node stops reading as `connected`. Any
+      received frame resets that timer. It governs liveness only, not
+      revocation.
+    - **A replaced connection cannot overwrite its successor's bookkeeping.**
+      The registry keeps one async write gate per machine, shared by that
+      machine's successive connections, for the hub's lifetime. A connection
+      writes `machines` only while holding the gate and only if the registry
+      still names its `connection_id`. A write in flight at replacement
+      finishes before the successor's hello write, which waits on the gate. A
+      write that starts after replacement is skipped. The successor sends its
+      ack only after its own hello write. No schema field is added.
 11. **Timings are constructor arguments, not configuration.**
     - `ChannelTiming` carries the ping interval, the backoff start and
-      ceiling, the ack and hello timeouts, the idle timeout, and the heartbeat
-      write interval. `ChannelTiming::default()` holds the values above.
+      ceiling, the ack and hello timeouts, the idle timeout, the key-recheck
+      interval, and the heartbeat write interval. `ChannelTiming::default()`
+      holds the values above.
     - Tests build short timings.
     - No bootstrap key is added.
 12. **`/api/machines` follows the API-key routes' house style.**
@@ -417,8 +448,8 @@ Targets:
 - `crates/gdaemon/src/front_door/relay.rs`
 - `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: registers `relay`; `FrontDoor` holds the `AppState`; in node mode `FrontDoor::handle` sends an `interactive` handshake challenge to key-cutover's native handler and relays every other request and upgrade without key authentication
 - `crates/gdaemon/src/front_door/ws.rs::*` — scope-reason: `splice` is split so the upgrade exchange runs over a stream the caller has connected, and the relay reuses it over TLS
-- `crates/gdaemon/src/front_door/health.rs::*` — scope-reason: `unavailable` and `bad_gateway` take the target as text
-- `crates/gdaemon/src/front_door/proxy.rs::*` — scope-reason: `forward` passes its target's text to `unavailable` and `bad_gateway`
+- `crates/gdaemon/src/front_door/health.rs::*` — scope-reason: `unavailable` and `bad_gateway` take `target: impl std::fmt::Display`
+- `crates/gdaemon/src/front_door/proxy.rs::*` — scope-reason: `strip_trailers` becomes `pub(super)` so the sibling `relay` module reuses it; `strip_hop_by_hop` is already `pub`
 - `crates/gdaemon/src/serve.rs::*` — scope-reason: `run` builds the `AppState` from the bootstrap's run mode and, in node mode, requires `api_key` (and `hub_cert` for an `https` hub) but no front-door secret or key resolver; `serve` takes the `AppState`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
@@ -448,9 +479,18 @@ Targets:
   codes, ping/pong, and extensions pass through untouched.
 - `crates/gdaemon/src/front_door/health.rs::unavailable` (line 39) writes
   `{"status":"unavailable","backend":{"state","target"}}` with
-  `target.to_string()`. Its callers are `proxy::forward` and `ws::splice`.
-  `crates/gdaemon/tests/front_door.rs` (line 247) asserts the loopback body,
-  which stays byte-identical.
+  `target.to_string()`, and `bad_gateway` (line 48) writes
+  `{"status":"bad_gateway","backend":{"target"}}` the same way. Both take
+  `target: SocketAddr` today. Their production callers are `proxy::forward`,
+  `ws::splice`, and `routes.rs::compare` (line 165, `bad_gateway(state.target,
+  error)`). `crates/gdaemon/tests/front_door.rs` (line 247) asserts the
+  loopback body, which stays byte-identical.
+- `crates/gdaemon/src/front_door/proxy.rs`: `strip_hop_by_hop` (line 71) is
+  `pub`, and `strip_trailers` (line 99) is private.
+- Break-glass: key-cutover 1.3's front door forwards `X-Gobby-Break-Glass`
+  untouched (`.gobby/plans/gdaemon-key-cutover.md`, lines 797-799), and
+  Python admits a matching header from a loopback peer (same plan, lines
+  360-367).
 - `crates/gdaemon/src/front_door/tls.rs::pinned_client_config` (line 110) trusts
   only the given leaf and sets ALPN `http/1.1` (line 119). hyper-rustls
   0.27.7's `ConnectorBuilder::with_tls_config` panics unless that list is
@@ -499,15 +539,19 @@ Targets:
     Its pool idle timeout is 90 s, so sequential requests reuse one TLS
     connection.
   - `HubRelay::forward(request)` rewrites the URI to `origin` plus the
-    original path and query, and sets `Host` to `authority`. It strips
-    hop-by-hop fields and trailers with `proxy::strip_hop_by_hop` and
-    `strip_trailers`. A connect error maps to `unavailable(origin, Down)`, and
-    a TLS or protocol error to `bad_gateway(origin, error)`.
+    original path and query, sets `Host` to `authority`, and removes
+    `X-Gobby-Break-Glass` (Decision 5). It strips hop-by-hop fields and
+    trailers with `proxy::strip_hop_by_hop` and `proxy::strip_trailers`. A
+    connect error maps to `unavailable(origin, Down)`, and a TLS or protocol
+    error to `bad_gateway(origin, error)`.
   - `HubRelay::splice(request, to_root_ws: bool)` dials `dial`. For
     `https` it wraps the stream with `tokio_rustls::TlsConnector` and `tls`,
-    using `host` as the server name. It sets `Host`,
-    rewrites the path to `/ws` (keeping the query) when `to_root_ws`, and
-    hands the stream to the split `ws` upgrade exchange.
+    using `host` as the server name. It sets `Host`, removes
+    `X-Gobby-Break-Glass`, rewrites the path to `/ws` (keeping the query) when
+    `to_root_ws`, and hands the stream to the split `ws` upgrade exchange.
+- `health::unavailable` and `health::bad_gateway` take
+  `target: impl std::fmt::Display` (Decision 7). `proxy.rs::strip_trailers`
+  becomes `pub(super)`.
 - `ws.rs` splits `splice` into a connect step and
   `splice_over(stream, request, target: &str)`, so loopback and relay share
   one upgrade exchange.
@@ -519,8 +563,10 @@ Targets:
   3. Any other upgrade goes to `relay.splice(request, is_ws_listener)`.
   4. Everything else goes to `relay.forward(request)`.
 
-  The node never authenticates a key, never strips or sets identity headers,
-  and never consults the route table.
+  The node never authenticates a key, never sets identity headers, and never
+  consults the route table. The only header it removes beyond hop-by-hop
+  fields is `X-Gobby-Break-Glass`; the hub's front door strips and sets the
+  identity headers itself.
 - `serve.rs::run` skips the front-door secret and the key resolver in node
   mode and builds the `AppState` before binding. `serve` takes
   `Arc<AppState>` and passes it to each `FrontDoor`. The node still binds
@@ -538,6 +584,12 @@ and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work), th
 - 1.2.3 - A WebSocket upgrade relayed through the node to the hub stub replays the terminal golden corpus and a 1000 close frame byte-equal in both directions. An upgrade on the HTTP listener keeps its path, and an upgrade on the WebSocket listener reaches `/ws` with its query. The same test also checks origin-to-dial-address derivation for omitted ports and bracketed IPv6, without binding privileged ports. test: `crates/gdaemon/tests/nodes.rs::node_relays_ws_over_pinned_tls`.
 - 1.2.4 - A node answers an `interactive` handshake challenge with `HMAC(node api_key, nonce)` without contacting the hub, and relays a `managed` challenge. test: `crates/gdaemon/tests/nodes.rs::node_answers_interactive_challenge_with_its_own_key`.
 - 1.2.5 - `AppState::from_bootstrap` refuses a node bootstrap with no `api_key`, or with an `https` hub and no `hub_cert`, and the error names `gobby auth login`. A spawned `gdaemon serve` with a node bootstrap and no `GOBBY_FRONT_DOOR_SECRET` starts and answers a relayed request. test: `crates/gdaemon/tests/nodes.rs::node_startup_requires_enrollment_but_no_secret`.
+- 1.2.6 - A node on the same host as a loopback TLS hub stub relays a request and a WebSocket upgrade that both carry `X-Gobby-Break-Glass`, and the stub receives neither with that header. test: `crates/gdaemon/tests/nodes.rs::node_strips_break_glass_before_the_hub`.
+
+Consumers unchanged:
+- `crates/gdaemon/src/front_door/routes.rs` — no-edit-reason: `compare` (line 165) passes `state.target`, a `SocketAddr`, to `health::bad_gateway`, which accepts it through `impl std::fmt::Display` with byte-identical output (Decision 7).
+- `crates/gdaemon/tests/front_door.rs` — no-edit-reason: the loopback 503 and 502 bodies stay byte-identical (Decision 7), and it spawns `serve` without a node bootstrap.
+- `crates/gdaemon/tests/ws_golden_proxy.rs` — no-edit-reason: the loopback splice keeps its behavior; 1.2.3 replays the same corpus through a node.
 
 ### 1.3 Node channel: the hub registers, heartbeats, replaces, and revokes node channels [category: code] (depends: 1.2)
 `kind: deliverable`
@@ -585,16 +637,21 @@ Targets:
 
 **Implementation:**
 - `nodes/registry.rs` defines the following:
-  - `Registry` wraps `std::sync::Mutex<HashMap<Uuid, ChannelHandle>>`.
+  - `Registry` wraps `std::sync::Mutex<HashMap<Uuid, Slot>>`, with
+    `Slot { current: Option<ChannelHandle>, gate: Arc<tokio::sync::Mutex<()>> }`.
+    A machine's slot, and so its gate, lives for the hub's lifetime, bounded
+    by the `machines` rows (Decision 10).
   - `ChannelHandle { connection_id: Uuid, close: oneshot::Sender<(u16, &'static str)> }`.
   - `register(machine_id) -> (connection_id, close_rx)` assigns a new
-    `connection_id`, swaps the entry, and fires the old handle's `close`
+    `connection_id`, swaps `current`, and fires the old handle's `close`
     with 4409.
-  - `remove(machine_id, connection_id)` removes the entry only while the
+  - `remove(machine_id, connection_id)` clears `current` only while the
     stored `connection_id` is its own.
-  - `is_connected(machine_id) -> bool` and `connected_ids()` report the
-    entries.
-  - No lock is held across an await.
+  - `persist(machine_id, connection_id, write)` clones the slot's gate, awaits
+    it, and runs `write` only if `current` still names `connection_id`. It
+    otherwise returns `Skipped` without touching the database.
+  - `is_connected(machine_id) -> bool` and `connected_ids()` report `current`.
+  - No `std` lock is held across an await.
 - `nodes/channel.rs` holds the hub endpoint, the node client, and
   `ChannelTiming`:
   - **Hub endpoint.** An axum handler takes `WebSocketUpgrade` and reads
@@ -604,16 +661,26 @@ Targets:
     1. It waits up to `hello_timeout` for a valid hello and otherwise closes
        1008.
     2. It registers the machine.
-    3. It writes `last_heartbeat_at = now()` and `node_version`.
-    4. It sends the ack.
-    5. It loops on `recv` under `idle_timeout`, closing 4408 when the timeout
-       elapses.
-    6. On each ping it re-reads `SELECT 1 FROM api_keys WHERE id = $1 AND
-       revoked_at IS NULL`. No row closes 4401. A query error keeps the
-       channel. It writes the heartbeat when `heartbeat_write` has elapsed.
-    7. When it fires, the registry's close signal closes the socket with its
-       code.
-    8. On exit it calls `registry.remove(machine_id, connection_id)`.
+    3. Through `registry.persist`, it writes `last_heartbeat_at = now()` and
+       `node_version`. A database error closes 1011 and removes the entry
+       before any ack, and the node reconnects with backoff.
+    4. If its close signal has already fired (it was replaced during step 3),
+       it closes with that code and sends no ack. Otherwise it sends the ack
+       and starts the recheck timer with
+       `tokio::time::interval_at(ack + key_recheck, key_recheck)` and
+       `MissedTickBehavior::Delay`.
+    5. It then selects over four events:
+       - **A received frame.** Any frame resets the `idle_timeout` deadline.
+         On a ping, when `heartbeat_write` has elapsed since its last write,
+         it writes `last_heartbeat_at` and `node_version` through
+         `registry.persist`.
+       - **A recheck tick.** It runs `SELECT 1 FROM api_keys WHERE id = $1 AND
+         revoked_at IS NULL`. No row removes the registry entry and then
+         closes 4401. A query error keeps the channel until the next tick.
+       - **The idle deadline.** It removes the entry and closes 4408.
+       - **The close signal.** It closes with the signal's code (4409).
+    6. On exit it calls `registry.remove(machine_id, connection_id)`, which is
+       a no-op when the entry is already gone or replaced.
 
     `node_version` and `platform` are bounded to 64 characters.
   - **Node client.** A task loops `connect → hello → ack → ping every
@@ -632,8 +699,8 @@ Targets:
     - After any close or error it sleeps for the backoff, which starts at
       `backoff_start`, doubles up to `backoff_max`, and resets after an ack.
   - **`ChannelTiming`.** Its defaults are a 30 s ping, 1 s and 60 s backoff,
-    10 s ack and hello timeouts, a 90 s idle timeout, and a 60 s heartbeat
-    write interval.
+    10 s ack and hello timeouts, a 90 s idle timeout, a 30 s key recheck, and
+    a 60 s heartbeat write interval.
 - `state.rs` changes as follows:
   - `ModeServices::Hub(HubServices { db: Pool, registry: Arc<Registry> })`.
   - `NodeServices` gains the channel task's `JoinHandle`.
@@ -655,10 +722,11 @@ and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work), th
 **Acceptance:**
 
 - 1.3.1 - A key-authenticated channel registers its machine and receives an ack carrying the machine id, and its hello writes `last_heartbeat_at` and `node_version`. A ping within the heartbeat write interval writes nothing. After one heartbeat write interval, a ping advances `last_heartbeat_at` and preserves the channel's `node_version`; another ping within the next interval writes nothing. The test uses short constructor timings and reads the isolated schema's machine row to observe both writes and the suppression. A second connection for the same machine replaces the first, which closes with 4409. When the first channel's cleanup runs after the second ack, the second stays registered. test: `crates/gdaemon/tests/nodes.rs::channel_registers_and_replaces`.
-- 1.3.2 - With the node client's shortened `ChannelTiming`, revoking the channel's key immediately after an observed heartbeat causes the next scheduled heartbeat to close the channel with 4401 and remove the machine from the registry within one configured heartbeat interval. The test drives the scheduled heartbeat rather than manually sending the revocation-triggering ping. It measures the bound on a monotonic clock and asserts the close arrives in under one and a half intervals, so the first scheduled heartbeat after the revocation performed it; the half interval absorbs the hub's re-read. It does not pause tokio time, because paused time auto-advances past the idle timeout while the hub awaits its database query. test: `crates/gdaemon/tests/nodes.rs::revoked_key_closes_channel_on_heartbeat`.
+- 1.3.2 - With a short key-recheck interval T counted from the ack, and an idle timeout above 2T, the test revokes the channel's key a quarter interval after the ack. The 4401 close arrives within T of the revocation on a monotonic clock, and the machine is already absent from the registry when it arrives. The first recheck after the revocation falls 0.75T after it and the second 1.75T after it, so only the first scheduled recheck fits that bound. The test runs this for three peers: the node client sending its scheduled pings, a raw peer that sends nothing after hello, and a raw peer that sends only Pong frames. It does not pause tokio time, because paused time auto-advances past the timers while the hub awaits its database query. test: `crates/gdaemon/tests/nodes.rs::revoked_key_closes_channel_on_heartbeat`.
 - 1.3.3 - The node client sends a hello with the gdaemon version and `<os>/<arch>`, pings at its interval, and reconnects after a close. Against a refusing hub its delays double from the start value to the ceiling, and they reset after an ack. It reads the key again on each attempt. test: `crates/gdaemon/tests/nodes.rs::node_channel_reconnects_with_backoff`.
 - 1.3.4 - A channel whose first frame is not a valid hello closes with 1008, and a registered channel silent past the idle timeout closes with 4408 and leaves the registry. test: `crates/gdaemon/tests/nodes.rs::silent_or_malformed_channel_is_closed`.
 - 1.3.5 - On a hub, an upgrade to `/api/nodes/channel` without a key identity is refused with 401 before any upgrade. A standalone front door does not mount the route and proxies the request to its backend. test: `crates/gdaemon/tests/nodes.rs::channel_requires_a_key_on_a_hub`.
+- 1.3.6 - While a test transaction holds a row lock on the machine's `machines` row, a first connection's hello write blocks. A second connection for the same machine then registers, and its ack does not arrive while the lock is held. After the test releases the lock, the first connection closes with 4409 without an ack, the second receives its ack, and the row holds the second connection's `node_version` with the registry naming the second connection. A `registry.persist` call under the superseded `connection_id` returns `Skipped` and leaves the row unchanged. test: `crates/gdaemon/tests/nodes.rs::replaced_channel_cannot_overwrite_successor_bookkeeping`.
 
 ### 1.4 `/api/machines` lists the caller's machines with connection state [category: code] (depends: 1.3)
 `kind: deliverable`
@@ -676,8 +744,15 @@ Targets:
 - `src/gobby/servers/routes/api_keys.py::list_keys` returns `{"keys": [...]}`
   scoped to the caller's user, with ISO timestamps (`_key_summary`). The
   machines API follows that shape (Decision 12).
-- Identity: the same key-cutover headers as 1.3, read after authentication.
-  The `machines` columns are listed in 1.3.
+- Identity: key-cutover 1.3's front door strips client `X-Gobby-User-Id`,
+  `X-Gobby-Machine-Id`, `X-Gobby-Key-Id`, and `X-Gobby-Front-Door` on every
+  path and sets them only for a key-authenticated caller. So after
+  authentication, `X-Gobby-User-Id` inside gdaemon is the caller's resolved
+  user, and its absence means no key identity.
+- Schema: `machines` has `id` (uuid), `hostname`, `os`, `label`,
+  `tailscale_name`, `owner_user_id`, `first_seen`, `last_seen` (baseline),
+  `ref` (migration 440), and `last_heartbeat_at` and `node_version` (migration
+  458). `gobby_daemon_runtime` holds SELECT on it.
 - `docs/guides/configuration.md` documents the bootstrap keys, including
   `datastore_mode` and `hub_daemon_url`. `docs/guides/shared-stack.md` holds
   the client setup that `gobby auth login` cites.
@@ -685,14 +760,25 @@ Targets:
   `tests/`.
 
 **Implementation:**
-- `nodes/machines_api.rs` builds an axum router over `(Pool, Option<Arc<Registry>>)`:
-  - `GET /api/machines` selects the columns in Decision 12 where
-    `owner_user_id = $1`, ordered by `first_seen, id`. It adds
-    `connected = registry.is_connected(id)`, or `false` without a registry.
-  - `GET /api/machines/{id}` does the same for one id. An unparsable id, a
-    missing row, or a foreign owner is 404 `machine_not_found`.
-  - Without `X-Gobby-User-Id` it is 401 `missing_auth`, and a query error is
-    503 `machines_unavailable`.
+- `nodes/machines_api.rs` builds an axum router over `(Pool, Option<Arc<Registry>>)`.
+  Its contract (Decision 12) is the following:
+  - **Fields.** Each machine object has exactly `id`, `ref`, `hostname`, `os`,
+    `label`, `tailscale_name`, `first_seen`, `last_seen`,
+    `last_heartbeat_at`, `node_version`, and `connected` (bool). `id` is the
+    uuid's text. Timestamps are RFC 3339 strings, or `null` when the column
+    is null. Other nullable columns are `null` when null.
+  - **`GET /api/machines`** selects those columns where
+    `owner_user_id = $1` (the caller's `X-Gobby-User-Id`), ordered by
+    `first_seen, id`, and returns `{"machines": [...]}`.
+  - **`GET /api/machines/{id}`** returns the one object, not wrapped. An
+    unparsable id, a missing row, or another user's machine is 404
+    `machine_not_found`.
+  - **`connected`** is `registry.is_connected(id)`: true only while this
+    hub's registry holds a live channel for the machine. Standalone mode has
+    no registry, so every row reads `false`, and so does the hub's own row.
+  - **Errors** use gdaemon's existing body `{"error": msg, "code": code}`.
+    Without `X-Gobby-User-Id` both routes are 401 `missing_auth`, and a query
+    or pool error is 503 `machines_unavailable`.
 - `ModeServices::Standalone` becomes `Standalone(StandaloneServices { db: Pool })`.
   `FrontDoor::handle` routes the machines paths in standalone and hub modes.
   A node never reaches it, because it relays.
@@ -710,7 +796,7 @@ Targets:
 
 **Acceptance:**
 
-- 1.4.1 - `GET /api/machines` lists only the caller's machines with the fields in Decision 12, and `connected` is true exactly for machines with a registered channel. `GET /api/machines/{id}` returns one such row and answers 404 `machine_not_found` for another user's machine, an unknown id, and a malformed id. test: `crates/gdaemon/tests/nodes.rs::machines_api_lists_rows_with_connection_state`.
+- 1.4.1 - `GET /api/machines` returns `{"machines": [...]}` with only the caller's machines, ordered by `first_seen, id`, each with exactly the eleven fields listed in this section's Implementation and RFC 3339 or `null` timestamps. `connected` is true exactly for machines with a registered channel, and false for every row on a standalone front door. `GET /api/machines/{id}` returns one such unwrapped object and answers 404 `machine_not_found` for another user's machine, an unknown id, and a malformed id. test: `crates/gdaemon/tests/nodes.rs::machines_api_lists_rows_with_connection_state`.
 - 1.4.2 - Without a key identity both routes answer 401 `missing_auth`, and a query error answers 503 `machines_unavailable`. test: `crates/gdaemon/tests/nodes.rs::machines_api_requires_a_key`.
 - 1.4.3 - The configuration guide documents running a node, its relay and channel, and `/api/machines`. behavior: the "Nodes" section in `docs/guides/configuration.md`.
 
@@ -764,13 +850,32 @@ Targets:
   - It enrolls with `gobby auth login`, accepting the hub's fingerprint. The
     node's machine id is the node home's `machine_id` file, which login
     creates through `require_machine_id`.
+  - It mints an observer key with
+    `ApiKeyManager.mint(TEST_USER_ID, "21000000-0000-4000-8000-000000000002", "pair-observer")`.
+    `TEST_USER_ID` comes from `tests.fixtures.postgres`, and the machine is
+    the one `_seed_e2e_runtime_state` inserts. The observer dials the hub
+    directly over the pinned certificate with
+    `ssl.create_default_context(cafile=…)`.
   - It starts a bare `gdaemon serve` from `select_test_gdaemon()`, with
-    `GOBBY_HOME` set to the node home and no `GOBBY_PARENT_FD` or
-    `GOBBY_FRONT_DOOR_SECRET`.
+    `GOBBY_HOME` set to the node home, no `GOBBY_PARENT_FD` or
+    `GOBBY_FRONT_DOOR_SECRET`, and stderr captured. A fixture finalizer
+    terminates the node, and kills it after 5 s, on success, failure, or
+    timeout.
+- **Readiness.** Listener readiness and channel registration are observed
+  separately, each bounded to 30 s:
+  - The test polls the node's `/api/health` through its loopback front door
+    until it answers 200.
+  - It then polls the observer's `GET /api/machines/{node id}` until it reads
+    `connected: true`.
+  - Right after that, it records the node's hello timestamp from the same
+    response's `last_heartbeat_at`. No later heartbeat write can exist yet,
+    because the write interval is 60 s.
+  - A readiness timeout fails the test with the node's captured stderr.
 - Then it asserts these steps in order:
   1. Through the node's loopback front door with the node's `api_key`,
      `/api/health` reports `"mode": "hub"`.
-  2. `/api/machines` lists the node's machine as `connected`.
+  2. `/api/machines` through the node lists the node's machine as
+     `connected`.
   3. A WebSocket on the node's `websocket_port` receives a pong for a ping.
   4. Through the node's front door, the test sends
      `POST /api/runtime/handshake/challenge` with
@@ -785,13 +890,19 @@ Targets:
      the test's HTTP client.
   5. The test revokes the node's key with `ApiKeyManager.revoke`. Within one
      default heartbeat interval (30 s), the node's machine reads
-     `connected: false` through an observer key that the test minted for the
-     same user with `ApiKeyManager.mint`, dialing the hub directly over the
-     pinned certificate with `ssl.create_default_context(cafile=…)`. The test
-     polls every 0.25 s against a 30 s monotonic deadline measured from the
-     revocation, and polls once more at the deadline.
+     `connected: false` through the observer. The timing works as follows:
+     - **Revocation phase.** The hub rechecks the key every 30 s from the
+       channel's ack (1.3), and the hello write stamps `last_heartbeat_at`
+       just before that ack. So the test waits, when needed, until the wall
+       clock is between 2 s and 20 s past a recheck boundary
+       (hello timestamp + 30k s), and only then revokes. The first recheck
+       after the revocation therefore falls between 10 s and 28 s after it.
+     - **Deadline.** From the revocation's return, the test polls the
+       observer's `GET /api/machines/{node id}` every 0.25 s on a monotonic
+       clock. It passes only on a response received before the 30 s deadline
+       that reads `connected: false`. A response received after the
+       deadline proves nothing, and the test fails.
   6. The next relayed request with the node's key answers 401.
-- The test cleans up by terminating the node gdaemon.
 
 **Focused verification (planned):**
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_hub_node_pair.py -q`
@@ -799,14 +910,12 @@ after `cargo build -p gobby-daemon` (heavy work).
 
 **Acceptance:**
 
-- 1.5.1 - Over self-signed TLS, an enrolled bare `gdaemon serve` node shows its machine as `connected` and relays one request (which reports the hub's mode) and one WebSocket upgrade (which receives the hub's pong). The native interactive challenge and the relayed authenticated handshake also complete together and return a grant bound to the enrolled node. Revoking its key closes the channel within one default heartbeat interval (30 s) and makes the next relayed request fail with 401. test: `tests/e2e/test_hub_node_pair.py::test_node_enrolls_and_relays`.
+- 1.5.1 - Over self-signed TLS, an enrolled bare `gdaemon serve` node, observed ready and registered within bounded waits, shows its machine as `connected` and relays one request (which reports the hub's mode) and one WebSocket upgrade (which receives the hub's pong). The native interactive challenge and the relayed authenticated handshake also complete together and return a grant bound to the enrolled node. Revoking its key at a controlled phase closes the channel within one default heartbeat interval (30 s), proved only by an observation received before that deadline, and makes the next relayed request fail with 401. test: `tests/e2e/test_hub_node_pair.py::test_node_enrolls_and_relays`.
 
 Consumers unchanged:
 - `tests/contracts/test_http_corpus.py` — no-edit-reason: uses the single-daemon `daemon_instance`; the hub and node pairing belongs to the pair test.
 - `tests/e2e/test_qa_23120_tmux_address.py` — no-edit-reason: same.
 - `tests/e2e/conftest.py` — no-edit-reason: the pair test writes the hub flag and the node bootstrap itself.
-- `crates/gdaemon/tests/front_door.rs` — no-edit-reason: the loopback 503 and 502 bodies stay byte-identical (Decision 7), and it spawns `serve` without a node bootstrap.
-- `crates/gdaemon/tests/ws_golden_proxy.rs` — no-edit-reason: the loopback splice keeps its behavior; 1.2.3 replays the same corpus through a node.
 - `src/gobby/cli/auth_login.py` — no-edit-reason: the node bootstrap it writes is the one 1.2 consumes.
 
 ## V1 Plan Changelog
@@ -828,6 +937,24 @@ Consumers unchanged:
   - 1.3.1 asserts the post-interval write (NC-E07);
   - the pair test proves the challenge and handshake split with a grant bound
     to the node (NC-E08).
+- 2026-10-05: On the Orchestrator's 12:11 CT ruling, Decision 1 drops the
+  external blocks edges. The five leaves stay active, and the plan expands
+  only after #23523 (Live activation of the key cutover) closes. The Adversary
+  gobby#15401 reviewed `53a7172` and raised seven blocking findings, all
+  accepted:
+  - NC-A1: the node removes `X-Gobby-Break-Glass` (Decision 5, 1.2.6).
+  - NC-A2: the hub rechecks the key on its own 30 s clock from the ack, so
+    silent and Pong-only peers are revoked too (Decision 10, 1.3.2).
+  - NC-A3: 1.3.2 revokes a quarter interval after the ack and asserts the
+    close within one interval. The pair test revokes at a controlled phase,
+    and only an observation received before the deadline counts.
+  - NC-A4: the health helpers take `impl Display`, `routes.rs` is a verified
+    no-edit consumer, and `strip_trailers` becomes `pub(super)`.
+  - NC-A5: 1.4 carries the full machines contract.
+  - NC-A6: a per-machine write gate fences replaced connections' bookkeeping
+    (Decision 10, 1.3.6).
+  - NC-A7: the pair test observes listener readiness and channel registration
+    separately, with bounded waits.
 
 ## V2: Verification
 `kind: verification`
