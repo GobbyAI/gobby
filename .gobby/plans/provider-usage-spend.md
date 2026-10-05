@@ -196,11 +196,15 @@ Writer decisions:
   are rewritten by the audit repair, with no aliasing.
 - **Repair at activation.** After each daemon restart that activates a P2
   leaf or 3.1, the cutover runs `gobby tokens audit --all --fix` before
-  DAEMON BACK is sent. The repair is idempotent, so running it again is
-  safe. The run after the restart that activates 3.1, the first restart that
-  exposes the ledger, is the completion gate: the ledger is authoritative
-  once a following `gobby tokens audit --all` prints `drifted=0`. V2 step 3
-  confirms it.
+  DAEMON BACK is sent. The repair is a diff repair (2.1) that never deletes
+  a row the live processor inserted after the audit's read, so it is safe
+  while sessions are live, and running it again is safe. The run after the
+  restart that activates 3.1, the first restart that exposes the ledger, is
+  the completion gate. The ledger is authoritative once a following
+  `gobby tokens audit --all` reports `stale=0` for every session and
+  `missing=0` for every session that is not `active`. Missing rows on an
+  `active` session are ingestion lag that the live processor fills. V2
+  step 3 confirms the gate.
 - **Consumer sweeps** ran read-only on `0.5.0` after `4858476f43` (2026-10-05):
   - `gcode grep -w` for `TokenEvent`, `_persist_session_transcript`,
     `ProviderCapacityRecord`, `ProcessorHost`, `SessionMessageProcessor`,
@@ -436,17 +440,43 @@ Targets:
   - `_messages_to_events` keeps the first event for each `message_id` before
     totals are compared.
   - Drift compares rows as well as totals, because equal token totals do
-    not mean an equal ledger. The audit reads every stored row of the
-    session with one direct query (`list_session_events` is limited). The
-    session drifts when the multiset of
-    `(message_id, api_calls, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)`
-    from the stored rows differs from the one derived from the transcript,
-    or when any total differs, as today.
-  - Equal totals therefore no longer hide an obsolete Codex index id, a NULL
-    `api_calls` on a pre-460 Claude or Grok row, or a row with NULL
-    `message_id`.
-  - `--fix` rewrites a drifting session through the same delete-and-reinsert
-    it already uses.
+    not mean an equal ledger. The audit must tolerate the live processor
+    appending while it runs, so read order matters:
+    1. It reads the stored rows first (set S), every row of the session in
+       one direct query because `list_session_events` is limited, with each
+       row's `id`.
+    2. It then derives rows from the transcript (set D). Every derived row
+       carries a message id, since the parsers assign fallback ids.
+    The processor inserts a row only after reading its line from the file,
+    and the file only grows, so every row in S has its line already present
+    when D is read.
+  - Rows are matched by `message_id` and compared on
+    `(api_calls, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)`.
+    The audit reports two classes per session:
+    - `stale`: a row of S that is absent from D or differs from its match,
+      or a row with NULL `message_id`. Equal totals therefore no longer hide
+      an obsolete Codex index id or a NULL `api_calls` on a pre-460 Claude
+      or Grok row. A stale row is never live lag.
+    - `missing`: a row of D absent from S, or `sessions.usage_*` differing
+      from the stored totals. On a session that is still `active` this
+      includes lines the processor has not ingested yet.
+  - `--fix` is a diff repair. The old delete-all-and-reinsert is removed,
+    because it deleted rows the processor inserted after the transcript
+    read. One transaction per session:
+    1. deletes, by `id`, only the rows of S whose `message_id` is NULL or
+       absent from D;
+    2. upserts D with
+       `ON CONFLICT (session_id, message_id) WHERE message_id IS NOT NULL DO UPDATE`
+       of the compared columns, `model`, and `event_at`. A stale row whose
+       key is in D, such as a pre-460 Claude row with NULL `api_calls`, is
+       corrected in place and keeps its `id`;
+    3. upserts the reported runs (2.3);
+    4. rewrites `sessions.usage_*` from `get_session_totals`.
+    A row the processor inserts after step 1 of the read is not in S, so it
+    is never deleted, and the processor's own later `update_usage` also
+    reads `get_session_totals`.
+  - The summary prints `audited`, `stale`, and `missing` session counts,
+    and with `--fix`, `repaired`.
 
 Consumers unchanged:
 - `src/gobby/servers/routes/admin/_testing.py` — no-edit-reason: builds `TokenEvent` by keyword without `api_calls`, which defaults to None.
@@ -471,7 +501,8 @@ session.
 - 2.1.3 - `api_call_count` returns 2 for a Claude message with two `message` iterations and one `advisor_message`, 1 without iterations, `modelCalls` for a Grok turn, None for a Grok turn with `usageIsIncomplete`, and None for Droid and Qwen. test: `tests/sessions/test_usage_call_identity.py::test_api_call_count_per_source`.
 - 2.1.4 - The live writer and the rebuild writer both persist `api_calls`, and `list_session_events` returns it. test: `tests/sessions/test_usage_call_identity.py::test_writers_persist_api_calls`.
 - 2.1.5 - The audit deduplicates parsed events by `message_id`, so a Codex session with repeated totals shows no drift. A stored row with NULL `message_id` is drift, and `--fix` replaces it with keyed rows. test: `tests/sessions/test_usage_call_identity.py::test_audit_dedupes_and_flags_unkeyed_rows`.
-- 2.1.6 - Stored rows whose token totals equal the transcript's still drift when they keep a pre-460 identity. This covers a Claude row and a Grok row with valid ids and NULL `api_calls`, and a Codex rollout without repeated totals whose rows keep index ids. `--fix` rewrites them to keyed rows with `api_calls`, and a second audit reports no drift. test: `tests/sessions/test_usage_call_identity.py::test_audit_flags_equal_total_identity_drift`.
+- 2.1.6 - Stored rows whose token totals equal the transcript's still drift when they keep a pre-460 identity. This covers a Claude row and a Grok row with valid ids and NULL `api_calls`, and a Codex rollout without repeated totals whose rows keep index ids. They are reported `stale`. `--fix` rewrites them to keyed rows with `api_calls`, and a second audit reports `stale=0` and `missing=0`. test: `tests/sessions/test_usage_call_identity.py::test_audit_flags_equal_total_identity_drift`.
+- 2.1.7 - `--fix` is safe against live ingestion. In a fixture that interleaves the audit with processor inserts, a row inserted after the audit's stored-row read survives `--fix`, and `sessions.usage_*` afterwards equals `get_session_totals` including it. A line appended after the transcript read is reported `missing`, never `stale`, and nothing deletes it. Only pre-read rows that are unkeyed or absent from the derived set are deleted. A pre-read row with the same key but NULL `api_calls` is corrected in place to `api_calls` 1, keeps its `id`, and is still present after `--fix`. test: `tests/sessions/test_usage_call_identity.py::test_fix_never_deletes_rows_ingested_during_audit`.
 
 ### 2.2 Claude subagent calls enter the parent ledger [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -656,7 +687,10 @@ Targets:
   dataclass mirroring the table columns, and:
   - `claude_cost_runs(lines)`:
     - one run per `startTime`, keeping the record with the largest
-      `totalCostUSD`;
+      `observed_at` (`startTime + totalDuration`), the latest cumulative
+      reading. The live path and the rebuild therefore pick the same record
+      even when two records tie on cost, and the strict upsert orders on the
+      same field;
     - run key `claude:<startTime>`, unit `usd`;
     - `api_duration_ms=totalAPIDuration`, `wall_duration_ms=totalDuration`;
     - `started_at=startTime` and `observed_at=startTime + totalDuration`;
@@ -689,9 +723,11 @@ Targets:
   consumes it, including the `if not stats_records` exit when the append
   holds no message.
 - The rebuild calls `collect_runs` over the full transcript and upserts. The
-  audit compares `collect_runs` over the full transcript with `list_runs`. A
-  missing run, or a stored run with an older `observed_at`, is drift, and
-  `--fix` upserts. The audit prints the run count and the amount by unit for
+  audit reads `list_runs` before the transcript, as 2.1 orders the row
+  read, and compares it with `collect_runs` over the full transcript. A
+  derived run that is absent from storage or newer than the stored one is
+  `missing`. A stored run absent from the derived set is `stale`. `--fix`
+  upserts the derived runs inside the 2.1 transaction. The audit prints the run count and the amount by unit for
   each session.
 
 **Granularity:** one leaf. The three providers share one table, one upsert
@@ -706,7 +742,7 @@ and wiring work for about 30 lines of parsing each.
 - 2.3.1 - Claude `cost-state` lines from two process runs, one repeated with a larger cumulative cost, yield two runs. Each run keeps its largest reading and its own `startTime`, and a resumed run does not carry the earlier run's cost. test: `tests/sessions/test_reported_usage.py::test_claude_cost_state_runs_are_per_start_time`.
 - 2.3.2 - A Grok turn converts `costUsdTicks` to USD exactly, and a turn flagged `usageIsIncomplete` stores `cost_complete` false. test: `tests/sessions/test_reported_usage.py::test_grok_turn_runs_convert_ticks`.
 - 2.3.3 - A Droid sidecar yields one `factory_credits` run, and a missing sidecar yields none. test: `tests/sessions/test_reported_usage.py::test_droid_sidecar_run`.
-- 2.3.4 - Upserting an older reading after a newer one leaves the newer one, and the live path, rebuild, and `audit --fix` produce identical rows. A session whose run is missing is drift to a plain audit, which writes nothing; `--fix` upserts the run, and a second audit reports no drift. test: `tests/sessions/test_reported_usage.py::test_upsert_keeps_newest_and_paths_agree`.
+- 2.3.4 - Upserting an older reading after a newer one leaves the newer one, and the live path, rebuild, and `audit --fix` produce identical rows. A plain audit reports a session whose run is missing as `missing` and writes nothing. `--fix` upserts the run, and a second audit reports `stale=0` and `missing=0`. Two cost-state records that tie on `totalCostUSD` resolve to the one with the larger `observed_at` on both the live path and the rebuild. test: `tests/sessions/test_reported_usage.py::test_upsert_keeps_newest_and_paths_agree`.
 - 2.3.5 - With the Droid transcript unchanged, rewriting its sidecar with a larger `factoryCredits` and a later mtime refreshes the `droid:session` run on the next normal live pass. A further pass with the sidecar unchanged leaves the row untouched, with the same `xmin`. test: `tests/sessions/test_reported_usage.py::test_idle_pass_refreshes_droid_sidecar`.
 - 2.3.6 - Appending only a Claude `cost-state` line to an otherwise idle parent transcript: the next live pass leaves through the `if not stats_records` exit, upserts the run, and advances the offset. Replaying that pass from the earlier offset changes nothing. When `_persist_ledger_batch` raises on that exit, the byte offset and parser state stay unchanged, and the next pass ingests the line. test: `tests/sessions/test_reported_usage.py::test_cost_state_only_append_reaches_the_ledger`.
 
@@ -1100,13 +1136,18 @@ Targets:
   - `build_operator_alert_sink(get_manager, get_config) -> Callable[[str], Awaitable[None]]`
     logs at INFO and returns without sending when comms is disabled, the
     manager is None, or `operator_alert_channel` is empty. Otherwise it awaits
-    `manager.send_message(channel, text)`. It catches and logs every
-    exception and never raises.
+    `asyncio.wait_for(manager.send_message(channel, text), ALERT_SEND_TIMEOUT_SECONDS)`
+    with `ALERT_SEND_TIMEOUT_SECONDS = 10`. It catches and logs every
+    exception, including the timeout, and never raises.
 - `ProviderCapacityService`:
   - gains `alert_sink: Callable[[str], Awaitable[None]] | None = None`;
   - in `observe`, under the per-provider lock, applies `transition` before
-    writing, stores the new details with the upsert, and after a successful
-    upsert awaits the sink once for each alert text.
+    writing and stores the new details with the upsert. After a successful
+    upsert, and after the lock is released, it schedules one sink call per
+    alert with the existing
+    `src/gobby/hooks/background_tasks.py::create_background_task`. `observe`
+    never awaits delivery, so a slow channel cannot stall a processor pass
+    or hold the lock.
 - `CommunicationsConfig.operator_alert_channel: str = ""` names a configured
   channel. Regenerate both config carriers.
 - `init_servers` sets
@@ -1142,7 +1183,7 @@ one behavior. The config key exists only for this sink.
 
 - 4.2.1 - Replaying the incident readings (a weekly window only) sends exactly three alerts: weekly warn at 95%, weekly exhausted at 100%, and drawing_credits when the balance first falls. A later window then sends one reset alert. Repeated readings at the same level send nothing. test: `tests/providers/test_quota_alerts.py::test_incident_replay_alerts_on_edges_only`.
 - 4.2.2 - A stale lower reading inside a window does not lower the stored level or re-alert. test: `tests/providers/test_quota_alerts.py::test_level_is_monotonic_within_window`.
-- 4.2.3 - The sink sends to `operator_alert_channel` through `CommunicationsManager.send_message`. It only logs when comms is disabled, the channel is empty, or the manager is None. A raising send is logged and does not fail `observe`. test: `tests/providers/test_quota_alerts.py::test_sink_degrades_without_raising`.
+- 4.2.3 - The sink sends to `operator_alert_channel` through `CommunicationsManager.send_message`. It only logs when comms is disabled, the channel is empty, or the manager is None. A raising send is logged and does not fail `observe`. A send that never completes is cut off at `ALERT_SEND_TIMEOUT_SECONDS` and logged. `observe` returns, and the provider lock is free, before the send finishes. test: `tests/providers/test_quota_alerts.py::test_sink_degrades_without_raising`.
 - 4.2.4 - Alert text contains no session id, message content, or credential-shaped value. test: `tests/providers/test_quota_alerts.py::test_alert_text_is_minimal`.
 - 4.2.5 - In a two-window fixture the weekly window stays at 20% with an unchanged `resets_at`. The five-hour window rising to 92% and then 100% sends a warn alert and an exhausted alert, both naming `five_hour`, while the provider reads `exhausted` and the weekly sends nothing. When the five-hour `resets_at` advances and its use falls, one `five_hour` reset alert is sent and the weekly state is unchanged. A reached flag turning on sends one `limit_reached` alert, and repeating it sends nothing. test: `tests/providers/test_quota_alerts.py::test_windows_alert_independently`.
 
@@ -1264,9 +1305,11 @@ After every leaf has passed:
    it runs, existing Codex rows keep index ids while reread lines get
    cumulative keys, so those sessions can double-count, and pre-460 Claude
    and Grok rows lack `api_calls`. The repair compares rows, not only
-   totals (2.1). It rewrites every drifting session, recomputes
-   `sessions.usage_*` from `get_session_totals`, ingests subagent rows, and
-   upserts reported runs. `gobby tokens audit --all` must print `drifted=0`.
+   totals (2.1). It upserts every derived row, deletes only stale pre-read
+   rows, recomputes `sessions.usage_*` from `get_session_totals`, ingests
+   subagent rows, and upserts reported runs. `gobby tokens audit --all` must
+   report `stale=0` for every session and `missing=0` for every session that
+   is not `active`.
 4. Read `gobby tokens quota codex` while a Codex session is active, and check
    the weekly percent and reset time against the newest rollout
    `rate_limits` line.
