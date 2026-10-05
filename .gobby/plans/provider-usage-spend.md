@@ -516,26 +516,44 @@ Targets:
   are passed as None (`COALESCE`, `storage/sessions/_usage.py`).
 
 **Implementation:**
-- New `src/gobby/sessions/subagent_usage.py::read_subagent_events(session_id, project_id, transcript_path, offsets) -> tuple[list[TokenEvent], dict[str, int]]`:
+- New `src/gobby/sessions/subagent_usage.py` with a frozen `SubagentCursor`
+  dataclass (`offset`, `next_index`, `dev`, `ino`, `mtime_ns`,
+  `parser_state`) and
+  `read_subagent_events(session_id, project_id, transcript_path, cursors) -> tuple[list[TokenEvent], dict[str, SubagentCursor]]`.
+  Byte progress and event identity share one coordinate: a message's
+  fallback id comes from its message index counted from the start of its
+  file, the same index a full read assigns.
   1. List the files with `find_supplemental_transcripts_on_disk("claude", transcript_path)`.
-  2. For each file, read the complete lines from its offset (0 when absent).
      The agent id is the file stem after `agent-`.
-  3. Parse with `get_parser("claude", session_id=f"{session_id}:{agent_id}", transcript_path=file)`,
-     so fallback ids are scoped to the agent.
+  2. Stat each file. A file with no cursor, or whose cursor no longer
+     matches, starts at offset 0 and index 0 with empty parser state. A
+     cursor no longer matches when the size is below `offset`, `(dev, ino)`
+     differs, or `mtime_ns` decreased. This is the rule
+     `_process_session_unlocked` applies to the parent.
+  3. Read the complete lines from the cursor's offset. Build the parser with
+     `get_parser("claude", session_id=f"{session_id}:{agent_id}", transcript_path=file)`,
+     so fallback ids are scoped to the agent, and hydrate it from
+     `parser_state`. Parse with
+     `processor_transcripts._parse_incremental_records(parser, lines, start_index=next_index)`.
   4. Emit one `TokenEvent` for each message with token usage: source
      `claude`, origin `transcript`, `api_calls` from `api_call_count`, and
      `metadata={"content_type": …, "agent_id": agent_id}`.
-  5. Return the events and the new offsets.
+  5. Return the events and each file's new cursor. The new `offset` is the
+     end of the last complete line, and `next_index` is the last parsed
+     message index plus 1, or unchanged when none parsed. `parser_state` is
+     `parser.snapshot_state()`, and the stat fields are the file's current
+     ones.
 - New `src/gobby/sessions/processor_ledger.py::ProcessorLedgerMixin` with
   `async _persist_ledger_batch(session_id, transcript_path, source, lines, records, caught_up)`.
   For Claude it runs `read_subagent_events` with
-  `self._subagent_offsets[session_id]` and inserts through `record_batch`.
+  `self._subagent_cursors[session_id]` and inserts through `record_batch`.
   When rows were inserted, it refreshes `sessions.usage_*` from
   `get_session_totals` through `session_manager.update_usage` with
-  `context_window=None` and `model=None`. It stores the new offsets only after
+  `context_window=None` and `model=None`. It stores the new cursors only after
   the insert succeeds.
 - `SessionMessageProcessor` adds `ProcessorLedgerMixin` to its bases, and
-  `__init__` sets `self._subagent_offsets: dict[str, dict[str, int]] = {}`.
+  `__init__` sets
+  `self._subagent_cursors: dict[str, dict[str, SubagentCursor]] = {}`.
   `ProcessorHost` declares the attribute and the method.
 - Every exit of `_process_session_unlocked` that consumes input awaits
   `_persist_ledger_batch` exactly once, before it advances `_byte_offsets`.
@@ -559,10 +577,12 @@ Targets:
   pass rereads the lines. The reread is idempotent: message ids are unique,
   `sessions.usage_*` is rewritten from `get_session_totals`, and the
   reported-run upsert is strict.
-  `unregister_session` and `_reset_transcript_state` drop the session's
-  subagent offsets. A daemon restart starts at offset 0, and the unique
-  message ids make the reread idempotent.
-- The rebuild and the audit read every subagent file in full (empty offsets).
+- `unregister_session` and `_reset_transcript_state` drop the session's
+  subagent cursors. A daemon restart reads each subagent file from offset 0
+  and index 0, assigning the same ids as the live passes did, so the reread
+  inserts nothing new.
+- The rebuild and the audit read every subagent file in full (empty
+  cursors), so they assign the same ids as the live path.
   The rebuild appends the subagent events to the `record_batch` call without
   snapshot entries.
 - Subagent events never reach `_snapshot_from_token_usage`,
@@ -599,6 +619,7 @@ rebuild, and audit. The shared reader keeps them identical.
 
 - 2.2.1 - A parent transcript with one subagent file that holds two API calls yields two parent-session rows tagged with `agent_id`, through both the live path and the rebuild. `sessions.usage_*` includes them. test: `tests/sessions/test_claude_subagent_usage.py::test_subagent_calls_join_parent_ledger`.
 - 2.2.2 - Lines appended to the subagent file between two live passes are read once. Rereading from offset 0 after a simulated restart inserts nothing new. test: `tests/sessions/test_claude_subagent_usage.py::test_live_offsets_read_each_line_once`.
+- 2.2.6 - Two usage-bearing messages without an API id, appended to one subagent file in separate live passes, stay two rows with distinct ids. A simulated restart and the rebuild assign the same two ids and the same totals. Truncating the file below its cursor, or replacing it with a new inode, resets that file to offset 0 and index 0, so the next pass reads the new content and the cursor is never stranded. test: `tests/sessions/test_claude_subagent_usage.py::test_subagent_identity_is_stable_across_passes`.
 - 2.2.3 - The parent's context occupancy snapshot and published tail occupancy are unchanged by subagent rows. test: `tests/sessions/test_claude_subagent_usage.py::test_subagent_rows_never_touch_occupancy`.
 - 2.2.4 - Two subagents whose messages lack an API id get distinct agent-scoped fallback ids, and the audit includes subagent rows without reporting drift. test: `tests/sessions/test_claude_subagent_usage.py::test_fallback_ids_are_agent_scoped_and_audited`.
 - 2.2.5 - With the parent transcript unchanged, two complete usage lines appended to a subagent file are ingested by the next normal live pass. The parent gains exactly two rows, `sessions.usage_*` includes them, and the parent's occupancy is unchanged. A further idle pass inserts nothing and leaves `sessions.usage_*` unchanged. test: `tests/sessions/test_claude_subagent_usage.py::test_idle_parent_pass_ingests_subagent_appends`.
@@ -869,8 +890,9 @@ Targets:
 - `gobby tokens quota [PROVIDER]`:
   - calls `/api/providers/{provider}/usage` for the given provider, or for
     `claude`, `codex`, `grok`, `droid`, `qwen`, and `agy` in turn;
-  - prints state, each window's used percent and reset time, the reason, and
-    the level and credit balance from `details`;
+  - prints state, each window's used percent and reset time, the reason,
+    and, from `details` when present, each window's alert level,
+    `limit_reached`, `drawing_credits`, and the credit balance;
   - exits 1 with the client error when the daemon is unreachable.
 - Two audit entries are added: `gobby tokens ledger` (symbol `token_ledger`)
   and `gobby tokens quota` (symbol `token_quota`). `usage.md` names both
@@ -885,7 +907,7 @@ reference entry and one test file.
 **Acceptance:**
 
 - 3.2.1 - `gobby tokens ledger --session` and `--task` print the store's totals for the 3.1 fixture, and `--json` round-trips the page dict. Passing both scopes, or neither, is a usage error. test: `tests/cli/test_tokens_ledger_cli.py::test_ledger_command_prints_scope_totals`.
-- 3.2.2 - `gobby tokens quota codex` prints the window, reset time, level, and balance from a stubbed daemon response, and an unreachable daemon exits 1. test: `tests/cli/test_tokens_ledger_cli.py::test_quota_command_reads_daemon_snapshot`.
+- 3.2.2 - `gobby tokens quota codex` prints each window with its reset time and alert level, and the balance, from a stubbed two-window daemon response, and an unreachable daemon exits 1. test: `tests/cli/test_tokens_ledger_cli.py::test_quota_command_reads_daemon_snapshot`.
 - 3.2.3 - For the 3.1.7 scopes, `gobby tokens ledger --session` prints `unknown (no reported run)` for the Claude session without `cost-state`, `0 usd` over 1 run for the zero-cost Grok session, and 1 incomplete run for the incomplete Grok session. test: `tests/cli/test_tokens_ledger_cli.py::test_ledger_command_keeps_unknown_spend_distinct`.
 
 ## P4: Codex quota and operator alerts
@@ -956,9 +978,9 @@ Targets:
 - `ProviderCapacityService.observe(provider, observation) -> bool` runs under
   a per-provider `asyncio.Lock`:
   1. It reads the stored row.
-  2. It drops the observation when its longest window's `resets_at` is
-     earlier than the stored longest window's `resets_at`. That rejects a
-     stale reading on a newer line.
+  2. It drops the observation when any window's `resets_at` is earlier than
+     the stored `resets_at` of the window with the same label. That rejects a
+     stale reading on a newer line for each independently resetting window.
   3. It sets the state to `exhausted` when any window is at or above its
      limit or either reached flag is set. Otherwise the state is `available`.
   4. It upserts with `source_version="transcript"` and returns whether the row
@@ -1013,7 +1035,7 @@ path would persist rows that `get_provider_capacity` still reports as
 
 - 4.1.1 - `observation_from_rate_limits` maps the live sample to one `weekly` window (80/100 percent, ISO reset) with credits and plan in `details`, and returns None for a null or windowless value. test: `tests/providers/test_codex_quota_observation.py::test_rate_limits_map_to_windows_and_details`.
 - 4.1.2 - A caught-up live Codex batch writes the newest reading, and `get("codex")` returns it as `available` with `details`. A catch-up pass and a rebuild write nothing. test: `tests/providers/test_codex_quota_observation.py::test_live_caught_up_batch_observes_newest_reading`.
-- 4.1.3 - An older line timestamp, or an earlier weekly `resets_at`, does not replace the stored row. test: `tests/providers/test_codex_quota_observation.py::test_stale_readings_are_rejected`.
+- 4.1.3 - An older line timestamp, an earlier weekly `resets_at`, or an earlier `five_hour` `resets_at` with the weekly unchanged does not replace the stored row. A two-window reading with only the five-hour window at 100% stores state `exhausted`. test: `tests/providers/test_codex_quota_observation.py::test_stale_readings_are_rejected`.
 - 4.1.4 - A stored row older than 900 s, or past a window's `resets_at`, reads as `stale` with its reason. Codex without a row reads as `unknown` "no Codex rate_limits observed yet". Claude reads as `unknown` with the statusline reason. test: `tests/providers/test_codex_quota_observation.py::test_observed_provider_freshness_and_reasons`.
 - 4.1.5 - A processor rebuilt through `_build_message_processor` keeps `provider_capacity_service`. test: `tests/providers/test_codex_quota_observation.py::test_rebuilt_processor_keeps_capacity_service`.
 
@@ -1044,25 +1066,37 @@ Targets:
 
 **Implementation:**
 - New `src/gobby/providers/quota_alerts.py`:
-  - `LEVELS = ("ok", "warn", "exhausted", "drawing_credits")`.
-  - `level_for(observation, previous_details)` returns:
-    - `drawing_credits` when the longest window is at or above 100,
-      `credits.has_credits` is true, and the balance is lower than
-      `previous_details["balance"]`;
-    - otherwise `exhausted` at or above 100, or when a reached flag is set;
-    - otherwise `warn` at or above 90;
-    - otherwise `ok`.
-  - `transition(previous_details, observation) -> tuple[dict, str | None]`:
-    - The window key is the longest window's `resets_at`.
-    - With the same key, the stored level is the maximum of the previous and
-      computed levels, so it is monotonic within a window.
-    - With a later key, the level is the computed one. When the previous level
-      was above `ok`, a reset alert is returned.
-    - An upward change of level within a window returns an alert.
-    - The returned details carry `level`, `window_resets_at`, and `balance`.
-  - Alert text is one line naming the provider, level, window label, used
-    percent, reset time, and balance. Example: "Codex quota warn: weekly 92%
-    used, resets 2026-10-08T18:53Z, credit balance 1265.60".
+  - Alert state is kept per window, because Codex windows reset
+    independently, and `observe` already marks the provider `exhausted` when
+    any window is exhausted (capacity_service.py:227-228).
+    `WINDOW_LEVELS = ("ok", "warn", "exhausted")`.
+    `window_level(window)` is `exhausted` at or above its limit, `warn` at or
+    above 90% of it, and `ok` otherwise.
+  - Account-wide signals are kept apart from the windows:
+    - `limit_reached` is true when either reached flag is set;
+    - `drawing_credits` is true when any window is exhausted,
+      `credits.has_credits` is true, and the balance is lower than the
+      stored balance.
+  - `transition(previous_details, observation) -> tuple[dict, list[str]]`:
+    - Window state lives in `details["alert_state"]["windows"]`, keyed by
+      window label, holding each window's `level` and `resets_at`.
+    - For each observed window, with the same `resets_at` the stored level is
+      the maximum of the previous and computed levels, so it is monotonic
+      within that window's period. An upward change returns an alert naming
+      that window.
+    - With a later `resets_at`, the window's level is the computed one. When
+      the previous level was above `ok`, a reset alert naming that window is
+      returned. Other windows are untouched.
+    - A window absent from the observation keeps its stored state. (`observe`
+      has already dropped any observation with an earlier `resets_at` for a
+      known window.)
+    - `limit_reached` and `drawing_credits` each alert once on their rising
+      edge and clear silently. `alert_state` also stores them and the
+      balance.
+  - Alert text is one line per alert. It names the provider, the alert, and,
+    for a window alert, that window's label, used percent, and reset time,
+    plus the credit balance. Example: "Codex quota warn: five_hour 92% used,
+    resets 2026-10-05T23:00Z, credit balance 1265.60".
   - `build_operator_alert_sink(get_manager, get_config) -> Callable[[str], Awaitable[None]]`
     logs at INFO and returns without sending when comms is disabled, the
     manager is None, or `operator_alert_channel` is empty. Otherwise it awaits
@@ -1070,8 +1104,9 @@ Targets:
     exception and never raises.
 - `ProviderCapacityService`:
   - gains `alert_sink: Callable[[str], Awaitable[None]] | None = None`;
-  - in `observe`, after a successful upsert, applies `transition` before
-    writing, stores the new details, and awaits the sink with any alert text.
+  - in `observe`, under the per-provider lock, applies `transition` before
+    writing, stores the new details with the upsert, and after a successful
+    upsert awaits the sink once for each alert text.
 - `CommunicationsConfig.operator_alert_channel: str = ""` names a configured
   channel. Regenerate both config carriers.
 - `init_servers` sets
@@ -1105,10 +1140,11 @@ one behavior. The config key exists only for this sink.
 
 **Acceptance:**
 
-- 4.2.1 - Replaying the incident readings sends exactly three alerts: warn at 95%, exhausted at 100%, and drawing_credits when the balance first falls. A later window then sends one reset alert. Repeated readings at the same level send nothing. test: `tests/providers/test_quota_alerts.py::test_incident_replay_alerts_on_edges_only`.
+- 4.2.1 - Replaying the incident readings (a weekly window only) sends exactly three alerts: weekly warn at 95%, weekly exhausted at 100%, and drawing_credits when the balance first falls. A later window then sends one reset alert. Repeated readings at the same level send nothing. test: `tests/providers/test_quota_alerts.py::test_incident_replay_alerts_on_edges_only`.
 - 4.2.2 - A stale lower reading inside a window does not lower the stored level or re-alert. test: `tests/providers/test_quota_alerts.py::test_level_is_monotonic_within_window`.
 - 4.2.3 - The sink sends to `operator_alert_channel` through `CommunicationsManager.send_message`. It only logs when comms is disabled, the channel is empty, or the manager is None. A raising send is logged and does not fail `observe`. test: `tests/providers/test_quota_alerts.py::test_sink_degrades_without_raising`.
 - 4.2.4 - Alert text contains no session id, message content, or credential-shaped value. test: `tests/providers/test_quota_alerts.py::test_alert_text_is_minimal`.
+- 4.2.5 - In a two-window fixture the weekly window stays at 20% with an unchanged `resets_at`. The five-hour window rising to 92% and then 100% sends a warn alert and an exhausted alert, both naming `five_hour`, while the provider reads `exhausted` and the weekly sends nothing. When the five-hour `resets_at` advances and its use falls, one `five_hour` reset alert is sent and the weekly state is unchanged. A reached flag turning on sends one `limit_reached` alert, and repeating it sends nothing. test: `tests/providers/test_quota_alerts.py::test_windows_alert_independently`.
 
 ## P5: Three surfaces, documented
 `kind: framing`
@@ -1144,8 +1180,9 @@ Targets:
   - **Spend:** `get_usage_ledger`, `/api/admin/usage/ledger`, and
     `gobby tokens ledger`. Paging is a live traversal (Decision 10), and
     `spend_observed` separates unknown spend from reported zero.
-- §Provider Capacity gains Codex observation, `details`, the alert levels,
-  and `communications.operator_alert_channel`.
+- §Provider Capacity gains Codex observation, `details`, the per-window
+  alert levels with the account-wide `limit_reached` and `drawing_credits`
+  alerts, and `communications.operator_alert_channel`.
 - §Token Ledger Audit gains the post-deploy `gobby tokens audit --all --fix`
   and the unkeyed-row drift rule.
 - The guide states the attribution rules: latest claim wins, intervals start
