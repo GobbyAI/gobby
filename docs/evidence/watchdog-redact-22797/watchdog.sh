@@ -128,12 +128,13 @@ attach_errors() {
 }
 
 check() {
-  local load l1 runs builds cur_err base new evidence cur_vec vbase dvec
+  local load l5 runs builds cur_err base new evidence cur_vec vbase dvec
   date '+%Y-%m-%d %H:%M:%S'
   load=$(sysctl -n vm.loadavg | tr -d '{}' | awk '{print $1" "$2" "$3}')
   echo "load: $load"
-  l1=${load%% *}
-  if awk -v l="$l1" 'BEGIN{exit !(l>24)}'; then echo "ALARM[load]: 1-min load $l1 > 24"; fi
+  l5=${load#* }
+  l5=${l5%% *}
+  if awk -v l="$l5" 'BEGIN{exit !(l>30)}'; then echo "ALARM[load]: 5-min load $l5 > 30"; fi
 
   runs=""
   if db_env; then runs=$(q "select count(*) from agent_runs where status='running'"); fi

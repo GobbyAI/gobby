@@ -42,8 +42,14 @@ echo "Message sent"
 EOF
   # Fake osascript so the fallback never raises a real macOS notification.
   mkdir -p "$home/bin"
+  # Keep load fixtures independent of the host's current load.
+  printf '0 0 0\n' >"$home/load.txt"
+  cat >"$home/bin/sysctl" <<EOF
+#!/bin/bash
+printf '{ %s }\\n' "\$(cat "$home/load.txt")"
+EOF
   printf '#!/bin/bash\ntouch "%s/osascript-called"\n' "$home" >"$home/bin/osascript"
-  chmod +x "$home/.local/bin/gobby" "$home/bin/osascript"
+  chmod +x "$home/.local/bin/gobby" "$home/bin/osascript" "$home/bin/sysctl"
   echo "$home"
 }
 
@@ -154,6 +160,25 @@ touch "$home/fail-send"
 run "$home"
 check "failed send falls back to osascript" test -e "$home/osascript-called"
 check "failed send attaches nothing" test ! -e "$home/attached.txt"
+
+# --- load fixtures: only the five-minute reading above 30 raises a load alarm ---
+fixture_home=$(printf 'baseline\n' | make_home load-above 1)
+printf '1 30.01 1\n' >"$fixture_home/load.txt"
+run "$fixture_home"
+check "five-minute load above 30 alarms with the correct text" \
+  grep -Fqx 'ALARM[load]: 5-min load 30.01 > 30' "$fixture_home/.gobby/watchdog/last.txt"
+
+fixture_home=$(printf 'baseline\n' | make_home load-boundary 1)
+printf '1 30 1\n' >"$fixture_home/load.txt"
+run "$fixture_home"
+check "five-minute load exactly 30 does not alarm" \
+  test "$(grep -c '^ALARM\[load\]' "$fixture_home/.gobby/watchdog/last.txt")" -eq 0
+
+fixture_home=$(printf 'baseline\n' | make_home load-one-minute 1)
+printf '40 29 1\n' >"$fixture_home/load.txt"
+run "$fixture_home"
+check "one-minute spike above 30 does not alarm when five-minute load is below 30" \
+  test "$(grep -c '^ALARM\[load\]' "$fixture_home/.gobby/watchdog/last.txt")" -eq 0
 
 echo "failures: $fails"
 [ "$fails" -eq 0 ]
