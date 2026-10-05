@@ -85,7 +85,7 @@ Outstanding source work is p002-f003 (Fieldy table pipe, gobby#14550; reviewer P
 
 All 11 sources and resulting trees were checked against their independent approval; every source is an ancestor of its landing, and every landing is an ancestor of the local head. Integration changes: none. Python test runs used the isolated test hub and GOBBY_TEST_PROTECT=1. The terminal-host Rust landing credits LM/R6’s exact-source 767/767 nextest, clippy and fmt runs; the entire crates tree and Cargo/config inputs matched the reviewed source, so MM did not repeat the heavy run. Auth’s keyed 2/2 E2E credit is peer evidence, not an MM rerun. The feedback-route 18-test check ran in its author’s worktree, following Josh’s review-location instruction.
 
-The supplemental three-file author-worktree pytest for #23134 task-CLI guard is still active (native 42361) at this report snapshot and receives no completion credit. The LAND’s completed source and merged-tree validations are the recorded acceptance evidence.
+The supplemental three-file author-worktree pytest for #23134 task-CLI guard completed with 887 passed, exit 0 (native session 42361; completion result 7ca001). It ran at exact source `9cb8adc55ebb7a759f229882e2c2482c88e5b1af` with the isolated test hub and GOBBY_TEST_PROTECT=1. LM and PD received the result; all MM test and CodeRabbit jobs have ended. The LAND’s source and merged-tree validations remain the recorded acceptance evidence.
 
 The baseline, auth and task-CLI guard integration checks verified approved blobs, index and tree; their independent source LAND owns semantic review. MM does not claim a second full semantic review of those large source diffs. Exact validation commands and native result references are in landings.json.
 
