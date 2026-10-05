@@ -1424,3 +1424,343 @@ DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
 uv run gobby plans validate .gobby/plans/code-index-vector-reconciliation.md -p /Users/josh/Projects/gobby
 ```
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Vector completion compare-and-set and attempted-version recovery
+  category: code
+  task_type: bug
+  depends_on: []
+  validation_criteria: '1.1.1: An attempt returns the current hash and timestamp.
+    Completion with that attempt marks the version synced and keeps its attempt time.
+    test: `crates/gcode/src/db/queries_cas_tests.rs::mark_vectors_synced_cas_marks_attempted_version`.
+
+    1.1.2: After this machine''s state moves to another hash, completion with the
+    old attempt returns false. It leaves the old row unsynced and sets the new current
+    row to `vectors_synced = false` with a NULL attempt. test: `crates/gcode/src/db/queries_cas_tests.rs::mark_vectors_synced_cas_rejects_completion_after_state_moves`.
+
+    1.1.3: A second attempt on the same hash invalidates the first attempt''s completion.
+    test: `crates/gcode/src/db/queries_cas_tests.rs::mark_vectors_synced_cas_rejects_same_hash_stale_attempt`.
+
+    1.1.4: When the state moves during the upsert, `VectorProjectionState` reports
+    a skip and the new current version stays pending. test: `crates/gcode/src/projection/sync/tests.rs::vector_sync_file_skips_when_state_moves_during_upsert`.
+
+    1.1.5: A failed vector completion dirties the attempted version as well as this
+    machine''s current row. The fixture is the S9 case: this machine''s state has
+    moved from H to K, and H is `vectors_synced = true` under a later attempt, as
+    after another machine re-synced changed docstring text. It runs twice, once with
+    H referenced by another machine''s state and once with no state referencing H.
+    Each time, completion with the old H attempt returns false and leaves both H and
+    K false with a NULL attempt. test: `crates/gcode/src/db/queries_cas_tests.rs::mark_vectors_synced_cas_failure_dirties_attempted_version`.
+
+    1.1.6: The same holds for `mark_graph_synced`, with H re-synced on the graph flag
+    after a calls and imports change, in the same two runs. test: `crates/gcode/src/db/queries_cas_tests.rs::mark_graph_synced_cas_failure_dirties_attempted_version`.'
+  labels:
+  - covers:code-index-vector-reconciliation:1.1:1.1.1
+  - covers:code-index-vector-reconciliation:1.1:1.1.2
+  - covers:code-index-vector-reconciliation:1.1:1.1.3
+  - covers:code-index-vector-reconciliation:1.1:1.1.4
+  - covers:code-index-vector-reconciliation:1.1:1.1.5
+  - covers:code-index-vector-reconciliation:1.1:1.1.6
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Sync worker leaves projection completion to gcode
+  category: code
+  task_type: bug
+  depends_on:
+  - '1.1'
+  - '1.4'
+  validation_criteria: '1.2.1: A successful native vector result leaves `vectors_synced`
+    as gcode wrote it. The worker never sets it, and the storage mixin has no `mark_vectors_synced`.
+    test: `tests/code_index/test_sync_worker.py::test_vector_sync_leaves_completion_to_native_cas`.
+
+    1.2.2: A native `{"status": "skipped", "reason": "sync_superseded"}` result raises
+    no error and leaves the file pending for the next scan. test: `tests/code_index/test_sync_worker.py::test_superseded_vector_skip_keeps_file_pending`.
+
+    1.2.3: A successful native graph result leaves `graph_synced` as gcode wrote it.
+    The worker calls no graph mark after a native call. test: `tests/code_index/test_sync_worker.py::test_graph_sync_leaves_completion_to_native_cas`.
+
+    1.2.4: A native graph `sync_superseded` skip raises no error and leaves the file
+    pending. test: `tests/code_index/test_sync_worker.py::test_superseded_graph_skip_keeps_file_pending`.
+
+    1.2.5: The shortcut mark returns false and leaves `graph_synced = false` when
+    the row''s `language` no longer matches the snapshot, and marks the row when it
+    matches. test: `tests/code_index/test_code_index_storage.py::test_no_graph_shortcut_mark_rejects_changed_snapshot`.
+
+    1.2.6: A Python `__init__.py` with imports and no symbols (`symbol_count = 0`)
+    goes to the native graph sync, and the worker makes no shortcut mark. A file outside
+    `_GRAPH_SYNC_LANGUAGES` still takes the shortcut. test: `tests/code_index/test_sync_worker.py::test_import_only_init_file_delegates_graph_sync_to_native`.'
+  labels:
+  - covers:code-index-vector-reconciliation:1.2:1.2.1
+  - covers:code-index-vector-reconciliation:1.2:1.2.2
+  - covers:code-index-vector-reconciliation:1.2:1.2.3
+  - covers:code-index-vector-reconciliation:1.2:1.2.4
+  - covers:code-index-vector-reconciliation:1.2:1.2.5
+  - covers:code-index-vector-reconciliation:1.2:1.2.6
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Re-parse projection reset
+  category: code
+  task_type: bug
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.3.1: Re-writing a version whose symbol set changes dirties
+    both flags in one call. test: `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed_symbol_set_dirties_both_flags`.
+
+    1.3.2: Re-writing a version with identical stored facts and identical vector text
+    leaves both flags alone. test: `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_identical_facts_keeps_both_flags`.
+
+    1.3.3: An empty stored version with an empty parse does not dirty. test: `crates/gcode/src/index/indexer/tests/facts.rs::empty_reparse_of_empty_version_keeps_flags`.
+
+    1.3.4: A non-empty stored version with an empty parse dirties both flags. test:
+    `crates/gcode/src/index/indexer/tests/facts.rs::reparse_that_drops_all_facts_dirties_both_flags`.
+
+    1.3.5: A `--full` re-index that changes symbol IDs of a version synced on both
+    flags leaves it `vectors_synced = false` and `graph_synced = false`, each with
+    a NULL attempt. test: `crates/gcode/src/index/indexer/tests/serial_db.rs::full_reindex_with_changed_symbol_ids_marks_projections_pending`.
+
+    1.3.6: `dirty_version_sync` changes only the named version and only the named
+    flags, even when no file state references the version. test: `crates/gcode/src/db/queries_cas_tests.rs::dirty_version_sync_touches_only_named_flags_and_version`.
+
+    1.3.7: A re-parse that keeps the symbol ID set but changes a stored docstring
+    dirties only the vector flag, with a NULL vector attempt. test: `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed_docstring_dirties_vectors_only`.
+
+    1.3.8: A re-parse that keeps the symbols but changes a call or an import dirties
+    only the graph flag, with a NULL graph attempt. test: `crates/gcode/src/index/indexer/tests/facts.rs::reparse_with_changed_calls_dirties_graph_only`.'
+  labels:
+  - covers:code-index-vector-reconciliation:1.3:1.3.1
+  - covers:code-index-vector-reconciliation:1.3:1.3.2
+  - covers:code-index-vector-reconciliation:1.3:1.3.3
+  - covers:code-index-vector-reconciliation:1.3:1.3.4
+  - covers:code-index-vector-reconciliation:1.3:1.3.5
+  - covers:code-index-vector-reconciliation:1.3:1.3.6
+  - covers:code-index-vector-reconciliation:1.3:1.3.7
+  - covers:code-index-vector-reconciliation:1.3:1.3.8
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Graph CLI honors the completion compare-and-set
+  category: code
+  task_type: bug
+  depends_on: []
+  validation_criteria: '1.4.1: The superseded skip payload is a terminal success shape
+    with reason `sync_superseded` and no degradation. test: `crates/gcode/src/commands/graph/tests.rs::superseded_skip_payload_is_terminal_success_shape`.
+
+    1.4.2: After this machine''s state moves to another hash, completing the old attempt
+    returns `SkippedSuperseded`, and the new current row is `graph_synced = false`
+    with a NULL attempt. Completing a current attempt returns the given outcome and
+    marks the row. test: `crates/gcode/src/commands/graph/tests.rs::graph_completion_reports_superseded_after_state_moves`.'
+  labels:
+  - covers:code-index-vector-reconciliation:1.4:1.4.1
+  - covers:code-index-vector-reconciliation:1.4:1.4.2
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: '`gcode vector reconcile` dry-run'
+  category: code
+  task_type: bug
+  depends_on:
+  - '1.3'
+  validation_criteria: '2.1.1: Only point IDs absent from PostgreSQL are orphans,
+    and each lands in its class (four seeded points, one per class, plus live points).
+    test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::dry_run_classifies_only_ids_absent_from_postgres`.
+
+    2.1.2: Versions missing points are split by flag and by state reference into the
+    four missing classes. test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::dry_run_splits_missing_vectors_by_flag_and_reference`.
+
+    2.1.3: The digest does not depend on scroll order and changes when any orphan
+    or synced-missing version changes. test: `crates/gcode/src/commands/vector/reconcile/tests.rs::inventory_digest_is_order_independent_and_content_sensitive`.
+
+    2.1.4: A dry-run sends only scroll requests to Qdrant and leaves every PostgreSQL
+    flag unchanged. test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::dry_run_mutates_nothing`.
+
+    2.1.5: A missing collection reports zero points, and every symbol is missing.
+    test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::dry_run_treats_missing_collection_as_empty`.
+
+    2.1.6: The contract is version 13 without `vector cleanup-orphans`, and the contract,
+    CLI and audit agree on `vector reconcile`. test: `crates/gcode/tests/contract.rs::contract_is_version_thirteen_without_ask`.'
+  labels:
+  - covers:code-index-vector-reconciliation:2.1:2.1.1
+  - covers:code-index-vector-reconciliation:2.1:2.1.2
+  - covers:code-index-vector-reconciliation:2.1:2.1.3
+  - covers:code-index-vector-reconciliation:2.1:2.1.4
+  - covers:code-index-vector-reconciliation:2.1:2.1.5
+  - covers:code-index-vector-reconciliation:2.1:2.1.6
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Reconcile apply under the maintenance lease
+  category: code
+  task_type: bug
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: Apply with the dry-run digest deletes exactly the orphan
+    IDs, resets exactly the synced-missing versions, and writes a complete receipt.
+    An immediate dry-run reports zero orphans and zero synced-missing versions. test:
+    `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_deletes_only_disowned_ids_and_writes_receipt`.
+
+    2.2.2: With the maintenance lease held elsewhere, apply fails busy and sends no
+    Qdrant delete, changes no flag and writes no receipt. test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_is_busy_without_mutation_when_lease_is_held`.
+
+    2.2.3: When a PostgreSQL symbol gains an orphan''s ID between the dry-run and
+    the apply, the inventory rebuilt under the lease no longer matches, and apply
+    refuses without mutation. test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_refuses_when_inventory_changes_under_lease`.
+
+    2.2.4: A Qdrant delete failure leaves a receipt with `complete: false` listing
+    the deleted batches, and the exit is nonzero. test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_records_partial_receipt_on_qdrant_failure`.
+
+    2.2.5: A receipt path inside the repository root, or under a non-private parent,
+    is refused before the lease. test: `crates/gcode/src/commands/vector/reconcile/tests.rs::apply_refuses_receipt_outside_private_location`.
+
+    2.2.6: The flag reset leaves pending versions and other projects'' versions unchanged.
+    test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_resets_only_synced_missing_versions`.
+
+    2.2.7: When the initial receipt cannot be written (a private receipt directory
+    with mode 0500), apply exits nonzero, changes no flag and sends no Qdrant delete.
+    test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_makes_no_mutation_when_initial_receipt_write_fails`.
+
+    2.2.8: An existing receipt for a different digest is refused before any flag reset
+    or Qdrant delete. test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_refuses_foreign_receipt_before_mutation`.
+
+    2.2.9: A retained version with no file state that apply reset stays `vectors_synced
+    = false` when this machine later adopts it, so the worker''s pending query selects
+    it. test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_reset_survives_adoption_of_retained_version`.
+
+    2.2.10: When the receipt write right after the committed flag reset fails before
+    recording, apply exits nonzero and sends no Qdrant delete. The flags stay reset.
+    Stderr gives the receipt path and the confirmed `versions_reset` count, and the
+    last recorded receipt is the initial one. test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_stops_before_deletes_when_reset_receipt_write_fails`.
+
+    2.2.11: With 257 orphan IDs (two batches), when the write after the first batch
+    fails before recording, apply exits nonzero and sends no second delete. Stderr
+    lists the first batch''s IDs. The last recorded receipt has `versions_reset` filled,
+    `deleted: []` and `complete: false`. test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_stops_after_first_batch_when_receipt_write_fails`.
+
+    2.2.12: When only the final `complete: true` write fails before recording, apply
+    exits nonzero after every delete. The last recorded receipt lists every batch
+    with `complete: false`. test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_exits_nonzero_when_final_receipt_write_fails`.
+
+    2.2.13: When a write records its receipt and then fails, apply still exits nonzero,
+    prints no apply payload, and reports the write as unconfirmed. The test runs twice.
+    On the write after the reset, no Qdrant delete follows. On the final write, the
+    recorded receipt reads `complete: true` and the exit is still nonzero. test: `crates/gcode/src/commands/vector/reconcile/tests/serial_db.rs::apply_reports_unconfirmed_when_published_receipt_write_fails`.'
+  labels:
+  - covers:code-index-vector-reconciliation:2.2:2.2.1
+  - covers:code-index-vector-reconciliation:2.2:2.2.2
+  - covers:code-index-vector-reconciliation:2.2:2.2.3
+  - covers:code-index-vector-reconciliation:2.2:2.2.4
+  - covers:code-index-vector-reconciliation:2.2:2.2.5
+  - covers:code-index-vector-reconciliation:2.2:2.2.6
+  - covers:code-index-vector-reconciliation:2.2:2.2.7
+  - covers:code-index-vector-reconciliation:2.2:2.2.8
+  - covers:code-index-vector-reconciliation:2.2:2.2.9
+  - covers:code-index-vector-reconciliation:2.2:2.2.10
+  - covers:code-index-vector-reconciliation:2.2:2.2.11
+  - covers:code-index-vector-reconciliation:2.2:2.2.12
+  - covers:code-index-vector-reconciliation:2.2:2.2.13
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Path-keyed history protection
+  category: code
+  task_type: bug
+  depends_on: []
+  validation_criteria: '3.1.1: A blob committed at two paths protects only the version
+    at the path where history holds it. test: `crates/gcode/src/commands/status/content_gc/history/tests.rs::duplicate_blob_protects_only_its_history_path`.
+
+    3.1.2: After a rename inside the window, the old path''s content stays protected.
+    Content that history holds only at the new path does not protect the old path.
+    test: `crates/gcode/src/commands/status/content_gc/history/tests.rs::rename_protects_each_path_by_its_own_history`.
+
+    3.1.3: Paths with spaces and newlines round-trip. test: `crates/gcode/src/commands/status/content_gc/history/tests.rs::unusual_paths_round_trip`.
+
+    3.1.4: A per-path `.gitattributes` filter produces the same hash the indexer computes
+    for that path''s checkout. test: `crates/gcode/src/commands/status/content_gc/history/tests.rs::filtered_content_hashes_per_path`.
+
+    3.1.5: When git history cannot be read, discovery retains every candidate of that
+    root. Its fixture paths are eligible under `test_context()`, so the test still
+    passes after 3.2. test: `crates/gcode/src/commands/status/content_gc/tests.rs::history_failure_retains_root_candidates`.
+
+    3.1.6: A sha256 repository is walked correctly. test: `crates/gcode/src/commands/status/content_gc/history/tests.rs::sha256_repository_tree_walk`.
+
+    3.1.7: A commit dated inside the window, followed on the same branch by a tip
+    dated before the cutoff, still protects its path and hash. test: `crates/gcode/src/commands/status/content_gc/history/tests.rs::recent_ancestor_behind_old_tip_stays_protected`.'
+  labels:
+  - covers:code-index-vector-reconciliation:3.1:3.1.1
+  - covers:code-index-vector-reconciliation:3.1:3.1.2
+  - covers:code-index-vector-reconciliation:3.1:3.1.3
+  - covers:code-index-vector-reconciliation:3.1:3.1.4
+  - covers:code-index-vector-reconciliation:3.1:3.1.5
+  - covers:code-index-vector-reconciliation:3.1:3.1.6
+  - covers:code-index-vector-reconciliation:3.1:3.1.7
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Current-config eligibility for history protection
+  category: code
+  task_type: bug
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: A candidate under an `extra_excludes` pattern is collected
+    even though history holds it at that path. test: `crates/gcode/src/commands/status/content_gc/tests.rs::excluded_path_is_collected_despite_history`.
+
+    3.2.2: A hidden path outside the allowlist is ineligible, and an allowlisted hidden
+    path is eligible. test: `crates/gcode/src/index/walker/tests/classification.rs::history_eligibility_applies_hidden_allowlist`.
+
+    3.2.3: A deleted path that passes the lexical filters stays eligible and is protected
+    by its history. test: `crates/gcode/src/commands/status/content_gc/tests.rs::missing_path_keeps_history_protection`.
+
+    3.2.4: An existing gitignored file is ineligible when `respect_gitignore` is set,
+    and eligible when it is not. test: `crates/gcode/src/index/walker/tests/classification.rs::history_eligibility_respects_gitignore_for_existing_files`.
+
+    3.2.5: An existing file that is not ignored and is larger than `MAX_FILE_SIZE`
+    stays eligible with `respect_gitignore` set, so history at that path still protects
+    an old candidate. Classification still excludes that file from indexing. test:
+    `crates/gcode/src/index/walker/tests/classification.rs::history_eligibility_ignores_file_size`.
+
+    3.2.6: A root that is not an existing directory retains an eligible candidate,
+    a candidate under `extra_excludes`, and a hidden candidate outside the allowlist.
+    test: `crates/gcode/src/commands/status/content_gc/tests.rs::gone_root_retains_every_candidate`.
+
+    3.2.7: Under an existing root whose history cannot be read, a candidate under
+    `extra_excludes` is collected and an eligible candidate is retained. test: `crates/gcode/src/commands/status/content_gc/tests.rs::history_failure_still_collects_ineligible_candidates`.'
+  labels:
+  - covers:code-index-vector-reconciliation:3.2:3.2.1
+  - covers:code-index-vector-reconciliation:3.2:3.2.2
+  - covers:code-index-vector-reconciliation:3.2:3.2.3
+  - covers:code-index-vector-reconciliation:3.2:3.2.4
+  - covers:code-index-vector-reconciliation:3.2:3.2.5
+  - covers:code-index-vector-reconciliation:3.2:3.2.6
+  - covers:code-index-vector-reconciliation:3.2:3.2.7
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Guides for reconcile and path-aware retention
+  category: docs
+  task_type: chore
+  depends_on:
+  - '2.1'
+  - '2.2'
+  - '3.1'
+  - '3.2'
+  validation_criteria: '4.1.1: The user guide documents the dry-run classes, the digest,
+    and the apply flags with their lease and receipt rules. behavior: "vector reconcile"
+    in `docs/guides/gcode-user-guide.md`.
+
+    4.1.2: No guide or README names `vector cleanup-orphans`, and the graph-core guide
+    no longer says prune sweeps vector orphans. behavior: "vector reconcile" in `docs/guides/gcode-graph-core.md`.
+
+    4.1.3: The prune text states path-keyed, eligibility-gated history retention.
+    behavior: "its own path" in `docs/guides/gcode-user-guide.md`.'
+  labels:
+  - covers:code-index-vector-reconciliation:4.1:4.1.1
+  - covers:code-index-vector-reconciliation:4.1:4.1.2
+  - covers:code-index-vector-reconciliation:4.1:4.1.3
+  tdd: false
+  source_section: '4.1'
+  assigned_agent: tech-writer
+```
