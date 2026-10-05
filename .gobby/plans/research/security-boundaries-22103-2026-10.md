@@ -102,9 +102,11 @@ allow  mcp__claude-in-chrome__computer   browser automation
   default and worker-safety, and no bypass.
 - Its predicate covers shell tools and literal syntax only
   (`src/gobby/hooks/provider_launch_guard.py:122-128`, hash `27a42043a197`).
-- Under SRT, every descendant of the sandboxed provider inherits the Seatbelt
-  profile. `render_srt_settings` sets `enableWeakerNestedSandbox: False`
-  (`src/gobby/agents/srt_runtime.py:513-540`, hash `17c1b972a7e2`).
+- Under SRT, descendants of the sandboxed provider run under the same Seatbelt
+  profile. That is sandbox-runtime and macOS platform design, which this spike
+  did not verify in Gobby. `render_srt_settings` sets
+  `enableWeakerNestedSandbox: False` (`src/gobby/agents/srt_runtime.py:513-540`,
+  hash `17c1b972a7e2`).
 
 **Limit.** Nine of the twelve cases pass. The guide already documents this
 (`docs/guides/sandboxing.md:78-84`).
@@ -162,7 +164,22 @@ path                                     read   write
 ~/.codex/hooks.json                      ALLOW  deny
 ~/Library/Keychains/login.keychain-db    ALLOW  deny
 == provider=codex
-(same read column; write ALLOW only for ~/.codex/auth.json, config.toml, hooks.json)
+allowAppleEvents=False allowLocalBinding=True allowUnixSockets=[] allowedDomains=6
+path                                     read   write
+~/.ssh/id_ed25519                        ALLOW  deny
+~/.aws/credentials                       ALLOW  deny
+~/.config/gh/hosts.yml                   ALLOW  deny
+~/.netrc                                 ALLOW  deny
+~/.docker/config.json                    ALLOW  deny
+~/.cargo/credentials.toml                deny   deny
+~/.gobby/bootstrap.yaml                  deny   deny
+~/.gobby/local_cli_token                 deny   deny
+~/.claude/settings.json                  ALLOW  deny
+~/.claude.json                           ALLOW  deny
+~/.codex/auth.json                       ALLOW  ALLOW
+~/.codex/config.toml                     ALLOW  ALLOW
+~/.codex/hooks.json                      ALLOW  ALLOW
+~/Library/Keychains/login.keychain-db    ALLOW  deny
 == web chat default: enabled=True backend=srt allow_network=False extra_deny_read=[]
 == no-secret-read: when="variables.get('is_spawned_agent')" tools=['Bash']
 BLOCK  cat ~/.ssh/id_ed25519
@@ -284,7 +301,8 @@ rule templates naming 'computer-use': none
   target (`src/gobby/mcp_proxy/tools/sessions/_terminal.py:746-769`, hash
   `82b62325110e`). No rule template names it. An interactive or web-chat caller
   can read any live session's pane or transcript tail, across projects. Web chat
-  is blocked from `send_keys` but not from `capture_output`.
+  is blocked from `send_keys`, and no rule blocks `capture_output` for it. This
+  pass did not check whether web chat exposes the tool.
 - Interactive sessions can use raw `tmux send-keys`, `osascript` and browser
   automation without any guard.
 
@@ -327,6 +345,10 @@ PipelineExecution.to_dict() carries resume_token: True
   (`src/gobby/workflows/pipeline/gatekeeper.py:94-150`, hash `1c51bb0c4c09`).
   The token reaches the REST `/run` caller, CLI output, the configured webhook,
   and the `approval_required` event.
+- That event goes only to the WebSocket broadcast. Only completed, failed and
+  cancelled events reach session dispatch (`src/gobby/runner_broadcasting.py:372-412`,
+  hash `aace5ba2f94a`). The WebSocket accepts only the local CLI bearer
+  (`src/gobby/servers/auth_service.py:251-252`, hash `cd3d74d1ef9f`).
 - The MCP run path swallows `ApprovalRequired` and returns no token
   (`src/gobby/mcp_proxy/tools/workflows/_pipeline_execution.py:176-178`, hash
   `37470f080f41`). `get_pipeline_status` omits tokens (`:819-831`, hash
@@ -403,6 +425,11 @@ codex run.
   `approve_pipeline`.
 - `toggle_rule` takes no caller identity
   (`src/gobby/mcp_proxy/tools/workflows/_rules.py:185-207`, hash `d42952fab3b0`).
+  Its MCP registration adds no principal check
+  (`src/gobby/mcp_proxy/tools/workflows/__init__.py:288-295`, hash `d1085d24c8c7`).
+- The auth service's effect gate is a takeover drain fence, not caller
+  authorization (`src/gobby/servers/lease_fence.py:44-45`, hash `ee693b82cbef`;
+  `auth_service.py:375-380`, hash `61566633efe5`).
 - No bundled agent definition blocks these tools. The spawned-agent mutation list
   covers only `gobby-tasks` and `gobby-tasks-ops`. The backend-developer
   `implement` step allows all tools and blocks four
