@@ -15,7 +15,7 @@ task-close-reviewer: mechanical close gates plus code-reviewer review), report
 The lane reviewer that LANDed a candidate lands it on `0.5.0` itself, through
 one daemon tool, `gobby-tasks-ops:land_commit(task_id, commit_sha)`. The tool
 is the only writer of the main checkout's branch for anything except Markdown
-plans, roles and docs. It needs Orchestrator approval only for a
+plans, roles and docs and plan coverage files. It needs Orchestrator approval only for a
 restart-class landing, an active freeze, or overlap with another lane's
 in-flight candidate. A git `reference-transaction` hook refuses every other
 update of that branch.
@@ -115,13 +115,18 @@ Rulings of record, verbatim:
    direct commits for Markdown only").** A `reference-transaction` hook refuses every update of the branch
    checked out in the main worktree unless `GOBBY_LAND_COMMIT=1` is set or
    every changed path is a `*.md` file at the repository root or under
-   `.gobby/plans/`, `.gobby/roles/` or `docs/`. Plan writers and the
+   `.gobby/plans/`, `.gobby/roles/` or `docs/`, or any file under
+   `.gobby/plans/coverage/`. Plan writers and the
    Orchestrator keep committing those directly (69 of 123 commits on
-   2026-10-05). `docs/reference-audit/*.json` stays out because tests read it
-   (#23484). A bundled rule refuses agent shell commands that mention
-   `GOBBY_LAND_COMMIT`. Consequence: plan coverage manifests (`*.yaml`) and
-   research attachments (`*.svg`, `*.txt`) under `.gobby/plans/` land through
-   `land_commit`.
+   2026-10-05). The coverage allowance is Josh's choice (a) on reviewer
+   finding B1, relayed by the Orchestrator at 13:19 CT: plan registration,
+   write-backs and archives commit coverage manifests and
+   `.gobby/plans/coverage/.regenerate.log` from the main checkout
+   (27883c9ac9, 2fedc56469, 1fb4cb12dd), where no lane ref exists for
+   `land_commit`. `docs/reference-audit/*.json` stays out because tests read
+   it (#23484). A bundled rule refuses agent shell commands that mention
+   `GOBBY_LAND_COMMIT`. Consequence: research attachments (`*.svg`, `*.txt`)
+   under `.gobby/plans/` land through `land_commit`.
 
 Out of scope: the needs-review handoff (Josh dropped decisions 2 and 6),
 task-close-reviewer retirement, and `main`/push routing. This plan has no
@@ -156,7 +161,9 @@ stage rows.
   `PRIORITY`; the lowest existing value is 50.
 - Git from the daemon goes through `daemon_git.run(args, cwd=, timeout=, env=)`
   in `src/gobby/utils/daemon_git.py`; a passed `env` replaces the whole
-  environment.
+  environment. Without one, `run` uses `git_subprocess_env() or
+  dict(os.environ)`; `git_subprocess_env` (`src/gobby/utils/git.py`) adds
+  fallback `PATH` entries only when `git` is not resolvable.
 - Hooks: `src/gobby/cli/installers/git_hooks.py::HOOK_TEMPLATES` drives
   install, uninstall and `get_stale_git_hooks`; `core.hooksPath` is the shared
   `.git/hooks`, so one install covers every worktree. `get_stale_git_hooks`
@@ -210,7 +217,7 @@ stage rows.
 `kind: framing`
 
 **Goal:** a reviewer lands its LANDed candidate in one call, and nothing else
-moves `0.5.0` except Markdown plans, roles and docs.
+moves `0.5.0` except Markdown plans, roles and docs and plan coverage files.
 
 ### 1.1 Landing receipt kinds [category: code]
 `kind: deliverable`
@@ -347,10 +354,12 @@ Implementation, new module `src/gobby/tasks/landing_policy.py`:
 - `ACTIVATION_CLASSES = ("none", "ui_build", "restart", "cutover")`, weakest
   first, and `classify_paths(paths) -> str` returning the strongest class per
   Decision Record item 4 (`none` for an empty set).
-- `DIRECT_COMMIT_MARKDOWN_DIRS = (".gobby/plans/", ".gobby/roles/", "docs/")`
-  and `is_direct_commit_path(path) -> bool`: true only for a path ending in
-  `.md` that has no `/` or starts with one of those prefixes. 1.5 generates
-  the hook's shell patterns from these two names.
+- `DIRECT_COMMIT_MARKDOWN_DIRS = (".gobby/plans/", ".gobby/roles/", "docs/")`,
+  `DIRECT_COMMIT_ANY_FILE_DIRS = (".gobby/plans/coverage/",)` and
+  `is_direct_commit_path(path) -> bool`: true only for a path that starts
+  with a `DIRECT_COMMIT_ANY_FILE_DIRS` prefix, or ends in `.md` and has no
+  `/` or starts with a `DIRECT_COMMIT_MARKDOWN_DIRS` prefix. 1.5 generates
+  the hook's shell patterns from these names.
 - `LandingFreeze` (frozen dataclass: `on`, `reason`, `set_by_session_id`,
   `set_at`), `freeze_path(git_common_dir) -> Path`
   (`<common>/gobby/landing-freeze.json`), `read_freeze(git_common_dir)`
@@ -378,11 +387,13 @@ Planned verification:
   `src/gobby/storage/schema_expected_identity.json` is cutover, `src/gobby/cli/`
   is restart, `web/` alone is ui_build, and `docs/` plus `tests/` is none.
   test: `tests/tasks/test_landing_policy.py::test_classify_paths_strongest_class_wins`.
-- 1.2.2 - `is_direct_commit_path` accepts only `*.md` at the root or under
-  `.gobby/plans/`, `.gobby/roles/`, `docs/`, and rejects
-  `docs/reference-audit/admin.json`, `.gobby/plans/coverage/x.yaml` and
-  `src/gobby/AGENTS.md`. test:
-  `tests/tasks/test_landing_policy.py::test_direct_commit_allows_only_listed_markdown`.
+- 1.2.2 - `is_direct_commit_path` accepts `*.md` at the root or under
+  `.gobby/plans/`, `.gobby/roles/`, `docs/`, plus
+  `.gobby/plans/coverage/<project>/23273/x.coverage.yaml` and
+  `.gobby/plans/coverage/.regenerate.log`, and rejects
+  `docs/reference-audit/admin.json`, `.gobby/plans/x.svg`,
+  `.gobby/plans/coverage-notes/x.yaml` and `src/gobby/AGENTS.md`. test:
+  `tests/tasks/test_landing_policy.py::test_direct_commit_allows_listed_markdown_and_coverage`.
 - 1.2.3 - A missing freeze file reads as off and a malformed one as on. test:
   `tests/tasks/test_landing_policy.py::test_unreadable_freeze_file_reads_as_frozen`.
 - 1.2.4 - `set_landing_freeze` records the calling session, refuses `on`
@@ -416,8 +427,9 @@ Consumers unchanged:
   `src/gobby/tasks/close_receipts.py`;
 - `landing_policy.classify_paths`, `read_freeze` (1.2);
 - `daemon_git.run` and `GitOk` in `src/gobby/utils/daemon_git.py`; pass
-  `env={**os.environ, "GOBBY_LAND_COMMIT": "1", "GIT_REFLOG_ACTION":
-  "gobby-land ..."}` to the ref-moving command;
+  `env={**(git_subprocess_env() or os.environ), "GOBBY_LAND_COMMIT": "1",
+  "GIT_REFLOG_ACTION": "gobby-land ..."}` to the ref-moving command, which
+  keeps `run`'s git `PATH` fallback;
 - `InterSessionMessageManager(db).create_message(from_session, to_session,
   content)` in `src/gobby/storage/inter_session_messages.py`, the pattern
   `src/gobby/mcp_proxy/tools/tasks/_stage_review.py` uses;
@@ -726,8 +738,8 @@ before-tool block rule once
 
 Implementation:
 - New `HOOK_TEMPLATES["reference-transaction"]`, rendered by a helper in
-  `git_hooks.py` from `landing_policy.DIRECT_COMMIT_MARKDOWN_DIRS` so the
-  allowance has one source. The POSIX `sh` script:
+  `git_hooks.py` from `landing_policy.DIRECT_COMMIT_MARKDOWN_DIRS` and
+  `DIRECT_COMMIT_ANY_FILE_DIRS` so the allowance has one source. The POSIX `sh` script:
   - reads stdin into a variable once, and checks only when `$1` is
     `prepared` and `GOBBY_LAND_COMMIT` is not `1`;
   - reads `<git-common-dir>/HEAD`; checks only when it is `ref: <name>`,
@@ -735,7 +747,7 @@ Implementation:
   - for each captured line naming exactly the protected ref: allows creation
     (zero old), refuses deletion (zero new), and otherwise reads
     `git diff --name-only --no-renames <old> <new>` line by line with
-    `IFS= read -r`; any path that is not an allowed Markdown path refuses,
+    `IFS= read -r`; any path that `is_direct_commit_path` would reject refuses,
     and so does any path git quoted (a leading `"`), which covers newlines,
     tabs and other escaped names;
   - fails closed when `git diff` fails;
@@ -768,9 +780,13 @@ worktree and drive real git.
 **Acceptance:**
 
 - 1.5.1 - In the main checkout, a commit touching only `docs/x.md` and a root
-  `NOTES.md` succeeds, and a commit touching `src/gobby/a.py` or
-  `docs/reference-audit/a.json` is refused with the path named. test:
-  `tests/cli/installers/test_landing_guard_hook.py::test_direct_commit_allows_only_listed_markdown`.
+  `NOTES.md` succeeds, and so does a commit adding a coverage manifest and
+  `.gobby/plans/coverage/.regenerate.log` and one that deletes a coverage
+  manifest while moving a plan `.md`. A commit touching `src/gobby/a.py`,
+  `docs/reference-audit/a.json` or `.gobby/plans/x.svg` is refused with the
+  path named. The hook's patterns match `is_direct_commit_path` on the same
+  path list. test:
+  `tests/cli/installers/test_landing_guard_hook.py::test_direct_commit_allows_listed_markdown_and_coverage`.
 - 1.5.2 - From a linked worktree, `git merge`, `git reset` and `git branch -f`
   that move the protected branch to code are refused, while commits on the
   lane branch pass. test:
@@ -856,8 +872,8 @@ and a read-through against the shipped tool schemas.
   "base_update_required" in `docs/guides/tasks.md`.
 - 2.1.4 - The guide gives the moved-tip retest procedure and its
   failed-retest path. behavior: "retest_required" in `docs/guides/tasks.md`.
-- 2.1.5 - The guide states the Markdown-only direct-commit allowance, the
-  guard and its operator override. behavior: "GOBBY_LAND_COMMIT" in
+- 2.1.5 - The guide states the direct-commit allowance (listed Markdown and
+  `.gobby/plans/coverage/`), the guard and its operator override. behavior: "GOBBY_LAND_COMMIT" in
   `docs/guides/tasks.md`.
 
 ## Rollout
@@ -942,6 +958,14 @@ and a read-through against the shipped tool schemas.
   base validation exit 0). F-M3-descendant-ref, F-M3-replay-provenance,
   F-M3-linked-source and N-M3-primary-duty are resolved; no findings remain.
   The Adversary derives M1 next. Josh approves before expansion.
+- 2026-10-05 13:21 CT: Lane 7 reviewer gobby#15396 bounced 250eecbd2d. B1:
+  the Markdown-only guard left coverage manifests and
+  `.gobby/plans/coverage/.regenerate.log` without an executable route.
+  Josh chose (a) (Orchestrator 13:19 CT): Decision Record item 7, 1.2
+  (`DIRECT_COMMIT_ANY_FILE_DIRS`, 1.2.2) and 1.5 (hook generation, 1.5.1)
+  allow any file under `.gobby/plans/coverage/`. LOW-1: the landing env
+  starts from `git_subprocess_env() or os.environ` so `daemon_git.run`'s git
+  `PATH` fallback survives. M1 is stale until the Adversary re-derives it.
 
 ## V2: Verification
 `kind: verification`
