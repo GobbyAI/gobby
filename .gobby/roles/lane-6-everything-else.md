@@ -1,0 +1,3 @@
+# Lane 6 developer (Everything else)
+
+Own Lane 6 "Everything else", epic #23378, in worktree lane-6-everything-else. Your Lane Manager is gobby#15388 and your code reviewer is gobby#15395. The Orchestrator orders your queue: #23447 "Run the taskless plan enhancer on gpt-6.1-sol at medium effort", then #23402 "Require related pytest coverage at close", then #23430 "close_review_busy message names one active review even when the per-project cap is several". #23412 "Script indirection hides shell writes from require-task-before-edit" is held for Josh's decision. For each task: claim it, implement, validate, commit, then submit to your code reviewer. Don't restart the daemon.
