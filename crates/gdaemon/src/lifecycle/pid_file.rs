@@ -234,40 +234,31 @@ fn acquire_record<T>(
     }
 }
 
+fn decimal_generation(text: &str) -> Option<BigInt> {
+    let bytes = text.as_bytes();
+    if bytes.is_empty()
+        || (bytes.len() > 1 && bytes[0] == b'0')
+        || !bytes.iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    text.parse().ok()
+}
+
 fn next_generation(record: &Option<PidRecord>) -> BigInt {
     let generation = record.as_ref().and_then(|r| r.get("generation"));
     let generation = generation
         .and_then(|raw| {
-            if let Ok(integer) = raw.get().parse::<BigInt>() {
-                return Some(integer);
-            }
-            match serde_json::from_str::<Value>(raw.get()).ok()? {
-                Value::Bool(value) => Some(BigInt::from(value)),
-                Value::String(value) => {
-                    let value = value.trim();
-                    let digits = value
-                        .strip_prefix('+')
-                        .or_else(|| value.strip_prefix('-'))
-                        .unwrap_or(value);
-                    // BigInt accepts repeated/trailing separators that Python int
-                    // rejects. Permit underscores only between digit groups.
-                    digits
-                        .split('_')
-                        .all(|group| !group.is_empty() && group.bytes().all(|b| b.is_ascii_digit()))
-                        .then(|| value.parse().ok())?
-                }
-                Value::Number(value) => value.to_string().parse::<BigInt>().ok().or_else(|| {
-                    let number = value.as_f64()?;
-                    number
-                        .is_finite()
-                        .then(|| format!("{:.0}", number.trunc()).parse().ok())?
-                }),
-                _ => None,
+            let text = raw.get().trim();
+            if text.starts_with('"') {
+                decimal_generation(&serde_json::from_str::<String>(text).ok()?)
+            } else {
+                decimal_generation(text)
             }
         })
         .unwrap_or_default();
-    // Python's int and increment have no machine-word bound. Keep the wire
-    // integer exact through decoding, arithmetic and canonical checksumming.
+    // Both readers accept only canonical nonnegative ASCII decimal values,
+    // without any machine-word bound on the generation or its increment.
     generation + BigInt::from(1)
 }
 

@@ -299,17 +299,29 @@ fn failed_pid_publication_releases_only_its_descriptor() -> anyhow::Result<()> {
 }
 
 #[test]
-fn generation_coercions_match_python_int() -> anyhow::Result<()> {
+fn canonical_generation_contract() -> anyhow::Result<()> {
     for (previous, expected) in [
-        (json!(3.0), 4),
-        (json!(true), 2),
-        (json!(" 5 "), 6),
-        (json!(" +1_000 "), 1001),
+        (json!("١"), 1),
+        (json!("+1"), 1),
+        (json!("1_0"), 1),
+        (json!(" 1"), 1),
+        (json!(""), 1),
+        (json!("01"), 1),
+        (json!("-0"), 1),
+        (json!("-1"), 1),
+        (json!(3.0), 1),
+        (json!(true), 1),
+        (json!(false), 1),
         (json!("1__2"), 1),
         (json!("3_"), 1),
         (json!("+_1"), 1),
-        (json!(-2), -1),
+        (json!(-2), 1),
         (json!([3]), 1),
+        (json!(null), 1),
+        (json!(0), 1),
+        (json!("0"), 1),
+        (json!(3), 4),
+        (json!("10"), 11),
     ] {
         let dir = TempDir::new()?;
         let path = dir.path().join("gobby.pid");
@@ -332,10 +344,11 @@ fn unbounded_generations_interoperate_with_python() -> anyhow::Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let prepare = r#"import json, sys
 from pathlib import Path
-from gobby.runner_pid_record import encode_record, decode_record
+from gobby.runner_pid_record import encode_record, decode_record, next_generation
 from gobby.runner_pid_file import reserve_service_start
 generations = [2**63-1, 2**63, 2**64-1, 2**64, -(2**63)-1,
-               10**100, -(10**100), str(10**100), str(-(10**100)), 1e100, -1e100]
+               10**100, -(10**100), str(10**100), str(-(10**100)), 1e100, -1e100,
+               '١', '+1', '1_0', ' 1', '', '01', '-0', True, False, 0, '0', 3.0, None, [1]]
 cases = []
 for mode in ('claim', 'reserve', 'convert', 'held'):
     for i, generation in enumerate(generations):
@@ -352,7 +365,7 @@ for mode in ('claim', 'reserve', 'convert', 'held'):
         record['extra'] = {'nested': [10**100, -(10**100)]}
         lock.write_bytes(encode_record(record))
         cases.append({'path': str(p), 'mode': mode,
-                      'expected': str(int(generation) + (2 if mode == 'held' else 1))})
+                      'expected': str(next_generation(record) + (1 if mode == 'held' else 0))})
 print(json.dumps(cases))
 "#;
     let output = Command::new("uv")

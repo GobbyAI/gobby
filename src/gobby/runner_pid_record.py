@@ -164,12 +164,28 @@ def reservation_is_live(
 
 
 def next_generation(record: dict[str, Any] | None) -> int:
+    """Increment canonical nonnegative ASCII decimal generations; reject other forms."""
     if not record:
         return 1
-    try:
-        return int(record.get("generation", 0)) + 1
-    except (TypeError, ValueError):
+    value = record.get("generation")
+    if isinstance(value, bool):
         return 1
+    if isinstance(value, int):
+        return value + 1 if value >= 0 else 1
+    if (
+        not isinstance(value, str)
+        or not value.isascii()
+        or not value.isdecimal()
+        or (len(value) > 1 and value[0] == "0")
+    ):
+        return 1
+    # Small chunks avoid int(string)'s configurable runtime digit cap without
+    # changing process-global limits. The protocol magnitude remains unbounded.
+    generation = 0
+    for offset in range(0, len(value), 9):
+        chunk = value[offset : offset + 9]
+        generation = generation * 10 ** len(chunk) + int(chunk)
+    return generation + 1
 
 
 def truncate_record(lock_fd: int) -> None:
