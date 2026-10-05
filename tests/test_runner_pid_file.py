@@ -40,7 +40,7 @@ from gobby.runner_pid_file import (
     reserve_service_start,
     service_nonce_path,
 )
-from gobby.runner_pid_record import decode_record, encode_record
+from gobby.runner_pid_record import decode_record, encode_record, next_generation
 from gobby.utils import spawn
 from tests.runner_helpers import create_base_patches
 
@@ -156,6 +156,95 @@ def test_gdaemon_converts_python_reservation(tmp_path: Path, marker: str) -> Non
             child.kill()
         child.communicate(timeout=10)
         cancel_service_reservation(pid_file)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Rust flock capability is Unix-only")
+@pytest.mark.parametrize(
+    "generation,expected",
+    [
+        pytest.param("١", 1, id="unicode-digit"),
+        pytest.param("+1", 1, id="plus"),
+        pytest.param("1_0", 1, id="underscore"),
+        pytest.param(" 1", 1, id="whitespace"),
+        pytest.param("", 1, id="empty"),
+        pytest.param("01", 1, id="leading-zero"),
+        pytest.param("-0", 1, id="negative-zero"),
+        pytest.param(-1, 1, id="negative-integer"),
+        pytest.param("-1", 1, id="negative-string"),
+        pytest.param(True, 1, id="true"),
+        pytest.param(False, 1, id="false"),
+        pytest.param(3.0, 1, id="float"),
+        pytest.param(None, 1, id="null"),
+        pytest.param([1], 1, id="array"),
+        pytest.param(0, 1, id="zero"),
+        pytest.param("0", 1, id="zero-string"),
+        pytest.param(1, 2, id="positive"),
+        pytest.param("10", 11, id="positive-string"),
+        pytest.param(2**63 - 1, 2**63, id="i64-max"),
+        pytest.param(2**63, 2**63 + 1, id="above-i64"),
+        pytest.param(str(2**63), 2**63 + 1, id="above-i64-string"),
+        pytest.param(10**100, 10**100 + 1, id="unbounded-integer"),
+        pytest.param(str(10**100), 10**100 + 1, id="unbounded-string"),
+    ],
+)
+def test_generation_contract_matches_gdaemon(
+    tmp_path: Path, generation: object, expected: int
+) -> None:
+    """Canonical nonnegative decimal generations agree through actual claims."""
+    assert next_generation({"generation": generation}) == expected
+    peer = _rust_pid_claim_peer()
+    assert peer.is_file(), "build the Rust pid_claim_fixture example first"
+    pid_file = tmp_path / "gobby.pid"
+    lock = pid_file.with_name("gobby.pid.lock")
+    lock.write_bytes(
+        encode_record(
+            {"version": 1, "state": "maintenance", "role": "maintenance", "generation": generation}
+        )
+    )
+    child = spawn.popen(
+        [str(peer), str(pid_file), "maintenance"],
+        text=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        output, errors = child.communicate("release\n", timeout=10)
+        assert child.returncode == 0, (output, errors)
+        assert output.startswith("ready ")
+        result = decode_record(lock.read_bytes())
+        assert result is not None
+        assert result["generation"] == expected
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=10)
+
+
+def test_canonical_generation_string_has_unbounded_magnitude() -> None:
+    result = next_generation({"generation": "1" + "0" * 5000})
+    assert result == 10**5000 + 1, "canonical generation lost magnitude at the runtime digit cap"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Rust fixture peer is Unix-only")
+@pytest.mark.parametrize("name", ["daemon_claim", "service_reservation"])
+def test_gdaemon_reads_pid_record_without_mutation(tmp_path: Path, name: str) -> None:
+    raw = (Path(__file__).parent / "fixtures" / "pid_file_records" / f"{name}.json").read_bytes()
+    expected = decode_record(raw)
+    assert expected is not None
+    path = tmp_path / "gobby.pid.lock"
+    path.write_bytes(raw)
+    result = spawn.run(
+        [str(_rust_pid_claim_peer()), str(path), "read-record"],
+        input="",
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == f"pid {expected['pid']} generation {expected['generation']}"
+    assert path.read_bytes() == raw
+    assert list(tmp_path.iterdir()) == [path]
 
 
 def _cli_runtime() -> CliRunner:

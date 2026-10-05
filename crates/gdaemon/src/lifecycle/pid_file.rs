@@ -5,6 +5,7 @@
 //! it is never handed to a child. Dropping/releasing preserves the PID record, as
 //! Python does, and never removes another owner's lock file.
 
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, RawFd};
@@ -13,12 +14,17 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use num_bigint::BigInt;
 use rand::{RngCore, rngs::OsRng};
+use serde::Serialize;
+use serde_json::value::{RawValue, to_raw_value};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 pub const SERVICE_LAUNCH_ENV: &str = "GOBBY_SERVICE_LAUNCH";
 pub const SERVICE_NONCE_ENV: &str = "GOBBY_SERVICE_NONCE";
+/// Lossless JSON fields, including Python integers wider than a machine word.
+pub type PidRecord = BTreeMap<String, Box<RawValue>>;
 const AGE_BOUND: i64 = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,7 +66,7 @@ pub struct PidFileClaim {
     file: Option<File>,
     pid_file: PathBuf,
     pub role: Role,
-    pub generation: i64,
+    pub generation: BigInt,
 }
 
 impl PidFileClaim {
@@ -82,10 +88,10 @@ impl PidFileClaim {
             .as_mut()
             .ok_or_else(|| invalid("claim is released"))?;
         let record = clear_stale(read_record(file)?);
-        if reservation_is_live(reservation(&record), now(), current_boot_id()) {
+        if reservation_is_live(reservation(&record).as_ref(), now(), current_boot_id()) {
             return Err(invalid("a service start reservation is already live"));
         }
-        let view = mint_reservation(file, &self.pid_file, backend, next_generation(&record)?)?;
+        let view = mint_reservation(file, &self.pid_file, backend, &next_generation(&record))?;
         self.release();
         Ok(view)
     }
@@ -195,14 +201,14 @@ fn try_lock(file: &File) -> io::Result<bool> {
     }
 }
 
-fn read_record(file: &mut File) -> io::Result<Option<Value>> {
+fn read_record(file: &mut File) -> io::Result<Option<PidRecord>> {
     file.seek(SeekFrom::Start(0))?;
     let mut raw = Vec::new();
     file.read_to_end(&mut raw)?;
     Ok(decode_record(&raw))
 }
 
-fn write_record(file: &mut File, record: &Value) -> io::Result<()> {
+fn write_record(file: &mut File, record: &PidRecord) -> io::Result<()> {
     let raw = encode_record(record)?;
     file.seek(SeekFrom::Start(0))?;
     file.set_len(0)?;
@@ -228,32 +234,56 @@ fn acquire_record<T>(
     }
 }
 
-fn next_generation(record: &Option<Value>) -> io::Result<i64> {
+fn decimal_generation(text: &str) -> Option<BigInt> {
+    let bytes = text.as_bytes();
+    if bytes.is_empty()
+        || (bytes.len() > 1 && bytes[0] == b'0')
+        || !bytes.iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    text.parse().ok()
+}
+
+fn next_generation(record: &Option<PidRecord>) -> BigInt {
     let generation = record.as_ref().and_then(|r| r.get("generation"));
     let generation = generation
-        .and_then(|value| match value {
-            Value::Bool(value) => Some(i64::from(*value)),
-            Value::String(value) => value.trim().parse().ok(),
-            _ => value.as_i64().or_else(|| {
-                let number = value.as_f64()?;
-                (number.is_finite() && number >= i64::MIN as f64 && number < -(i64::MIN as f64))
-                    .then_some(number.trunc() as i64)
-            }),
+        .and_then(|raw| {
+            let text = raw.get().trim();
+            if text.starts_with('"') {
+                decimal_generation(&serde_json::from_str::<String>(text).ok()?)
+            } else {
+                decimal_generation(text)
+            }
         })
-        .unwrap_or(0);
-    generation
-        .checked_add(1)
-        .ok_or_else(|| invalid("generation overflow"))
+        .unwrap_or_default();
+    // Both readers accept only canonical nonnegative ASCII decimal values,
+    // without any machine-word bound on the generation or its increment.
+    generation + BigInt::from(1)
 }
 
-fn role_record(role: &str, generation: i64, ack: Value) -> Value {
-    json!({"version":1,"state":role,"role":role,"pid":std::process::id(),
-        "boot_id":current_boot_id(),"generation":generation,"reservation":null,"ack":ack})
+fn role_record(role: &str, generation: &BigInt, ack: Value) -> io::Result<PidRecord> {
+    let mut record: PidRecord = serde_json::from_str(
+        &serde_json::to_string(&json!({
+            "version":1,"state":role,"role":role,"pid":std::process::id(),
+            "boot_id":current_boot_id(),"reservation":null,"ack":ack
+        }))
+        .map_err(io::Error::other)?,
+    )
+    .map_err(io::Error::other)?;
+    record.insert(
+        "generation".into(),
+        RawValue::from_string(generation.to_string()).map_err(io::Error::other)?,
+    );
+    Ok(record)
 }
 
-fn write_role(file: &mut File, role: Role, generation: i64, ack: Value) -> io::Result<()> {
-    write_record(file, &role_record("transitioning", generation, Value::Null))?;
-    write_record(file, &role_record(role.name(), generation, ack))
+fn write_role(file: &mut File, role: Role, generation: &BigInt, ack: Value) -> io::Result<()> {
+    write_record(
+        file,
+        &role_record("transitioning", generation, Value::Null)?,
+    )?;
+    write_record(file, &role_record(role.name(), generation, ack)?)
 }
 
 fn write_pid(pid_file: &Path) -> io::Result<()> {
@@ -284,11 +314,12 @@ fn other_pid_alive(pid_file: &Path) -> bool {
     }
 }
 
-fn reservation(record: &Option<Value>) -> Option<&Value> {
-    record
-        .as_ref()?
-        .get("reservation")
-        .filter(|v| v.is_object())
+fn record_value(record: &PidRecord, key: &str) -> Option<Value> {
+    serde_json::from_str(record.get(key)?.get()).ok()
+}
+
+fn reservation(record: &Option<PidRecord>) -> Option<Value> {
+    record_value(record.as_ref()?, "reservation").filter(Value::is_object)
 }
 
 /// Freshness deliberately ignores the issuer PID, which may exit after minting.
@@ -326,9 +357,9 @@ pub fn reservation_is_live(payload: Option<&Value>, time: f64, boot: &str) -> bo
     time - issued < bound
 }
 
-fn clear_stale(mut record: Option<Value>) -> Option<Value> {
+fn clear_stale(mut record: Option<PidRecord>) -> Option<PidRecord> {
     if let Some(payload) = reservation(&record)
-        && !reservation_is_live(Some(payload), now(), current_boot_id())
+        && !reservation_is_live(Some(&payload), now(), current_boot_id())
     {
         if let (Some(path), Some(nonce)) =
             (payload["nonce_path"].as_str(), payload["nonce"].as_str())
@@ -336,7 +367,10 @@ fn clear_stale(mut record: Option<Value>) -> Option<Value> {
             unlink_matching_nonce(Path::new(path), nonce);
         }
         if let Some(record) = &mut record {
-            record["reservation"] = Value::Null;
+            record.insert(
+                "reservation".into(),
+                RawValue::from_string("null".into()).expect("JSON null is valid"),
+            );
         }
     }
     record
@@ -348,14 +382,14 @@ pub fn claim_pid_file(pid_file: &Path, role: Role) -> io::Result<Option<PidFileC
         return Ok(None);
     }
     let record = clear_stale(read_record(&mut file)?);
-    if reservation_is_live(reservation(&record), now(), current_boot_id())
+    if reservation_is_live(reservation(&record).as_ref(), now(), current_boot_id())
         || other_pid_alive(pid_file)
     {
         return Ok(None);
     }
-    let generation = next_generation(&record)?;
+    let generation = next_generation(&record);
     acquire_record(&mut file, |file| {
-        write_role(file, role, generation, Value::Null)?;
+        write_role(file, role, &generation, Value::Null)?;
         if role == Role::Daemon {
             write_pid(pid_file)?;
         }
@@ -385,19 +419,22 @@ pub fn probe_daemon_lock(pid_file: &Path) -> io::Result<ProbeState> {
             ProbeState::Transitioning
         });
     };
-    if record["state"] == "transitioning" || record["role"] == "transitioning" {
+    if record_value(&record, "state") == Some(json!("transitioning"))
+        || record_value(&record, "role") == Some(json!("transitioning"))
+    {
         return Ok(ProbeState::Transitioning);
     }
-    if let Some(payload) = record.get("reservation").filter(|v| v.is_object()) {
+    if let Some(payload) = record_value(&record, "reservation").filter(Value::is_object) {
         return Ok(
-            if reservation_is_live(Some(payload), now(), current_boot_id()) {
+            if reservation_is_live(Some(&payload), now(), current_boot_id()) {
                 ProbeState::LiveReservation
             } else {
                 ProbeState::StaleReservation
             },
         );
     }
-    Ok(match record["role"].as_str() {
+    let role = record_value(&record, "role");
+    Ok(match role.as_ref().and_then(Value::as_str) {
         Some("daemon") if held => ProbeState::Daemon,
         Some("maintenance") if held => ProbeState::Maintenance,
         _ if held => ProbeState::Transitioning,
@@ -454,7 +491,7 @@ fn mint_reservation(
     file: &mut File,
     pid_file: &Path,
     backend: &str,
-    generation: i64,
+    generation: &BigInt,
 ) -> io::Result<ServiceReservation> {
     let mut bytes = [0_u8; 16];
     OsRng.try_fill_bytes(&mut bytes).map_err(io::Error::other)?;
@@ -466,11 +503,20 @@ fn mint_reservation(
     let issued_at = now();
     let payload = json!({"backend":backend,"nonce":nonce,"nonce_path":path,
         "issued_at":issued_at,"boot_id":current_boot_id(),"age_bound_seconds":AGE_BOUND});
-    write_record(file, &role_record("transitioning", generation, Value::Null))?;
+    write_record(
+        file,
+        &role_record("transitioning", generation, Value::Null)?,
+    )?;
     create_nonce(&nonce_path, &nonce)?;
-    let record = json!({"version":1,"state":"reservation","role":null,
-        "pid":std::process::id(),"boot_id":current_boot_id(),"generation":generation,
-        "reservation":payload,"ack":null});
+    let mut record = role_record("reservation", generation, Value::Null)?;
+    record.insert(
+        "role".into(),
+        to_raw_value(&Value::Null).map_err(io::Error::other)?,
+    );
+    record.insert(
+        "reservation".into(),
+        to_raw_value(&payload).map_err(io::Error::other)?,
+    );
     if let Err(error) = write_record(file, &record) {
         unlink_matching_nonce(&nonce_path, &nonce);
         return Err(error);
@@ -490,14 +536,14 @@ pub fn reserve_service_start(pid_file: &Path, backend: &str) -> io::Result<Servi
         return Err(invalid("singleton lock is held"));
     }
     let record = clear_stale(read_record(&mut file)?);
-    if reservation_is_live(reservation(&record), now(), current_boot_id()) {
+    if reservation_is_live(reservation(&record).as_ref(), now(), current_boot_id()) {
         return Err(invalid("a service start reservation is already live"));
     }
     if other_pid_alive(pid_file) {
         return Err(invalid("a live process still owns the pid file"));
     }
     acquire_record(&mut file, |file| {
-        mint_reservation(file, pid_file, backend, next_generation(&record)?)
+        mint_reservation(file, pid_file, backend, &next_generation(&record))
     })
 }
 
@@ -512,7 +558,7 @@ pub fn convert_or_acquire_service_claim(
     }
     let record = clear_stale(read_record(&mut file)?);
     let payload = reservation(&record);
-    let live = reservation_is_live(payload, now(), current_boot_id());
+    let live = reservation_is_live(payload.as_ref(), now(), current_boot_id());
     let ack = if live {
         let payload = payload.ok_or_else(|| invalid("live reservation is malformed"))?;
         let expected_path = payload["nonce_path"]
@@ -532,9 +578,9 @@ pub fn convert_or_acquire_service_claim(
         }
         Value::Null
     };
-    let generation = next_generation(&record)?;
+    let generation = next_generation(&record);
     acquire_record(&mut file, |file| {
-        write_role(file, Role::Daemon, generation, ack)?;
+        write_role(file, Role::Daemon, &generation, ack)?;
         write_pid(pid_file)?;
         Ok(())
     })?;
@@ -580,33 +626,38 @@ fn hex(bytes: &[u8]) -> String {
 
 /// Python's sorted, compact, ensure_ascii=True JSON is the checksum contract.
 /// Sorting explicitly avoids depending on serde_json's map feature selection.
-fn canonical(value: &Value) -> io::Result<String> {
-    Ok(match value {
-        Value::Object(map) => {
-            let mut keys: Vec<_> = map.keys().collect();
-            keys.sort();
-            let items = keys
-                .into_iter()
-                .map(|key| {
+fn canonical(raw: &RawValue) -> io::Result<String> {
+    let text = raw.get().trim();
+    Ok(match text.as_bytes().first() {
+        Some(b'{') => {
+            let fields: PidRecord = serde_json::from_str(text).map_err(io::Error::other)?;
+            let items = fields
+                .iter()
+                .map(|(key, value)| {
                     Ok(format!(
                         "{}:{}",
-                        canonical(&Value::String(key.clone()))?,
-                        canonical(&map[key])?
+                        canonical(&to_raw_value(key).map_err(io::Error::other)?)?,
+                        canonical(value)?
                     ))
                 })
                 .collect::<io::Result<Vec<_>>>()?;
             format!("{{{}}}", items.join(","))
         }
-        Value::Array(values) => format!(
-            "[{}]",
-            values
-                .iter()
-                .map(canonical)
-                .collect::<io::Result<Vec<_>>>()?
-                .join(",")
-        ),
-        Value::String(s) => {
-            let quoted = serde_json::to_string(s).map_err(io::Error::other)?;
+        Some(b'[') => {
+            let values: Vec<Box<RawValue>> =
+                serde_json::from_str(text).map_err(io::Error::other)?;
+            format!(
+                "[{}]",
+                values
+                    .iter()
+                    .map(|v| canonical(v))
+                    .collect::<io::Result<Vec<_>>>()?
+                    .join(",")
+            )
+        }
+        Some(b'"') => {
+            let s: String = serde_json::from_str(text).map_err(io::Error::other)?;
+            let quoted = serde_json::to_string(&s).map_err(io::Error::other)?;
             let mut ascii = String::new();
             for ch in quoted.chars() {
                 if ch >= '\u{7f}' {
@@ -620,10 +671,16 @@ fn canonical(value: &Value) -> io::Result<String> {
             }
             ascii
         }
-        Value::Number(number) if number.is_f64() => {
-            python_float(number.as_f64().ok_or_else(|| invalid("invalid float"))?)
+        Some(b't' | b'f' | b'n') => text.into(),
+        _ => {
+            // RawValue preserves number literals locally, without changing
+            // serde_json::Number serialization in other workspace consumers.
+            if let Ok(integer) = text.parse::<BigInt>() {
+                integer.to_string()
+            } else {
+                python_float(serde_json::from_str::<f64>(text).map_err(io::Error::other)?)
+            }
         }
-        _ => value.to_string(),
     })
 }
 
@@ -644,27 +701,30 @@ fn python_float(number: f64) -> String {
     }
 }
 
-pub fn encode_record(record: &Value) -> io::Result<Vec<u8>> {
-    let mut body = record
-        .as_object()
-        .cloned()
-        .ok_or_else(|| invalid("record must be an object"))?;
+pub fn encode_record<T: Serialize + ?Sized>(record: &T) -> io::Result<Vec<u8>> {
+    let mut body: PidRecord =
+        serde_json::from_str(to_raw_value(record).map_err(io::Error::other)?.get())
+            .map_err(io::Error::other)?;
     body.remove("checksum");
     let checksum = hex(&Sha256::digest(
-        canonical(&Value::Object(body.clone()))?.as_bytes(),
+        canonical(&to_raw_value(&body).map_err(io::Error::other)?)?.as_bytes(),
     ));
-    body.insert("checksum".into(), Value::String(checksum));
-    Ok(canonical(&Value::Object(body))?.into_bytes())
+    body.insert(
+        "checksum".into(),
+        to_raw_value(&checksum).map_err(io::Error::other)?,
+    );
+    Ok(canonical(&to_raw_value(&body).map_err(io::Error::other)?)?.into_bytes())
 }
 
-pub fn decode_record(raw: &[u8]) -> Option<Value> {
-    let mut value: Value = serde_json::from_slice(raw).ok()?;
-    let map = value.as_object_mut()?;
-    let checksum = map.remove("checksum")?;
-    let expected = hex(&Sha256::digest(canonical(&value).ok()?.as_bytes()));
-    if checksum.as_str()? != expected {
+pub fn decode_record(raw: &[u8]) -> Option<PidRecord> {
+    let mut body: PidRecord = serde_json::from_slice(raw).ok()?;
+    let checksum = body.remove("checksum")?;
+    let expected = hex(&Sha256::digest(
+        canonical(&to_raw_value(&body).ok()?).ok()?.as_bytes(),
+    ));
+    if serde_json::from_str::<String>(checksum.get()).ok()? != expected {
         return None;
     }
-    value.as_object_mut()?.insert("checksum".into(), checksum);
-    Some(value)
+    body.insert("checksum".into(), checksum);
+    Some(body)
 }
