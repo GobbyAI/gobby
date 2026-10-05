@@ -1851,7 +1851,7 @@ would collide with those leaves.
 
 ```yaml
 deferral:
-  task_ref: "TBD-after-22902-P3"
+  task_ref: "#23511"
   reason: "External prerequisite: the seat YAML files are created or rewritten by the open #22902 P3 leaves (#22996-#22999) under root #22988."
   owner: "orchestrator"
   original_acceptance_items:
@@ -1883,7 +1883,7 @@ The gates:
 
 ```yaml
 deferral:
-  task_ref: "TBD-after-22894"
+  task_ref: "#23512"
   reason: "External prerequisite: #22894 acceptance pins the roster, role files and default.yaml lookup phrases until it closes."
   owner: "orchestrator"
   original_acceptance_items:
