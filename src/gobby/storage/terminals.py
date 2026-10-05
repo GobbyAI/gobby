@@ -55,6 +55,10 @@ class HostEpochMismatchError(RuntimeError):
     """Raised when a native attach's live host epoch does not match the row."""
 
 
+class TerminalNotReadyError(RuntimeError):
+    """Raised when a native spawn has not persisted its attach identity yet."""
+
+
 class MachineOwnershipMismatchError(RuntimeError):
     """Raised when a terminal row belongs to another machine."""
 
@@ -269,6 +273,8 @@ def native_attach_locator(
     host_socket: str | None,
 ) -> AttachLocator:
     """Build a native attach locator after validating the live host identity."""
+    if not row.host_epoch:
+        raise TerminalNotReadyError("Terminal spawn has not persisted its host epoch")
     if row.host_epoch != live_host_epoch:
         raise HostEpochMismatchError("Live host epoch does not match the terminal row")
     host_terminal_id = None
