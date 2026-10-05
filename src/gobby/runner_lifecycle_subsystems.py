@@ -218,11 +218,12 @@ async def _start_tracked_service(
     service: Any,
     subsystem: str,
     tracker: StartupTracker | None,
+    **start_kwargs: Any,
 ) -> None:
     if service is None:
         return
     try:
-        await service.start()
+        await service.start(**start_kwargs)
     except Exception as e:
         logger.exception("%s start failed: %s", subsystem, e)
         if tracker:
@@ -268,6 +269,18 @@ async def _start_core_services(runner: GobbyRunner, tracker: StartupTracker | No
         runner.lifecycle_manager,
         "Session lifecycle manager",
         tracker,
+    )
+
+
+async def _start_machine_local_lifecycle(
+    runner: GobbyRunner, tracker: StartupTracker | None
+) -> None:
+    """Start a node's own transcript processing and local file maintenance."""
+    await _start_tracked_service(
+        runner.lifecycle_manager,
+        "Session lifecycle manager",
+        tracker,
+        machine_local_only=True,
     )
 
 
@@ -715,6 +728,10 @@ async def init_subsystems(
         "vector_store", lambda: _initialize_vector_store(runner, rebuild_vector_store, tracker)
     )
     await hub_only_phase("core_services", lambda: _start_core_services(runner, tracker))
+    if node_mode:
+        await timed_startup_phase(
+            "node_machine_local_lifecycle", _start_machine_local_lifecycle(runner, tracker)
+        )
     await timed_startup_phase(
         "agent_lifecycle_monitor", _start_agent_lifecycle_monitor(runner, tracker)
     )

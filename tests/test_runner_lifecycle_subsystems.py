@@ -360,6 +360,7 @@ EVERY_MODE_STEPS = (
     "_start_agent_lifecycle_monitor",
     "_start_websocket_server",
 )
+NODE_ONLY_STEP = "_start_machine_local_lifecycle"
 
 
 async def _run_init_recording_steps(
@@ -387,6 +388,7 @@ async def _run_init_recording_steps(
             monkeypatch.setattr(lifecycle_subsystems, name, record_async(name, True))
         else:
             monkeypatch.setattr(lifecycle_subsystems, name, record_async(name))
+    monkeypatch.setattr(lifecycle_subsystems, NODE_ONLY_STEP, record_async(NODE_ONLY_STEP))
     monkeypatch.setattr(
         lifecycle_subsystems, "_start_code_index_tasks", record_sync("_start_code_index_tasks")
     )
@@ -423,10 +425,24 @@ async def test_node_mode_skips_hub_only_phases(
             monkeypatch, BootstrapConfig(datastore_mode="remote")
         )
 
-    assert called == set(EVERY_MODE_STEPS)
+    assert called == {*EVERY_MODE_STEPS, NODE_ONLY_STEP}
     assert _phase_skips(caplog) == sorted(
         f"skipping hub-only {phase} in node mode" for phase in HUB_ONLY_PHASES
     )
+
+
+@pytest.mark.asyncio
+async def test_node_lifecycle_phase_starts_the_manager_machine_local_only() -> None:
+    start_kwargs: list[dict[str, object]] = []
+
+    async def start(**kwargs: object) -> None:
+        start_kwargs.append(kwargs)
+
+    runner = SimpleNamespace(lifecycle_manager=SimpleNamespace(start=start))
+
+    await lifecycle_subsystems._start_machine_local_lifecycle(cast("GobbyRunner", runner), None)
+
+    assert start_kwargs == [{"machine_local_only": True}]
 
 
 @pytest.mark.asyncio

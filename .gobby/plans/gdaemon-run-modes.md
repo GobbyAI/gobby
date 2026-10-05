@@ -255,6 +255,9 @@ Targets:
 - `tests/test_bm25_startup.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
 - `tests/test_runner_lifecycle.py::*` — scope-reason: SimpleNamespace runner fakes that reach the gated functions gain `bootstrap_config=BootstrapConfig()`; terminal-completion recovery with local and foreign runs
 
+Consumers unchanged:
+- `tests/memory/test_indexing_service.py` — no-edit-reason: 2.2's commits (ed166cfe8b, 32ad98fb04, c22852ef6f, dc13e12735) leave it untouched; its call to `_request_memory_projection_repair` was added afterwards by #23316 (0d4f9ef4d5) with a `"hub"` run mode, which takes the ungated path.
+
 **Granularity:** eight acceptance items, one outcome: a `node` runner starts
 no shared-row maintenance, and every other mode behaves as today. Every gate
 reads the same `run_mode()` and is proven by the same focused test run. Split
@@ -435,12 +438,16 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 ## D1 Node-scoped transcript processing (depends: 2.2)
 `kind: deferred`
 
-`core_services` is hub-only in 2.2 because `SessionLifecycleManager` processes
-every session in the shared database with no machine filter. Transcript files
-live on the machine that ran the session, so the hub cannot read a node's
-transcripts, and in `node` mode nothing processes them. A node-scoped transcript
-processor needs a machine filter on the pending-session query and a decision on
-where the derived artifacts are written. Neither belongs to run modes.
+`core_services` is hub-only in 2.2 because `SessionLifecycleManager` also runs
+shared-row loops: session expiry and purges, and the knowledge-graph queue.
+Transcript processing is already machine-scoped:
+`get_pending_transcript_sessions` (`src/gobby/storage/sessions/_transcript.py`)
+selects only sessions whose `machine_id` is this machine's (641bc44427), and the
+owning machine writes the derived rows and keeps the sidecar and archive on its
+own disk. Transcript files live on the machine that ran the session, so the hub
+cannot read a node's transcripts, and in `node` mode nothing processes them. The
+gap is starting the machine-local part of the manager on a node, which does not
+belong to run modes.
 
 Acceptance item D1.1: a `node` runner processes the transcripts of sessions
 whose `machine_id` is its own, and no other session's.
@@ -497,6 +504,17 @@ deferral:
   correction 32ad98fb04 runs it in every mode. `provider-capability-refresh`
   stays hub-only, with a note on the local CLI probes. 2.2.1 and M1 are
   unchanged.
+- 2026-10-04: D1's premise corrected while specifying #23112. The pending
+  transcript query already filters by `machine_id`
+  (`src/gobby/storage/sessions/_transcript.py:25-51`, 641bc44427), and artifact
+  ownership is settled in code. The gap is that a node starts no machine-local
+  lifecycle loop. D1.1 and M1 are unchanged; #23112 carries the atomic spec.
+- 2026-10-04: Fixed the validator error "consumer-coverage: section 2.2: symbol
+  `src/gobby/runner_init/services.py::_request_memory_projection_repair` has
+  consumers missing from Targets or its Consumers unchanged inventory:
+  tests/memory/test_indexing_service.py". The test gained its call after 2.2
+  landed (#23316, 0d4f9ef4d5), so 2.2 lists it under Consumers unchanged. No
+  acceptance item changes.
 
 ## V2: Verification
 `kind: verification`

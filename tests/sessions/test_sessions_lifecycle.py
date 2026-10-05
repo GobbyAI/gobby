@@ -1335,22 +1335,30 @@ class TestPromptFileCleanup:
         assert removed == 0
 
     @pytest.mark.asyncio
-    async def test_expire_calls_cleanup(self, manager: SessionLifecycleManager) -> None:
-        """_expire_stale_sessions calls _cleanup_prompt_files."""
-        manager.session_manager = MagicMock()
-        manager.session_manager.pause_inactive_active_sessions.return_value = 0
-        manager.session_manager.expire_orphaned_handoff_sessions.return_value = 0
-        manager.session_manager.expire_stale_sessions.return_value = 0
-        manager.session_manager.expire_empty_sessions.return_value = 0
-        manager.session_manager.prune_empty_sessions.return_value = 0
+    async def test_expire_loop_calls_cleanup(self, manager: SessionLifecycleManager) -> None:
+        """Each expire-loop pass calls _cleanup_prompt_files after the shared-row sweep."""
+        manager._running = True
+        calls = _record_steps(manager, "_sweep_shared_rows")
 
-        with patch.object(manager, "_cleanup_prompt_files") as mock_cleanup:
-            expired_count = await manager._expire_stale_sessions(
-                manager._capture_active().session_lifecycle
-            )
+        def cleanup_prompt_files() -> int:
+            calls.append("_cleanup_prompt_files")
+            return 0
 
-        assert expired_count == 0
-        mock_cleanup.assert_called_once()
+        async def stop_after_one_pass(_seconds: float) -> None:
+            manager._running = False
+
+        with (
+            patch.object(manager, "_cleanup_prompt_files", cleanup_prompt_files),
+            patch.object(lifecycle_mod, "purge_textgen_project_dirs", _recording_purge(calls)),
+            patch("asyncio.sleep", stop_after_one_pass),
+        ):
+            await manager._expire_loop()
+
+        assert calls == [
+            "_sweep_shared_rows",
+            "_cleanup_prompt_files",
+            "purge_textgen_project_dirs",
+        ]
 
 
 class TestGenerateArtifactsIfNeeded:
@@ -2326,3 +2334,109 @@ class TestStartStopIdempotent:
         await manager.stop()
         assert manager._expire_task is None
         assert manager._process_task is None
+
+
+async def _until(predicate: Callable[[], bool]) -> None:
+    async with asyncio.timeout(5):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+
+SHARED_ROW_STEPS = frozenset(
+    {
+        "_expire_stale_sessions",
+        "_purge_soft_deleted_definitions",
+        "_purge_dream_hidden_memories",
+        "_process_pending_graph_memories",
+    }
+)
+
+
+def _record_steps(manager: SessionLifecycleManager, *names: str) -> list[str]:
+    """Replace each named async step with one that appends its name to the returned list."""
+    calls: list[str] = []
+    for name in names:
+
+        async def step(*_args: object, _name: str = name, **_kwargs: object) -> int:
+            calls.append(_name)
+            return 0
+
+        setattr(manager, name, step)
+    return calls
+
+
+def _recording_purge(calls: list[str]) -> Callable[[], int]:
+    def purge() -> int:
+        calls.append("purge_textgen_project_dirs")
+        return 0
+
+    return purge
+
+
+class TestMachineLocalLifecycle:
+    """A node runner starts only the machine-local lifecycle work (#23112)."""
+
+    @pytest.mark.asyncio
+    async def test_machine_local_start_runs_process_loop_without_shared_row_loops(
+        self, mock_db: MagicMock, mock_config: SessionLifecycleConfig
+    ) -> None:
+        memory_manager = SimpleNamespace(kg_service=MagicMock())
+        with patch(_SESSION_MANAGER_PATCH):
+            manager = SessionLifecycleManager(
+                mock_db,
+                static_session_capture(mock_config, services=_memory_services(memory_manager)),
+            )
+        calls = _record_steps(manager, *SHARED_ROW_STEPS, "_process_pending_transcripts")
+
+        with patch.object(lifecycle_mod, "purge_textgen_project_dirs", _recording_purge(calls)):
+            await manager.start(machine_local_only=True)
+            try:
+                await _until(
+                    lambda: {"_process_pending_transcripts", "purge_textgen_project_dirs"}
+                    <= set(calls)
+                )
+                assert manager._kg_queue_task is None
+            finally:
+                await manager.stop()
+
+        assert SHARED_ROW_STEPS.isdisjoint(calls)
+
+    @pytest.mark.asyncio
+    async def test_machine_local_maintenance_cleans_prompt_files_and_textgen_dirs(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
+        calls = _record_steps(manager, *SHARED_ROW_STEPS, "_process_pending_transcripts")
+        stale_prompt = tmp_path / "gobby-prompts" / "prompt-old-session.txt"
+        stale_prompt.parent.mkdir()
+        stale_prompt.write_text("old prompt")
+        stale = time.time() - 7200
+        os.utime(stale_prompt, (stale, stale))
+
+        with (
+            patch("tempfile.gettempdir", return_value=str(tmp_path)),
+            patch.object(lifecycle_mod, "purge_textgen_project_dirs", _recording_purge(calls)),
+        ):
+            await manager.start(machine_local_only=True)
+            try:
+                await _until(
+                    lambda: not stale_prompt.exists() and "purge_textgen_project_dirs" in calls
+                )
+            finally:
+                await manager.stop()
+
+        assert SHARED_ROW_STEPS.isdisjoint(calls)
+
+    @pytest.mark.asyncio
+    async def test_full_start_still_runs_machine_local_maintenance(
+        self, manager: SessionLifecycleManager
+    ) -> None:
+        calls = _record_steps(manager, *SHARED_ROW_STEPS, "_process_pending_transcripts")
+
+        with patch.object(lifecycle_mod, "purge_textgen_project_dirs", _recording_purge(calls)):
+            await manager.start()
+            try:
+                await _until(lambda: "purge_textgen_project_dirs" in calls)
+            finally:
+                await manager.stop()
+
+        assert calls.index("_expire_stale_sessions") < calls.index("purge_textgen_project_dirs")
