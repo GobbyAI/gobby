@@ -894,6 +894,13 @@ C2's signature and on the pinned read and retention paths it measures.
   `main` and no SHA recorded, and the caller passes an explicit base. Forking the
   detached commit with a NULL base branch is rejected because it spreads
   mechanism across about 30 base-branch consumers.
+- 2026-10-05: Adversary consensus on `55099e2381` (Adversary gobby#15401, Writer
+  gobby#15400). No blocking findings remain, and fresh base validation passes.
+  PIN-A1 through PIN-A7 and the B2 and C2 clarifications are resolved, PIN-A4 per
+  the Orchestrator ruling. All eleven code deliverables keep backend routes. Agreed
+  task types and TDD: T1 chore without TDD; A1 and A2 bug with TDD; B1 through B5
+  feature with TDD; C1 and C2 bug with TDD; C3 chore without TDD (empirical timing
+  and docs). The Adversary derives and applies M1 next.
 
 ## V2: Verification
 `kind: verification`
