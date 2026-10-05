@@ -278,6 +278,7 @@ Targets:
 - `crates/gcode/src/index/api_tests.rs::*` — scope-reason: the attempt and completion calls at 111-133 move to the new signatures
 - `crates/gcode/src/db/queries_cas_tests.rs::*` — scope-reason: add vector compare-and-set tests beside the graph ones
 - `crates/gcode/src/projection/sync/tests.rs::*` — scope-reason: add a `serial_db` module with the superseded-completion test
+- `crates/gcode/src/vector/code_symbols.rs::*` — scope-reason: the `cfg(test)` `mod tests` declaration becomes `pub(crate)` so the projection and reconcile tests reach its HTTP helpers
 - `crates/gcode/src/vector/code_symbols/tests.rs::*` — scope-reason: `accept_with_timeout` and `read_http_request` become `pub(crate)` for the projection and reconcile tests
 
 Consumers unchanged:
@@ -336,7 +337,7 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
   `crates/gcode/src/db/queries_cas_tests.rs::mark_vectors_synced_cas_rejects_same_hash_stale_attempt`.
 - 1.1.4 - When the state moves during the upsert, `VectorProjectionState`
   reports a skip and the new current version stays pending. test:
-  `crates/gcode/src/projection/sync/tests.rs::serial_db::vector_sync_file_skips_when_state_moves_during_upsert`.
+  `crates/gcode/src/projection/sync/tests.rs::vector_sync_file_skips_when_state_moves_during_upsert`.
 
 ### 1.2 Sync worker leaves vector completion to gcode [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -465,7 +466,7 @@ Targets:
 - `crates/gcode/src/vector/code_symbols/qdrant.rs::collect_file_paths_from_scroll_page`
 - `crates/gcode/src/vector/code_symbols/qdrant.rs::VectorOrphanCleanup`
 - `crates/gcode/src/vector/code_symbols/qdrant.rs::delete_file_vectors`
-- `crates/gcode/src/vector/code_symbols.rs::*` — scope-reason: swap the cleanup re-exports for `scroll_point_identities` and `PointIdentity`; make `mod tests` `pub(crate)` under `cfg(test)`
+- `crates/gcode/src/vector/code_symbols.rs::*` — scope-reason: swap the cleanup re-exports for `scroll_point_identities` and `PointIdentity`
 - `crates/gcode/src/vector/code_symbols/tests/deletion.rs::*` — scope-reason: remove the three tests of the deleted functions
 - `crates/gcode/src/cli.rs::VectorCommand`
 - `crates/gcode/src/dispatch.rs::*` — scope-reason: the service-selection arm (:153) and the command arm (:516) move to `Reconcile`
@@ -764,7 +765,7 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
   `crates/gcode/src/commands/status/content_gc/history/tests.rs::filtered_content_hashes_per_path`.
 - 3.1.5 - When git history cannot be read, discovery retains every candidate
   of that root. test:
-  `crates/gcode/src/commands/status/content_gc/tests.rs::serial_db::history_failure_retains_root_candidates`.
+  `crates/gcode/src/commands/status/content_gc/tests.rs::history_failure_retains_root_candidates`.
 - 3.1.6 - A sha256 repository is walked correctly. test:
   `crates/gcode/src/commands/status/content_gc/history/tests.rs::sha256_repository_tree_walk`.
 
@@ -823,13 +824,13 @@ then `cargo clippy -p gobby-code` and `cargo fmt -p gobby-code -- --check`.
 
 - 3.2.1 - A candidate under an `extra_excludes` pattern is collected even
   though history holds it at that path. test:
-  `crates/gcode/src/commands/status/content_gc/tests.rs::serial_db::excluded_path_is_collected_despite_history`.
+  `crates/gcode/src/commands/status/content_gc/tests.rs::excluded_path_is_collected_despite_history`.
 - 3.2.2 - A hidden path outside the allowlist is ineligible, and an
   allowlisted hidden path is eligible. test:
   `crates/gcode/src/index/walker/tests/classification.rs::history_eligibility_applies_hidden_allowlist`.
 - 3.2.3 - A deleted path that passes the lexical filters stays eligible and
   is protected by its history. test:
-  `crates/gcode/src/commands/status/content_gc/tests.rs::serial_db::missing_path_keeps_history_protection`.
+  `crates/gcode/src/commands/status/content_gc/tests.rs::missing_path_keeps_history_protection`.
 - 3.2.4 - An existing gitignored file is ineligible when `respect_gitignore`
   is set, and eligible when it is not. test:
   `crates/gcode/src/index/walker/tests/classification.rs::history_eligibility_respects_gitignore_for_existing_files`.
@@ -974,7 +975,7 @@ drop is part of it.
 `kind: verification`
 
 - 2026-10-05 14:52 CDT: First draft by the Lane 7 Plan Writer gobby#15429 on
-  #22958. The design was checked with the advisor:
+  #22958. Design choices:
   - The missing-vector repair is hub-wide per version, following the #19743
     shared-hub topology.
   - The dry-run evidence is JSON on stdout.
