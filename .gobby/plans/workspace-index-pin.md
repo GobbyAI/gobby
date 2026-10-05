@@ -10,7 +10,8 @@ Plan artifact: `.gobby/plans/workspace-index-pin.md`
 `kind: framing`
 
 A default worktree or local clone forks the caller checkout's local HEAD, including
-unpushed commits, without fetching. An explicit local branch selects its local tip;
+unpushed commits, without fetching; a detached caller HEAD requires an explicit
+base. An explicit local branch selects its local tip;
 an explicit remote branch fetches and selects its latest tip. The selected commit is
 resolved before creating or refreshing a workspace. An existing branch may not
 silently substitute another commit. A reused agent worktree rebases its work onto
@@ -26,8 +27,9 @@ Ask continues to read the caller's live index; its commit IDs do not select an i
 
 The pin governs every read lane, including graph and vector, and remains a
 content-GC root until the child overlay is purged. When a source projection moves,
-stale graph and vector rows are excluded immediately, and the existing
-projection-sync lifecycle materializes only the missing pinned paths for the child.
+stale graph and vector rows are excluded immediately, and the existing daemon
+projection worker materializes only the missing pinned paths, at their pinned
+versions, into the child's projection namespace.
 
 ## R2 Constraints and evidence
 `kind: framing`
@@ -73,7 +75,8 @@ The current checkout has migration 458 as its head. Observed 2026-10-05:
 `git log --all --diff-filter=A --name-only --format= -- 'crates/gcore/assets/schema/migrations/459_*' 'crates/gcore/assets/schema/migrations/46*'`
 returned no files, so no ref adds 459 or later. The Orchestrator assigned 459 to
 #23439 (bigint session usage counters) and 460 to this plan:
-`460_code_overlay_pins.sql`. If another migration lands first, the executor
+`460_code_overlay_pins.sql`. A rerun later on 2026-10-05, after #23439 landed
+`459_session_usage_bigint.sql`, found no 460 or later. If another migration lands first, the executor
 repeats that all-ref sweep and takes the next free number.
 The migration source requires its catalog, grant, schema-contract, CLI-contract,
 and Python expected-identity carriers in the same deliverable.
@@ -139,10 +142,20 @@ every `repair_isolation_environment` call record into it through the existing
 `complete_spawn_phase_timings` adds `spawn_wall` and `unattributed`:
 `unattributed` is wall time minus top-level phases, with the nested isolation
 subphases left out of the sum so no time counts twice. `_implementation.py` is
-912 lines, so move the isolation handler selection, the `prepare_environment`
-call, and the prepare-failure response out of `spawn_agent_impl` into the new
+912 lines, so move the `prepare_environment` call and the prepare-failure
+response out of `spawn_agent_impl` into the new
 `src/gobby/mcp_proxy/tools/spawn_agent/_isolation_prepare.py`, which also times
-`isolation_prepare`. This deliverable changes no isolation behavior and has no
+`isolation_prepare`. Handler selection stays in place: `spawn_agent_impl` and
+`_worktree_reuse.py` keep calling `get_isolation_handler` and pass the handler to
+the moved helper. Literal sweep, observed 2026-10-05: `gcode grep -F
+get_isolation_handler tests/mcp_proxy` and `gcode grep -w prepare_environment
+tests/mcp_proxy` hit `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py`,
+`tests/mcp_proxy/tools/spawn_agent/test_event_loop.py`,
+`tests/mcp_proxy/tools/spawn_agent/test_agy_gate.py`, and A1's spawn
+error-handling test, which patch those module attributes and mock
+`prepare_environment` on the returned handler; all keep working after the move,
+and the error-handling test changes later under A1 only for its base-branch
+assertions. This deliverable changes no isolation behavior and has no
 dependencies; it lands first so every later deliverable is measured against an
 attributed baseline. Rejected: deriving phases from log timestamps (neither
 structured nor testable) and a context variable for the timing map (hidden
@@ -158,6 +171,11 @@ subphase breakdown and residual are recorded on the T1 leaf.
 through one spawn path; splitting them would land phase keys with no writer or
 writers with no log. The `_implementation.py` move is required by the
 1,000-line ceiling.
+
+Consumers unchanged:
+- `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py` — no-edit-reason: It patches _implementation.get_isolation_handler and mocks prepare_environment on the returned handler, and handler selection stays in _implementation.py.
+- `tests/mcp_proxy/tools/spawn_agent/test_event_loop.py` — no-edit-reason: It monkeypatches _implementation.get_isolation_handler, which still selects the handler passed to the moved helper.
+- `tests/mcp_proxy/tools/spawn_agent/test_agy_gate.py` — no-edit-reason: It patches get_isolation_handler on _implementation, which keeps that lookup.
 
 **Acceptance:**
 
@@ -175,19 +193,35 @@ writers with no log. The `_implementation.py` move is required by the
 
 Targets:
 - `src/gobby/worktrees/git/_lifecycle.py::create_worktree`
+- `src/gobby/worktrees/git/manager.py::WorktreeGitManager.create_worktree`
 - `src/gobby/worktrees/base_branch.py::*` — scope-reason: validate explicit ref forms and selected commit
 - `src/gobby/worktrees/creation.py::*` — scope-reason: creation, cleanup, and result provenance share the selected commit
+- `src/gobby/agents/isolation_models.py::*` — scope-reason: SpawnConfig keeps an omitted base as None through to the handler
+- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::*` — scope-reason: move requested-base resolution out and stop substituting the current branch or main
+- `src/gobby/mcp_proxy/tools/spawn_agent/_isolation_prepare.py`
 - `src/gobby/agents/isolation_worktree.py::*` — scope-reason: preparation and cleanup share fork provenance
 - `src/gobby/agents/worktree_reuse.py::*` — scope-reason: refresh, conflict, and pin provenance share one continuation path
 - `src/gobby/mcp_proxy/tools/worktrees/_create.py::*` — scope-reason: omitted base selects the caller's HEAD and remote-style refs are accepted
 - `src/gobby/cli/worktrees.py::*` — scope-reason: CLI creation defaults to the caller's HEAD
 - `src/gobby/servers/routes/source_control_worktrees.py::*` — scope-reason: client worktree creation forks the exact selected commit
 - `src/gobby/hooks/event_handlers/_misc.py::*` — scope-reason: the worktree hook drops its clean-branch origin fallback
+- `src/gobby/build/workspace_services.py::*` — scope-reason: integration worktree creation passes its selected commit without use_local
+- `src/gobby/install/shared/skills/gobby/references/source-control/worktrees.md`
 - `tests/worktrees/test_fork_commit.py`
 - `tests/agents/test_worktree_fork_commit.py`
 - `tests/mcp_proxy/tools/test_worktrees_create.py::*` — scope-reason: omitted versus explicit base cases
 - `tests/hooks/test_misc_handlers.py::*` — scope-reason: hook exact-HEAD case
 - `tests/servers/test_source_control_worktrees.py`
+- `tests/worktrees/test_worktree_git.py::*` — scope-reason: creation requires a base ref and selected commit, and explicit remote refs are accepted
+- `tests/worktrees/test_worktree_service.py::*` — scope-reason: wrapper calls drop use_local and keep the commit-SHA base refusal
+- `tests/worktrees/test_creation.py::*` — scope-reason: direct creation passes the selected commit instead of use_local
+- `tests/servers/routes/test_source_control_routes.py::*` — scope-reason: client creation asserts the selected commit instead of main with use_local False
+- `tests/agents/test_isolation.py::*` — scope-reason: worktree handler tests resolve an omitted base once and keep an explicit main
+- `tests/agents/test_isolation_base_capture.py::*` — scope-reason: base capture records the selected commit
+- `tests/agents/test_isolation_project_json.py::*` — scope-reason: handler creation mocks drop use_local
+- `tests/mcp_proxy/tools/spawn_agent/test_project_scope.py::*` — scope-reason: an omitted base reaches the handler as None and resolves against the target project
+- `tests/mcp_proxy/tools/spawn_agent/test_error_handling.py::*` — scope-reason: spawn no longer resolves the current branch before the handler
+- `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::*` — scope-reason: handler creation mocks drop use_local
 
 **Research context:** Agent spawns already select the caller's current branch
 and preserve unpushed commits: `src/gobby/agents/isolation_worktree.py` replaces
@@ -202,23 +236,73 @@ and client-route creation still default to `main`, and the MCP surface in
 to origin when clean (excerpt `6b9c7c6c…`). `sync_reused_worktree_to_base`
 already returns a recoverable conflict.
 
+Omission is lost before any handler runs. `spawn_agent_impl` turns an omitted
+base into the target checkout's current branch, or `main` when that lookup fails
+or HEAD is detached (`src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`,
+Adversary `gcode evidence` excerpt `cf9d9ec9…`), `SpawnConfig.base_branch` is a
+required `str` (`src/gobby/agents/isolation_models.py`, `256e205b…`), and both
+handlers then replace `main` with the current branch, so an explicit local `main`
+is indistinguishable from an omitted base. The `WorktreeGitManager.create_worktree`
+wrapper and `_lifecycle.create_worktree` default to `main` with `use_local=False`
+(`src/gobby/worktrees/git/manager.py`, `99fe63fa…`). The workspace record refuses
+a commit SHA as its base branch (`base_branch_is_commit_sha`,
+`tests/worktrees/test_worktree_service.py::test_spawn_worktree_create_refuses_unreferenced_sha_base`).
+
 The default-path delta is to resolve the caller checkout's `HEAD^{commit}` once
-and pass that exact SHA through creation, eliminating the clean-branch fetch and
-its race. Bare explicit refs are local only; `origin/<name>` and
-`refs/remotes/origin/<name>` are explicit remote refs and fetch only that ref.
-Align the MCP, CLI, client-route, and hook surfaces with that rule while keeping
-an explicitly supplied local `main` distinguishable from an omitted base. Reuse
-the existing `get_local_commit` in `src/gobby/worktrees/git/_branch.py`
-unchanged; add no second branch-resolution abstraction. Reject an existing
-branch whose tip would change the selection. A reused agent worktree rebases
-onto the selected commit. Integration workspace refresh keeps its current
-merged-commit behavior and is re-pinned under B2. Planned check: isolated
-focused pytest for local HEAD, unpushed commits, explicit local and remote refs,
-mismatched existing branch, reuse conflict, and each public creation surface.
+and fork that exact commit, eliminating the clean-branch fetch and its race.
+Omission stays `None` from the request through `SpawnConfig`
+(`base_branch: str | None`; an agent definition's `inherit` still means omitted),
+and `spawn_agent_impl` no longer resolves a branch. Each handler resolves an
+omitted base exactly once per spawn, with the target project's git manager, to the
+caller checkout's `HEAD^{commit}`, and records the attached branch name as the
+workspace base branch. An explicit ref, including `main`, is never replaced by the
+current branch. An omitted base on a detached HEAD returns a recoverable
+`detached_head_requires_base` error before any side effect; it never falls back to
+`main`, and it never records a SHA as the base branch. Bare explicit refs are
+local only; `origin/<name>` and `refs/remotes/origin/<name>` are explicit remote
+refs that fetch only that ref and record `<name>` as the base branch.
+`_lifecycle.create_worktree` and its `WorktreeGitManager` wrapper require the
+recorded base branch and the selected commit and drop their `main` and
+`use_local` defaults; the ref form alone decides local versus remote, so every
+caller, including the integration path in `src/gobby/build/workspace_services.py`
+and the `create_worktree` MCP tool, stops passing `use_local`. Align the MCP, CLI,
+client-route, and hook surfaces with that rule. Reuse the existing
+`get_local_commit` in `src/gobby/worktrees/git/_branch.py` unchanged; add no
+second branch-resolution abstraction. Reject an existing branch whose tip would
+change the selection. A reused agent worktree rebases onto the selected commit.
+Integration workspace refresh keeps its current merged-commit behavior and is
+re-pinned under B2.
+
+`_implementation.py` is 913 lines, so move the requested-base resolution (the
+explicit argument, the agent definition's default, and `inherit` as omitted) out
+of `spawn_agent_impl` into T1's
+`src/gobby/mcp_proxy/tools/spawn_agent/_isolation_prepare.py`, returning `None`
+for an omitted base; the current-branch and `main` substitution is deleted, not
+moved.
+
+Consumer sweep, observed 2026-10-05: `gcode grep -w create_worktree
+src/gobby/worktrees/ src/gobby/agents/ tests/worktrees/ -m 55`, `gcode grep -F
+create_worktree src/ tests/`, and `gcode grep -E 'use_local|shallow' tests/`.
+The tests in Targets assert the old `main`, `use_local`, current-branch
+substitution, or remote-rejection contract
+(`test_create_rejects_remote_base_before_side_effects` becomes an acceptance
+case). The `create_worktree` hits in `tests/cli/test_cli_worktrees_coverage.py`,
+`tests/cli/test_worktrees_cli.py`, `tests/cli/test_worktrees_coverage.py`,
+`tests/e2e/test_worktrees_e2e.py`, and
+`tests/integration/test_worktree_lifecycle.py` only build stored `Worktree`
+fixtures with `base_branch="main"`, which remains a valid recorded branch.
+`src/gobby/agents/resume_metadata.py` keeps its `base_branch: str` parameter,
+because handlers always report a branch name. Planned check: isolated focused
+pytest for local HEAD, unpushed commits, detached HEAD, explicit local `main`
+while on another branch, explicit local and remote refs, mismatched existing
+branch, reuse conflict, and each public creation surface, plus every migrated
+test file above.
 
 **Granularity:** These entry points share one selected-commit contract;
 splitting them would leave a creation surface with different fork semantics.
-The seven acceptance items are one rule checked at each surface that applies it.
+The acceptance items are one rule checked at each surface that applies it. The
+test count is migration of existing expectations the contract changes, not
+independent work.
 
 **Acceptance:**
 
@@ -229,6 +313,7 @@ The seven acceptance items are one rule checked at each surface that applies it.
 - A1.5 - Public creation surfaces distinguish an omitted base, which uses the caller's HEAD, from an explicit local `main`. test: `tests/mcp_proxy/tools/test_worktrees_create.py::test_omitted_base_uses_project_head_and_explicit_main_stays_main`.
 - A1.6 - The worktree hook forks the exact local HEAD without an origin fallback. test: `tests/hooks/test_misc_handlers.py::TestWorktreeHandlers::test_worktree_create_uses_exact_local_head`.
 - A1.7 - Client worktree creation forks the exact selected commit. test: `tests/servers/test_source_control_worktrees.py::test_create_client_worktree_uses_exact_selected_commit`.
+- A1.8 - An omitted agent base reaches the handler as `None` and resolves the target checkout's HEAD once; a detached HEAD fails recoverably without side effects, and an explicit local `main` on another branch forks local `main`. test: `tests/agents/test_worktree_fork_commit.py::test_omitted_base_survives_to_one_head_resolution`.
 
 ### A2 Local clone selection and Git module extraction (depends: A1)
 `kind: deliverable`
@@ -240,18 +325,32 @@ Targets:
 - `src/gobby/clones/merge.py`
 - `src/gobby/mcp_proxy/tools/_clones_creation.py::*` — scope-reason: clone tool arguments and result carry selected commit
 - `src/gobby/agents/isolation_clone.py::CloneIsolationHandler.prepare_environment`
+- `src/gobby/install/shared/skills/gobby/references/source-control/clones.md`
 - `tests/clones/test_fork_commit.py`
 - `tests/agents/test_clone_fork_commit.py`
+- `tests/agents/test_isolation.py::*` — scope-reason: clone handler tests expect a local clone of the selected commit instead of a shallow remote clone
+- `tests/mcp_proxy/tools/test_mcp_proxy_tools_clones.py::*` — scope-reason: the clone tool's default path clones locally instead of calling shallow_clone
 
 **Research context:** `CloneGitManager.create_clone` currently follows the
 remote shallow-clone path and the MCP clone tool defaults `base_branch` to main.
 Use the caller's local repository as the clone source for default and local-ref
 forks, preserve the exact selected commit, and use a fetched remote tip for an
-explicit remote ref. An external URL has no matching local indexed checkout.
-Split `CloneGitManager.merge_branch` and its private helpers from the 910-line
-`git.py` into the new `merge.py`, preserving the manager's public method and
-tests. Planned check: focused clone and agent pytest for all sources and the
-extraction's merge behavior.
+explicit remote ref. An external URL has no matching local indexed checkout and
+keeps the remote clone path. The clone handler follows A1's omission rule: an
+omitted base resolves the caller's `HEAD^{commit}` once, a detached HEAD fails
+recoverably, and an explicit `main` is never replaced by the current branch. The
+handler and the clone tool stop choosing between local and shallow remote clones
+by unpushed-commit detection, and the clone tool drops its `use_local` argument;
+`CloneGitManager.create_clone` keeps its `use_local` and `shallow` parameters for
+the external-URL path, so its manager-level tests in `tests/clones/test_git.py`
+and `tests/clones/test_git_extended.py` are unchanged.
+`tests/agents/test_isolation.py` asserts `use_local=False` and `shallow=True`
+for a clean clone (Adversary excerpt `5014b80a…`), and
+`tests/mcp_proxy/tools/test_mcp_proxy_tools_clones.py` asserts `shallow_clone`
+for the default path; both migrate. Split `CloneGitManager.merge_branch` and its
+private helpers from the 910-line `git.py` into the new `merge.py`, preserving the
+manager's public method and tests. Planned check: focused clone and agent pytest
+for all sources, the migrated tests, and the extraction's merge behavior.
 
 **Granularity:** The extraction keeps the touched production module below the
 1,000-line ceiling and belongs in this clone lifecycle change.
@@ -261,6 +360,7 @@ extraction's merge behavior.
 - A2.1 - Default clones include caller-local unpushed commits and record the selected commit. test: `tests/clones/test_fork_commit.py::test_local_clone_uses_caller_head`.
 - A2.2 - Explicit local/remote clone refs select their resolved tips; external URL clones report a cold-index source. test: `tests/clones/test_fork_commit.py::test_clone_ref_sources`.
 - A2.3 - The extracted merge path preserves merge behavior and keeps the Git module below 1,000 lines. test: `tests/clones/test_fork_commit.py::test_extracted_merge_path`.
+- A2.4 - Agent clones resolve an omitted base once, keep an explicit `main`, and fail recoverably on a detached HEAD. test: `tests/agents/test_clone_fork_commit.py::test_clone_omission_and_detached_head`.
 
 ## P3: Persist and read a pinned index
 `kind: framing`
@@ -279,30 +379,63 @@ Targets:
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: generated schema identity fields change together
 - `crates/gcore/src/project.rs::*` — scope-reason: parse and validate base commit and ancestor checkout identity
 - `src/gobby/utils/project_context.py::*` — scope-reason: persist and read the isolation marker's pin provenance
+- `crates/gcode/src/index/api/file_state.rs::*` — scope-reason: one compare-and-set writer sets or clears a selector's Git blob ID
 - `crates/gcode/src/index/indexer/file.rs::*` — scope-reason: record blob IDs with clean selectors
-- `crates/gcode/src/index/indexer/pipeline.rs::*` — scope-reason: propagate clean tracked state to selector writes
+- `crates/gcode/src/index/indexer/pipeline.rs::*` — scope-reason: record blob state for fresh, adopted, and skipped primary selectors
+- `crates/gcode/src/index/indexer/overlay.rs::*` — scope-reason: record blob state for overlay-owned selectors so nested pins can inherit them
+- `crates/gcode/src/index/indexer/tests/facts.rs::*` — scope-reason: verify selector blob writes across write outcomes
 - `tests/utils/test_isolation_pin_marker.py`
 
 **Research context:** `code_indexed_file_states` selects the current content
 version and `code_indexed_files` owns immutable content facts. Add a nullable Git
 blob ID to a clean tracked selector and an overlay-owned base table keyed by
 machine, overlay project, and path with source project and content hash. Its FK
-must keep the source content version valid. Store `base_commit` and the ancestor
+must keep the source content version valid. Each pin row also carries B4's
+projection state: graph and vector projected flags, default false, with
+per-target attempt timestamps. Store `base_commit` and the ancestor
 checkout path/identity in the isolation marker, validating partial markers.
-Dirty or untracked content never receives a qualifying blob ID. Update every
-schema carrier with migration 460 (459 belongs to #23439; if another migration
-lands first, repeat the R2 all-ref sweep and take the next free number). Planned checks: schema contracts, marker tests, and `cargo test -p
-gobby-code` for selector writes.
+Dirty or untracked content never receives a qualifying blob ID.
+
+Selector blob ownership. The existing selector writers are
+`api::file_state::upsert_file_state`, which inserts or updates only the content
+hash, and `adopt_file_state`, which also writes selectors (Adversary excerpts
+`bb083c90…` and `5fa77874…`); `PostgresCodeFactSink::upsert_file`
+(`crates/gcode/src/index/indexer/sink.rs`, `dde7a41a…`) calls the first for fresh
+writes, `pipeline.rs` calls `adopt_file_state` for adopted primary selectors, and
+`overlay.rs` calls it for overlay selectors. The test-only Python
+`CodeIndexFileStorageMixin.upsert_file` and raw test fixtures also update
+selectors. Migration 460 adds a `BEFORE UPDATE OF content_hash` trigger on
+`code_indexed_file_states` that clears a carried-over blob ID whenever the content
+hash changes, following the existing `trg_chat_attachments_*` trigger pattern;
+that single guard covers every writer, so no writer can leave a blob ID naming
+other content. A new `api::file_state::set_selector_git_blob` sets or clears the
+blob ID for one selector only while it still names the given content hash.
+`pipeline.rs` calls it for fresh, adopted, and skipped primary selectors and
+`overlay.rs` for overlay-owned selectors, passing the blob ID only for clean
+tracked files and `None` otherwise. A skipped selector back-fills a missing blob
+ID once its unchanged file becomes clean and tracked, and keeps an existing one,
+because a Git blob ID is a function of content. `upsert_file_state`,
+`adopt_file_state`, their 30-odd test call sites, `IndexedFile`, and the
+`CodeFactSink` trait keep their signatures, so `sink.rs` is unchanged.
+
+Update every schema carrier with migration 460 (459 belongs to #23439; if another
+migration lands first, repeat the R2 all-ref sweep and take the next free number).
+Planned checks: schema contracts, marker tests, and `cargo test -p gobby-code` for
+selector writes, the trigger, and each write outcome.
 
 **Granularity:** Schema, grants, generated catalog, expected identity, marker,
 and selector storage form one atomic data contract. The carrier count is required
 by the repository's schema contract, not independent implementation work.
+
+Consumers unchanged:
+- `crates/gcode/src/index/indexer/sink.rs` — no-edit-reason: PostgresCodeFactSink::upsert_file keeps calling upsert_file_state, and the migration trigger clears a stale blob ID on its content-hash updates.
 
 **Acceptance:**
 
 - B1.1 - Migration and all carriers expose an overlay-owned pin table with source-version FK and scoped grants. test: `crates/gcore/tests/schema_contract.rs::code_overlay_pin_schema_contract`.
 - B1.2 - Clean tracked file selectors store Git blob IDs; dirty and untracked selectors do not qualify. test: `crates/gcode/src/index/indexer/tests/facts.rs::clean_selector_records_git_blob`.
 - B1.3 - Isolation markers carry selected commit and ancestor checkout identity with validated completeness. test: `tests/utils/test_isolation_pin_marker.py::test_marker_requires_complete_pin_provenance`.
+- B1.4 - Fresh, adopted, skipped, and overlay-owned selectors set, back-fill, or clear the blob ID, and any content-hash change clears a carried-over blob ID. test: `crates/gcode/src/index/indexer/tests/facts.rs::selector_blob_follows_every_write_outcome`.
 
 ### B2 Create an effective pin and persist indexing gaps (depends: B1)
 `kind: deliverable`
@@ -339,10 +472,19 @@ creation pins in `src/gobby/worktrees/creation.py`, direct clone creation pins
 in `src/gobby/mcp_proxy/tools/_clones_creation.py`, and integration workspace
 creation and refresh re-pin in `src/gobby/build/workspace_services.py`, keeping
 the integration workspace's merged commits. Individual isolation handlers never
-invoke pin. A failed pin never falls through to the moving parent's rows: it
-records a cold pin, with no inherited selectors, and the child indexes locally.
+invoke pin. A failed pin never falls through to the moving parent's rows. Two
+failure classes differ. A semantic selection failure, such as a missing or
+unreadable ancestor checkout, an unresolvable selected commit, or a failed
+`git ls-tree`, durably records a cold pin with no inherited selectors, and the
+child indexes locally. A storage failure, such as a database, grant, or timeout
+error on the pin transaction, cannot be trusted to write that cold pin either,
+and the prior pin rows survive the rolled-back replacement; after a
+reused-worktree rebase they name the old commit. Such a failure, including a
+failed cold-pin write after a semantic failure, returns a recoverable error
+before any index, read, or spawn success: the agent spawn, direct creation, or
+integration refresh fails with the pin error and never proceeds on the prior pin.
 Planned checks: Rust PostgreSQL tests for clean, stale, dirty, and nested-overlay
-selectors, plus focused Python call-path and pin-failure tests.
+selectors, plus focused Python call-path, pin-failure, and storage-failure tests.
 
 **Granularity:** Pin selection and atomic replacement are one lifecycle
 transaction; the Python callers exercise that same command at creation. Nine
@@ -355,8 +497,9 @@ splitting callers from the command would ship a pin nothing invokes.
 - B2.2 - Dirty, untracked, ignored, and mismatched files are excluded and tracked gaps persist for indexing. test: `crates/gcode/src/commands/pin/tests.rs::pin_records_only_safe_selectors_and_gaps`.
 - B2.3 - No matching live indexed checkout produces a cold pin; re-pin atomically replaces prior rows. test: `crates/gcode/src/commands/pin/tests.rs::pin_cold_and_replacement`.
 - B2.4 - Agent spawns pin from the marker in `ensure_isolation_code_index` immediately before `gcode index`, and isolation handlers never invoke pin. test: `tests/agents/test_code_index_pin.py::test_agent_preflight_pins_marker_before_index`.
-- B2.5 - A pin failure records a cold pin and indexes locally, never exposing moving-parent rows. test: `tests/agents/test_code_index_pin.py::test_pin_failure_forces_cold_index_without_parent_fallthrough`.
+- B2.5 - A semantic pin-selection failure records a cold pin and indexes locally, never exposing moving-parent rows. test: `tests/agents/test_code_index_pin.py::test_pin_failure_forces_cold_index_without_parent_fallthrough`.
 - B2.6 - Direct worktree creation, direct clone creation, and integration refresh each pin the selected commit before returning, and integration refresh keeps its merged commits. test: `tests/agents/test_code_index_pin.py::test_direct_paths_pin_before_return`.
+- B2.7 - A pin storage failure, including a failed cold-pin write, returns a recoverable error before index, read, or spawn success and never proceeds on the prior pin. test: `tests/agents/test_code_index_pin.py::test_pin_storage_failure_blocks_success`.
 
 ### B3 Scoped PostgreSQL and BM25 reads (depends: B2)
 `kind: deliverable`
@@ -376,6 +519,8 @@ Targets:
 
 **Research context:** Facts are keyed by source project, file path, and content
 hash. Overlay-owned file states shadow pinned base rows; tombstones hide paths.
+Inherited rows come only from pins: an overlay with no pin rows, including a cold
+pin, inherits nothing and never reads the parent's current selectors.
 Resolve each inherited fact by its exact pinned source version for BM25, symbol,
 tree, import, and codewiki reads. Apply scope in SQL before `LIMIT`, so stale
 parent rows cannot consume a result window. Split `crates/gcode/src/commands/search.rs`
@@ -402,33 +547,86 @@ Targets:
 - `crates/gcode/src/commands/vector.rs::*` — scope-reason: constrain semantic results to pinned symbol versions
 - `crates/gcode/src/commands/graph/reads.rs::*` — scope-reason: graph reads use the pinned effective graph
 - `crates/gcode/src/graph/code_graph/read/relationships.rs::*` — scope-reason: relationship queries filter source versions
-- `crates/gcode/src/projection/sync.rs::*` — scope-reason: reconcile moved source projections by pinned path in background
+- `crates/gcode/src/projection/sync.rs::*` — scope-reason: route an unowned overlay path's graph and vector sync through its pin
+- `crates/gcode/src/projection/sync/pinned.rs`
+- `crates/gcode/src/db/queries.rs::*` — scope-reason: read graph facts at an exact source version
+- `crates/gcode/src/vector/code_symbols/repository.rs::*` — scope-reason: fetch symbols at an exact source version
 - `crates/gcode/src/commands/search/scoped_fetch.rs`
 - `crates/gcode/src/projection/sync/tests.rs::*` — scope-reason: recovery tests use existing projection fixtures
 - `crates/gcode/src/cli/tests/projection.rs::*` — scope-reason: verify degraded and recovered search
+- `src/gobby/code_index/_storage/files.py::*` — scope-reason: enumerate pending pinned projection work per overlay project
+- `src/gobby/code_index/sync_worker.py::*` — scope-reason: the existing worker pass drives pinned recovery
+- `tests/code_index/test_sync_worker_pins.py`
 
 **Research context:** Graph and vector projections currently hold only a source
 project's current per-path version. PostgreSQL facts become available before
 projection completion. R1 makes graph and vector availability part of the pin
 contract, so filtering alone is incomplete: it prevents stale answers but loses
-graph and vector results once a parent projection moves. Filter existing source
-projection results to pinned IDs; if a source projection moved, submit the
-affected pinned paths through the existing idempotent projection-sync request
-for the child overlay, and introduce no new worker or queue. Keep text and BM25
-search available with an explicit degraded projection state during recovery.
-Planned check: Rust projection tests that move one ancestor path, verify
-immediate text reads, and observe eventual graph/vector recovery without
-rebuilding unchanged paths.
+graph and vector results once a parent projection moves.
+
+Nothing schedules that recovery today. `ProjectionSyncRequest` carries only a
+project ID and path lists, `pending_after_code_fact_write` only builds a pending
+status, and `sync_after_index` runs synchronously after an index pass
+(`crates/gcode/src/projection/sync.rs`, Adversary excerpts `1e757710…` and
+`1a311306…`). The daemon's background worker
+(`src/gobby/code_index/sync_worker.py::_sync_pass`) scans each indexed project's
+own selectors through `CodeIndexFileStorageMixin.get_pending_sync_files`
+(`c3f742db…`), so a pin alone never becomes work. Rust `sync_graph_file` and
+`VectorProjectionState::sync_file` read the current selector for
+`ctx.project_id` and path (`372db2f1…`), never a pinned version. The worker's
+`_sync_file` marks and requeues the facts row by `IndexedFile.id`, which for a
+pinned path is the source project's row, so pin work cannot reuse it.
+
+Recovery reuses that worker and adds no queue. The pin row is the durable work
+identity: machine, overlay project, path, source project, and content hash, with
+B1's per-target projected flags and attempt timestamps. A pin row is pending for
+a target when its flag is false, the source project's selector no longer names
+the pinned version, no child-owned selector or tombstone shadows the path, and
+the attempt is outside the existing failure cool-off. A new storage method in
+`src/gobby/code_index/_storage/files.py` lists that work per overlay project, and
+`_sync_pass` processes it after the project's own pending files through a
+separate pinned branch that calls the existing `GcodeGateway.graph_sync_file` and
+`vector_sync_file` with the child root and path, so `gcode_gateway.py` (950
+lines) is unchanged. On the Rust side, `sync_graph_file` and
+`VectorProjectionState::sync_file` hand an overlay path with no owned selector to
+the new `crates/gcode/src/projection/sync/pinned.rs`. It reads graph facts and
+symbols at the exact pinned source project, path, and content hash, through
+exact-version variants of `read_graph_file_facts` (`crates/gcode/src/db/queries.rs`)
+and `fetch_symbols_for_file`
+(`crates/gcode/src/vector/code_symbols/repository.rs`). It writes them into the
+child overlay project's projection namespace, keyed by that content hash. It then
+marks the pin row's target flag with a compare-and-set that matches the same
+source project and content hash, with no owned selector or tombstone for the
+path.
+
+Fencing follows from that compare-and-set. A re-pin replaces the rows atomically
+with fresh flags, so a completion for the old version matches nothing and is
+discarded. An owned selector or tombstone that appears mid-sync shadows the pin,
+so its completion is discarded too. A purge deletes the rows, so a late completion
+also matches nothing. Projected rows that a discarded completion left in the
+child namespace are never served, because reads admit only versions named by a
+live pin or owned selector, and the next pending pass for the current version
+replaces that path's child projection. Reads use the source namespace while the
+source selector still names the pinned version, and the child namespace once the
+pin's flag is set. Until then they exclude the path and report a degraded
+projection state while text and BM25 search stay available. Planned check: Rust
+projection tests that move one ancestor path, verify immediate text reads,
+observe eventual graph and vector recovery under the child namespace without
+rebuilding unchanged paths, and discard stale completions; focused Python
+worker tests that a pin alone schedules recovery.
 
 **Granularity:** Projection reconciliation has one background lifecycle and two
 projection backends; shared recovery state keeps their failure handling coherent.
+The Python worker branch and the Rust pinned sync are the two halves of one
+scheduled lifecycle; either alone ships work nothing performs.
 
 **Acceptance:**
 
 - B4.1 - Graph and vector results grant access only to source versions named by pins or child-owned selectors. test: `crates/gcode/src/cli/tests/projection.rs::projection_reads_respect_pin_versions`.
-- B4.2 - A moved source projection reprojects only affected pinned paths in background. test: `crates/gcode/src/projection/sync/tests.rs::reproject_only_moved_pinned_paths`.
+- B4.2 - A moved source projection reprojects only the affected pinned paths, at their exact pinned versions, into the child namespace. test: `crates/gcode/src/projection/sync/tests.rs::reproject_only_moved_pinned_paths`.
 - B4.3 - PostgreSQL/BM25 remain usable while projections recover and search reports degraded state. test: `crates/gcode/src/cli/tests/projection.rs::text_search_survives_projection_recovery`.
-- B4.4 - Repeated reads while recovery is pending deduplicate the same child, path, and target work and never admit stale projection rows. test: `crates/gcode/src/projection/sync/tests.rs::pinned_recovery_reuses_idempotent_sync`.
+- B4.4 - A completion for a re-pinned, shadowed, or purged pin is discarded and its projected rows are never admitted by reads. test: `crates/gcode/src/projection/sync/tests.rs::stale_pinned_completion_is_discarded`.
+- B4.5 - The daemon worker schedules pinned recovery from pin rows alone, skips shadowed paths, and leaves the source facts row's sync flags untouched. test: `tests/code_index/test_sync_worker_pins.py::test_worker_schedules_pinned_recovery`.
 
 ### B5 Pin-aware retention and overlay purge (depends: B3)
 `kind: deliverable`
@@ -437,26 +635,44 @@ projection backends; shared recovery state keeps their failure handling coherent
 
 Targets:
 - `crates/gcode/src/commands/status/content_gc.rs::*` — scope-reason: pinned source versions are referenced for pruning
-- `crates/gcode/src/commands/status/prune.rs::*` — scope-reason: preserve source facts while a child pin exists
-- `crates/gcode/src/commands/status/prune/reconcile.rs::*` — scope-reason: purge overlay-owned pin rows with child removal
+- `crates/gcode/src/index/indexer/lifecycle.rs::invalidate`
 - `crates/gcode/src/commands/status/content_gc/tests.rs::*` — scope-reason: exercise pin retention with existing GC fixtures
-- `crates/gcode/src/commands/status/prune/tests.rs::*` — scope-reason: exercise overlay purge and source retention
+- `crates/gcode/src/commands/status/prune/tests.rs::*` — scope-reason: exercise overlay purge, invalidation, and source retention
 
 **Research context:** Old content versions currently age out after the normal
-unreferenced-content period. R1 makes a live pin a content-GC root. Pins join the
+unreferenced-content period, and `content_gc.rs` owns the only production
+delete of content facts. R1 makes a live pin a content-GC root. Pins join the
 existing reachability predicate as a content reference, including when the
-source project is otherwise stale; add no new retention policy or TTL. Child
-purge deletes the child's pin rows inside the existing purge transaction, and
-normal pruning collects released versions on the next pass. In an
+source project is otherwise stale; add no new retention policy or TTL.
+
+Purge ownership. The stale-project sweep in
+`crates/gcode/src/commands/status/prune.rs` locks each stale project and calls
+`invalidate_project_locked` (`crates/gcode/src/commands/status/invalidate.rs`),
+which delegates to `crates/gcode/src/index/indexer/lifecycle.rs::invalidate`;
+that one transaction deletes the project's communities, file states, and project
+state (Adversary excerpts `46176df1…` and `724c9e65…`).
+`prune/reconcile.rs` only aggregates sweep reports and is not a target.
+`invalidate` also deletes, in the same transaction, the pin rows the invalidated
+project owns as the overlay, and never rows where it is only the source project,
+so a descendant's pins keep their source versions reachable. Normal pruning
+collects released versions on the next pass. The same transaction serves the
+manual `gcode invalidate`, so invalidating an overlay drops its pin and its next
+index is cold until the next pin: agent preflight re-pins before indexing, and a
+direct workspace re-pins with `gcode pin`. An overlay with no pin rows inherits
+nothing; it never falls back to the parent's current selectors. In an
 overlay-of-overlay chain, purging an intermediate overlay must not collect a
 source version a live descendant still pins. Planned check: focused Rust
-PostgreSQL GC/prune tests for retained, released, and overlay-of-overlay
-versions.
+PostgreSQL GC/prune tests for retained, released, invalidated, and
+overlay-of-overlay versions.
+
+Consumers unchanged:
+- `crates/gcode/src/commands/status/invalidate.rs` — no-edit-reason: invalidate_project_locked keeps calling indexer::invalidate, whose transaction now also removes the owned pin rows.
+- `crates/gcode/src/index/indexer.rs` — no-edit-reason: The pub use re-export of lifecycle::invalidate is unchanged.
 
 **Acceptance:**
 
 - B5.1 - Prune retains pinned versions and their source-project facts while any child pin exists. test: `crates/gcode/src/commands/status/content_gc/tests.rs::pinned_version_survives_prune`.
-- B5.2 - Child purge removes its pins and later prune can collect unreferenced source facts. test: `crates/gcode/src/commands/status/prune/tests.rs::purged_overlay_releases_pins`.
+- B5.2 - Child purge and invalidation remove only the pins the child owns, in the invalidation transaction, and later prune can collect unreferenced source facts. test: `crates/gcode/src/commands/status/prune/tests.rs::purged_overlay_releases_pins`.
 - B5.3 - Purging an intermediate overlay cannot collect a source version still pinned by a live descendant. test: `crates/gcode/src/commands/status/prune/tests.rs::nested_pin_chain_preserves_source_version`.
 
 ## P4: Make unchanged overlay indexing cheap
@@ -476,13 +692,30 @@ Targets:
 - `crates/gcode/src/index/indexer/tests/facts.rs::*` — scope-reason: verify import-provider retention
 
 **Research context:** Current overlay reconcile performs full discovery and
-compares with the parent's moving HEAD/status. Use child status, persisted pin
-gaps, and `git diff --name-only base_commit HEAD` as the normal candidate set.
-Route those files directly without a full discovery walk; use full discovery for
-`--full` or Git failure. Build import resolution only when a candidate needs it,
-while retaining unchanged providers so local imports still resolve. Drop the
-parent timestamp freshness trigger. Planned check: isolated Rust tests for no
-change, one file, source movement, Git failure, and import-provider continuity.
+compares with the parent's moving HEAD/status. The normal candidate set is child
+status, persisted pin gaps, `git diff --name-only base_commit HEAD`, and every
+path the child owns a selector or tombstone for. The existing
+`overlay_reconcile_candidates` already adds the overlay's owned paths
+(`crates/gcode/src/index/indexer/overlay.rs`, Adversary excerpt `439ebbd3…`).
+Without them, a dirty file reverted to its base content, or an untracked file
+indexed and then deleted, drops out of status and diff while its owned selector
+or tombstone keeps shadowing the pin. Owned paths are bounded by the child's own
+divergence. `overlay_reconcile_action` receives the pinned base row in place of
+the parent row, so its existing arms handle every transition out of divergence
+with no new mechanism: content equal to the pin inherits and deletes the owned
+row, a missing file with no pinned row deletes the owned row, a missing pinned
+file is tombstoned, and a tombstoned path that reappears with pinned content
+inherits and clears the tombstone. Pinned rows are tracked at `base_commit` by
+construction (B2 excludes ignored and untracked paths), so Git status or the diff
+reports their deletion. The current branch that adds parent rows Git cannot
+report, such as ignored or explicitly indexed parent paths, is removed with the
+parent comparison. Route those files directly without a full discovery walk; use
+full discovery for `--full` or Git failure. Build import resolution only when a
+candidate needs it, while retaining unchanged providers so local imports still
+resolve. Drop the parent timestamp freshness trigger. Planned check: isolated
+Rust tests for no change, one file, source movement, revert to base, deletion of
+an owned untracked file, reappearance of a tombstoned path, Git failure, and
+import-provider continuity.
 
 **Granularity:** Reconcile candidate selection and import providers must share
 one candidate set; separating them would allow an incomplete index pass.
@@ -492,55 +725,88 @@ one candidate set; separating them would allow an incomplete index pass.
 - C1.1 - No-change and one-file overlays avoid full discovery and ignore parent HEAD movement. test: `crates/gcode/src/index/indexer/tests/overlay.rs::reconcile_uses_child_candidates_only`.
 - C1.2 - Full mode and Git failure use complete discovery. test: `crates/gcode/src/index/indexer/tests/overlay.rs::reconcile_falls_back_to_full_discovery`.
 - C1.3 - Candidate import resolution retains unchanged providers. test: `crates/gcode/src/index/indexer/tests/facts.rs::candidate_imports_keep_unchanged_providers`.
+- C1.4 - Without full discovery, a reverted dirty file, a deleted owned untracked file, and a reappearing tombstoned path each stop shadowing the pin. test: `crates/gcode/src/index/indexer/tests/overlay.rs::owned_rows_leave_divergence_without_discovery`.
 
-### C2 Pre-Leiden fingerprint, phase name, and documented contract (depends: C1, B4, B5)
+### C2 Pre-Leiden community input signature
 `kind: deliverable`
 `category: code`
 `implementation_domain: backend`
 
 Targets:
-- `crates/gcode/src/communities.rs::*` — scope-reason: fingerprint and refresh state share the community lifecycle
-- `crates/gcode/src/communities/partition.rs::*` — scope-reason: expose stable pre-partition input fingerprint
+- `crates/gcode/src/communities.rs::*` — scope-reason: compare the stored input signature before build_partition
+- `crates/gcode/src/communities/partition.rs::*` — scope-reason: compute the input signature and drop the unused post-partition signature
 - `crates/gcode/src/communities/refresh_tests.rs::*` — scope-reason: assert unchanged runs never invoke Leiden
+- `crates/gcode/src/communities/partition_tests.rs::*` — scope-reason: signature tests move from the partition to its inputs
+- `crates/gcode/src/communities/remap/tests.rs::*` — scope-reason: partition fixtures drop the removed signature field
+
+**Research context:** `refresh_project_communities`
+(`crates/gcode/src/communities.rs`) loads imports and runs `build_partition`
+before it compares the stored partition signature, so the stored value,
+`{LABEL_ALGORITHM_VERSION}:{partition_signature}`, is computed after Leiden and an
+early skip needs a signature of the partition inputs. The value lives in
+`code_indexed_project_states.partition_signature`, written only by
+`ReplaceTxn::commit` (`crates/gcode/src/db/communities.rs`, Adversary excerpt
+`6256324b…`). Reuse that column with a versioned input-signature contract: the
+stored value becomes `input-v1:{LABEL_ALGORITHM_VERSION}:{sha256}`, hashed over
+the sorted import identity and rows that `load_project_imports` returns, and
+computed before `build_partition`. A match skips Leiden and the replace. A
+mismatch, including any stored value from the post-partition contract, runs
+Leiden once and commits the input signature. No schema change is needed.
+`ReplaceTxn::commit` and `seed_from_parent` are unchanged: seeding copies prior
+communities but never the signature, so a first overlay run still runs Leiden.
+`Partition::partition_signature` has no other reader and is removed. Trade-off:
+a run whose inputs changed but whose partition is identical now rewrites its
+community rows through the existing `ReplaceTxn` path; it runs Leiden either
+way. Rejected (enhancer E5, Orchestrator ruling 2026-10-05): seeding the child's
+communities from the ancestor at pin time and skipping refresh when C1 reports
+zero change. The existing Overlay `seed_from_parent` copies the parent's current
+partition, which can include dirty or moved-HEAD content, so a skip would serve
+communities that do not match the pinned inputs; the input signature is computed
+from the child's effective inputs and stays correct for cold and first runs.
+Planned check: focused Rust community tests proving zero Leiden calls for
+unchanged inputs and one Leiden call for changed inputs or a legacy value.
+
+Consumers unchanged:
+- `crates/gcode/src/db/communities.rs` — no-edit-reason: ReplaceTxn::commit stores the signature string it receives, and seed_from_parent never copies a signature.
+
+**Acceptance:**
+
+- C2.1 - An unchanged index run performs no Leiden pass. test: `crates/gcode/src/communities/refresh_tests.rs::unchanged_inputs_skip_leiden`.
+- C2.2 - Changed inputs, or a stored post-partition value, run Leiden once and store the versioned input signature. test: `crates/gcode/src/communities/refresh_tests.rs::changed_or_legacy_signature_runs_leiden_once`.
+
+### C3 Overlay phase name, documented contract, and benchmark (depends: C1, C2, B4, B5)
+`kind: deliverable`
+`category: code`
+`implementation_domain: backend`
+
+Targets:
 - `src/gobby/agents/code_index.py::*` — scope-reason: phase timing and gcode preflight share one function path
 - `src/gobby/agents/spawn_timing.py::*` — scope-reason: replace obsolete spawn phase key
 - `tests/agents/test_code_overlay_index_timing.py`
 - `docs/guides/code-index.md`
 - `docs/guides/gcode-development-guide.md`
 
-**Research context:** `refresh_project_communities`
-(`crates/gcode/src/communities.rs`) loads imports and runs `build_partition`
-before it compares the stored partition signature, so the existing signature is
-computed after Leiden and an early skip needs a separate fingerprint of the
-partition inputs. Persist and compare that fingerprint before `build_partition`;
-refresh when inputs change. Rejected (enhancer E5, Orchestrator ruling
-2026-10-05): seeding the child's communities from the ancestor at pin time and
-skipping refresh when C1 reports zero change. The existing Overlay
-`seed_from_parent` (`crates/gcode/src/db/communities.rs`) copies the parent's
-current partition, which can include dirty or moved-HEAD content, so a skip would
-serve communities that do not match the pinned inputs; the fingerprint is
-computed from the child's effective inputs and stays correct for cold and first
-runs. Rename `code_index_index` to `code_overlay_index` in the spawn writer
-(`src/gobby/agents/code_index.py`) and the `SPAWN_PHASES` catalog
-(`src/gobby/agents/spawn_timing.py`, which T1 already extends). Document pinned
+**Research context:** Rename `code_index_index` to `code_overlay_index` in the
+spawn writer (`src/gobby/agents/code_index.py`) and the `SPAWN_PHASES` catalog
+(`src/gobby/agents/spawn_timing.py`, which T1 already extends); the Adversary's
+`code_index_index` literal sweep finds only those two files. Document pinned
 workspace semantics, the cold fallback, projection recovery, and Ask's
-live-index scope. Planned check: focused Rust community tests proving zero
-Leiden calls for unchanged inputs; Python phase tests; then a load-matched idle
+live-index scope. Planned check: Python phase tests; then a load-matched idle
 zero-diff spawn using T1's timing, reporting wall time, every named phase,
 isolation subphases, and the residual against R2's 33.9 s and 7.064 s baseline,
 plus measured pin, one-file overlay, and cold index passes against the 34.9 s and
 71.6 s observations. The 2 s target is comparative. No spawn improvement is
 claimed without that measured breakdown.
 
-**Granularity:** This deliverable closes the end-to-end performance contract;
-the fingerprint and named timing phase make the result independently measurable.
+**Granularity:** The rename, guides, and benchmark close the end-to-end
+performance contract after every mechanism has landed; the benchmark depends on
+C2's signature and on the pinned read and retention paths it measures.
 
 **Acceptance:**
 
-- C2.1 - An unchanged index run performs no Leiden pass. test: `crates/gcode/src/communities/refresh_tests.rs::unchanged_inputs_skip_leiden`.
-- C2.2 - Spawn timing reports `code_overlay_index`. test: `tests/agents/test_code_overlay_index_timing.py::test_spawn_phase_uses_overlay_name`.
-- C2.3 - Guides state the workspace pin and Ask live-index contracts. file: `docs/guides/code-index.md`.
-- C2.4 - A load-matched zero-diff spawn records wall time, every named phase, isolation subphases, and the residual against the 33.9 s and 7.064 s idle baseline, and pin, one-file, and cold measurements are recorded against the 34.9 s and 71.6 s observations. behavior: "benchmarked workspace indexing" in `docs/guides/gcode-development-guide.md`.
+- C3.1 - Spawn timing reports `code_overlay_index`. test: `tests/agents/test_code_overlay_index_timing.py::test_spawn_phase_uses_overlay_name`.
+- C3.2 - Guides state the workspace pin and Ask live-index contracts. file: `docs/guides/code-index.md`.
+- C3.3 - A load-matched zero-diff spawn records wall time, every named phase, isolation subphases, and the residual against the 33.9 s and 7.064 s idle baseline, and pin, one-file, and cold measurements are recorded against the 34.9 s and 71.6 s observations. behavior: "benchmarked workspace indexing" in `docs/guides/gcode-development-guide.md`.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -567,6 +833,24 @@ the fingerprint and named timing phase make the result independently measurable.
   side edit drops `docs/plans/gcode-ask-fix.md` from C2. Migration renumbered
   459 to 460 on the Orchestrator's ruling (459 belongs to #23439), after an
   all-ref `git log --all --diff-filter=A` sweep found no 459 or later.
+- 2026-10-05: Adversary review of `d8f49d4f6f` (Adversary gobby#15401, Writer
+  gobby#15400); all six blocking findings and two clarifications accepted.
+  PIN-A1: C1's candidate set keeps owned selector and tombstone paths and feeds
+  `overlay_reconcile_action` the pinned row (C1.4). PIN-A2: B4 schedules recovery
+  through the existing daemon worker with the pin row as durable work identity,
+  exact-version fact reads, a child projection namespace, and compare-and-set
+  fencing (B4.4 rewritten, B4.5 added; B1's pin rows carry projection state).
+  PIN-A3: B1 owns selector blob writes through one compare-and-set writer and a
+  migration trigger that clears a stale blob ID (B1.4). PIN-A4: A1 keeps an
+  omitted base as `None` to one handler HEAD resolution, refuses a detached HEAD
+  without an explicit base, and drops the `main` and `use_local` defaults (A1.8,
+  A2.4). PIN-A5: existing tests that encode the old selection contract became A1
+  and A2 Targets, with sweeps and no-edit inventories recorded; T1 keeps handler
+  selection in place. PIN-A6: B5 targets `lifecycle.rs::invalidate`, the actual
+  purge transaction, and drops `prune.rs` and `prune/reconcile.rs`. B2 separates
+  semantic pin failures (cold pin) from storage failures (recoverable error,
+  B2.7). C2 is split: C2 reuses `partition_signature` for a versioned pre-Leiden
+  input signature, and C3 carries the phase rename, guides, and benchmark.
 
 ## V2: Verification
 `kind: verification`
