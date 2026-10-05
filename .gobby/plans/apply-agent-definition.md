@@ -141,6 +141,12 @@ enforces it (#22902 Constraints, boundary paragraph).
      definition's recorded variables, ends its step instance (1.2), and applies
      the new delta, so the row carries what a new row would. Variables written
      at runtime stay with the conversation, as they do today.
+   - Permission and cleanup are separate tests. `is_role_change` decides only
+     whether an activation may proceed. Cleanup runs on every identity change:
+     a stored `_agent_type` that differs from the new agent, on a row that is
+     not spawned. That includes the permitted first activation over a
+     configured base agent, which can declare variables and steps like any
+     agent (adversary finding F-B1-base-cleanup).
    - Rejected: a new row per web-chat switch. The launch binds the row by
      conversation id (`chat/_session.py:314-330`), and `set_agent` keeps that id
      stable. A new row would need a second successor-commit flow beside the
@@ -649,14 +655,34 @@ Implementation:
     - it writes `_agent_definition_hash`;
     - it writes `_agent_definition_keys`, the sorted names of its definition
       variables: the `workflows.variables` keys, the selector-filtered default
-      keys, and `step_workflow_complete` when seeded. A relaunch clears these
-      keys (step 9).
+      keys, and `step_workflow_complete` when seeded.
+      `commit_definition_changes` finalizes the list.
   - `definition_pin(agent_body) -> str`: returns
     `compute_definition_hash(agent_body.model_dump_json())`.
   - `is_role_change(db, variables, agent) -> bool`: true when the stored
     `_agent_type` is not the base agent (absent, `default`, or
     `ConfigRepository(db).read(resolve_secrets=False).values["default_agent"]`)
-    and differs from `agent`. Step 7 and the attached-terminal handler share it.
+    and differs from `agent`. Step 7, the attached-terminal handler and the
+    override guard share it. It decides permission only.
+  - `commit_definition_changes(db, session_id, agent, changes) -> dict`: the
+    one write path for both activation entries, the tool and
+    `activate_default_agent`. It rereads the session's variables, then:
+    - It finds an identity change when the stored `_agent_type` is set and
+      differs from `agent`, and `is_spawned_agent` is not true. The spawned
+      exclusion matters because the reconciler passes the run agent when the
+      stored `_agent_type` is `default` (`session_activation.py:532-541`).
+    - On an identity change, it sets to `None` every name in the stored
+      `_agent_definition_keys` that the new list,
+      `changes["_agent_definition_keys"]`, does not name. It compares lists,
+      never the keys of `changes`, because `activate_default_agent` drops
+      existing keys from `changes` before the call. Rules read variables with
+      `get`, so a cleared key reads as absent.
+    - Without an identity change, it writes the sorted union of the stored and
+      new lists. A key that a drifted definition no longer declares keeps its
+      value, as runtime values do, and stays listed until the next identity
+      change clears it (adversary finding F-B1-key-ledger).
+    - It runs one `merge_variables` and returns the merged variables. 1.2
+      wraps it in the step lock.
   - `build_persona_prompt_context`: moved from `build_session_persona_context`.
   - `colliding_definition_variable_error`: moved from
     `colliding_persona_variable_error`.
@@ -687,13 +713,10 @@ web-chat launch passes `relaunch=True`. The registered tool never does.
    - The same agent with a different pin re-applies, as drift.
 8. Resolve `task_id`, or refuse `task_unresolved`.
 9. Build the changes with `build_definition_changes(is_spawned=False)` and add
-   `_agent_context_injected=False` and `_agent_identity_reinject=True`. On a
-   relaunch role change, also set to `None` every name in the stored
-   `_agent_definition_keys` that the new delta does not write. Rules read
-   variables with `get`, so a cleared key reads as absent. The previous step
-   instance ends in 1.2.
+   `_agent_context_injected=False` and `_agent_identity_reinject=True`.
 10. Refuse `variable_collision`.
-11. Run one `merge_variables`.
+11. Write through `commit_definition_changes`. On an identity change it clears
+    the previous definition's keys, and from 1.2 it ends its step instance.
 
 Every refusal is `{success: false, error_code, error}`, returned before any
 write.
@@ -714,7 +737,9 @@ Callers:
 - `activate_default_agent` adds `_agent_definition_hash` and
   `_agent_definition_keys` to both its `internal_keys` and `always_reapply`
   sets, so every re-activation refreshes the pin (1.3 compares it first) and
-  the key list.
+  the key list. It writes through `commit_definition_changes` in place of its
+  own `merge_variables`, so a same-agent re-activation keeps the union of key
+  lists, and an override on a base-agent row clears the base agent's keys.
 - `activate_default_agent` passes its `cli_source` to `resolve_agent`, so both
   entry points resolve `provider: inherit` to the session's CLI and compute the
   same pin for the same row.
@@ -777,6 +802,12 @@ Tests: `test_apply_agent_definition.py` uses the `HubDatabase` fixtures of
 - The relaunch case seeds two seat rows, X declaring `workflows.variables`
   `{x_only: 1}` and Y declaring none, activates X, and relaunches to Y and,
   separately, to `default`.
+- The drift-then-switch case activates X with `x_only`, patches definition
+  resolution so X no longer declares it, drives SessionStart `compact`, and
+  then relaunches to Y.
+- The configured-base case sets `default_agent` to a definition declaring
+  `{base_only: 1}`, activates the base agent on the row, and then activates Y
+  through the tool without `relaunch`.
 - The web-chat switch case mirrors the existing launch tests: it patches
   `apply_agent_definition_impl` and asserts the call and `start_data`.
 - The override case extends `test_activate_agent_override.py`: a row stored at
@@ -873,6 +904,15 @@ Consumers unchanged:
   naming X. From the base agent, the same request still writes
   `/gobby persona Y`. test:
   `tests/servers/websocket/test_attached_session_agent.py::test_attached_terminal_role_change_refused_before_write`.
+- 1.1.16 - After seat X's definition drops `x_only` and a `compact`
+  SessionStart re-activates X, `x_only` keeps its value and
+  `_agent_definition_keys` still names it. A later `relaunch=True` to Y sets
+  `x_only` to `None`. test:
+  `tests/hooks/test_session_start_reactivation.py::test_drift_then_relaunch_clears_retired_definition_key`.
+- 1.1.17 - With `default_agent` configured as a definition that declares
+  `base_only`, activating seat Y through the tool without `relaunch` succeeds
+  and sets `base_only` to `None`. test:
+  `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activation_over_configured_base_clears_base_keys`.
 
 ### 1.2 Step workflows on interactive sessions [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -922,13 +962,31 @@ Implementation:
     event (Decision 8).
   - The helper stays in `session_activation.py`, so there is one step-instance
     writer for non-spawn paths.
-  - On a relaunch role change (1.1, step 7), the impl first deletes the
-    previous instance with `AgentStepInstanceManager.delete_for_session`, before
-    the merge. `_ensure_step_instance` returns early on any existing instance
+- `commit_definition_changes` (1.1) runs inside one
+  `db.transaction_immediate(AgentStepInstanceMutation(session_id=...))`, and
+  rereads the variables under that lock. On an identity change it deletes the
+  previous instance with `AgentStepInstanceManager.delete_for_session`, then
+  merges (adversary finding F-B1-step-race).
+  - `_ensure_step_instance` returns early on any existing instance
     (`session_activation.py:660-661`), so without the delete seat X's steps
-    would outlive X. Deleting first leaves only states the reconciler can
-    repair: if the merge then fails, the row is still X with no instance, and
-    the next reconcile recreates X's.
+    would outlive X.
+  - The delete and the merge commit together. `delete_for_session` re-enters
+    the held step lock as a no-op (`postgres_pool.py:394-405`). The variable
+    lock, at priority 950, nests inside the step lock at 875, as
+    `_acquire_lock` requires (`postgres_pool.py:707-715`).
+  - Ambient transaction reuse is keyed by the adapter (`_ambient.py:28-56`), so
+    the helper builds both managers from its one `db`. No caller of either
+    entry holds an immediate transaction.
+  - A merge failure rolls back the delete, so the row stays X with X's
+    instance.
+- `_ensure_step_instance` takes the step lock, rereads the session's
+  variables, and resolves `agent_name` from that read. It no longer resolves
+  from the caller's snapshot. The snapshot only gates the lock: with no
+  resolvable agent, the function returns without locking.
+  - A reconcile holding a pre-switch snapshot waits for the transition. It
+    then builds Y's instance, or returns on the one already there.
+  - The instance save stays outside the transition, so it can still fail on
+    its own and report `step_workflow_pending` (Decision 8).
 - Scope:
   - `default.yaml` declares no `step_workflow`, so a plain session still gets
     none.
@@ -955,7 +1013,9 @@ Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 1.2.3 - A failed instance save leaves the activation variables in place and the
   next hook event's reconcile materializes the instance. test:
   `tests/hooks/test_interactive_step_instance.py::test_reconcile_repairs_missing_instance_after_failed_save`.
-- 1.2.4 - A spawned session's spawn-time instance is untouched. test:
+- 1.2.4 - A spawned session's spawn-time instance is untouched, including
+  when the reconciler activates its run agent over a stored `_agent_type` of
+  `default`. test:
   `tests/hooks/test_interactive_step_instance.py::test_spawned_step_instance_unchanged`.
 - 1.2.5 - The old no-instance non-goal test is inverted. test:
   `tests/workflows/test_step_snapshot_semantics.py::test_definition_activation_materializes_step_instance`.
@@ -963,6 +1023,19 @@ Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   instance, Y's, at Y's first step. A relaunch from X to `default` leaves no
   instance. test:
   `tests/hooks/test_interactive_step_instance.py::test_relaunch_switch_replaces_step_instance`.
+- 1.2.7 - With `default_agent` configured as a definition that declares steps,
+  activating seat Y through the tool without `relaunch` leaves one instance,
+  Y's, at Y's first step. test:
+  `tests/hooks/test_interactive_step_instance.py::test_activation_over_configured_base_replaces_base_instance`.
+- 1.2.8 - A relaunch from seat X to seat Y, both with steps, ends with one
+  instance, Y's, in two cases:
+  - A reconcile holding X's pre-switch snapshot runs after the transition
+    commits, while Y's own instance save is injected to fail.
+  - A reconcile thread starts while the transition is paused inside the merge
+    on a `threading.Event`. Each join is bounded at 10 seconds.
+  A merge failure injected inside the transition leaves X's variables and X's
+  instance. test:
+  `tests/hooks/test_interactive_step_instance.py::test_switch_serializes_with_stale_reconcile`.
 
 ### 1.3 Definition drift receipt on re-activation [category: code] (depends: 1.1, 1.2)
 `kind: deliverable`
