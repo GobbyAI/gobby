@@ -232,6 +232,7 @@ then ruff, format check, and mypy on the changed files.
 
 - 1.2.1 - A workspace merge conflict fails the stage with `needs_human=True`, records the conflicted files, adds no label, and spawns nothing. test: `tests/dispatch/test_workspace_merge.py::test_conflict_fails_merge_stage_for_human`.
 - 1.2.2 - A merge whose source worktree metadata is missing fails the stage with `workspace_merge_failed` and `needs_human=True` instead of raising to the dispatcher. test: `tests/dispatch/test_workspace_merge.py::test_execute_merge_workspace_missing_source_metadata_fails_stage_for_human`.
+- 1.2.3 - `src/gobby/dispatch/merge_recovery.py` is deleted, and no module imports `WORKSPACE_MERGE_CONFLICT_LABEL`. behavior: "merge_recovery module deleted" in `src/gobby/dispatch/workspace_merge.py`.
 
 ### 1.3 Root tasks land their own workspace (depends: 1.2) [category: code]
 `kind: deliverable`
