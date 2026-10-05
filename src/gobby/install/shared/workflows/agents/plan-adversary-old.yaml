@@ -12,7 +12,10 @@ model: gpt-5.6-sol
 reasoning_effort: xhigh
 reasoning_required: false
 isolation: none
+blocked_tools:
+  - "EnterWorktree"
 blocked_mcp_tools:
+  - "gobby-worktrees:create_worktree"
   - "gobby-agents:spawn_agent"
   - "gobby-agents:kill_agent"
   - "gobby-plans:apply_plan_review_repairs"

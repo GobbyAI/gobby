@@ -16,9 +16,11 @@ isolation: none
 # Agent-level tool restrictions (applied regardless of step workflow): the
 # enhancer is advisory-only and must never edit the plan artifact.
 blocked_tools:
+  - "EnterWorktree"
   - "Edit"
   - "Write"
 blocked_mcp_tools:
+  - "gobby-worktrees:create_worktree"
   - "gobby-agents:spawn_agent"
   - "gobby-agents:kill_agent"
 

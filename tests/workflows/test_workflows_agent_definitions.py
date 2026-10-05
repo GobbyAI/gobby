@@ -153,7 +153,7 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         "plan-adversary-taskless-old": ("grok", "grok-4.7", "xhigh"),
         "plan-enhancer": ("codex", "gpt-5.6-sol", "xhigh"),
         "plan-enhancer-old": ("codex", "gpt-5.6-sol", "xhigh"),
-        "plan-enhancer-taskless-old": ("codex", "gpt-5.6-sol", "xhigh"),
+        "plan-enhancer-taskless-old": ("codex", "gpt-6.1-sol", "medium"),
         "plan-writer": ("codex", "gpt-5.6-sol", "medium"),
         "planner": ("codex", "gpt-5.6-sol", "medium"),
         "product-manager": ("codex", "gpt-5.6-sol", "xhigh"),

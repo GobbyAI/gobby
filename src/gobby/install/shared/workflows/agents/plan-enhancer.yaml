@@ -14,9 +14,11 @@ reasoning_effort: xhigh
 isolation: none
 # The enhancer is advisory-only and must never edit the plan artifact.
 blocked_tools:
+  - "EnterWorktree"
   - "Edit"
   - "Write"
 blocked_mcp_tools:
+  - "gobby-worktrees:create_worktree"
   - "gobby-agents:spawn_agent"
   - "gobby-agents:dispatch_batch"
   - "gobby-agents:kill_agent"

@@ -13,7 +13,10 @@ model: grok-4.7
 reasoning_effort: xhigh
 reasoning_required: false
 isolation: none
+blocked_tools:
+  - "EnterWorktree"
 blocked_mcp_tools:
+  - "gobby-worktrees:create_worktree"
   - "gobby-agents:spawn_agent"
   - "gobby-agents:dispatch_batch"
   - "gobby-agents:kill_agent"
