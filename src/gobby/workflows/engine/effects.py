@@ -363,11 +363,13 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
         tool_name = event.data.get("tool_name")
         mcp_tool = event.data.get("mcp_tool")
         mcp_server = event.data.get("mcp_server") or event.data.get("server_name")
-        command = event.data.get("command")
-        if not command:
-            tool_input = event.data.get("tool_input")
-            if isinstance(tool_input, dict):
-                command = tool_input.get("command")
+        tool_input = event.data.get("tool_input")
+        # Rewrites update tool_input; the flattened alias may still hold the original command.
+        command = (
+            tool_input["command"]
+            if isinstance(tool_input, dict) and "command" in tool_input
+            else event.data.get("command")
+        )
 
         # If no tools/mcp_tools filter specified, block applies to everything
         has_tool_filter = effect.tools or effect.mcp_tools

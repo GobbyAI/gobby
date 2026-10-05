@@ -179,3 +179,46 @@ def test_set_variable_effect_accepts_command_selectors() -> None:
     matcher = EffectsMixin()
     assert matcher._effect_matches_event(effect, event_for("git commit -m x"))
     assert not matcher._effect_matches_event(effect, event_for("git status"))
+
+
+@pytest.mark.parametrize("tools", [None, ["Bash"]])
+@pytest.mark.parametrize(
+    ("alias", "tool_input", "expected"),
+    [
+        ("git status", {"command": "rtk git status"}, True),
+        ("rtk git status", {"command": "git status"}, False),
+        ("rtk git status", {"command": ""}, False),
+        ("rtk git status", {"command": "rtk git status"}, True),
+        (None, {"command": "rtk git status"}, True),
+        ("rtk git status", {}, True),
+        ("git status", {}, False),
+    ],
+)
+def test_effect_command_selectors_use_current_tool_input(
+    tools: list[str] | None,
+    alias: str | None,
+    tool_input: dict[str, str],
+    expected: bool,
+) -> None:
+    """Rewrites supersede the command alias; legacy top-level commands still work."""
+    from datetime import UTC, datetime
+
+    from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+    from gobby.workflows.definitions import RuleEffect
+    from gobby.workflows.engine.effects import EffectsMixin
+
+    effect = RuleEffect(
+        type="block",
+        reason="wrapped commands are forbidden",
+        tools=tools,
+        command_pattern=r"^rtk git status$",
+    )
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="session",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={"tool_name": "Bash", "command": alias, "tool_input": tool_input},
+    )
+
+    assert EffectsMixin()._effect_matches_event(effect, event) is expected
