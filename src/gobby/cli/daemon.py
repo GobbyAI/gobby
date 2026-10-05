@@ -451,7 +451,13 @@ def restart(
 def status(ctx: click.Context) -> None:
     """Show Gobby daemon operational health dashboard."""
     from gobby.cli.runtime import get_cli_runtime, require_cli_database
+    from gobby.storage.hub.managed import managed_grant_path
     from gobby.storage.schema_divergence import collect_installed_binary_set, collect_schema_heads
+
+    if managed_grant_path() is not None:
+        from gobby.cli.daemon_health import report_managed_health
+
+        report_managed_health(ctx)
 
     binary_set = collect_installed_binary_set()
     if binary_set.mixed:
