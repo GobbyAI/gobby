@@ -16,7 +16,7 @@ mod util;
 
 pub use freshness_probe::project_changed_since;
 pub use lifecycle::invalidate;
-#[cfg(test)]
+#[cfg(all(test, gcode_postgres_tests))]
 pub(crate) use lifecycle::refresh_communities;
 pub(crate) use local_imports::{
     LocalImportRepair, resolve_project_local_import_calls, resolve_project_local_import_inheritance,
