@@ -11,7 +11,7 @@ from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 
-from gobby.tasks.command_equivalence import target_covers
+from gobby.tasks.command_equivalence import canonical_command, target_covers
 from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationRun,
     TranscriptValidationSegment,
@@ -48,6 +48,46 @@ _COLLECTED_RE = re.compile(
 )
 _ERROR_LINE_RE = re.compile(r"^\s*ERROR\b.*$", re.MULTILINE)
 _MISSING_PATH_RE = re.compile(r"ERROR: file or directory not found: (\S+)")
+_CARGO_MISSING_PACKAGE_RE = re.compile(
+    r"error: package ID specification `([^`]+)` did not match any packages"
+)
+_CARGO_PACKAGE_SUGGESTION_RE = re.compile(r"help: a package with a similar name exists: `[^`]+`")
+
+
+def cargo_package_selection_failed(failure: TranscriptValidationRun) -> bool:
+    """Recognize a Cargo package-selection error that never compiled or ran tests.
+
+    Require a complete diagnostic for a selected package and no other output
+    beyond Cargo's optional spelling suggestion. Compound/wrapped commands and
+    incomplete or mixed output retain their normal failure coverage obligation.
+    """
+    if (
+        failure.exit_code != 101
+        or failure.output_truncated
+        or not failure.output
+        or failure.wrapped
+        or "test" not in failure.categories
+    ):
+        return False
+    command = canonical_command(failure.command)
+    if command is None:
+        return False
+    tokens = shlex.split(command)
+    if "&&" in tokens:
+        return False
+    if tokens[:2] == ["uv", "run"]:
+        tokens = tokens[2:]
+    if tokens[:2] != ["cargo", "test"] and tokens[:3] != ["cargo", "nextest", "run"]:
+        return False
+    args = tokens[: tokens.index("--")] if "--" in tokens else tokens
+    packages = {args[index + 1] for index, token in enumerate(args[:-1]) if token == "--package"}
+    lines = [line.strip() for line in failure.output.splitlines() if line.strip()]
+    match = _CARGO_MISSING_PACKAGE_RE.fullmatch(lines[0]) if lines else None
+    return bool(
+        match
+        and match.group(1) in packages
+        and all(_CARGO_PACKAGE_SUGGESTION_RE.fullmatch(line) for line in lines[1:])
+    )
 
 
 def run_covers(success: TranscriptValidationRun, failure: TranscriptValidationRun) -> bool:

@@ -33,6 +33,7 @@ from gobby.tasks.transcript_evidence_models import (
 )
 from gobby.workflows.found_work_dispositions import has_owner_filed_disposition
 from gobby.workflows.validation_cover import (
+    cargo_package_selection_failed,
     green_covers_failure,
     run_covers,
     run_targets,
@@ -256,6 +257,8 @@ def unresolved_validation_failures(
     unresolved: list[TranscriptValidationRun] = []
     for failed in ordered:
         if failed.outcome != "failure":
+            continue
+        if cargo_package_selection_failed(failed):
             continue
         greens = [
             run
