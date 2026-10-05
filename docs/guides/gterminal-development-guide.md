@@ -36,9 +36,10 @@ cargo nextest run -p gobby-terminal --test build_env -E 'test(darwin_nonsimd_arc
 ```
 
 End users receive prebuilt GitHub release assets. The installer local-workspace
-fallback for `gterm` builds `--features vt-engine` with a 600s timeout; if
-`zig` is missing it skips that step with an explicit reason and continues to
-Gobby-hosted GitHub assets. `gclient`'s local build is ordinary cargo.
+fallback for `gterm` builds `--features vt-engine` with a 600s timeout; when
+none of the Zig 0.16 sources above is present it skips that step with an
+explicit reason and continues to Gobby-hosted GitHub assets. `gclient`'s local
+build is ordinary cargo.
 
 ### Sandboxed Zig caches
 

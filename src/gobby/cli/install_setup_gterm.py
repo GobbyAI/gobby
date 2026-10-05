@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -26,8 +27,16 @@ from gobby.install.version_probe import probe_native_bin_version
 from . import install_release
 
 GTERM_NO_ZIG_SKIP_REASON = (
-    "zig not found on PATH; skipping local gterm workspace build (vt-engine requires Zig 0.16)"
+    "Zig 0.16 not found (ZIG, a PATH zig 0.16, or the Homebrew zig@0.16 keg); "
+    "skipping local gterm workspace build (vt-engine requires Zig 0.16)"
 )
+# Homebrew's keg-only Zig 0.16, in crates/gterminal/build_zig.rs's order: the
+# Apple silicon prefix, then the Intel one.
+_HOMEBREW_ZIG_016 = (
+    Path("/opt/homebrew/opt/zig@0.16/bin/zig"),
+    Path("/usr/local/opt/zig@0.16/bin/zig"),
+)
+_ZIG_VERSION_TIMEOUT_SECONDS = 10
 _WORKSPACE_BUILD_TIMEOUT_SECONDS = 600
 _CRATE_PACKAGE = "gobby-terminal"
 _CRATE_DIR = "gterminal"
@@ -121,8 +130,31 @@ def install_gterm_from_github(
     )
 
 
-def _zig_on_path(module: Any) -> bool:
-    return module.shutil.which("zig") is not None
+def _zig_016_available(module: Any) -> bool:
+    """Whether the vt-engine build finds Zig 0.16 the way build_zig.rs does.
+
+    `ZIG` when set; else the PATH `zig` when it reports 0.16.x; else a Homebrew keg.
+    """
+    if "ZIG" in os.environ:
+        return True
+    zig = module.shutil.which("zig")
+    if zig:
+        try:
+            result = module.subprocess.run(
+                [zig, "version"],
+                capture_output=True,
+                text=True,
+                timeout=_ZIG_VERSION_TIMEOUT_SECONDS,
+            )
+        except (OSError, module.subprocess.TimeoutExpired):
+            result = None
+        if (
+            result is not None
+            and result.returncode == 0
+            and result.stdout.strip().startswith("0.16.")
+        ):
+            return True
+    return any(keg.exists() for keg in _HOMEBREW_ZIG_016)
 
 
 def install_gterm_from_submodule(module: Any, bin_dir: Path) -> str | None:
@@ -145,7 +177,7 @@ def install_gterm_from_submodule(module: Any, bin_dir: Path) -> str | None:
         )
         return None
 
-    if not _zig_on_path(module):
+    if not _zig_016_available(module):
         module.click.echo(f"  {GTERM_NO_ZIG_SKIP_REASON}")
         module.logger.info("gterm: %s", GTERM_NO_ZIG_SKIP_REASON)
         return None
@@ -203,7 +235,7 @@ def install_gterm_from_cargo_git(module: Any, bin_dir: Path) -> bool:
     """Install gterm from source via cargo install --git."""
     if not module.shutil.which("cargo"):
         return False
-    if not _zig_on_path(module):
+    if not _zig_016_available(module):
         module.logger.info("gterm: %s", GTERM_NO_ZIG_SKIP_REASON)
         return False
     try:
@@ -268,7 +300,7 @@ def install_gterm_from_cargo_install(
     """Compile and install gterm from source via cargo install."""
     if not module.shutil.which("cargo"):
         return False
-    if not _zig_on_path(module):
+    if not _zig_016_available(module):
         module.logger.info("gterm: %s", GTERM_NO_ZIG_SKIP_REASON)
         return False
     try:
