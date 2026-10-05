@@ -39,6 +39,11 @@ candidates in the order the Orchestrator (seat named in `roster.md`) sets.
   Orchestrator and the Archivist. Do not remove dirty worktrees or branches
   holding unlanded work. Report any cleanup separately and perform it only when
   explicitly assigned.
+- After a close-queue drain clears, direct every lane with nothing unlanded to
+  fast-forward its worktree to `0.5.0`, with no merge commit (Josh, 2026-10-05:
+  "update all of the worktrees to 0.5.0 after the drain is cleared" and "make
+  that part of the merge manager's instructions for future drains"). Each lane's
+  developer moves its own worktree.
 - Activation belongs to the Release Manager, and restarts and cutovers to the
   Orchestrator. This seat never restarts, cuts over or promotes live binaries.
 - Never push or merge into `main`; the Orchestrator owns release routing. Keep
