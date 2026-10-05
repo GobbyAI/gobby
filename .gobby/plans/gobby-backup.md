@@ -2159,12 +2159,14 @@ Implementation:
      (1.3) or leaves a container running fails the run before any
      archive.
   5. Inventory and archive each volume as Python does.
-  6. The cleanup runs on every path after the first stop attempt. It
-     runs `docker start` for every managed container, continuing past a
-     failed start, and waits until each runs. The run keeps the
-     original error and also reports each failed start or wait, naming
-     the container. With no earlier error, a failed start fails the
-     run. `ServicesLock` is released after the cleanup ends.
+  6. The cleanup runs on every path after the first stop attempt. For
+     each managed container it runs `docker start` and waits up to
+     60 s, as 5.1 does, for the container to report running. A failed
+     start or wait never skips the remaining containers. The run keeps
+     the original error and also reports each failed start or wait,
+     naming the container. With no earlier error, a failed start or
+     wait fails the run, and nothing is published. `ServicesLock` is
+     released after the cleanup ends.
   7. Run the inline verify (6.2), write the manifest and publish.
 - The final line tells the operator to run `gobby start`.
 - Cold backups go to the same default root, and retention never prunes
@@ -2189,15 +2191,16 @@ then `cargo clippy -p gobby-backup --all-targets -- -D warnings`.
   Every managed container is started again, and the run reports the stop
   error. test:
   `crates/gbackup/src/cold/tests.rs::failed_stop_restarts_every_container`.
-- 6.1.4 - A failed start fails the run even after the archives succeeded,
-  and nothing is published. test:
-  `crates/gbackup/src/cold/tests.rs::failed_start_fails_run`.
+- 6.1.4 - A failed start, or a readiness wait that ends without the
+  container running, fails the run even after the archives succeeded.
+  The remaining containers are still started, and nothing is published.
+  test: `crates/gbackup/src/cold/tests.rs::failed_start_or_wait_fails_run`.
 - 6.1.5 - The PostgreSQL capture runs in cold mode, so the drain runs. test:
   `crates/gbackup/src/cold/tests.rs::cold_capture_drains_principals`.
-- 6.1.6 - When a stop fails and a start also fails, the remaining
-  containers are still started, and the run reports the stop error and
-  each failed start. test:
-  `crates/gbackup/src/cold/tests.rs::stop_and_start_failures_both_reported`.
+- 6.1.6 - When a stop fails and a start or a readiness wait also fails,
+  the remaining containers are still started, and the run reports the
+  stop error and each failed start or wait. test:
+  `crates/gbackup/src/cold/tests.rs::stop_and_restart_failures_all_reported`.
 
 ### 6.2 Volume verification and cold inline verify [category: code] (depends: 6.1)
 `kind: deliverable`
@@ -2679,6 +2682,10 @@ deferral:
     of retired modules before its cut.
   - The `_archive_volumes` citations name `cli.py`, and 1.4's planned
     verification runs `tests/cli/test_install_components.py`.
+- 2026-10-05 17:40 CDT: Adv1 verified `8a9c34f` and asked that a failed
+  readiness wait fail the cold run as a failed start does. 6.1 bounds
+  the wait at 5.1's 60 s and continues past either failure (6.1.4,
+  6.1.6).
 
 ## V2: Verification
 `kind: verification`
