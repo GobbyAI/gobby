@@ -593,11 +593,17 @@ Implementation:
   - A writer takes `last-run.lock` through `flock_until`, reads the file,
     replaces its own mode's record, writes a 0600 temp file, fsyncs it,
     renames it over `last-run.json` and fsyncs the directory.
-  - When `last-run.lock` times out or the write fails, the previous
-    `last-run.json` stays as it was, because the rename never ran. A
-    timestamped line `<UTC> gbackup: could not record <mode> run:
-    <error>` goes to stderr, which the timer appends to its log, and the
-    run exits 1. A recording failure is never itself recorded.
+  - A failure before the rename (the lock deadline, the read, the temp
+    write or its fsync, or the rename itself) leaves the previous
+    `last-run.json` as it was and removes the temp file.
+  - A directory fsync that fails after a successful rename leaves the
+    new, complete record visible. Its durability is unconfirmed, and
+    nothing is rolled back.
+  - Either way, a timestamped line `<UTC> gbackup: could not record
+    <mode> run: <error>` goes to stderr, which the timer appends to its
+    log, and the run exits 1. After a rename the line says the
+    record's durability is unconfirmed. A recording failure is never
+    itself recorded.
   - An error string is the error chain's display. No code path formats a
     DSN or a key into an error.
 - `jitter_minutes(machine_id)` takes the first eight bytes of the
@@ -631,9 +637,14 @@ Planned verification:
 - 1.2.3 - The `Refuse` policy fails, naming the holder's PID and command.
   test: `crates/gbackup/src/envelope/tests.rs::refuse_policy_names_holder`.
 - 1.2.4 - Writing a `verify` record keeps the existing `backup` record, and
-  the file mode is 0600. A `last-run.lock` held past the deadline, or a
-  failed write, leaves the previous file byte-identical, prints the
-  timestamped stderr line, exits 1, and attempts no second record. test:
+  the file mode is 0600. With injected failures:
+  - a `last-run.lock` held past the deadline, or a failed temp write,
+    leaves the previous file byte-identical;
+  - a directory fsync that fails after the rename leaves the new record
+    in place and reports unconfirmed durability.
+
+  Each failure prints the timestamped stderr line, exits 1, and attempts
+  no rollback and no second record. test:
   `crates/gbackup/src/envelope/tests.rs::last_run_replaces_only_its_mode_and_never_clobbers`.
 - 1.2.5 - Jitter is stable for one machine ID and always within 0 to 15
   minutes. test:
@@ -1549,8 +1560,8 @@ Implementation:
   run. A retention failure after a published backup records `error`, names
   the published directory, and exits 1.
 - The record is written on every path, including a panic caught at the
-  entry point. A failure to record follows 1.2: the previous record
-  stays, stderr carries the diagnostic, and the run exits 1.
+  entry point. A failure to record follows 1.2: stderr carries the
+  diagnostic and the run exits 1.
 
 Planned verification:
 `cargo nextest run -p gobby-backup -E 'test(scheduled)'`, then `cargo clippy
@@ -2602,8 +2613,8 @@ deferral:
   - B5: `check_artifact_set` (2.1) runs before every verify and restore.
 - 2026-10-05 17:20 CDT: Adv1 verified `ed7821d`, which resolved B2 to B4.
   The Writer accepted its two adjacent residuals.
-  - B1: a failure to record keeps the previous `last-run.json`, writes
-    a stderr diagnostic and exits 1 (1.2.4, 3.2, 4.4).
+  - B1: a failure to record writes a stderr diagnostic and exits 1
+    (1.2.4, 3.2, 4.4).
   - B5: only `volumes` may be skipped. A forged skipped required store
     is refused before any write (2.1.7, 5.2.3).
   - 8.1 also removes the `FILES_ARCHIVE_RELPATH` import from
