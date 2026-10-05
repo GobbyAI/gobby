@@ -67,8 +67,10 @@ Rulings of record, verbatim:
    `activation` receipts already use. `transfer_task_authority` stays the
    fallback when both have ended. Its `reason` fact holds one or more of
    `restart`, `freeze`, `overlap`, comma-joined. An optional `batch` fact
-   names an Orchestrator restart batch. One receipt per SHA; the tool takes
-   the union of reasons across that SHA's approvals.
+   names an Orchestrator restart batch. Approvals are append-only: a
+   `landing_approval` is idempotent per author, SHA and reason set, so an
+   approver adds a reason with a new receipt and never edits one. The tool
+   takes the union of reasons across that SHA's approvals.
    - Rejected: a named Orchestrator seat. The daemon cannot identify a seat.
 3. **Freeze home (Josh decision 4).** A JSON file at
    `<git-common-dir>/gobby/landing-freeze.json` holding `on`, `reason`,
@@ -99,6 +101,8 @@ Rulings of record, verbatim:
    kind and SHA, and the close reviewer already reads them.
    - Rejected: linking the merge commit to the task. Close gates 7, 8 and 13
      read linked commits, and a merge commit's combined diff is usually empty.
+     The merge subject therefore carries no `[<project>-#N]` or `<project>-#N`
+     tag, which commit discovery would link back to the task.
    - Rejected: a plain task comment. Forgeable through REST, and it needs its
      own idempotency.
 6. **Overlap.** The in-flight set is every `independent_review_approval`
@@ -155,7 +159,17 @@ stage rows.
   environment.
 - Hooks: `src/gobby/cli/installers/git_hooks.py::HOOK_TEMPLATES` drives
   install, uninstall and `get_stale_git_hooks`; `core.hooksPath` is the shared
-  `.git/hooks`, so one install covers every worktree.
+  `.git/hooks`, so one install covers every worktree. `get_stale_git_hooks`
+  skips a hook file that is missing or has no Gobby section, so a newly added
+  template never reports stale on an existing install. `install_git_hooks`
+  puts the Gobby section before preserved foreign hook content. The
+  `pre-push` template runs `exit 0` for delete-only pushes and
+  `pre-merge-commit` runs `exit 0` under `GOBBY_MERGE=1`, which skips that
+  foreign content. `pre-push` (`PUSH_REFS=$(cat)`) and `post-rewrite`
+  (`while read`) consume stdin, which leaves the foreign content none.
+- Commit discovery: `extract_task_ids_from_message` in
+  `src/gobby/tasks/commits.py` links a commit whose message carries
+  `[<project>-#N]` or `<project>-#N` to task N.
 - Memory 37618e95: the Merge Manager's git index commands entered its edit
   ledger and deadlocked other sessions' commits and closes, which is why
   landings run between close batches (memory 283e9a81). `land_commit` runs
@@ -232,6 +246,10 @@ Implementation:
   `batch` is optional. `landing` adds no authority rule beyond the existing
   claimant and task-close-reviewer refusals; only `land_commit` (1.3) writes
   it.
+- Replay for `landing_approval` matches on author, SHA and the sorted reason
+  set: an identical set returns the existing receipt, and a different set
+  appends a new receipt. Existing receipts are never edited. Every other kind
+  keeps the author, kind and SHA match.
 - The MCP tool refuses any kind outside `CALLER_RECEIPT_KINDS` before
   verifying the SHA, and its schema enum lists only those kinds. The
   description names `landing_approval` (creator or delegator; reasons) and
@@ -261,6 +279,10 @@ Planned verification:
 - 1.1.5 - The close-review prompt explains `landing_approval` and `landing`
   receipts when the task carries them. test:
   `tests/tasks/test_close_receipts.py::test_reviewer_prompt_explains_landing_receipts`.
+- 1.1.6 - The creator approves `restart`, then `freeze,overlap`, for one SHA:
+  two receipts exist, the first unchanged, and repeating either call adds
+  none. test:
+  `tests/tasks/test_close_receipts.py::test_landing_approval_new_reasons_append_receipt`.
 
 ### 1.2 Landing policy and freeze flag [category: code]
 `kind: deliverable`
@@ -396,18 +418,28 @@ target, so any lock taken inside nests correctly), exported in `__all__`, key
 `land_commit.land_candidate(db, *, task, caller_session_id, commit_sha)`:
 1. Needs a calling session, a full 40-character `commit_sha` that resolves to
    a commit, and a repository path for the task's project. The main checkout
-   is the parent of the git common dir; the target branch is its
-   `symbolic-ref --short HEAD` (detached: refuse `main_checkout_detached`).
-2. Holds `MainCheckoutLanding(project_id)` for the rest of the call.
+   is the parent of the git common dir, from whichever worktree the caller
+   sits in.
+2. Holds `MainCheckoutLanding(project_id)` for the rest of the call, then
+   reads the target branch as the main checkout's `symbolic-ref HEAD`
+   (detached: refuse `main_checkout_detached`). No branch name is hardcoded.
+   `set_landing_freeze` (1.2) holds the same lock around its write, so a
+   freeze that has returned applies to every later landing.
 3. Refuses `review_receipt_missing` unless the caller authored an
    `independent_review_approval` receipt on the task naming `commit_sha`, and
    refuses `caller_is_claimant` when the caller now claims the task.
-4. When `commit_sha` is already an ancestor of the branch tip: no git write;
-   records the `landing` receipt with mode `already_landed` and notifies.
-   Closed tasks land like open ones.
+4. When `commit_sha` is already an ancestor of the branch tip, there is no git
+   write. If the caller already holds a `landing` receipt for the SHA, the
+   call returns that receipt's `mode`, `landed_tip`, `merge_commit`,
+   `activation_class` and `retest_required` unchanged. Otherwise a generated
+   landing merge in `<sha>..<tip>` whose second parent is `sha` (from
+   `git rev-list --merges --parents`) yields mode `merge` with
+   `retest_required: true`; failing that, mode `already_landed`. It records
+   that receipt and notifies. Closed tasks land like open ones.
 5. Computes the merge base with the tip and the candidate paths
-   (`git diff --name-only --no-renames <base> <sha>`), then the activation
-   class.
+   (`git diff -z --name-only --no-renames <base> <sha>`), then the activation
+   class. Every path set `land_commit` computes, overlap and moved paths
+   included, uses `-z` output split on NUL.
 6. Required approvals: `freeze` when `read_freeze` is on; `restart` when the
    class is restart or cutover; `overlap` when Decision Record item 6 finds
    overlaps (each reported with task ref, SHA and shared paths). Granted
@@ -418,8 +450,10 @@ target, so any lock taken inside nests correctly), exported in `__all__`, key
 8. Any missing approval or refusal returns `landed: false` with every blocker
    at once (`missing_approvals`, `overlaps`, `activation_class`, the SHA an
    approver must name) and no git write.
-9. Otherwise runs `git merge --ff-only <sha>` in the main checkout with the
-   override variable, then confirms the branch ref equals `sha`.
+9. Otherwise re-reads `symbolic-ref HEAD` (changed since step 2: refuse
+   `main_checkout_branch_changed`), runs `git merge --ff-only <sha>` in the
+   main checkout with the override variable, then confirms the branch ref
+   equals `sha`.
 10. Records the `landing` receipt (author: caller; facts: `branch`,
     `landed_tip`, `mode`, `activation_class`, `retest_required`, and
     `merge_commit` when present) and messages the task's claimant, creator and
@@ -428,9 +462,11 @@ target, so any lock taken inside nests correctly), exported in `__all__`, key
 11. Returns `landed: true`, `mode`, `branch`, `landed_tip`,
     `activation_class`, `retest_required`.
 
-**Granularity:** 1.3 has six acceptance items and one lifecycle owner, the
-landing call. Moved-tip handling is split into 1.4 because it is
-independently testable once 1.3 refuses `tip_moved`.
+**Granularity:** 1.3 has eight acceptance items and one lifecycle owner, the
+landing call. The lock, branch and replay items are preconditions of that one
+call, so they stay together. Moved-tip handling and git failure handling are
+split into 1.4 because they are independently testable once 1.3 refuses
+`tip_moved`.
 
 Planned verification:
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_land_commit.py tests/mcp_proxy/tools/tasks/test_landing_tools.py tests/storage/hub/test_postgres_placeholder_remap.py tests/workflows/test_task_enforcement_rules.py -q`.
@@ -461,8 +497,17 @@ main checkout and real git; no test touches this checkout.
 - 1.3.6 - `MainCheckoutLanding` maps to `main_checkout_landing:<project_id>`
   and has the lowest lock priority. test:
   `tests/storage/hub/test_postgres_placeholder_remap.py::test_main_checkout_landing_lock_key`.
+- 1.3.7 - Two concurrent `land_commit` calls run one at a time, and the lock is
+  free again after a refusal and after an exception. A freeze set while a
+  landing holds the lock applies to the next landing. test:
+  `tests/tasks/test_land_commit.py::test_concurrent_landings_serialize_and_release_lock`.
+- 1.3.8 - A detached main HEAD refuses `main_checkout_detached`, a branch
+  switched before the write refuses `main_checkout_branch_changed`, and a
+  call from a linked worktree lands into the main checkout's branch. Each
+  refusal leaves both branches unmoved. test:
+  `tests/tasks/test_land_commit.py::test_landing_branch_is_main_checkout_head`.
 
-### 1.4 Moved-tip landing [category: code] (depends: 1.3)
+### 1.4 Moved-tip landing and git failure handling [category: code] (depends: 1.3)
 `kind: deliverable`
 
 Targets:
@@ -478,27 +523,44 @@ Observed in the probe (As-Is Facts): a prebuilt merge commit applied with
 `git merge --ff-only` keeps unrelated staged and dirty files, and
 `--ff-only` refuses a locally dirty landed path. `git merge-tree
 --write-tree` exits 1 on conflicts and prints the tree on its first line.
+`daemon_git.run` defaults to a 10-second timeout, and git can move the ref
+before a timed-out or failed command returns.
 
 Implementation in `src/gobby/tasks/land_commit.py`:
-- Moved paths are `git diff --name-only --no-renames <base> <tip>`. A
+- Moved paths are `git diff -z --name-only --no-renames <base> <tip>`. A
   non-empty intersection with the candidate paths refuses
   `base_update_required` with the shared paths, reported beside any missing
   approvals.
 - Disjoint paths: build `TREE` with `git merge-tree --write-tree <tip> <sha>`
   (conflict exit: refuse `merge_conflict`), then
-  `git commit-tree <TREE> -p <tip> -p <sha> -m "[<project>-#N] chore: land
-  reviewed <short sha>"`, and fast-forward to that merge commit. The
-  `landing` receipt carries mode `merge`, `merge_commit` and
-  `retest_required: true`; the response tells the reviewer to run the
-  candidate's focused tests in the main checkout and report the result to the
-  developer and the Orchestrator.
+  `git commit-tree <TREE> -p <tip> -p <sha> -m "chore: land reviewed <short
+  sha> for #N"`, and fast-forward to that merge commit. The subject carries
+  no task tag (Decision Record item 5). The `landing` receipt carries mode
+  `merge`, `merge_commit` and `retest_required: true`. The response states
+  the retest procedure: the reviewer takes the focused verification commands
+  from the task's validation evidence, runs them in the main checkout, and
+  reports each command and result, the receipt's `landed_tip`, the HEAD it
+  tested and any unrelated checkout changes to the developer and the
+  Orchestrator.
 - `--ff-only` failures:
-  - the tip moved since step 5: recompute from the ancestry check, at most
-    three attempts, then refuse `tip_contention`;
+  - the tip moved since step 5: re-read the branch and tip and repeat every
+    policy check (candidate and moved paths, class, freeze, overlap,
+    approvals) before the next write, at most three attempts, then refuse
+    `tip_contention`;
   - "would be overwritten": refuse `checkout_dirty` with git's path list;
   - `index.lock`: refuse `checkout_busy` (retryable);
   - anything else: refuse `git_failed` with stderr.
-  No refusal leaves a ref change or a working-tree change behind.
+  A refusal before the ref-moving command changes neither ref nor checkout.
+- Ref reconciliation: the ref-moving command runs with a 120-second timeout.
+  After it returns, fails or times out, `land_commit` re-reads the branch
+  ref before classifying the outcome. A ref equal to the target (the SHA or
+  the merge commit) is a landing whatever git returned. A failed receipt
+  write then returns `landed: true` with `receipt_pending: true`, and a retry
+  records it through 1.3 step 4. A failed message returns `landed: true` with
+  `notification_pending` naming the unreached sessions. An interrupted
+  command whose ref did not move refuses `git_interrupted` with
+  `git status --porcelain` output for the operator. Nothing resets the shared
+  checkout to compensate.
 
 Planned verification:
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_land_commit.py -q`.
@@ -514,33 +576,59 @@ Planned verification:
   `base_update_required` naming that path, and the branch does not move.
   test: `tests/tasks/test_land_commit.py::test_moved_tip_with_shared_paths_requires_base_update`.
 - 1.4.3 - A direct commit that moves the tip between computing and landing is
-  absorbed by recomputing, and the landing still succeeds. test:
+  absorbed by recomputing, and the landing still succeeds. A racing commit
+  that touches a candidate path refuses `base_update_required`, one that
+  makes the class `restart` adds that missing approval, and three exhausted
+  attempts refuse `tip_contention`. test:
   `tests/tasks/test_land_commit.py::test_tip_race_recomputes_and_lands`.
 - 1.4.4 - A locally dirty landed path refuses `checkout_dirty` and a held
-  `index.lock` refuses `checkout_busy`, each with no ref change. test:
+  `index.lock` refuses `checkout_busy`. Each refusal, a merge conflict and an
+  exhausted contention leave the ref, the worktree contents and the index
+  entries unchanged, unrelated staged files and untracked files included.
+  test:
   `tests/tasks/test_land_commit.py::test_dirty_path_and_index_lock_refuse_without_ref_change`.
+- 1.4.5 - `extract_task_ids_from_message` finds no task in the generated
+  merge commit's message, so commit discovery never links it to the task.
+  test: `tests/tasks/test_land_commit.py::test_landing_merge_is_not_task_tagged`.
+- 1.4.6 - A ref that moved before git timed out, and a receipt write that
+  fails after the ref moved, both return `landed: true`; the second returns
+  `receipt_pending: true`. A failed message returns `notification_pending`.
+  The checkout is never reset. test:
+  `tests/tasks/test_land_commit.py::test_ref_moved_before_failure_reports_landing`.
+- 1.4.7 - A repeated call after a merge landing returns mode `merge` with
+  `retest_required: true`. A retry after `receipt_pending` finds the
+  generated merge and records the same. test:
+  `tests/tasks/test_land_commit.py::test_merge_landing_replay_preserves_retest_obligation`.
+
+**Granularity:** 1.4 has seven acceptance items and one lifecycle owner, the
+write half of the landing call. Moved-tip merging and failure reconciliation
+share the ref-moving command and its retry loop, so they stay together.
 
 ### 1.5 Protected-branch guard [category: code] (depends: 1.2, 1.4)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/cli/installers/git_hooks.py::HOOK_TEMPLATES`
+- `src/gobby/cli/installers/git_hooks.py::get_stale_git_hooks`
 - `src/gobby/install/shared/workflows/rules/worker-safety/block-landing-override.yaml`
 - `tests/framing_corpus.py::TRUE_RESTRICTION_RULES`
-- `tests/cli/installers/test_git_hooks_installer.py::*` — scope-reason: the expected hook-name set gains reference-transaction
+- `tests/cli/installers/test_git_hooks_installer.py::*` — scope-reason: the expected hook-name set gains reference-transaction, plus stale-detection and foreign-hook chaining tests
 - `tests/cli/installers/test_landing_guard_hook.py`
 - `tests/workflows/rules/test_landing_override_rule.py`
 
 Consumers unchanged:
 - `tests/workflows/test_rewrite_rules.py` — no-edit-reason: reads the corpus sets, which this deliverable extends.
+- `src/gobby/utils/deps.py` — no-edit-reason: reports whatever list `get_stale_git_hooks` returns per checkout.
 
 **Research context:** `HOOK_TEMPLATES` in
 `src/gobby/cli/installers/git_hooks.py` maps hook names to the Gobby section
-that `install_git_hooks` wraps in GOBBY HOOK markers; `get_stale_git_hooks`
-(called from `src/gobby/utils/deps.py`) reports an install missing a template,
-so adding a key marks every existing install stale until `gobby install`
-refreshes it. `TestHookTemplates::test_all_expected_hooks_defined` pins the key
-set. Git calls `reference-transaction` with the state (`prepared`,
+that `install_git_hooks` wraps in GOBBY HOOK markers and places before any
+preserved foreign content. `get_stale_git_hooks` (called from
+`src/gobby/utils/deps.py`) reports only hooks whose installed Gobby section
+differs, and skips a missing hook, so today a new template never shows as
+stale (As-Is Facts). `TestHookTemplates::test_all_expected_hooks_defined` pins
+the key set; `test_ignores_hooks_without_managed_section` pins that an
+unmanaged repository reports nothing. Git calls `reference-transaction` with the state (`prepared`,
 `committed`, `aborted`) as `$1` and `<old> <new> <refname>` lines on stdin;
 a non-zero exit in `prepared` aborts the whole transaction. The main
 worktree's `HEAD` file is `<git-common-dir>/HEAD`, also from linked
@@ -555,17 +643,33 @@ Implementation:
 - New `HOOK_TEMPLATES["reference-transaction"]`, rendered by a helper in
   `git_hooks.py` from `landing_policy.DIRECT_COMMIT_MARKDOWN_DIRS` so the
   allowance has one source. The POSIX `sh` script:
-  - exits 0 unless `$1` is `prepared`, or when `GOBBY_LAND_COMMIT=1`;
-  - reads `<git-common-dir>/HEAD`; exits 0 unless it is `ref: <name>`, which
-    is the protected ref;
-  - for each stdin line naming exactly the protected ref: allows creation
-    (zero old), refuses deletion (zero new), and otherwise lists
-    `git diff --name-only --no-renames <old> <new>`; any path that is not an
-    allowed Markdown path refuses;
+  - reads stdin into a variable once, and checks only when `$1` is
+    `prepared` and `GOBBY_LAND_COMMIT` is not `1`;
+  - reads `<git-common-dir>/HEAD`; checks only when it is `ref: <name>`,
+    which is the protected ref;
+  - for each captured line naming exactly the protected ref: allows creation
+    (zero old), refuses deletion (zero new), and otherwise reads
+    `git diff --name-only --no-renames <old> <new>` line by line with
+    `IFS= read -r`; any path that is not an allowed Markdown path refuses,
+    and so does any path git quoted (a leading `"`), which covers newlines,
+    tabs and other escaped names;
   - fails closed when `git diff` fails;
   - refusal text names the path, `gobby-tasks-ops:land_commit`, and the
     operator override `GOBBY_LAND_COMMIT=1`.
-  It runs no Python, so commits pay no interpreter start.
+  Only a refusal exits (status 1). An allowed update never exits: the
+  section ends by restoring the captured lines as stdin (`exec 0<<EOF` with
+  the variable; `/dev/null` when it is empty), so preserved foreign hook
+  content after it runs with the same state argument and stdin, and can
+  still refuse. The override bypasses only Gobby's checks. The script runs no
+  Python, so commits pay no interpreter start.
+- The same chaining applies to the existing templates (Orchestrator found
+  work, 12:28 CT): `pre-push` and `pre-merge-commit` drop their early
+  `exit 0` for an if/else, and `pre-push` (`PUSH_REFS`) and `post-rewrite`
+  capture stdin once and restore it the same way. Each still exits non-zero on its
+  own failure.
+- `get_stale_git_hooks`: when at least one template hook carries a Gobby
+  section, a template hook that is missing or has no Gobby section is stale.
+  A repository with no Gobby section anywhere still reports nothing.
 - New rule `block-landing-override` (group `worker-safety`, enabled, every
   session): blocks a Bash command containing `GOBBY_LAND_COMMIT` with a
   true-restriction reason that names `land_commit`. Added to
@@ -589,12 +693,31 @@ worktree and drive real git.
 - 1.5.3 - With `GOBBY_LAND_COMMIT=1`, `land_commit`'s fast-forward passes the
   hook. test:
   `tests/cli/installers/test_landing_guard_hook.py::test_land_commit_passes_installed_guard`.
-- 1.5.4 - The installer defines `reference-transaction`, and an install made
-  before it reports stale. test:
+- 1.5.4 - The installer defines `reference-transaction`. test:
   `tests/cli/installers/test_git_hooks_installer.py::TestHookTemplates::test_all_expected_hooks_defined`.
 - 1.5.5 - An agent Bash command mentioning `GOBBY_LAND_COMMIT` is blocked for
   spawned and interactive sessions. test:
   `tests/workflows/rules/test_landing_override_rule.py::test_landing_override_is_blocked_for_every_session`.
+- 1.5.6 - An install made before `reference-transaction` existed reports it
+  stale, and `gobby install` clears it; a repository with no Gobby section
+  still reports nothing. test:
+  `tests/cli/installers/test_git_hooks_installer.py::test_missing_template_hook_is_stale_for_managed_install`.
+- 1.5.7 - With a foreign hook after the Gobby section that records its stdin
+  and arguments, the foreign hook runs with the original stdin for an
+  allowed `reference-transaction` update, a delete-only `pre-push`, a
+  `pre-merge-commit` under `GOBBY_MERGE=1` and a `post-rewrite`. A foreign
+  `reference-transaction` refusal of a Gobby-allowed update still aborts it.
+  Reinstall and uninstall keep the foreign content. test:
+  `tests/cli/installers/test_git_hooks_installer.py::test_gobby_sections_chain_to_foreign_hook_content`.
+- 1.5.8 - A direct commit mixing `docs/a.md` with `src/gobby/a.py`, and one
+  touching a Markdown path that git quotes (a tab or newline in the name),
+  are refused; a path with spaces under `docs/` is allowed. test:
+  `tests/cli/installers/test_landing_guard_hook.py::test_guard_classifies_unusual_paths_fail_closed`.
+
+**Granularity:** 1.5 has eight acceptance items and one owner, the managed
+git hook set in `git_hooks.py`. The guard, the chaining fix and stale
+detection change the same templates and installer, and 1.5.6 and 1.5.7 are
+what make the guard live and safe beside foreign hooks.
 
 ## P2: Documentation
 `kind: framing`
@@ -618,9 +741,13 @@ Implementation:
   `landing`; one sentence says a code task closes after `land_commit` records
   its landing.
 - `docs/guides/tasks.md`: a `### Landing` section after `### Close` covering
-  the reviewer flow, path classes, approvals and freeze, moved-tip behavior
-  with the post-landing retest, the refusal codes, the direct-commit
-  allowance, the guard and its operator override.
+  the reviewer flow, who may call each tool and grant each approval, path
+  classes, approvals and freeze, moved-tip behavior with the retest
+  procedure (1.4: commands from the task's validation evidence, the tested
+  HEAD reported, a failed retest withholds the Lane Manager's close release
+  and never rolls the branch back), every refusal code and pending flag in
+  `land_commit.py`, the direct-commit allowance, the guard and its operator
+  override.
 
 Planned verification: `uv run gobby plans validate .gobby/plans/reviewer-landing.md -p /Users/josh/Projects/gobby`
 and a read-through against the shipped tool schemas.
@@ -628,11 +755,21 @@ and a read-through against the shipped tool schemas.
 **Acceptance:**
 
 - 2.1.1 - The closing reference names both new receipt kinds, their
-  authority and the landing-before-close order. behavior: "landing_approval"
-  in `src/gobby/install/shared/skills/gobby/references/tasks/closing.md`.
-- 2.1.2 - The tasks guide documents `land_commit`, `set_landing_freeze`, the
-  path classes, the refusal codes and the guard override. behavior:
-  "GOBBY_LAND_COMMIT" in `docs/guides/tasks.md`.
+  authority, append-only approvals and the landing-before-close order.
+  behavior: "landing_approval" in
+  `src/gobby/install/shared/skills/gobby/references/tasks/closing.md`.
+- 2.1.2 - Read against the shipped `land_commit` and `set_landing_freeze`
+  schemas, the guide states who may call each tool and grant each approval
+  reason, and the freeze's effect and unreadable-file rule. behavior:
+  "set_landing_freeze" in `docs/guides/tasks.md`.
+- 2.1.3 - The guide lists the four path classes with their approvals, and
+  every refusal code and pending flag that `land_commit.py` returns. behavior:
+  "base_update_required" in `docs/guides/tasks.md`.
+- 2.1.4 - The guide gives the moved-tip retest procedure and its
+  failed-retest path. behavior: "retest_required" in `docs/guides/tasks.md`.
+- 2.1.5 - The guide states the Markdown-only direct-commit allowance, the
+  guard and its operator override. behavior: "GOBBY_LAND_COMMIT" in
+  `docs/guides/tasks.md`.
 
 ## Rollout
 `kind: framing`
@@ -647,13 +784,17 @@ and a read-through against the shipped tool schemas.
    doing merges".
 3. 1.5 lands through `land_commit` (restart class, so with a `restart`
    approval). After the restart that syncs the rule, the Orchestrator runs
-   `gobby install` from the main checkout so `get_stale_git_hooks` clears and
-   the guard is live.
+   `gobby install` from the main checkout, confirms `get_stale_git_hooks` is
+   empty, and confirms an executable `reference-transaction` with the Gobby
+   section at `git rev-parse --git-path hooks`.
 4. At step 2 the Orchestrator edits `.gobby/roles/merge-manager.md`,
    `code-reviewer.md`, `lane-manager.md`, `orchestrator.md` and `_common.md`:
-   reviewers land with `land_commit` and run the retest; Lane Managers check
-   the `landing` receipt before a close release; the Orchestrator owns
-   `set_landing_freeze` and approvals.
+   reviewers land with `land_commit` and, when `retest_required`, run the 1.4
+   retest procedure; Lane Managers check the `landing` receipt and, for a
+   merge landing, a passing retest report before a close release; a failed
+   or unavailable retest withholds the release and enters the found-work
+   path, never a rollback; the Orchestrator owns `set_landing_freeze` and
+   approvals.
 5. The close-order rule (memory 283e9a81) keeps "code closes after landing".
    Its spacing of landings between close batches existed for the Merge
    Manager's index commands; whether to keep it is the Orchestrator's call.
@@ -665,6 +806,17 @@ and a read-through against the shipped tool schemas.
   rescoped to M3 by Josh's 11:56 CT ruling.
 - 2026-10-05: Josh ruled decision 7 at 12:24 CT ("guard, direct commits for
   Markdown only"); Decision Record item 7 is adopted.
+- 2026-10-05: Enhancer pass (run d4113107, 12 suggestions on e352c34)
+  applied per the Orchestrator's 12:28 CT dispositions. E01 untagged merge
+  subject; E02 stale detection for missing template hooks; E03 ref
+  reconciliation with pending flags; E04 replay keeps the stored receipt;
+  E05 retries repeat every check and the freeze setter takes the landing
+  lock; E06 append-only approvals; E07 branch from main HEAD under the lock,
+  with no hardcoded name; E08 guard chaining (narrowed); E09 `-z` paths and
+  fail-closed quoted paths (narrowed); E10 lock and preservation tests; E11
+  retest procedure; E12 docs acceptance as a checklist (decision-7 part
+  moot). Found work folded into 1.5: the `pre-push`, `pre-merge-commit` and
+  `post-rewrite` templates chain to foreign hook content.
 
 ## V2: Verification
 `kind: verification`
