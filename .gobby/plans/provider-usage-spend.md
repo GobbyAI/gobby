@@ -1228,6 +1228,28 @@ model, and they land after every surface exists.
     now defines paging as a live traversal, 3.1.2 states the condition, and
     3.1.8 proves an append and a late earlier-timestamp row. No snapshot
     table, export job, or cursor lease is added.
+- 2026-10-05: Consensus between the Plan Writer gobby#15469 and the Plan
+  Adversary gobby#15471 at 904a22a18c, after one dialogue with four
+  blocking findings, all resolved in the plan. No disagreement was left for
+  the Orchestrator.
+  - PUS-F1: the `if not stats_records` exit advanced the transcript offset
+    without ledger work, so a `cost-state`-only append was lost. Every exit
+    that consumes input now feeds `_persist_ledger_batch` before the offset
+    advances, with parser-state restore on failure (2.2, 2.3.6).
+  - PUS-F2: the audit repaired only sessions with different token totals,
+    which left pre-460 identities and NULL `api_calls` in place. Drift now
+    compares rows and reported runs, and the activation repair is the gate
+    before the ledger counts as authoritative (2.1.6, 2.3.4, Constraints,
+    V2).
+  - PUS-F3: a fresh parser on each subagent tail reused fallback indexes.
+    Per-file cursors now carry offset, message index, file identity, and
+    parser state, with resets on truncation or replacement (2.2.6).
+  - PUS-F4: alert levels followed only the longest window, so an exhausted
+    five-hour window went unannounced. Alert state and stale rejection are
+    per window, with account-wide `limit_reached` and `drawing_credits`
+    (4.1.3, 4.2.5).
+  - The Adversary found no over-engineering, and the project-scoped task
+    resolution needed no change.
 
 ## V2: Verification
 `kind: verification`
