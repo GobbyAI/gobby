@@ -97,8 +97,8 @@ Orchestrator's rulings A1 to A8 (2026-10-05).
    - On a held lock, `backup --scheduled` records `skipped_locked` and exits
      0.
    - `verify --scheduled` waits for the lock, because the Sunday backup can
-     still hold it at 07:30. Every external step has a timeout, so the wait
-     is bounded.
+     still hold it at 07:30. Every external step has a timeout, PostgreSQL
+     statements and lock waits included (1.3), so the wait is bounded.
    - Interactive commands refuse on a held lock and exit 1, naming the
      holder.
    - Restore and cold also take the daemon's maintenance claim, which fails
@@ -177,6 +177,10 @@ Rejected alternatives:
 - A gcore-owned manifest (Draft 1). That is superseded by A1.
 - Re-hashing every retained backup nightly. That reads about 60 GB per
   night.
+- A full recovery rehearsal on a disposable, test-owned hub stack
+  (enhancer E7, declined by the Orchestrator on 2026-10-05). The weekly
+  verify already restores every store into disposable containers, and a
+  test-owned hub stack is new infrastructure.
 
 ## As-Is Facts
 `kind: framing`
@@ -443,6 +447,9 @@ recorded change.
   environment snapshot explicitly instead of mutating the process
   environment. Live checks run only against the isolated test hub with
   `GOBBY_TEST_PROTECT=1` and `GOBBY_TEST_ALLOW_DOCKER=1`.
+- Database tests (`serial_db`) connect only after `pg::serial_db_url`
+  (1.3) accepts the test target, and their commands set
+  `GOBBY_TEST_PROTECT=1`.
 - No DSN, password, API key or token appears in argv, stdout, logs,
   `last-run.json` or the manifest. PostgreSQL client tools run through
   `docker exec` in the managed container, which needs no password, as
@@ -622,7 +629,13 @@ Targets:
 - `crates/gbackup/src/target/tests.rs`
 - `crates/gbackup/src/docker.rs`
 - `crates/gbackup/src/docker/tests.rs`
+- `crates/gbackup/src/pg.rs`
+- `crates/gbackup/src/pg/tests.rs`
 - `crates/gbackup/src/lib.rs`
+
+**Granularity:** one leaf with eight acceptance items. Target resolution,
+the Docker runner and the PostgreSQL session are the run's bounded paths
+to the target, and every later leaf uses all three.
 
 **Research context:**
 - `_hub_backup_target` (hub_backup/cli.py lines 177-205) and `_managed_postgres_container`
@@ -649,6 +662,11 @@ Targets:
 - gcore's `read_files_home_view` (bootstrap.rs) returns the datastore mode
   and files_home, and `postgres_database_url_from_bootstrap_file`
   (bootstrap.rs) returns the DSN.
+- gcore's `connection_config` (postgres.rs) sets only `connect_timeout`,
+  and `connect_readonly` sets `default_transaction_read_only`. Neither
+  bounds a statement or a lock wait.
+- Python's `pg_dump` budget defaults to `_SUBPROCESS_TIMEOUT_SECONDS`
+  (600 s, postgres_backup.py line 42).
 
 Implementation:
 - `EnvSnapshot` is read once in `main`: `GOBBY_TEST_PROTECT`,
@@ -675,10 +693,25 @@ Implementation:
   loopback port 60990.
 - `preflight(target, docker, root)` requires each target container to
   report `State.Running`, and at least 5 GiB free at the backup root.
+- `pg::connect(dsn, access, budget)` opens every gbackup PostgreSQL
+  session. It calls gcore's `connect_readonly` or `connect_readwrite`,
+  then sets `statement_timeout` and `lock_timeout` to `budget`. The
+  budget is the capture budget from `GOBBY_POSTGRES_DUMP_TIMEOUT_SECONDS`
+  (default 600 s, as Python). There is no new setting. `resolve_qdrant`
+  reads the config through it.
+- `pg::serial_db_url(raw, env)` is test-only and gates every `serial_db`
+  test:
+  - Unset, it returns none and the test skips with a message.
+  - Set, the URL must resolve through `resolve_restore_target` to the
+    test target, which needs `GOBBY_TEST_PROTECT` and loopback port 60892
+    with `gobby_test`/`gobby_test`.
+  - The production DSN and any other URL fail before a connection
+    opens, naming host, port, user and database but never the password.
 
 Planned verification:
-`cargo nextest run -p gobby-backup -E 'test(target) | test(docker)'`, then
-`cargo clippy -p gobby-backup --all-targets -- -D warnings`.
+`cargo nextest run -p gobby-backup -E 'test(target) | test(docker) | test(pg)'`,
+then `GOBBY_TEST_PROTECT=1 GBACKUP_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo nextest run -p gobby-backup -E 'test(pg)'`
+and `cargo clippy -p gobby-backup --all-targets -- -D warnings`.
 
 **Acceptance:**
 
@@ -700,6 +733,14 @@ Planned verification:
 - 1.3.6 - Preflight fails when a target container is not running or less
   than 5 GiB is free. test:
   `crates/gbackup/src/target/tests.rs::preflight_requires_running_containers_and_free_space`.
+- 1.3.7 - Every gbackup PostgreSQL session sets `statement_timeout` and
+  `lock_timeout` to the capture budget. A statement blocked by a
+  conflicting lock fails at the lock timeout. test:
+  `crates/gbackup/src/pg/tests.rs::serial_db_lock_conflict_times_out`.
+- 1.3.8 - The `serial_db` gate skips when its variable is unset. It
+  refuses the production DSN, any other URL, and the test DSN without
+  `GOBBY_TEST_PROTECT`, each before a connection opens. test:
+  `crates/gbackup/src/pg/tests.rs::serial_db_gate_refuses_non_test_targets`.
 
 ### 1.4 Managed install through gobby install [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -957,7 +998,10 @@ Targets:
 - `collect_postgres_identity` (_stores.py lines 120-147) reads:
   - the system identifier from `pg_control_system()`;
   - `current_database()` and its OID;
-  - `MAX(version)` from `schema_migrations`, which must exist.
+  - `MAX(version)` from `schema_migrations`. A missing table fails, and
+    so does a table with no applied version (`schema_migrations has no
+    applied version; refusing to back up an unmigrated database`, line
+    139).
 - Other collectors:
   - `collect_row_count_probes` (150-164) counts every base table in
     `public`.
@@ -989,9 +1033,9 @@ Implementation:
 - `stores.rs` declares the store modules and the shared result
   `StoreCapture { artifacts, details, archive_verified }`.
 - `capture_postgres(ctx, mode)` runs in this order:
-  1. In `Mode::Cold` only, run `drain_ephemeral_principals(dsn)` through
-     `connect_readwrite`.
-  2. Open a read-only connection, run
+  1. In `Mode::Cold` only, run `drain_ephemeral_principals(dsn)` in a
+     read-write `pg::connect` session (1.3).
+  2. Open a read-only `pg::connect` session (1.3), run
      `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`, then
      `SELECT pg_export_snapshot()`.
   3. In that transaction, collect identity, the starting head, row-count
@@ -1006,13 +1050,15 @@ Implementation:
   details record `postgres_version`, `archive_list_checked`,
   `schema_object_counts` and `roles`, because the weekly verify runs in
   another process and needs those expectations.
-- `drain_ephemeral_principals` is public for 5.1 and 6.1.
-- Database tests are in the `serial_db` group and gated on
-  `GBACKUP_POSTGRES_TEST_DATABASE_URL` (the isolated 60892 hub). They skip
-  with a message when it is unset. Docker steps use the fake `docker`.
+- Identity collection fails before `pg_dump` runs when
+  `schema_migrations` is missing or has no applied version, with
+  Python's message.
+- `drain_ephemeral_principals` is public for 5.2 and 6.1.
+- Database tests are in the `serial_db` group, gated by
+  `pg::serial_db_url` (1.3). Docker steps use the fake `docker`.
 
 Planned verification:
-`GBACKUP_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo nextest run -p gobby-backup -E 'test(stores::postgres)'`,
+`GOBBY_TEST_PROTECT=1 GBACKUP_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo nextest run -p gobby-backup -E 'test(stores::postgres)'`,
 then `cargo clippy -p gobby-backup --all-targets -- -D warnings`.
 
 **Acceptance:**
@@ -1033,9 +1079,9 @@ then `cargo clippy -p gobby-backup --all-targets -- -D warnings`.
 - 2.2.5 - Source roles exclude managed principals, and the details carry
   the schema counts and roles. test:
   `crates/gbackup/src/stores/postgres/tests.rs::serial_db_roles_exclude_managed_principals`.
-- 2.2.6 - A missing `schema_migrations` table fails identity collection.
-  test:
-  `crates/gbackup/src/stores/postgres/tests.rs::serial_db_missing_schema_migrations_fails`.
+- 2.2.6 - A missing `schema_migrations` table, or one with no applied
+  version, fails identity collection before `pg_dump` runs. test:
+  `crates/gbackup/src/stores/postgres/tests.rs::serial_db_unmigrated_database_fails`.
 
 ### 2.3 Qdrant capture [category: code] (depends: 2.2)
 `kind: deliverable`
@@ -1641,10 +1687,16 @@ Targets:
   (2.5).
 
 Implementation:
-- `restore_files_into(archive, dest_dir, expected_sha256)` takes a
-  destination directory handle, so verify (scratch) and restore
-  (files_home, 5.1) share it.
-  - Steps 1 to 3 follow Python, and all of them run before the first write.
+- The files restore is two calls, shared by verify (scratch) and restore
+  (files_home, 5.2). Both work in a destination directory handle.
+  - `preflight_files_restore(archive, dest_dir, expected_sha256)` runs
+    steps 1 to 3 without writing, and returns a checked plan that holds
+    the open archive. The member graph follows Python's
+    `preflight_archive_graph` (files_home.py): duplicate members, file
+    and directory prefix conflicts, the member and byte limits, and
+    non-file members are refused. A member name that is absolute, or has
+    an empty, `.` or `..` component, is refused too.
+  - `restore_files_into(plan)` writes.
   - Directories are created one component at a time with `mkdirat`. A
     symlinked component fails, and is never followed.
   - Each file is copied to `.<name>.restore-tmp`, opened with `O_CREAT`,
@@ -1667,9 +1719,11 @@ test(verify::files)'`, then `cargo clippy -p gobby-backup --all-targets --
 - 4.3.1 - A restore into a directory reproduces the archive. It replaces
   existing files and keeps unrelated ones. test:
   `crates/gbackup/src/files_restore/tests.rs::restore_reproduces_archive_and_keeps_unrelated`.
-- 4.3.2 - Each of these is refused before any file is written:
+- 4.3.2 - `preflight_files_restore` refuses each of these before any file
+  is written:
   - a hash mismatch;
   - a non-file member;
+  - a duplicate, prefix-conflicting or unsafe member name;
   - insufficient space.
 
   A symlinked destination component fails without being followed. test:
@@ -1789,14 +1843,18 @@ Implementation:
   - It checks each count, exactly or by range.
 - `preflight_falkordb(docker, target, clean)`: without `--clean`, it
   refuses when `DBSIZE` is above 0.
-- `restore_falkordb` runs under `ServicesLock`:
+- `restore_falkordb` takes the caller's held `ServicesLock` guard, and
+  never acquires the lock itself:
   1. `docker stop` the FalkorDB container.
   2. `docker cp` the RDB to `/var/lib/falkordb/data/dump.rdb`.
   3. `docker start` the container.
   4. Wait up to 60 s for `PING` and for loading to finish.
   5. Compare the graph list and counts.
 
-  A failed start fails the restore and names the container.
+  After a successful stop, every later path attempts `docker start`,
+  a failed copy included. The restore keeps the original error, and
+  also reports a failed start or readiness wait, naming the container.
+  This restarts the service. It never rolls back restored data.
 
 Planned verification:
 `cargo nextest run -p gobby-backup -E 'test(restore::qdrant) |
@@ -1814,13 +1872,15 @@ gobby-backup --all-targets -- -D warnings`.
   `crates/gbackup/src/restore/qdrant/tests.rs::clean_restore_replaces_collections`.
 - 5.1.3 - Without `--clean`, a non-empty FalkorDB target is refused. test:
   `crates/gbackup/src/restore/falkordb/tests.rs::non_empty_target_refused_without_clean`.
-- 5.1.4 - FalkorDB restore stops, copies and starts under the services
-  lock, then compares counts. A held services lock fails before the stop.
-  test:
-  `crates/gbackup/src/restore/falkordb/tests.rs::restore_runs_under_services_lock`.
+- 5.1.4 - FalkorDB restore stops, copies and starts while the caller
+  holds the services lock, then compares counts. test:
+  `crates/gbackup/src/restore/falkordb/tests.rs::restore_runs_under_held_services_lock`.
 - 5.1.5 - The services lock writes Python's holder format and refuses
   while another process holds it. test:
   `crates/gbackup/src/services_lock/tests.rs::holder_format_matches_python`.
+- 5.1.6 - A copy that fails after the stop still attempts the start. The
+  restore fails with the copy error and reports the start outcome. test:
+  `crates/gbackup/src/restore/falkordb/tests.rs::failed_copy_still_restarts_container`.
 
 ### 5.2 Restore command [category: code] (depends: 5.1)
 `kind: deliverable`
@@ -1878,11 +1938,14 @@ Implementation:
      `archive_verified` and `restore_verified`. Otherwise refuse, naming the
      stores and suggesting `gbackup verify DIR`.
   5. Run every refusal check before any write:
-     - files_home space and ownership (4.3);
+     - `preflight_files_restore` (4.3): the hash, the member graph, space
+       and ownership;
      - `pg_restore --list` in the target container;
      - a `--clean` target that is not `postgres`;
      - Qdrant and FalkorDB (5.1), with the Qdrant URL read from the target
-       database's config.
+       database's config;
+     - `ServicesLock::acquire` (5.1). A held lock refuses here. The guard
+       is held through the FalkorDB restart.
   6. Confirm. `--yes` skips the prompt. Otherwise a terminal prompt asks
      `Restore hub PostgreSQL, Qdrant, FalkorDB and files_home into the
      explicit target? [y/N]`. Without a terminal, it refuses with exit 1.
@@ -1891,19 +1954,21 @@ Implementation:
   8. Replay globals: `restorable_globals` strips `PASSWORD` clauses and
      makes each `CREATE ROLE` idempotent, as Python does. The result is
      piped to `psql -v ON_ERROR_STOP=1` through `docker exec`.
-  9. With `--clean`, reset the database as Python does, in process.
+  9. With `--clean`, reset the database as Python does, in a `pg::connect`
+     session (1.3).
   10. Run `pg_restore --no-owner` with `PGOPTIONS=-c event_triggers=off`.
   11. Probe the three extensions. A login refused by the maintenance guard
       fails with a message that the backup holds a pre-D1 maintenance
       epoch.
-  12. Restore Qdrant, then FalkorDB (5.1).
+  12. Restore Qdrant, then FalkorDB (5.1) with the held services-lock
+      guard.
   13. Run `drain_ephemeral_principals` (2.2).
   14. Print the redacted target.
 - A failure after the first write exits 1 and lists the completed steps.
   There is no rollback, as in Python.
 
 Planned verification:
-`GBACKUP_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo nextest run -p gobby-backup -E 'test(restore)'`,
+`GOBBY_TEST_PROTECT=1 GBACKUP_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo nextest run -p gobby-backup -E 'test(restore)'`,
 then `cargo clippy -p gobby-backup --all-targets -- -D warnings`. A live
 restore is out of scope for the leaf: it would replace the test hub.
 
@@ -1914,7 +1979,8 @@ restore is out of scope for the leaf: it would replace the test hub.
 - 5.2.2 - A restored store without `restore_verified` is refused, named,
   and pointed at `gbackup verify`. test:
   `crates/gbackup/src/restore/tests.rs::gate_requires_every_restored_store_verified`.
-- 5.2.3 - Every preflight refusal happens before the first write. The fake
+- 5.2.3 - Every preflight refusal happens before the first write,
+  including a late invalid tar member and a held services lock. The fake
   harness records no mutation. test:
   `crates/gbackup/src/restore/tests.rs::preflight_refusals_precede_mutation`.
 - 5.2.4 - Without a terminal and without `--yes`, restore refuses, and
@@ -2022,9 +2088,11 @@ then `cargo clippy -p gobby-backup --all-targets -- -D warnings`.
 
 Targets:
 - `crates/gbackup/src/verify.rs`
+- `crates/gbackup/src/verify/tests.rs`
 - `crates/gbackup/src/verify/volumes.rs`
 - `crates/gbackup/src/verify/volumes/tests.rs`
 - `crates/gbackup/src/cold.rs`
+- `crates/gbackup/src/cold/tests.rs`
 - `crates/gbackup/Cargo.toml`
 - `Cargo.lock`
 
@@ -2050,7 +2118,7 @@ Implementation:
 - `gbackup verify DIR` on a cold backup also verifies `volumes`.
 
 Planned verification:
-`cargo nextest run -p gobby-backup -E 'test(verify::volumes) | test(cold)'`,
+`cargo nextest run -p gobby-backup -E 'test(verify) | test(cold)'`,
 then `cargo clippy -p gobby-backup --all-targets -- -D warnings`. On the
 isolated test hub, with the test hub's daemon stopped, run
 `GOBBY_TEST_PROTECT=1 GOBBY_TEST_ALLOW_DOCKER=1 gbackup backup --cold
@@ -2066,8 +2134,10 @@ isolated test hub, with the test hub's daemon stopped, run
 - 6.2.3 - A cold backup is published only after all five stores verify
   inline. Any failure publishes nothing. test:
   `crates/gbackup/src/cold/tests.rs::cold_publishes_only_after_inline_verify`.
-- 6.2.4 - `gbackup verify` on a cold backup verifies `volumes`. test:
-  `crates/gbackup/src/verify/volumes/tests.rs::verify_command_covers_cold_volumes`.
+- 6.2.4 - `gbackup verify DIR` on a cold backup verifies all five stores,
+  rewrites the `volumes` verification state, and exits 1 when volumes
+  fail. test:
+  `crates/gbackup/src/verify/tests.rs::verify_command_covers_cold_volumes`.
 
 ## P7: OS Timers
 `kind: framing`
@@ -2423,6 +2493,22 @@ deferral:
   - Retention checks sizes only.
   - gbackup verifies only manifests it wrote.
   - D1 is widened to release assets plus the formula.
+- 2026-10-05 16:51 CDT: Enhancer pass (run `7027aef5`) on `efe6a44`. The
+  Orchestrator gobby#14972 accepted E1 to E6 and declined E7.
+  - E1: 4.3 splits `preflight_files_restore` from the write. 5.2 runs it
+    and takes `ServicesLock` before confirmation, and holds the guard
+    through the FalkorDB restart.
+  - E2: 5.1 attempts a FalkorDB start on every path after the stop (5.1.6).
+  - E3: `pg::serial_db_url` (1.3) admits only the test target under
+    `GOBBY_TEST_PROTECT`, and every `serial_db` command sets it.
+  - E4: `pg::connect` (1.3) sets `statement_timeout` and `lock_timeout` from
+    the capture budget, which keeps Decision Record 7's wait bounded.
+  - E5: 2.2.6 also refuses a `schema_migrations` table with no applied
+    version.
+  - E6: 6.2 targets `cold/tests.rs` and `verify/tests.rs`, and 6.2.4 moves to
+    the verify command harness.
+  - E7: a full recovery rehearsal on a test-owned hub, declined and recorded
+    under Rejected alternatives.
 
 ## V2: Verification
 `kind: verification`
@@ -2432,7 +2518,7 @@ last leaf lands:
 
 ```bash
 cargo nextest run -p gobby-backup
-GBACKUP_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo nextest run -p gobby-backup -E 'test(serial_db)'
+GOBBY_TEST_PROTECT=1 GBACKUP_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo nextest run -p gobby-backup -E 'test(serial_db)'
 cargo clippy -p gobby-backup --all-targets -- -D warnings && cargo fmt -p gobby-backup -- --check
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_install_setup_gbackup.py tests/cli/test_cli_install.py tests/cli/test_install_setup_gterm.py tests/install/test_version_pins.py tests/cli/test_install_binary_components.py tests/cli/test_install_components.py tests/utils/test_utils_status.py tests/cli/installers/test_backup_timers.py tests/cli/hub_backup/ tests/cli/installers/test_docker_guard.py tests/cli/test_hub_files_restore.py tests/cli/test_hub_backup_rehearsal.py tests/cli/test_hub_maintenance.py tests/cli/test_pack.py tests/cli/test_cli.py tests/fixtures/test_live_hub_scan.py -q
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
