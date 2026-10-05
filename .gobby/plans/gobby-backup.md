@@ -593,6 +593,11 @@ Implementation:
   - A writer takes `last-run.lock` through `flock_until`, reads the file,
     replaces its own mode's record, writes a 0600 temp file, fsyncs it,
     renames it over `last-run.json` and fsyncs the directory.
+  - When `last-run.lock` times out or the write fails, the previous
+    `last-run.json` stays as it was, because the rename never ran. A
+    timestamped line `<UTC> gbackup: could not record <mode> run:
+    <error>` goes to stderr, which the timer appends to its log, and the
+    run exits 1. A recording failure is never itself recorded.
   - An error string is the error chain's display. No code path formats a
     DSN or a key into an error.
 - `jitter_minutes(machine_id)` takes the first eight bytes of the
@@ -626,8 +631,10 @@ Planned verification:
 - 1.2.3 - The `Refuse` policy fails, naming the holder's PID and command.
   test: `crates/gbackup/src/envelope/tests.rs::refuse_policy_names_holder`.
 - 1.2.4 - Writing a `verify` record keeps the existing `backup` record, and
-  the file mode is 0600. test:
-  `crates/gbackup/src/envelope/tests.rs::last_run_replaces_only_its_mode`.
+  the file mode is 0600. A `last-run.lock` held past the deadline, or a
+  failed write, leaves the previous file byte-identical, prints the
+  timestamped stderr line, exits 1, and attempts no second record. test:
+  `crates/gbackup/src/envelope/tests.rs::last_run_replaces_only_its_mode_and_never_clobbers`.
 - 1.2.5 - Jitter is stable for one machine ID and always within 0 to 15
   minutes. test:
   `crates/gbackup/src/envelope/tests.rs::jitter_is_stable_and_bounded`.
@@ -967,8 +974,10 @@ Implementation:
 - `check_artifact_set(&manifest)` adds the semantic rules the schema
   cannot state, and leaves the v3 JSON shape alone:
   - Artifact names are unique, and so are paths.
-  - Each store that is not skipped has its required records exactly
-    once, at Python's paths: `postgres-dump` (`postgres/gobby.dump`),
+  - Only `volumes` may be skipped. `postgres`, `qdrant`, `falkordb` and
+    `files` always need their records, whatever their details claim. A
+    skipped `volumes` needs no volume records.
+  - Each required record appears exactly once, at Python's paths: `postgres-dump` (`postgres/gobby.dump`),
     `postgres-globals` (`postgres/globals.sql`), `falkordb-rdb`
     (`falkordb/dump.rdb`), `files-home` (`files/files_home.tar`), one
     `qdrant-<name>` per collection in `details.collections` whose path
@@ -1021,8 +1030,10 @@ Planned verification:
   `crates/gbackup/src/manifest/tests.rs::live_volumes_record_is_skipped_live_mode`.
 - 2.1.7 - `check_artifact_set` refuses an omitted required record, a
   duplicate name, a duplicate path, a Qdrant snapshot path with no
-  matching record, and an orphan `qdrant-` record. It accepts the
-  Python-written fixture and a gbackup-written live manifest. test:
+  matching record, an orphan `qdrant-` record, and a `postgres` store
+  whose details claim `skipped` while `postgres-globals` is omitted. It
+  accepts the Python-written fixture, a cold manifest and a
+  gbackup-written live manifest. test:
   `crates/gbackup/src/manifest/tests.rs::artifact_set_rules`.
 
 ### 2.2 PostgreSQL capture in an exported snapshot [category: code] (depends: 2.1)
@@ -1538,7 +1549,8 @@ Implementation:
   run. A retention failure after a published backup records `error`, names
   the published directory, and exits 1.
 - The record is written on every path, including a panic caught at the
-  entry point.
+  entry point. A failure to record follows 1.2: the previous record
+  stays, stderr carries the diagnostic, and the run exits 1.
 
 Planned verification:
 `cargo nextest run -p gobby-backup -E 'test(scheduled)'`, then `cargo clippy
@@ -1821,7 +1833,8 @@ Implementation:
   - A live `volumes` record stays skipped.
   - The manifest is rewritten through `write_manifest`.
 - No candidate means status `ok` with `nothing to verify`.
-- `--scheduled` adds the jitter and writes the `verify` record.
+- `--scheduled` adds the jitter and writes the `verify` record. A failure
+  to record follows 1.2.
 - `--json` prints `backup_root`, each store's flags, and `errors`.
 - Verify never takes the maintenance claim and never stops anything.
   Scratch Qdrant collections live on the hub Qdrant, as in Python.
@@ -2039,8 +2052,9 @@ restore is out of scope for the leaf: it would replace the test hub.
   and pointed at `gbackup verify`. test:
   `crates/gbackup/src/restore/tests.rs::gate_requires_every_restored_store_verified`.
 - 5.2.3 - Every preflight refusal happens before the first write: a
-  non-null `epoch_id`, an artifact-set defect, a late invalid tar member
-  and a held services lock among them. The fake harness records no
+  non-null `epoch_id`, an artifact-set defect (a forged skipped
+  `postgres` store without `postgres-globals` included), a late invalid
+  tar member and a held services lock among them. The fake harness records no
   mutation. test:
   `crates/gbackup/src/restore/tests.rs::preflight_refusals_precede_mutation`.
 - 5.2.4 - Without a terminal and without `--yes`, restore refuses, and
@@ -2372,7 +2386,7 @@ Targets:
 - `tests/cli/hub_backup/test_manifest.py::*` — operation: delete — scope-reason: tests the retired manifest module
 - `tests/cli/hub_backup/test_globals_credentials.py::*` — operation: delete — scope-reason: tests the retired globals handling
 - `tests/cli/installers/test_docker_guard.py::*` — scope-reason: delete the four hub-backup guard tests and their hub imports
-- `tests/cli/test_hub_files_restore.py::*` — scope-reason: delete `test_hub_backup_restore_files_uses_dest_files_home`, `_fake_verified_manifest` and the `hub_cli` import
+- `tests/cli/test_hub_files_restore.py::*` — scope-reason: delete `test_hub_backup_restore_files_uses_dest_files_home`, `_fake_verified_manifest`, the `hub_cli` import and the `FILES_ARCHIVE_RELPATH` import
 - `tests/cli/test_hub_backup_rehearsal.py::*` — scope-reason: delete the tests that drive retired internals (`_hub_backup_target`, `_archive_volumes`, `tar_volumes`, `stop_daemon`); keep the rehearsal-profile and `_start_daemon` tests
 - `tests/cli/test_hub_maintenance.py::*` — scope-reason: delete `test_hub_backup_epoch_refuses_non_orchestrator_invocation` and its `hub_backup` import
 - `tests/fixtures/test_live_hub_scan.py::*` — scope-reason: drop the allowlist entries of deleted or trimmed test files, because the scan requires an exact match
@@ -2576,8 +2590,8 @@ deferral:
     the verify command harness.
   - E7: a full recovery rehearsal on a test-owned hub, declined and recorded
     under Rejected alternatives.
-- 2026-10-05 17:05 CDT: Adversary round 1 (Adv1 gobby#15401) on `399bbbe`.
-  The Writer accepted all five blocking findings.
+- 2026-10-05 17:05 CDT: Adversary findings B1 to B5 from Adv1
+  gobby#15401 on `399bbbe`. The Writer accepted all five.
   - B1: `flock_until` (1.2) bounds every blocking lock by the capture
     budget, and Decision Record 7 says so.
   - B2: restore refuses a non-null `epoch_id` before any write (5.2,
@@ -2586,6 +2600,14 @@ deferral:
     `falkordb_matches` (2.4) is shared by 4.2 and 5.1 (Decision Record 13).
   - B4: the reset test works on its own disposable database (5.2.7).
   - B5: `check_artifact_set` (2.1) runs before every verify and restore.
+- 2026-10-05 17:20 CDT: Adv1 verified `ed7821d`, which resolved B2 to B4.
+  The Writer accepted its two adjacent residuals.
+  - B1: a failure to record keeps the previous `last-run.json`, writes
+    a stderr diagnostic and exits 1 (1.2.4, 3.2, 4.4).
+  - B5: only `volumes` may be skipped. A forged skipped required store
+    is refused before any write (2.1.7, 5.2.3).
+  - 8.1 also removes the `FILES_ARCHIVE_RELPATH` import from
+    `tests/cli/test_hub_files_restore.py`.
 
 ## V2: Verification
 `kind: verification`
