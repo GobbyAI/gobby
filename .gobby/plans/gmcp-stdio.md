@@ -38,8 +38,9 @@ module that does not exist).
 - The agent sandbox drops the wrapper's main-repo read grant and its
   `gobby mcp-server` text (1.8).
 
-The streamable HTTP transport, OAuth, thin-node use, live activation, and
-publishing are deferred sections D1 to D5, each with an owner.
+Live activation, the streamable HTTP transport, OAuth, thin-node use,
+publishing, and the post-switch smoke proof are deferred sections D1 to D6, each
+with an owner.
 
 ## Decision Record
 `kind: framing`
@@ -169,12 +170,13 @@ Writer decisions:
   - `gcode grep -w` for `_resolved_gobby_mcp_command`,
     `_is_repairable_stale_gobby_mcp_server_config`, and
     `mcp_config_read_exceptions`.
-  - `docs/evidence/**`, `docs/plans/**`, `docs/audits/**`,
+  - `docs/evidence/**`, `docs/plans/**`, `docs/audits/**`, `docs/archive/**`,
     `tests/fixtures/provider_contracts/**`, and `CHANGELOG.md` hold dated history
     and are excluded.
-- **Landing order.** D1 (live activation) must be complete before the Merge
-  Manager lands 1.6. Each landing's daemon restart makes spawns launch
-  `~/.gobby/bin/gmcp`.
+- **Landing order.** D1 (pre-switch promotion) must be complete before the
+  Merge Manager lands 1.6. The daemon restart that follows the 1.6 landing makes
+  spawns launch `~/.gobby/bin/gmcp`. D6 (post-switch smoke proof) runs after
+  that restart.
 
 ## Parent D3 Mapping
 `kind: framing`
@@ -741,6 +743,8 @@ Targets:
 - `web/src/api/runtimeConfigCodecVectors.gen.ts::*` — scope-reason: regenerated with the contract
 - `tests/contracts/http/config_schema.json::*` — scope-reason: the `/api/config/schema` snapshot drops `tool_timeouts`
 - `docs/reference-audit/admin.json::*` — scope-reason: the `gobby mcp-server` row becomes a `gmcp` row
+- `web/src/components/settings/sections/McpToolsSection.tsx::*` — scope-reason: the `tool_timeouts` path and its Per-tool timeouts editor leave
+- `web/src/components/settings/sections/configFields.tsx::*` — scope-reason: `NumberMapConfigField` leaves; the `tool_timeouts` editor was its only consumer
 - `docs/guides/configuration.md`
 - `docs/guides/mcp-tools.md`
 - `docs/guides/cli-commands.md`
@@ -759,6 +763,8 @@ Targets:
 - `tests/cli/test_cli.py::*` — scope-reason: the `mcp-server` command and help assertions leave
 - `tests/config/test_servers.py::*` — scope-reason: the `tool_timeouts` cases leave
 - `tests/config/test_config_registry.py::*` — scope-reason: the `tool_timeouts` mapping pattern leaves the expected set
+- `web/src/components/settings/sections/__tests__/McpToolsSection.test.tsx::*` — scope-reason: the `tool_timeouts` fixture and editor case leave, and a case asserts the editor is absent
+- `web/tests/style-surfaces.spec.ts::*` — scope-reason: the settings fixture drops `tool_timeouts`
 
 **Research context:**
 - Only `cli/mcp.py`, the stdio modules, and tests import the stdio modules
@@ -767,6 +773,12 @@ Targets:
   `current_terminal_context` and `serialize_terminal_context` have no
   non-wrapper caller.
 - `tool_timeouts` is read only by `DaemonProxy._get_tool_timeouts`.
+- The web settings page edits it.
+  `web/src/components/settings/sections/McpToolsSection.tsx` lists
+  `mcp_client_proxy.tool_timeouts` in `PROXY_PATHS` and renders the "Per-tool
+  timeouts (seconds)" `NumberMapConfigField`. That editor is the only consumer
+  of `configFields.tsx::NumberMapConfigField`. `McpToolsSection.test.tsx`
+  edits the field, and `web/tests/style-surfaces.spec.ts` seeds it.
   `scripts/generate_runtime_config_contract.py` emits both the gcore contract
   JSON and `web/src/api/runtimeConfigCodecVectors.gen.ts` from the registry.
   `tests/config/test_runtime_config_contract.py` checks both.
@@ -787,6 +799,10 @@ Targets:
   mapping patterns, then regenerate with
   `uv run python scripts/generate_runtime_config_contract.py` and refresh the
   HTTP config-schema snapshot.
+- The MCP & Tools settings section drops the `tool_timeouts` path and editor,
+  and `configFields.tsx` drops `NumberMapConfigField`. The unit test replaces
+  the editor case with `omitsRetiredPerToolTimeoutsEditor`, and both web
+  fixtures drop the key.
 - `admin.json` replaces the `gobby mcp-server` row with a `gmcp` row:
   reference `clients.md`, implementation `crates/gmcp/src/main.rs::main`, and
   verification `public-cli-inventory`.
@@ -799,8 +815,10 @@ inventory forgets it, or the setting documented after its reader is gone.
 
 **Focused verification (planned):**
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/ tests/cli/test_cli.py tests/config/ tests/skills/ tests/contracts/test_http_corpus.py -q`,
-then `uv run ruff check src/`, `uv run mypy src/`, and
-`gcode grep -F "mcp_proxy.stdio" src tests` with no hits.
+then `npx vitest run src/components/settings/sections/__tests__/McpToolsSection.test.tsx`
+and `npx tsc --noEmit` in `web/`, `uv run ruff check src/`, `uv run mypy src/`,
+and `gcode grep -F "mcp_proxy.stdio" src tests` and
+`gcode grep -F "tool_timeouts" src tests web` with no hits.
 
 **Acceptance:**
 
@@ -809,6 +827,7 @@ then `uv run ruff check src/`, `uv run mypy src/`, and
 - 1.7.3 - `mcp_client_proxy.tool_timeouts` is absent from the config model, the registry, the gcore contract, the web vectors, and the HTTP schema snapshot. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
 - 1.7.4 - The reference audit carries a `gmcp` row and no `gobby mcp-server` row. behavior: "gmcp" in `docs/reference-audit/admin.json`.
 - 1.7.5 - The guides describe `gmcp` as the stdio transport. behavior: "gmcp" in `docs/guides/mcp-tools.md`.
+- 1.7.6 - The MCP & Tools settings section renders no Per-tool timeouts editor, and `NumberMapConfigField` no longer exists. test: `web/src/components/settings/sections/__tests__/McpToolsSection.test.tsx::omitsRetiredPerToolTimeoutsEditor`.
 
 ### 1.8 The sandbox drops the wrapper's read grant [category: code] (depends: 1.6)
 `kind: deliverable`
@@ -869,15 +888,13 @@ then `uv run ruff check` and `uv run mypy` on the touched modules.
 - 1.8.3 - The sandbox read paths keep the `uv` cache roots after the move. test: `tests/agents/test_sandbox.py::test_package_installs_use_explicit_per_run_cache_paths`.
 - 1.8.4 - The loopback-egress comment names `gmcp`. behavior: "gmcp" in `src/gobby/agents/srt_settings.py`.
 
-## D1 Live activation: `gmcp` on the hub before launch sites switch (depends: 1.3, 1.4)
+## D1 Pre-switch promotion: `gmcp` on the hub before launch sites switch (depends: 1.3, 1.4)
 `kind: deferred`
 
 - D1.1: after 1.1 to 1.4 land, the PD runs `gobby install gmcp` from the main
   checkout and confirms that `~/.gobby/bin/gmcp --version` answers. This needs
   no daemon restart.
 - D1.2: the PD tells the Merge Manager that 1.6 may land.
-- D1.3: after 1.6 lands and its restart completes, a newly spawned Claude agent
-  and a Codex agent each list Gobby tools within their first turn.
 
 ```yaml
 deferral:
@@ -887,7 +904,6 @@ deferral:
   original_acceptance_items:
     - D1.1
     - D1.2
-    - D1.3
 ```
 
 ## D2 Streamable HTTP transport as the `mcp` route family
@@ -976,6 +992,25 @@ deferral:
     - D5.3
 ```
 
+## D6 Post-switch smoke proof (depends: 1.6)
+`kind: deferred`
+
+- D6.1: after 1.6 lands and its daemon restart completes, a newly spawned
+  Claude agent and a newly spawned Codex agent each list Gobby tools within
+  their first turn.
+- D6.2: during a later daemon restart, a live `gmcp` answers
+  `DAEMON_UNAVAILABLE` and recovers afterwards without relaunch.
+
+```yaml
+deferral:
+  task_ref: "TBD-at-expansion"
+  reason: "The proof needs the 1.6 landing, a live daemon restart, and fresh spawns on the operator's hub, which are PD operations outside any leaf. It expands as a planning task held needs-planning with a blocked-by edge to 1.6; the Orchestrator retypes it to manual."
+  owner: "program-director"
+  original_acceptance_items:
+    - D6.1
+    - D6.2
+```
+
 ## V1 Plan Changelog
 `kind: verification`
 
@@ -997,6 +1032,4 @@ After every leaf has passed:
 3. Run `uv run gobby plans validate .gobby/plans/gmcp-stdio.md -p <root>` and
    `gcode grep -F "gobby mcp-server" src`. Hits remain only in the 1.6
    repair.
-4. After D1 and 1.6: a cold spawned agent lists Gobby tools within its first
-   turn, and `gmcp` answers `DAEMON_UNAVAILABLE` during a daemon restart and
-   recovers afterwards without relaunch.
+4. D6 records the post-switch smoke proof.
