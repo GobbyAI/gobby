@@ -187,16 +187,25 @@ async def test_preview_reports_another_task_busy_without_directing_real_close(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("other_occupied", [False, True])
 async def test_preview_reports_same_task_terminal_review_with_live_run_busy(
     monkeypatch: pytest.MonkeyPatch,
+    other_occupied: bool,
 ) -> None:
     terminal = _review(status="invalid", run_id=_FIRST_REVIEW_RUN_ID)
+    other = replace(
+        _review(status="running", run_id=_SECOND_REVIEW_RUN_ID),
+        id="other-review",
+        task_id="other-task",
+        task_ref="#101",
+    )
+    occupied = (terminal, other) if other_occupied else (terminal,)
     store = _Store(terminal)
     monkeypatch.setattr(
         store,
         "get_admission_blocker",
         lambda _project_id, *, task_id, max_concurrency: TaskCloseReviewBusyError(
-            terminal, active_reviews=(terminal,), max_concurrency=max_concurrency
+            terminal, active_reviews=occupied, max_concurrency=max_concurrency
         ),
     )
     _patch_store(monkeypatch, store)
@@ -211,9 +220,12 @@ async def test_preview_reports_same_task_terminal_review_with_live_run_busy(
     assert result["error"] == "close_review_busy"
     assert result["active_review_status"] == "invalid"
     assert result["project_review_capacity"] == 3
-    assert result["active_review_count"] == 1
+    assert result["active_review_count"] == len(occupied)
+    assert result["active_task_refs"] == [review.task_ref for review in occupied]
     assert "previous close-review run" in result["message"]
     assert "capacity is full" not in result["message"]
+    assert "Wait for that run to finish, then retry close_task." in result["message"]
+    assert "Wait for an occupied review" not in result["message"]
     assert store.created_arguments is None
 
 

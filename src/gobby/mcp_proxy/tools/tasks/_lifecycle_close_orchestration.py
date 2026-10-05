@@ -95,9 +95,10 @@ def busy_review_response(
         if active_review.task_id == task_id
         else "The project's close-review capacity is full"
     )
+    wait_for = "that run" if active_review.task_id == task_id else "an occupied review"
     message = (
         f"{reason} (capacity {blocker.max_concurrency}, active count {count}). "
-        f"Occupied reviews: {refs}. Wait for an occupied review to finish, then retry close_task. "
+        f"Occupied reviews: {refs}. Wait for {wait_for} to finish, then retry close_task. "
         "No review was queued for this task."
     )
     return {
