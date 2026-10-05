@@ -374,7 +374,7 @@ def _record_from_marker_data(
     source = str(data.get("source", "unknown"))
     timestamp = _optional_float(data.get("timestamp"))
     age = (time.time() - timestamp) if timestamp is not None else None
-    stale = age is None or age >= max_age_seconds
+    stale = age is None or not 0 <= age < max_age_seconds
     if stale:
         return ShutdownIntentRecord(
             intent=ShutdownIntent.STOP,

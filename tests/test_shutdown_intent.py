@@ -29,6 +29,30 @@ from gobby.shutdown_intent import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("intent", [ShutdownIntent.RESTART, ShutdownIntent.STOP])
+@pytest.mark.parametrize("age", [-1.0, 0.0, 119.0, 120.0])
+def test_shutdown_marker_freshness_bounds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, intent: ShutdownIntent, age: float
+) -> None:
+    monkeypatch.setattr("gobby.shutdown_intent.time.time", lambda: 1000.0)
+    write_shutdown_intent("freshness_test", intent, home=tmp_path)
+    marker = get_active_shutdown_marker_path(tmp_path)
+    raw = marker.read_bytes()
+    monkeypatch.setattr("gobby.shutdown_intent.time.time", lambda: 1000.0 + age)
+
+    records = [
+        read_active_shutdown_intent(home=tmp_path, max_age_seconds=120),
+        read_shutdown_source_record(home=tmp_path, max_age_seconds=120),
+        read_shutdown_intent(home=tmp_path, consume=False, max_age_seconds=120),
+    ]
+    fresh = 0 <= age < 120
+    for record in records:
+        assert record is not None
+        assert record.stale is not fresh
+        assert record.intent is (intent if fresh else ShutdownIntent.STOP)
+    assert marker.read_bytes() == raw
+
+
 def test_read_shutdown_intent_missing_marker_defaults_to_stop(tmp_path: Path) -> None:
     record = read_shutdown_intent(home=tmp_path)
 
