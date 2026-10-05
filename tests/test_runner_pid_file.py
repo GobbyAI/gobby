@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import select
 import stat
 import subprocess  # nosec B404 - the test's child is started through gobby.utils.spawn
 import sys
@@ -39,6 +40,7 @@ from gobby.runner_pid_file import (
     reserve_service_start,
     service_nonce_path,
 )
+from gobby.runner_pid_record import decode_record, encode_record
 from gobby.utils import spawn
 from tests.runner_helpers import create_base_patches
 
@@ -47,6 +49,105 @@ pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_wi
 
 def _daemon_probe(pid: int = 4242) -> SingletonProbe:
     return SingletonProbe(state=ProbeState.DAEMON, pid=pid, role="daemon")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Rust flock capability is Unix-only")
+@pytest.mark.parametrize("role", ["daemon", "maintenance"])
+def test_probe_reports_gdaemon_claim(tmp_path: Path, role: str) -> None:
+    """Build peer first: cargo build -p gobby-daemon --example pid_claim_fixture."""
+    peer = Path(__file__).resolve().parents[1] / "target/debug/examples/pid_claim_fixture"
+    assert peer.is_file(), "build the Rust pid_claim_fixture example before this focused test"
+    pid_file = tmp_path / "gobby.pid"
+    env = dict(os.environ)
+    env.pop("GOBBY_SERVICE_LAUNCH", None)
+    env.pop("GOBBY_SERVICE_NONCE", None)
+    child = spawn.popen(
+        [str(peer), str(pid_file), role],
+        env=env,
+        text=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        assert child.stdout is not None
+        ready, _, _ = select.select([child.stdout], [], [], 10)
+        assert ready, "Rust peer did not publish its claim"
+        banner = child.stdout.readline().split()
+        assert banner[0] == "ready"
+        probe = probe_daemon_lock(pid_file)
+        assert probe.state is (ProbeState.DAEMON if role == "daemon" else ProbeState.MAINTENANCE)
+        assert probe.pid == int(banner[1])
+        assert probe.role == role
+        assert probe.generation == 1
+        winner = pid_file.with_name("gobby.pid.lock").read_bytes()
+        assert claim_pid_file(pid_file) is None
+        assert pid_file.with_name("gobby.pid.lock").read_bytes() == winner
+        output, errors = child.communicate("release\n", timeout=10)
+        assert child.returncode == 0, (output, errors)
+        assert probe_daemon_lock(pid_file).state is ProbeState.ABSENT
+        claim = claim_pid_file(pid_file)
+        assert claim is not None
+        claim.release()
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=10)
+
+
+@pytest.mark.parametrize("name", ["daemon_claim", "service_reservation"])
+def test_pid_record_goldens_are_python_canonical(name: str) -> None:
+    path = Path(__file__).parent / "fixtures/pid_file_records" / f"{name}.json"
+    raw = path.read_bytes().rstrip(b"\n")
+    record = decode_record(raw)
+    assert record is not None
+    assert encode_record(record) == raw
+    assert record["generation"] == (7 if name == "daemon_claim" else 8)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Rust flock capability is Unix-only")
+@pytest.mark.parametrize("marker", ["1", "0", "true"])
+def test_gdaemon_converts_python_reservation(tmp_path: Path, marker: str) -> None:
+    peer = Path(__file__).resolve().parents[1] / "target/debug/examples/pid_claim_fixture"
+    assert peer.is_file(), "build the Rust pid_claim_fixture example before this focused test"
+    pid_file = tmp_path / "雪-😀.pid"
+    reserved = reserve_service_start(pid_file, backend="launchd")
+    env = {**os.environ, "GOBBY_SERVICE_LAUNCH": marker, "GOBBY_SERVICE_NONCE": reserved.nonce_path}
+    child = spawn.popen(
+        [str(peer), str(pid_file)],
+        env=env,
+        text=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        if marker != "1":
+            output, errors = child.communicate(timeout=10)
+            assert child.returncode != 0, output
+            assert "claim refused" in errors
+            assert probe_daemon_lock(pid_file).state is ProbeState.LIVE_RESERVATION
+            assert Path(reserved.nonce_path).read_text() == reserved.nonce
+            return
+        assert child.stdout is not None
+        ready, _, _ = select.select([child.stdout], [], [], 10)
+        assert ready, "Rust peer did not convert its reservation"
+        assert child.stdout.readline().startswith("ready ")
+        probe = probe_daemon_lock(pid_file)
+        assert probe.state is ProbeState.DAEMON
+        assert probe.pid == child.pid
+        assert probe.generation == 2
+        assert not Path(reserved.nonce_path).exists()
+        record = decode_record(pid_file.with_name(f"{pid_file.name}.lock").read_bytes())
+        assert record is not None
+        assert record["ack"] == {"status": "converted", "pid": child.pid}
+        output, errors = child.communicate("release\n", timeout=10)
+        assert child.returncode == 0, (output, errors)
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=10)
+        cancel_service_reservation(pid_file)
 
 
 def _cli_runtime() -> CliRunner:
