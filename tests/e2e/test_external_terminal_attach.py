@@ -27,14 +27,14 @@ import websockets
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import AttachLocator, TerminalManager
 from gobby.terminals.frame_client import FrameClient, FrameProtocolError
-from gobby.terminals.host_protocol import read_pidfile
 from tests._timing import wait_for_awaited_condition, wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
     MCPTestClient,
+    create_host_socket_dir,
     daemon_token,
-    terminate_process_tree,
+    stop_terminal_host,
 )
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.native_binary_selection import select_native_binary
@@ -105,9 +105,9 @@ def _gterm_bin_dir() -> Path:
 
 def _short_socket_dir() -> Path:
     root = os.environ.get("CLAUDE_CODE_TMPDIR") or tempfile.gettempdir()
-    path = Path(tempfile.mkdtemp(prefix="", dir=root)).resolve()
+    path = create_host_socket_dir(Path(root), prefix="")
     if len(os.fsencode(path / "gterm-control.sock")) >= 104:
-        path.rmdir()
+        shutil.rmtree(path)
         pytest.fail(f"Permitted temp root is too long for AF_UNIX sockets: {root}")
     return path
 
@@ -139,9 +139,7 @@ def e2e_pre_daemon_setup(
         monkeypatch.setenv("GOBBY_E2E_HOST_SOCKET_DIR", str(socket_dir))
         yield
     finally:
-        host_pid = read_pidfile(socket_dir)
-        if host_pid is not None:
-            terminate_process_tree(host_pid)
+        stop_terminal_host(socket_dir)
         shutil.rmtree(socket_dir, ignore_errors=True)
 
 
