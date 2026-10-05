@@ -174,6 +174,91 @@ async def test_same_seat_noop_and_role_change_refused(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("drift", [False, True])
+async def test_activation_preserves_runtime_defaults(
+    temp_db: HubDatabase,
+    session_id: str,
+    definitions: dict[str, AgentDefinitionBody],
+    drift: bool,
+) -> None:
+    from gobby.storage.definitions.variables import SessionVariableDefaultManager
+
+    defaults = SessionVariableDefaultManager(temp_db)
+    for name, value in {
+        "task_claimed": False,
+        "claimed_tasks": {},
+        "task_edited_files": {},
+    }.items():
+        defaults.create(name=name, default_value=value)
+    apply = apply_definition()
+    if drift:
+        await apply(agent="x", db=temp_db, session_id=session_id)
+        definitions["x"].description = "Changed definition."
+    runtime = {
+        "task_claimed": True,
+        "claimed_tasks": {"u1": "#1"},
+        "task_edited_files": {"u1": ["src/example.py"]},
+    }
+    manager = SessionVariableManager(temp_db)
+    manager.merge_variables(session_id, runtime)
+    result = await apply(agent="x", db=temp_db, session_id=session_id)
+    assert result["status"] == "applied"
+    stored = manager.get_variables(session_id)
+    assert {key: stored[key] for key in runtime} == runtime
+
+
+@pytest.mark.asyncio
+async def test_relaunch_preserves_caller_overlay_after_cleanup(
+    temp_db: HubDatabase, session_id: str, definitions: dict[str, AgentDefinitionBody]
+) -> None:
+    apply = apply_definition()
+    await apply(agent="x", db=temp_db, session_id=session_id)
+    result = await apply(
+        agent="y", db=temp_db, session_id=session_id, relaunch=True, variables={"x_only": 7}
+    )
+    assert result["status"] == "applied"
+    assert SessionVariableManager(temp_db).get_variables(session_id)["x_only"] == 7
+
+
+@pytest.mark.asyncio
+async def test_activation_preserves_runtime_update_after_build(
+    temp_db: HubDatabase, session_id: str, definitions: dict[str, AgentDefinitionBody]
+) -> None:
+    from gobby.storage.definitions.variables import SessionVariableDefaultManager
+
+    SessionVariableDefaultManager(temp_db).create(name="task_claimed", default_value=False)
+    module = activation_module()
+    build = module.build_definition_changes
+    manager = SessionVariableManager(temp_db)
+
+    def update_during_build(*args: Any, **kwargs: Any) -> Any:
+        result = build(*args, **kwargs)
+        manager.merge_variables(session_id, {"task_claimed": True})
+        return result
+
+    with patch.object(module, "build_definition_changes", side_effect=update_during_build):
+        result = await apply_definition()(agent="x", db=temp_db, session_id=session_id)
+    assert result["status"] == "applied"
+    assert manager.get_variables(session_id)["task_claimed"] is True
+
+
+@pytest.mark.asyncio
+async def test_definition_variables_overwrite_runtime_on_activation_and_relaunch(
+    temp_db: HubDatabase, session_id: str, definitions: dict[str, AgentDefinitionBody]
+) -> None:
+    definitions["y"].workflows.variables = {"x_only": 2}
+    manager = SessionVariableManager(temp_db)
+    manager.merge_variables(session_id, {"x_only": 99})
+    apply = apply_definition()
+    first = await apply(agent="x", db=temp_db, session_id=session_id)
+    assert first["status"] == "applied"
+    assert manager.get_variables(session_id)["x_only"] == 1
+    second = await apply(agent="y", db=temp_db, session_id=session_id, relaunch=True)
+    assert second["status"] == "applied"
+    assert manager.get_variables(session_id)["x_only"] == 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("target", ["y", "default"])
 async def test_relaunch_switches_seat_and_clears_previous_keys(
     temp_db: HubDatabase, session_id: str, definitions: dict[str, AgentDefinitionBody], target: str

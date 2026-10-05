@@ -192,20 +192,6 @@ def activate_default_agent(
     }
     variables_count = len([k for k in changes if k not in internal_keys])
 
-    if existing:
-        always_reapply = {
-            "_agent_type",
-            "_active_rule_names",
-            "_active_skill_names",
-            "_skill_format",
-            "_agent_blocked_tools",
-            "_agent_blocked_mcp_tools",
-            "is_spawned_agent",
-            "_agent_definition_hash",
-            "_agent_definition_keys",
-        }
-        changes = {k: v for k, v in changes.items() if k in always_reapply or k not in existing}
-
     _ta_vars = time.monotonic()
     committed = commit_definition_changes(
         db,
@@ -215,6 +201,7 @@ def activate_default_agent(
         expected_agent_type=expected_agent_type,
         relaunch=False,
         same_pin_noop=False,
+        definition_variable_names=set(agent_body.workflows.variables),
     )
     if committed["status"] != "applied":
         handler.logger.warning(

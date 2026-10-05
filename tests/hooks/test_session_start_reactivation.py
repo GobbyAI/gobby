@@ -151,6 +151,22 @@ async def test_compact_sessionstart_keeps_seat_skills_and_rules(
 
 
 @pytest.mark.asyncio
+async def test_compact_preserves_defaults_and_reapplies_definition_variables(
+    temp_db: HubDatabase, session_id: str, seats: dict[str, AgentDefinitionBody]
+) -> None:
+    from gobby.storage.definitions.variables import SessionVariableDefaultManager
+
+    SessionVariableDefaultManager(temp_db).create(name="task_claimed", default_value=False)
+    await apply_agent_definition_impl("x", temp_db, session_id)
+    manager = SessionVariableManager(temp_db)
+    manager.merge_variables(session_id, {"task_claimed": True, "x_only": 99})
+    compact(temp_db, session_id)
+    stored = manager.get_variables(session_id)
+    assert stored["task_claimed"] is True
+    assert stored["x_only"] == 1
+
+
+@pytest.mark.asyncio
 async def test_inherit_provider_pin_is_stable_across_entry_points(
     temp_db: HubDatabase, session_id: str, seats: dict[str, AgentDefinitionBody]
 ) -> None:

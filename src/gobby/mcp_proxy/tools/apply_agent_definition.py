@@ -215,6 +215,8 @@ def commit_definition_changes(
     expected_agent_type: Any,
     relaunch: bool,
     same_pin_noop: bool,
+    definition_variable_names: set[str] | None = None,
+    overlays: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Recheck identity under the step lock and commit exactly one variable merge."""
     from gobby.storage.hub.protocol import AgentStepInstanceMutation
@@ -237,7 +239,25 @@ def commit_definition_changes(
         )
         if decision != "apply":
             return {"status": decision, "agent": current_agent}
-        delta = dict(changes)
+        always_reapply = {
+            "_agent_type",
+            "_active_rule_names",
+            "_active_skill_names",
+            "_skill_format",
+            "_agent_blocked_tools",
+            "_agent_blocked_mcp_tools",
+            "is_spawned_agent",
+            "_agent_definition_hash",
+            "_agent_definition_keys",
+            "_agent_context_injected",
+            "_agent_identity_reinject",
+            "step_workflow_complete",
+        } | (definition_variable_names or set())
+        delta = {
+            key: value
+            for key, value in changes.items()
+            if key in always_reapply or key not in current
+        }
         previous_keys = set(current.get("_agent_definition_keys") or [])
         new_keys = set(changes["_agent_definition_keys"])
         identity_change = (
@@ -250,6 +270,7 @@ def commit_definition_changes(
         else:
             new_keys |= previous_keys
         delta["_agent_definition_keys"] = sorted(new_keys)
+        delta.update(overlays or {})
         merged = manager.merge_variables(session_id, delta)
         return {"status": "applied", "agent": agent, "variables": merged}
 
@@ -342,8 +363,6 @@ async def apply_agent_definition_impl(
     collision = colliding_definition_variable_error(variables, changes=changes, extra_vars=extra)
     if collision:
         return _refusal("variable_collision", collision)
-    changes.update(extra)
-    changes.update(variables or {})
     committed = commit_definition_changes(
         db,
         session_id,
@@ -352,6 +371,8 @@ async def apply_agent_definition_impl(
         expected_agent_type=stored.get("_agent_type"),
         relaunch=relaunch,
         same_pin_noop=True,
+        definition_variable_names=set(body.workflows.variables),
+        overlays={**extra, **(variables or {})},
     )
     if committed["status"] != "applied":
         return _activation_receipt(committed["status"], committed["agent"], agent)
