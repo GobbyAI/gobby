@@ -259,8 +259,10 @@ gcode before editing.
   `DBSIZE`. It then copies the RDB with `docker cp`.
 - `tar_volumes` (630-673) inventories each volume through a read-only
   `alpine` container and writes `volumes/<volume>.tar.gz` with
-  `tar czf`. `_archive_volumes` (550-582) stops the services first, refuses
-  when they did not stop, and restarts them in `finally`.
+  `tar czf`.
+- `_archive_volumes` (cli.py 550-582) stops the services first, refuses
+  when they did not stop, and restarts them in `finally`. A failed stop
+  raises before that `try`, so a partial stop leaves services stopped.
 - `archive_rule_allow_audit_logs` (708-738) copies
   `rule-allow-audit.jsonl` and its numeric rotations from the logs directory
   to `logs/`. It refuses symlinks, and a missing directory archives nothing.
@@ -858,7 +860,7 @@ Implementation:
   `name in {"gclient", "gterm", "gbackup"}` branch.
 
 Planned verification:
-`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_install_setup_gbackup.py tests/cli/test_cli_install.py tests/cli/test_install_setup_gterm.py tests/install/test_version_pins.py tests/cli/test_install_binary_components.py -q`,
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_install_setup_gbackup.py tests/cli/test_cli_install.py tests/cli/test_install_setup_gterm.py tests/install/test_version_pins.py tests/cli/test_install_binary_components.py tests/cli/test_install_components.py -q`,
 then `uv run ruff check src/ && uv run mypy src/` and a test-types audit of
 the changed tests.
 
@@ -1925,15 +1927,18 @@ Implementation:
   refuses when `DBSIZE` is above 0.
 - `restore_falkordb` takes the caller's held `ServicesLock` guard, and
   never acquires the lock itself:
-  1. `docker stop` the FalkorDB container.
+  1. Arm the start cleanup, then `docker stop` the FalkorDB container.
+     A stop that exits nonzero, outlives its Docker timeout (1.3) or
+     leaves the container running fails the restore before the copy.
   2. `docker cp` the RDB to `/var/lib/falkordb/data/dump.rdb`.
   3. `docker start` the container.
   4. Wait up to 60 s for `PING` and for loading to finish.
   5. Compare the graph list and counts through `falkordb_matches` (2.4).
 
-  After a successful stop, every later path attempts `docker start`,
-  a failed copy included. The restore keeps the original error, and
-  also reports a failed start or readiness wait, naming the container.
+  Every path after the stop attempt runs the start and the readiness
+  wait, a failed stop and a failed copy included. The restore keeps the
+  original error, and also reports a failed start or readiness wait,
+  naming the container. The guard stays held until the cleanup ends.
   This restarts the service. It never rolls back restored data.
 
 Planned verification:
@@ -1958,9 +1963,12 @@ gobby-backup --all-targets -- -D warnings`.
 - 5.1.5 - The services lock writes Python's holder format and refuses
   while another process holds it. test:
   `crates/gbackup/src/services_lock/tests.rs::holder_format_matches_python`.
-- 5.1.6 - A copy that fails after the stop still attempts the start. The
-  restore fails with the copy error and reports the start outcome. test:
-  `crates/gbackup/src/restore/falkordb/tests.rs::failed_copy_still_restarts_container`.
+- 5.1.6 - A stop that exits nonzero, a stop that times out, a container
+  still running after the stop, and a copy that fails each still attempt
+  the start and the readiness wait. The restore fails with the original
+  error. When the start or the wait also fails, it reports that failure
+  too, naming the container. test:
+  `crates/gbackup/src/restore/falkordb/tests.rs::every_path_after_stop_attempt_restarts_container`.
 
 ### 5.2 Restore command [category: code] (depends: 5.1)
 `kind: deliverable`
@@ -2118,9 +2126,11 @@ Targets:
 - `crates/gbackup/src/lib.rs`
 
 **Research context:**
-- `_archive_volumes` (_stores.py lines 550-582) stops the services through
+- `_archive_volumes` (cli.py lines 550-582) stops the services through
   Compose, refuses when they did not stop, restarts them in `finally`, and
-  fails when the restart fails.
+  fails when the restart fails. Its `try` starts after the stop, so a
+  failed or partial stop (566-569) restarts nothing. gbackup arms the
+  start before the first stop.
 - `tar_volumes` (630-673):
   - inventories each volume by streaming a tar out of a read-only `alpine`
     container into `tar_stream_inventory`;
@@ -2143,11 +2153,18 @@ Implementation:
   3. Run the logical captures with `Mode::Cold`, so PostgreSQL drains
      first (2.2). Then capture Qdrant, FalkorDB, files_home, the audit logs
      and the machine identity.
-  4. Under `ServicesLock` (5.1), `docker stop` the three managed containers
-     and require each to report not running.
+  4. Take `ServicesLock` (5.1) and arm the start cleanup. Then `docker
+     stop` the three managed containers and require each to report not
+     running. A stop that exits nonzero, outlives its Docker timeout
+     (1.3) or leaves a container running fails the run before any
+     archive.
   5. Inventory and archive each volume as Python does.
-  6. In `finally`, `docker start` the containers and wait until each runs.
-     A failed start fails the run.
+  6. The cleanup runs on every path after the first stop attempt. It
+     runs `docker start` for every managed container, continuing past a
+     failed start, and waits until each runs. The run keeps the
+     original error and also reports each failed start or wait, naming
+     the container. With no earlier error, a failed start fails the
+     run. `ServicesLock` is released after the cleanup ends.
   7. Run the inline verify (6.2), write the manifest and publish.
 - The final line tells the operator to run `gobby start`.
 - Cold backups go to the same default root, and retention never prunes
@@ -2166,14 +2183,21 @@ then `cargo clippy -p gobby-backup --all-targets -- -D warnings`.
   archived with inventories, and containers are started, in that order.
   The `volumes` record is archived and not skipped. test:
   `crates/gbackup/src/cold/tests.rs::stop_archive_start_order`.
-- 6.1.3 - A container that does not stop refuses the run, and the
-  containers are started again. test:
-  `crates/gbackup/src/cold/tests.rs::container_that_keeps_running_refuses`.
+- 6.1.3 - Each stop failure refuses the run before any archive: a stop
+  that exits nonzero, one that times out, a container that keeps running,
+  and a nonzero stop on the second container after the first stopped.
+  Every managed container is started again, and the run reports the stop
+  error. test:
+  `crates/gbackup/src/cold/tests.rs::failed_stop_restarts_every_container`.
 - 6.1.4 - A failed start fails the run even after the archives succeeded,
   and nothing is published. test:
   `crates/gbackup/src/cold/tests.rs::failed_start_fails_run`.
 - 6.1.5 - The PostgreSQL capture runs in cold mode, so the drain runs. test:
   `crates/gbackup/src/cold/tests.rs::cold_capture_drains_principals`.
+- 6.1.6 - When a stop fails and a start also fails, the remaining
+  containers are still started, and the run reports the stop error and
+  each failed start. test:
+  `crates/gbackup/src/cold/tests.rs::stop_and_start_failures_both_reported`.
 
 ### 6.2 Volume verification and cold inline verify [category: code] (depends: 6.1)
 `kind: deliverable`
@@ -2435,6 +2459,10 @@ Consumers unchanged:
   #23557 (Remove executor-less gobby hub-maintenance run campaigns and the
   epoch surface) records that every campaign fails before its
   `hub-backup --epoch` step, because no executor is registered.
+- #23586 (hub-backup live-path recovery gaps: restore consumes unlisted
+  inputs unverified, and a failed partial service stop skips the restart)
+  is open. Its fix edits `restore_hub_backup` and `_archive_volumes` in
+  `cli.py` and adds tests of both under `tests/cli/`.
 - `tests/fixtures/test_live_hub_scan.py` (lines 15-39) requires its
   allowlist to equal the files it finds.
 
@@ -2454,6 +2482,11 @@ Implementation:
   install`. On `win32` the shim refuses, as Decision Record 12 says.
 - `_start_daemon` stays, with its imports.
 - The deletions and trims are as the Targets list them.
+- Before the cut, `gcode grep` sweeps `tests/` for imports of the
+  retired modules and symbols. A test added after expansion, #23586's
+  among them, is deleted or trimmed in the same commit. Its file leaves
+  the `test_live_hub_scan.py` allowlist, and a trimmed file joins the
+  pytest scope.
 
 Planned verification:
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/hub_backup/ tests/cli/installers/test_docker_guard.py tests/cli/test_hub_files_restore.py tests/cli/test_hub_backup_rehearsal.py tests/cli/test_hub_maintenance.py tests/cli/test_pack.py tests/cli/test_cli.py tests/fixtures/test_live_hub_scan.py -q`,
@@ -2556,10 +2589,18 @@ deferral:
    `gbackup` by hand. Run `gobby service install` once after 7.2, then
    check `launchctl print gui/<uid>/com.gobby.backup` or `systemctl --user
    list-timers`.
-3. 8.1 lands after 6.2. #23557 (Remove executor-less gobby hub-maintenance
-   run campaigns and the epoch surface) also edits
-   `tests/cli/test_hub_maintenance.py`. If it lands first, re-derive 8.1's
-   Targets at expansion.
+3. 8.1 lands after 6.2. Two open tasks also edit what 8.1 trims, and
+   neither gates it:
+   - #23557 (Remove executor-less gobby hub-maintenance run campaigns and
+     the epoch surface) edits `tests/cli/test_hub_maintenance.py`.
+   - #23586 (hub-backup live-path recovery gaps: restore consumes unlisted
+     inputs unverified, and a failed partial service stop skips the
+     restart) edits `cli.py` and adds tests of the modules 8.1 retires.
+
+   Either one that lands before expansion re-derives 8.1's Targets at
+   expansion: its new tests of retired modules, the
+   `test_live_hub_scan.py` allowlist and 8.1's pytest scope. One that
+   lands later is caught by 8.1's sweep before the cut.
 4. After the first nightly, read `~/.gobby/backups/hub/last-run.json`.
    After the first Sunday, check that the newest live manifest records
    `restore_verified` for its four live stores.
@@ -2626,6 +2667,18 @@ deferral:
   the Plan Adversary gobby#15401 on `dd7449b`. B1 to B5 are resolved, and
   no blocking finding remains. Base validation exits 0 with no warnings.
   The Adversary derives and applies M1 next.
+- 2026-10-05 17:36 CDT: CR7 gobby#15396 bounced `99667e6`. The Writer
+  accepted its two blocking and two low findings, with the coverage
+  cases Adv1 gobby#15401 added.
+  - B1: 5.1 and 6.1 arm the container start before the first stop
+    attempt. A stop that errors, times out or stops only some
+    containers still restarts them (5.1.6, 6.1.3, 6.1.6).
+  - B2: Rollout 3 and 8.1 name #23586 (hub-backup live-path recovery
+    gaps: restore consumes unlisted inputs unverified, and a failed
+    partial service stop skips the restart). 8.1 sweeps for new tests
+    of retired modules before its cut.
+  - The `_archive_volumes` citations name `cli.py`, and 1.4's planned
+    verification runs `tests/cli/test_install_components.py`.
 
 ## V2: Verification
 `kind: verification`
