@@ -1,0 +1,716 @@
+header:
+  plan_id: content-ownership-rules
+  plan_hash: 4f3e0ca14d263d90a9d65d71939e02753a00f1cb5cab86a073a123d381792239
+  root_task_ref: '23561'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-05T21:08:13Z'
+  task_tree_source: db
+  task_tree_source_hash: de71e497779996d590477e51845599ee749a0cf1f4efc4e1984fac4579494624
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 4fc993202af21dd07c4c5d74b812524478092082269941bd656e9cc338ec5ed3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23562'
+    validation_criteria_snippet: '1.1.1: The `gobby-tasks` registry built by `create_lifecycle_registry`
+      exposes neither `release_task_paths` nor `inspect_task_path_ownership`. test:
+      `tests/mcp...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_read_only_classification.py::test_task_registry_omits_retired_path_tools
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: ceedbb3fefde344f2e82817ee57dc1a92a8b8902a582ac9a2b2e026dabde8a6c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23562'
+    validation_criteria_snippet: '1.1.1: The `gobby-tasks` registry built by `create_lifecycle_registry`
+      exposes neither `release_task_paths` nor `inspect_task_path_ownership`. test:
+      `tests/mcp...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_claim_task.py::test_claim_task_ignores_foreign_dirty_declared_paths
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 5ffd06bd4fb042425f7d8fa2e7570ed2333300ca643f725baec7f82f5d7baf42
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23562'
+    validation_criteria_snippet: '1.1.1: The `gobby-tasks` registry built by `create_lifecycle_registry`
+      exposes neither `release_task_paths` nor `inspect_task_path_ownership`. test:
+      `tests/mcp...'
+    matched_artifact_ref: tests/workflows/test_task_enforcement_rules.py::test_retired_path_tools_absent_from_enforcement_lists
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 816a7ac978b4b235ad6ad1ac5993a5ea52e7d80af3da28c2d8c2361aa39c2c28
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23563'
+    validation_criteria_snippet: '1.2.1: The sessions registry built by `create_session_messages_registry`
+      has no `capture_baseline_dirty_files` tool. test: `tests/mcp_proxy/tools/test_internal...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_internal_action_tools.py::test_sessions_registry_omits_capture_baseline_dirty_files
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: fe2b3019a269dfd03c8094f183b1eb57b4fa4052d546d9bd0a888c2778cfc45f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23563'
+    validation_criteria_snippet: '1.2.1: The sessions registry built by `create_session_messages_registry`
+      has no `capture_baseline_dirty_files` tool. test: `tests/mcp_proxy/tools/test_internal...'
+    matched_artifact_ref: tests/hooks/test_session_activation_reconciliation.py::test_activation_seeds_no_baseline_dirty_files
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: fd24ccca0921df79efe46cbb6b3328913c3d8fe9adffb059d0f9d1b325e4c744
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23563'
+    validation_criteria_snippet: '1.2.1: The sessions registry built by `create_session_messages_registry`
+      has no `capture_baseline_dirty_files` tool. test: `tests/mcp_proxy/tools/test_internal...'
+    matched_artifact_ref: tests/hooks/test_session_activation_reconciliation.py::test_baseline_dirty_tracking_invariant_still_seeds_edit_ledgers
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: ca2ac9bd33e1ce1375b6de0fdf45f6c038ee16a091a1a6ba9a9ccdfcde9cc674
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23564'
+    validation_criteria_snippet: '1.3.1: Rule 3 refuses a Write to a path that is
+      dirty and absent from the session''s ledger, naming the holding live session''s
+      ref and its claimed task ref; wit...'
+    matched_artifact_ref: tests/workflows/test_commit_guard.py::test_rule3_refuses_dirty_first_touch_naming_owner
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: c0e39626fbdd10e931a3db90ea1c6364132479a96e563cee41ac037a5b7cc3b6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23564'
+    validation_criteria_snippet: '1.3.1: Rule 3 refuses a Write to a path that is
+      dirty and absent from the session''s ledger, naming the holding live session''s
+      ref and its claimed task ref; wit...'
+    matched_artifact_ref: tests/workflows/test_commit_guard.py::test_rule3_allows_owned_and_clean_paths_and_releases_stale_holder
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: aec812461184e10454dcc86a2aed8fe2adda53732e752ec0c50596ff04435c4c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23564'
+    validation_criteria_snippet: '1.3.1: Rule 3 refuses a Write to a path that is
+      dirty and absent from the session''s ledger, naming the holding live session''s
+      ref and its claimed task ref; wit...'
+    matched_artifact_ref: tests/workflows/test_commit_guard.py::test_rule3_checks_write_paths_of_write_kind_calls_only
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.4
+  plan_node_hash: 4c226e7e215a42595451a95bf3c4e192b2af63b0ea3aa2a58422c7d119e96b08
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23564'
+    validation_criteria_snippet: '1.3.1: Rule 3 refuses a Write to a path that is
+      dirty and absent from the session''s ledger, naming the holding live session''s
+      ref and its claimed task ref; wit...'
+    matched_artifact_ref: tests/workflows/test_commit_guard.py::test_rule3_exempts_merge_set_paths_during_merge
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.5
+  plan_node_hash: 8402ec85b1a50c3b90ee598265b43c03c591d8c110021bf8149307723f40d971
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23564'
+    validation_criteria_snippet: '1.3.1: Rule 3 refuses a Write to a path that is
+      dirty and absent from the session''s ledger, naming the holding live session''s
+      ref and its claimed task ref; wit...'
+    matched_artifact_ref: tests/workflows/test_commit_guard.py::test_rule2_landing_merge_passes_for_merge_set_paths
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.6
+  plan_node_hash: 3b7a03c66ca88aaf22c23336c7160a8f1e86f7c1a63c188210c0d2427762a1fd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23564'
+    validation_criteria_snippet: '1.3.1: Rule 3 refuses a Write to a path that is
+      dirty and absent from the session''s ledger, naming the holding live session''s
+      ref and its claimed task ref; wit...'
+    matched_artifact_ref: tests/workflows/test_commit_guard.py::test_rule2_blocks_only_other_live_sessions_dirty_paths
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.7
+  plan_node_hash: b6dda8ddfdbeb1bd0f997d69e37b549f9cb5af48b2cef703b0e932d40e7c1961
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23564'
+    validation_criteria_snippet: '1.3.1: Rule 3 refuses a Write to a path that is
+      dirty and absent from the session''s ledger, naming the holding live session''s
+      ref and its claimed task ref; wit...'
+    matched_artifact_ref: tests/workflows/test_task_claim_state.py::test_resolve_edit_pair_keys_on_project_root
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.8
+  plan_node_hash: c42d1c937e70589af19f18d815b329de9d1e324676f5a992234eaa1409428cf9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23564'
+    validation_criteria_snippet: '1.3.1: Rule 3 refuses a Write to a path that is
+      dirty and absent from the session''s ledger, naming the holding live session''s
+      ref and its claimed task ref; wit...'
+    matched_artifact_ref: tests/workflows/test_git_commit_parsing.py::test_parse_git_commit_invocations_handles_chdir_and_nested_shells
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.9
+  plan_node_hash: 8ef54c44a2170a39dafb055d1bc8b046afc7c7fdc95390a227561a1c506836b1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23564'
+    validation_criteria_snippet: '1.3.1: Rule 3 refuses a Write to a path that is
+      dirty and absent from the session''s ledger, naming the holding live session''s
+      ref and its claimed task ref; wit...'
+    matched_artifact_ref: tests/workflows/test_task_claim_state.py::test_resolve_edit_pair_finds_root_from_resolved_target
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.10
+  plan_node_hash: 39f3b063c5e0b3304297bef03852ddae44e13ad14f6173cbf5a6044dae3c9724
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23564'
+    validation_criteria_snippet: '1.3.1: Rule 3 refuses a Write to a path that is
+      dirty and absent from the session''s ledger, naming the holding live session''s
+      ref and its claimed task ref; wit...'
+    matched_artifact_ref: tests/workflows/test_commit_guard.py::test_rule3_resolves_relative_paths_at_tool_workdir
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.1
+  plan_node_hash: 94da71aae0511bd51b7cd6aa8a6f1cba157d12e0d97281ac45e65e31b053830d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23565'
+    validation_criteria_snippet: '1.4.1: `record_edited_files` sets `session_dirty_files[root][rel]`
+      to the active task (null without one, replacing an earlier tag), appends the
+      pair to `task_e...'
+    matched_artifact_ref: tests/workflows/test_session_variable_manager.py::test_record_edited_files_writes_nested_ledgers
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.2
+  plan_node_hash: ed585a3d5187dfd72f19a182b857485e170dbbab011b76f69642b4593f032ba3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23565'
+    validation_criteria_snippet: '1.4.1: `record_edited_files` sets `session_dirty_files[root][rel]`
+      to the active task (null without one, replacing an earlier tag), appends the
+      pair to `task_e...'
+    matched_artifact_ref: tests/workflows/test_task_claim_state.py::test_live_and_recorded_task_pairs_differ_after_release
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.3
+  plan_node_hash: 52866c2daf6fe8184bc4571b256f1436684d09d9b053b57ffb42e7561baa85ca
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23565'
+    validation_criteria_snippet: '1.4.1: `record_edited_files` sets `session_dirty_files[root][rel]`
+      to the active task (null without one, replacing an earlier tag), appends the
+      pair to `task_e...'
+    matched_artifact_ref: tests/workflows/test_task_claim_state.py::test_remove_claimed_task_keeps_task_ledger
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.4
+  plan_node_hash: ef445e42c8ca598fca43c6b8385795f4256c19829ee99864afd5f8eed3b98c23
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23565'
+    validation_criteria_snippet: '1.4.1: `record_edited_files` sets `session_dirty_files[root][rel]`
+      to the active task (null without one, replacing an earlier tag), appends the
+      pair to `task_e...'
+    matched_artifact_ref: tests/workflows/test_session_variable_manager.py::test_reconcile_releases_clean_and_missing_root_pairs
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.5
+  plan_node_hash: 2241b51314e5e8a0c569210136d8ded5ac157cf6bcc736de0ed81130c0a97462
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23565'
+    validation_criteria_snippet: '1.4.1: `record_edited_files` sets `session_dirty_files[root][rel]`
+      to the active task (null without one, replacing an earlier tag), appends the
+      pair to `task_e...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_close_evidence_sessions.py::test_close_excludes_other_task_edit_in_same_checkout
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.6
+  plan_node_hash: 7666ac889424abff296232385d0755b7d85df6716d1eef1cb71d3e28b30f111b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23565'
+    validation_criteria_snippet: '1.4.1: `record_edited_files` sets `session_dirty_files[root][rel]`
+      to the active task (null without one, replacing an earlier tag), appends the
+      pair to `task_e...'
+    matched_artifact_ref: tests/workflows/test_monolith_guard.py::test_outstanding_monolith_paths_projects_each_pair_against_its_root
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.7
+  plan_node_hash: 254a2bff3c0cb040398f7821260eabdca1617599d571d8a7b23da43f372ba303
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23565'
+    validation_criteria_snippet: '1.4.1: `record_edited_files` sets `session_dirty_files[root][rel]`
+      to the active task (null without one, replacing an earlier tag), appends the
+      pair to `task_e...'
+    matched_artifact_ref: tests/workflows/test_task_claim_state.py::test_old_shape_ledger_values_read_as_empty
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.8
+  plan_node_hash: dfdb98d2b0a1449645f24b0bb15ec26fc3272f71e705eb75c3de86091bc529ec
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23565'
+    validation_criteria_snippet: '1.4.1: `record_edited_files` sets `session_dirty_files[root][rel]`
+      to the active task (null without one, replacing an earlier tag), appends the
+      pair to `task_e...'
+    matched_artifact_ref: tests/workflows/test_monolith_guard.py::test_outstanding_monolith_paths_ignores_released_history
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.9
+  plan_node_hash: ca8333610a0047fe4ece75b17d816f96ee0d8fb9b0497587961d391f08dbdf29
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23565'
+    validation_criteria_snippet: '1.4.1: `record_edited_files` sets `session_dirty_files[root][rel]`
+      to the active task (null without one, replacing an earlier tag), appends the
+      pair to `task_e...'
+    matched_artifact_ref: tests/workflows/test_session_variable_manager.py::test_end_task_tags_nulls_only_that_tasks_pairs
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.10
+  plan_node_hash: 7f07a8dc83713b0d154026b8f372241d67970331722e2e60a21b82b27c4a02b3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23565'
+    validation_criteria_snippet: '1.4.1: `record_edited_files` sets `session_dirty_files[root][rel]`
+      to the active task (null without one, replacing an earlier tag), appends the
+      pair to `task_e...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_closed_task_cleanup_ends_task_tags_in_tag_holders
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.11
+  plan_node_hash: 9f9002332d30ab40fc23e5907535c084405ce0b4ba06a490928badd7dd8a6541
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23565'
+    validation_criteria_snippet: '1.4.1: `record_edited_files` sets `session_dirty_files[root][rel]`
+      to the active task (null without one, replacing an earlier tag), appends the
+      pair to `task_e...'
+    matched_artifact_ref: tests/workflows/test_session_variable_manager.py::test_task_tag_holders_finds_unlinked_holders
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.1
+  plan_node_hash: a6ffb0ad7de42af9ac12120e595f634af93f947e40ab63b00720041544edd5ab
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23566'
+    validation_criteria_snippet: '1.5.1: #22642 regression: in a temporary git checkout
+      where a tracked file is staged, a Bash `git restore --staged <path>` call records
+      no pair in `session_dir...'
+    matched_artifact_ref: tests/hooks/test_tool_handlers.py::test_git_restore_staged_records_no_attribution
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.2
+  plan_node_hash: 0d71d1c15a429bb1e7897c21fcd655d9562098b86706b356d3d6dd07ff6e0e05
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23566'
+    validation_criteria_snippet: '1.5.1: #22642 regression: in a temporary git checkout
+      where a tracked file is staged, a Bash `git restore --staged <path>` call records
+      no pair in `session_dir...'
+    matched_artifact_ref: tests/hooks/test_tool_handlers.py::test_recorder_records_only_content_changes
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.3
+  plan_node_hash: 77b05629afd88df499c89982798ac2093e9ee900e7be839801a7057a885addbc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23566'
+    validation_criteria_snippet: '1.5.1: #22642 regression: in a temporary git checkout
+      where a tracked file is staged, a Bash `git restore --staged <path>` call records
+      no pair in `session_dir...'
+    matched_artifact_ref: tests/hooks/test_tool_handlers.py::test_recorder_handles_untracked_and_owned_paths
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.4
+  plan_node_hash: 54f372814caa19aa19d0615855cd22beb8249f2358d3ef91a34c1afc447bed44
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23566'
+    validation_criteria_snippet: '1.5.1: #22642 regression: in a temporary git checkout
+      where a tracked file is staged, a Bash `git restore --staged <path>` call records
+      no pair in `session_dir...'
+    matched_artifact_ref: tests/hooks/test_normalization.py::TestExternalNavigationScope.test_git_restore_index_only_pathspecs_are_execute_kind
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.5
+  plan_node_hash: c156ffb919c1fdf70c0961eef7f8a20c68c4e0099ddaf575aa48512519c1e050
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23566'
+    validation_criteria_snippet: '1.5.1: #22642 regression: in a temporary git checkout
+      where a tracked file is staged, a Bash `git restore --staged <path>` call records
+      no pair in `session_dir...'
+    matched_artifact_ref: tests/hooks/test_normalization.py::test_mixed_segments_publish_union_of_write_kind_targets
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.6
+  plan_node_hash: 05a233abfbef7926b4e9a27f9f01d40f43ac950a8750172a4624194dfb9909ee
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23566'
+    validation_criteria_snippet: '1.5.1: #22642 regression: in a temporary git checkout
+      where a tracked file is staged, a Bash `git restore --staged <path>` call records
+      no pair in `session_dir...'
+    matched_artifact_ref: tests/hooks/test_tool_handlers.py::test_recorder_ignores_execute_segment_paths_in_mixed_command
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.7
+  plan_node_hash: 00a188b185c3baf8f60f6e8d2028fe233f5284053af5a6f25d7f8d3a66d3acc7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23566'
+    validation_criteria_snippet: '1.5.1: #22642 regression: in a temporary git checkout
+      where a tracked file is staged, a Bash `git restore --staged <path>` call records
+      no pair in `session_dir...'
+    matched_artifact_ref: tests/hooks/test_tool_handlers.py::test_failed_write_call_records_only_changed_bytes
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.8
+  plan_node_hash: 14603b470c21fc35070bc2be475ce373394d7e2942611e2a67e3d4814a11b84d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23566'
+    validation_criteria_snippet: '1.5.1: #22642 regression: in a temporary git checkout
+      where a tracked file is staged, a Bash `git restore --staged <path>` call records
+      no pair in `session_dir...'
+    matched_artifact_ref: tests/hooks/test_tool_handlers.py::test_merge_set_noop_write_records_nothing
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.9
+  plan_node_hash: 21ac85ed8a3b5d121d9d915a78e5c36d1f7ededcf9eb6894127bdb8c08b52b8c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23566'
+    validation_criteria_snippet: '1.5.1: #22642 regression: in a temporary git checkout
+      where a tracked file is staged, a Bash `git restore --staged <path>` call records
+      no pair in `session_dir...'
+    matched_artifact_ref: tests/hooks/test_tool_handlers.py::test_write_committed_in_same_call_keeps_task_record
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.10
+  plan_node_hash: d741767fdc9093571342cef61ff97a67c5a5ccf8fc0da7680ecf3e8676890c46
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23566'
+    validation_criteria_snippet: '1.5.1: #22642 regression: in a temporary git checkout
+      where a tracked file is staged, a Bash `git restore --staged <path>` call records
+      no pair in `session_dir...'
+    matched_artifact_ref: tests/hooks/test_tool_handlers.py::test_recorder_falls_back_to_status_without_entry
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.11
+  plan_node_hash: 6aeb9aeaa22c3b876a47085b048fccb412657b2faaafa58990bf83d2a7ce566b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23566'
+    validation_criteria_snippet: '1.5.1: #22642 regression: in a temporary git checkout
+      where a tracked file is staged, a Bash `git restore --staged <path>` call records
+      no pair in `session_dir...'
+    matched_artifact_ref: tests/hooks/test_pre_write_digests.py::test_interleaved_calls_keep_baselines_by_request_id
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.12
+  plan_node_hash: 0435cabc2b37cd38a260e1872d45422ea2b6436baf2a48f94d445995e324ca6b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23566'
+    validation_criteria_snippet: '1.5.1: #22642 regression: in a temporary git checkout
+      where a tracked file is staged, a Bash `git restore --staged <path>` call records
+      no pair in `session_dir...'
+    matched_artifact_ref: tests/hooks/test_pre_write_digests.py::test_session_end_and_age_prune_drop_stale_entries
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.13
+  plan_node_hash: 2ac720b0a6c04897016f036d6e0afdbcb88a26c186b13c5d65090824b9e4bc2b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23566'
+    validation_criteria_snippet: '1.5.1: #22642 regression: in a temporary git checkout
+      where a tracked file is staged, a Bash `git restore --staged <path>` call records
+      no pair in `session_dir...'
+    matched_artifact_ref: tests/hooks/test_tool_handlers.py::test_recorder_resolves_relative_paths_at_tool_workdir
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.14
+  plan_node_hash: 8ef78ff501a04958c49976eab5f62ba95fd4d8d1c0ece3ccb366a998ea625d3c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23566'
+    validation_criteria_snippet: '1.5.1: #22642 regression: in a temporary git checkout
+      where a tracked file is staged, a Bash `git restore --staged <path>` call records
+      no pair in `session_dir...'
+    matched_artifact_ref: tests/hooks/test_tool_handlers.py::test_unreadable_path_takes_status_fallback_without_skipping_others
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.1
+  plan_node_hash: 9ba8e598b1977f1f759ff70d3fb8af3ae4e54815b7098a67e3ac6a152f0687ab
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23567'
+    validation_criteria_snippet: '1.6.1: A Write whose path lies in a checkout of
+      a different registered project returns the rule 4 text naming both projects,
+      while writes into the session''s ow...'
+    matched_artifact_ref: tests/workflows/test_ownership_eval_context.py::test_rule4_refuses_other_project_and_allows_own_and_unmanaged
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.2
+  plan_node_hash: 91f3e2e5544004f30aacdde61076e8c96ea63b0b0239f2247ce5365312a91b30
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23567'
+    validation_criteria_snippet: '1.6.1: A Write whose path lies in a checkout of
+      a different registered project returns the rule 4 text naming both projects,
+      while writes into the session''s ow...'
+    matched_artifact_ref: tests/workflows/test_ownership_eval_context.py::test_sanctioned_worktree_write_obeys_rules_1_to_3
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.3
+  plan_node_hash: 5f951cf137d76a58f8033e3bfa52a0742b2d3ff3b32ec938f8c10b426975147c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23567'
+    validation_criteria_snippet: '1.6.1: A Write whose path lies in a checkout of
+      a different registered project returns the rule 4 text naming both projects,
+      while writes into the session''s ow...'
+    matched_artifact_ref: tests/workflows/test_ownership_eval_context.py::test_rule4_default_key_keeps_unwired_callers_open
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.4
+  plan_node_hash: 37e693cf1a2e4e5f1f823be0abab4cb7a19f263d1ec84db4136eca364e78991e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23567'
+    validation_criteria_snippet: '1.6.1: A Write whose path lies in a checkout of
+      a different registered project returns the rule 4 text naming both projects,
+      while writes into the session''s ow...'
+    matched_artifact_ref: tests/workflows/test_task_enforcement_rules.py::test_block_cross_project_write_template_shape
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.5
+  plan_node_hash: 07bfaa5dcb55a7a3fcd7e301013619b8a331d06272cfdad29d4bfb4ea2cd7c0c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23567'
+    validation_criteria_snippet: '1.6.1: A Write whose path lies in a checkout of
+      a different registered project returns the rule 4 text naming both projects,
+      while writes into the session''s ow...'
+    matched_artifact_ref: tests/workflows/test_ownership_eval_context.py::test_rule4_resolves_workdir_relative_and_symlinked_paths
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.1
+  plan_node_hash: a39a1bcf7d2b512ef4c248aabca377b29bc04af968e6847e537a6dfce8d1f1f4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23568'
+    validation_criteria_snippet: '1.7.1: Gate 9 fails with "Files created or mutated
+      for the task are uncommitted: <root>/<rel> ... Commit them and retry." for a
+      live pair, with no owner lookup...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_mcp_close_checklist.py::test_uncommitted_task_edits_names_dirty_paths
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.2
+  plan_node_hash: b498765b4fc48d0beea5f74eb39b570ec99ec49c006b76f88dee6f1a6a0965c8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23568'
+    validation_criteria_snippet: '1.7.1: Gate 9 fails with "Files created or mutated
+      for the task are uncommitted: <root>/<rel> ... Commit them and retry." for a
+      live pair, with no owner lookup...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_checks_live_pairs_per_checkout_root
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.3
+  plan_node_hash: 50d5f64d5b2a2dcd457078ff4b4b5dc9bf5bc2e6ba7356dca43003e6824f8711
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23568'
+    validation_criteria_snippet: '1.7.1: Gate 9 fails with "Files created or mutated
+      for the task are uncommitted: <root>/<rel> ... Commit them and retry." for a
+      live pair, with no owner lookup...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_passes_when_index_only_touch_recorded_nothing
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.4
+  plan_node_hash: 78d93a6359ea3dd7cd70e78ab2192b5baee66bc33d648d4aa2be25cb48a09c76
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23568'
+    validation_criteria_snippet: '1.7.1: Gate 9 fails with "Files created or mutated
+      for the task are uncommitted: <root>/<rel> ... Commit them and retry." for a
+      live pair, with no owner lookup...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_close_attribution.py::test_live_pairs_feed_fingerprint_and_unavailable_proof
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.5
+  plan_node_hash: caf398713e0505b61c6064bcd3243e43879cfa5d0089d406ca44fcf49fa495ac
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23568'
+    validation_criteria_snippet: '1.7.1: Gate 9 fails with "Files created or mutated
+      for the task are uncommitted: <root>/<rel> ... Commit them and retry." for a
+      live pair, with no owner lookup...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_refuses_close_until_failed_transfer_is_retried
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.6
+  plan_node_hash: bcac666a79a9a9501fbe84796d9f5e96794f7db8240231ba509ec138e224d032
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23568'
+    validation_criteria_snippet: '1.7.1: Gate 9 fails with "Files created or mutated
+      for the task are uncommitted: <root>/<rel> ... Commit them and retry." for a
+      live pair, with no owner lookup...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_fails_closed_when_tag_holder_inventory_fails
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.1
+  plan_node_hash: 6a87fb8544617d1f0c63179985744eece0a056e9925ab169799f07d7123832ac
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23569'
+    validation_criteria_snippet: '1.8.1: Claiming a task whose ended predecessor holds
+      live pairs for it moves those pairs into the claimant''s `session_dirty_files`
+      and `task_edited_files[task]...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_claim_task.py::test_claim_transfers_ended_predecessor_live_pairs
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.2
+  plan_node_hash: 364f10a8a530bef6f608b6a80b0c5ed975ea517f2157204837dddbf23af643f9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23569'
+    validation_criteria_snippet: '1.8.1: Claiming a task whose ended predecessor holds
+      live pairs for it moves those pairs into the claimant''s `session_dirty_files`
+      and `task_edited_files[task]...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_claim_task.py::test_claim_transfer_never_duplicates_live_ownership
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.3
+  plan_node_hash: 2f08c1991dfe66e197ec888e7adff8462d6fcecb40387865521b9ba2f0f4882f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23569'
+    validation_criteria_snippet: '1.8.1: Claiming a task whose ended predecessor holds
+      live pairs for it moves those pairs into the claimant''s `session_dirty_files`
+      and `task_edited_files[task]...'
+    matched_artifact_ref: tests/workflows/test_session_variable_manager.py::test_transfer_task_pairs_rolls_back_on_failure
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.4
+  plan_node_hash: 9fbcee0343d78224cd0f4e5a346bdcb410fe6930bc399564f1a0044f748034b4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23569'
+    validation_criteria_snippet: '1.8.1: Claiming a task whose ended predecessor holds
+      live pairs for it moves those pairs into the claimant''s `session_dirty_files`
+      and `task_edited_files[task]...'
+    matched_artifact_ref: tests/workflows/test_session_variable_manager.py::test_single_row_mutation_waits_on_pair_lock
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.5
+  plan_node_hash: 9b9bcf37f60892520f9a21dcf8eca6dfed69990fd6377aa3a4155e9cb901e5c7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23569'
+    validation_criteria_snippet: '1.8.1: Claiming a task whose ended predecessor holds
+      live pairs for it moves those pairs into the claimant''s `session_dirty_files`
+      and `task_edited_files[task]...'
+    matched_artifact_ref: tests/storage/test_manager_surface_parity.py::test_session_variable_pair_lock_keys_match_single_row_keys_in_sorted_order
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.6
+  plan_node_hash: b2422bc14f0519d073d796499ebf6bfa4f5e8d031bd4d8a072aa0157ca14a93b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23569'
+    validation_criteria_snippet: '1.8.1: Claiming a task whose ended predecessor holds
+      live pairs for it moves those pairs into the claimant''s `session_dirty_files`
+      and `task_edited_files[task]...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_claim_task.py::test_already_claimed_retry_completes_failed_pair_transfer
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.7
+  plan_node_hash: 54a161279a3cc3de7003bf0f544902fa7065277873c356e027c4592981b0525d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23569'
+    validation_criteria_snippet: '1.8.1: Claiming a task whose ended predecessor holds
+      live pairs for it moves those pairs into the claimant''s `session_dirty_files`
+      and `task_edited_files[task]...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_claim_task.py::test_claim_transfers_only_pairs_live_for_the_claimed_task
+  deferral_target: null
+  detail: ''
