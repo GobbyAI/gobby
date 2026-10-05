@@ -565,6 +565,34 @@
     },
     {
       "surface": "cli",
+      "command": "gobby auth key",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/authentication.md",
+      "implementation": {
+        "path": "src/gobby/cli/auth_login.py",
+        "symbol": "key"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby auth login",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/authentication.md",
+      "implementation": {
+        "path": "src/gobby/cli/auth_login.py",
+        "symbol": "login"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
       "command": "gobby auth token",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/authentication.md",
       "implementation": {
