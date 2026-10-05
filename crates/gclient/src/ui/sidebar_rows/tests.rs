@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::sidebar_model::AgentEntry;
 use crate::app::Workspace;
 use crate::daemon::{Checkout, ProjectRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow};
 use crate::theme::{Theme, ThemeKind};
@@ -252,6 +253,34 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
         .find(|row| row.id == "session:sess-effort")
         .expect("effort row");
     assert_eq!(effort.reference, "alpha#77");
+}
+
+#[test]
+fn model_slug_reads_provider_model_effort_and_skips_absent_segments() {
+    let slug = |model: Option<&str>, display: Option<&str>, effort: Option<&str>| {
+        AgentEntry {
+            model: model.map(str::to_owned),
+            model_display_name: display.map(str::to_owned),
+            effort: effort.map(str::to_owned),
+            ..AgentEntry::default()
+        }
+        .model_slug()
+    };
+    assert_eq!(
+        slug(Some("gpt-6-sol"), None, Some("xhigh")),
+        "gpt-6-sol-xhigh"
+    );
+    assert_eq!(
+        slug(Some("claude-fable-5-1"), Some("Fable 5.1"), Some("high")),
+        "claude-fable-5.1-high"
+    );
+    assert_eq!(slug(Some("gpt-6-sol"), None, None), "gpt-6-sol");
+    assert_eq!(
+        slug(None, None, Some("xhigh")),
+        "xhigh",
+        "a run spawned with an effort before its model is known"
+    );
+    assert_eq!(slug(None, None, None), "");
 }
 
 #[test]
