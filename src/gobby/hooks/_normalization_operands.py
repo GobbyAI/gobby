@@ -17,8 +17,8 @@ _CURL_SHORT_OPTIONS_WITH_VALUES = frozenset("AbcCdDeEFHKmoPQrTtuwxXYz")
 # Options whose value is the next word (or attached) for file-mutation commands.
 # Values are timestamps, modes, owners, suffixes, or read-only references, except
 # the -t/--target-directory destination, which _file_command_operands returns.
-# install -S is GNU's suffix; on BSD/macOS it is a flag, so its next word is
-# dropped there, which still leaves the last operand as the destination.
+# install -S is GNU's suffix and BSD/macOS's safe-copy flag. Directory mode
+# must retain every possible BSD operand, including GNU's possible suffix.
 _FILE_COMMAND_VALUE_OPTIONS: dict[str, tuple[str, frozenset[str]]] = {
     "touch": ("Adrt", frozenset({"--date", "--reference", "--time"})),
     "mkdir": ("m", frozenset({"--mode"})),
@@ -55,6 +55,18 @@ def _file_command_operands(cmd: str, parts: list[str]) -> tuple[list[str], str |
     separate value. ``install -d`` creates every operand.
     """
     short_values, long_values = _FILE_COMMAND_VALUE_OPTIONS.get(cmd, ("", frozenset()))
+    if cmd == "install":
+        bsd_result = _parse_file_command_operands(
+            cmd, parts, short_values.replace("S", ""), long_values
+        )
+        if bsd_result[2]:
+            return bsd_result
+    return _parse_file_command_operands(cmd, parts, short_values, long_values)
+
+
+def _parse_file_command_operands(
+    cmd: str, parts: list[str], short_values: str, long_values: frozenset[str]
+) -> tuple[list[str], str | None, bool]:
     operands: list[str] = []
     target_directory: str | None = None
     creates_directories = False

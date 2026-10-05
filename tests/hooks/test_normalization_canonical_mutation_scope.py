@@ -911,3 +911,42 @@ def test_exact_long_flag_is_not_read_as_a_value_option_abbreviation() -> None:
     assert _resolve_long_option("--strip", names) is None
     assert _resolve_long_option("--strip-p", names) == "--strip-program"
     assert _resolve_long_option("--s", names) is None
+
+
+@pytest.mark.parametrize("options", ["-S .bak", "--suffix .bak"])
+def test_mv_suffix_value_is_not_a_write_target(tmp_path: Path, options: str) -> None:
+    project, scratch = tmp_path / "project", tmp_path / "scratch"
+
+    data = _shell_write_metadata(f"mv {options} {scratch}/a {scratch}/b", project)
+
+    assert data["canonical_file_paths"] == [f"{scratch}/a", f"{scratch}/b"]
+    assert data["canonical_repo_mutation"] is False
+
+
+@pytest.mark.parametrize("options", ["-d -S", "-dS", "-S -d", "-Sd"])
+def test_bsd_install_safe_directory_mode_keeps_every_target(tmp_path: Path, options: str) -> None:
+    project, scratch = tmp_path / "project", tmp_path / "scratch"
+
+    data = _shell_write_metadata(f"install {options} {project}/a {scratch}/b", project)
+
+    assert data["canonical_file_paths"] == [f"{project}/a", f"{scratch}/b"]
+    assert data["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize("options", ["-S .bak", "--suffix .bak"])
+def test_install_file_mode_suffix_after_operands_keeps_destination(
+    tmp_path: Path, options: str
+) -> None:
+    project, scratch = tmp_path / "project", tmp_path / "scratch"
+
+    data = _shell_write_metadata(f"install {scratch}/a {project}/b {options}", project)
+
+    assert data["canonical_file_paths"] == [f"{project}/b"]
+    assert data["canonical_repo_mutation"] is True
+
+
+def test_bsd_install_safe_directory_mode_keeps_dynamic_target_unknown(tmp_path: Path) -> None:
+    data = _shell_write_metadata(f'install -d -S "$TARGET" {tmp_path}/scratch/b', tmp_path)
+
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
