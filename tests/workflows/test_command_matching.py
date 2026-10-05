@@ -37,6 +37,7 @@ class TestExecutableCommandSubjects:
             "ls $()",
             "pwd",
             "true",
+            "ls $(pwd)",
         ]
 
     def test_quoted_substitution_redirect_keeps_the_whole_segment(self) -> None:
@@ -46,6 +47,7 @@ class TestExecutableCommandSubjects:
             'echo "$()"',
             "printf x > out.txt",
             "git status",
+            'echo "$(printf x > out.txt)"',
         ]
 
     @pytest.mark.parametrize(
@@ -144,13 +146,21 @@ class TestExecutableCommandSubjects:
         """A commit message built from `cat <<'EOF'` is data one level in."""
         command = "git commit -m \"$(cat <<'EOF'\nfix: guard\n\npytest now passes\nEOF\n)\""
 
-        assert executable_command_subjects(command) == ['git commit -m "$()"', "cat <<'EOF'"]
+        assert executable_command_subjects(command) == [
+            'git commit -m "$()"',
+            "cat <<'EOF'",
+            "git commit -m \"$(cat <<'EOF')\"",
+        ]
         assert not command_patterns_match(command, pattern=PYTEST_PATTERN, mask_quoted=True)
 
     def test_substitution_that_runs_a_command_keeps_it(self) -> None:
         command = 'git commit -m "$(uv run pytest)"'
 
-        assert executable_command_subjects(command) == ['git commit -m "$()"', "uv run pytest"]
+        assert executable_command_subjects(command) == [
+            'git commit -m "$()"',
+            "uv run pytest",
+            command,
+        ]
         assert command_patterns_match(command, pattern=PYTEST_PATTERN, mask_quoted=True)
 
     def test_a_shell_segment_keeps_its_substitution_body(self) -> None:
@@ -166,6 +176,17 @@ class TestExecutableCommandSubjects:
 
         assert executable_command_subjects(command) == [command]
         assert not command_patterns_match(command, pattern=PYTEST_PATTERN, mask_quoted=True)
+
+    def test_nested_substitution_correlations_do_not_duplicate_correlations(self) -> None:
+        command = "echo x"
+        for _ in range(18):
+            command = f"echo $({command})"
+
+        subjects = executable_command_subjects(command)
+
+        assert "echo x" in subjects
+        assert len(subjects) == 37
+        assert sum(map(len, subjects)) <= len(command) * len(subjects)
 
     def test_unterminated_heredoc_keeps_its_swallowed_text(self) -> None:
         command = "cat <<'EOF'\ngit push --force"

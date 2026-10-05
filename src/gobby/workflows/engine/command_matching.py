@@ -446,7 +446,13 @@ def executable_command_subjects(command: str) -> list[str]:
     return _subjects(command, 0)
 
 
-def _subjects(command: str, depth: int, *, heredoc_source: bool = False) -> list[str]:
+def _subjects(
+    command: str,
+    depth: int,
+    *,
+    heredoc_source: bool = False,
+    correlated_subjects: list[str] | None = None,
+) -> list[str]:
     try:
         scan = scan_shell_command(command)
     except ValueError:
@@ -465,12 +471,13 @@ def _subjects(command: str, depth: int, *, heredoc_source: bool = False) -> list
         raw.append(
             command[min(start for start, _ in segment_spans) : max(end for _, end in segment_spans)]
         )
+    correlations = [] if correlated_subjects is None else correlated_subjects
     subjects: list[str] = []
     for text, segment in zip(raw, segments, strict=True):
         if _runs_substitution_output(scan.tokens[segment.first : segment.last + 1]):
             subjects.append(text)
         else:
-            subjects.extend(_resolve_substitutions(text, depth))
+            subjects.extend(_resolve_substitutions(text, depth, correlations))
     for heredoc in scan.heredocs:
         owner = next(
             index
@@ -482,14 +489,23 @@ def _subjects(command: str, depth: int, *, heredoc_source: bool = False) -> list
         if _heredoc_may_execute(tokens, raw[owner], heredoc, heredoc.opener - segment.first):
             # Each executed body has its own quote context. Joining it to the
             # owner or a sibling lets an interpreter quote hide later commands.
-            subjects.extend(_subjects(heredoc.text, depth, heredoc_source=True))
+            subjects.extend(
+                _subjects(
+                    heredoc.text,
+                    depth,
+                    heredoc_source=True,
+                    correlated_subjects=correlations,
+                )
+            )
         elif not heredoc.quoted:
             for span in _substitution_spans(heredoc.text):
-                subjects.extend(_subjects(span, depth + 1))
+                subjects.extend(_subjects(span, depth + 1, correlated_subjects=correlations))
+    if correlated_subjects is None:
+        subjects.extend(correlations)
     return subjects
 
 
-def _resolve_substitutions(subject: str, depth: int) -> list[str]:
+def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) -> list[str]:
     """Extract each command substitution into independent executable subjects.
 
     The scanner reads ``"$(cat <<'EOF' … EOF)"`` as one quoted token, so a
@@ -497,10 +513,16 @@ def _resolve_substitutions(subject: str, depth: int) -> list[str]:
     Running the body through the same segment rules drops what it only prints
     and keeps what it executes. Leave empty substitution delimiters in the owner
     to preserve word boundaries without importing the body's quote context.
+    Also retain an owner with resolved bodies for patterns that correlate a
+    command with its argument text. Independent subjects remain authoritative
+    for execution matching even when that additional subject has odd quotes.
+    Collect correlations separately so enclosing substitutions never splice
+    those additional projections back into their own bodies.
     A body that cannot be delimited stays whole, and single quotes make a
     substitution literal text.
     """
     out: list[str] = []
+    correlated: list[str] = []
     executed: list[str] = []
     quote = ""
     index = 0
@@ -508,6 +530,7 @@ def _resolve_substitutions(subject: str, depth: int) -> list[str]:
         char = subject[index]
         if char == "\\" and quote != "'":
             out.append(subject[index : index + 2])
+            correlated.append(subject[index : index + 2])
             index += 2
             continue
         if quote != "'" and (subject.startswith("$(", index) or char == "`"):
@@ -517,14 +540,19 @@ def _resolve_substitutions(subject: str, depth: int) -> list[str]:
                 end = _substitution_end(subject, start, tick, depth + 1)
             except ValueError:
                 return [subject]
-            executed.extend(_subjects(subject[start:end], depth + 1))
+            bodies = _subjects(subject[start:end], depth + 1, correlated_subjects=correlations)
+            executed.extend(bodies)
             out.append(f"{subject[index:start]}{subject[end]}")
+            correlated.append(f"{subject[index:start]}{' '.join(bodies)}{subject[end]}")
             index = end + 1
             continue
         if char in "\"'":
             quote = "" if quote == char else quote or char
         out.append(char)
+        correlated.append(char)
         index += 1
+    if executed:
+        correlations.append("".join(correlated))
     return ["".join(out), *executed]
 
 

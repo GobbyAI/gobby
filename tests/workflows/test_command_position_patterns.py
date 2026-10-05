@@ -936,3 +936,34 @@ def test_sibling_mask_quoted_rule_is_comment_aware(
     assert _blocks(body, "echo hi # it's\nuv run pytest")
     # A commit message that merely mentions the command stays prose.
     assert not _blocks(body, 'git commit -m "docs: run uv run pytest for the suite"')
+
+
+@pytest.mark.parametrize(
+    "command, blocked",
+    [
+        ("curl -X POST $(echo http://localhost:60887/api/admin/restart)", True),
+        ('curl -X POST "$(echo http://localhost:60887/api/admin/restart)"', True),
+        ("curl -X POST `echo http://localhost:60887/api/admin/restart`", True),
+        ("curl -X POST $(echo $(echo http://localhost:60887/api/admin/restart))", True),
+        ("curl -X POST http://localhost:60887$(echo /api/admin/restart)", True),
+        ("curl -X POST $(echo http://localhost:60887/api/health)", False),
+        ("echo $(echo http://localhost:60887/api/admin/restart)", False),
+        ("echo http://localhost:60887/api/admin/restart", False),
+        # This unmasked rule conservatively matches literal URL argument text too.
+        ("curl -X POST '$(echo http://localhost:60887/api/admin/restart)'", True),
+    ],
+)
+def test_argument_content_rules_match_substitution_command_text(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    command: str,
+    blocked: bool,
+) -> None:
+    """Correlate owner commands and substitution text for argument-content selectors.
+
+    Commands are inert inputs to the bundled block effect, never shell executions.
+    """
+    _sync_bundled(db)
+    body = _get_rule(manager, "no-daemon-management-http")
+
+    assert _blocks(body, command) is blocked
