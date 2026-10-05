@@ -1936,7 +1936,7 @@ reaches its parent through a numeric ref:
 
 ```yaml
 deferral:
-  task_ref: "TBD-filed-under-22691-before-expansion"
+  task_ref: "#23497"
   reason: "Orchestrator rulings (2026-10-05, 08:10 and 08:18 CT, R4): runtime lifecycle enforcement is parented under #22691 (Lane 3 - Runbooks). The Orchestrator files the task after Josh approves this plan, the Writer replaces this placeholder with its numeric ref before expansion, and the Orchestrator adds the 2.1 and root-epic edges after expansion."
   owner: "orchestrator"
   original_acceptance_items:
