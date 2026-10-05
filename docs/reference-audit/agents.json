@@ -1179,8 +1179,8 @@
     {
       "id": "source-audit",
       "kind": "implementation-and-schema",
-      "command": "gcode search-symbol apply_agent_definition src/gobby/mcp_proxy/tools/agents_spawn_tools.py; gcode symbol-at src/gobby/mcp_proxy/tools/agents_spawn_tools.py:109",
-      "result": "2026-10-05: current apply_agent_definition registration inspected and mapped to register_agent_spawn_tools.apply_agent_definition. No live mutation probes."
+      "command": "gcode outline/symbol-at/grep on agent MCP registry, workflow definitions/models, CLI agents/steps, agent/provider HTTP routes, sandbox policy/cache/grants and ghook cli_config; current schemas spawn_agent, apply_persona, list/get_agent_definition; gobby agents --help and spawn --help",
+      "result": "Public operations inventoried from current registrations. Effective sandbox policy, lifecycle handoff, ownership and persona-only boundary checked. No live mutating probes."
     },
     {
       "id": "installed-agent",
@@ -1191,8 +1191,8 @@
     {
       "id": "focused-agents",
       "kind": "pytest",
-      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/skills/test_reference_library.py --no-cov --tb=short -q",
-      "result": "2026-10-05: 57 passed, 1 failed in 218.91s. All activation tests and stale-symbol contracts passed; remaining global coverage failure is confined to auth key/login mappings already on main but absent from this lane's admin.json baseline. Isolated fixtures, no live mutation probes."
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_persona.py tests/mcp_proxy/tools/test_agent_worktree_checkpoint.py tests/mcp_proxy/tools/test_agent_messaging.py tests/mcp_proxy/tools/test_agent_messaging_broadcast.py tests/mcp_proxy/tools/test_agents_termination.py tests/mcp_proxy/tools/test_agent_cancellation.py tests/workflows/test_agent_definitions_v2.py tests/servers/routes/test_agents_routes.py tests/servers/routes/test_agent_spawn_routes.py -q",
+      "result": "242 passed in 41.18s; isolated fixtures, no live mutation probes."
     },
     {
       "id": "sandbox-cli-models",
