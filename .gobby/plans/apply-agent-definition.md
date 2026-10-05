@@ -146,9 +146,11 @@ enforces it (#22902 Constraints, boundary paragraph).
      a stored `_agent_type` that differs from the new agent, on a row that is
      not spawned. That includes the permitted first activation over a
      configured base agent, which can declare variables and steps like any
-     agent (adversary finding F-B1-base-cleanup). Both tests run again under
-     the session's step lock at the write (1.1), so a decision made from an
-     earlier read never commits over a newer seat.
+     agent (adversary finding F-B1-base-cleanup). At the write, under the
+     session's step lock (1.1), an activation commits only while the stored
+     `_agent_type` still equals the one it was prepared against, and then both
+     tests run again. A delta prepared from an earlier read never commits over
+     a newer seat, the base agent included.
    - Rejected: a new row per web-chat switch. The launch binds the row by
      conversation id (`chat/_session.py:314-330`), and `set_agent` keeps that id
      stable. A new row would need a second successor-commit flow beside the
@@ -165,6 +167,8 @@ enforces it (#22902 Constraints, boundary paragraph).
      and is kept);
    - `pipeline_requires_spawn`;
    - `role_change_requires_relaunch`;
+   - `activation_superseded` (the session's agent changed between the
+     activation's read and its write);
    - `spawned_session_definition_fixed`;
    - `task_unresolved`;
    - `variable_collision` (`colliding_persona_variable_error`, renamed).
@@ -675,16 +679,22 @@ Implementation:
     - Otherwise it returns `apply`.
     Step 7 and `commit_definition_changes` share it, so the early check and
     the locked check cannot diverge.
-  - `commit_definition_changes(db, session_id, agent, changes, *, relaunch,
-    same_pin_noop) -> dict`: the one write path for both activation entries,
-    the tool and `activate_default_agent`.
+  - `commit_definition_changes(db, session_id, agent, changes, *,
+    expected_agent_type, relaunch, same_pin_noop) -> dict`: the one write path
+    for both activation entries, the tool and `activate_default_agent`.
     - It opens `db.transaction_immediate(AgentStepInstanceMutation(session_id=
       session_id))` and rereads the session's variables under that lock.
-    - It reruns `activation_decision` on the reread, with the pin from
-      `changes["_agent_definition_hash"]`. A result other than `apply` is
-      returned with the current `_agent_type`, and nothing is written. A
-      decision taken before the lock therefore never commits over a newer
-      seat (adversary finding F-B1-locked-permission).
+    - It compares the reread `_agent_type` with `expected_agent_type`, the
+      stored value the caller read before choosing its agent and building its
+      delta. On a mismatch it returns `superseded` with the current
+      `_agent_type` and writes nothing, whatever the current identity is, base
+      agent included.
+    - Otherwise it reruns `activation_decision` on the reread, with the pin
+      from `changes["_agent_definition_hash"]`, which still catches a pin that
+      a concurrent same-agent activation changed. A result other than `apply`
+      is returned with the current `_agent_type`, and nothing is written.
+    - A delta prepared from an earlier read therefore never commits over a
+      newer seat (adversary finding F-B1-locked-permission).
     - The variable lock, at priority 950, nests inside the step lock at 875,
       as `_acquire_lock` requires (`postgres_pool.py:707-715`). Ambient
       transaction reuse is keyed by the adapter (`_ambient.py:28-56`), so the
@@ -738,12 +748,14 @@ web-chat launch passes `relaunch=True`. The registered tool never does.
 9. Build the changes with `build_definition_changes(is_spawned=False)` and add
    `_agent_context_injected=False` and `_agent_identity_reinject=True`.
 10. Refuse `variable_collision`.
-11. Write through `commit_definition_changes(..., relaunch=relaunch,
-    same_pin_noop=True)`. If its locked recheck returns `unchanged` or
-    `role_change_requires_relaunch`, the impl returns the same receipt as
-    step 7. An activation that committed first wins, and the other writes
-    nothing. On an identity change the helper clears the previous
-    definition's keys, and from 1.2 it ends the previous step instance.
+11. Write through `commit_definition_changes(..., expected_agent_type=<the
+    step 2 _agent_type>, relaunch=relaunch, same_pin_noop=True)`.
+    - `superseded` refuses `activation_superseded`, naming the current agent.
+    - `unchanged` and `role_change_requires_relaunch` return the same receipts
+      as step 7.
+    - An activation that committed first wins, and the other writes nothing.
+    - On an identity change the helper clears the previous definition's keys,
+      and from 1.2 it ends the previous step instance.
 
 Every refusal is `{success: false, error_code, error}`, returned before any
 write.
@@ -765,15 +777,19 @@ Callers:
   `_agent_definition_keys` to both its `internal_keys` and `always_reapply`
   sets, so every re-activation refreshes the pin (1.3 compares it first) and
   the key list. It writes through `commit_definition_changes(...,
-  relaunch=False, same_pin_noop=False)` in place of its own
-  `merge_variables`.
+  expected_agent_type=..., relaunch=False, same_pin_noop=False)` in place of
+  its own `merge_variables`.
+  - It reads the session's variables once, before `_resolve_agent_name`, and
+    passes that read's `_agent_type` as `expected_agent_type`. Any identity
+    change committed after that read, including a relaunch to the base agent,
+    is caught at the write.
   - A same-agent re-activation still refreshes every always-reapply key and
     keeps the union of key lists.
   - An override on a base-agent row clears the base agent's keys.
-  - If the locked recheck returns `role_change_requires_relaunch`, a relaunch
-    committed while it prepared its delta. It writes nothing, logs a warning
-    naming the session, the current seat and the stale agent, and returns
-    `None`. The relaunch already wrote the current seat's full delta and
+  - If the locked check returns `superseded` or
+    `role_change_requires_relaunch`, a relaunch committed while it prepared
+    its delta. It writes nothing, logs a warning naming the session, the
+    current seat and the stale agent, and returns `None`. The relaunch already wrote the current seat's full delta and
     requested reinjection. The reconciler reports `activation_failed` for that
     one event and resolves the current seat on the next.
 - `activate_default_agent` passes its `cli_source` to `resolve_agent`, so both
@@ -848,10 +864,11 @@ Tests: `test_apply_agent_definition.py` uses the `HubDatabase` fixtures of
   activating Y and one Z. A `threading.Barrier` patched into step 8's task
   resolution holds both past step 7 until both arrive. Each join is bounded at
   10 seconds.
-- The stale-SessionStart case patches `build_agent_changes` to wait on a
-  `threading.Event` after building X's delta. While it waits, a
-  `relaunch=True` activation to Y commits. The event is then set, with joins
-  bounded at 10 seconds.
+- The stale-SessionStart case starts from a row at seat X and patches
+  `build_agent_changes` to wait on a `threading.Event` after building X's
+  delta. While it waits, a `relaunch=True` activation commits. The event is
+  then set, with joins bounded at 10 seconds. The case is parametrized over a
+  relaunch to Y and a relaunch to `default`.
 - The web-chat switch case mirrors the existing launch tests: it patches
   `apply_agent_definition_impl` and asserts the call and `start_data`.
 - The override case extends `test_activate_agent_override.py`: a row stored at
@@ -959,12 +976,14 @@ Consumers unchanged:
   `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activation_over_configured_base_clears_base_keys`.
 - 1.1.18 - Two concurrent tool activations from the base agent, to Y and to Z,
   both pass step 7. Exactly one returns `applied`, the other returns
-  `role_change_requires_relaunch`, and the row holds only the winner's delta.
+  `activation_superseded`, and the row holds only the winner's delta.
   test:
   `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_concurrent_activations_recheck_permission_under_lock`.
-- 1.1.19 - A SessionStart activation of X whose delta was built before a
-  `relaunch=True` to Y committed writes nothing. It returns `None` and logs one
-  warning naming the session, Y and X, and the row keeps Y's delta. test:
+- 1.1.19 - On a row at seat X, a SessionStart activation of X whose delta was
+  built before a `relaunch=True` committed writes nothing. This holds for a
+  relaunch to Y and for a relaunch to `default`. It returns `None` and logs
+  one warning naming the session, the new agent and X. The row keeps the
+  relaunched agent's delta. test:
   `tests/hooks/test_session_start_reactivation.py::test_stale_sessionstart_behind_relaunch_keeps_current_seat`.
 
 ### 1.2 Step workflows on interactive sessions [category: code] (depends: 1.1)
