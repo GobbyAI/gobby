@@ -149,10 +149,18 @@ class TaskCloseReview:
 
 
 class TaskCloseReviewBusyError(RuntimeError):
-    """Another task owns this project's close-review admission slot."""
+    """Admission refusal with the occupancy snapshot that caused it."""
 
-    def __init__(self, active_review: TaskCloseReview) -> None:
+    def __init__(
+        self,
+        active_review: TaskCloseReview,
+        *,
+        active_reviews: Sequence[TaskCloseReview],
+        max_concurrency: int,
+    ) -> None:
         self.active_review = active_review
+        self.active_reviews = tuple(active_reviews)
+        self.max_concurrency = max_concurrency
         super().__init__(f"Close reviewer active for {active_review.task_ref}")
 
 
@@ -247,7 +255,7 @@ class TaskCloseReviewStore:
                 conn.execute("SELECT id FROM projects WHERE id = %s FOR UPDATE", (project_id,))
                 blocker = _admission_blocker(conn, project_id, task_id, max_concurrency)
                 if blocker is not None:
-                    raise TaskCloseReviewBusyError(blocker)
+                    raise blocker
             row = conn.execute(
                 f"""
                 WITH launch_task AS (
@@ -477,7 +485,7 @@ class TaskCloseReviewStore:
 
     def get_admission_blocker(
         self, project_id: str, *, task_id: str, max_concurrency: int
-    ) -> TaskCloseReview | None:
+    ) -> TaskCloseReviewBusyError | None:
         """Report, for an advisory preview, the review that admission would refuse beside."""
         with self.db.transaction() as conn:
             return _admission_blocker(conn, project_id, task_id, max_concurrency)
@@ -840,7 +848,7 @@ class TaskCloseReviewStore:
 
 def _admission_blocker(
     conn: Transaction, project_id: str, task_id: str, max_concurrency: int
-) -> TaskCloseReview | None:
+) -> TaskCloseReviewBusyError | None:
     """Return the review that keeps ``task_id`` from a new review, if any.
 
     A terminal review whose run is still alive holds its slot until the run exits.
@@ -867,13 +875,21 @@ def _admission_blocker(
             task_id,
         ),
     ).fetchall()
-    own = next((row for row in occupied if str(row["task_id"]) == task_id), None)
+    reviews = tuple(_review_from_row(row) for row in occupied)
+    own = next((review for review in reviews if review.task_id == task_id), None)
     if own is not None:
         return (
-            _review_from_row(own) if own["status"] in TERMINAL_TASK_CLOSE_REVIEW_STATUSES else None
+            TaskCloseReviewBusyError(own, active_reviews=reviews, max_concurrency=max_concurrency)
+            if own.terminal
+            else None
         )
-    others = [row for row in occupied if str(row["task_id"]) != task_id]
-    return _review_from_row(others[0]) if len(others) >= max_concurrency else None
+    return (
+        TaskCloseReviewBusyError(
+            reviews[0], active_reviews=reviews, max_concurrency=max_concurrency
+        )
+        if len(reviews) >= max_concurrency
+        else None
+    )
 
 
 def _json(value: Mapping[str, Any]) -> str:
