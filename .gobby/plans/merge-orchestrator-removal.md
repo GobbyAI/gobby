@@ -198,9 +198,9 @@ Targets:
 - `src/gobby/dispatch/merge_recovery.py::*` — operation: delete — scope-reason: retire the conflict-recovery label module
 - `tests/dispatch/test_merge_rule.py::*` — scope-reason: replace merge-agent spawn and no-agent cases
 - `tests/dispatch/test_rules.py::*` — scope-reason: replace merge routing, conflict-label, and root-merge cases
-- `tests/dispatch/test_workspace_merge.py::*` — scope-reason: assert conflict escalation without the recovery label
+- `tests/dispatch/test_workspace_merge.py::*` — scope-reason: assert conflict escalation without the recovery label and add root own-workspace landing cases
 - `tests/dispatch/test_dispatcher.py::*` — scope-reason: replace the merge heartbeat spawn test and the disabled-agent override fixture
-- `tests/dispatch/test_delivery_chain.py::*` — scope-reason: drive the merge segment through the deterministic paths
+- `tests/dispatch/test_delivery_chain.py::*` — scope-reason: drive the merge segment through the deterministic paths and add the isolation-none descendant closure case
 - `tests/dispatch/test_pr_to_merge_advance.py::*` — scope-reason: the fake registry's merge row has no default agent
 - `tests/e2e/test_build_dispatcher_autonomy.py::*` — scope-reason: the merge stage no longer spawns merge-orchestrator
 
@@ -249,12 +249,21 @@ target branch is checked out there, the same local landing #14360 added for root
 integration workspaces; otherwise it raises and `_execute_merge_workspace` fails
 the stage with `workspace_merge_failed` and `needs_human=True`.
 `_ensure_target_merge_safe` and `_recover_stale_merge_state` guard the target as
-before. `_isolation` is defined in `_rule_state.py` and already used by
+before. Only `_complete_merge_stage` calls `cleanup_successful_merge_artifacts`,
+so a failed merge leaves the source workspace in place for the human. `_isolation` is defined in `_rule_state.py` and already used by
 `development_isolation_rule`. `fail_stage` with `needs_human=True` escalates
 through `StageStatesManager`; a human resolves the conflict and records the result
 with `gobby-tasks-ops:record_merge_result`. `_close_task_in_txn` cascades
 descendants only when the completing stage is `merge`
-(`_stage_state_transitions.py`). Consumer sweep (`grep -rlw` over `src tests`):
+(`_stage_state_transitions.py`); `_cascade_close_descendants`
+(`src/gobby/storage/tasks/_stage_utils.py`) closes the open subtree with
+`closed_reason = 'merged'`. The existing
+`test_parent_epic_pr_merge_closes_with_real_heartbeat` closes its child before
+delivery, so it does not prove that cascade; 1.2.11 adds the case with a
+descendant still open. The root landing cases reuse `_init_repo`,
+`_merge_checkout`, and the clone setup already in `test_workspace_merge.py`; the
+existing root landing test uses `integration_workspace_id` and does not exercise
+a root's own workspace. Consumer sweep (`grep -rlw` over `src tests`):
 `merge_rule` in `rules.py`, `test_delivery_chain.py`, `test_merge_rule.py`,
 `test_pr_rules.py` (rule-order list only, unchanged), `test_rules.py`;
 `auto_advance_ready_rule` in `rules.py`, `test_delivery_chain.py`,
@@ -287,6 +296,10 @@ then ruff, format check, and mypy on the changed files.
 - 1.2.5 - A workspace merge conflict fails the stage with `needs_human=True`, records the conflicted files, adds no label, and spawns nothing. test: `tests/dispatch/test_workspace_merge.py::test_conflict_fails_merge_stage_for_human`.
 - 1.2.6 - A real heartbeat lands an isolated child task's merge stage without spawning an agent. test: `tests/dispatch/test_dispatcher.py::test_real_heartbeat_merge_lands_workspace_without_agent`.
 - 1.2.7 - The bundled `merge` row has no `default_agent`, and `merge_recovery.py` is gone. file: `src/gobby/install/shared/registry/stages.yaml`.
+- 1.2.8 - A root task with only its own `worktree_id`, no parent, and no integration artifact lands its committed content into the checked-out target branch and completes the merge stage. test: `tests/dispatch/test_workspace_merge.py::test_execute_merge_workspace_lands_root_own_worktree_on_local_branch`.
+- 1.2.9 - A root task with only its own `clone_id`, no parent, and no integration artifact lands its committed content into the checked-out target branch and completes the merge stage. test: `tests/dispatch/test_workspace_merge.py::test_execute_merge_workspace_lands_root_own_clone_on_local_branch`.
+- 1.2.10 - A root own-workspace merge whose target branch is not checked out fails the stage with `workspace_merge_failed` and `needs_human=True` and keeps the source workspace. test: `tests/dispatch/test_workspace_merge.py::test_execute_merge_workspace_root_own_worktree_target_not_checked_out_escalates`.
+- 1.2.11 - A real heartbeat on an `isolation: none` parent whose descendant is still open at merge start completes `merge`, closes the parent with `manifest_exhausted`, closes the descendant with `merged`, and spawns no agent and runs no git landing. test: `tests/dispatch/test_delivery_chain.py::test_isolation_none_parent_merge_closes_open_descendant_with_real_heartbeat`.
 
 ## P2: Definition retirement
 `kind: framing`
@@ -415,3 +428,12 @@ its coordinated restart from the main checkout. Then:
 - 2026-10-05, Plan Writer gobby#15429 draft. The Orchestrator gobby#14972 accepted
   the five recommendations recorded in the Decision Record and will put the
   rejected `pr`-stage retirement alternative to Josh at approval.
+- **2026-10-05, enhancement round 1 of 1.** `kind: enhancement`; `enhancer_run`:
+  `49822a10-4e58-4a20-8423-6a4e9a5f09f9` (plan-enhancer-taskless-old, against
+  111389c); converged: no; `suggestions_presented`: 2. The Orchestrator
+  gobby#14972 voted on each. E1-root-own-workspace-landing (better, testability):
+  accepted, because the root-source widening in ruling 3 had only action-selection
+  proof; it became acceptance 1.2.8-1.2.10. E2-isolation-none-descendant-closure
+  (better, testability): accepted, because ruling 4 keeps `merge` for descendant
+  closure and no existing test proves it; it became acceptance 1.2.11. Both reuse
+  existing test machinery and add no production mechanism.
