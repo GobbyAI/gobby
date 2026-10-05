@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+import sys
 import threading
 from collections.abc import Callable
 from dataclasses import replace
@@ -1105,6 +1106,101 @@ class TestTerminalValidationFailures:
         assert facts.terminal_validation_failures == ("pytest tests/unit/test_widget.py",)
         assert derive.await_args is not None
         assert derive.await_args.args[1] == created_at
+
+
+def _capture_pytest(repo: Path, targets: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", *targets, "-q", "--tb=short"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+
+def test_pytest_usage_error_is_not_a_terminal_validation_failure(tmp_path: Path) -> None:
+    """L7's actual missing-path red is covered by either corrected green via #23342."""
+    surviving = [
+        "tests/servers/routes/test_api_keys.py",
+        "tests/servers/routes/test_auth_routes.py",
+        "tests/storage/test_storage_auth.py",
+        "tests/servers/test_http_middleware.py",
+    ]
+    missing = "tests/servers/test_exception_handlers.py"
+    corrected = "tests/servers/test_http_error_handling.py"
+    # Match the repository addopt: -q still prints the no-tests banner with -v.
+    (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\naddopts = "-v"\n')
+    for target in [*surviving, corrected]:
+        path = tmp_path / target
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def test_case() -> None:\n    assert True\n")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    _commit(tmp_path)
+
+    prefix = (
+        "RTK_DISABLED=1 GOBBY_TEST_GDAEMON=checkout "
+        "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test "
+        f"GOBBY_TEST_PROTECT=1 uv run --directory {shlex.quote(str(tmp_path))} pytest "
+    )
+    runs: list[TranscriptValidationRun] = []
+    for order, targets in enumerate(
+        [[*surviving, missing], [*surviving, corrected], surviving], start=1
+    ):
+        result = _capture_pytest(tmp_path, targets)
+        assert result.returncode == (4 if order == 1 else 0), result.stdout + result.stderr
+        runs.append(
+            replace(
+                _run(
+                    order,
+                    "failure" if order == 1 else "success",
+                    f"{prefix}{' '.join(targets)} -q --tb=short",
+                    output=result.stdout + result.stderr,
+                ),
+                exit_code=result.returncode,
+            )
+        )
+
+    red, corrected_green, dropped_green = runs
+    assert red.output is not None
+    assert "no tests ran" in red.output
+    assert f"ERROR: file or directory not found: {missing}" in red.output
+    assert unresolved_validation_failures(
+        [red], owner_handoff=False, project_path=str(tmp_path)
+    ) == (red,)
+    for greens in ([corrected_green], [dropped_green], [corrected_green, dropped_green]):
+        assert (
+            unresolved_validation_failures(
+                [red, *greens], owner_handoff=False, project_path=str(tmp_path)
+            )
+            == ()
+        )
+
+
+def test_conftest_import_error_exit_four_stays_terminal(tmp_path: Path) -> None:
+    """Exit 4 can represent broken code rather than an invalid test target."""
+    conftest = tmp_path / "tests/servers/conftest.py"
+    conftest.parent.mkdir(parents=True)
+    conftest.write_text("import nonexistent_gobby_conftest_dependency\n")
+    target = "tests/servers/test_ok.py"
+    (tmp_path / target).write_text("def test_case() -> None:\n    assert True\n")
+    result = _capture_pytest(tmp_path, [target])
+    output = result.stdout + result.stderr
+    assert result.returncode == 4, output
+    assert "ImportError while loading conftest" in output
+    assert "ModuleNotFoundError" in output
+    red = replace(
+        _run(
+            1,
+            "failure",
+            f"uv run --directory {shlex.quote(str(tmp_path))} pytest {target} -q --tb=short",
+            output=output,
+        ),
+        exit_code=result.returncode,
+    )
+    assert unresolved_validation_failures(
+        [red], owner_handoff=False, project_path=str(tmp_path)
+    ) == (red,)
 
 
 _WIDGET = "tests/unit/test_widget.py"
