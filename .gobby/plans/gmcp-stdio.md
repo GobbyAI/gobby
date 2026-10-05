@@ -1069,6 +1069,25 @@ root is #23275. Drafting creates no tasks, labels, or edges.
   Orchestrator rulings of 11:19, 11:24, and 11:48 CT. Targets and consumers were
   swept read-only on `0.5.0` at `6f5d0c8733`. The draft is narrative only, with
   no M1.
+- 2026-10-05: Consensus between the Plan Writer gobby#15469 and the Plan
+  Adversary gobby#15471 at `fcc970aa76`.
+  - The enhancer pass (run `ee783f28`) proposed E1 to E4. The Orchestrator
+    gobby#14972 disposed them at 12:08 CT: E1 accepted as modified (1.4 depends
+    on 1.2, D1 on 1.3 and 1.4), and E2, E3, and E4 accepted.
+  - The Orchestrator's first Decision 16 ruling put the sandbox edits in 1.6,
+    which the `production-size-growth` lint rejects. At 12:12 CT it ruled for a
+    new leaf 1.8 that moves code out of the two large files.
+  - Adversary findings, all resolved:
+    - F1: D1 waited on 1.6 while 1.6 waited on D1. The post-switch proof moved
+      to D6.
+    - F2: the web Per-tool timeouts editor and `NumberMapConfigField` retire
+      in 1.7.
+    - F3: the Deferral Finalization ledger was added, accepted by the
+      Orchestrator at 12:26 CT. D2 uses the cited-parent route because a
+      blocked-by edge would form a cycle.
+    - F4: the repair covers every `uv run … gobby mcp-server` shape.
+    - N1: 1.6 records its Granularity decision.
+  - No disagreement went to the Orchestrator.
 
 ## V2: Verification
 `kind: verification`
