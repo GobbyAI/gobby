@@ -48,7 +48,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv for Python interoperability tests
-        uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           enable-cache: true
 
@@ -279,7 +279,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv for Python interoperability tests
-        uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           enable-cache: true
 

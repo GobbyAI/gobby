@@ -220,8 +220,9 @@ fn acquire_record<T>(
     match action(file) {
         Ok(value) => Ok(value),
         Err(error) => {
-            file.set_len(0)?;
-            file.sync_all()?;
+            // Match Python's best-effort truncate without masking the failure
+            // that caused acquisition to unwind. Dropping File releases flock.
+            let _ = file.set_len(0).and_then(|()| file.sync_all());
             Err(error)
         }
     }
