@@ -997,6 +997,16 @@ Targets:
 - `tests/workflows/test_step_snapshot_semantics.py::*` — scope-reason: invert the tests that pinned the no-instance non-goal
 - `tests/hooks/test_session_activation_reconciliation.py::*` — scope-reason: step recovery no longer requires a spawned session or task
 
+**Granularity:** eight acceptance items, one behavior: the lifecycle of a
+session's single step instance. Creation on activation (1.2.1, 1.2.2, 1.2.5),
+recovery by the reconciler (1.2.3), preservation for spawned runs (1.2.4) and
+replacement on an identity change (1.2.6-1.2.8) all go through the same two
+writers, `_ensure_step_instance` and the transition in
+`commit_definition_changes`, under the same step lock. Shipping creation
+without replacement would leave seat X's steps on a row switched to Y.
+Shipping replacement without the locked reread would reopen the stale
+reconcile race. No split is warranted.
+
 **Research context:** today's gates:
 - `session_activation.py::_ensure_step_instance` returns without creating
   anything unless `is_spawned_agent` or `_session_is_spawned(session)` holds and
