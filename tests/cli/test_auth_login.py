@@ -653,6 +653,24 @@ def test_login_compensation_follows_publication_point(
         )
         assert (delete.method, delete.path) == ("DELETE", f"/api/auth/keys/{new_id}")
 
+    @contextmanager
+    def _unlockable(path: Path) -> Iterator[None]:
+        raise TimeoutError("durable file lock deadline exceeded")
+        yield
+
+    with _serve(FakeHub(), tmp_path / "lock", tls=True) as hub:
+        node = _node(tmp_path / "lock", monkeypatch, hub.origin)
+        before = node.snapshot()
+        with monkeypatch.context() as patched:
+            patched.setattr(auth_login, "exclusive_file_lock", _unlockable)
+            result = _login("--fingerprint", pem_fingerprint(hub.pem), prompts=f"{PASSWORD}\n")
+        (new_id,) = hub.keys
+        assert result.exit_code != 0
+        assert "lock deadline exceeded" in result.output
+        assert node.snapshot() == before
+        assert hub.revoked == [new_id]
+        assert hub.live == {PRIOR_KEY_ID}
+
     for stage in ("fsync", "readback"):
         root = tmp_path / stage
         with _serve(FakeHub(), root, tls=True) as hub:

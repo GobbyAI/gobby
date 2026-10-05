@@ -10,6 +10,7 @@ import ssl
 import tempfile
 import uuid
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import dataclass
 from enum import Enum
 from http.cookies import SimpleCookie
@@ -274,7 +275,12 @@ def _publish(
     path: Path, pem_path: Path, pem: str | None, minted: _Minted
 ) -> tuple[_Publication, Exception | None]:
     """Publish under the bootstrap lock; on failure, settle by the publication point."""
-    with exclusive_file_lock(path):
+    with ExitStack() as held:
+        try:
+            held.enter_context(exclusive_file_lock(path))
+        except OSError as exc:
+            # Nothing is published without the lock, so the minted key must be revoked.
+            return _Publication.ROLLED_BACK, exc
         try:
             prior_pem = pem_path.read_bytes().decode("utf-8") if pem and pem_path.exists() else None
         except (OSError, UnicodeDecodeError) as exc:
