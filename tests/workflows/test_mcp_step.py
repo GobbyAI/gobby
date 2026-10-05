@@ -43,6 +43,7 @@ class TestMCPStepConfig:
         )
         assert config.server == "gobby-agents"
         assert config.tool == "spawn_agent"
+        assert config.arguments is not None
         assert config.arguments["prompt"] == "Do work"
         assert config.arguments["timeout"] == 600
 
@@ -54,12 +55,12 @@ class TestMCPStepConfig:
     def test_config_requires_server(self) -> None:
         """Test that server is required."""
         with pytest.raises(ValidationError):
-            MCPStepConfig(tool="some_tool")
+            MCPStepConfig.model_validate({"tool": "some_tool"})
 
     def test_config_requires_tool(self) -> None:
         """Test that tool is required."""
         with pytest.raises(ValidationError):
-            MCPStepConfig(server="some_server")
+            MCPStepConfig.model_validate({"server": "some_server"})
 
 
 # =============================================================================
@@ -144,12 +145,12 @@ class TestPipelineStepMCP:
 
 
 @pytest.fixture
-def mock_db():
+def mock_db() -> MagicMock:
     return MagicMock()
 
 
 @pytest.fixture
-def mock_execution_manager():
+def mock_execution_manager() -> MagicMock:
     manager = MagicMock()
     mock_execution = MagicMock()
     mock_execution.id = "pe-test-123"
@@ -165,12 +166,12 @@ def mock_execution_manager():
 
 
 @pytest.fixture
-def mock_llm_service():
+def mock_llm_service() -> AsyncMock:
     return AsyncMock()
 
 
 @pytest.fixture
-def mock_tool_proxy():
+def mock_tool_proxy() -> AsyncMock:
     proxy = AsyncMock()
     proxy.get_tool_schema = AsyncMock(return_value={"success": True, "tool": {"inputSchema": {}}})
     proxy.call_tool = AsyncMock(return_value={"success": True, "task_id": "#42"})
@@ -183,7 +184,7 @@ def mock_tool_proxy():
 def _make_session_manager(
     *,
     resolve_to: str | None = None,
-    resolve_exc=None,
+    resolve_exc: Exception | None = None,
     external_id: str | None = None,
 ) -> MagicMock:
     """Build a standalone session_manager stub for execute_mcp_step tests."""
@@ -204,7 +205,7 @@ class TestExecuteMCPStep:
     """Tests for execute_mcp_step handler function."""
 
     @pytest.mark.asyncio
-    async def test_mcp_step_calls_tool_proxy(self, mock_tool_proxy) -> None:
+    async def test_mcp_step_calls_tool_proxy(self, mock_tool_proxy: AsyncMock) -> None:
         """Test that MCP step calls tool_proxy.call_tool with correct args."""
         step = PipelineStep(
             id="test_step",
@@ -215,7 +216,7 @@ class TestExecuteMCPStep:
             ),
         )
 
-        context: dict = {"inputs": {}, "steps": {}}
+        context: dict[str, Any] = {"inputs": {}, "steps": {}}
         result = await execute_mcp_step(step, context, lambda: mock_tool_proxy)
 
         mock_tool_proxy.get_tool_schema.assert_not_called()
@@ -231,7 +232,9 @@ class TestExecuteMCPStep:
         assert result["task_id"] == "#42"
 
     @pytest.mark.asyncio
-    async def test_mcp_step_prefetches_schema_for_pipeline_session(self, mock_tool_proxy) -> None:
+    async def test_mcp_step_prefetches_schema_for_pipeline_session(
+        self, mock_tool_proxy: AsyncMock
+    ) -> None:
         """Pipeline MCP steps unlock the target tool before execution."""
         step = PipelineStep(
             id="test_step",
@@ -239,7 +242,7 @@ class TestExecuteMCPStep:
         )
 
         session_manager = _make_session_manager(resolve_to="pipeline-session-123")
-        context: dict = {"inputs": {}, "steps": {}, "session_id": "pipeline-session-123"}
+        context: dict[str, Any] = {"inputs": {}, "steps": {}, "session_id": "pipeline-session-123"}
         await execute_mcp_step(
             step, context, lambda: mock_tool_proxy, session_manager=session_manager
         )
@@ -262,14 +265,14 @@ class TestExecuteMCPStep:
         assert mock_tool_proxy.call_tool.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_mcp_step_no_arguments(self, mock_tool_proxy) -> None:
+    async def test_mcp_step_no_arguments(self, mock_tool_proxy: AsyncMock) -> None:
         """Test MCP step with no arguments passes empty dict."""
         step = PipelineStep(
             id="test_step",
             mcp=MCPStepConfig(server="gobby-agents", tool="wait_for_agent"),
         )
 
-        context: dict = {"inputs": {}, "steps": {}}
+        context: dict[str, Any] = {"inputs": {}, "steps": {}}
         await execute_mcp_step(step, context, lambda: mock_tool_proxy)
 
         mock_tool_proxy.get_tool_schema.assert_not_called()
@@ -289,7 +292,7 @@ class TestExecuteMCPStep:
             mcp=MCPStepConfig(server="s", tool="t"),
         )
 
-        context: dict = {"inputs": {}, "steps": {}}
+        context: dict[str, Any] = {"inputs": {}, "steps": {}}
         with pytest.raises(RuntimeError, match="requires tool_proxy_getter"):
             await execute_mcp_step(step, context, None)
 
@@ -301,13 +304,13 @@ class TestExecuteMCPStep:
             mcp=MCPStepConfig(server="s", tool="t"),
         )
 
-        context: dict = {"inputs": {}, "steps": {}}
+        context: dict[str, Any] = {"inputs": {}, "steps": {}}
         with pytest.raises(RuntimeError, match="returned None"):
             await execute_mcp_step(step, context, lambda: None)
 
     @pytest.mark.asyncio
     async def test_execute_mcp_step_resolves_external_id_before_session_context(
-        self, mock_tool_proxy
+        self, mock_tool_proxy: AsyncMock
     ) -> None:
         """External_id passed as session_id resolves to platform UUID before dispatch."""
         session_manager = _make_session_manager(
@@ -319,7 +322,7 @@ class TestExecuteMCPStep:
             mcp=MCPStepConfig(server="gobby-workflows", tool="list_pipeline_executions"),
         )
 
-        context: dict = {"inputs": {}, "steps": {}, "session_id": "external-uuid-abc"}
+        context: dict[str, Any] = {"inputs": {}, "steps": {}, "session_id": "external-uuid-abc"}
         await execute_mcp_step(
             step, context, lambda: mock_tool_proxy, session_manager=session_manager
         )
@@ -331,7 +334,7 @@ class TestExecuteMCPStep:
     @pytest.mark.asyncio
     async def test_execute_mcp_step_unresolvable_session_id_skips_set_session_context(
         self,
-        mock_tool_proxy,
+        mock_tool_proxy: AsyncMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Unresolvable pipeline session refs are debug-only and fall through."""
@@ -346,7 +349,7 @@ class TestExecuteMCPStep:
             mcp=MCPStepConfig(server="gobby-workflows", tool="list_pipeline_executions"),
         )
 
-        context: dict = {
+        context: dict[str, Any] = {
             "inputs": {},
             "steps": {},
             "session_id": "#6858",
@@ -373,7 +376,7 @@ class TestExecuteMCPStep:
 
     @pytest.mark.asyncio
     async def test_execute_mcp_step_ignores_tool_proxy_session_manager_in_production(
-        self, mock_tool_proxy
+        self, mock_tool_proxy: AsyncMock
     ) -> None:
         """The handler must resolve via the session_manager kwarg, not tool_proxy.session_manager.
 
@@ -392,7 +395,7 @@ class TestExecuteMCPStep:
             id="test_step",
             mcp=MCPStepConfig(server="gobby-workflows", tool="list_pipeline_executions"),
         )
-        context: dict = {"inputs": {}, "steps": {}, "session_id": "pipeline-child-ref"}
+        context: dict[str, Any] = {"inputs": {}, "steps": {}, "session_id": "pipeline-child-ref"}
         await execute_mcp_step(
             step, context, lambda: mock_tool_proxy, session_manager=correct_manager
         )
@@ -416,7 +419,7 @@ class TestExecuteMCPStep:
             mcp=MCPStepConfig(server="s", tool="missing_tool"),
         )
 
-        context: dict = {"inputs": {}, "steps": {}}
+        context: dict[str, Any] = {"inputs": {}, "steps": {}}
         with pytest.raises(RuntimeError, match="failed"):
             await execute_mcp_step(step, context, lambda: mock_proxy)
 
@@ -487,7 +490,11 @@ class TestMCPStepInPipelineExecute:
 
     @pytest.mark.asyncio
     async def test_mcp_step_executes_in_pipeline(
-        self, mock_db, mock_execution_manager, mock_llm_service, mock_tool_proxy
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: AsyncMock,
+        mock_tool_proxy: AsyncMock,
     ) -> None:
         """Test that MCP steps execute correctly within the pipeline flow."""
         from gobby.workflows.definitions import PipelineDefinition
@@ -573,7 +580,11 @@ class TestMCPTemplateRendering:
 
     @pytest.mark.asyncio
     async def test_render_mcp_arguments_with_template(
-        self, mock_db, mock_execution_manager, mock_llm_service, mock_tool_proxy
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: AsyncMock,
+        mock_tool_proxy: AsyncMock,
     ) -> None:
         """Test that ${{ }} templates are rendered in MCP arguments."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -601,7 +612,7 @@ class TestMCPTemplateRendering:
             ),
         )
 
-        context: dict = {
+        context: dict[str, Any] = {
             "inputs": {"task_title": "Fix bug #42", "wait_timeout": "600"},
             "steps": {},
         }
@@ -616,7 +627,7 @@ class TestMCPTemplateRendering:
 
     @pytest.mark.asyncio
     async def test_coerce_boolean_values(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: AsyncMock
     ) -> None:
         """Test that boolean strings are coerced to bool."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -641,7 +652,7 @@ class TestMCPTemplateRendering:
             ),
         )
 
-        context: dict = {
+        context: dict[str, Any] = {
             "inputs": {"force_flag": "true", "verbose": "false"},
             "steps": {},
         }
@@ -652,7 +663,7 @@ class TestMCPTemplateRendering:
 
     @pytest.mark.asyncio
     async def test_drop_null_values(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: AsyncMock
     ) -> None:
         """Null-like MCP arguments are omitted from the rendered call."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -674,7 +685,7 @@ class TestMCPTemplateRendering:
             ),
         )
 
-        context: dict = {
+        context: dict[str, Any] = {
             "inputs": {"maybe_null": "null"},
             "steps": {},
         }
@@ -684,7 +695,7 @@ class TestMCPTemplateRendering:
 
     @pytest.mark.asyncio
     async def test_coerce_float_values(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: AsyncMock
     ) -> None:
         """Test that float strings are coerced to float."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -706,7 +717,7 @@ class TestMCPTemplateRendering:
             ),
         )
 
-        context: dict = {
+        context: dict[str, Any] = {
             "inputs": {"ratio": "0.75"},
             "steps": {},
         }
@@ -717,7 +728,7 @@ class TestMCPTemplateRendering:
 
     @pytest.mark.asyncio
     async def test_nested_dict_arguments_rendered(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: AsyncMock
     ) -> None:
         """Test that nested dict arguments are recursively rendered."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -744,7 +755,7 @@ class TestMCPTemplateRendering:
             ),
         )
 
-        context: dict = {
+        context: dict[str, Any] = {
             "inputs": {"name": "test", "count": "5"},
             "steps": {},
         }
@@ -755,7 +766,7 @@ class TestMCPTemplateRendering:
 
     @pytest.mark.asyncio
     async def test_pure_expression_preserves_list(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: AsyncMock
     ) -> None:
         """Test that a pure ${{ expr }} returning a list preserves the list type."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -777,7 +788,7 @@ class TestMCPTemplateRendering:
             ),
         )
 
-        context: dict = {
+        context: dict[str, Any] = {
             "inputs": {},
             "steps": {"execute": {"output": {"created": ["#9633", "#9634", "#9635"]}}},
         }
@@ -788,7 +799,7 @@ class TestMCPTemplateRendering:
 
     @pytest.mark.asyncio
     async def test_pure_expression_preserves_dict(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: AsyncMock
     ) -> None:
         """Test that a pure ${{ expr }} returning a dict preserves the dict type."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -810,7 +821,7 @@ class TestMCPTemplateRendering:
             ),
         )
 
-        context: dict = {
+        context: dict[str, Any] = {
             "inputs": {},
             "steps": {"prev": {"output": {"settings": {"timeout": 600, "retries": 3}}}},
         }
@@ -821,7 +832,7 @@ class TestMCPTemplateRendering:
 
     @pytest.mark.asyncio
     async def test_mixed_string_with_list_renders_as_string(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: AsyncMock
     ) -> None:
         """Test that mixed strings containing ${{ }} still render as strings."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -843,7 +854,7 @@ class TestMCPTemplateRendering:
             ),
         )
 
-        context: dict = {
+        context: dict[str, Any] = {
             "inputs": {},
             "steps": {"prev": {"output": {"ids": ["#1", "#2"]}}},
         }
@@ -854,7 +865,7 @@ class TestMCPTemplateRendering:
 
     @pytest.mark.asyncio
     async def test_pure_expression_preserves_scalar_types(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: AsyncMock
     ) -> None:
         """Test that pure expressions also work correctly for scalar values."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -880,7 +891,7 @@ class TestMCPTemplateRendering:
             ),
         )
 
-        context: dict = {
+        context: dict[str, Any] = {
             "inputs": {"count": 42, "name": "test", "flag": True},
             "steps": {},
         }
@@ -893,7 +904,7 @@ class TestMCPTemplateRendering:
 
     @pytest.mark.asyncio
     async def test_render_does_not_mutate_original(
-        self, mock_db, mock_execution_manager, mock_llm_service
+        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: AsyncMock
     ) -> None:
         """Test that rendering doesn't mutate the original step definition."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -912,10 +923,12 @@ class TestMCPTemplateRendering:
             mcp=MCPStepConfig(server="s", tool="t", arguments=original_args),
         )
 
-        context: dict = {"inputs": {"timeout": "300"}, "steps": {}}
+        context: dict[str, Any] = {"inputs": {"timeout": "300"}, "steps": {}}
         rendered = executor.renderer.render_step(step, context)
 
         # Original should be unchanged
+        assert step.mcp is not None
+        assert step.mcp.arguments is not None
         assert step.mcp.arguments["timeout"] == "${{ inputs.timeout }}"
         # Rendered should have coerced value
         assert rendered.mcp.arguments["timeout"] == 300

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import signal
 import subprocess
@@ -96,7 +97,7 @@ def test_compose_interrupt_terminates_process_group_and_reaps_child(
     monkeypatch.setattr(daemon_services, "resolves_to_real_run", lambda _run: True)
     popen = MagicMock(return_value=process)
     monkeypatch.setattr(subprocess, "Popen", popen)
-    monkeypatch.setattr(daemon_services.os, "killpg", killpg)
+    monkeypatch.setattr(os, "killpg", killpg)
     monkeypatch.setattr(sys, "platform", "darwin")
 
     with pytest.raises(KeyboardInterrupt):
@@ -126,7 +127,7 @@ def test_second_interrupt_during_compose_reap_still_kills_process_group(
 
     monkeypatch.setattr(daemon_services, "resolves_to_real_run", lambda _run: True)
     monkeypatch.setattr(subprocess, "Popen", MagicMock(return_value=process))
-    monkeypatch.setattr(daemon_services.os, "killpg", killpg)
+    monkeypatch.setattr(os, "killpg", killpg)
     monkeypatch.setattr(sys, "platform", "darwin")
 
     with pytest.raises(KeyboardInterrupt):

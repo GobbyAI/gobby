@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 194,
+  "site_count": 192,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -861,26 +861,6 @@
         "arg-type"
       ],
       "statement": "writer = KnowledgeGraphWriter ( falkor )"
-    },
-    {
-      "fingerprint": "a2714bf4d6489188b1378c2db19bb585f9515815a96e0f334f8c2cc145a3cebd",
-      "path": "tests/memory/test_indexing_service.py",
-      "symbol": "test_global_reindex_acquires_admission_before_source_snapshot",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "service . fetch_all_memories = fetch"
-    },
-    {
-      "fingerprint": "87b9abcdc40945cbad943324a29d666094c7bfc98e57854d4fe1933e48b5ce5d",
-      "path": "tests/memory/test_indexing_service.py",
-      "symbol": "test_global_reindex_routes_rowless_cleanup_through_recreate_fence",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "service . fetch_all_memories = fetch"
     },
     {
       "fingerprint": "6997018f2dd29f8ec70237849c2762c827a06be117b3aaab63873bdf354e050c",

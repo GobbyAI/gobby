@@ -39,7 +39,7 @@ from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.agents.attention_metadata import AttentionMetadataStore
-    from gobby.agents.detection.registry import DetectionManifestRegistry
+    from gobby.agents.detection.provider import DetectionRegistry
     from gobby.autonomous.stuck_detector import StuckDetectionResult, StuckDetector
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.hooks.session_coordinator import SessionCoordinator
@@ -78,7 +78,7 @@ class AgentLifecycleMonitor:
         self,
         agent_run_manager: LocalAgentRunManager,
         db: HubDatabase,
-        detection_registry: DetectionManifestRegistry,
+        detection_registry: DetectionRegistry,
         session_manager: SessionManager | None = None,
         session_coordinator: SessionCoordinator | None = None,
         clone_storage: LocalCloneManager | None = None,
@@ -269,7 +269,7 @@ class AgentLifecycleMonitor:
         return self._stall_classifier
 
     @property
-    def detection_registry(self) -> DetectionManifestRegistry:
+    def detection_registry(self) -> DetectionRegistry:
         """Return the shared live manifest registry."""
         return self._detection_registry
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -82,7 +83,7 @@ class MockMessage:
     metadata_json: str | None = None
     delivered_at: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "from_session": self.from_session,
@@ -94,7 +95,7 @@ class MockMessage:
             "delivered_at": self.delivered_at,
         }
 
-    def to_brief(self) -> dict:
+    def to_brief(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "from_session": self.from_session,
@@ -118,7 +119,7 @@ class FakeWakeDispatcher:
 
 
 @pytest.fixture
-def mock_session_manager():
+def mock_session_manager() -> MagicMock:
     mgr = MagicMock()
     mgr.resolve_session_reference = MagicMock(side_effect=lambda ref, project_id=None: ref)
     mgr.get = MagicMock(return_value=None)
@@ -127,7 +128,7 @@ def mock_session_manager():
 
 
 @pytest.fixture
-def mock_message_manager():
+def mock_message_manager() -> MagicMock:
     mgr = MagicMock()
     mgr.create_message = MagicMock(return_value=MockMessage())
     mgr.get_undelivered_messages = MagicMock(return_value=[])
@@ -138,7 +139,7 @@ def mock_message_manager():
 
 
 @pytest.fixture
-def mock_db():
+def mock_db() -> MagicMock:
     db = MagicMock()
     db.fetchone = MagicMock(return_value=None)
     db.execute = MagicMock()
@@ -147,10 +148,10 @@ def mock_db():
 
 @pytest.fixture
 def messaging_registry(
-    mock_session_manager,
-    mock_message_manager,
-    mock_db,
-):
+    mock_session_manager: MagicMock,
+    mock_message_manager: MagicMock,
+    mock_db: MagicMock,
+) -> InternalToolRegistry:
     from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 
     registry = InternalToolRegistry(
@@ -176,7 +177,10 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_success(
-        self, messaging_registry, mock_session_manager, mock_message_manager
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
     ) -> None:
         """P2P message between sessions in the same project."""
         mock_session_manager.get.side_effect = lambda sid: {
@@ -199,7 +203,10 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_defaults_to_compact_response(
-        self, messaging_registry, mock_session_manager, mock_message_manager
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
     ) -> None:
         """Default responses acknowledge delivery without echoing wire diagnostics."""
         mock_session_manager.get.side_effect = lambda sid: {
@@ -230,7 +237,10 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_brief_false_preserves_full_diagnostics(
-        self, messaging_registry, mock_session_manager, mock_message_manager
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
     ) -> None:
         """Callers may request the existing lossless diagnostic response."""
         mock_session_manager.get.side_effect = lambda sid: {
@@ -260,7 +270,10 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_accepts_session_target_and_metadata(
-        self, messaging_registry, mock_session_manager, mock_message_manager
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
     ) -> None:
         """Public send_message accepts session target_id and forwards metadata."""
         mock_session_manager.get.side_effect = lambda sid: {
@@ -291,7 +304,10 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_defaults_from_session_from_context(
-        self, messaging_registry, mock_session_manager, mock_message_manager
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
     ) -> None:
         """Omitted from_session resolves from the caller's SessionContext."""
         from gobby.utils.session_context import session_context_for_test
@@ -326,7 +342,10 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_no_session_context_returns_error(
-        self, messaging_registry, mock_session_manager, mock_message_manager
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
     ) -> None:
         """Omitted from_session outside SessionContext returns a tool error."""
         result = await messaging_registry.call(
@@ -343,7 +362,10 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_direct_function_accepts_keyword_priority(
-        self, messaging_registry, mock_session_manager, mock_message_manager
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
     ) -> None:
         """Direct send_message function accepts optional fields only by keyword."""
         mock_session_manager.get.side_effect = lambda sid: {
@@ -365,7 +387,7 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_rejects_positional_priority(
-        self, messaging_registry, mock_session_manager
+        self, messaging_registry: InternalToolRegistry, mock_session_manager: MagicMock
     ) -> None:
         """Direct send_message no longer accepts legacy positional priority."""
         send_message = messaging_registry.get_tool("send_message")
@@ -376,7 +398,9 @@ class TestSendMessage:
 
         mock_session_manager.resolve_session_reference.assert_not_called()
 
-    def test_send_message_schema_documents_target_parameters(self, messaging_registry) -> None:
+    def test_send_message_schema_documents_target_parameters(
+        self, messaging_registry: InternalToolRegistry
+    ) -> None:
         """Tool description names target args and keyword-only optional fields."""
         schema = messaging_registry.get_schema("send_message")
 
@@ -451,7 +475,10 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_rejects_removed_all_selector(
-        self, messaging_registry, mock_session_manager, mock_message_manager
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
     ) -> None:
         """The removed all selector has no compatibility alias."""
         result = await messaging_registry.call(
@@ -470,7 +497,10 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_requires_target_id_for_session_target(
-        self, messaging_registry, mock_session_manager, mock_message_manager
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
     ) -> None:
         """Reject session target sends without a target identifier."""
         result = await messaging_registry.call(
@@ -485,7 +515,7 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_rejects_unknown_target(
-        self, messaging_registry, mock_message_manager
+        self, messaging_registry: InternalToolRegistry, mock_message_manager: MagicMock
     ) -> None:
         """Reject unknown target selectors."""
         result = await messaging_registry.call(
@@ -499,7 +529,10 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_rejects_project_target_id(
-        self, messaging_registry, mock_session_manager, mock_message_manager
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
     ) -> None:
         """Project scope is derived from the sender and forbids target_id."""
         mock_session_manager.get.side_effect = lambda sid: {
@@ -559,9 +592,9 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_session_project_broadcast_rejects_project_override(
         self,
-        messaging_registry,
-        mock_session_manager,
-        mock_message_manager,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
     ) -> None:
         mock_session_manager.get.return_value = MockSession(id="s-from")
 
@@ -581,8 +614,8 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_system_project_broadcast_requires_explicit_project(
         self,
-        messaging_registry,
-        mock_message_manager,
+        messaging_registry: InternalToolRegistry,
+        mock_message_manager: MagicMock,
     ) -> None:
         result = await messaging_registry.call(
             "send_message",
@@ -599,8 +632,8 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_global_broadcast_rejects_project_scope(
         self,
-        messaging_registry,
-        mock_message_manager,
+        messaging_registry: InternalToolRegistry,
+        mock_message_manager: MagicMock,
     ) -> None:
         result = await messaging_registry.call(
             "send_message",
@@ -617,7 +650,10 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_rejects_empty_content(
-        self, messaging_registry, mock_session_manager, mock_message_manager
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
     ) -> None:
         """Reject blank content before resolving sessions."""
         result = await messaging_registry.call(
@@ -638,9 +674,9 @@ class TestSendMessage:
     @pytest.mark.parametrize("wake, expected_calls", [(None, []), (True, ["s-child"])])
     async def test_send_message_project_target_fans_out_and_wakes(
         self,
-        mock_session_manager,
-        mock_message_manager,
-        mock_db,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+        mock_db: MagicMock,
         wake: bool | None,
         expected_calls: list[str],
     ) -> None:
@@ -869,10 +905,10 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_send_message_empty_fanout_reports_selector_failure(
         self,
-        messaging_registry,
-        mock_session_manager,
-        mock_message_manager,
-        mock_db,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+        mock_db: MagicMock,
     ) -> None:
         """Empty fanout is an actionable result for the tool caller."""
         mock_session_manager.get.return_value = MockSession(id="s-from")
@@ -976,10 +1012,10 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_send_message_build_target_uses_context_project_for_coordinator(
         self,
-        messaging_registry,
-        mock_session_manager,
-        mock_message_manager,
-        mock_db,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+        mock_db: MagicMock,
     ) -> None:
         """Wrapper project context scopes build targets for cross-project coordinators."""
         from gobby.utils.project_context import reset_project_context, set_project_context
@@ -1069,10 +1105,10 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_send_message_agent_target_allows_cross_project_coordinator(
         self,
-        messaging_registry,
-        mock_session_manager,
-        mock_message_manager,
-        mock_db,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+        mock_db: MagicMock,
     ) -> None:
         """Recorded build coordinators may message their build agents directly."""
         mock_session_manager.get.side_effect = lambda sid: {
@@ -1149,9 +1185,9 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_send_message_persists_when_live_wake_has_no_managed_terminal(
         self,
-        mock_session_manager,
-        mock_message_manager,
-        mock_db,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+        mock_db: MagicMock,
     ) -> None:
         """Wake stores mailbox rows even when no live terminal row exists."""
         from gobby.events.wake import WakeDispatcher
@@ -1218,9 +1254,9 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_brief_response_reports_correlated_wake_decline(
         self,
-        mock_session_manager,
-        mock_message_manager,
-        mock_db,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+        mock_db: MagicMock,
     ) -> None:
         from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 
@@ -1278,7 +1314,7 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_different_project_delivered(
-        self, messaging_registry, mock_session_manager
+        self, messaging_registry: InternalToolRegistry, mock_session_manager: MagicMock
     ) -> None:
         """Deliver direct session messages across projects."""
         mock_session_manager.get.side_effect = lambda sid: {
@@ -1302,7 +1338,10 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_auto_writes_agent_runs_result(
-        self, messaging_registry, mock_session_manager, mock_db
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_db: MagicMock,
     ) -> None:
         """When child sends to parent, auto-write to agent_runs.result."""
         mock_session_manager.get.side_effect = lambda sid: {
@@ -1336,7 +1375,7 @@ class TestSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_session_not_found(
-        self, messaging_registry, mock_session_manager
+        self, messaging_registry: InternalToolRegistry, mock_session_manager: MagicMock
     ) -> None:
         """Reject when from_session does not exist."""
         mock_session_manager.get.return_value = None
@@ -1497,7 +1536,7 @@ class TestGetInterSessionMessage:
     """get_inter_session_message returns one lossless, access-controlled payload."""
 
     @pytest.fixture(autouse=True)
-    def caller_context(self):
+    def caller_context(self) -> Iterator[None]:
         with session_context_for_test("s-child"):
             yield
 
@@ -1508,8 +1547,8 @@ class TestGetInterSessionMessage:
     )
     async def test_sender_or_recipient_can_retrieve_complete_message(
         self,
-        messaging_registry,
-        mock_message_manager,
+        messaging_registry: InternalToolRegistry,
+        mock_message_manager: MagicMock,
         from_session: str,
         to_session: str,
     ) -> None:
@@ -1547,7 +1586,7 @@ class TestGetInterSessionMessage:
 
     @pytest.mark.asyncio
     async def test_missing_message_returns_not_found(
-        self, messaging_registry, mock_message_manager
+        self, messaging_registry: InternalToolRegistry, mock_message_manager: MagicMock
     ) -> None:
         mock_message_manager.get_message.return_value = None
 
@@ -1564,7 +1603,7 @@ class TestGetInterSessionMessage:
 
     @pytest.mark.asyncio
     async def test_foreign_session_is_denied(
-        self, messaging_registry, mock_message_manager
+        self, messaging_registry: InternalToolRegistry, mock_message_manager: MagicMock
     ) -> None:
         mock_message_manager.get_message.return_value = MockMessage(
             id="msg-private",
@@ -1585,7 +1624,9 @@ class TestGetInterSessionMessage:
         mock_message_manager.mark_delivered_batch.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_requires_calling_session(self, messaging_registry, mock_message_manager) -> None:
+    async def test_requires_calling_session(
+        self, messaging_registry: InternalToolRegistry, mock_message_manager: MagicMock
+    ) -> None:
         token = set_session_context(None)
         try:
             result = await messaging_registry.call(

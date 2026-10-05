@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -20,7 +21,7 @@ from gobby.runner_init.services import (
     _request_memory_projection_repair,
 )
 from gobby.storage.embedding_generation_state import EmbeddingGenerationLeaseLost
-from gobby.storage.memories import Memory
+from gobby.storage.memories import Memory, MemoryType, Visibility
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope, memory_matches_scope
 from tests.projects.fence_helpers import wait_for_exclusive_claim
 
@@ -30,10 +31,10 @@ pytestmark = pytest.mark.unit
 def _memory(memory_id: str, content: str, project_id: str = "project-1") -> Memory:
     return Memory(
         id=memory_id,
-        memory_type="fact",
+        memory_type=MemoryType.FACT,
         content=content,
-        created_at="2026-05-31T00:00:00+00:00",
-        updated_at="2026-05-31T00:00:00+00:00",
+        created_at=datetime(2026, 5, 31, tzinfo=UTC),
+        updated_at=datetime(2026, 5, 31, tzinfo=UTC),
         project_id=project_id,
     )
 
@@ -56,6 +57,8 @@ class _MemoryStorage:
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
+        *,
+        visibility: Visibility = "active",
     ) -> list[Memory]:
         self.list_calls.append((scope, limit, offset))
         memories = [
@@ -72,7 +75,13 @@ class _MemoryStorage:
         end = None if limit is None else offset + limit
         return ids[offset:end]
 
-    def get_memories(self, memory_ids: list[str], **_kwargs: Any) -> list[Memory]:
+    def get_memories(
+        self,
+        memory_ids: list[str],
+        scope: MemoryScope = ALL_MEMORIES,
+        *,
+        visibility: Visibility = "active",
+    ) -> list[Memory]:
         by_id = {memory.id: memory for memory in self.memories}
         return [by_id[memory_id] for memory_id in memory_ids if memory_id in by_id]
 
@@ -227,7 +236,9 @@ def _service(
 
 
 @pytest.mark.asyncio
-async def test_global_reindex_routes_rowless_cleanup_through_recreate_fence() -> None:
+async def test_global_reindex_routes_rowless_cleanup_through_recreate_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     storage = _MemoryStorage([_memory("mem-1", "alpha")])
     vector_store = _VectorStore()
     cleanup_rowless = AsyncMock()
@@ -242,7 +253,7 @@ async def test_global_reindex_routes_rowless_cleanup_through_recreate_fence() ->
             storage.memories.clear()
         return await original_fetch()
 
-    service.fetch_all_memories = fetch  # type: ignore[method-assign]
+    monkeypatch.setattr(service, "fetch_all_memories", fetch)
 
     result = await service.reindex_embeddings()
 
@@ -273,7 +284,9 @@ async def test_reconcile_backfills_missing_vectors_and_deletes_orphans() -> None
     }
     assert set(vector_store.ids) == {"present", "missing"}
     embed_fn.assert_awaited_once_with("Missing")
-    assert vector_store.batch_upsert.await_args.args[0] == [
+    upsert_call = vector_store.batch_upsert.await_args
+    assert upsert_call is not None
+    assert upsert_call.args[0] == [
         (
             "missing",
             [0.4, 0.5],
@@ -355,11 +368,14 @@ async def test_reconcile_replaces_stale_vector_and_clears_current_marker() -> No
 
 
 @pytest.mark.asyncio
-async def test_reconcile_reports_only_content_qualified_stale_clears() -> None:
+async def test_reconcile_reports_only_content_qualified_stale_clears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     stale = _memory("stale", "Current content")
     stale.vector_needs_reindex = True
     storage = _MemoryStorage([stale])
-    storage.mark_vectors_reindexed = MagicMock(return_value=0)
+    mark_vectors_reindexed = MagicMock(return_value=0)
+    monkeypatch.setattr(storage, "mark_vectors_reindexed", mark_vectors_reindexed)
     vector_store = _VectorStore()
     vector_store.ids = ["stale"]
 
@@ -367,7 +383,7 @@ async def test_reconcile_reports_only_content_qualified_stale_clears() -> None:
 
     assert report["qdrant"]["stale_found"] == 1
     assert report["qdrant"]["stale_reindexed"] == 0
-    storage.mark_vectors_reindexed.assert_called_once_with({"stale": "Current content"})
+    mark_vectors_reindexed.assert_called_once_with({"stale": "Current content"})
 
 
 @pytest.mark.asyncio
@@ -548,7 +564,9 @@ async def test_global_reindex_skips_unchanged_memory_snapshot() -> None:
 
 
 @pytest.mark.asyncio
-async def test_global_reindex_acquires_admission_before_source_snapshot() -> None:
+async def test_global_reindex_acquires_admission_before_source_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     events: list[str] = []
 
     class FencedVectorStore(_VectorStore):
@@ -578,7 +596,7 @@ async def test_global_reindex_acquires_admission_before_source_snapshot() -> Non
         events.append("snapshot")
         return await original_fetch()
 
-    service.fetch_all_memories = fetch  # type: ignore[method-assign]
+    monkeypatch.setattr(service, "fetch_all_memories", fetch)
 
     result = await service.reindex_embeddings()
 
@@ -637,12 +655,13 @@ async def test_global_index_rebuild_pages_every_crossref_memory(
     monkeypatch.setattr("gobby.memory.services.indexing.REINDEX_PAGE_SIZE", 2)
     storage = _MemoryStorage([_memory(f"mem-{index}", str(index)) for index in range(5)])
     service = _service(storage, _VectorStore())
-    service._crossref_service.rebuild_for_memory = AsyncMock(return_value=1)
+    rebuild_for_memory = AsyncMock(return_value=1)
+    monkeypatch.setattr(service._crossref_service, "rebuild_for_memory", rebuild_for_memory)
 
     report = await service.rebuild_indices()
 
     assert report["crossrefs"] == {"memories_processed": 5, "crossrefs_created": 5}
-    assert service._crossref_service.rebuild_for_memory.await_count == 5
+    assert rebuild_for_memory.await_count == 5
     assert storage.list_calls == [
         (ALL_MEMORIES, 2, 0),
         (ALL_MEMORIES, 2, 2),

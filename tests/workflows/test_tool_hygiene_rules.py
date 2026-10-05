@@ -56,7 +56,9 @@ def _sync_bundled(db: HubDatabase) -> None:
 class TestToolHygieneSync:
     """Test that tool-hygiene.yaml syncs correctly."""
 
-    def test_bundled_file_syncs_target_rules(self, db, manager) -> None:
+    def test_bundled_file_syncs_target_rules(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Key tool-hygiene rules should sync to rule_definitions."""
         _sync_bundled(db)
 
@@ -67,7 +69,7 @@ class TestToolHygieneSync:
         assert "require-uv" in rule_names
         assert CLAUDE_MEMORY_RULES.issubset(rule_names)
 
-    def test_all_rules_have_group(self, db, manager) -> None:
+    def test_all_rules_have_group(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """All tool-hygiene rules should have group='tool-hygiene'."""
         _sync_bundled(db)
 
@@ -77,7 +79,9 @@ class TestToolHygieneSync:
                 body = row.definition_json
                 assert body.get("group") == "tool-hygiene", f"{row.name} missing group"
 
-    def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
+    def test_all_rules_are_valid_pydantic(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
@@ -88,7 +92,9 @@ class TestToolHygieneSync:
                 effect_types = {e.type for e in body.resolved_effects}
                 assert effect_types <= {"block", "set_variable", "rewrite_input", "inject_context"}
 
-    def test_deprecated_block_escaped_quotes_rule_is_orphaned(self, db, manager) -> None:
+    def test_deprecated_block_escaped_quotes_rule_is_orphaned(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Bundled sync soft-deletes the retired block-escaped-quotes rule."""
         body = RuleDefinitionBody(
             event="before_tool",
@@ -124,7 +130,9 @@ REQUIRE_UV_COMMAND_PATTERN = (
 class TestRequireUvRule:
     """Verify require-uv guards Python package management commands."""
 
-    def test_uses_single_block_effect(self, db, manager) -> None:
+    def test_uses_single_block_effect(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """require-uv should only block matching Bash commands."""
         _sync_bundled(db)
 
@@ -142,22 +150,26 @@ class TestRequireUvRule:
         assert effect.command_pattern == REQUIRE_UV_COMMAND_PATTERN
         assert effect.reason == REQUIRE_UV_REASON
 
-    def test_has_no_rewrite_or_context_effects(self, db, manager) -> None:
+    def test_has_no_rewrite_or_context_effects(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """require-uv should not return modified_input through rewrite effects."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-uv")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         effect_types = {e.type for e in body.resolved_effects}
         assert "rewrite_input" not in effect_types
         assert "inject_context" not in effect_types
 
-    def test_has_when_condition(self, db, manager) -> None:
+    def test_has_when_condition(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """require-uv should only fire when require_uv variable is set."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-uv")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
@@ -176,7 +188,7 @@ class TestRequireUvRule:
         ],
     )
     async def test_bundled_rule_allows_non_package_and_uv_managed_commands(
-        self, db, manager, command: str
+        self, db: HubDatabase, manager: RuleDefinitionManager, command: str
     ) -> None:
         """Ordinary Python and uv-managed package commands should pass."""
         _sync_bundled(db)
@@ -202,7 +214,7 @@ class TestRequireUvRule:
         ],
     )
     async def test_bundled_rule_blocks_unmanaged_package_commands_without_rewrite(
-        self, db, manager, command: str
+        self, db: HubDatabase, manager: RuleDefinitionManager, command: str
     ) -> None:
         """Unmanaged package commands should block without a rewrite payload."""
         _sync_bundled(db)
@@ -235,7 +247,9 @@ def _make_normalized_bash_event(command: str) -> HookEvent:
 class TestClaudeMemoryHygieneRules:
     """Verify Claude file-memory hygiene uses canonical kind/path metadata."""
 
-    def test_block_effects_include_bash(self, db, manager) -> None:
+    def test_block_effects_include_bash(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         expected_tools = {
             "block-claude-memory-read": ["Read", "Bash"],
@@ -252,7 +266,9 @@ class TestClaudeMemoryHygieneRules:
             assert "touches_claude_memory_path" in body.when
             assert body.resolved_effects[0].tools == tools
 
-    def test_native_memory_tool_rule_structure(self, db, manager) -> None:
+    def test_native_memory_tool_rule_structure(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """The harness-level Memory tool is blocked by name, not by path."""
         _sync_bundled(db)
         row = manager.get_by_name("block-claude-memory-tool")
@@ -263,7 +279,7 @@ class TestClaudeMemoryHygieneRules:
         assert body.resolved_effects[0].tools == ["Memory"]
 
     @pytest.mark.asyncio
-    async def test_blocks_native_memory_tool(self, db) -> None:
+    async def test_blocks_native_memory_tool(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         data: dict[str, object] = {
             "tool_name": "Memory",
@@ -285,7 +301,7 @@ class TestClaudeMemoryHygieneRules:
         assert "Use gobby-memory" in response.reason
 
     @pytest.mark.asyncio
-    async def test_blocks_shell_read_workaround(self, db) -> None:
+    async def test_blocks_shell_read_workaround(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         event = _make_normalized_bash_event("cat .claude/memory/project.md")
 
@@ -296,7 +312,7 @@ class TestClaudeMemoryHygieneRules:
         assert "Use gobby-memory" in response.reason
 
     @pytest.mark.asyncio
-    async def test_blocks_shell_search_workaround(self, db) -> None:
+    async def test_blocks_shell_search_workaround(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         event = _make_normalized_bash_event("rg project .claude/memory")
 
@@ -307,7 +323,7 @@ class TestClaudeMemoryHygieneRules:
         assert "Use gobby-memory" in response.reason
 
     @pytest.mark.asyncio
-    async def test_blocks_shell_write_workaround(self, db) -> None:
+    async def test_blocks_shell_write_workaround(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         event = _make_normalized_bash_event("printf hello > .claude/memory/project.md")
 
@@ -365,7 +381,7 @@ class TestRequireUvShouldBlock:
         "command",
         ["python script.py", 'python -c "print(1)"', "python3 -m http.server"],
     )
-    def test_allows_bare_python(self, db, command: str) -> None:
+    def test_allows_bare_python(self, db: HubDatabase, command: str) -> None:
         engine = RuleEngine(db)
         event = _make_bash_event(command)
         assert engine._should_block(_require_uv_effect(), event) is False
@@ -380,7 +396,7 @@ class TestRequireUvShouldBlock:
             "python3.13 -m pip install requests",
         ],
     )
-    def test_blocks_unmanaged_package_commands(self, db, command: str) -> None:
+    def test_blocks_unmanaged_package_commands(self, db: HubDatabase, command: str) -> None:
         engine = RuleEngine(db)
         event = _make_bash_event(command)
         assert engine._should_block(_require_uv_effect(), event) is True
@@ -394,17 +410,17 @@ class TestRequireUvShouldBlock:
             "uv run python -m pip install requests",
         ],
     )
-    def test_allows_uv_managed_commands(self, db, command: str) -> None:
+    def test_allows_uv_managed_commands(self, db: HubDatabase, command: str) -> None:
         engine = RuleEngine(db)
         event = _make_bash_event(command)
         assert engine._should_block(_require_uv_effect(), event) is False
 
-    def test_allows_non_python_command(self, db) -> None:
+    def test_allows_non_python_command(self, db: HubDatabase) -> None:
         engine = RuleEngine(db)
         event = _make_bash_event("ls -la")
         assert engine._should_block(_require_uv_effect(), event) is False
 
-    def test_allows_python_after_chain(self, db) -> None:
+    def test_allows_python_after_chain(self, db: HubDatabase) -> None:
         engine = RuleEngine(db)
         event = _make_bash_event("cd /tmp && python test.py")
         assert engine._should_block(_require_uv_effect(), event) is False
@@ -417,17 +433,17 @@ class TestRequireUvShouldBlock:
             "printf archive | python3.13 -m pip install x",
         ],
     )
-    def test_blocks_package_management_after_separator(self, db, command: str) -> None:
+    def test_blocks_package_management_after_separator(self, db: HubDatabase, command: str) -> None:
         engine = RuleEngine(db)
         event = _make_bash_event(command)
         assert engine._should_block(_require_uv_effect(), event) is True
 
-    def test_allows_uv_run_python_after_chain(self, db) -> None:
+    def test_allows_uv_run_python_after_chain(self, db: HubDatabase) -> None:
         engine = RuleEngine(db)
         event = _make_bash_event("cd /tmp && uv run python test.py")
         assert engine._should_block(_require_uv_effect(), event) is False
 
-    def test_blocks_package_command_at_top_level(self, db) -> None:
+    def test_blocks_package_command_at_top_level(self, db: HubDatabase) -> None:
         """Legacy path: command at top level of event.data still works."""
         engine = RuleEngine(db)
         event = HookEvent(
@@ -439,12 +455,14 @@ class TestRequireUvShouldBlock:
         )
         assert engine._should_block(_require_uv_effect(), event) is True
 
-    def test_allows_bare_python_through_normalized_exec_command(self, db) -> None:
+    def test_allows_bare_python_through_normalized_exec_command(self, db: HubDatabase) -> None:
         engine = RuleEngine(db)
         event = _make_shell_alias_event("exec_command", "python script.py")
         assert engine._should_block(_require_uv_effect(), event) is False
 
-    def test_blocks_package_management_through_normalized_exec_command(self, db) -> None:
+    def test_blocks_package_management_through_normalized_exec_command(
+        self, db: HubDatabase
+    ) -> None:
         engine = RuleEngine(db)
         event = _make_shell_alias_event("exec_command", "python3.13 -m pip install x")
         assert engine._should_block(_require_uv_effect(), event) is True
