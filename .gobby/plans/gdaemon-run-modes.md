@@ -255,6 +255,9 @@ Targets:
 - `tests/test_bm25_startup.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
 - `tests/test_runner_lifecycle.py::*` — scope-reason: SimpleNamespace runner fakes that reach the gated functions gain `bootstrap_config=BootstrapConfig()`; terminal-completion recovery with local and foreign runs
 
+Consumers unchanged:
+- `tests/memory/test_indexing_service.py` — no-edit-reason: 2.2's commits (ed166cfe8b, 32ad98fb04, c22852ef6f, dc13e12735) leave it untouched; its call to `_request_memory_projection_repair` was added afterwards by #23316 (0d4f9ef4d5) with a `"hub"` run mode, which takes the ungated path.
+
 **Granularity:** eight acceptance items, one outcome: a `node` runner starts
 no shared-row maintenance, and every other mode behaves as today. Every gate
 reads the same `run_mode()` and is proven by the same focused test run. Split
@@ -506,6 +509,12 @@ deferral:
   (`src/gobby/storage/sessions/_transcript.py:25-51`, 641bc44427), and artifact
   ownership is settled in code. The gap is that a node starts no machine-local
   lifecycle loop. D1.1 and M1 are unchanged; #23112 carries the atomic spec.
+- 2026-10-04: Fixed the validator error "consumer-coverage: section 2.2: symbol
+  `src/gobby/runner_init/services.py::_request_memory_projection_repair` has
+  consumers missing from Targets or its Consumers unchanged inventory:
+  tests/memory/test_indexing_service.py". The test gained its call after 2.2
+  landed (#23316, 0d4f9ef4d5), so 2.2 lists it under Consumers unchanged. No
+  acceptance item changes.
 
 ## V2: Verification
 `kind: verification`
