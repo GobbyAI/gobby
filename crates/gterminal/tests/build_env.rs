@@ -5,6 +5,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+// The macOS-only archive test is the one caller of `machine_zig`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[path = "../build_zig.rs"]
+mod build_zig;
+
+use build_zig::resolve_zig;
+
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -129,7 +136,8 @@ fn darwin_nonsimd_archive_links_every_member() {
     let prefix = temp.path().join("install");
     let cache = temp.path().join("cache");
     let version = fs::read_to_string(vendor.join("VERSION")).expect("vendor version");
-    let mut command = Command::new(std::env::var_os("ZIG").unwrap_or_else(|| "zig".into()));
+    let mut command =
+        Command::new(build_zig::machine_zig().expect("Zig 0.16 for the vendored build"));
     command
         .current_dir(&vendor)
         .args([
@@ -179,4 +187,50 @@ fn darwin_nonsimd_archive_links_every_member() {
         "non-SIMD archive must retain linkable members:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn version(text: &str) -> impl FnOnce() -> Option<String> + '_ {
+    move || Some(text.to_string())
+}
+
+#[test]
+fn zig_env_wins_without_probing_path() {
+    let zig = resolve_zig(
+        Some(OsString::from("/custom/zig")),
+        || panic!("ZIG set: the PATH zig is never asked"),
+        Path::new("/absent/zig"),
+    );
+    assert_eq!(zig, Ok(OsString::from("/custom/zig")));
+}
+
+#[test]
+fn a_path_zig_016_is_used_before_the_homebrew_keg() {
+    let keg = tempfile::NamedTempFile::new().expect("keg stand-in");
+    let zig = resolve_zig(None, version("0.16.0\n"), keg.path());
+    assert_eq!(zig, Ok(OsString::from("zig")));
+}
+
+#[test]
+fn another_path_zig_falls_back_to_the_homebrew_keg() {
+    let keg = tempfile::NamedTempFile::new().expect("keg stand-in");
+    let zig = resolve_zig(None, version("0.17.0\n"), keg.path());
+    assert_eq!(zig, Ok(keg.path().as_os_str().to_owned()));
+    let zig = resolve_zig(None, || None, keg.path());
+    assert_eq!(
+        zig,
+        Ok(keg.path().as_os_str().to_owned()),
+        "a missing PATH zig falls back too"
+    );
+}
+
+#[test]
+fn no_zig_016_anywhere_names_the_brew_fix() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let keg = dir.path().join("zig");
+    assert!(!keg.exists());
+    let message = resolve_zig(None, version("0.17.0\n"), &keg).expect_err("no Zig 0.16");
+    assert!(message.contains("brew install zig@0.16"), "{message}");
+    assert!(message.contains("0.17.0"), "names the PATH zig: {message}");
+    let message = resolve_zig(None, || None, &keg).expect_err("no zig at all");
+    assert!(message.contains("PATH zig is missing"), "{message}");
 }
