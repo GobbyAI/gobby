@@ -171,9 +171,11 @@ sha256 is stored (Decision 5).
    `canonical_tool_kind == "write"`, over the write paths that
    `resolve_edit_pair` maps to a pair. Today's rule 3 checks
    `canonical_repo_mutation` alone, so it also inspects `git add` paths; that
-   ends. `canonical_repo_mutation` is no longer their gate: normalization has
+   ends. `canonical_repo_mutation` is no longer their gate. Normalization has
    no claim state, so it is false for a sanctioned worktree of another project
-   (Decision 9), and every own-project pair already has it true.
+   (Decision 9). It is also false for a separate clone of this project (same
+   `.gobby/project.json` id, different git repository), which rules 1 to 3
+   now cover too, because `resolve_edit_pair` keys on the project id.
 7. **`git restore --staged` is execute-kind (accepted).** Without
    `--worktree`/`-W` it changes only the index. It is reclassified from
    `"write"` to `"execute"`, like `git add`. This is the #22642 command.
@@ -977,7 +979,7 @@ and `tests/hooks/test_normalization.py` with the isolation prefix.
 - 1.5.3 - A Write creating a new untracked file records it, a write to an ignored path records nothing, and a write to an owned path records without running git. test: `tests/hooks/test_tool_handlers.py::test_recorder_handles_untracked_ignored_and_owned_paths`.
 - 1.5.4 - `git restore --staged` and `git restore -S` without `--worktree`/`-W` normalize to execute-kind; `git restore --staged --worktree` and `git restore -W` stay write-kind. test: `tests/hooks/test_normalization.py::TestExternalNavigationScope.test_git_restore_pathspecs_without_separator_are_write_paths`.
 - 1.5.5 - Mixed shell segments publish `canonical_write_file_paths` as the union of write-kind targets: `cp a b && git restore -- c` gives `[b, c]`, `mv a b && echo x > d` and `rm e && echo x > d` include `d` with the `mv` or `rm` paths, and `git add x && git restore -- y` and `git restore --staged x && echo z > y` give `[y]` only. test: `tests/hooks/test_normalization.py::test_mixed_segments_publish_union_of_write_kind_targets`.
-- 1.5.6 - In a temporary git checkout, a Bash `git add <staged foreign path> && git restore -- <own path>` call records only the restored path when it changed, and none of the `git add` path. test: `tests/hooks/test_tool_handlers.py::test_recorder_ignores_execute_segment_paths_in_mixed_command`.
+- 1.5.6 - In a temporary git checkout, a Bash `git add <foreign path> && git restore -- <own path>` call, where `<own path>` is already in the session's ledger and the restore changes it, records `<own path>` and nothing for the `git add` path. test: `tests/hooks/test_tool_handlers.py::test_recorder_ignores_execute_segment_paths_in_mixed_command`.
 
 ### 1.6 Rule 4 refuses writes into another Gobby project [category: code] (depends: 1.3, 1.5, 1.7)
 `kind: deliverable`
@@ -1266,7 +1268,9 @@ Targets:
 - `claim_task` calls it after the claimant's variables merge. Before the
   `already_claimed` early return, it calls it again, which retries any
   transfer that failed earlier. A non-empty list goes into the result as
-  `pair_transfer_errors`. The claim itself still succeeds.
+  `pair_transfer_errors`. The claim itself still succeeds. While errors
+  remain, the `already_claimed` message says to call `claim_task` again to
+  retry the transfer, instead of "do not call claim_task again".
 - A live predecessor that still claims the task keeps its pairs (Decision 2).
   An ended predecessor is never named as an owner, because owners are live
   sessions only (Decision 15).
@@ -1279,9 +1283,10 @@ Targets:
 
 - 1.8.1 - Claiming a task whose ended predecessor holds live pairs for it moves those pairs into the claimant's `session_dirty_files` and `task_edited_files[task]` and removes them from the predecessor's `session_dirty_files`, keeping the predecessor's task ledger. test: `tests/mcp_proxy/tools/test_claim_task.py::test_claim_transfers_ended_predecessor_live_pairs`.
 - 1.8.2 - A live predecessor that still claims the task keeps its pairs, and a live predecessor that released the claim hands them over, so no pair is held by two live sessions. test: `tests/mcp_proxy/tools/test_claim_task.py::test_claim_transfer_never_duplicates_live_ownership`.
-- 1.8.3 - `transfer_task_pairs` moves the pairs in one transaction and leaves the claimant's `session_edited_files` unchanged. A failure injected after the claimant's row is written and before the predecessor's row is written rolls both rows back, leaving exactly one live holder. A later `claim_task` by the same session takes the `already_claimed` return, completes the transfer, and reports no `pair_transfer_errors`. test: `tests/workflows/test_session_variable_manager.py::test_transfer_task_pairs_rolls_back_and_retries_idempotently`.
+- 1.8.3 - `transfer_task_pairs` moves the pairs in one transaction and leaves the claimant's `session_edited_files` unchanged. A failure injected after the claimant's row is written and before the predecessor's row is written rolls both rows back, leaving exactly one live holder, and a second call completes the move. test: `tests/workflows/test_session_variable_manager.py::test_transfer_task_pairs_rolls_back_on_failure`.
 - 1.8.4 - While one thread holds a `SessionVariablePairMutation` transaction open, another thread's `_mutate_variables` on either row waits until it commits and then sees the transferred ledger. test: `tests/workflows/test_session_variable_manager.py::test_single_row_mutation_waits_on_pair_lock`.
 - 1.8.5 - `advisory_lock_keys(SessionVariablePairMutation(b, a))` equals the `SessionVariableMutation` keys of `a` then `b`, and taking a `SessionVariableMutation` lock after the pair lock raises `LockAcquisitionOrderError`. test: `tests/storage/test_manager_surface_parity.py::test_session_variable_pair_lock_keys_match_single_row_keys_in_sorted_order`.
+- 1.8.6 - When a claim's transfer fails, the result carries `pair_transfer_errors` and its message invites a retry; a later `claim_task` by the same session takes the `already_claimed` return, completes the transfer, and reports no `pair_transfer_errors`. test: `tests/mcp_proxy/tools/test_claim_task.py::test_already_claimed_retry_completes_failed_pair_transfer`.
 
 ## V1 Plan Changelog
 `kind: verification`
