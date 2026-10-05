@@ -1115,3 +1115,204 @@ After every leaf has passed:
 3. Run `tests/e2e/test_hub_node_pair.py` and `tests/e2e/test_auth_login.py`
    against isolated daemons.
 4. Confirm `cargo tree -p gobby-daemon -i aws-lc-rs` prints nothing.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Rust bootstrap derives the run mode the way Python does
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: The Rust parser derives the mode, normalized `hub_daemon_url`,
+    and `hub_cert` that every shared vector expects. It rejects `(remote, true)`,
+    a remote bootstrap without `hub_daemon_url`, a local one with it, and this process''s
+    own origin, each with Python''s message. test: `crates/gcore/tests/bootstrap_run_modes.rs::shared_vectors_match_python`.
+
+    1.1.2: Python''s `bootstrap_from_mapping` and `BootstrapConfig.run_mode` produce
+    the same outcome on every case of the same vector file. test: `tests/config/test_bootstrap_run_modes.py::test_shared_vectors_match_rust`.'
+  labels:
+  - covers:gdaemon-node-channel:1.1:1.1.1
+  - covers:gdaemon-node-channel:1.1:1.1.2
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: 'Node relay: a node''s front door forwards to its hub over the pinned connection'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: A node relays two sequential requests to a TLS hub
+    stub over one pinned connection, with the bearer, path, and query unchanged and
+    `Host` set to the hub''s authority. When the hub refuses connections it answers
+    503 with `backend.target` equal to `hub_daemon_url`. test: `crates/gdaemon/tests/nodes.rs::node_relays_over_pinned_tls`.
+
+    1.2.2: A node whose `hub_cert` names a different certificate than the hub presents
+    answers 502 and never forwards the request. test: `crates/gdaemon/tests/nodes.rs::node_refuses_an_unpinned_hub`.
+
+    1.2.3: A WebSocket upgrade relayed through the node to the hub stub replays the
+    terminal golden corpus and a 1000 close frame byte-equal in both directions. An
+    upgrade on the HTTP listener keeps its path, and an upgrade on the WebSocket listener
+    reaches `/ws` with its query. The same test also checks origin-to-dial-address
+    derivation for omitted ports and bracketed IPv6, without binding privileged ports.
+    test: `crates/gdaemon/tests/nodes.rs::node_relays_ws_over_pinned_tls`.
+
+    1.2.4: A node answers an `interactive` handshake challenge with `HMAC(node api_key,
+    nonce)` without contacting the hub, and relays a `managed` challenge. test: `crates/gdaemon/tests/nodes.rs::node_answers_interactive_challenge_with_its_own_key`.
+
+    1.2.5: `AppState::from_bootstrap` refuses a node bootstrap with no `api_key`,
+    or with an `https` hub and no `hub_cert`, and the error names `gobby auth login`.
+    A spawned `gdaemon serve` with a node bootstrap and no `GOBBY_FRONT_DOOR_SECRET`
+    starts and answers a relayed request. test: `crates/gdaemon/tests/nodes.rs::node_startup_requires_enrollment_but_no_secret`.
+
+    1.2.6: A node on the same host as a loopback TLS hub stub relays a request and
+    a WebSocket upgrade that both carry `X-Gobby-Break-Glass`, and the stub receives
+    neither with that header. test: `crates/gdaemon/tests/nodes.rs::node_strips_break_glass_before_the_hub`.'
+  labels:
+  - covers:gdaemon-node-channel:1.2:1.2.1
+  - covers:gdaemon-node-channel:1.2:1.2.2
+  - covers:gdaemon-node-channel:1.2:1.2.3
+  - covers:gdaemon-node-channel:1.2:1.2.4
+  - covers:gdaemon-node-channel:1.2:1.2.5
+  - covers:gdaemon-node-channel:1.2:1.2.6
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: 'Node channel: the hub registers, heartbeats, replaces, and revokes node
+    channels'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: A key-authenticated channel registers its machine and
+    receives an ack carrying the machine id, and its hello writes `last_heartbeat_at`
+    and `node_version`. A ping within the heartbeat write interval writes nothing.
+    After one heartbeat write interval, a ping advances `last_heartbeat_at` and preserves
+    the channel''s `node_version`; another ping within the next interval writes nothing.
+    The test uses short constructor timings and reads the isolated schema''s machine
+    row to observe both writes and the suppression. A second connection for the same
+    machine replaces the first, which closes with 4409. When the first channel''s
+    cleanup runs after the second ack, the second stays registered. test: `crates/gdaemon/tests/nodes.rs::channel_registers_and_replaces`.
+
+    1.3.2: The test uses a short key-recheck interval R anchored at the upgrade, a
+    recheck deadline D below 0.75R, and an idle timeout above 2R: - **First-check
+    proof.** It revokes the channel''s key R/4 after its upgrade completes. The 4401
+    close arrives within R + D of the revocation on a monotonic clock, and the machine
+    is already absent from the registry. The first recheck after the revocation falls
+    0.75R after it and the second 1.75R after it, so only the first scheduled recheck
+    fits that bound. This runs for three peers: the node client sending its scheduled
+    pings, a raw peer silent after hello, and a raw peer sending only Pong frames.
+    - **Bookkeeping never blocks revocation.** While a test transaction holds a row
+    lock on the machine''s `machines` row, a due heartbeat write blocks. The key is
+    then revoked, and the channel still closes 4401 within R + D. - **Unproven checks.**
+    While a test transaction holds `ACCESS EXCLUSIVE` on `api_keys`, a tick''s check
+    times out after D and the channel stays open. After the lock is released, the
+    next tick proves the key again. - **Teardown shares the tick''s budget.** The
+    test revokes the key, then holds `ACCESS EXCLUSIVE` on `api_keys` and calls the
+    public `key_tick` with a `futures_util::sink` whose send never completes. It releases
+    the lock D/2 after the tick, so the check returns no row late. The registry entry
+    is gone as soon as `key_tick` reads that result, and `key_tick` returns with the
+    transport dropped by the tick plus D on a monotonic clock. That is the remaining
+    budget, not D again. - It does not pause tokio time, because paused time auto-advances
+    past the timers while the hub awaits its database query. test: `crates/gdaemon/tests/nodes.rs::revoked_key_closes_channel_on_heartbeat`.
+
+    1.3.3: The node client sends a hello with the gdaemon version and `<os>/<arch>`,
+    pings at its interval, and reconnects after a close. Against a refusing hub its
+    delays double from the start value to the ceiling, and they reset after an ack.
+    It reads the key again on each attempt. test: `crates/gdaemon/tests/nodes.rs::node_channel_reconnects_with_backoff`.
+
+    1.3.4: A channel whose first frame is not a valid hello closes with 1008, and
+    a registered channel silent past the idle timeout closes with 4408 and leaves
+    the registry. test: `crates/gdaemon/tests/nodes.rs::silent_or_malformed_channel_is_closed`.
+
+    1.3.5: On a hub, an upgrade to `/api/nodes/channel` without a key identity is
+    refused with 401 before any upgrade. A standalone front door does not mount the
+    route and proxies the request to its backend. A key revoked after the upgrade
+    but before hello, or while the hello write is blocked by a test row lock that
+    is then released, closes 4401 with no ack, and leaves no registry entry and no
+    `connected` machine. While a test transaction holds `ACCESS EXCLUSIVE` on `api_keys`
+    and blocks a registered channel''s pre-ack check, the machine reads `connected:
+    false`. A raw peer that resets its TCP connection while that check is blocked
+    makes the ack send fail after the lock is released, which leaves no registry entry
+    and the machine never reading `connected`. A `mark_live` call under a superseded
+    `connection_id` returns `false` and leaves the successor not live. The bounded
+    ack send is driven through the public `send_ack` with a `futures_util::sink` and
+    a test-built registry. A sink whose send never completes makes `send_ack` return
+    at the admission end, with no registry entry left for that `connection_id` and
+    the machine never reading `connected`. With the close signal already fired, `send_ack`
+    returns that code without sending, and the successor''s entry is unchanged. A
+    sink that completes accepts the ack while the machine still reads `connected:
+    false`, and the machine reads `connected` once `send_ack` returns. test: `crates/gdaemon/tests/nodes.rs::channel_requires_a_key_on_a_hub`.
+
+    1.3.6: While a test transaction holds a row lock on the machine''s `machines`
+    row, a first connection''s hello write blocks. A second connection for the same
+    machine then registers. The first connection closes with 4409 and no ack while
+    its write stays blocked, and the second''s ack does not arrive while the lock
+    is held. After the test releases the lock, the first write completes and releases
+    the gate, the second receives its ack, and the row holds the second connection''s
+    `node_version` with the registry naming the second connection. A `registry.persist`
+    call under the superseded `connection_id` returns `Skipped` and leaves the row
+    unchanged. In the pre-ack variant, two upgrades authenticate first, and a test
+    transaction then holds `ACCESS EXCLUSIVE` on `api_keys`. The test uses a recheck
+    deadline long enough to keep the first connection''s pre-ack check blocked through
+    the replacement. The first connection''s hello and write complete and its pre-ack
+    check blocks. The second connection''s hello then registers and replaces it. The
+    first closes 4409 with no ack while its check is still blocked, and the machine
+    reads `connected: false`. After the lock is released, the second connection receives
+    its ack and becomes the live entry. test: `crates/gdaemon/tests/nodes.rs::replaced_channel_cannot_overwrite_successor_bookkeeping`.'
+  labels:
+  - covers:gdaemon-node-channel:1.3:1.3.1
+  - covers:gdaemon-node-channel:1.3:1.3.2
+  - covers:gdaemon-node-channel:1.3:1.3.3
+  - covers:gdaemon-node-channel:1.3:1.3.4
+  - covers:gdaemon-node-channel:1.3:1.3.5
+  - covers:gdaemon-node-channel:1.3:1.3.6
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: '`/api/machines` lists the caller''s machines with connection state'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.4.1: `GET /api/machines` returns `{"machines": [...]}` with
+    only the caller''s machines, ordered by `first_seen, id`, each with exactly the
+    eleven fields listed in this section''s Implementation and RFC 3339 or `null`
+    timestamps. `connected` is true exactly for machines with an acknowledged live
+    channel, and false for every row on a standalone front door. `GET /api/machines/{id}`
+    returns one such unwrapped object and answers 404 `machine_not_found` for another
+    user''s machine, an unknown id, and a malformed id. test: `crates/gdaemon/tests/nodes.rs::machines_api_lists_rows_with_connection_state`.
+
+    1.4.2: Without a key identity both routes answer 401 `missing_auth`, and a query
+    error answers 503 `machines_unavailable`. test: `crates/gdaemon/tests/nodes.rs::machines_api_requires_a_key`.
+
+    1.4.3: The configuration guide documents running a node, its relay and channel,
+    and `/api/machines`. behavior: the "Nodes" section in `docs/guides/configuration.md`.'
+  labels:
+  - covers:gdaemon-node-channel:1.4:1.4.1
+  - covers:gdaemon-node-channel:1.4:1.4.2
+  - covers:gdaemon-node-channel:1.4:1.4.3
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Hub-node pair test over self-signed TLS
+  category: test
+  task_type: chore
+  depends_on:
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  validation_criteria: '1.5.1: Over self-signed TLS, an enrolled bare `gdaemon serve`
+    node, observed ready and registered within bounded waits, shows its machine as
+    `connected` and relays one request (which reports the hub''s mode) and one WebSocket
+    upgrade (which receives the hub''s pong). The native interactive challenge and
+    the relayed authenticated handshake also complete together and return a grant
+    bound to the enrolled node. Revoking its key closes the channel within one default
+    heartbeat interval (30 s), proved only by an observation received before that
+    deadline, and makes the next relayed request fail with 401. test: `tests/e2e/test_hub_node_pair.py::test_node_enrolls_and_relays`.'
+  labels:
+  - covers:gdaemon-node-channel:1.5:1.5.1
+  tdd: false
+  source_section: '1.5'
+  assigned_agent: backend-developer
+```
