@@ -1,0 +1,503 @@
+header:
+  plan_id: gdaemon-key-cutover
+  plan_hash: 96980debbe57ed082b6b9e31d2de7b76b451e74a6bb2d2710776c14e4483a1f6
+  root_task_ref: '23273'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-05T16:07:11Z'
+  task_tree_source: db
+  task_tree_source_hash: 051bdbe388e8195cc2802e34d8e22acac0dcaa5887ef51d2b8eb84e8aea178bc
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 41a106390d48f3017af97d06cc3809f5c1365ff81a564b9cc62cfb6588d4a255
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23517'
+    validation_criteria_snippet: '1.1.1: `ensure_break_glass_credential` creates a
+      mode-0600 file when it is absent and leaves an existing file byte-identical,
+      and `break_glass_matches` refuses...'
+    matched_artifact_ref: tests/utils/test_break_glass.py::test_credential_is_owner_only_and_never_rewritten
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: be9ba4a1fed1fea3d1bae56dd5d684349f8685d8492327dfa4f2adefb8a3c5fd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23517'
+    validation_criteria_snippet: '1.1.1: `ensure_break_glass_credential` creates a
+      mode-0600 file when it is absent and leaves an existing file byte-identical,
+      and `break_glass_matches` refuses...'
+    matched_artifact_ref: tests/servers/test_break_glass.py::test_break_glass_admits_only_loopback_holder_without_database
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 91a7a58c3408a9d6d536a330e06a3eeefe8abb5c8dac16510a2250f5db612d44
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23517'
+    validation_criteria_snippet: '1.1.1: `ensure_break_glass_credential` creates a
+      mode-0600 file when it is absent and leaves an existing file byte-identical,
+      and `break_glass_matches` refuses...'
+    matched_artifact_ref: tests/servers/test_break_glass.py::test_break_glass_still_requires_grant_on_grant_routes
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 81e27e65dd2bcbb1954c3819438f5b586bc3cc6ca23fae2781c4ba69962f97e8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23517'
+    validation_criteria_snippet: '1.1.1: `ensure_break_glass_credential` creates a
+      mode-0600 file when it is absent and leaves an existing file byte-identical,
+      and `break_glass_matches` refuses...'
+    matched_artifact_ref: tests/test_runner_front_door.py::test_run_gobby_creates_break_glass_before_front_door
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: d1d8faaecfcdb8e4d2f450f24d0aae220d123c037e29282d7da0f61c55291c39
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23517'
+    validation_criteria_snippet: '1.1.1: `ensure_break_glass_credential` creates a
+      mode-0600 file when it is absent and leaves an existing file byte-identical,
+      and `break_glass_matches` refuses...'
+    matched_artifact_ref: tests/agents/test_sandbox_policy.py::test_break_glass_file_is_a_credential_root
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.6
+  plan_node_hash: 66e7221c43e2d803ac04330b5db2625b8aca88f35b3ef2215dc76aa30d07d93e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23517'
+    validation_criteria_snippet: '1.1.1: `ensure_break_glass_credential` creates a
+      mode-0600 file when it is absent and leaves an existing file byte-identical,
+      and `break_glass_matches` refuses...'
+    matched_artifact_ref: Break-glass access
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 948c36733758333c50cbda42c3d97190e55fa8930824fc3dd0236ad85db59975
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23518'
+    validation_criteria_snippet: '1.2.1: A capability issued with `derive_managed_signing_key(api_key)`
+      verifies with that key and fails with the raw API key, with a key derived from
+      another AP...'
+    matched_artifact_ref: tests/utils/test_local_token.py::test_managed_tokens_sign_with_derived_key
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 5045fdbe42d3839981aba77a22b706856d2d481087c2c8ac08584e5feb572696
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23518'
+    validation_criteria_snippet: '1.2.1: A capability issued with `derive_managed_signing_key(api_key)`
+      verifies with that key and fails with the raw API key, with a key derived from
+      another AP...'
+    matched_artifact_ref: tests/servers/test_auth_service.py::test_managed_token_survives_restart_and_new_lease
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: e6d20386256304042c84048b2bd206d616eecc354c1199ea2ed37cb282979ce6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23518'
+    validation_criteria_snippet: '1.2.1: A capability issued with `derive_managed_signing_key(api_key)`
+      verifies with that key and fails with the raw API key, with a key derived from
+      another AP...'
+    matched_artifact_ref: tests/servers/test_auth_service.py::test_rotated_bootstrap_key_invalidates_managed_tokens
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: 55034d11b5aeaaef21a71bd412364a0ecc28432a739cbd93b891729d7d0316c5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23518'
+    validation_criteria_snippet: '1.2.1: A capability issued with `derive_managed_signing_key(api_key)`
+      verifies with that key and fails with the raw API key, with a key derived from
+      another AP...'
+    matched_artifact_ref: tests/servers/routes/test_runtime_handshake.py::test_managed_challenge_uses_derived_signing_key
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: f7d526dd54b1d26a2bba7a42cc3a7b94b039b2eadd8ac98a50a3762749ac5e72
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23518'
+    validation_criteria_snippet: '1.2.1: A capability issued with `derive_managed_signing_key(api_key)`
+      verifies with that key and fails with the raw API key, with a key derived from
+      another AP...'
+    matched_artifact_ref: tests/utils/test_local_token.py::test_missing_bootstrap_key_refuses_issuance_and_verification
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.6
+  plan_node_hash: a5d1627a3aeff2fb647446e755c8bcfbe6504eed77ba04be8d1e4ac3c109d826
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23518'
+    validation_criteria_snippet: '1.2.1: A capability issued with `derive_managed_signing_key(api_key)`
+      verifies with that key and fails with the raw API key, with a key derived from
+      another AP...'
+    matched_artifact_ref: tests/servers/test_auth_service.py::test_managed_signing_uses_the_daemon_bootstrap
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.7
+  plan_node_hash: 92035d4d794f8fa5dc568e4b6cbc0f65d992f12a37147088c2c2c48b56d89e92
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23518'
+    validation_criteria_snippet: '1.2.1: A capability issued with `derive_managed_signing_key(api_key)`
+      verifies with that key and fails with the raw API key, with a key derived from
+      another AP...'
+    matched_artifact_ref: tests/runtime_grants/test_maintenance_launch.py::test_launch_signs_with_current_bootstrap_key
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: 77132b6c04ed1ef5a1e7f3aa66ff4691a4139b58d2eaf44356e2490ec69307d1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::valid_key_forwards_identity_headers
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: 14198e05d58127770a8522a188cb2765a1ac964f7e6a6b7aff2eee49eac1dd32
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: tests/servers/test_auth_service.py::test_front_door_identity_requires_secret
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: 6f6c282117a7052dd3eaeb4f818c7c801a3dcaa6942404e056677b11dec0b2fd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::interactive_challenge_answered_locally
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.4
+  plan_node_hash: 2501fb056f9f0c488f3c35f6783dc24c416a3961958553a05783f3c19833059f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: tests/servers/test_grant_auth.py::test_interactive_grant_matches_forwarded_machine
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.5
+  plan_node_hash: 45ad2290d9ba3158f95ddb2154f06ac2d7f6c66b8f48598f9bbdd18ccbb135dd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: API key
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.6
+  plan_node_hash: 662df5cfb1f657a27621cc62193ab3cd0dfe5eee6c32afd96cde116e30507a91
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: tests/contracts/test_http_corpus.py::test_case_replays_equal
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.7
+  plan_node_hash: 247b1c405a38afbc1e8f7e2d5c68569699965753cdbdac4ae15f6263e84ec4da
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: crates/gdaemon/tests/http_contracts.rs::cases_replay_in_declared_backend_state
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.8
+  plan_node_hash: de4a329c65b5df1db801bcdcd052da1c1352256341ac2b041e5b88c0c7f81afb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: src/gobby/hooks/inbox_maintenance.py
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.9
+  plan_node_hash: 06a2699c1e38a21196ca72f4f989f43ca1813753fefc6d0be5f328c547d098e4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: crates/gcore/src/api_key_format.rs::matches_shared_vectors
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.10
+  plan_node_hash: ed23be70e8a4d10be93853788312e94640227fe5449252c898ce528c6aa29191
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: tests/config/test_removed_config_fields.py::test_retired_auth_token_hash_row_is_deleted
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.11
+  plan_node_hash: 7e10116875cb0a70024a231081897df74de36a7e087536832373825ee54e1b20
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: crates/gterminal/tests/frame_protocol.rs::rotated_key_applies_to_next_hello
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.12
+  plan_node_hash: 979ec6e558b14b64e5a155505ad0d690a85381d7457ee436e80ee321fb34d633
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::break_glass_header_passes_through_when_resolver_fails
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.13
+  plan_node_hash: 3863d0a7c64b7978fe9c9d557c0562e7989d7998cc54004f552221b363398c12
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::resolver_error_is_503_and_missing_secret_refuses_start
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.14
+  plan_node_hash: 418299a41238397934c7eb2fc62161cce3d572eda37f4a03aaeeee4235e0ba29
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: tests/servers/routes/test_api_keys.py::test_key_routes_use_verified_front_door_identity
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.15
+  plan_node_hash: 2f55f7f9f7740a93dab559d908cd9036575251fb7076f29bb6a8f5533f2f13dd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: src/gobby/terminals/native_frames.py
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.16
+  plan_node_hash: 5a8cbcb9d206ebdab73b4db82efcbd3afb5ab2d79f88b2888a413e5f39d29aab
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23519'
+    validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
+      and key ids, strips client identity headers, forwards the ids with the front-door
+      secret, passes `gobby-a...'
+    matched_artifact_ref: tests/test_runner_init.py::test_startup_provisions_no_operator_token
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.1
+  plan_node_hash: 1b505f8485ac4e761f7da8fd4d7405d9193837143a5e3b2cc34ce74ee9068b88
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23520'
+    validation_criteria_snippet: '1.4.1: `--rotate` mints with the old key, publishes,
+      verifies the new key, and only then revokes the old one. When verification fails,
+      only the key fields are ...'
+    matched_artifact_ref: tests/cli/test_auth_login.py::test_rotate_verifies_before_revoke
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.2
+  plan_node_hash: 08ec82245cd6d2840b3781c684acb02458b2acd9562d2da1428b3ea2c987d911
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23520'
+    validation_criteria_snippet: '1.4.1: `--rotate` mints with the old key, publishes,
+      verifies the new key, and only then revokes the old one. When verification fails,
+      only the key fields are ...'
+    matched_artifact_ref: tests/cli/test_auth_login.py::test_key_list_and_revoke_send_the_bootstrap_key
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.3
+  plan_node_hash: 2587c422baf3c97a4ccd32f7058ec92207bc9a0863f228b9789c1134bb0b5c18
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23520'
+    validation_criteria_snippet: '1.4.1: `--rotate` mints with the old key, publishes,
+      verifies the new key, and only then revokes the old one. When verification fails,
+      only the key fields are ...'
+    matched_artifact_ref: tests/cli/test_auth_login.py::test_key_mint_prints_once_and_writes_nothing
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.4
+  plan_node_hash: b4f13fb6d272e4756e3ba9e67eebfb244dc831d17233a7a0457ea4988e8cb443
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23520'
+    validation_criteria_snippet: '1.4.1: `--rotate` mints with the old key, publishes,
+      verifies the new key, and only then revokes the old one. When verification fails,
+      only the key fields are ...'
+    matched_artifact_ref: tests/cli/test_auth_login.py::test_key_show_prints_hint_only
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.5
+  plan_node_hash: 50e5b367b01d2e9b7a235f16d80b71609644cbf899abbae62fb5af80c083e579
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23520'
+    validation_criteria_snippet: '1.4.1: `--rotate` mints with the old key, publishes,
+      verifies the new key, and only then revokes the old one. When verification fails,
+      only the key fields are ...'
+    matched_artifact_ref: tests/skills/test_reference_library.py::test_reference_contract_3_2_1
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.1
+  plan_node_hash: abaab7c23b39a713bdec88cd067e82aaefa1381cc6ba4c042febc496121dfd59
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23521'
+    validation_criteria_snippet: '1.5.1: `gcode --allow-stale grep ''local_cli_token|LOCAL_CLI_TOKEN|X-Gobby-Local-Token|api_token_hash|gobby
+      auth token|local_token_file_present'' docs/ -l -m1000...'
+    matched_artifact_ref: gobby auth login
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.2
+  plan_node_hash: 3b16c9ab471684299cad12145ea6b2aaf1e3b1b17391c668f137b98e366ea5f0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23521'
+    validation_criteria_snippet: '1.5.1: `gcode --allow-stale grep ''local_cli_token|LOCAL_CLI_TOKEN|X-Gobby-Local-Token|api_token_hash|gobby
+      auth token|local_token_file_present'' docs/ -l -m1000...'
+    matched_artifact_ref: Flag-day gterm activation
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.3
+  plan_node_hash: be213f41d46f625ab1d8255558d1c093e4f8549083b737ffa75886f4d09fdbbe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23521'
+    validation_criteria_snippet: '1.5.1: `gcode --allow-stale grep ''local_cli_token|LOCAL_CLI_TOKEN|X-Gobby-Local-Token|api_token_hash|gobby
+      auth token|local_token_file_present'' docs/ -l -m1000...'
+    matched_artifact_ref: gobby auth key --mint
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.4
+  plan_node_hash: 4e661994ced19f00322ceeb4094c285c77424a2f3a2e9635750c99a1fcb9da07
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23521'
+    validation_criteria_snippet: '1.5.1: `gcode --allow-stale grep ''local_cli_token|LOCAL_CLI_TOKEN|X-Gobby-Local-Token|api_token_hash|gobby
+      auth token|local_token_file_present'' docs/ -l -m1000...'
+    matched_artifact_ref: gobby auth key --rotate
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.1
+  plan_node_hash: 4e879b20c950c80eada3b4343d1912bbc8533761c17b8d22e025d3553100504f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23522'
+    validation_criteria_snippet: '1.6.1: After the cutover code is reverted on the
+      same isolated home and schema the tip ran on, a daemon whose Python imports
+      resolve under the reverted clone''s...'
+    matched_artifact_ref: Break-glass admitted after revert
+  deferral_target: null
+  detail: ''
+- section_id: D1
+  item_id: D1.1
+  plan_node_hash: 355c27fc205b29ab47298483ecf5edf30e8a4497fc88001b8ee7acf1375368a4
+  status: deferred
+  leaves: []
+  deferral_target: '#23523'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.2
+  plan_node_hash: 9099a07e8e523c9823309f7d63765d8e810a09b6c5b2c1eccc65fbe6427f567f
+  status: deferred
+  leaves: []
+  deferral_target: '#23523'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.3
+  plan_node_hash: 93ea7538f85a2b590833021b8d44119fcd375d0c70bd1b256e5932406c475c75
+  status: deferred
+  leaves: []
+  deferral_target: '#23523'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.4
+  plan_node_hash: f91846ae06af20e71d15390236bff7d157e8f8dab3afa9de4a3e3c6fbfa84346
+  status: deferred
+  leaves: []
+  deferral_target: '#23523'
+  detail: deferral is valid

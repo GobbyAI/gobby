@@ -1282,7 +1282,7 @@ The PD runs this in an approved window outside quiet hours (Decisions 13 and
 
 ```yaml
 deferral:
-  task_ref: "TBD-at-expansion"
+  task_ref: "#23523"
   reason: "Live activation restarts the production daemon and drains the gterm host in an approved window. Expansion manifests reject the manual category, so this expands as a planning task held needs-planning with blocked-by edges to 1.1 through 1.6; the Orchestrator retypes it to manual and the PD runs it."
   owner: "program-director"
   original_acceptance_items:
