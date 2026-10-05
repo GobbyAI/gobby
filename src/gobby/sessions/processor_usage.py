@@ -59,14 +59,20 @@ class ProcessorUsageMixin:
         has_context_occupancy = any(msg.context_used_tokens is not None for msg in messages)
         has_window_metadata = any(self._message_context_window(msg) is not None for msg in messages)
         has_model = any(isinstance(msg.model, str) and bool(msg.model) for msg in messages)
-        # Claude Code's hook payloads carry no effort; its transcript records do.
-        observed_effort = next(
-            (
-                effort
-                for msg in reversed(messages)
-                if (effort := observed_reasoning_effort(msg.raw_json)) is not None
-            ),
-            None,
+        # Claude Code's hook payloads carry no effort; its transcript records do. A
+        # catch-up batch short of EOF ends on a historical record, so it keeps the
+        # stored effort the way it keeps the stored occupancy.
+        observed_effort = (
+            next(
+                (
+                    effort
+                    for msg in reversed(messages)
+                    if (effort := observed_reasoning_effort(msg.raw_json)) is not None
+                ),
+                None,
+            )
+            if publish_occupancy
+            else None
         )
         if (
             not has_usage

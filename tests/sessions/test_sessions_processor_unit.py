@@ -3083,12 +3083,15 @@ class TestModelExtraction:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("stored", "record_efforts", "final", "writes"),
+        ("stored", "record_efforts", "publish_occupancy", "final", "writes"),
         [
-            pytest.param(None, ["xhigh"], "xhigh", ["xhigh"], id="first-observation"),
-            pytest.param("high", ["medium", "xhigh"], "xhigh", ["xhigh"], id="latest-record-wins"),
-            pytest.param("xhigh", ["xhigh"], "xhigh", [], id="unchanged-is-not-rewritten"),
-            pytest.param("high", [None], "high", [], id="record-without-effort"),
+            pytest.param(None, ["xhigh"], True, "xhigh", ["xhigh"], id="first-observation"),
+            pytest.param(
+                "high", ["medium", "xhigh"], True, "xhigh", ["xhigh"], id="latest-record-wins"
+            ),
+            pytest.param("xhigh", ["xhigh"], True, "xhigh", [], id="unchanged-is-not-rewritten"),
+            pytest.param("high", [None], True, "high", [], id="record-without-effort"),
+            pytest.param("xhigh", ["medium"], False, "xhigh", [], id="catch-up-short-of-eof"),
         ],
     )
     async def test_persist_usage_events_records_transcript_reasoning_effort(
@@ -3096,10 +3099,15 @@ class TestModelExtraction:
         mock_db: MagicMock,
         stored: str | None,
         record_efforts: list[str | None],
+        publish_occupancy: bool,
         final: str | None,
         writes: list[str],
     ) -> None:
-        """Claude records carry the turn's effort; the session row takes the latest one."""
+        """Claude records carry the turn's effort; the session row takes the latest one.
+
+        A catch-up batch short of EOF ends on a historical record and keeps the stored
+        effort.
+        """
         row = SimpleNamespace(source="claude", model="claude-opus-5-5", reasoning_effort=stored)
         written: list[str] = []
 
@@ -3128,7 +3136,9 @@ class TestModelExtraction:
             for index, effort in enumerate(record_efforts)
         ]
 
-        await processor._persist_usage_events("session-1", messages)
+        await processor._persist_usage_events(
+            "session-1", messages, publish_occupancy=publish_occupancy
+        )
 
         assert row.reasoning_effort == final
         assert written == writes
