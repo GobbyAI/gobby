@@ -86,16 +86,17 @@ def _record_edit(
     *,
     postgres_db: Any,
     session_id: str,
+    project_dir: Path,
     relative_path: str,
     old: str,
     new: str,
 ) -> dict[str, Any]:
     from gobby.workflows.state_manager import SessionVariableManager
 
-    patch = (
-        f"*** Begin Patch\n*** Update File: {relative_path}\n@@\n-{old}\n+{new}\n*** End Patch\n"
+    patch = f"*** Begin Patch\n*** Update File: {project_dir / relative_path}\n@@\n-{old}\n+{new}\n*** End Patch\n"
+    assert SessionVariableManager(postgres_db).record_edited_file(
+        session_id, relative_path, checkout_root=str(project_dir)
     )
-    assert SessionVariableManager(postgres_db).record_edited_file(session_id, relative_path)
     return {
         "type": "custom_tool_call",
         "call_id": f"patch-{uuid.uuid4().hex}",
@@ -163,7 +164,12 @@ def _write_transcript(
     transcript.write_text("".join(f"{json.dumps(record)}\n" for record in records))
 
 
-def _commit(project: Path, message: str) -> str:
+def _commit(project: Path, message: str, client: MCPTestClient, task_id: str) -> str:
+    task = _unwrap(
+        client.call_tool("gobby-tasks", "get_task", {"task_id": task_id, "brief": False})
+    )
+    project_name = json.loads((project / ".gobby/project.json").read_text())["name"]
+    message = f"[{project_name}-#{task['seq_num']}] {message}"
     subprocess.run(["git", "add", "src/close_checklist.py"], cwd=project, check=True)
     subprocess.run(["git", "commit", "-m", message], cwd=project, check=True)
     return subprocess.run(
@@ -191,7 +197,7 @@ def _close(client: MCPTestClient, task_id: str, commit_sha: str) -> dict[str, An
     )
 
 
-def test_ready_codex_task_closes_with_one_llm_call(
+def test_ready_codex_task_previews_without_llm(
     daemon_instance: DaemonInstance,
     mcp_client: MCPTestClient,
     cli_events: CLIEventSimulator,
@@ -208,6 +214,7 @@ def test_ready_codex_task_closes_with_one_llm_call(
     edit = _record_edit(
         postgres_db=postgres_db,
         session_id=session_id,
+        project_dir=daemon_instance.project_dir,
         relative_path="src/close_checklist.py",
         old="",
         new="VALUE = 1",
@@ -220,16 +227,20 @@ def test_ready_codex_task_closes_with_one_llm_call(
             *_validation_events(outcome=0, timestamp=timestamp + timedelta(seconds=1)),
         ],
     )
-    commit_sha = _commit(daemon_instance.project_dir, "Add close checklist module")
+    commit_sha = _commit(
+        daemon_instance.project_dir, "Add close checklist module", mcp_client, task_id
+    )
 
     started = time.monotonic()
     result = _close(mcp_client, task_id, commit_sha)
 
-    assert result["closed"] is True, result
-    assert result["can_close"] is True
+    assert result["closed"] is False, result
+    assert result["error"] == "close_review_required", result
+    assert all(gate["status"] in {"passed", "skipped"} for gate in result["checklist"][:12])
+    assert result["checklist"][12]["status"] == "not_run"
     assert time.monotonic() - started < 120
-    assert validation_llm_server.validation_calls == 1
-    assert len(validation_llm_server.requests) == 1
+    assert validation_llm_server.validation_calls == 0
+    assert len(validation_llm_server.requests) == 0
 
 
 def test_dirty_task_file_blocks_before_llm(
@@ -249,15 +260,19 @@ def test_dirty_task_file_blocks_before_llm(
     first_edit = _record_edit(
         postgres_db=postgres_db,
         session_id=session_id,
+        project_dir=daemon_instance.project_dir,
         relative_path="src/close_checklist.py",
         old="",
         new="VALUE = 1",
     )
-    commit_sha = _commit(daemon_instance.project_dir, "Add close checklist module")
+    commit_sha = _commit(
+        daemon_instance.project_dir, "Add close checklist module", mcp_client, task_id
+    )
     source.write_text("VALUE = 2\n")
     second_edit = _record_edit(
         postgres_db=postgres_db,
         session_id=session_id,
+        project_dir=daemon_instance.project_dir,
         relative_path="src/close_checklist.py",
         old="VALUE = 1",
         new="VALUE = 2",
@@ -295,6 +310,7 @@ def test_failed_validation_run_blocks_before_llm(
     edit = _record_edit(
         postgres_db=postgres_db,
         session_id=session_id,
+        project_dir=daemon_instance.project_dir,
         relative_path="src/close_checklist.py",
         old="",
         new="VALUE = 1",
@@ -307,7 +323,9 @@ def test_failed_validation_run_blocks_before_llm(
             *_validation_events(outcome=1, timestamp=timestamp + timedelta(seconds=1)),
         ],
     )
-    commit_sha = _commit(daemon_instance.project_dir, "Add close checklist module")
+    commit_sha = _commit(
+        daemon_instance.project_dir, "Add close checklist module", mcp_client, task_id
+    )
 
     result = _close(mcp_client, task_id, commit_sha)
 
@@ -316,7 +334,7 @@ def test_failed_validation_run_blocks_before_llm(
     assert validation_llm_server.validation_calls == 0
 
 
-def test_epic_closes_without_llm_or_invalid_skipped_status(
+def test_epic_previews_without_llm_or_invalid_skipped_status(
     daemon_instance: DaemonInstance,
     mcp_client: MCPTestClient,
     cli_events: CLIEventSimulator,
@@ -342,7 +360,8 @@ def test_epic_closes_without_llm_or_invalid_skipped_status(
         )
     )
 
-    assert result["closed"] is True, result
+    assert result["closed"] is False, result
+    assert result["can_close"] is True, result
     assert all(gate["status"] == "skipped" for gate in result["checklist"][4:])
     assert validation_llm_server.validation_calls == 0
 
@@ -364,6 +383,7 @@ def test_edit_after_clean_run_makes_transcript_evidence_stale(
     first_edit = _record_edit(
         postgres_db=postgres_db,
         session_id=session_id,
+        project_dir=daemon_instance.project_dir,
         relative_path="src/close_checklist.py",
         old="",
         new="VALUE = 1",
@@ -372,6 +392,7 @@ def test_edit_after_clean_run_makes_transcript_evidence_stale(
     second_edit = _record_edit(
         postgres_db=postgres_db,
         session_id=session_id,
+        project_dir=daemon_instance.project_dir,
         relative_path="src/close_checklist.py",
         old="VALUE = 1",
         new="VALUE = 1\\nDETAIL = 'after validation'",
@@ -385,7 +406,9 @@ def test_edit_after_clean_run_makes_transcript_evidence_stale(
             _response_item(second_edit, timestamp + timedelta(seconds=2)),
         ],
     )
-    commit_sha = _commit(daemon_instance.project_dir, "Add post-validation edit")
+    commit_sha = _commit(
+        daemon_instance.project_dir, "Add post-validation edit", mcp_client, task_id
+    )
 
     result = _close(mcp_client, task_id, commit_sha)
 

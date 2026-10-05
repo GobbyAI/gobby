@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import ast
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import get_ident
 from types import SimpleNamespace
 from typing import Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -24,6 +27,7 @@ from gobby.tasks.close_checklist import (
     CloseGateResult,
     evaluate_validation_commands,
 )
+from gobby.tasks.close_test_coverage import related_python_source_tests
 from gobby.tasks.command_equivalence import pytest_targets, scope_difference
 from gobby.tasks.transcript_evidence import merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
@@ -528,6 +532,249 @@ def test_unrelated_pytest_does_not_cover_a_changed_python_test() -> None:
 
     assert gate.status == "failed"
     assert gate.details["pytest_uncovered_paths"] == ["tests/tasks/test_close_checklist.py"]
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_status"),
+    [
+        ("uv run pytest tests/test_unrelated.py -q", "failed"),
+        ("uv run pytest tests/test_widget.py -q", "passed"),
+        ("uv run pytest tests -q", "passed"),
+    ],
+)
+def test_changed_python_source_requires_related_pytest_coverage(
+    tmp_path: Path, command: str, expected_status: str
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/widget.py").write_text("value = 1\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_widget.py").write_text("def test_widget(): pass\n")
+    (tmp_path / "tests/test_unrelated.py").write_text("def test_unrelated(): pass\n")
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1, command=command),)),
+        has_attributed_edits=True,
+        changed_paths=("src/widget.py",),
+        close_root=str(tmp_path),
+    )
+
+    assert gate.status == expected_status
+    assert gate.details["python_source_related_tests"] == {
+        "src/widget.py": ["tests/test_widget.py"]
+    }
+    if expected_status == "failed":
+        assert gate.details["python_source_uncovered_tests"] == {
+            "src/widget.py": ["tests/test_widget.py"]
+        }
+        assert "src/widget.py" in gate.message
+        assert "tests/test_widget.py" in gate.message
+    else:
+        assert gate.details["python_source_uncovered_tests"] == {}
+
+
+def test_changed_python_source_without_related_tests_is_reported_not_blocking(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/unmatchedsentinelmodule.py").write_text("value = 1\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_unrelated.py").write_text("def test_unrelated(): pass\n")
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_run(1, command="uv run pytest tests/test_unrelated.py -q"),)
+        ),
+        has_attributed_edits=True,
+        changed_paths=("src/unmatchedsentinelmodule.py",),
+        close_root=str(tmp_path),
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["python_sources_without_related_tests"] == [
+        "src/unmatchedsentinelmodule.py"
+    ]
+
+
+@pytest.mark.parametrize("excluded", ["stale", "wrapped", "unknown", "foreign"])
+def test_python_source_coverage_requires_fresh_credited_success(
+    tmp_path: Path, excluded: str
+) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_widget.py").write_text("def test_widget(): pass\n")
+    command = "uv run pytest tests/test_widget.py -q"
+    if excluded == "wrapped":
+        command += " | tail -1"
+    elif excluded == "foreign":
+        command = f"uv --directory {tmp_path.parent / 'other'} run pytest tests/test_widget.py -q"
+    evidence = TranscriptEvidence(
+        validation_runs=(
+            _run(1, command=command, outcome="unknown" if excluded == "unknown" else "success"),
+            _run(3, command="uv run pytest tests/test_unrelated.py -q"),
+        ),
+        edits=(_edit(2),) if excluded == "stale" else (),
+    )
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        changed_paths=("src/widget.py",),
+        close_root=str(tmp_path),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["python_source_uncovered_tests"] == {
+        "src/widget.py": ["tests/test_widget.py"]
+    }
+
+
+def test_related_pytest_must_cover_each_source_and_preserve_test_type_audit(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "tests").mkdir()
+    for name in ("widget", "gadget"):
+        (tmp_path / f"tests/test_{name}.py").write_text(f"def test_{name}(): pass\n")
+    changed_paths = ("src/widget.py", "src/gadget.py", "tests/test_widget.py")
+    widget_run = _run(1, command="uv run pytest tests/test_widget.py -q")
+    audit_run = _scoped_audit_run(2, "tests/test_widget.py")
+    gadget_run = _run(3, command="uv run pytest tests/test_gadget.py -q")
+
+    def evaluate(runs: tuple[TranscriptValidationRun, ...]) -> CloseGateResult:
+        return evaluate_validation_commands(
+            task_category="code",
+            evidence=TranscriptEvidence(validation_runs=runs),
+            has_attributed_edits=True,
+            changed_paths=changed_paths,
+            close_root=str(tmp_path),
+        )
+
+    missing_audit = evaluate((widget_run, gadget_run))
+    assert missing_audit.status == "failed"
+    assert "test type audit" in missing_audit.message
+    missing_gadget = evaluate((widget_run, audit_run))
+    assert missing_gadget.status == "failed"
+    assert missing_gadget.details["python_source_uncovered_tests"] == {
+        "src/gadget.py": ["tests/test_gadget.py"]
+    }
+    assert evaluate((widget_run, audit_run, gadget_run)).status == "passed"
+
+
+def test_source_without_related_tests_preserves_no_edit_skip(tmp_path: Path) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(),
+        has_attributed_edits=False,
+        changed_paths=("src/qqxvz.py",),
+        close_root=str(tmp_path),
+    )
+    assert gate.status == "skipped"
+    assert gate.details["python_sources_without_related_tests"] == ["src/qqxvz.py"]
+
+
+def test_rootless_validation_probe_never_scans_tests() -> None:
+    with patch("gobby.tasks.close_checklist.related_python_source_tests") as selector:
+        gate = evaluate_validation_commands(
+            task_category="code",
+            evidence=TranscriptEvidence(),
+            has_attributed_edits=False,
+            changed_paths=("src/widget.py",),
+        )
+    selector.assert_not_called()
+    assert gate.status == "failed"  # Conservatively request the rooted off-thread evaluation.
+
+
+def test_related_source_selector_uses_one_test_tree_scan(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_widget.py").write_text("def test_widget(): pass\n")
+    original = Path.rglob
+    scanned: list[Path] = []
+
+    def record_scan(path: Path, pattern: str) -> Iterator[Path]:
+        scanned.append(path)
+        return original(path, pattern)
+
+    with patch.object(Path, "rglob", record_scan):
+        selected = related_python_source_tests(
+            ("src/widget.py", "src/gadget.py"), base_dir=tmp_path
+        )
+    assert selected == {"src/gadget.py": (), "src/widget.py": ("tests/test_widget.py",)}
+    assert scanned == [tmp_path / "tests"]
+
+
+def test_related_source_selector_follows_relative_facades_without_string_imports(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "src/gobby/hooks"
+    package.mkdir(parents=True)
+    (package / "_ansi_c.py").write_text("VALUE = 1\n")
+    (package / "_normalization_shell.py").write_text("from ._ansi_c import VALUE\n")
+    (package / "normalization.py").write_text("from ._normalization_shell import VALUE\n")
+    tests = tmp_path / "tests/hooks"
+    tests.mkdir(parents=True)
+    (tests / "test_normalization.py").write_text("from gobby.hooks import (\nnormalization,\n)\n")
+    (tests / "test_expansion.py").write_text(
+        "EXAMPLE = '''\nfrom gobby.hooks._ansi_c import VALUE\n'''\n"
+    )
+    unrelated = "from gobby.hooks.other_module import VALUE\n"
+    (tests / "test_unrelated.py").write_text(unrelated)
+    with patch("gobby.tasks.close_test_coverage.ast.parse", wraps=ast.parse) as parse:
+        selected = related_python_source_tests(("src/gobby/hooks/_ansi_c.py",), base_dir=tmp_path)
+    assert selected == {"src/gobby/hooks/_ansi_c.py": ("tests/hooks/test_normalization.py",)}
+    assert not any(call.args[0] == unrelated for call in parse.call_args_list)
+
+
+@pytest.mark.parametrize("stem", ["core", "_implementation"])
+def test_generic_source_stems_match_only_their_mirrored_package(tmp_path: Path, stem: str) -> None:
+    own_tests = tmp_path / "tests/feature"
+    own_tests.mkdir(parents=True)
+    test_name = f"test_{stem.lstrip('_')}.py"
+    (own_tests / test_name).write_text("def test_behavior(): pass\n")
+    (own_tests / f"test_{stem.lstrip('_')}_extra.py").write_text(
+        "def test_different_module(): pass\n"
+    )
+    other_tests = tmp_path / "tests/unrelated"
+    other_tests.mkdir()
+    (other_tests / test_name).write_text("def test_other(): pass\n")
+    assert related_python_source_tests((f"src/feature/{stem}.py",), base_dir=tmp_path) == {
+        f"src/feature/{stem}.py": (f"tests/feature/{test_name}",)
+    }
+
+
+def test_related_source_selector_on_real_module_paths() -> None:
+    root = Path(__file__).resolve().parents[2]
+    selected = related_python_source_tests(
+        (
+            "src/gobby/hooks/_ansi_c.py",
+            "src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py",
+            "src/gobby/storage/__init__.py",
+            "src/gobby/workflows/engine/core.py",
+            "src/gobby/servers/routes/feedback.py",
+            "src/gobby/tasks/close_checklist.py",
+        ),
+        base_dir=root,
+    )
+    assert "tests/hooks/test_normalization.py" in selected["src/gobby/hooks/_ansi_c.py"]
+    assert (
+        "tests/agents/test_sandbox_network.py"
+        in selected["src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py"]
+    )
+    assert selected["src/gobby/storage/__init__.py"] == ()
+    assert (
+        "tests/pipelines/test_pipeline_executor_core.py"
+        not in selected["src/gobby/workflows/engine/core.py"]
+    )
+    assert (
+        "tests/servers/routes/test_feedback_routes.py"
+        in selected["src/gobby/servers/routes/feedback.py"]
+    )
+    assert "tests/tasks/test_close_checklist.py" in selected["src/gobby/tasks/close_checklist.py"]
+    assert not any(
+        "expansion" in path or "escalation" in path or "score" in path
+        for paths in selected.values()
+        for path in paths
+    )
 
 
 def _deleted_test_gate(*audit_targets: str) -> CloseGateResult:
@@ -2195,11 +2442,24 @@ async def test_every_independent_deterministic_blocker_lands_in_one_response() -
         justification_error="Task changes exceed the declared scope.",
     )
     review = AsyncMock()
+    event_loop_thread = get_ident()
+    selector_threads: list[int] = []
+
+    def select_tests(*_args: object, **_kwargs: object) -> dict[str, tuple[str, ...]]:
+        selector_threads.append(get_ident())
+        return {"src/a.py": ()}
 
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "collect_net_commit_paths", return_value=NetCommitPaths()),
+        patch.object(
+            lifecycle,
+            "collect_net_commit_paths",
+            return_value=NetCommitPaths(changed=frozenset({"src/a.py"})),
+        ),
+        patch(
+            "gobby.tasks.close_checklist.related_python_source_tests", side_effect=select_tests
+        ) as selector,
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
@@ -2250,6 +2510,10 @@ async def test_every_independent_deterministic_blocker_lands_in_one_response() -
         )
 
     failures = evaluation.checklist.all_failures
+    selector.assert_called_once()
+    assert selector.call_args.kwargs["base_dir"] == "/repo"
+    assert len(selector_threads) == 1
+    assert selector_threads[0] != event_loop_thread
     assert [gate.name for gate in failures] == [
         "changes_summary_present",
         "task_scope",
