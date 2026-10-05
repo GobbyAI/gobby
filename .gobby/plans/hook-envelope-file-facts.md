@@ -1041,17 +1041,23 @@ Consumers unchanged:
       `relative_path`, normalized with `normalize_task_edited_path`. A fact
       with a null `relative_path` lies outside the project and is skipped. A
       path with no fact is uncarried.
-    - New `foreign_claim_owners(db, *, session_id, project_id) -> dict[str, tuple[ForeignPathOwner, ...]]`
+    - New `foreign_claim_owners(db, *, session_id, project_id) -> tuple[tuple[ForeignClaim, ...], dict[str, tuple[ForeignPathOwner, ...]]]`
       in `hook_gate_context.py` runs the `_active_path_owners` query: open
       tasks in the project claimed by other sessions in an active status.
-      It takes each owner's paths from `task_edited_file_set(variables, task_id)`,
-      every path the task recorded in any checkout, with no root
-      normalization. The roughly 20-line query is duplicated because
-      `commit_guard.py` is not edited.
-    - The gate blocks when a carried `relative_path` is among the owners'
-      paths, or when any mutation path is uncarried and any owner exists. The
-      reason is the diagnostic plus `_format_dirty_edit_reason` over the
-      matching owners (all owners for the uncarried case).
+      - The first element lists every claim row the query returns, as
+        `ForeignClaim(session_ref, task_ref)` (new, frozen). It is built
+        independently of path membership, so a claim whose ledger is empty,
+        whether before its first edit or after a release, is still listed.
+      - The second element maps paths to owners. It takes each owner's paths
+        from `task_edited_file_set(variables, task_id)`, every path the task
+        recorded in any checkout, with no root normalization.
+      - The roughly 20-line query is duplicated because `commit_guard.py` is
+        not edited. One query serves both elements.
+    - The gate blocks when a carried `relative_path` is in the path map, with
+      the diagnostic plus `_format_dirty_edit_reason` over the matching
+      owners. It also blocks when any mutation path is uncarried and the
+      claim list is non-empty, with the diagnostic plus one line per claim
+      (session and task).
     - It is `""` when nothing matches. There is no git call, no release and
       no `Path.resolve`.
   - The code-review values keep the armed defaults.
@@ -1070,7 +1076,7 @@ Consumers unchanged:
 **Acceptance:**
 
 - 1.6.1 - A foreign-origin `git commit` blocks with `FOREIGN_ORIGIN_DIAGNOSTIC`, and no git subprocess runs. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_commit_fails_closed_without_git`.
-- 1.6.2 - A foreign-origin write blocks with the diagnostic and releases nothing when its carried `relative_path` is claimed by another session. That includes a claim recorded in a different checkout, so two checkouts with the same relative path both count. A nested cwd maps to the same relative identity. An uncarried path, such as a `.md` target or a shell-derived write, blocks when another session holds any claim and passes when none does. A fact with a null `relative_path`, or an unclaimed carried path, passes. Spies show no `Path.resolve`, `normalize_task_checkout_root`, git call or release. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_write_on_claimed_path_fails_closed`.
+- 1.6.2 - A foreign-origin write blocks with the diagnostic and releases nothing when its carried `relative_path` is claimed by another session. That includes a claim recorded in a different checkout, so two checkouts with the same relative path both count. A nested cwd maps to the same relative identity. An uncarried path, such as a `.md` target or a shell-derived write, blocks when another session holds any claim, including a claim whose ledger is empty (before its first edit, or after a release). It passes when no other session holds a claim. A fact with a null `relative_path`, or an unclaimed carried path, passes. Spies show no `Path.resolve`, `normalize_task_checkout_root`, git call or release. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_write_on_claimed_path_fails_closed`.
 - 1.6.3 - A foreign-origin event resolves no checkout and no git worktree root, even when this machine holds a checkout of the same project. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_event_resolves_no_local_checkout`.
 - 1.6.4 - A foreign-origin after_tool git event skips `reconcile_edit_ledgers`, and the code-review gate stays armed. test: `tests/workflows/test_foreign_origin_gates.py::test_foreign_event_skips_reconcile_and_keeps_review_gate`.
 - 1.6.5 - Local-origin gate values returned by `git_gate_eval_context`, including `foreign_landing_merge`, are byte-identical before and after the move, and the later `_evaluate_rules` augmentation runs in its existing order. test: `tests/workflows/test_foreign_origin_gates.py::test_local_gate_context_unchanged_by_move`.
