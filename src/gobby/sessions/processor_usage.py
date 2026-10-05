@@ -13,6 +13,7 @@ from gobby.llm.context_windows import reconcile_model_context, reconcile_observe
 from gobby.sessions.context_usage import grok_epoch_max_occupancy, normalize_context_usage_source
 from gobby.sessions.message_stats import TURN_BOUNDARY_CONTENT_TYPE
 from gobby.sessions.processor_types import WINDOW_ONLY_CONTEXT_SOURCES, ProcessorHost
+from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
@@ -58,11 +59,21 @@ class ProcessorUsageMixin:
         has_context_occupancy = any(msg.context_used_tokens is not None for msg in messages)
         has_window_metadata = any(self._message_context_window(msg) is not None for msg in messages)
         has_model = any(isinstance(msg.model, str) and bool(msg.model) for msg in messages)
+        # Claude Code's hook payloads carry no effort; its transcript records do.
+        observed_effort = next(
+            (
+                effort
+                for msg in reversed(messages)
+                if (effort := observed_reasoning_effort(msg.raw_json)) is not None
+            ),
+            None,
+        )
         if (
             not has_usage
             and not has_context_occupancy
             and not has_window_metadata
             and not has_model
+            and observed_effort is None
         ):
             return
 
@@ -73,6 +84,12 @@ class ProcessorUsageMixin:
             return
         if session is None:
             return
+        if observed_effort is not None and observed_effort != getattr(
+            session, "reasoning_effort", None
+        ):
+            await self._run_db(
+                self.session_manager.update, session_id, reasoning_effort=observed_effort
+            )
 
         store = self._new_token_event_store()
         project_id = getattr(session, "project_id", None)

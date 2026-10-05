@@ -424,11 +424,13 @@ class TestSessionRegistration:
         assert appender._safe_to_start_event == index.safe_to_start_event
         assert appender._state.current_message is not None
         assert appender._state.current_message.role == "assistant"
-        # Pre-resume calls are remembered as resolved ids -- shared on every
-        # per-batch clone -- rather than as pending stubs that would be
-        # deep-copied forever (#20875).
+        # Pre-resume calls are known through the index's shared first-open map
+        # (#23117), never as pending stubs that would be deep-copied forever
+        # (#20875) nor by walking every historical id into the resolved set.
         assert appender._state.pending_tool_calls == {}
-        assert "call_1" in appender._state.resolved_tool_call_ids
+        assert appender._state.resolved_tool_call_ids == set()
+        assert appender._state.knows_tool_call("call_1")
+        assert not appender._state.knows_tool_call("call_unknown")
         assert processor._parsers["sid"].snapshot_state()["pending_tool_search_use_ids"] == [
             "call_resume"
         ]
@@ -3078,6 +3080,58 @@ class TestModelExtraction:
         mock_session_manager.update_model.assert_not_called()
         assert mock_session_manager.update_model.call_count == 0
         assert not mock_session_manager.update_model.called
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("stored", "record_efforts", "final", "writes"),
+        [
+            pytest.param(None, ["xhigh"], "xhigh", ["xhigh"], id="first-observation"),
+            pytest.param("high", ["medium", "xhigh"], "xhigh", ["xhigh"], id="latest-record-wins"),
+            pytest.param("xhigh", ["xhigh"], "xhigh", [], id="unchanged-is-not-rewritten"),
+            pytest.param("high", [None], "high", [], id="record-without-effort"),
+        ],
+    )
+    async def test_persist_usage_events_records_transcript_reasoning_effort(
+        self,
+        mock_db: MagicMock,
+        stored: str | None,
+        record_efforts: list[str | None],
+        final: str | None,
+        writes: list[str],
+    ) -> None:
+        """Claude records carry the turn's effort; the session row takes the latest one."""
+        row = SimpleNamespace(source="claude", model="claude-opus-5-5", reasoning_effort=stored)
+        written: list[str] = []
+
+        def update(session_id: str, *, reasoning_effort: str) -> None:
+            assert session_id == "session-1"
+            written.append(reasoning_effort)
+            row.reasoning_effort = reasoning_effort
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = row
+        session_manager.update.side_effect = update
+        processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
+        messages = [
+            ParsedMessage(
+                index=index,
+                role="assistant",
+                content="done",
+                content_type="text",
+                tool_name=None,
+                tool_input=None,
+                tool_result=None,
+                timestamp=datetime.now(),
+                raw_json={"type": "assistant"} | ({"effort": effort} if effort else {}),
+                model="claude-opus-5-5",
+            )
+            for index, effort in enumerate(record_efforts)
+        ]
+
+        await processor._persist_usage_events("session-1", messages)
+
+        assert row.reasoning_effort == final
+        assert written == writes
 
 
 class TestInitialization:
