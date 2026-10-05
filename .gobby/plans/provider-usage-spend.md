@@ -191,9 +191,16 @@ Writer decisions:
   - Alert text carries provider, window, percent, reset time, and credit
     balance only.
 - **No secrets in output.** No leaf logs a credential, token, or header value.
-- **No backward compatibility.** 0.5.0 has not shipped. Existing Codex rows
-  with index-based ids are replaced by the post-deploy audit (V2), with no
-  aliasing.
+- **No backward compatibility.** 0.5.0 has not shipped. Pre-460 rows (Codex
+  index ids, NULL `api_calls`, missing subagent rows, missing reported runs)
+  are rewritten by the audit repair, with no aliasing.
+- **Repair at activation.** After each daemon restart that activates a P2
+  leaf or 3.1, the cutover runs `gobby tokens audit --all --fix` before
+  DAEMON BACK is sent. The repair is idempotent, so running it again is
+  safe. The run after the restart that activates 3.1, the first restart that
+  exposes the ledger, is the completion gate: the ledger is authoritative
+  once a following `gobby tokens audit --all` prints `drifted=0`. V2 step 3
+  confirms it.
 - **Consumer sweeps** ran read-only on `0.5.0` after `4858476f43` (2026-10-05):
   - `gcode grep -w` for `TokenEvent`, `_persist_session_transcript`,
     `ProviderCapacityRecord`, `ProcessorHost`, `SessionMessageProcessor`,
@@ -428,9 +435,18 @@ Targets:
 - Audit (`gobby tokens audit`):
   - `_messages_to_events` keeps the first event for each `message_id` before
     totals are compared.
-  - A session that has stored rows with NULL `message_id` counts as drift.
-  - `--fix` rewrites that session through the same delete-and-reinsert it
-    already uses.
+  - Drift compares rows as well as totals, because equal token totals do
+    not mean an equal ledger. The audit reads every stored row of the
+    session with one direct query (`list_session_events` is limited). The
+    session drifts when the multiset of
+    `(message_id, api_calls, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)`
+    from the stored rows differs from the one derived from the transcript,
+    or when any total differs, as today.
+  - Equal totals therefore no longer hide an obsolete Codex index id, a NULL
+    `api_calls` on a pre-460 Claude or Grok row, or a row with NULL
+    `message_id`.
+  - `--fix` rewrites a drifting session through the same delete-and-reinsert
+    it already uses.
 
 Consumers unchanged:
 - `src/gobby/servers/routes/admin/_testing.py` — no-edit-reason: builds `TokenEvent` by keyword without `api_calls`, which defaults to None.
@@ -455,6 +471,7 @@ session.
 - 2.1.3 - `api_call_count` returns 2 for a Claude message with two `message` iterations and one `advisor_message`, 1 without iterations, `modelCalls` for a Grok turn, None for a Grok turn with `usageIsIncomplete`, and None for Droid and Qwen. test: `tests/sessions/test_usage_call_identity.py::test_api_call_count_per_source`.
 - 2.1.4 - The live writer and the rebuild writer both persist `api_calls`, and `list_session_events` returns it. test: `tests/sessions/test_usage_call_identity.py::test_writers_persist_api_calls`.
 - 2.1.5 - The audit deduplicates parsed events by `message_id`, so a Codex session with repeated totals shows no drift. A stored row with NULL `message_id` is drift, and `--fix` replaces it with keyed rows. test: `tests/sessions/test_usage_call_identity.py::test_audit_dedupes_and_flags_unkeyed_rows`.
+- 2.1.6 - Stored rows whose token totals equal the transcript's still drift when they keep a pre-460 identity. This covers a Claude row and a Grok row with valid ids and NULL `api_calls`, and a Codex rollout without repeated totals whose rows keep index ids. `--fix` rewrites them to keyed rows with `api_calls`, and a second audit reports no drift. test: `tests/sessions/test_usage_call_identity.py::test_audit_flags_equal_total_identity_drift`.
 
 ### 2.2 Claude subagent calls enter the parent ledger [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -482,7 +499,9 @@ Targets:
   byte offset (`self._byte_offsets`) and calls `_process_parsed_batch` with
   `publish_occupancy=caught_up`. When the parent has no new lines it returns
   early (`if not new_lines: return True`, processor_transcripts.py:244-245),
-  before it looks up the parser.
+  before it looks up the parser. When the parsed lines yield no stats
+  records, the `if not stats_records` branch advances the index and the byte
+  offset and returns without `_process_parsed_batch`.
 - `ProcessorLifecycleMixin._loop` calls `_process_all_sessions` every
   `poll_interval`, which runs `_process_session` for every registered
   session. An idle parent therefore still gets a pass on every poll.
@@ -518,15 +537,28 @@ Targets:
 - `SessionMessageProcessor` adds `ProcessorLedgerMixin` to its bases, and
   `__init__` sets `self._subagent_offsets: dict[str, dict[str, int]] = {}`.
   `ProcessorHost` declares the attribute and the method.
-- `_process_session_unlocked` awaits `_persist_ledger_batch` after
-  `_process_parsed_batch` succeeds, before it advances `_byte_offsets`.
-- The no-new-lines branch also feeds the ledger. Before returning, it
-  resolves the session's parser from `self._parsers` and, when one exists,
-  awaits
-  `_persist_ledger_batch(session_id, transcript_path, _parser_source(parser), [], [], caught_up)`.
-  A subagent append or a Droid sidecar change is then ingested on the next
-  poll while the parent transcript is idle. The existing poll loop drives
-  that pass, so no watcher, polling service, or event bus is added.
+- Every exit of `_process_session_unlocked` that consumes input awaits
+  `_persist_ledger_batch` exactly once, before it advances `_byte_offsets`.
+  Every consumed line therefore reaches its collector. There are three such
+  exits:
+  1. The parsed-batch exit awaits it after `_process_parsed_batch` succeeds,
+     with the pass's lines and parsed records.
+  2. The `if not stats_records` exit advances the offset over lines that
+     carry no messages, for example a Claude append that holds only a
+     `cost-state` record, which the parser filters. It awaits the ledger
+     first, with the pass's lines and parsed records.
+  3. The no-new-lines exit resolves the session's parser from
+     `self._parsers` and, when one exists, awaits
+     `_persist_ledger_batch(session_id, transcript_path, _parser_source(parser), [], [], caught_up)`.
+     A subagent append or a Droid sidecar change is then ingested on the
+     next poll while the parent transcript is idle. The existing poll loop
+     drives that pass, so no watcher, polling service, or event bus is added.
+- When `_persist_ledger_batch` raises on exits 1 or 2, the parser state is
+  restored from `parser_state` (as `_process_parsed_batch` failures already
+  are) and the error propagates. The offset stays where it was, and the next
+  pass rereads the lines. The reread is idempotent: message ids are unique,
+  `sessions.usage_*` is rewritten from `get_session_totals`, and the
+  reported-run upsert is strict.
   `unregister_session` and `_reset_transcript_state` drop the session's
   subagent offsets. A daemon restart starts at offset 0, and the unique
   message ids make the reread idempotent.
@@ -631,10 +663,15 @@ Targets:
 - `_persist_ledger_batch` calls `collect_runs` on each pass for the batch's
   lines and messages, and upserts the result. Droid reads the sidecar on every
   pass, including the no-new-lines pass that 2.2 adds, so a sidecar-only
-  change refreshes the run while the transcript is idle.
-- The rebuild and the audit call `collect_runs` over the full transcript and
-  upsert. The audit prints the run count and the amount by unit for each
-  session.
+  change refreshes the run while the transcript is idle. A Claude
+  `cost-state` line reaches `claude_cost_runs` through whichever 2.2 exit
+  consumes it, including the `if not stats_records` exit when the append
+  holds no message.
+- The rebuild calls `collect_runs` over the full transcript and upserts. The
+  audit compares `collect_runs` over the full transcript with `list_runs`. A
+  missing run, or a stored run with an older `observed_at`, is drift, and
+  `--fix` upserts. The audit prints the run count and the amount by unit for
+  each session.
 
 **Granularity:** one leaf. The three providers share one table, one upsert
 rule, and one dispatcher. Splitting them per provider would triple the store
@@ -648,8 +685,9 @@ and wiring work for about 30 lines of parsing each.
 - 2.3.1 - Claude `cost-state` lines from two process runs, one repeated with a larger cumulative cost, yield two runs. Each run keeps its largest reading and its own `startTime`, and a resumed run does not carry the earlier run's cost. test: `tests/sessions/test_reported_usage.py::test_claude_cost_state_runs_are_per_start_time`.
 - 2.3.2 - A Grok turn converts `costUsdTicks` to USD exactly, and a turn flagged `usageIsIncomplete` stores `cost_complete` false. test: `tests/sessions/test_reported_usage.py::test_grok_turn_runs_convert_ticks`.
 - 2.3.3 - A Droid sidecar yields one `factory_credits` run, and a missing sidecar yields none. test: `tests/sessions/test_reported_usage.py::test_droid_sidecar_run`.
-- 2.3.4 - Upserting an older reading after a newer one leaves the newer one, and the live path, rebuild, and audit produce identical rows. test: `tests/sessions/test_reported_usage.py::test_upsert_keeps_newest_and_paths_agree`.
+- 2.3.4 - Upserting an older reading after a newer one leaves the newer one, and the live path, rebuild, and `audit --fix` produce identical rows. A session whose run is missing is drift to a plain audit, which writes nothing; `--fix` upserts the run, and a second audit reports no drift. test: `tests/sessions/test_reported_usage.py::test_upsert_keeps_newest_and_paths_agree`.
 - 2.3.5 - With the Droid transcript unchanged, rewriting its sidecar with a larger `factoryCredits` and a later mtime refreshes the `droid:session` run on the next normal live pass. A further pass with the sidecar unchanged leaves the row untouched, with the same `xmin`. test: `tests/sessions/test_reported_usage.py::test_idle_pass_refreshes_droid_sidecar`.
+- 2.3.6 - Appending only a Claude `cost-state` line to an otherwise idle parent transcript: the next live pass leaves through the `if not stats_records` exit, upserts the run, and advances the offset. Replaying that pass from the earlier offset changes nothing. When `_persist_ledger_batch` raises on that exit, the byte offset and parser state stay unchanged, and the next pass ingests the line. test: `tests/sessions/test_reported_usage.py::test_cost_state_only_append_reaches_the_ledger`.
 
 ## P3: The ledger interface
 `kind: framing`
@@ -1163,13 +1201,13 @@ After every leaf has passed:
    `cargo nextest run -p gobby-core --test schema_contract` and
    `cargo nextest run -p gobby-daemon --test cli_contract` (heavy work).
 2. Run `uv run gobby plans validate .gobby/plans/provider-usage-spend.md -p <root>`.
-3. Post-deploy repair, required once migration 460 and 2.1 are live: run
-   `gobby tokens audit --all --fix`. Until it runs, existing Codex rows keep
-   index ids while new rows use cumulative keys, so those sessions
-   double-count. The fix rewrites every drifting session, recomputes
+3. Confirm the activation repair (Constraints, Repair at activation). Before
+   it runs, existing Codex rows keep index ids while reread lines get
+   cumulative keys, so those sessions can double-count, and pre-460 Claude
+   and Grok rows lack `api_calls`. The repair compares rows, not only
+   totals (2.1). It rewrites every drifting session, recomputes
    `sessions.usage_*` from `get_session_totals`, ingests subagent rows, and
-   upserts reported runs. A second `gobby tokens audit --all` must report no
-   drift.
+   upserts reported runs. `gobby tokens audit --all` must print `drifted=0`.
 4. Read `gobby tokens quota codex` while a Codex session is active, and check
    the weekly percent and reset time against the newest rollout
    `rate_limits` line.
