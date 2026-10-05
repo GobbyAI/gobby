@@ -225,6 +225,11 @@ def _mount_vite_dev_ui(app: FastAPI, server: "HTTPServer") -> None:
         logger.debug("Dev UI proxy not mounted: config is unavailable")
         return
     ui_port = server.bootstrap_config.ui_port
+    # One pooled client for every proxied request. Building a client is synchronous work
+    # on the event loop, and a dev boot issues hundreds of module requests; the lifespan
+    # closes it on shutdown.
+    client = httpx.AsyncClient(timeout=30.0, follow_redirects=False)
+    app.state.vite_proxy_client = client
 
     async def vite_proxy(request: Request, path: str = "") -> Response:
         if _is_daemon_owned_ui_path(path):
@@ -239,13 +244,12 @@ def _mount_vite_dev_ui(app: FastAPI, server: "HTTPServer") -> None:
                 yield chunk
 
         try:
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
-                backend_response = await client.request(
-                    request.method,
-                    target,
-                    headers=_proxied_request_headers(request.headers),
-                    content=request_content(),
-                )
+            backend_response = await client.request(
+                request.method,
+                target,
+                headers=_proxied_request_headers(request.headers),
+                content=request_content(),
+            )
         except ClientDisconnect:
             logger.debug("Vite UI proxy: client disconnected before request body completed")
             return Response(status_code=499)

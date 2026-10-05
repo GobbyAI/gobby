@@ -1,9 +1,11 @@
-"""Tests for the dev-mode Vite proxy's client-disconnect handling."""
+"""Tests for the dev-mode Vite proxy: disconnects, body forwarding and client pooling."""
 
+import asyncio
 import logging
 from collections.abc import AsyncIterable
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -13,15 +15,24 @@ from starlette.responses import Response
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers import app_factory
+from gobby.storage.sessions import SessionManager
+from tests.servers.conftest import create_http_server
+
+if TYPE_CHECKING:
+    from gobby.servers.http import HTTPServer
 
 pytestmark = pytest.mark.unit
 
 
-def _server(config: DaemonConfig) -> SimpleNamespace:
-    return SimpleNamespace(
-        services=SimpleNamespace(config=config),
-        startup_config=config,
-        bootstrap_config=BootstrapConfig(ui_port=config.ui.port),
+def _server(config: DaemonConfig) -> "HTTPServer":
+    # The proxy mount reads only these attributes of the server.
+    return cast(
+        "HTTPServer",
+        SimpleNamespace(
+            services=SimpleNamespace(config=config),
+            startup_config=config,
+            bootstrap_config=BootstrapConfig(ui_port=config.ui.port),
+        ),
     )
 
 
@@ -157,3 +168,95 @@ async def test_vite_proxy_forwards_request_body(
     assert forwarded["method"] == "POST"
     assert forwarded["url"] == "http://localhost:5173/api-ish"
     assert forwarded["content"] == b"payload"
+
+
+@pytest.mark.asyncio
+async def test_vite_proxy_serves_concurrent_module_loads_through_one_pooled_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A browser boot fans out hundreds of module requests through the proxy.
+
+    Building an httpx.AsyncClient is synchronous work (about 12-20 ms measured live), so
+    constructing one per request blocks the daemon event loop and serializes every module
+    load; the dev SPA then never finishes booting through the daemon port. Every request
+    must share one client and all of them must be in flight upstream at once.
+    """
+    chunk_paths = [f"node_modules/.vite/deps/chunk-{index:04d}.js" for index in range(20)]
+    constructions = 0
+    in_flight = 0
+    all_in_flight = asyncio.Event()
+
+    class FakeAsyncClient:
+        def __init__(self, **_kwargs: object) -> None:
+            nonlocal constructions
+            constructions += 1
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            pass
+
+        async def request(
+            self,
+            method: str,
+            url: str,
+            *,
+            content: AsyncIterable[bytes],
+            **_kwargs: object,
+        ) -> httpx.Response:
+            nonlocal in_flight
+            _ = method
+            async for _chunk in content:
+                pass
+            in_flight += 1
+            if in_flight == len(chunk_paths):
+                all_in_flight.set()
+            await all_in_flight.wait()
+            return httpx.Response(
+                200, content=url.encode(), headers={"content-type": "text/javascript"}
+            )
+
+    monkeypatch.setattr(app_factory.httpx, "AsyncClient", FakeAsyncClient)
+
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    config = DaemonConfig(ui={"enabled": True, "mode": "dev", "port": 5173})
+    app_factory._mount_vite_dev_ui(app, _server(config))
+    endpoint = _vite_proxy_endpoint(app)
+
+    async def receive_empty() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async with asyncio.timeout(5):
+        responses: list[Response] = await asyncio.gather(
+            *(
+                endpoint(_make_request("GET", path, receive_empty), path=path)
+                for path in chunk_paths
+            )
+        )
+
+    assert [response.status_code for response in responses] == [200] * len(chunk_paths)
+    assert [bytes(response.body) for response in responses] == [
+        f"http://localhost:5173/{path}".encode() for path in chunk_paths
+    ]
+    assert in_flight == len(chunk_paths)
+    assert constructions == 1
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_closes_the_pooled_vite_proxy_client(
+    session_storage: SessionManager,
+) -> None:
+    """The pooled proxy client lives with the app and is closed by the lifespan teardown."""
+    server = create_http_server(port=60887, test_mode=True, session_manager=session_storage)
+    server.app.state.hook_manager = MagicMock()
+    server.app.state.hook_manager.shutdown_async = AsyncMock()
+    proxy_client = httpx.AsyncClient()
+    server.app.state.vite_proxy_client = proxy_client
+
+    async with server.app.router.lifespan_context(server.app):
+        assert proxy_client.is_closed is False
+
+    assert proxy_client.is_closed is True

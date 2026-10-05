@@ -423,6 +423,10 @@ def create_lifespan(
                 server._hook_manager = None
             logger.debug("HookManager shutdown complete")
 
+        vite_proxy_client = getattr(app.state, "vite_proxy_client", None)
+        if vite_proxy_client is not None:
+            await vite_proxy_client.aclose()
+
         await server._process_shutdown()
 
         server._running = False
