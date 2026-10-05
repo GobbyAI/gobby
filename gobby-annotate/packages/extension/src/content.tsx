@@ -22,6 +22,7 @@ import { viewport } from "./frame-agent";
 import { rpc } from "./api";
 import css from "./ui.css?inline";
 import { installFonts } from "./fonts";
+import { isolateFocus } from "./focus";
 import { scopeStyles } from "./styles";
 
 const HOST_ID = "gobby-annotate-root";
@@ -600,6 +601,7 @@ export function activate(): () => void {
   const mount = document.createElement("div");
   shadow.append(mount);
   document.documentElement.append(host);
+  const releaseFocus = isolateFocus(host);
   const documentId = crypto.randomUUID();
   let root: Root | null = createRoot(mount);
   const removeFonts = installFonts();
@@ -622,6 +624,7 @@ export function activate(): () => void {
     root = null;
     chrome.runtime.onMessage.removeListener(listener);
     removeFonts();
+    releaseFocus();
     host.remove();
   };
   host.addEventListener("annotate-deactivate", deactivate);

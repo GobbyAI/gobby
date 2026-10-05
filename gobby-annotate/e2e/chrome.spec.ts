@@ -7,6 +7,9 @@ import { decodeBundle } from "../packages/core/src";
 test("native capture, persistent editing, responsive controls and idempotent activation", async ({
   playwright,
 }, testInfo) => {
+  // One end-to-end walk through every capture path: it runs ~32 s under normal
+  // fleet load, past Playwright's 30 s default.
+  test.setTimeout(120_000);
   const temporary = await mkdtemp(join(tmpdir(), "annotate-chrome-"));
   const extension = join(temporary, "extension");
   await cp(resolve("packages/extension/dist/chrome"), extension, {
