@@ -215,7 +215,11 @@ def _separator(token: ShellToken) -> bool:
 
 
 def option_word_count(
-    option: str, value_options: Collection[str], *, infer_long_options: bool = False
+    option: str,
+    value_options: Collection[str],
+    *,
+    infer_long_options: bool = False,
+    flag_options: Collection[str] = (),
 ) -> int:
     """Words a leading option occupies, read as getopt reads it.
 
@@ -223,11 +227,12 @@ def option_word_count(
     (``--chdir=/x``, ``-D/x``). In a short cluster (``-nD``) the first value
     option takes the rest of the cluster, or the next word when it ends it.
     Long-option inference is opt-in: getopt permits prefixes, clap does not.
+    An exact flag wins over a prefix of a longer value option.
     """
     if option in value_options:
         return 2
     if option.startswith("--"):
-        if infer_long_options and "=" not in option:
+        if infer_long_options and "=" not in option and option not in flag_options:
             return 2 if any(value.startswith(option) for value in value_options) else 1
         return 1
     for index in range(1, len(option)):
@@ -315,6 +320,30 @@ def _split_env_argv(string: str) -> list[str]:
     if started:
         words.append("".join(word))
     return words
+
+
+_SUDO_FLAG_OPTIONS = frozenset(
+    {
+        "--background",
+        "--preserve-env",  # Optional operands must be attached with '='.
+        "--edit",
+        "--set-home",
+        "--login",
+        "--remove-timestamp",
+        "--list",
+        "--preserve-groups",
+        "--shell",
+        "--validate",
+        "--askpass",
+        "--bell",
+        "--help",
+        "--reset-timestamp",
+        "--no-update",
+        "--non-interactive",
+        "--stdin",
+        "--version",
+    }
+)
 
 
 def _unwrap(words: list[str]) -> list[str]:
@@ -427,7 +456,13 @@ def _unwrap(words: list[str]) -> list[str]:
                         return ["sh", "-c", " ".join(script)]
                     # Split words may themselves contain env options (shebang form).
                     continue
-                words = words[option_word_count(option, takes_value, infer_long_options=True) :]
+                count = option_word_count(
+                    option,
+                    takes_value,
+                    infer_long_options=True,
+                    flag_options=_SUDO_FLAG_OPTIONS if name == "sudo" else (),
+                )
+                words = words[count:]
             if name == "timeout" and words:
                 words = words[1:]
         elif name == "eval":

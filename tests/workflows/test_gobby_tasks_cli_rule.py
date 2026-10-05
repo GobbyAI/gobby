@@ -401,6 +401,30 @@ def test_env_split_and_getopt_prefixes_preserve_execution(
 
 
 @pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize("prefix", ["sudo --login", "sudo --login-class x", "sudo --login-c x"])
+def test_sudo_exact_flag_precedes_value_prefix(
+    db: HubDatabase, effect: RuleEffect, tool_name: str, prefix: str
+) -> None:
+    command = prefix + " " + _MUTATION
+    assert RuleEngine(db)._should_block(effect, _shell_event(tool_name, command)) is True
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize("data", ["it's", 'a "quote', "`literal", "plain"])
+@pytest.mark.parametrize("consumer,blocked", [("bash", True), ("cat", False)])
+def test_nested_heredoc_data_does_not_open_shell_quote(
+    db: HubDatabase,
+    effect: RuleEffect,
+    tool_name: str,
+    data: str,
+    consumer: str,
+    blocked: bool,
+) -> None:
+    command = consumer + " <<'EOF'\ncat <<'X'\n" + data + "\nX\n" + _MUTATION + "\nEOF"
+    assert RuleEngine(db)._should_block(effect, _shell_event(tool_name, command)) is blocked
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
 @pytest.mark.parametrize(
     "command",
     [

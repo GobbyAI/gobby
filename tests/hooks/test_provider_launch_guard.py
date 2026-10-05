@@ -310,6 +310,13 @@ def test_env_split_and_getopt_prefixes_preserve_launches(
     assert blocks_direct_provider_launch(tool_name, {key: command}) is blocked
 
 
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize("prefix", ["sudo --login", "sudo --login-class x", "sudo --login-c x"])
+def test_sudo_exact_flag_precedes_value_prefix(tool_name: str, prefix: str) -> None:
+    key = "command" if tool_name == "Bash" else "cmd"
+    assert blocks_direct_provider_launch(tool_name, {key: prefix + " codex"}) is True
+
+
 @pytest.mark.parametrize(
     "name",
     [

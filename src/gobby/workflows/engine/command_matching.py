@@ -446,10 +446,13 @@ def executable_command_subjects(command: str) -> list[str]:
     return _subjects(command, 0)
 
 
-def _subjects(command: str, depth: int) -> list[str]:
+def _subjects(command: str, depth: int, *, heredoc_source: bool = False) -> list[str]:
     try:
         scan = scan_shell_command(command)
     except ValueError:
+        return [command]
+    # Preserve interpreter source verbatim unless it has its own heredoc boundaries.
+    if heredoc_source and not scan.heredocs:
         return [command]
     segments = _split_segments(scan.tokens)
     if not segments:
@@ -477,7 +480,10 @@ def _subjects(command: str, depth: int) -> list[str]:
         segment = segments[owner]
         tokens = scan.tokens[segment.first : segment.last + 1]
         if _heredoc_may_execute(tokens, raw[owner], heredoc, heredoc.opener - segment.first):
-            subjects[owner] = f"{subjects[owner]}\n{heredoc.text}"
+            # Nested stdin data may contain unmatched quotes. Remove that data
+            # through the existing consumer rules before quote masking sees it.
+            body = "\n".join(_subjects(heredoc.text, depth, heredoc_source=True))
+            subjects[owner] = f"{subjects[owner]}\n{body}"
         elif not heredoc.quoted:
             subjects[owner] += "".join(f"\n{span}" for span in _substitution_spans(heredoc.text))
     return subjects
