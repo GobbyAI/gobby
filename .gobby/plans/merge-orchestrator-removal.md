@@ -530,3 +530,141 @@ its coordinated restart from the main checkout. Then:
   sync-owned rows, and section 3 checks the live `default_agent` values.
   Agreed leaf routing: five code/backend leaves, tdd false; 1.2 bug, 2.1 chore,
   1.1/1.3/1.4 feature.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: PR stage submits for review without an agent
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: An `in_progress` `pr` stage yields a `submit_for_review`
+    advance action and never a spawn. test: `tests/dispatch/test_pr_rules.py::test_pr_work_submits_stage_for_review`.
+
+    1.1.2: The dispatcher executes `submit_for_review`, moving the `pr` stage to `needs_review`.
+    test: `tests/dispatch/test_stage_advance.py::test_advance_stage_submits_for_review`.
+
+    1.1.3: A real heartbeat takes an `in_progress` `pr` stage to `needs_review` without
+    spawning an agent. test: `tests/dispatch/test_dispatcher.py::test_real_heartbeat_pr_stage_submits_for_review_without_agent`.
+
+    1.1.4: The bundled `pr` row has no `default_agent` and keeps trajectory-monitor
+    as its required reviewer. file: `src/gobby/install/shared/registry/stages.yaml`.'
+  labels:
+  - covers:merge-orchestrator-removal:1.1:1.1.1
+  - covers:merge-orchestrator-removal:1.1:1.1.2
+  - covers:merge-orchestrator-removal:1.1:1.1.3
+  - covers:merge-orchestrator-removal:1.1:1.1.4
+  tdd: false
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Workspace-merge failures fail the merge stage for a human
+  category: code
+  task_type: bug
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: A workspace merge conflict fails the stage with `needs_human=True`,
+    records the conflicted files, adds no label, and spawns nothing. test: `tests/dispatch/test_workspace_merge.py::test_conflict_fails_merge_stage_for_human`.
+
+    1.2.2: A merge whose source worktree metadata is missing fails the stage with
+    `workspace_merge_failed` and `needs_human=True` instead of raising to the dispatcher.
+    test: `tests/dispatch/test_workspace_merge.py::test_execute_merge_workspace_missing_source_metadata_fails_stage_for_human`.
+
+    1.2.3: `src/gobby/dispatch/merge_recovery.py` is deleted, and no module imports
+    `WORKSPACE_MERGE_CONFLICT_LABEL`. behavior: "merge_recovery module deleted" in
+    `src/gobby/dispatch/workspace_merge.py`.'
+  labels:
+  - covers:merge-orchestrator-removal:1.2:1.2.1
+  - covers:merge-orchestrator-removal:1.2:1.2.2
+  - covers:merge-orchestrator-removal:1.2:1.2.3
+  tdd: false
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Root tasks land their own workspace
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: A root task with only its own `worktree_id` gets a
+    `MergeWorkspaceAction`. test: `tests/dispatch/test_rules.py::test_root_own_worktree_uses_workspace_merge_action`.
+
+    1.3.2: A root task with only its own `worktree_id`, no parent, and no integration
+    artifact lands its committed content into the checked-out target branch and completes
+    the merge stage. test: `tests/dispatch/test_workspace_merge.py::test_execute_merge_workspace_lands_root_own_worktree_on_local_branch`.
+
+    1.3.3: A root task with only its own `clone_id`, no parent, and no integration
+    artifact lands its committed content into the checked-out target branch and completes
+    the merge stage. test: `tests/dispatch/test_workspace_merge.py::test_execute_merge_workspace_lands_root_own_clone_on_local_branch`.
+
+    1.3.4: A root own-workspace merge whose target branch is not checked out fails
+    the stage with `workspace_merge_failed` and `needs_human=True` and keeps the source
+    workspace. test: `tests/dispatch/test_workspace_merge.py::test_execute_merge_workspace_root_own_worktree_target_not_checked_out_escalates`.'
+  labels:
+  - covers:merge-orchestrator-removal:1.3:1.3.1
+  - covers:merge-orchestrator-removal:1.3:1.3.2
+  - covers:merge-orchestrator-removal:1.3:1.3.3
+  - covers:merge-orchestrator-removal:1.3:1.3.4
+  tdd: false
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Merge stage runs without an agent
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.3'
+  validation_criteria: '1.4.1: A `ready` `merge` stage whose previous stage is done
+    starts without a default agent. test: `tests/dispatch/test_rules.py::test_merge_stage_auto_starts_without_agent`.
+
+    1.4.2: A merge stage of an `isolation: none` task with no workspace yields `complete_stage`.
+    test: `tests/dispatch/test_merge_rule.py::test_merge_rule_completes_isolation_none_stage`.
+
+    1.4.3: A merge stage with isolation and no usable workspace source escalates `merge_no_workspace_source`.
+    test: `tests/dispatch/test_merge_rule.py::test_merge_rule_escalates_missing_workspace_source`.
+
+    1.4.4: A real heartbeat lands an isolated child task''s merge stage without spawning
+    an agent. test: `tests/dispatch/test_dispatcher.py::test_real_heartbeat_merge_lands_workspace_without_agent`.
+
+    1.4.5: The bundled `merge` row has no `default_agent`. file: `src/gobby/install/shared/registry/stages.yaml`.
+
+    1.4.6: A real heartbeat on an `isolation: none` parent whose descendant is still
+    open at merge start completes `merge`, closes the parent with `manifest_exhausted`,
+    closes the descendant with `merged`, and spawns no agent and runs no git landing.
+    test: `tests/dispatch/test_delivery_chain.py::test_isolation_none_parent_merge_closes_open_descendant_with_real_heartbeat`.'
+  labels:
+  - covers:merge-orchestrator-removal:1.4:1.4.1
+  - covers:merge-orchestrator-removal:1.4:1.4.2
+  - covers:merge-orchestrator-removal:1.4:1.4.3
+  - covers:merge-orchestrator-removal:1.4:1.4.4
+  - covers:merge-orchestrator-removal:1.4:1.4.5
+  - covers:merge-orchestrator-removal:1.4:1.4.6
+  tdd: false
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Retire the merge-orchestrator definition and its references
+  category: code
+  task_type: chore
+  depends_on:
+  - '1.1'
+  - '1.4'
+  validation_criteria: '2.1.1: The bundled merge-orchestrator definition and its prompt
+    builder are gone; the installed-row removal is evidenced in section 3. test: `tests/dispatch/test_dispatch_prompts.py::test_merge_orchestrator_prompt_builder_absent`.
+
+    2.1.2: A second active run on the same task is refused even when the requester
+    is `merge-worker`. test: `tests/mcp_proxy/tools/spawn_agent/test_mcp_proxy_tools_spawn_agent_dedup.py::test_merge_worker_spawn_refuses_active_same_task_run`.
+
+    2.1.3: `verify_in_worktree` still rejects unscoped and git verification commands
+    after the helper move. test: `tests/mcp_proxy/tools/test_merge_landscape.py::test_verify_in_worktree_rejects_unscoped_pytest`.
+
+    2.1.4: `src`, including guidance and the merge-worker description, has no merge-orchestrator
+    reference, and in `tests` only the retirement-absence assertion names it. behavior:
+    "no active merge-orchestrator references" in `src/gobby/dispatch/AGENTS.md`.'
+  labels:
+  - covers:merge-orchestrator-removal:2.1:2.1.1
+  - covers:merge-orchestrator-removal:2.1:2.1.2
+  - covers:merge-orchestrator-removal:2.1:2.1.3
+  - covers:merge-orchestrator-removal:2.1:2.1.4
+  tdd: false
+  source_section: '2.1'
+  implementation_domain: backend
+```
