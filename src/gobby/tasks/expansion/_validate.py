@@ -155,7 +155,13 @@ def validate_plan_file(
     plan_document: PlanDocument | None = None,
     parse_mode: ParseMode = "draft",
 ) -> dict[str, Any]:
-    """Validate a plan file against the Plan-Coverage Contract."""
+    """Validate a plan file against the Plan-Coverage Contract.
+
+    Semantic and symbol checks require project-scoped completion lookup, even
+    offline: guessing that no sections are complete can produce false findings.
+    Missing lookup returns ``completed_section_exemptions_unavailable`` after
+    structural validation, before any completion-dependent checks.
+    """
     project_path = project_context.get("project_path") if project_context is not None else None
     project_root = Path(project_path) if isinstance(project_path, str) and project_path else None
     skipped_symbols = skipped_symbol_validation().to_dict()

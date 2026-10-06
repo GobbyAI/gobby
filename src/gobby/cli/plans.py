@@ -411,34 +411,24 @@ def _validate_plan_for_cli(
         return structural_result
 
     require_symbol_validation = project_ref is not None or mode == "expansion"
-    if project_context is None:
-        result = validate_plan_file(
-            None,
-            plan_path,
-            expected_project_id=expected_project_id,
-            require_symbol_validation=require_symbol_validation,
-            consumer_coverage_blocking=mode == "expansion",
-            parse_mode=parse_mode,
-        )
-    else:
-        try:
-            db = _open_db()
-        except (OSError, psycopg.Error, RuntimeError) as exc:
-            return {
-                **structural_result,
-                "errors": [f"completed-section exemptions unavailable: task database: {exc}"],
-            }
-        result = validate_plan_file(
-            None,
-            plan_path,
-            project_context=project_context,
-            expected_project_id=expected_project_id,
-            code_index=CodeIndexStorage(db),
-            task_manager=LocalTaskManager(db),
-            require_symbol_validation=require_symbol_validation,
-            consumer_coverage_blocking=mode == "expansion",
-            parse_mode=parse_mode,
-        )
+    try:
+        db = _open_db()
+    except (OSError, psycopg.Error, RuntimeError) as exc:
+        return {
+            **structural_result,
+            "errors": [f"completed-section exemptions unavailable: task database: {exc}"],
+        }
+    result = validate_plan_file(
+        None,
+        plan_path,
+        project_context=project_context,
+        expected_project_id=expected_project_id,
+        code_index=CodeIndexStorage(db),
+        task_manager=LocalTaskManager(db),
+        require_symbol_validation=require_symbol_validation,
+        consumer_coverage_blocking=mode == "expansion",
+        parse_mode=parse_mode,
+    )
     return _with_symbol_validation_warnings(result)
 
 

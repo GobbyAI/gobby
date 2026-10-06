@@ -97,12 +97,15 @@ def _validate_plan_for_agent_spawn(
     project_context = get_project_context(plan_path.parent)
     task = task_manager.get_task(task_id)
     expected_project_id = getattr(task, "project_id", None)
+    if project_context is None and isinstance(expected_project_id, str) and expected_project_id:
+        project_context = {"id": expected_project_id}
     result = validate_plan_file(
         None,
         plan_path,
         project_context=project_context,
         expected_project_id=(expected_project_id if isinstance(expected_project_id, str) else None),
         code_index=code_index,
+        task_manager=task_manager,
         require_symbol_validation=True,
     )
     if result.get("valid"):
