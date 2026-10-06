@@ -6,15 +6,12 @@ rules:
     event: turn_start
     enabled: true
     priority: 20
-    # The seat catalogue is inline so persona (`_persona_name`) and spawned
-    # (`_agent_type`) seats match alike; `agent_scope` alone misses personas.
+    # Activation and spawn both set `_agent_type`, so the inline seat catalogue
+    # matches every seat. A persona overlay (`apply_persona`) never matches a seat rule.
     when: >
-      (variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
+      variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary']
-      or variables.get('_persona_name') in ['assistant', 'orchestrator', 'lane-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary'])
       and not variables.get('_seat_common_injected')
     effects:
       - type: inject_context
@@ -24,7 +21,7 @@ rules:
 
           These rules apply to every seat.
 
-          - Your seat is the definition named by your `_persona_name` or `_agent_type`. Stay inside it. Send out-of-role work to the Orchestrator; don't do it yourself.
+          - Your seat is the definition named by your `_agent_type`. Stay inside it. Send out-of-role work to the Orchestrator; don't do it yourself.
           - Cross-session messages go only through `gobby-agents:send_message`. Never send keys into another session.
           - Do not spawn agents. The only permitted spawns are the automated task-close reviewer and the Plan Writer's single bounded enhancer pass per plan.
           - Only the Orchestrator, or someone Josh names, restarts the daemon. Every restart gets a global notice before it stops and a DAEMON BACK notice after it is healthy. The Assistant alerts Josh immediately before and after, with the outcome.

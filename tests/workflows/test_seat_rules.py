@@ -39,11 +39,11 @@ GUIDANCE_HEADING = "## Seat Guidance"
 RECEIPT = "enhancer-pass-spent"
 ENHANCER_CALL = {"agent": "plan-enhancer-taskless-old", "isolation": "none"}
 DEVELOPER: dict[str, Any] = {"_agent_type": "developer"}
-ASSISTANT: dict[str, Any] = {"_agent_type": "default", "_persona_name": "assistant"}
+ASSISTANT: dict[str, Any] = {"_agent_type": "assistant"}
 ARCHIVIST: dict[str, Any] = {"_agent_type": "archivist"}
-PLAN_WRITER: dict[str, Any] = {"_agent_type": "default", "_persona_name": "plan-writer"}
+PLAN_WRITER: dict[str, Any] = {"_agent_type": "plan-writer"}
 PLAN_ENHANCER: dict[str, Any] = {"_agent_type": "plan-enhancer"}
-ORCHESTRATOR: dict[str, Any] = {"_agent_type": "default", "_persona_name": "orchestrator"}
+ORCHESTRATOR: dict[str, Any] = {"_agent_type": "orchestrator"}
 
 
 def _load_roles(db: HubDatabase) -> None:
@@ -107,7 +107,7 @@ async def _decide(
 
 @pytest.mark.asyncio
 async def test_seat_common_injected_once_per_epoch(engine: RuleEngine) -> None:
-    variables: dict[str, Any] = {"_persona_name": "plan-writer"}
+    variables = dict(PLAN_WRITER)
 
     first = await _turn_context(engine, variables)
     second = await _turn_context(engine, variables)
@@ -122,10 +122,10 @@ async def test_seat_common_injected_once_per_epoch(engine: RuleEngine) -> None:
 @pytest.mark.asyncio
 async def test_seat_common_matches_spawned_and_skips_non_seats(engine: RuleEngine) -> None:
     spawned = await _turn_context(engine, {"_agent_type": "developer"})
-    orchestrator = await _turn_context(engine, {"_persona_name": "orchestrator"})
+    orchestrator = await _turn_context(engine, dict(ORCHESTRATOR))
     plain = await _turn_context(engine, {})
     enhancer = await _turn_context(engine, dict(PLAN_ENHANCER))
-    off_catalogue = await _turn_context(engine, {"_persona_name": "design-lead"})
+    off_catalogue = await _turn_context(engine, {"_agent_type": "design-lead"})
 
     assert GUIDANCE_HEADING in spawned
     assert GUIDANCE_HEADING in orchestrator
@@ -136,7 +136,7 @@ async def test_seat_common_matches_spawned_and_skips_non_seats(engine: RuleEngin
 
 @pytest.mark.asyncio
 async def test_seat_common_rearms_after_compact(engine: RuleEngine) -> None:
-    variables: dict[str, Any] = {"_persona_name": "plan-writer"}
+    variables = dict(PLAN_WRITER)
     assert GUIDANCE_HEADING in await _turn_context(engine, variables)
 
     await engine.evaluate(
@@ -520,3 +520,29 @@ async def test_receipt_retention_resolves_supported_task_refs(
     for ref in refs:
         relabel = {"task_id": ref, "labels": ["plan"]}
         assert await harness.call(orchestrator, "gobby-tasks", "update_task", relabel) is None
+
+
+@pytest.mark.asyncio
+async def test_persona_name_alone_matches_no_seat_rule(harness: _ProxyHarness) -> None:
+    """A persona overlay switches prompt and skills, never seat rules."""
+    plan = harness.task("plan")
+    persona = harness.session("persona", {"_persona_name": "plan-writer"}, claim=plan)
+
+    async def hook(event_type: HookEventType, data: dict[str, Any]) -> HookResponse:
+        event = harness._hook_event(persona, event_type, data)
+        return await harness.workflow_handler.evaluate_async(event)
+
+    turn = await hook(HookEventType.BEFORE_AGENT, {"prompt": "hello"})
+    assert GUIDANCE_HEADING not in (turn.context or "")
+    shell = await hook(HookEventType.BEFORE_TOOL, _shell("gobby agents spawn developer"))
+    assert shell.decision == "allow"
+    for server, tool, arguments in (
+        ("gobby-agents", "spawn_agent", {"agent": "developer"}),
+        ("gobby-agents", "dispatch_batch", dict(ENHANCER_CALL)),
+        ("gobby-workflows", "run_pipeline", {"name": "nightly"}),
+        ("gobby-tasks", "remove_label", {"task_id": plan, "label": RECEIPT}),
+        ("gobby-agents", "spawn_agent", dict(ENHANCER_CALL)),
+    ):
+        assert await harness.call(persona, server, tool, arguments) is None, tool
+    assert harness.dispatcher.receipt_calls == 0
+    assert not harness.receipted(plan)
