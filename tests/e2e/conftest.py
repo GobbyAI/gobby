@@ -547,8 +547,14 @@ def _seed_e2e_runtime_state(
     *,
     terminal_host_socket_dir: Path | None = None,
 ) -> None:
-    """Seed PostgreSQL-owned runtime config and the synthetic E2E project."""
+    """Seed installed detection manifests, runtime config and the synthetic E2E project."""
+    from gobby.agents.detection.registry import sync_bundled_detection_manifests
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
+
+    # The temporary project is not a dev checkout, so runner startup does not
+    # publish bundled manifests. Model the installed rows required by live probes.
+    detection_sync = sync_bundled_detection_manifests(postgres_db)
+    assert detection_sync["errors"] == [], detection_sync
 
     mutations = ConfigMutations(postgres_db)
     values: dict[str, object] = {
