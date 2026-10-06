@@ -20,7 +20,7 @@ from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 
 _REVIEW_SAFE_STATES = frozenset({"needs_review", "review_approved"})
 _RECOVERABLE_STAGE_STATES = ("ready", "in_progress", "needs_review", "review_approved")
-_ARTIFACT_ISOLATION = frozenset({"worktree", "clone"})
+_ARTIFACT_CHECKOUT_MODES = frozenset({"worktree", "clone"})
 
 
 WorkspaceFamily = Literal["worktree", "clone", "none"]
@@ -256,7 +256,7 @@ async def _workspace_check(task_manager: LocalTaskManager, task: Task) -> _Works
         return await _inspect_workspace("clone", artifacts.clone_path)
 
     checkout_mode = getattr(task.checkout_mode, "value", task.checkout_mode)
-    if checkout_mode in _ARTIFACT_ISOLATION:
+    if checkout_mode in _ARTIFACT_CHECKOUT_MODES:
         return _WorkspaceCheck(
             family="none",
             error=f"missing_{checkout_mode}_artifact_path",

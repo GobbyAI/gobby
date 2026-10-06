@@ -168,6 +168,8 @@ class AgentDefinitionBody(BaseModel):
         """Reject removed keys so extra=ignore cannot silently drop them."""
         if not isinstance(data, dict):
             return data
+        if "isolation" in data:
+            raise ValueError("top-level isolation is no longer accepted: use checkout_mode")
         replacements = {
             "steps": "step_workflow.steps",
             "step_variables": "step_workflow.variables",

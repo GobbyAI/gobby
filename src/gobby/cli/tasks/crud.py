@@ -5,7 +5,7 @@ from functools import partial
 import click
 
 from gobby.cli.tasks._crud_common import (
-    ISOLATION_CHOICE,
+    CHECKOUT_MODE_CHOICE,
     TASK_TYPE_CHOICE,
 )
 from gobby.cli.tasks._crud_common import (
@@ -234,7 +234,7 @@ def show_task(task_id: str) -> None:
 )
 @click.option(
     "--checkout-mode",
-    type=ISOLATION_CHOICE,
+    type=CHECKOUT_MODE_CHOICE,
     help="New automation checkout mode",
 )
 @click.option(

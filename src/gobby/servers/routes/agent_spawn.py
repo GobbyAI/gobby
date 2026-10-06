@@ -11,7 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from gobby.agents.launcher_session import aget_or_create_launcher_session
 from gobby.agents.reasoning import normalize_reasoning_effort
@@ -60,6 +60,8 @@ class ReasoningEffortMixin(BaseModel):
 
 class AgentSpawnRequest(ReasoningEffortMixin):
     """Request body for spawning an agent on a task."""
+
+    model_config = ConfigDict(extra="forbid")
 
     task_id: str
     agent_name: str = "default"

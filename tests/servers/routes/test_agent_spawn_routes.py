@@ -234,6 +234,21 @@ class TestSpawnAgent:
             )
         assert response.status_code == 400
 
+    @pytest.mark.parametrize("checkout_mode", ["clone", "worktree"])
+    @pytest.mark.parametrize("include_current_key", [False, True])
+    def test_removed_isolation_key_rejected(
+        self, client: TestClient, checkout_mode: str, include_current_key: bool
+    ) -> None:
+        payload = {"task_id": "unused-task", "isolation": checkout_mode}
+        if include_current_key:
+            payload["checkout_mode"] = "none"
+        response = client.post("/api/agents/spawn", json=payload)
+        assert response.status_code == 422
+        assert any(
+            error["loc"] == ["body", "isolation"] and error["type"] == "extra_forbidden"
+            for error in response.json()["detail"]
+        )
+
     def test_spawn_web_chat_mode(
         self,
         client: TestClient,

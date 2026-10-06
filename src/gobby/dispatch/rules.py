@@ -144,7 +144,7 @@ def development_isolation_rule(task: object, context: object) -> Action | None:
         return StartStageAction(task_id=_task_id(task), stage_name=_stage_name(stage))
     if checkout_mode not in {"worktree", "clone"}:
         return EscalateAction(
-            task_id=_task_id(task), reason=f"development_isolation_invalid:{checkout_mode}"
+            task_id=_task_id(task), reason=f"development_checkout_mode_invalid:{checkout_mode}"
         )
 
     return StartStageAction(task_id=_task_id(task), stage_name=_stage_name(stage))

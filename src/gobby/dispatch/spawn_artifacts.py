@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_EXPLICIT_AGENT_ISOLATIONS = {"none", "worktree", "clone"}
+_EXPLICIT_AGENT_CHECKOUT_MODES = {"none", "worktree", "clone"}
 _PRE_DEVELOPMENT_ISOLATION_STAGES = {
     "ideation",
     "research",
@@ -516,18 +516,18 @@ def _effective_spawn_checkout_mode(
     if stage_name in _DEVELOPMENT_FORWARD_ISOLATION_STAGES:
         if task_checkout_mode is not None:
             return task_checkout_mode
-        if agent_checkout_mode in _EXPLICIT_AGENT_ISOLATIONS:
+        if agent_checkout_mode in _EXPLICIT_AGENT_CHECKOUT_MODES:
             return cast(SpawnCheckoutMode, agent_checkout_mode)
         return None
 
-    if agent_checkout_mode in _EXPLICIT_AGENT_ISOLATIONS:
+    if agent_checkout_mode in _EXPLICIT_AGENT_CHECKOUT_MODES:
         return cast(SpawnCheckoutMode, agent_checkout_mode)
     return task_checkout_mode
 
 
 def _task_spawn_checkout_mode(task: object) -> SpawnCheckoutMode | None:
     task_checkout_mode = getattr(task, "checkout_mode", None)
-    if task_checkout_mode in _EXPLICIT_AGENT_ISOLATIONS:
+    if task_checkout_mode in _EXPLICIT_AGENT_CHECKOUT_MODES:
         return cast(SpawnCheckoutMode, task_checkout_mode)
     return None
 
