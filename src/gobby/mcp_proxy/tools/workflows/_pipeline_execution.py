@@ -584,7 +584,7 @@ async def approve_pipeline(
     Args:
         executor: PipelineExecutor instance
         token: Approval token from the waiting execution
-        approved_by: Identifier of who approved (email, user ID, etc.)
+        approved_by: The authenticated decider, ``operator`` or ``session:<id>``
 
     Returns:
         Dict with execution status
@@ -622,7 +622,7 @@ async def reject_pipeline(
     Args:
         executor: PipelineExecutor instance
         token: Approval token from the waiting execution
-        rejected_by: Identifier of who rejected (email, user ID, etc.)
+        rejected_by: The authenticated decider, ``operator`` or ``session:<id>``
 
     Returns:
         Dict with execution status (cancelled)

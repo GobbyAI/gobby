@@ -137,11 +137,13 @@ class TestPipelineExecution:
             created_at="2026-02-01T12:00:00Z",
             updated_at="2026-02-01T12:30:00Z",
             completed_at="2026-02-01T12:30:00Z",
-            resume_token=None,
+            resume_token="resume-secret",
             session_id="sess-123",
             parent_execution_id=None,
         )
         d = execution.to_dict()
+        assert "resume_token" not in d
+        assert "resume-secret" not in d.values()
         assert d["id"] == "pe-abc123456789"
         assert d["pipeline_name"] == "test-pipeline"
         assert d["project_id"] == "proj-123"
