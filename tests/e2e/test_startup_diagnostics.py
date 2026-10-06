@@ -69,7 +69,13 @@ def test_delayed_skill_search_names_readiness_blocker(
             with pytest.raises(conftest.DaemonHealthTimeoutError) as exc_info:
                 next(daemon)
             error = exc_info.value
-            assert initializer_entered, "Genuine registry init never reached the injected delay"
+            assert initializer_entered, (
+                "Genuine registry init never reached the injected delay\n"
+                f"Backend state: {error.backend_state}\n"
+                f"Thread stacks:\n{error.thread_stack_tail}\n"
+                f"Task stacks:\n{error.task_stack_tail}\n"
+                f"Startup timings:\n{error.startup_timing_tail}"
+            )
             assert error.last_status_code == 503
             assert error.process_status == "running"
             assert error.backend_state in ("down", "starting")

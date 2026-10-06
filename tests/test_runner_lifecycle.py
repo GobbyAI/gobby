@@ -965,7 +965,10 @@ class TestInitSubsystems:
         ]
         assert "Agent lifecycle monitor start failed during startup" in caplog.text
 
-    async def test_start_failures_do_not_abort_init_and_readiness_is_last(self) -> None:
+    @pytest.mark.parametrize("shutdown_during_prewarm", [False, True])
+    async def test_start_failures_do_not_abort_init_and_readiness_is_last(
+        self, shutdown_during_prewarm: bool
+    ) -> None:
         events: list[str] = []
 
         class RecordingServices:
@@ -1005,6 +1008,13 @@ class TestInitSubsystems:
         async def recover_pipelines(*_args: object) -> None:
             events.append("recover-pipelines")
 
+        async def prewarm_pool() -> None:
+            assert "websocket" in events, "Transcript prewarm delayed WebSocket startup"
+            assert services.startup_ready is False
+            events.append("prewarm")
+            await asyncio.sleep(0)
+            services.shutdown_in_progress = shutdown_during_prewarm
+
         services = RecordingServices()
         tracker = RecordingTracker()
         runner = SimpleNamespace(
@@ -1028,8 +1038,13 @@ class TestInitSubsystems:
             system_automation_loop=SimpleNamespace(start=AsyncMock(side_effect=automation_start)),
         )
         async_noop = AsyncMock()
+        prewarm = AsyncMock(side_effect=prewarm_pool)
 
         with (
+            patch(
+                "gobby.tasks.transcript_evidence_pool.prewarm_transcript_evidence_pool",
+                new=prewarm,
+            ),
             patch.object(runner_lifecycle_subsystems, "_connect_mcp_servers", async_noop),
             patch.object(runner_lifecycle_subsystems, "_check_embedding_service", async_noop),
             patch.object(runner_lifecycle_subsystems, "_cleanup_metrics_on_startup"),
@@ -1064,7 +1079,7 @@ class TestInitSubsystems:
                 cast(GobbyRunner, runner), AsyncMock(), tracker
             )
 
-        assert events == [
+        expected_events = [
             "communications-start",
             "lifecycle-start",
             "cron-start",
@@ -1073,9 +1088,12 @@ class TestInitSubsystems:
             "websocket",
             "ui",
             "automation-start",
-            "tracker-finish",
-            "ready:True",
+            "prewarm",
         ]
+        if not shutdown_during_prewarm:
+            expected_events.extend(["tracker-finish", "ready:True"])
+        assert events == expected_events
+        prewarm.assert_awaited_once_with()
         runner.message_processor.start.assert_not_awaited()
         assert tracker.errors == [
             {"subsystem": "Session lifecycle manager", "error": "lifecycle failed"},
@@ -1085,8 +1103,8 @@ class TestInitSubsystems:
             "Communications manager",
             "System automation loop",
         ]
-        assert tracker.done is True
-        assert services.startup_ready is True
+        assert tracker.done is (not shutdown_during_prewarm)
+        assert services.startup_ready is (not shutdown_during_prewarm)
 
     async def test_cleanup_stale_expansion_runs_on_startup_uses_db_executor(
         self, temp_db: HubDatabase, sample_project: dict[str, Any]
@@ -4192,7 +4210,7 @@ class TestShutdownLoop:
             server.started = False
 
             async def serve() -> None:
-                prewarm.assert_awaited_once_with()
+                prewarm.assert_not_awaited()
                 assert runner.http_server.services.web_chat_runtime_manager.start.await_count == 0
                 server.started = True
                 await runtime_started.wait()
@@ -4219,7 +4237,7 @@ class TestShutdownLoop:
                 )
             )
             stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
-            stack.enter_context(patch("gobby.runner_lifecycle._init_subsystems", new=AsyncMock()))
+            stack.enter_context(patch("gobby.runner_lifecycle.init_subsystems", new=AsyncMock()))
             stack.enter_context(patch("gobby.runner_lifecycle._start_periodic_tasks"))
             stack.enter_context(
                 patch("gobby.runner_lifecycle.shutdown_daemon_services", new=AsyncMock())
@@ -4234,7 +4252,7 @@ class TestShutdownLoop:
             )
 
             runtime_manager.start.assert_awaited_once_with(background=True)
-            prewarm.assert_awaited_once_with()
+            prewarm.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_run_waits_for_shutdown_signal(self, mock_config: MagicMock) -> None:

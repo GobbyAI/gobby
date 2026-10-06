@@ -55,7 +55,12 @@ def capture_readiness_timeout(
         owner_pid = int((log_dir / "readiness-diagnostics.pid").read_text())
     except (OSError, ValueError):
         owner_pid = None
-    if process is not None and owner_pid == process.pid and process.poll() is None:
+    if (
+        owner_pid is not None
+        and process is not None
+        and owner_pid == process.pid
+        and process.poll() is None
+    ):
         try:
             process.send_signal(signal.SIGUSR2)
             process.send_signal(signal.SIGUSR1)
