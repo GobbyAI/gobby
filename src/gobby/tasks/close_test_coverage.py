@@ -344,20 +344,9 @@ def _resolved_pytest_targets(run: TranscriptValidationRun, root: str) -> tuple[s
     location = run_location(run.command, workdir=run.workdir)
     if not targets or location is None:
         return ()
-    paths = (os.path.normpath(os.path.join(root, location, target)) for target in targets)
-    return tuple(_canonical_target(path, root) for path in paths)
-
-
-def _canonical_target(path: str, root: str) -> str:
-    """Canonicalize ``path`` so that no symlink into ``root`` poses as a copy.
-
-    A target that resolves into ``root`` is the root's own file. Any other keeps its file
-    name under a canonical parent, so a copy held as a file symlink compares by its bytes.
-    """
-    resolved = os.path.realpath(path)
-    if resolved == root or resolved.startswith(f"{root}{os.sep}"):
-        return resolved
-    return os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+    # Symlinks stay unresolved: pytest's rootdir and pythonpath follow the path as written,
+    # so a test symlinked into ``root`` from another tree runs that tree's code.
+    return tuple(os.path.normpath(os.path.join(root, location, target)) for target in targets)
 
 
 def _runs_test(

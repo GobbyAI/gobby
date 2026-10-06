@@ -1478,10 +1478,6 @@ def test_foreign_project_run_from_an_identical_export_credits_the_changed_test(
     ("target", "workdir", "export_body"),
     [
         pytest.param(_E2E_TEST, None, _E2E_BODY, id="target-in-close-root"),
-        pytest.param(f"{{tmp}}/link/{_E2E_TEST}", None, _E2E_BODY, id="symlink-to-close-root"),
-        pytest.param(
-            f"{{tmp}}/filelink/{_E2E_TEST}", None, _E2E_BODY, id="file-symlink-to-close-root"
-        ),
         pytest.param(
             _E2E_TEST, "export", "def test_other() -> None:\n    assert True\n", id="differing"
         ),
@@ -1490,17 +1486,31 @@ def test_foreign_project_run_from_an_identical_export_credits_the_changed_test(
 def test_foreign_project_run_without_an_identical_copy_stays_foreign(
     tmp_path: Path, target: str, workdir: str | None, export_body: str
 ) -> None:
-    # The close root's own file is no copy, even through a symlinked directory or file.
-    (tmp_path / "link").symlink_to(tmp_path / "repo")
-    (tmp_path / "filelink/tests/e2e").mkdir(parents=True)
-    (tmp_path / "filelink" / _E2E_TEST).symlink_to(tmp_path / "repo" / _E2E_TEST)
-    command = f"uv run --project {tmp_path}/lane pytest {target.format(tmp=tmp_path)} -v"
+    # The close root's own file is no copy.
+    command = f"uv run --project {tmp_path}/lane pytest {target} -v"
     run = _run(2, command=command, workdir=str(tmp_path / workdir) if workdir else None)
 
     gate = _export_tree_gate(tmp_path, run, export_body=export_body)
 
     assert gate.details["foreign_scope_runs"] == [command]
     assert gate.details["pytest_uncovered_paths"] == [_E2E_TEST]
+
+
+@pytest.mark.parametrize("tree", ["link", "filelink"])
+def test_foreign_project_run_through_a_symlinked_copy_credits_the_changed_test(
+    tmp_path: Path, tree: str
+) -> None:
+    # pytest runs the tree the target sits in; here it holds the close root's bytes.
+    (tmp_path / "link").symlink_to(tmp_path / "repo")
+    (tmp_path / "filelink/tests/e2e").mkdir(parents=True)
+    (tmp_path / "filelink" / _E2E_TEST).symlink_to(tmp_path / "repo" / _E2E_TEST)
+    command = f"uv run --project {tmp_path}/lane pytest {tmp_path}/{tree}/{_E2E_TEST} -v"
+
+    gate = _export_tree_gate(tmp_path, _run(2, command=command))
+
+    assert gate.status == "passed", gate.message
+    assert gate.details["foreign_scope_runs"] == []
+    assert gate.details["pytest_uncovered_paths"] == []
 
 
 @pytest.mark.parametrize(
@@ -1546,6 +1556,46 @@ def test_copy_credit_requires_every_changed_path_identical(
     assert gate.details.get("pytest_copy_differing_paths", []) == differing
     for path in differing:
         assert f"`{path}`" in gate.message
+
+
+@pytest.mark.parametrize("link", ["file", "directory"])
+@pytest.mark.parametrize(
+    ("tree_widget", "differing"),
+    [
+        pytest.param("value = 1\n", ["src/widget.py"], id="old-source"),
+        pytest.param("value = 2\n", [], id="same-source"),
+    ],
+)
+def test_symlink_into_close_root_credits_only_an_identical_tree(
+    tmp_path: Path, link: str, tree_widget: str, differing: list[str]
+) -> None:
+    # pytest imports the symlinking tree's source, so that tree's bytes decide the credit.
+    repo, tree = tmp_path / "repo", tmp_path / "tree"
+    for checkout, widget in ((repo, "value = 2\n"), (tree, tree_widget)):
+        (checkout / "src").mkdir(parents=True)
+        (checkout / "src/widget.py").write_text(widget)
+    (repo / "tests").mkdir()
+    (repo / "tests/test_widget.py").write_text("def test_widget(): pass\n")
+    if link == "file":
+        (tree / "tests").mkdir()
+        (tree / "tests/test_widget.py").symlink_to(repo / "tests/test_widget.py")
+    else:
+        (tree / "tests").symlink_to(repo / "tests")
+    run = _run(2, command="uv run pytest tests/test_widget.py -q", workdir=str(tree))
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_scoped_audit_run(1, "tests/test_widget.py"), run)
+        ),
+        has_attributed_edits=True,
+        changed_paths=("src/widget.py", "tests/test_widget.py"),
+        close_root=str(repo),
+    )
+
+    assert gate.status == ("failed" if differing else "passed"), gate.message
+    assert gate.details["pytest_uncovered_paths"] == (["tests/test_widget.py"] if differing else [])
+    assert gate.details.get("pytest_copy_differing_paths", []) == differing
 
 
 def _scoped_pytest_gate(tmp_path: Path, failing_command: str) -> CloseGateResult:
