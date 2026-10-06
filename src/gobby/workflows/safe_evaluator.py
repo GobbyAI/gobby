@@ -583,6 +583,7 @@ def build_condition_helpers(
         outstanding_monolith_paths,
         projected_monolith_paths,
     )
+    from .task_claim_state import claims_without_edit_target
 
     ctx = context or {}
 
@@ -655,6 +656,7 @@ def build_condition_helpers(
                 task_commit_project_path_allowlist_violation
             ),
             "touches_claude_memory_path": touches_claude_memory_path,
+            "claims_without_edit_target": claims_without_edit_target,
             "touches_ui_design_path": touches_ui_design_path,
             **PATH_CONDITION_HELPERS,
             **task_condition_helpers(task_manager),

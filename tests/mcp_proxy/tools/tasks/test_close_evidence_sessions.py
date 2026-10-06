@@ -22,6 +22,7 @@ from gobby.tasks.acceptance_artifacts import AcceptanceTest
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence_models import (
+    TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
     TranscriptTaskClaim,
@@ -1125,10 +1126,10 @@ def _session_link(task_id: str, created_at: str) -> dict[str, Any]:
     }
 
 
-def _run_at(session_id: str, at: str, outcome: str) -> Any:
+def _run_at(session_id: str, at: str, outcome: str, order: int = 1) -> Any:
     started = datetime.fromisoformat(at)
     return replace(
-        _run(1, outcome=outcome),
+        _run(order, outcome=outcome),
         session_id=session_id,
         started_at=started,
         completed_at=started + timedelta(seconds=5),
@@ -1154,7 +1155,7 @@ async def test_linked_session_runs_after_it_claims_another_task_are_not_credited
             _session_link("other-task", "2026-09-29T02:14:00+00:00"),
             _session_link("task", "2026-09-28T13:55:00+00:00"),
         ],
-        # The owner's own later claim never bounds its window.
+        # The owner's own later claim bounds its window too (#23665).
         QA: [
             _session_link("owner-next", "2026-09-28T21:00:00+00:00"),
             _session_link("task", "2026-09-28T20:00:00+00:00"),
@@ -1195,7 +1196,7 @@ async def test_linked_session_runs_after_it_claims_another_task_are_not_credited
     by_session = {evidence.sessions[0]: evidence for evidence in merged}
     assert by_session[IMPLEMENTER].validation_runs == runs[IMPLEMENTER][:1]
     assert by_session[IMPLEMENTER].command_runs == runs[IMPLEMENTER][:1]
-    assert by_session[QA].validation_runs == runs[QA]
+    assert by_session[QA].validation_runs == runs[QA][:1]
 
 
 async def _implementer_runs_after_claims(
@@ -1294,3 +1295,120 @@ async def test_linked_session_runs_after_returning_to_an_earlier_task_are_not_cr
     )
 
     assert credited == (before,)
+
+
+async def _owner_evidence(
+    db_claims: list[dict[str, Any]],
+    transcript_claims: tuple[TranscriptTaskClaim, ...],
+    runs: tuple[Any, ...],
+    edits: tuple[TranscriptEdit, ...] = (),
+) -> TranscriptEvidence:
+    """Derive close evidence where QA alone owns and closes the task."""
+    ctx = _context(
+        [_link(QA, "claimed", "2026-09-29T20:00:00+00:00")],
+        {QA: _session(QA, "2026-09-29T19:00:00+00:00")},
+    )
+    ctx.session_var_manager.get_variables.return_value = {}
+    ctx.session_task_manager.get_session_tasks.return_value = db_claims
+
+    async def record(session: Any, *args: Any, **kwargs: Any) -> TranscriptEvidence:
+        return TranscriptEvidence(
+            validation_runs=runs,
+            command_runs=runs,
+            edits=edits,
+            task_claims=transcript_claims,
+            sessions=(QA,),
+        )
+
+    with (
+        patch(f"{_SUPPORT}.resolve_validation_detection_config"),
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_transcript_evidence", new=AsyncMock(side_effect=record)),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+        patch(f"{_SUPPORT}.merge_transcript_evidence", side_effect=lambda *sets: list(sets)),
+    ):
+        merged: Any = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=QA,
+            closing_session_id=QA,
+            owner_window_start="2026-09-29T20:00:00+00:00",
+            task_edited_files=set(),
+            repo_path="/repo",
+        )
+    (evidence,) = merged
+    assert isinstance(evidence, TranscriptEvidence)
+    assert evidence.command_runs == evidence.validation_runs
+    return evidence
+
+
+_HANDED_OFF_THEN_NEWER_CLAIM = [
+    _session_link("newer-task", "2026-09-29T21:00:00+00:00"),
+    _session_link("task", "2026-09-29T20:00:00+00:00"),
+]
+
+
+@pytest.mark.asyncio
+async def test_owner_runs_for_newer_work_after_a_hand_off_do_not_judge_the_close() -> None:
+    """#23665: a handed-off task's close ignores the owner's runs for its newer claim."""
+    green = _run_at(QA, "2026-09-29T20:30:00+00:00", "success")
+    newer_red = _run_at(QA, "2026-09-29T22:00:00+00:00", "failure")
+    newer_green = _run_at(QA, "2026-09-29T22:30:00+00:00", "success")
+
+    evidence = await _owner_evidence(
+        _HANDED_OFF_THEN_NEWER_CLAIM,
+        (_claim("newer-task", "2026-09-29T21:00:00+00:00"),),
+        (green, newer_red, newer_green),
+    )
+
+    assert evidence.validation_runs == (green,)
+
+
+@pytest.mark.asyncio
+async def test_owner_runs_after_reactivating_the_handed_off_task_are_credited() -> None:
+    """#23665: reclaiming the task once the newer claim is handed off resumes its window."""
+    newer_red = _run_at(QA, "2026-09-29T22:00:00+00:00", "failure")
+    red = _run_at(QA, "2026-09-30T01:00:00+00:00", "failure")
+    green = _run_at(QA, "2026-09-30T01:30:00+00:00", "success")
+
+    evidence = await _owner_evidence(
+        _HANDED_OFF_THEN_NEWER_CLAIM,
+        (
+            _claim("newer-task", "2026-09-29T21:00:00+00:00"),
+            _claim("task", "2026-09-30T00:00:00+00:00"),
+        ),
+        (newer_red, red, green),
+    )
+
+    assert evidence.validation_runs == (red, green)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("edited", [True, False], ids=["edited", "untouched"])
+async def test_owner_edit_without_a_reclaim_stales_the_handed_off_green(edited: bool) -> None:
+    """#23665: the newer claim ended and the task became the edit target with no claim
+    call, so no return is recorded. The owner's edit still stales the earlier green."""
+    green = _run_at(QA, "2026-09-29T20:30:00+00:00", "success", order=1)
+    edit = TranscriptEdit(
+        session_id=QA,
+        source="codex",
+        path="src/handed_off.py",
+        timestamp=datetime.fromisoformat("2026-09-30T01:00:00+00:00"),
+        order=2,
+        tool_name="apply_patch",
+    )
+    red = _run_at(QA, "2026-09-30T01:10:00+00:00", "failure", order=3)
+
+    evidence = await _owner_evidence(
+        _HANDED_OFF_THEN_NEWER_CLAIM,
+        (_claim("newer-task", "2026-09-29T21:00:00+00:00"),),
+        (green, red),
+        (edit,) if edited else (),
+    )
+    gate = evaluate_validation_commands(
+        task_category="code", evidence=evidence, has_attributed_edits=True
+    )
+
+    assert evidence.validation_runs == (green,)
+    assert evidence.edits == ((edit,) if edited else ())
+    assert gate.passed is not edited, gate.message
