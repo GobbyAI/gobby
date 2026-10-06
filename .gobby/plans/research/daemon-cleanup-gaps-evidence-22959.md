@@ -66,11 +66,27 @@ child was not traced.
 
 The scheduler is the `gobby:project-purge` cron job. Its handler is
 `projects:purge-expired`, registered by `register_project_purge_cron` through
-`src/gobby/runner_init/project_purge.py:76`. It runs every 24 h and purges
-projects whose soft delete is more than 24 h old, at most 10 per run:
+`src/gobby/runner_init/project_purge.py:76`. It runs every 24 h. Each run
+selects every soft-deleted, non-system project whose `deleted_at` is at or
+before now minus 24 h (inclusive cutoff), with no row limit, ordered by
+`deleted_at, id`. It purges all of them, at most 4 at a time.
+`PROJECT_PURGE_ID_LIMIT = 10` caps only the ID arrays in the returned result;
+the `purged_count` and `failed_count` fields carry the full counts:
 
 - `src/gobby/projects/purge.py:19-24`
   `excerpt_hash=d101e5446fbd05bc312e3a5fcd8d601e372b22fb351e42bd9b4ba2f47c1b4f29`
+- `src/gobby/storage/projects.py:514-522` (`list_purge_candidates`)
+  `excerpt_hash=3ab30fed35de8e2241bbcb2b25e203c95ab3ea03eaf24bd9e991e53ee7a7ba8f`
+- `src/gobby/projects/purge.py:363-380` (handler, semaphore of
+  `PROJECT_PURGE_CONCURRENCY = 4`)
+  `excerpt_hash=2573eb37f88dac287f2ba0a9c1d241e690093c737651d31d542ad483a2dd906b`
+
+Failure visibility: the handler catches each project's exception and records
+only `failed` with the project ID. The exception and the outcome reason are
+discarded. The run returns the failed IDs (first 10), the failed count and an
+overall `failed` status. The handler never retries a project itself. A failed
+project stays soft-deleted and becomes a candidate again at the next daily
+run, which is the only retry.
 
 - `src/gobby/projects/purge.py:256-263`
   `excerpt_hash=3b9e9ceca490b52fee13d3efe547e03f79477a8fb72ef4c33b2467fe717ebec4`
@@ -403,6 +419,15 @@ daemon start and then every 24 h:
 The daemon logs record 182 `Periodic unmodeled-observation cleanup` runs since
 2026-09-13, for example `2026-10-03 10:08:05 ... removed 7930 old occurrence rows`.
 Daemon log times are CDT.
+
+Failure visibility: a failed prune logs `Error in unmodeled observation
+cleanup loop: <message>` through `logger.error`, without a traceback, and
+the loop then sleeps the full 24 h. Nothing retries sooner:
+
+- `src/gobby/runner_maintenance/telemetry_loops.py:75-78`
+  `excerpt_hash=28a7b75fbee53ae5ad4d79e653b597bef63f96e27335ffac7df33fd78878bffd`
+- That error line appears 0 times across the retained `daemon.log*` and
+  `errors.log*` files (checked 2026-10-06).
 
 **Cutoff.** The prune deletes by `last_seen_at`:
 
