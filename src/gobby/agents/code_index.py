@@ -46,7 +46,7 @@ from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.storage.schema_contract import installed_schema_identity
 from gobby.utils import spawn
 from gobby.utils.daemon_git import GitOk, daemon_git
-from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, read_local_api_token
+from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, read_managed_signing_key
 from gobby.utils.native_bin import resolve_native_bin
 
 if TYPE_CHECKING:
@@ -419,11 +419,11 @@ def _prepare_gcode_runtime(
     if credential is None:
         return CodeIndexPreflightResult(env={})
 
-    operator_token = read_local_api_token()
-    if not operator_token:
+    signing_key = read_managed_signing_key()
+    if not signing_key:
         raise IndexInventoryError(
-            "operator_token_unavailable",
-            "operator token unavailable",
+            "signing_key_unavailable",
+            "managed signing key unavailable",
             retryable=False,
         )
     if not project_id:
@@ -454,7 +454,7 @@ def _prepare_gcode_runtime(
     launch = materialize_managed_launch(
         grant,
         dest_dir=credential.bootstrap_path.parent,
-        operator_token=operator_token,
+        signing_key=signing_key,
         deadline_seconds=max(1.0, remaining_seconds),
     )
     _link_runtime_assets(source_home, runtime_home)

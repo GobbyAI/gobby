@@ -26,7 +26,7 @@ from gobby.agents.spawners import (
 )
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
-from gobby.utils.local_token import read_local_api_token
+from gobby.utils.local_token import read_managed_signing_key
 
 if TYPE_CHECKING:
     from gobby.config.runtime_models import ConfigSnapshot
@@ -473,9 +473,9 @@ def _issue_prelaunch_credential(
         raise RuntimeError("prelaunch credential requires a config snapshot")
     # Grant identity and HMAC come from the live daemon lease; fail closed
     # before issuing anything a broken bootstrap could leak into the launch.
-    operator_token = read_local_api_token()
-    if not operator_token:
-        raise RuntimeError("prelaunch credential requires an operator token")
+    signing_key = read_managed_signing_key()
+    if not signing_key:
+        raise RuntimeError("prelaunch credential: signing_key_unavailable")
     if not prepared.project_id:
         raise RuntimeError("prelaunch credential requires a project_id")
     context = _active_deployment_grant_context()
@@ -504,7 +504,7 @@ def _issue_prelaunch_credential(
     launch = materialize_managed_launch(
         grant,
         dest_dir=credential.bootstrap_path.parent,
-        operator_token=operator_token,
+        signing_key=signing_key,
         deadline_seconds=max(1.0, remaining_seconds),
     )
     # gcore consumers parse this file as a full GrantBundle; the minimal
@@ -625,7 +625,7 @@ def _prepare_run_for_session(
             max_agent_depth=max_agent_depth,
             prompt=prompt_env,
             prompt_file=prompt_file,
-            operator_token=read_local_api_token(),
+            signing_key=read_managed_signing_key(),
             timeout_seconds=timeout_seconds,
         )
 

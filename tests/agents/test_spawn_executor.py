@@ -14,6 +14,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.utils.local_token import derive_managed_signing_key
+
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
 
@@ -2733,7 +2735,7 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
         parent_session_id=parent_session_id,
         agent_run_id=run_id,
         project_id="project-uuid",
-        operator_token="operator-token",
+        signing_key=derive_managed_signing_key("operator-token"),
     )
     parent_env["GOBBY_HOME"] = str(tmp_path)
     parent_env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] = str(tmp_path / "grant.json")

@@ -14,7 +14,7 @@ _RESUME_METADATA_ENV_KEYS = frozenset(SPAWN_CACHE_ENV_VARS)
 
 # Positive allowlist of config-override keys persisted for daemon-stop resume.
 # Secret-bearing overrides are never persisted: resume re-mints the agent
-# capability from the operator token instead of replaying a stored one.
+# capability from the managed signing key instead of replaying a stored one.
 _RESUME_CONFIG_OVERRIDE_KEYS = frozenset(
     {
         "mcp_servers.gobby.command",

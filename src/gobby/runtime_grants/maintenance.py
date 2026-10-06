@@ -13,9 +13,10 @@ from types import TracebackType
 from typing import Any
 from uuid import uuid4
 
-from gobby.runtime_grants.handshake import HandshakeService
+from gobby.runtime_grants.handshake import HandshakeRejection, HandshakeService
 from gobby.runtime_grants.launch import ManagedLaunch, materialize_managed_launch
 from gobby.storage.managed_credentials import ManagedCredentialManager
+from gobby.utils.local_token import read_managed_signing_key
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +54,10 @@ class HandshakeMaintenanceLaunchFactory:
         *,
         handshake: HandshakeService,
         credentials: ManagedCredentialManager,
-        operator_token: str,
         machine_id: str,
     ) -> None:
         self._handshake = handshake
         self._credentials = credentials
-        self._operator_token = operator_token
         self._machine_id = machine_id
 
     @contextmanager
@@ -69,6 +68,9 @@ class HandshakeMaintenanceLaunchFactory:
         timeout_seconds: float,
         code_overlay_project_id: str | None = None,
     ) -> Iterator[ManagedLaunch]:
+        signing_key = read_managed_signing_key()
+        if not signing_key:
+            raise HandshakeRejection("signing_key_unavailable", code="signing_key_unavailable")
         execution_id = uuid4()
         dest = Path(tempfile.mkdtemp(prefix="gobby-mnt-"))
         issued = False
@@ -83,7 +85,7 @@ class HandshakeMaintenanceLaunchFactory:
             launch = materialize_managed_launch(
                 grant,
                 dest_dir=dest,
-                operator_token=self._operator_token,
+                signing_key=signing_key,
                 deadline_seconds=timeout_seconds,
             )
             yield launch

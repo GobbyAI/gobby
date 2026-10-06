@@ -35,6 +35,7 @@ from gobby.runtime_grants.service import (
 )
 from gobby.servers.auth_service import _AGENT_CAPABILITY_MATRIX, AuthService
 from gobby.utils.local_token import (
+    derive_managed_signing_key,
     issue_agent_api_token,
     verify_agent_api_token,
 )
@@ -51,6 +52,50 @@ from tests.servers.conftest import create_http_server
 pytestmark = pytest.mark.unit
 
 OPERATOR_TOKEN = "handshake-operator-token"
+
+
+def test_managed_challenge_uses_derived_signing_key(tmp_path: Path) -> None:
+    from gobby.utils.local_token import derive_managed_signing_key
+
+    key = derive_managed_signing_key("bootstrap-key")
+    nonce = os.urandom(16)
+    token = issue_agent_api_token(
+        key,
+        agent_run_id=AGENT_RUN_ID,
+        session_id=SESSION_ID,
+        project_id=PROJECT_ID,
+        machine_id=LOCAL_MACHINE_ID,
+    )
+    _, encoded_claims, encoded_signature = token.split(".")
+    claims = json.loads(base64.urlsafe_b64decode(encoded_claims + "=" * (-len(encoded_claims) % 4)))
+    signature = base64.urlsafe_b64decode(encoded_signature + "=" * (-len(encoded_signature) % 4))
+    bootstrap = tmp_path / "bootstrap.yaml"
+    bootstrap.write_text("api_key: bootstrap-key\n")
+    token_file = tmp_path / "local-token"
+    token_file.write_text(OPERATOR_TOKEN)
+    server = create_http_server(config=DaemonConfig(), authenticated_requests=False)
+    server.auth_service = AuthService(
+        lambda: server.services.database, token_file=token_file, bootstrap_file=bootstrap
+    )
+    client = TestClient(server.app)
+    body = {"nonce": base64.urlsafe_b64encode(nonce).decode(), "kind": "managed", "claims": claims}
+    response = client.post("/api/runtime/handshake/challenge", json=body)
+    assert response.status_code == 200
+    assert response.json()["proof"] == hmac.new(signature, nonce, hashlib.sha256).hexdigest()
+    interactive = client.post(
+        "/api/runtime/handshake/challenge", json={"nonce": body["nonce"], "kind": "interactive"}
+    )
+    assert interactive.status_code == 200
+    assert (
+        interactive.json()["proof"]
+        == hmac.new(OPERATOR_TOKEN.encode(), nonce, hashlib.sha256).hexdigest()
+    )
+    bootstrap.unlink()
+    missing = client.post("/api/runtime/handshake/challenge", json=body)
+    assert missing.status_code == 503
+    assert missing.json()["detail"] == "signing_key_unavailable"
+
+
 LOCAL_MACHINE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 PROJECT_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 SESSION_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
@@ -98,7 +143,6 @@ def _handshake(
     return HandshakeService(
         grants=grants,
         local_machine_id=LOCAL_MACHINE_ID,
-        operator_token=OPERATOR_TOKEN,
         issue_postgres=issue_postgres,
         admitted_projects=frozenset({PROJECT_ID}),
         admitted_maintenance_targets=admitted_maintenance_targets,
@@ -130,24 +174,26 @@ def test_challenge_proof_before_bearer(tmp_path: Path) -> None:
         nonce,
         kind="interactive",
         operator_token=OPERATOR_TOKEN,
+        signing_key=derive_managed_signing_key(OPERATOR_TOKEN),
     )
     expected = hmac.new(OPERATOR_TOKEN.encode(), nonce, hashlib.sha256).hexdigest()
     assert interactive == expected
 
     token = issue_agent_api_token(
-        OPERATOR_TOKEN,
+        derive_managed_signing_key(OPERATOR_TOKEN),
         agent_run_id=AGENT_RUN_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
         machine_id=LOCAL_MACHINE_ID,
         timeout_seconds=30,
     )
-    claims = verify_agent_api_token(token, OPERATOR_TOKEN)
+    claims = verify_agent_api_token(token, derive_managed_signing_key(OPERATOR_TOKEN))
     assert claims is not None
     managed = challenge_proof(
         nonce,
         kind="managed",
         operator_token=OPERATOR_TOKEN,
+        signing_key=derive_managed_signing_key(OPERATOR_TOKEN),
         claims=claims,
     )
     signature = token.rsplit(".", maxsplit=1)[1]
@@ -156,7 +202,11 @@ def test_challenge_proof_before_bearer(tmp_path: Path) -> None:
 
     server = create_http_server(config=DaemonConfig(), authenticated_requests=False)
     token_file = tmp_path / "unused"
-    server.auth_service = AuthService(lambda: server.services.database, token_file=token_file)
+    server.auth_service = AuthService(
+        lambda: server.services.database,
+        token_file=token_file,
+        bootstrap_file=_managed_bootstrap(token_file),
+    )
     with patch.object(server.auth_service, "local_token", return_value=OPERATOR_TOKEN):
         client = TestClient(server.app)
         rejected = client.post(
@@ -177,7 +227,7 @@ def test_challenge_proof_before_bearer(tmp_path: Path) -> None:
 def test_challenge_proof_matches_agent_run_token_kind(tmp_path: Path) -> None:
     nonce = os.urandom(16)
     token = issue_agent_api_token(
-        OPERATOR_TOKEN,
+        derive_managed_signing_key(OPERATOR_TOKEN),
         agent_run_id=AGENT_RUN_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
@@ -192,7 +242,11 @@ def test_challenge_proof_matches_agent_run_token_kind(tmp_path: Path) -> None:
 
     server = create_http_server(config=DaemonConfig(), authenticated_requests=False)
     token_file = tmp_path / "unused"
-    server.auth_service = AuthService(lambda: server.services.database, token_file=token_file)
+    server.auth_service = AuthService(
+        lambda: server.services.database,
+        token_file=token_file,
+        bootstrap_file=_managed_bootstrap(token_file),
+    )
     with patch.object(server.auth_service, "local_token", return_value=OPERATOR_TOKEN):
         response = TestClient(server.app).post(
             "/api/runtime/handshake/challenge",
@@ -220,7 +274,7 @@ def test_challenge_rejects_oversized_nonce() -> None:
 def test_machine_claim_binding() -> None:
     handshake = _handshake()
     missing = issue_agent_api_token(
-        OPERATOR_TOKEN,
+        derive_managed_signing_key(OPERATOR_TOKEN),
         agent_run_id=AGENT_RUN_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
@@ -237,19 +291,23 @@ def test_machine_claim_binding() -> None:
         .decode()
     )
     signed = f"{version}.{encoded}"
-    signature = hmac.new(OPERATOR_TOKEN.encode(), signed.encode(), hashlib.sha256).digest()
+    signature = hmac.new(
+        derive_managed_signing_key(OPERATOR_TOKEN), signed.encode(), hashlib.sha256
+    ).digest()
     unsigned_machine = f"{signed}.{base64.urlsafe_b64encode(signature).rstrip(b'=').decode()}"
-    assert verify_agent_api_token(unsigned_machine, OPERATOR_TOKEN) is None
+    assert (
+        verify_agent_api_token(unsigned_machine, derive_managed_signing_key(OPERATOR_TOKEN)) is None
+    )
 
     token = issue_agent_api_token(
-        OPERATOR_TOKEN,
+        derive_managed_signing_key(OPERATOR_TOKEN),
         agent_run_id=AGENT_RUN_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
         machine_id=LOCAL_MACHINE_ID,
         timeout_seconds=30,
     )
-    claims = verify_agent_api_token(token, OPERATOR_TOKEN)
+    claims = verify_agent_api_token(token, derive_managed_signing_key(OPERATOR_TOKEN))
     assert claims is not None
     assert claims.machine_id == LOCAL_MACHINE_ID
     with pytest.raises(HandshakeRejection, match="machine"):
@@ -263,14 +321,14 @@ def test_machine_claim_binding() -> None:
 def test_bearer_claim_binding_matrix() -> None:
     handshake = _handshake()
     token = issue_agent_api_token(
-        OPERATOR_TOKEN,
+        derive_managed_signing_key(OPERATOR_TOKEN),
         agent_run_id=AGENT_RUN_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
         machine_id=LOCAL_MACHINE_ID,
         timeout_seconds=30,
     )
-    claims = verify_agent_api_token(token, OPERATOR_TOKEN)
+    claims = verify_agent_api_token(token, derive_managed_signing_key(OPERATOR_TOKEN))
     assert claims is not None
 
     with pytest.raises(HandshakeRejection) as mismatch:
@@ -301,7 +359,6 @@ def test_bearer_claim_binding_matrix() -> None:
         HandshakeService(
             grants=_grant_service(),
             local_machine_id=LOCAL_MACHINE_ID,
-            operator_token=OPERATOR_TOKEN,
             issue_postgres=lambda _principal: (_ for _ in ()).throw(
                 HandshakeRejection("credential issuance failed", code="credential_issuance_failed")
             ),
@@ -408,7 +465,6 @@ def test_expiry_bounded_and_serialized() -> None:
     service = HandshakeService(
         grants=_grant_service(),
         local_machine_id=LOCAL_MACHINE_ID,
-        operator_token=OPERATOR_TOKEN,
         issue_postgres=issue_postgres,
         admitted_projects=frozenset({PROJECT_ID}),
         clock=lambda: 1_700_000_000,
@@ -446,7 +502,6 @@ def test_operator_overlay_flows_into_principal() -> None:
     service = HandshakeService(
         grants=_grant_service(),
         local_machine_id=LOCAL_MACHINE_ID,
-        operator_token=OPERATOR_TOKEN,
         issue_postgres=issue_postgres,
         admitted_projects=frozenset({PROJECT_ID}),
         clock=lambda: 1_700_000_000,
@@ -490,7 +545,6 @@ def test_operator_issue_accepts_missing_session_id() -> None:
     service = HandshakeService(
         grants=_grant_service(),
         local_machine_id=LOCAL_MACHINE_ID,
-        operator_token=OPERATOR_TOKEN,
         issue_postgres=issue_postgres,
         admitted_projects=frozenset({PROJECT_ID}),
         clock=lambda: 1_700_000_000,
@@ -528,14 +582,14 @@ def test_rejection_log_attributes_principal(
     server = _config_server(_grant_service(), tmp_path / "token")
     claims = verify_agent_api_token(
         issue_agent_api_token(
-            OPERATOR_TOKEN,
+            derive_managed_signing_key(OPERATOR_TOKEN),
             agent_run_id=AGENT_RUN_ID,
             session_id=SESSION_ID,
             project_id=PROJECT_ID,
             machine_id=LOCAL_MACHINE_ID,
             timeout_seconds=30,
         ),
-        OPERATOR_TOKEN,
+        derive_managed_signing_key(OPERATOR_TOKEN),
     )
     assert claims is not None
     with (
@@ -604,14 +658,14 @@ def test_managed_refresh_envelope_token(tmp_path: Path) -> None:
     handshake = _handshake(grants)
     claims = verify_agent_api_token(
         issue_agent_api_token(
-            OPERATOR_TOKEN,
+            derive_managed_signing_key(OPERATOR_TOKEN),
             agent_run_id=AGENT_RUN_ID,
             session_id=SESSION_ID,
             project_id=PROJECT_ID,
             machine_id=LOCAL_MACHINE_ID,
             timeout_seconds=90,
         ),
-        OPERATOR_TOKEN,
+        derive_managed_signing_key(OPERATOR_TOKEN),
     )
     assert claims is not None
     grant = handshake.issue_for_agent(
@@ -622,14 +676,14 @@ def test_managed_refresh_envelope_token(tmp_path: Path) -> None:
     launch = materialize_managed_launch(
         grant,
         dest_dir=tmp_path,
-        operator_token=OPERATOR_TOKEN,
+        signing_key=derive_managed_signing_key(OPERATOR_TOKEN),
         deadline_seconds=90,
     )
     assert launch.grant_path.is_file()
     assert launch.grant_path.stat().st_mode & 0o777 == 0o600
     assert launch.env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == str(launch.grant_path)
     envelope = launch.env["GOBBY_AGENT_API_TOKEN"]
-    claims = verify_agent_api_token(envelope, OPERATOR_TOKEN)
+    claims = verify_agent_api_token(envelope, derive_managed_signing_key(OPERATOR_TOKEN))
     assert claims is not None
     assert claims.project_id == grant.principal.project_id
     assert claims.machine_id == grant.principal.machine_id
@@ -652,14 +706,14 @@ def test_operator_and_agent_grants_are_v2() -> None:
         session_id=SESSION_ID,
     )
     agent_token = issue_agent_api_token(
-        OPERATOR_TOKEN,
+        derive_managed_signing_key(OPERATOR_TOKEN),
         agent_run_id=AGENT_RUN_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
         machine_id=LOCAL_MACHINE_ID,
         timeout_seconds=30,
     )
-    agent_claims = verify_agent_api_token(agent_token, OPERATOR_TOKEN)
+    agent_claims = verify_agent_api_token(agent_token, derive_managed_signing_key(OPERATOR_TOKEN))
     assert agent_claims is not None
     agent = handshake.issue_for_agent(
         agent_claims,
@@ -678,7 +732,11 @@ def _config_server(grants: GrantService, token_file: Path) -> Any:
 
     server = create_http_server(config=DaemonConfig(), authenticated_requests=False)
     token_file.write_text(OPERATOR_TOKEN)
-    server.auth_service = AuthService(lambda: server.services.database, token_file=token_file)
+    server.auth_service = AuthService(
+        lambda: server.services.database,
+        token_file=token_file,
+        bootstrap_file=_managed_bootstrap(token_file),
+    )
     server.auth_service.bind_runtime(
         grant_service=grants,
         lease_live=lambda: True,
@@ -741,3 +799,10 @@ def test_maintenance_target_admission_query_covers_indexed_and_soft_deleted_proj
 
     database.fetchone.return_value = None
     assert maintenance_target_admitted(database, "p1") is False
+
+
+def _managed_bootstrap(token_file: Path) -> Path:
+    bootstrap = token_file.with_name(token_file.name + ".bootstrap.yaml")
+    api_key = token_file.read_text().strip() if token_file.exists() else OPERATOR_TOKEN
+    bootstrap.write_text(json.dumps({"api_key": api_key}))
+    return bootstrap
