@@ -7,6 +7,7 @@ import posixpath
 import re
 import shlex
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 
 from gobby.config.shell_lexing import ParsedShellCommand
@@ -471,6 +472,30 @@ _VITEST_RELATED_OPTIONS = frozenset(
 _ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 
 
+def vitest_related_paths(arguments: Iterable[str]) -> tuple[str, ...] | None:
+    """Parse literal related targets, consuming option values before finding paths."""
+    targets: list[str] = []
+    remaining = iter(arguments)
+    for argument in remaining:
+        name = argument.split("=", 1)[0]
+        if argument == "--run":
+            continue
+        if name in _VITEST_RELATED_OPTIONS:
+            if name == "--reporter" and "=" not in argument:
+                value = next(remaining, None)
+                if value is None or value.startswith("-"):
+                    return None
+        elif argument.startswith("-") or any(char in argument for char in "*?[]{}"):
+            return None
+        else:
+            path = posixpath.normpath(argument)
+            if posixpath.isabs(path) or path == ".." or path.startswith("../"):
+                return None
+            if path not in targets:
+                targets.append(path)
+    return tuple(targets) if targets else None
+
+
 def vitest_related_targets(
     command: str, *, close_root: str | None = None
 ) -> tuple[str, ...] | None:
@@ -507,26 +532,15 @@ def vitest_related_targets(
         if tuple(words[: len(launcher)]) == launcher:
             words = words[len(launcher) :]
             break
-    if not words or not (words[0] == "vitest" or words[0].endswith("node_modules/.bin/vitest")):
+    if not words or words[0] not in {
+        "vitest",
+        "node_modules/.bin/vitest",
+        "./node_modules/.bin/vitest",
+    }:
         return None
     if words[1:2] != ["related"]:
         return None
-    has_run = False
-    targets: list[str] = []
-    arguments = iter(words[2:])
-    for argument in arguments:
-        name = argument.split("=", 1)[0]
-        if argument == "--run":
-            has_run = True
-        elif name in _VITEST_RELATED_OPTIONS:
-            if name == "--reporter" and "=" not in argument and next(arguments, None) is None:
-                return None
-        elif argument.startswith("-") or any(char in argument for char in "*?[]{}"):
-            return None
-        else:
-            path = posixpath.normpath(argument)
-            if posixpath.isabs(path) or path == ".." or path.startswith("../"):
-                return None
-            if f"web/{path}" not in targets:
-                targets.append(f"web/{path}")
-    return tuple(targets) if has_run and targets else None
+    if "--run" not in words[2:]:
+        return None
+    targets = vitest_related_paths(words[2:])
+    return tuple(f"web/{path}" for path in targets) if targets else None

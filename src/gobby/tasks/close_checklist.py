@@ -297,6 +297,9 @@ def _evaluate_validation_commands(
     category = (task_category or "").strip().casefold()
     changed_paths = tuple(changed_paths)
     deleted = frozenset(deleted_paths)
+    changed_web_paths = changed_web_source_paths(
+        path for path in changed_paths if path not in deleted
+    )
     changed_python_test_paths = _changed_python_test_paths(changed_paths)
     source_tests = (
         related_python_source_tests(changed_paths, base_dir=close_root) if close_root else {}
@@ -383,7 +386,7 @@ def _evaluate_validation_commands(
     criterion_command_gaps = [record for record in criterion_commands if not record["satisfied"]]
     uncovered_web = uncovered_vitest_related_paths(
         (run.command for run in credited if run.outcome == "success"),
-        changed_web_source_paths(path for path in changed_paths if path not in deleted),
+        changed_web_paths,
         close_root=close_root,
     )
     details = {
@@ -450,7 +453,12 @@ def _evaluate_validation_commands(
         )
 
     # Exempt tasks still need the command record for their explicit criteria review.
-    if not has_attributed_edits and not test_types_audit_required and not related_tests_required:
+    if (
+        not has_attributed_edits
+        and not test_types_audit_required
+        and not related_tests_required
+        and not changed_web_paths
+    ):
         return CloseGateResult(
             item=9,
             name="validation_commands",
@@ -463,6 +471,7 @@ def _evaluate_validation_commands(
         category in _AUTO_PASS_CATEGORIES
         and not test_types_audit_required
         and not related_tests_required
+        and not changed_web_paths
     ):
         return CloseGateResult(
             item=9,

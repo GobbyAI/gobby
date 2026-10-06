@@ -120,6 +120,7 @@ def test_targetless_test_runner_spans_are_rejected(span: str) -> None:
     findings = malformed_criterion_command_findings(criteria)
     assert findings
     assert "full suite" in findings[0]
+
     assert authored_criterion_commands(criteria) == []
 
 
@@ -148,7 +149,8 @@ def test_targeted_test_runner_spans_are_accepted(span: str) -> None:
     assert authored_criterion_commands(criteria) == [span]
 
 
-def test_vitest_related_with_a_path_is_not_a_full_suite_run() -> None:
+@pytest.mark.parametrize("reporter", ["dot", "custom.test.ts"])
+def test_vitest_related_with_a_path_is_not_a_full_suite_run(reporter: str) -> None:
     related = "cd web && npx vitest related src/components/shared/MarkdownBody.tsx --run"
     bare = "cd web && npx vitest related --run"
 
@@ -157,6 +159,11 @@ def test_vitest_related_with_a_path_is_not_a_full_suite_run() -> None:
     findings = malformed_criterion_command_findings(f"Done when `{bare}` passes.")
     assert findings
     assert "full suite" in findings[0]
+
+    option_only = f"cd web && npx vitest related --reporter {reporter} --run"
+    assert malformed_criterion_command_findings(f"Done when `{option_only}` passes.")
+    reporter_with_path = f"cd web && npx vitest related --reporter {reporter} src/a.tsx --run"
+    assert malformed_criterion_command_findings(f"Done when `{reporter_with_path}` passes.") == ()
 
 
 DAEMON_LIFECYCLE_SPANS = [

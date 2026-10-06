@@ -1084,6 +1084,29 @@ def test_changed_web_source_requires_vitest_related_coverage() -> None:
     assert related.details["vitest_related_uncovered_paths"] == []
 
 
+@pytest.mark.parametrize("category", ["docs", "planning", "research", "manual"])
+@pytest.mark.parametrize("has_attributed_edits", [True, False])
+def test_exempt_categories_still_require_changed_web_coverage(
+    category: str, has_attributed_edits: bool
+) -> None:
+    def evaluate(*runs: TranscriptValidationRun) -> CloseGateResult:
+        return evaluate_validation_commands(
+            task_category=category,
+            evidence=TranscriptEvidence(validation_runs=runs),
+            has_attributed_edits=has_attributed_edits,
+            changed_paths=(_MARKDOWN_BODY,),
+            close_root="/repo",
+        )
+
+    missing = evaluate()
+    covered = evaluate(_run(1, command=_MARKDOWN_BODY_RELATED))
+
+    assert missing.status == "failed", missing.message
+    assert missing.details["vitest_related_uncovered_paths"] == [_MARKDOWN_BODY]
+    assert covered.status == "passed", covered.message
+    assert covered.details["vitest_related_uncovered_paths"] == []
+
+
 def test_type_only_and_test_paths_close_on_one_related_run() -> None:
     # A type-only module has no runtime importer, so plain `related` selects nothing and
     # exits 1; --passWithNoTests makes that empty answer green. vitest's own source filter
@@ -1166,6 +1189,9 @@ def test_tasks_without_web_source_changes_need_no_vitest_related_run() -> None:
         ("cd web && npx --no-install vitest related src/a.tsx --run", ("web/src/a.tsx",)),
         ("cd web && npm exec -- vitest related src/a.tsx --run", ("web/src/a.tsx",)),
         ("cd web && pnpm exec vitest related src/a.tsx --run", ("web/src/a.tsx",)),
+        ("cd web && ./node_modules/.bin/vitest related src/a.tsx --run", ("web/src/a.tsx",)),
+        ("cd web && /other/project/node_modules/.bin/vitest related src/a.tsx --run", None),
+        ("cd web && evilnode_modules/.bin/vitest related src/a.tsx --run", None),
         (
             "cd web && node_modules/.bin/vitest related src/a.tsx src/b.ts --run",
             ("web/src/a.tsx", "web/src/b.ts"),
