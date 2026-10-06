@@ -313,9 +313,9 @@ enforces it (#22902 Constraints, boundary paragraph).
     - The command routes to the `references/agents/personas.md` skill
       reference, which calls `apply_persona`. The picker therefore switches the
       terminal's persona live, and #23647 restores that switch. 3.1 adds the
-      definition-activation route to the reference. Neither the websocket
-      handler nor the reference path changes. `persona` stays the name of the
-      prompt surface.
+      definition-activation route to the reference. #23647 returns the
+      websocket handler to its pre-#23503 switch, and the reference path does
+      not change. `persona` stays the name of the prompt surface.
     - Amended 2026-10-06 (#23648): the earlier draft rewrote the reference to
       call `apply_agent_definition`.
 
@@ -576,8 +576,8 @@ shared main checkout.
 Corrections (line hints are against 45e6be4254, which is still the plan's last
 commit on 2026-10-05):
 
-- Line 86: the skill-selector readers become `resolve_skills_for_agent` and
-  `apply_agent_definition`.
+- Line 86: the skill-selector readers become `resolve_skills_for_agent`,
+  `apply_agent_definition` and, once #23647 restores it, `apply_persona`.
 - D2 (lane text) and 4.1 (lane files): the lane derives from task and queue
   ownership (R2). The lane line in each lane role file lasts only until D2 of
   this plan retires the files.

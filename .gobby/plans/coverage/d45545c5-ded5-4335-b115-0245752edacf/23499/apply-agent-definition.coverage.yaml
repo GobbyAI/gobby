@@ -1,11 +1,11 @@
 header:
   plan_id: apply-agent-definition
-  plan_hash: e61cf86600c3b149c2b9295af38038731a6db0d7b5605e241b77fe080d406666
+  plan_hash: e578fffa5b9a451d4868d9df59bc1eaa6fdfb17ab5f6da5a3f03eda181c16818
   root_task_ref: '23499'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-06T08:57:59Z'
+  generated_at: '2026-10-06T09:21:51Z'
   task_tree_source: db
-  task_tree_source_hash: dcb454e7891101b5579aadf17462213b6a138c7ac116932b6241683c6d960475
+  task_tree_source_hash: 9324cafa94706f93d73921d73b918f2c87d8bda1a20d069cae41c7e57e10cc0a
   evidence_summary: []
   evidence: []
 rows:
@@ -548,8 +548,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23510'
-    validation_criteria_snippet: '3.1.1: The persona reference calls `apply_agent_definition`
-      and names the relaunch refusal. behavior: "apply_agent_definition" in `src/gobby/install/shared/ski...'
+    validation_criteria_snippet: '3.1.1: The persona reference keeps `apply_persona`
+      for the live persona switch, and routes whole-definition activation to `apply_agent_definition`
+      with its rel...'
     matched_artifact_ref: role_change_requires_relaunch
   deferral_target: null
   detail: ''
@@ -559,8 +560,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23510'
-    validation_criteria_snippet: '3.1.1: The persona reference calls `apply_agent_definition`
-      and names the relaunch refusal. behavior: "apply_agent_definition" in `src/gobby/install/shared/ski...'
+    validation_criteria_snippet: '3.1.1: The persona reference keeps `apply_persona`
+      for the live persona switch, and routes whole-definition activation to `apply_agent_definition`
+      with its rel...'
     matched_artifact_ref: tests/skills/test_review_skill.py::test_epic_review_references_pin_routing_and_verdict_mapping
   deferral_target: null
   detail: ''
@@ -570,8 +572,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23510'
-    validation_criteria_snippet: '3.1.1: The persona reference calls `apply_agent_definition`
-      and names the relaunch refusal. behavior: "apply_agent_definition" in `src/gobby/install/shared/ski...'
+    validation_criteria_snippet: '3.1.1: The persona reference keeps `apply_persona`
+      for the live persona switch, and routes whole-definition activation to `apply_agent_definition`
+      with its rel...'
     matched_artifact_ref: role_change_requires_relaunch
   deferral_target: null
   detail: ''
@@ -581,8 +584,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23510'
-    validation_criteria_snippet: '3.1.1: The persona reference calls `apply_agent_definition`
-      and names the relaunch refusal. behavior: "apply_agent_definition" in `src/gobby/install/shared/ski...'
+    validation_criteria_snippet: '3.1.1: The persona reference keeps `apply_persona`
+      for the live persona switch, and routes whole-definition activation to `apply_agent_definition`
+      with its rel...'
     matched_artifact_ref: docs/guides/workflows-overview.md
   deferral_target: null
   detail: ''
