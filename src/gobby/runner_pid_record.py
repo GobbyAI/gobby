@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import time
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -52,15 +53,36 @@ def current_boot_id() -> str:
     return "boot:unknown"
 
 
+def _parse_decimal(value: str) -> int:
+    """Parse JSON integers locally without changing the runtime's digit limit."""
+    return int(Decimal(value))
+
+
+def _canonical_json(value: Any) -> str:
+    """Keep stdlib canonical bytes, with record-local unbounded JSON integers."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        # Decimal construction is exact and independent of context precision.
+        return str(Decimal(value))
+    if isinstance(value, dict):
+        return (
+            "{"
+            + ",".join(json.dumps(key) + ":" + _canonical_json(value[key]) for key in sorted(value))
+            + "}"
+        )
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(_canonical_json(item) for item in value) + "]"
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
 def checksum_payload(payload: dict[str, Any]) -> str:
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    canonical = _canonical_json(payload)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def encode_record(record: dict[str, Any]) -> bytes:
     body = {key: value for key, value in record.items() if key != "checksum"}
     body["checksum"] = checksum_payload(body)
-    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    return _canonical_json(body).encode()
 
 
 def decode_record(raw: bytes) -> dict[str, Any] | None:
@@ -68,7 +90,7 @@ def decode_record(raw: bytes) -> dict[str, Any] | None:
     if not text:
         return None
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(text, parse_int=_parse_decimal)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         return None
     if not isinstance(parsed, dict):
@@ -179,13 +201,7 @@ def next_generation(record: dict[str, Any] | None) -> int:
         or (len(value) > 1 and value[0] == "0")
     ):
         return 1
-    # Small chunks avoid int(string)'s configurable runtime digit cap without
-    # changing process-global limits. The protocol magnitude remains unbounded.
-    generation = 0
-    for offset in range(0, len(value), 9):
-        chunk = value[offset : offset + 9]
-        generation = generation * 10 ** len(chunk) + int(chunk)
-    return generation + 1
+    return _parse_decimal(value) + 1
 
 
 def truncate_record(lock_fd: int) -> None:
