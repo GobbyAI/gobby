@@ -98,6 +98,25 @@ def _mark_closed_without_stage_cleanup(task_manager: LocalTaskManager, task_id: 
     )
 
 
+def _create_closed_task(
+    task_manager: LocalTaskManager,
+    project_id: str,
+    title: str,
+    *,
+    created_day: int,
+    closed_day: int,
+) -> None:
+    task = task_manager.create_task(project_id, title, validation_criteria=VALIDATION_CRITERIA)
+    task_manager.db.execute(
+        "UPDATE tasks SET created_at = %s, closed_at = %s WHERE id = %s",
+        (
+            f"2026-05-{created_day:02d}T00:00:00+00:00",
+            f"2026-06-{closed_day:02d}T00:00:00+00:00",
+            task.id,
+        ),
+    )
+
+
 def _assert_stage_state(task, state: str) -> None:
     assert projected_task_state(task) == state
 
@@ -3056,6 +3075,24 @@ class TestListTasksBranchCoverage:
         assert len(tasks) == 2
         for t in tasks:
             assert t.parent_task_id == parent.id
+
+    def test_closed_listing_defaults_to_newest_closure_first(
+        self, task_manager: LocalTaskManager, project_id: str
+    ) -> None:
+        """A limited closed listing returns the latest closures, newest first (#23687)."""
+        _create_closed_task(task_manager, project_id, "A", created_day=1, closed_day=4)
+        _create_closed_task(task_manager, project_id, "B", created_day=2, closed_day=1)
+        _create_closed_task(task_manager, project_id, "C", created_day=3, closed_day=3)
+        _create_closed_task(task_manager, project_id, "D", created_day=4, closed_day=2)
+        task_manager.create_task(project_id, "Open", validation_criteria=VALIDATION_CRITERIA)
+
+        newest = task_manager.list_tasks(project_id=project_id, closed=True, limit=3)
+        hierarchy = task_manager.list_tasks(
+            project_id=project_id, closed=True, limit=3, sort_by="hierarchy"
+        )
+
+        assert [t.title for t in newest] == ["A", "C", "D"]
+        assert [t.title for t in hierarchy] == ["A", "B", "C"]
 
 
 @pytest.mark.integration
