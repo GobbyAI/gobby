@@ -382,6 +382,27 @@ def test_direct_close_agents_preview_then_wait_for_reviewer(agent_name: str) -> 
     assert get_task_handlers[0]["variable"] == "implementation_complete"
 
 
+def test_developer_submit_waits_for_the_close_reviewer_then_reads_the_task() -> None:
+    submit = _step(_agent("developer"), "submit")
+    guidance = submit["status_message"]
+
+    assert {"gobby-agents:wait_for_agent", "gobby-tasks:get_task"} <= set(
+        submit["allowed_mcp_tools"]
+    )
+    assert "close_review_required" in guidance
+    assert "wait_for_agent once" in guidance
+    assert "reviewer_run_id" in guidance
+    assert "get_task(task_id=assigned_task_id)" in guidance
+
+
+def test_developer_route_skills_can_page_an_offloaded_task_card() -> None:
+    route_skills = _step(_agent("developer"), "route_skills")
+
+    assert "gobby-results:get_tool_result" in route_skills["allowed_mcp_tools"]
+    assert "offloaded" in route_skills["status_message"]
+    assert "get_tool_result" in route_skills["status_message"]
+
+
 def test_merge_orchestrator_no_work_close_waits_for_reviewer() -> None:
     agent = _agent("merge-orchestrator")
     execute = _step(agent, "execute")

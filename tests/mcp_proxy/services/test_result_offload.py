@@ -456,6 +456,42 @@ async def test_oversized_result_preserves_bounded_scalar_outcome_fields() -> Non
     )
 
 
+async def test_oversized_task_card_preserves_its_flat_state_outcome() -> None:
+    """Step handlers read state.is_closed from get_task after a reviewed close."""
+    harness = _harness()
+    state = {
+        "current_stage": None,
+        "is_closed": True,
+        "closed_at": "2026-10-06T22:00:00+00:00",
+        "is_claimed": False,
+        "is_blocked": False,
+        "is_escalated": False,
+    }
+    # Sixteen scalar card fields precede state, filling the scalar budget on their own.
+    card: dict[str, object] = {f"field_{index}": index for index in range(16)}
+    card.update(
+        description="x" * 4_000,
+        state=state,
+        dependencies={"blocked_by": [{"is_closed": True}]},
+    )
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="gobby-tasks",
+        tool_name="get_task",
+        result=card,
+        session_id="session",
+        intent=None,
+    )
+
+    assert actual["offloaded"] is True
+    assert actual["state"] == state
+    assert "dependencies" not in actual
+    assert "description" not in actual
+    assert _serialized_size(actual) <= (
+        harness.config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
+    )
+
+
 async def test_explicit_project_id_keeps_oversized_result_retrievable() -> None:
     harness = _harness(project_id=None)
 
