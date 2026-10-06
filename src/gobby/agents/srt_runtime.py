@@ -658,6 +658,7 @@ async def prepare_sandbox_launch(
             prepare_grok_sandbox_home, run_paths.cache, env, assets=run_paths.assets
         )
         run_environment["GROK_HOME"] = str(grok_home.home)
+        run_environment["GROK_AUTH_PATH"] = str(grok_home.home / "auth.json")
         grok_writes = grok_home.runtime_write_paths
         grok_denies = grok_home.protected_write_paths
     prompt_file = env.get("GOBBY_PROMPT_FILE")

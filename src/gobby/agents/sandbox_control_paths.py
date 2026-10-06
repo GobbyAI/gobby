@@ -5,6 +5,7 @@ allowRead wins over denyRead and must be checked when assembling a policy.
 """
 
 from collections.abc import Mapping
+from glob import has_magic
 from pathlib import Path
 
 # Include fallback settings and directories accepting arbitrary hook files, not
@@ -24,14 +25,32 @@ GROK_CONTROL_FILES = (
 )
 
 _PROVIDER_CONTROLS: dict[str, tuple[str, ...]] = {
-    ".claude": ("settings.json", "settings.local.json"),
-    ".codex": ("hooks.json", "config.toml"),
-    ".qwen": ("settings.json", "trustedFolders.json"),
-    ".factory": ("hooks.json", "settings.json", "settings.local.json"),
+    ".claude": (
+        "settings.json",
+        "settings.local.json",
+        "plugins/cache",
+        "plugins/marketplaces",
+        "plugins/synced",
+        "plugins/installed_plugins.json",
+        "plugins/known_marketplaces.json",
+    ),
+    ".codex": ("hooks.json", "config.toml", "plugins/cache"),
+    ".qwen": ("settings.json", "trustedFolders.json", "extensions", "extension-store"),
+    ".factory": (
+        "hooks.json",
+        "settings.json",
+        "settings.local.json",
+        "plugins/cache",
+        "plugins/marketplaces",
+        "plugins/installed_plugins.json",
+        "plugins/known_marketplaces.json",
+    ),
     ".grok": GROK_CONTROL_FILES,
     ".cursor": ("hooks.json",),
-    ".gemini": ("settings.json", "trustedFolders.json", "config/hooks.json"),
+    ".gemini": ("settings.json", "trustedFolders.json", "config/hooks.json", "extensions"),
     ".config/gemini": ("settings.json", "trustedFolders.json"),
+    ".agents/plugins": ("marketplace.json",),
+    ".claude-plugin": ("marketplace.json",),
 }
 
 _CONFIG_HOME_ENV = {
@@ -46,6 +65,17 @@ def provider_control_write_paths(
 ) -> list[str]:
     """Protect host and inherited project control files, including alternate homes."""
     paths = [str(Path.home() / ".claude.json")]
+    control_roots: list[Path] = []
+    for extra in extra_roots:
+        # File and glob grants are not configuration directories. Inventing
+        # controls below them makes SRT pin the file itself against rename.
+        for index, part in enumerate(extra.parts):
+            if has_magic(part):
+                extra = Path(*extra.parts[:index])
+                break
+        if extra.is_file():
+            extra = extra.parent
+        control_roots.extend((extra, *extra.parents))
     # CLIs can inherit project settings from ancestors. Also protect absent files
     # so a managed process cannot install a new hook for a later host session.
     roots = dict.fromkeys(
@@ -53,7 +83,7 @@ def provider_control_write_paths(
             Path.home(),
             workspace,
             *workspace.parents,
-            *(root for extra in extra_roots for root in (extra, *extra.parents)),
+            *control_roots,
         )
     )
     for root in roots:

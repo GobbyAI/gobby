@@ -52,6 +52,17 @@ def prepare_grok_sandbox_home(
     assert_credential_read_contract(
         [str(source)], credential_read_roots(), provider_credential_read_exceptions("grok")
     )
+    auth = Path(env.get("GROK_AUTH_PATH") or str(source / "auth.json")).expanduser().resolve()
+    auth_lock = auth.with_name("auth.json.lock")
+    auth_writes = (str(auth), str(auth_lock), str(auth.parent / ".*.*.tmp"))
+    assert_sensitive_path_contract(list(auth_writes), list(auth_writes))
+    assert_credential_read_contract(
+        [str(auth), str(auth_lock.resolve())],
+        credential_read_roots(),
+        provider_credential_read_exceptions("grok"),
+    )
+    if auth_lock.is_symlink():
+        raise ValueError("Grok auth lock must not be a symlink")
 
     protected = [str(source / name) for name in GROK_CONTROL_FILES]
     registry = source / "hooks-paths"
@@ -65,7 +76,7 @@ def prepare_grok_sandbox_home(
             and not line.lstrip().startswith("#")
             and Path(line.strip()).is_absolute()
         )
-    runtime = tuple(str(source / name) for name in GROK_RUNTIME_DIRECTORIES)
+    runtime = (*auth_writes, *(str(source / name) for name in GROK_RUNTIME_DIRECTORIES))
     resolved_runtime = [str(Path(path).resolve()) for path in runtime]
     assert_sensitive_path_contract(resolved_runtime, resolved_runtime)
     assert_credential_read_contract(
@@ -88,6 +99,8 @@ def prepare_grok_sandbox_home(
         completed = json.loads(receipt_path.read_text())
         if not isinstance(completed, dict) or completed.get("source") != str(source):
             raise ValueError("Grok managed home source changed")
+        if (home / "auth.json").resolve() != auth:
+            raise ValueError("Grok managed home auth target changed")
         return GrokSandboxHome(home, tuple(protected), runtime)
     home.mkdir(mode=0o700, parents=True)
     assets.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -119,11 +132,14 @@ def prepare_grok_sandbox_home(
                 target.chmod(0o600)
             else:
                 target.symlink_to(original, target_is_directory=original.is_dir())
-    # Links expose only the active provider's existing read necessities. Atomic
-    # auth refresh replaces the per-run link instead of modifying the host file.
-    for name in ("auth.json", "mcp_credentials.json"):
-        if (source / name).exists():
-            (home / name).symlink_to(source / name)
+    # Grok follows auth.json links before atomic publish. Keep its lock shared
+    # too: refresh tokens are single-use, so private locks would race the host.
+    auth.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    auth_lock.touch(mode=0o600, exist_ok=True)
+    (home / "auth.json").symlink_to(auth)
+    (home / "auth.json.lock").symlink_to(auth_lock)
+    if (source / "mcp_credentials.json").exists():
+        (home / "mcp_credentials.json").symlink_to(source / "mcp_credentials.json")
     for name in (*GROK_RUNTIME_DIRECTORIES, "skills", "personas"):
         original = source / name
         if name in GROK_RUNTIME_DIRECTORIES:
