@@ -2999,6 +2999,10 @@ F02 resolution direction: keep direct typing uninterrupted across a daemon resta
   - covers:gclient-daemon-resilience:A2:A2.13
   - covers:gclient-daemon-resilience:A2:A2.14
   - covers:gclient-daemon-resilience:A2:A2.15
+  - covers:gclient-daemon-resilience:A2:A2.16
+  - covers:gclient-daemon-resilience:A2:A2.17
+  - covers:gclient-daemon-resilience:A2:A2.18
+  - covers:gclient-daemon-resilience:A2:A2.19
   tdd: true
   source_section: A2
   implementation_domain: backend
