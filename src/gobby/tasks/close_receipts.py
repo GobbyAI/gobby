@@ -28,9 +28,13 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ACTIVATION",
+    "CALLER_RECEIPT_KINDS",
     "CLOSE_RECEIPT_AUTHOR_TYPE",
     "CLOSE_RECEIPT_KINDS",
     "INDEPENDENT_REVIEW_APPROVAL",
+    "LANDING",
+    "LANDING_APPROVAL",
+    "LANDING_APPROVAL_REASONS",
     "CloseReceipt",
     "CloseReceiptError",
     "close_receipt_facts",
@@ -41,7 +45,13 @@ __all__ = [
 CLOSE_RECEIPT_AUTHOR_TYPE = "close_receipt"
 INDEPENDENT_REVIEW_APPROVAL = "independent_review_approval"
 ACTIVATION = "activation"
-CLOSE_RECEIPT_KINDS = frozenset({INDEPENDENT_REVIEW_APPROVAL, ACTIVATION})
+LANDING_APPROVAL = "landing_approval"
+LANDING = "landing"
+CLOSE_RECEIPT_KINDS = frozenset(
+    {INDEPENDENT_REVIEW_APPROVAL, ACTIVATION, LANDING_APPROVAL, LANDING}
+)
+CALLER_RECEIPT_KINDS = CLOSE_RECEIPT_KINDS - {LANDING}
+LANDING_APPROVAL_REASONS = frozenset({"restart", "freeze", "overlap"})
 
 _APPROVAL_VERDICT = "LAND"
 _FULL_SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -74,7 +84,9 @@ def record_close_receipt(
     commit_sha: str,
     facts: object = None,
 ) -> tuple[CloseReceipt, bool]:
-    """Record one receipt, or return the author's existing one for this kind and commit.
+    """Record a receipt, returning a replay with the same author, kind and commit.
+
+    Landing approvals also match the reason set; changed reasons append a receipt.
 
     The caller has already verified that ``commit_sha`` names a commit in the
     task's repository. Authority comes from the task row as locked here, so
@@ -86,6 +98,9 @@ def record_close_receipt(
     if not _FULL_SHA_RE.fullmatch(sha):
         raise CloseReceiptError("commit_sha must be a full 40-character commit SHA")
     bounded_facts = _bounded_facts(facts)
+    approval_reasons = (
+        _landing_approval_reasons(bounded_facts) if kind == LANDING_APPROVAL else None
+    )
     body: dict[str, Any] = {"kind": kind, "commit_sha": sha, "facts": bounded_facts}
     if kind == INDEPENDENT_REVIEW_APPROVAL:
         body["verdict"] = _APPROVAL_VERDICT
@@ -107,12 +122,12 @@ def record_close_receipt(
             raise CloseReceiptError(f"task {task.id} no longer exists")
         if author_session_id == authority["claimed_by_session_id"]:
             raise CloseReceiptError("the task's claimant cannot attest evidence for its own close")
-        if kind == ACTIVATION and author_session_id not in {
+        if kind in {ACTIVATION, LANDING_APPROVAL} and author_session_id not in {
             authority["created_in_session_id"],
             authority["delegated_by_session_id"],
         }:
             raise CloseReceiptError(
-                "activation receipts come only from the task's creator or delegator"
+                f"{kind} receipts come only from the task's creator or delegator"
             )
         reviewer = conn.execute(
             """
@@ -137,6 +152,10 @@ def record_close_receipt(
         for row in rows:
             existing = _receipt_from_row(row)
             if existing is not None and (existing.kind, existing.commit_sha) == (kind, sha):
+                if kind == LANDING_APPROVAL and (
+                    _landing_approval_reasons(existing.facts) != approval_reasons
+                ):
+                    continue
                 return existing, False
         inserted = conn.execute(
             """
@@ -211,6 +230,19 @@ def _author_role(task: Task, author_session_id: str) -> str:
     if author_session_id == task.delegated_by_session_id:
         return "task_delegator"
     return "independent_session"
+
+
+def _landing_approval_reasons(facts: Mapping[str, str | int | bool]) -> frozenset[str]:
+    reason = facts.get("reason")
+    if not isinstance(reason, str):
+        raise CloseReceiptError("landing_approval requires a string reason fact")
+    reasons = frozenset(part.strip() for part in reason.split(","))
+    if not reasons or not reasons <= LANDING_APPROVAL_REASONS:
+        raise CloseReceiptError(
+            "landing_approval reason must name a non-empty subset of "
+            f"{sorted(LANDING_APPROVAL_REASONS)}"
+        )
+    return reasons
 
 
 def _bounded_facts(facts: object) -> dict[str, str | int | bool]:
