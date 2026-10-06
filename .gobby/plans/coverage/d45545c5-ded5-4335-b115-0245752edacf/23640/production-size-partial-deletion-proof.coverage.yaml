@@ -1,11 +1,11 @@
 header:
   plan_id: production-size-partial-deletion-proof
-  plan_hash: 6201951547e258c11dd070c80c27869f29f22cf7892c98ae11f37baea83b4f0a
+  plan_hash: e4ad7379b8d7a49ba314fa3cd4f67d3158b8bb9f955000df503edbdc71842d14
   root_task_ref: '23640'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-06T05:10:02Z'
+  generated_at: '2026-10-06T09:31:19Z'
   task_tree_source: db
-  task_tree_source_hash: 72764f00c100136d2872c93b51c90b76da20524a74c7426edade050facf26722
+  task_tree_source_hash: cb35685829f9d01f9f06a103f1ee69cad7ebd5910b126d78a1fccda0191772d6
   evidence_summary: []
   evidence: []
 rows:
