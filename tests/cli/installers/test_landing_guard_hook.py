@@ -6,6 +6,7 @@ real git with a hermetic environment that never carries the operator override.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -14,7 +15,14 @@ from pathlib import Path
 import pytest
 
 from gobby.cli.installers.git_hooks import HOOK_TEMPLATES
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
+from gobby.tasks.close_receipts import INDEPENDENT_REVIEW_APPROVAL, record_close_receipt
+from gobby.tasks.land_commit import land_candidate
 from gobby.tasks.landing_policy import is_direct_commit_path
+from gobby.utils.session_context import session_context_for_test
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -187,3 +195,54 @@ def test_guard_classifies_unusual_paths_fail_closed(tmp_path: Path) -> None:
     _assert_refused(agents, "src/gobby/AGENTS.md")
     assert spaced.returncode == 0, spaced.stderr
     assert accented.returncode == 0, accented.stderr
+
+
+async def test_land_commit_passes_installed_guard(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    repo = _baseline(tmp_path)
+    # Repository-local hooksPath, so land_commit's git finds the guard under any global config.
+    repo.ok(repo.root, "config", "core.hooksPath", str(repo.root / ".git" / "hooks"))
+    lane = tmp_path / "lane"
+    repo.ok(repo.root, "worktree", "add", "-q", "-b", "lane", str(lane))
+    candidate = repo.commit(lane, {"tests/test_a.py": "a = 1\n"})
+    sha = repo.ok(lane, "rev-parse", "HEAD")
+    direct = repo.git(repo.root, "merge", "-q", "--ff-only", "lane")
+    creator, claimant, reviewer = (
+        SessionManager(temp_db).register(
+            external_id=external_id,
+            machine_id=isolated.machine_id,
+            source="codex",
+            project_id=isolated.project.id,
+        )
+        for external_id in ("creator", "claimant", "reviewer")
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        isolated.project.id,
+        "Reviewed candidate",
+        created_in_session_id=creator.id,
+        claimed_by_session_id=claimant.id,
+        validation_criteria="Land the reviewed SHA.",
+    )
+    temp_db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([sha]), task.id))
+    task = LocalTaskManager(temp_db).get_task(task.id)
+    record_close_receipt(
+        temp_db,
+        task=task,
+        author_session_id=reviewer.id,
+        kind=INDEPENDENT_REVIEW_APPROVAL,
+        commit_sha=sha,
+    )
+
+    with session_context_for_test(reviewer.id):
+        landed = await land_candidate(
+            temp_db, task=task, caller_session_id=reviewer.id, commit_sha=sha
+        )
+
+    assert candidate.returncode == 0, candidate.stderr
+    _assert_refused(direct, "tests/test_a.py")
+    assert landed["landed"] is True, landed
+    assert repo.ok(repo.root, "rev-parse", "main") == sha
