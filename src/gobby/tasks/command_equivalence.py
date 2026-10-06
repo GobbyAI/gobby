@@ -473,7 +473,6 @@ _VITEST_LAUNCHERS = (
 _VITEST_RELATED_OPTIONS = frozenset(
     {"--reporter", "--no-coverage", "--silent", "--passWithNoTests"}
 )
-_ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 
 
 def vitest_related_paths(arguments: Iterable[str]) -> tuple[str, ...] | None:
@@ -505,8 +504,8 @@ def run_location(command: str, *, workdir: str | None = None) -> str | None:
 
     It starts at the tool call's absolute ``workdir``, or the checkout root (``.``) when
     none was recorded, and follows the leading ``cd <dir> &&`` chain and a ``uv
-    --directory``; ``export`` steps keep it. ``None`` means another operator or leading
-    step.
+    --directory``, also behind an exit-preserving prefix; ``export`` steps keep it.
+    ``None`` means another operator or leading step.
     """
     parsed = parse_validation_shell(command)
     if not parsed.segments or any(operator != "&&" for operator in parsed.operators):
@@ -518,11 +517,20 @@ def run_location(command: str, *, workdir: str | None = None) -> str | None:
         if len(step) != 2 or step[0] != "cd":
             return None
         location = posixpath.normpath(posixpath.join(location, step[1]))
-    words = list(parsed.segments[-1])
-    while words and _ENV_ASSIGNMENT.match(words[0]):
-        words.pop(0)
-    directory = _drop_neutral_uv_options(words)[1].get("--directory", ".")
+    directory = _drop_neutral_uv_options(_core_words(parsed.segments[-1]))[1].get(
+        "--directory", "."
+    )
     return posixpath.normpath(posixpath.join(location, directory))
+
+
+def _core_words(segment: tuple[str, ...]) -> list[str]:
+    """Return ``segment`` without its exit-preserving prefixes (env, ``rtk``, ``nice``).
+
+    These are the prefixes a run's ``core_command`` drops, so its location and runner
+    come from the same words as its targets.
+    """
+    core = parse_validation_shell(normalize_validation_evidence_command(shlex.join(segment)))
+    return list(core.segments[0]) if len(core.segments) == 1 else list(segment)
 
 
 def vitest_related_targets(
@@ -542,9 +550,7 @@ def vitest_related_targets(
         location = resolved.relative_to(root).as_posix() if resolved.is_relative_to(root) else None
     if location != "web":
         return None
-    words = list(parse_validation_shell(command).segments[-1])
-    while words and _ENV_ASSIGNMENT.match(words[0]):
-        words.pop(0)
+    words = _core_words(parse_validation_shell(command).segments[-1])
     for launcher in _VITEST_LAUNCHERS:
         if tuple(words[: len(launcher)]) == launcher:
             words = words[len(launcher) :]

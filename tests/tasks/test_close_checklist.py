@@ -1230,6 +1230,7 @@ def test_tasks_without_web_source_changes_need_no_vitest_related_run() -> None:
         ),
         ("cd /repo && cd web && npx vitest related --run src/a.tsx", ("web/src/a.tsx",)),
         ("export CI=1 && cd web && npx vitest related src/a.tsx --run", ("web/src/a.tsx",)),
+        ("cd web && CI=1 rtk npx vitest related src/a.tsx --run", ("web/src/a.tsx",)),
         ("cd web && npx vitest related", None),
         ("cd web && npx vitest related --run", None),
         ("cd web && npx vitest related src/a.tsx", None),
@@ -1441,6 +1442,20 @@ def _export_tree_gate(
             _E2E_BODY,
             [_E2E_TEST],
             id="uv-directory-unrelated",
+        ),
+        pytest.param(
+            f"GOBBY_TEST_PROTECT=1 rtk uv run --directory {{tmp}}/repo pytest {_E2E_TEST}",
+            "unrelated",
+            _E2E_BODY,
+            [],
+            id="rtk-uv-directory-close-root-from-unrelated",
+        ),
+        pytest.param(
+            f"rtk uv run --directory ../export pytest {_E2E_TEST} -v",
+            "repo",
+            "def test_other() -> None:\n    assert True\n",
+            [_E2E_TEST],
+            id="rtk-uv-directory-relative-differing",
         ),
     ],
 )
