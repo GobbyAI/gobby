@@ -730,15 +730,19 @@ roster and task state).
 
 Step state: transitions read the merged variables with instance variables
 last (`engine/enforcement_completion.py::_process_step_after_tool`), so a flag
-declared in `step_workflow.variables` can be flipped only by
-`gobby-workflows:set_variable(scope="step")`
-(`mcp_proxy/tools/workflows/_variables.py:84`) or by a step handler; the
-top-level proxy `set_variable` is session-scoped (`stdio_tools.py:338`) and is
-ignored for declared instance names
-(`tests/workflows/test_step_runtime_transitions.py::test_native_set_variable_does_not_shadow_workflow_local_variable`).
-Every seat prompt therefore names `gobby-workflows:set_variable(scope="step")`
+declared in `step_workflow.variables` can be flipped only by the top-level
+`mcp__gobby__set_variable` with `scope="step"` (`mcp_proxy/server.py:546`,
+which writes the step instance through
+`mcp_proxy/tools/workflows/_variables.py:84`) or by a step handler. A
+session-scoped write is ignored for declared instance names
+(`tests/workflows/test_step_runtime_transitions.py::test_native_set_variable_does_not_shadow_workflow_local_variable`),
+and the stdio shortcut (`stdio_tools.py:331`, `stdio_proxy.py:582`) hard-codes
+session scope until #22997 carries `scope` through it. The step gate admits
+the call as an infrastructure tool (`enforcement/blocking.py`
+`INFRASTRUCTURE_TOOLS`), so its `allowed_tools` entry records the step's writes.
+Every seat prompt therefore names `mcp__gobby__set_variable(scope="step")`
 for the flags it sets by hand, every step whose flags the seat sets lists
-`gobby-workflows:set_variable` in its MCP allowlist, and `on_mcp_success`
+`mcp__gobby__set_variable` in its `allowed_tools`, and `on_mcp_success`
 handlers (`WorkflowStep.on_mcp_success`, `definitions.py:586`; entries
 `{server, tool, when?, action: set_variable, variable, value}` evaluated with
 `vars`, `tool_input`, `tool_output`, where `tool_input` carries the MCP
@@ -936,11 +940,11 @@ skills need no new gate. The seat reorders the shared workflow so the
 required gate comes first, as every seat with `required_skills` does
 (3.5): `load_required_skills` becomes the opening `load_skills` step, and
 a `route_skills` step sits between `claim` and `load_additional_skills`
-(allowed MCP: `gobby-tasks:get_task`,
-`gobby-workflows:set_variable`) has the seat read the claimed task, map its
+(allowed MCP: `gobby-tasks:get_task`; allowed tools:
+`mcp__gobby__set_variable`) has the seat read the claimed task, map its
 paths and `implementation_domain` through the prompt's routing table, merge
 any skills the task description names, write `additional_skills` with
-`gobby-workflows:set_variable(scope="step")`, then set `skills_routed`; its
+`mcp__gobby__set_variable(scope="step")`, then set `skills_routed`; its
 `on_mcp_success` for `gobby-tasks:get_task` with `when:
 tool_output.get('id') == vars.assigned_task_id` binds `assigned_task_ref`
 from `tool_output.get('ref')`, the `#NNNNN` form the event line carries
@@ -978,8 +982,8 @@ wiring: `claim` keeps its `gobby-tasks:claim_task` success handler for
 `tool_output.get('task_id')`, and allows
 `gobby-agents:wait_for_coordination` for the idle wait on the PD or Lane
 Manager; `submit` (allowed MCP: `send_message`,
-`gobby-agents:wait_for_coordination`, `close_task`, `link_commit`,
-`gobby-workflows:set_variable`) has an
+`gobby-agents:wait_for_coordination`, `close_task`, `link_commit`; allowed
+tools: `mcp__gobby__set_variable`) has an
 `on_mcp_success` for `gobby-agents:send_message` with `when:
 'EVENT=CANDIDATE' in str(tool_input.get('content')) and
 str(vars.assigned_task_ref) in str(tool_input.get('content'))` that sets
@@ -1081,14 +1085,14 @@ rule stays disabled and pinned, and the plumbing stays untouched);
 `required_skills: [code-review, restraint]`;
 `step_workflow.variables: {candidate_received: false, verdict_ready: false,
 candidate_task: null}`; steps `load_skills` → `await` (allowed MCP:
-`send_message`, `gobby-agents:wait_for_coordination`, sessions read,
-`gobby-workflows:set_variable`; the seat
+`send_message`, `gobby-agents:wait_for_coordination`, sessions read; allowed
+tools: `mcp__gobby__set_variable`; the seat
 records the PD's CANDIDATE line by setting `candidate_task` to its `TASK=`
 value and `candidate_received` at step scope; transition to `review` when
 `vars.candidate_received`) → `review` (read-only tools plus `gcode` and `git
-diff`, `gobby-workflows:set_variable`; transition to `verdict` when
-`vars.verdict_ready`) → `verdict` (allowed MCP: `send_message`,
-`gobby-workflows:set_variable`; the message carries `EVENT=CANDIDATE_VERDICT
+diff`, `mcp__gobby__set_variable`; transition to `verdict` when
+`vars.verdict_ready`) → `verdict` (allowed MCP: `send_message`; allowed tools:
+`mcp__gobby__set_variable`; the message carries `EVENT=CANDIDATE_VERDICT
 TASK=#NNNNN ... VERDICT=LAND|BOUNCE` with HIGH/MEDIUM/LOW findings to PD and
 author lane; `on_mcp_success` for `gobby-agents:send_message` with `when:
 'EVENT=CANDIDATE_VERDICT' in str(tool_input.get('content')) and
@@ -1144,14 +1148,14 @@ family, load only on a breach, matched windows for performance verdicts) with
 no skill reference for it. `log-monitor` step workflow:
 `step_workflow.variables: {tick_done: false, tick_window: null}`;
 `load_skills` → `tick` (allowed MCP: skills, sessions read,
-`gobby-agents:wait_for_coordination`, `gobby-workflows:set_variable`; the
-cadence is `wait_for_coordination(owner_session=<PD>, reply=true,
+`gobby-agents:wait_for_coordination`; allowed tools:
+`mcp__gobby__set_variable`; the cadence is `wait_for_coordination(owner_session=<PD>, reply=true,
 timeout=600)`, whose expiry starts the next tick and whose PD reply starts
 it early; the seat sets `tick_window` to the
 `HH:MM-HH:MM` window it examined and `tick_done`, both at step scope;
 transition to `report` when `vars.tick_done`) → `report` (allowed MCP:
-`send_message`, `gobby-agents:wait_for_coordination`,
-`gobby-workflows:set_variable`; `on_mcp_success` for
+`send_message`, `gobby-agents:wait_for_coordination`; allowed tools:
+`mcp__gobby__set_variable`; `on_mcp_success` for
 `gobby-agents:send_message` with `when: 'Systems nominal' in
 str(tool_input.get('content')) or 'EVENT=ALARM' in
 str(tool_input.get('content'))` resets `tick_done` and `tick_window`;
@@ -1390,7 +1394,7 @@ Seat invariants to pin:
 - The seats with a step workflow (`developer`, `code-reviewer`, `log-monitor`
   and `researcher`) declare no `exit_condition`.
 - Every step whose transition reads a flag the seat sets by hand lists
-  `gobby-workflows:set_variable` in its MCP allowlist.
+  `mcp__gobby__set_variable` in its `allowed_tools`.
 - Every step that waits on another session lists
   `gobby-agents:wait_for_coordination`: developer `claim` and `submit`,
   code-reviewer `await`, log-monitor `tick` and `report`, and researcher
@@ -1744,6 +1748,27 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
 
   M1 is re-derived through the handoff-manifest tools. Base and
   expansion-mode validation pass. No implementation tests were run.
+- 2026-10-06: Amendment under #23693 (Lane Manager gobby#15389). It
+  corrects the step-state write tool, which Lane 3 developer gobby#15577
+  found while working #22997. `gobby-workflows` does not register
+  `set_variable`; `set_variable` moved to the top-level proxy in
+  `0aa7440db7` (#9875), and the top-level `mcp__gobby__set_variable` takes
+  `scope="step"` (`mcp_proxy/server.py:546`).
+  - The P3 step-state framing, 3.2 (`route_skills`, `submit`), 3.3
+    (code-reviewer `await`, `review` and `verdict`; log-monitor `tick` and
+    `report`) and the 3.5 invariant name `mcp__gobby__set_variable` with
+    `scope="step"` in `allowed_tools`.
+  - Completed 2.2 keeps its text under the Orchestrator's (gobby#14972)
+    option-3 rule. 2.2.1 and its M1 entry say `gobby-workflows:set_variable`
+    stays allowed; the tool that stays allowed is the top-level
+    `mcp__gobby__set_variable`.
+  - The PA-002 changelog line, the round-1 evidence fence and the negative
+    references in 3.4.1 and its M1 entry keep their bytes, per the
+    Orchestrator's 15:14 CT criterion-2 ruling on the scope finding of the
+    Plan Adversary (gobby#15471).
+
+  M1 is unchanged. Base and expansion-mode validation pass. No
+  implementation tests were run.
 
 ## M1 Task Manifest
 `kind: manifest`
