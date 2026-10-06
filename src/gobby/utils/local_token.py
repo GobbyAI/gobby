@@ -33,6 +33,26 @@ def daemon_bootstrap_path() -> Path:
     return _daemon_bootstrap if _daemon_bootstrap is not None else bootstrap_path()
 
 
+MANAGED_TOKEN_KEY_LABEL = b"gobby-managed-token-v1"
+
+
+def derive_managed_signing_key(api_key: str) -> bytes:
+    """Domain-separate managed capability signatures from the bootstrap bearer."""
+    return hmac.new(api_key.encode(), MANAGED_TOKEN_KEY_LABEL, hashlib.sha256).digest()
+
+
+def read_managed_signing_key(bootstrap: Path | None = None) -> bytes | None:
+    """Read the current startup-bound bootstrap key, failing closed on bad input."""
+    from gobby.config.bootstrap import BootstrapConfigError
+    from gobby.config.bootstrap_io import read_bootstrap_yaml
+
+    try:
+        api_key = read_bootstrap_yaml(bootstrap or daemon_bootstrap_path()).get("api_key")
+    except (OSError, BootstrapConfigError):
+        return None
+    return derive_managed_signing_key(api_key) if isinstance(api_key, str) and api_key else None
+
+
 # This is a filename, not a credential value.
 LOCAL_API_TOKEN_FILENAME = "local_cli_token"  # nosec B105
 GOBBY_AGENT_API_TOKEN_ENV = "GOBBY_AGENT_API_TOKEN"
@@ -87,7 +107,7 @@ def read_local_api_token() -> str | None:
 
 
 def issue_agent_api_token(
-    operator_token: str,
+    signing_key: bytes,
     *,
     agent_run_id: str,
     session_id: str,
@@ -105,7 +125,7 @@ def issue_agent_api_token(
     else:
         ttl_seconds = AGENT_TOKEN_MAX_TTL_SECONDS
     return _issue_managed_api_token(
-        operator_token,
+        signing_key,
         owner_claim="agent_run_id",
         owner_id=agent_run_id,
         session_id=session_id,
@@ -117,7 +137,7 @@ def issue_agent_api_token(
 
 
 def issue_tool_api_token(
-    operator_token: str,
+    signing_key: bytes,
     *,
     managed_execution_id: str,
     session_id: str,
@@ -127,7 +147,7 @@ def issue_tool_api_token(
 ) -> str:
     """Mint a daemon capability bounded to one managed tool request."""
     return _issue_managed_api_token(
-        operator_token,
+        signing_key,
         owner_claim="managed_execution_id",
         owner_id=managed_execution_id,
         session_id=session_id,
@@ -139,7 +159,7 @@ def issue_tool_api_token(
 
 
 def issue_maintenance_api_token(
-    operator_token: str,
+    signing_key: bytes,
     *,
     execution_id: str,
     project_id: str,
@@ -148,7 +168,7 @@ def issue_maintenance_api_token(
 ) -> str:
     """Mint a daemon capability bound to one maintenance execution."""
     return _issue_managed_api_token(
-        operator_token,
+        signing_key,
         owner_claim="managed_execution_id",
         owner_id=execution_id,
         session_id=execution_id,
@@ -160,7 +180,7 @@ def issue_maintenance_api_token(
 
 
 def _issue_managed_api_token(
-    operator_token: str,
+    signing_key: bytes,
     *,
     owner_claim: str,
     owner_id: str,
@@ -170,6 +190,8 @@ def _issue_managed_api_token(
     machine_id: str | None = None,
     kind: str | None = None,
 ) -> str:
+    if not signing_key:
+        raise ValueError("signing_key_unavailable")
     resolved_machine = machine_id or get_machine_id()
     if not resolved_machine:
         raise ValueError("capability tokens require a machine_id")
@@ -192,13 +214,13 @@ def _issue_managed_api_token(
     ).encode()
     encoded_payload = _urlsafe_encode(payload)
     signed = f"{_AGENT_TOKEN_VERSION}.{encoded_payload}"
-    signature = hmac.new(operator_token.encode(), signed.encode(), hashlib.sha256).digest()
+    signature = hmac.new(signing_key, signed.encode(), hashlib.sha256).digest()
     return f"{signed}.{_urlsafe_encode(signature)}"
 
 
 AgentApiTokenRejection = Literal[
     "invalid_token",
-    "operator_token_unavailable",
+    "signing_key_unavailable",
     "capability_invalid",
     "capability_expired",
 ]
@@ -206,21 +228,21 @@ AgentApiTokenRejection = Literal[
 
 def verify_agent_api_token(
     token: str,
-    operator_token: str,
+    signing_key: bytes | None,
 ) -> AgentApiTokenClaims | None:
     """Verify and decode a managed capability; any rejection reads as ``None``."""
-    claims = classify_agent_api_token(token, operator_token)
+    claims = classify_agent_api_token(token, signing_key)
     return claims if isinstance(claims, AgentApiTokenClaims) else None
 
 
 def classify_agent_api_token(
     token: str,
-    operator_token: str | None,
+    signing_key: bytes | None,
 ) -> AgentApiTokenClaims | AgentApiTokenRejection:
     """Verify a single-owner managed execution capability or name why it failed.
 
     ``invalid_token`` is a bearer that is not a managed capability at all,
-    ``operator_token_unavailable`` a capability with no signing key to check it
+    ``signing_key_unavailable`` a capability with no signing key to check it
     against, ``capability_invalid`` one whose signature or claims do not verify
     (including missing integer ``iat``/``exp`` claims), and ``capability_expired``
     a verified capability at or past its expiry.
@@ -228,12 +250,12 @@ def classify_agent_api_token(
     parts = token.split(".", maxsplit=2)
     if len(parts) != 3 or parts[0] != _AGENT_TOKEN_VERSION:
         return "invalid_token"
-    if operator_token is None:
-        return "operator_token_unavailable"
+    if not signing_key:
+        return "signing_key_unavailable"
     version, encoded_payload, encoded_signature = parts
     try:
         signed = f"{version}.{encoded_payload}"
-        expected = hmac.new(operator_token.encode(), signed.encode(), hashlib.sha256).digest()
+        expected = hmac.new(signing_key, signed.encode(), hashlib.sha256).digest()
         supplied = _urlsafe_decode(encoded_signature)
         if not hmac.compare_digest(expected, supplied):
             return "capability_invalid"

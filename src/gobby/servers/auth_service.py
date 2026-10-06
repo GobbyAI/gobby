@@ -39,7 +39,9 @@ from gobby.utils.local_token import (
     AgentApiTokenClaims,
     AgentApiTokenRejection,
     classify_agent_api_token,
+    daemon_bootstrap_path,
     local_token_path,
+    read_managed_signing_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -212,6 +214,7 @@ class AuthService:
         effect_fence: EffectFence | None = None,
         clock: Callable[[], int] | None = None,
         break_glass_file: Path | None = None,
+        bootstrap_file: Path | None = None,
     ) -> None:
         self._database_getter = database_getter
         self._auth_schema: str | None = None
@@ -226,6 +229,25 @@ class AuthService:
         self._effect_fence = effect_fence
         self._clock = clock
         self._break_glass_file = break_glass_file
+        self._bootstrap_file = bootstrap_file
+        self._managed_key_stamp: tuple[Path, int, int, int] | None = None
+        self._managed_key: bytes | None = None
+
+    def managed_signing_key(self) -> bytes | None:
+        """Observe bootstrap replacement on the next request, without a refresh interval."""
+        path = self._bootstrap_file or daemon_bootstrap_path()
+        with self._lock:
+            try:
+                stat = path.stat()
+            except OSError:
+                self._managed_key_stamp = None
+                self._managed_key = None
+                return None
+            stamp = (path, stat.st_ino, stat.st_mtime_ns, stat.st_size)
+            if stamp != self._managed_key_stamp:
+                self._managed_key = read_managed_signing_key(path)
+                self._managed_key_stamp = stamp
+            return self._managed_key
 
     def bind_runtime(
         self,
@@ -421,7 +443,7 @@ class AuthService:
         request: HTTPConnection,
         token: str,
     ) -> AgentApiTokenClaims | _CapabilityRejection:
-        claims = classify_agent_api_token(token, self.local_token())
+        claims = classify_agent_api_token(token, self.managed_signing_key())
         if not isinstance(claims, AgentApiTokenClaims):
             return claims
         entry = _agent_capability_allows(request)
