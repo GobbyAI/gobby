@@ -14017,9 +14017,10 @@ async fn a_reattach_abandons_writes_queued_for_the_old_attachment() {
         settle_before_lag(&mock).await;
         lag_the_loop_receiver(&mock, &daemon);
         wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
-        // The new attachment is installed once the loop sizes it.
+        // The attach sets its own viewport before the loop installs it; only
+        // the loop's resize says the pane is live on attachment-2.
         timeout(WAIT_BUDGET, async {
-            while !websocket_requests(&mock, "terminal_set_viewport")
+            while !websocket_requests(&mock, "terminal_resize")
                 .iter()
                 .any(|body| body["attachment_id"] == "attachment-2")
             {
@@ -14072,5 +14073,74 @@ async fn a_reattach_abandons_writes_queued_for_the_old_attachment() {
         ["Input delivery unconfirmed.", "Input not sent: 2 bytes."],
         "only y is unconfirmed; z and w are reported unsent"
     );
+    mock.shutdown().await;
+}
+
+/// A key typed while a lag re-attach still waits on its attach reply is the
+/// pane's ask for control: it lands under the new attachment once that is
+/// installed, after a takeover take, instead of being dropped (#23559).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_key_typed_while_reattaching_lands_on_the_new_attachment() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..6 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [{"terminal_id": "terminal-reattached", "backend": "native", "state": "live"}],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("attached pane");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        settle_before_lag(&mock).await;
+        // Holding the re-attach's reply keeps the pane attaching.
+        let attached = mock.hold_ws("terminal_attach", |_| true);
+        lag_the_loop_receiver(&mock, &daemon);
+        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+        // Input outranks recoveries, so 'q' is handled before the attach
+        // reply released behind it is applied.
+        send_key(&input_tx, KeyCode::Char('q'), KeyModifiers::NONE).await;
+        attached.notify_one();
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("reattached loop");
+    let takes = websocket_requests(&mock, "terminal_take_control");
+    assert_eq!(takes.len(), 2);
+    assert_eq!(takes[1]["attachment_id"], "attachment-2");
+    assert_eq!(takes[1]["takeover"], true, "the key takes control back");
+    let typed = websocket_requests(&mock, "terminal_input");
+    assert_eq!(typed.len(), 1);
+    assert_eq!(typed[0]["data"], "q");
+    assert_eq!(typed[0]["attachment_id"], "attachment-2");
     mock.shutdown().await;
 }
