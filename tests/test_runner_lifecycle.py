@@ -966,8 +966,12 @@ class TestInitSubsystems:
         assert "Agent lifecycle monitor start failed during startup" in caplog.text
 
     @pytest.mark.parametrize("shutdown_during_prewarm", [False, True])
+    @pytest.mark.parametrize("prewarm_failure", [False, True])
     async def test_start_failures_do_not_abort_init_and_readiness_is_last(
-        self, shutdown_during_prewarm: bool
+        self,
+        shutdown_during_prewarm: bool,
+        prewarm_failure: bool,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         events: list[str] = []
 
@@ -1014,6 +1018,8 @@ class TestInitSubsystems:
             events.append("prewarm")
             await asyncio.sleep(0)
             services.shutdown_in_progress = shutdown_during_prewarm
+            if prewarm_failure:
+                raise TimeoutError("Transcript evidence workers did not prewarm together")
 
         services = RecordingServices()
         tracker = RecordingTracker()
@@ -1095,10 +1101,19 @@ class TestInitSubsystems:
         assert events == expected_events
         prewarm.assert_awaited_once_with()
         runner.message_processor.start.assert_not_awaited()
-        assert tracker.errors == [
+        expected_errors = [
             {"subsystem": "Session lifecycle manager", "error": "lifecycle failed"},
             {"subsystem": "Cron scheduler", "error": "cron failed"},
         ]
+        if prewarm_failure:
+            expected_errors.append(
+                {
+                    "subsystem": "Transcript evidence pool",
+                    "error": "Transcript evidence workers did not prewarm together",
+                }
+            )
+            assert "Transcript evidence pool prewarm failed during startup" in caplog.text
+        assert tracker.errors == expected_errors
         assert tracker.steps_completed == [
             "Communications manager",
             "System automation loop",
