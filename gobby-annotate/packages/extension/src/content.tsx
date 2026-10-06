@@ -1,6 +1,7 @@
 import { createRoot, type Root } from "react-dom/client";
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -22,7 +23,7 @@ import { viewport } from "./frame-agent";
 import { rpc } from "./api";
 import css from "./ui.css?inline";
 import { installFonts } from "./fonts";
-import { isolateFocus } from "./focus";
+import { isolateEditor } from "./focus";
 import { scopeStyles } from "./styles";
 
 const HOST_ID = "gobby-annotate-root";
@@ -70,6 +71,10 @@ function App({
   const pendingEdit = useRef<{ id: string; text: string } | null>(null);
   const pendingTitle = useRef<{ text: string } | null>(null);
   const selected = batch?.annotations.find((a) => a.id === editing);
+  const editorOpen = (!!selected || panel === "menu") && !collapsed;
+  useLayoutEffect(() => {
+    if (editorOpen) return isolateEditor(host);
+  }, [host, editorOpen]);
   function assign(value: Batch) {
     current.current = value;
     setBatch(value);
@@ -354,7 +359,23 @@ function App({
     window.addEventListener("pointercancel", done, { once: true });
   }
   return (
-    <div ref={shell} className="annotate-shell" style={{ left: 8, top: 8 }}>
+    <div
+      ref={shell}
+      className="annotate-shell"
+      style={{ left: 8, top: 8 }}
+      role={editorOpen ? "dialog" : undefined}
+      aria-modal={editorOpen || undefined}
+      aria-label={editorOpen ? "Gobby Annotate editor" : undefined}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !editorOpen) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (canLeaveEditor()) {
+          setEditing(null);
+          setPanel("none");
+        }
+      }}
+    >
       {error && (
         <div role="alert" className="annotate-panel">
           {error}
@@ -601,7 +622,6 @@ export function activate(): () => void {
   const mount = document.createElement("div");
   shadow.append(mount);
   document.documentElement.append(host);
-  const releaseFocus = isolateFocus(host);
   const documentId = crypto.randomUUID();
   let root: Root | null = createRoot(mount);
   const removeFonts = installFonts();
@@ -624,7 +644,6 @@ export function activate(): () => void {
     root = null;
     chrome.runtime.onMessage.removeListener(listener);
     removeFonts();
-    releaseFocus();
     host.remove();
   };
   host.addEventListener("annotate-deactivate", deactivate);
