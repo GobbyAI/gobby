@@ -20,42 +20,80 @@ logger = logging.getLogger(__name__)
 
 
 @contextmanager
-def _batch_transaction(db: HubDatabase, batch_id: str) -> Iterator[Transaction]:
+def _batch_transaction(
+    db: HubDatabase, batch_id: str, search_trace: str | None
+) -> Iterator[Transaction]:
     """Time acquisition and transaction exit without recording database details."""
+    if search_trace is None:
+        with db.transaction() as txn:
+            yield txn
+        return
     started = perf_counter()
     exiting: float | None = None
-    logger.info("unmodeled_batch batch=%s phase=connection event=started", batch_id)
+    outcome = "commit"
+    body_error: BaseException | None = None
+    logger.debug(
+        "unmodeled_batch trace=%s batch=%s phase=connection event=started", search_trace, batch_id
+    )
     try:
         with db.transaction() as txn:
-            logger.info(
-                "unmodeled_batch batch=%s phase=connection event=finished elapsed_s=%.6f",
+            logger.debug(
+                "unmodeled_batch trace=%s batch=%s phase=connection event=finished elapsed_s=%.6f",
+                search_trace,
                 batch_id,
                 perf_counter() - started,
             )
             try:
                 yield txn
+            except BaseException as error:
+                body_error = error
+                outcome = "rollback"
+                raise
             finally:
                 exiting = perf_counter()
-                logger.info("unmodeled_batch batch=%s phase=commit event=started", batch_id)
+                logger.debug(
+                    "unmodeled_batch trace=%s batch=%s phase=transaction_exit event=started "
+                    "outcome=%s",
+                    search_trace,
+                    batch_id,
+                    outcome,
+                )
+    except BaseException as error:
+        if exiting is not None and error is not body_error:
+            outcome = "error"
+        raise
     finally:
         if exiting is not None:
-            logger.info(
-                "unmodeled_batch batch=%s phase=commit event=finished elapsed_s=%.6f",
+            logger.debug(
+                "unmodeled_batch trace=%s batch=%s phase=transaction_exit event=finished "
+                "outcome=%s elapsed_s=%.6f",
+                search_trace,
                 batch_id,
+                outcome,
                 perf_counter() - exiting,
             )
 
 
 def _batch_execute(
-    txn: Transaction, batch_id: str, phase: str, sql: str, parameters: tuple[str]
+    txn: Transaction,
+    batch_id: str,
+    phase: str,
+    sql: str,
+    parameters: tuple[str],
+    search_trace: str | None,
 ) -> Cursor:
+    if search_trace is None:
+        return txn.execute(sql, parameters)
     started = perf_counter()
-    logger.info("unmodeled_batch batch=%s phase=%s event=started", batch_id, phase)
+    logger.debug(
+        "unmodeled_batch trace=%s batch=%s phase=%s event=started", search_trace, batch_id, phase
+    )
     try:
         return txn.execute(sql, parameters)
     finally:
-        logger.info(
-            "unmodeled_batch batch=%s phase=%s event=finished elapsed_s=%.6f",
+        logger.debug(
+            "unmodeled_batch trace=%s batch=%s phase=%s event=finished elapsed_s=%.6f",
+            search_trace,
             batch_id,
             phase,
             perf_counter() - started,
@@ -77,7 +115,11 @@ _SENSITIVE_KEY_PARTS = (
     "token",
 )
 
-COUNT_SEMANTICS = "retention-window distinct transcript occurrences"
+_LAST_SEEN_REFRESH_SECONDS = 60 * 60
+COUNT_SEMANTICS = (
+    "retention-window distinct transcript occurrences; hourly last-seen display/sort precision "
+    "with matching pruning grace"
+)
 
 
 @dataclass(frozen=True)
@@ -225,11 +267,16 @@ class UnmodeledObservationStore:
                 )
                 return True
 
+            session_predicate = (
+                "session_id IS NULL" if observation.session_id is None else "session_id = %s"
+            )
+            session_parameters = () if observation.session_id is None else (observation.session_id,)
             txn.execute(
-                """
+                f"""
                 UPDATE unmodeled_observation_events
                 SET last_seen_at = NOW()
-                WHERE session_id IS NOT DISTINCT FROM %s
+                WHERE {session_predicate}
+                  AND last_seen_at < NOW() - INTERVAL '{_LAST_SEEN_REFRESH_SECONDS} seconds'
                   AND source = %s
                   AND kind = %s
                   AND name = %s
@@ -239,7 +286,7 @@ class UnmodeledObservationStore:
                   AND sample_hash = %s
                 """,
                 (
-                    observation.session_id,
+                    *session_parameters,
                     observation.source,
                     observation.kind,
                     observation.name,
@@ -250,10 +297,11 @@ class UnmodeledObservationStore:
                 ),
             )
             txn.execute(
-                """
+                f"""
                 UPDATE unmodeled_observations
                 SET last_seen_at = NOW()
-                WHERE source = %s
+                WHERE last_seen_at < NOW() - INTERVAL '{_LAST_SEEN_REFRESH_SECONDS} seconds'
+                  AND source = %s
                   AND kind = %s
                   AND name = %s
                   AND server_name = %s
@@ -269,7 +317,9 @@ class UnmodeledObservationStore:
             )
             return False
 
-    def record_many(self, observations: list[UnmodeledObservationInput]) -> int:
+    def record_many(
+        self, observations: list[UnmodeledObservationInput], *, search_trace: str | None = None
+    ) -> int:
         """Persist one rendered window in three statements and one transaction.
 
         Keep the same distinct-occurrence and last-seen semantics as ``record``;
@@ -321,7 +371,7 @@ class UnmodeledObservationStore:
         # Consistent lock order also lets overlapping concurrent batches compose.
         payload = json.dumps([events[key] for key in sorted(events)])
         batch_id = uuid4().hex
-        with _batch_transaction(self._db, batch_id) as txn:
+        with _batch_transaction(self._db, batch_id, search_trace) as txn:
             inserted = _batch_execute(
                 txn,
                 batch_id,
@@ -344,23 +394,37 @@ class UnmodeledObservationStore:
                           session_id, source_ref, sample_hash
                 """,
                 (payload,),
+                search_trace,
             ).fetchall()
             _batch_execute(
                 txn,
                 batch_id,
                 "refresh_events",
-                """
-                UPDATE unmodeled_observation_events AS event SET last_seen_at = NOW()
-                FROM jsonb_to_recordset(%s::jsonb) AS x(
-                    session_id uuid, source text, kind text, name text,
-                    server_name text, tool_type text, source_ref text, sample_hash text
+                f"""
+                WITH incoming AS (
+                    SELECT * FROM jsonb_to_recordset(%s::jsonb) AS x(
+                        session_id uuid, source text, kind text, name text,
+                        server_name text, tool_type text, source_ref text, sample_hash text
+                    )
+                ), refreshed_sessions AS (
+                    UPDATE unmodeled_observation_events AS event SET last_seen_at = NOW()
+                    FROM incoming AS x
+                    WHERE event.session_id = x.session_id
+                      AND event.last_seen_at < NOW() - INTERVAL '{_LAST_SEEN_REFRESH_SECONDS} seconds'
+                      AND event.source = x.source AND event.kind = x.kind AND event.name = x.name
+                      AND event.server_name = x.server_name AND event.tool_type = x.tool_type
+                      AND event.source_ref = x.source_ref AND event.sample_hash = x.sample_hash
                 )
-                WHERE event.session_id IS NOT DISTINCT FROM x.session_id
+                UPDATE unmodeled_observation_events AS event SET last_seen_at = NOW()
+                FROM incoming AS x
+                WHERE event.session_id IS NULL AND x.session_id IS NULL
+                  AND event.last_seen_at < NOW() - INTERVAL '{_LAST_SEEN_REFRESH_SECONDS} seconds'
                   AND event.source = x.source AND event.kind = x.kind AND event.name = x.name
                   AND event.server_name = x.server_name AND event.tool_type = x.tool_type
                   AND event.source_ref = x.source_ref AND event.sample_hash = x.sample_hash
                 """,
                 (payload,),
+                search_trace,
             )
             counts: dict[tuple[str, ...], int] = {}
             fields = ("source", "kind", "name", "server_name", "tool_type")
@@ -385,7 +449,7 @@ class UnmodeledObservationStore:
                 txn,
                 batch_id,
                 "refresh_aggregates",
-                """
+                f"""
                 WITH incoming AS (
                     SELECT * FROM jsonb_to_recordset(%s::jsonb) AS x(
                         source text, kind text, name text, server_name text, tool_type text,
@@ -395,6 +459,7 @@ class UnmodeledObservationStore:
                     UPDATE unmodeled_observations AS aggregate SET last_seen_at = NOW()
                     FROM incoming AS x
                     WHERE x.count = 0
+                      AND aggregate.last_seen_at < NOW() - INTERVAL '{_LAST_SEEN_REFRESH_SECONDS} seconds'
                       AND aggregate.source = x.source AND aggregate.kind = x.kind
                       AND aggregate.name = x.name AND aggregate.server_name = x.server_name
                       AND aggregate.tool_type = x.tool_type
@@ -418,6 +483,7 @@ class UnmodeledObservationStore:
                         THEN EXCLUDED.sample_hash ELSE unmodeled_observations.sample_hash END
                 """,
                 (json.dumps([aggregates[key] for key in sorted(aggregates)]),),
+                search_trace,
             )
         return len(inserted)
 
@@ -464,13 +530,14 @@ class UnmodeledObservationStore:
         return [_row_from_db(row) for row in rows]
 
     def prune_events_older_than(self, *, retention_days: int) -> int:
-        """Delete old occurrence guards; aggregate counts are retention-window counts."""
+        """Prune with refresh-interval grace so rounded last-seen cannot expire early."""
         days = max(1, int(retention_days))
         with self._db.transaction() as txn:
             deleted_rows = txn.execute(
-                """
+                f"""
                 DELETE FROM unmodeled_observation_events
                 WHERE last_seen_at < NOW() - (%s * INTERVAL '1 day')
+                                    - INTERVAL '{_LAST_SEEN_REFRESH_SECONDS} seconds'
                 RETURNING source, kind, name, server_name, tool_type
                 """,
                 (days,),

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from gobby.sessions.transcript_search_timing import _search_id
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.unmodeled_observations import (
@@ -36,7 +37,7 @@ class ObservationTracker:
             return
         pending, self._pending = self._pending, []
         try:
-            self._store.record_many(pending)
+            self._store.record_many(pending, search_trace=_search_id.get())
         except Exception:
             logger.debug("Failed to persist unmodeled transcript observations", exc_info=True)
 

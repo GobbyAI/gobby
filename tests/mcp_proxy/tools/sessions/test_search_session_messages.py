@@ -32,7 +32,7 @@ async def test_search_records_content_free_worker_phase_timings(
     private_text = "private-transcript-content"
     path = _transcript(tmp_path / "private-path.jsonl", [private_text] * 250)
     registry = _registry([_session("private-session-id", path)])
-    caplog.set_level(logging.INFO, logger="gobby.sessions.transcript_search_timing")
+    caplog.set_level(logging.DEBUG, logger="gobby.sessions.transcript_search_timing")
 
     result = await _search(
         registry,
@@ -46,6 +46,7 @@ async def test_search_records_content_free_worker_phase_timings(
     assert len(result["results"]) == limit
     records = [r for r in caplog.records if r.name == "gobby.sessions.transcript_search_timing"]
     assert records, "search must expose server-side worker phases before optimizing them"
+    assert all(record.levelno == logging.DEBUG for record in records)
     assert "phase=render" in caplog.text
     assert "queue_s=" in caplog.text
     assert "work_s=" in caplog.text
@@ -105,7 +106,7 @@ async def test_large_codex_search_phase_logs_preserve_results_and_continuation(
     session = _session("large-codex", path)
     session.source = "codex"
     registry = _registry([session])
-    caplog.set_level(logging.INFO, logger="gobby.sessions.transcript_search_timing")
+    caplog.set_level(logging.DEBUG, logger="gobby.sessions.transcript_search_timing")
 
     first = await _search(
         registry, query="needle", session_id=session.id, limit=limit, full_content=full_content
