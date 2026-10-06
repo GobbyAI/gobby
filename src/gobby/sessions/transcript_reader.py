@@ -281,21 +281,23 @@ class TranscriptReader:
 
         def render() -> WindowResult:
             try:
-                return render_window(
-                    path,
-                    resolved.source or "claude",
-                    session_id,
-                    index,
-                    limit=limit,
-                    offset=offset,
-                    order=order,
-                    lines=resolved.lines,
-                    gzip_index=resolved.gzip_index,
-                    max_span=max_span,
-                    observation_tracker=tracker,
-                )
+                with transcript_search_timing("parse_render"):
+                    return render_window(
+                        path,
+                        resolved.source or "claude",
+                        session_id,
+                        index,
+                        limit=limit,
+                        offset=offset,
+                        order=order,
+                        lines=resolved.lines,
+                        gzip_index=resolved.gzip_index,
+                        max_span=max_span,
+                        observation_tracker=tracker,
+                    )
             finally:
-                tracker.flush()
+                with transcript_search_timing("telemetry_flush"):
+                    tracker.flush()
 
         return await transcript_to_thread(render)
 

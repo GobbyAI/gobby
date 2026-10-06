@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+import logging
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
+from time import perf_counter
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -20,6 +23,67 @@ pytestmark = pytest.mark.unit
 
 # unmodeled_observation_events.session_id is a native uuid column.
 SESSION_STORAGE = "aeaeaeae-0000-4000-8000-00000000ac01"
+
+
+def test_large_event_table_batch_refresh_uses_occurrence_key_index(
+    temp_db: HubDatabase,
+) -> None:
+    """A transcript batch must locate its rows rather than scan common tool history."""
+    temp_db.execute(
+        """
+        INSERT INTO unmodeled_observation_events
+            (id, session_id, source, kind, name, source_ref, sample_hash)
+        SELECT md5(i::text)::uuid, %s::uuid, 'codex', 'block_type', 'scale_tool',
+               i::text, 'seed'
+        FROM generate_series(1, 300000) AS i
+        """,
+        (SESSION_STORAGE,),
+    )
+    temp_db.execute("ANALYZE unmodeled_observation_events")
+    observations = [_observation("scale_tool", source_ref=str(i)) for i in range(120)]
+    store = UnmodeledObservationStore(temp_db)
+    real_transaction = temp_db.transaction
+    statements: list[tuple[str, Any]] = []
+    timings: list[float] = []
+
+    @contextmanager
+    def measured_transaction() -> Iterator[Transaction]:
+        with real_transaction() as transaction:
+
+            def execute(sql: str, parameters: Any = None) -> Any:
+                started = perf_counter()
+                try:
+                    return transaction.execute(sql, parameters)
+                finally:
+                    statements.append((sql, parameters))
+                    timings.append(perf_counter() - started)
+
+            spy = MagicMock(wraps=transaction)
+            spy.execute.side_effect = execute
+            yield cast(Transaction, spy)
+
+    with patch.object(temp_db, "transaction", side_effect=measured_transaction):
+        assert store.record_many(observations) == 120
+    refresh_sql, parameters = statements[1]
+    row = temp_db.fetchone("EXPLAIN (FORMAT JSON) " + refresh_sql, parameters)
+    assert row is not None
+    plan = json.dumps(row["QUERY PLAN"])
+    print(f"BATCH_PHASE_SECONDS {timings}")
+    print(f"REFRESH_PLAN {plan}")
+    assert "unmodeled_observation_events_dedup_key" in plan
+
+
+def test_batch_records_content_free_statement_phases(
+    temp_db: HubDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="gobby.storage.unmodeled_observations")
+    observation = _observation("private-tool-name")
+    assert UnmodeledObservationStore(temp_db).record_many([observation]) == 1
+    for phase in ("connection", "insert_events", "refresh_events", "refresh_aggregates", "commit"):
+        assert f"phase={phase} event=started" in caplog.text
+        assert f"phase={phase} event=finished" in caplog.text
+    for private_value in (observation.name, SESSION_STORAGE, "secret-value", "payload"):
+        assert private_value not in caplog.text
 
 
 @pytest.mark.parametrize("session_id", [SESSION_STORAGE, None])

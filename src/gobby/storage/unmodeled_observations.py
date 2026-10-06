@@ -5,15 +5,62 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import Cursor, HubDatabase, Transaction
 from gobby.utils.datetime import normalize_datetime_model, require_stored_datetime
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _batch_transaction(db: HubDatabase, batch_id: str) -> Iterator[Transaction]:
+    """Time acquisition and transaction exit without recording database details."""
+    started = perf_counter()
+    exiting: float | None = None
+    logger.info("unmodeled_batch batch=%s phase=connection event=started", batch_id)
+    try:
+        with db.transaction() as txn:
+            logger.info(
+                "unmodeled_batch batch=%s phase=connection event=finished elapsed_s=%.6f",
+                batch_id,
+                perf_counter() - started,
+            )
+            try:
+                yield txn
+            finally:
+                exiting = perf_counter()
+                logger.info("unmodeled_batch batch=%s phase=commit event=started", batch_id)
+    finally:
+        if exiting is not None:
+            logger.info(
+                "unmodeled_batch batch=%s phase=commit event=finished elapsed_s=%.6f",
+                batch_id,
+                perf_counter() - exiting,
+            )
+
+
+def _batch_execute(
+    txn: Transaction, batch_id: str, phase: str, sql: str, parameters: tuple[str]
+) -> Cursor:
+    started = perf_counter()
+    logger.info("unmodeled_batch batch=%s phase=%s event=started", batch_id, phase)
+    try:
+        return txn.execute(sql, parameters)
+    finally:
+        logger.info(
+            "unmodeled_batch batch=%s phase=%s event=finished elapsed_s=%.6f",
+            batch_id,
+            phase,
+            perf_counter() - started,
+        )
+
 
 _HASH_VERSION = "unmodeled-observation-sample-v2"
 _MAX_KEYS = 50
@@ -273,8 +320,12 @@ class UnmodeledObservationStore:
             return 0
         # Consistent lock order also lets overlapping concurrent batches compose.
         payload = json.dumps([events[key] for key in sorted(events)])
-        with self._db.transaction() as txn:
-            inserted = txn.execute(
+        batch_id = uuid4().hex
+        with _batch_transaction(self._db, batch_id) as txn:
+            inserted = _batch_execute(
+                txn,
+                batch_id,
+                "insert_events",
                 """
                 INSERT INTO unmodeled_observation_events (
                     id, session_id, source, kind, name, server_name, tool_type,
@@ -294,7 +345,10 @@ class UnmodeledObservationStore:
                 """,
                 (payload,),
             ).fetchall()
-            txn.execute(
+            _batch_execute(
+                txn,
+                batch_id,
+                "refresh_events",
                 """
                 UPDATE unmodeled_observation_events AS event SET last_seen_at = NOW()
                 FROM jsonb_to_recordset(%s::jsonb) AS x(
@@ -327,7 +381,10 @@ class UnmodeledObservationStore:
                 key = tuple(str(event[field]) for field in fields)
                 if identity in novel or key not in aggregates:
                     aggregates[key] = {**event, "count": counts.get(key, 0)}
-            txn.execute(
+            _batch_execute(
+                txn,
+                batch_id,
+                "refresh_aggregates",
                 """
                 WITH incoming AS (
                     SELECT * FROM jsonb_to_recordset(%s::jsonb) AS x(
