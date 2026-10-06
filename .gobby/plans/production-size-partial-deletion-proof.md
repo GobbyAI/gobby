@@ -25,6 +25,11 @@ The fix has two halves, as Josh chose (option B):
   byte-identical to the base minus the declared lines. No added line can hide
   behind the proof.
 
+The adversarial review also found a generic close-finalization race:
+`commit_close` adopts a re-fetched task row after its last gate-input check.
+The Orchestrator placed the fix in this plan as 2.2 (19:44 CT, 2026-10-05),
+because it is what keeps 2.1's proof binding intact.
+
 Anything the grammar cannot express exactly fails closed: mixed add/delete
 edits, in-file moves, renames, malformed or stale proofs. Those keep today's
 split requirement. Whole-file deletion (`operation: delete`) is unchanged and
@@ -34,7 +39,7 @@ This plan does not depend on the Chrome plan or its workaround. It does not
 touch gclient. The pane-accessor split that plan already carries stays as it
 is.
 
-Ownership: the Python daemon implements both leaves. The Orchestrator routes
+Ownership: all three leaves are Python daemon work. The Orchestrator routes
 them to developer seats.
 
 ## Decision Record
@@ -142,6 +147,12 @@ them to developer seats.
      description's proof lines, and finalization's existing fingerprint
      recheck turns a proof edited after evaluation into a stale close. A
      description edit outside the proof lines still closes.
+   - That recheck runs before `link_close_commit_shas` re-fetches the row,
+     and it is the re-fetched row's `updated_at` that the close transition
+     uses as its compare-and-set. 2.2 repeats the comparison on that linked
+     row, so the transition adopts only a row whose gate inputs match the
+     evaluation. A later change fails the compare-and-set with
+     `TaskStaleStateError`.
 9. **Base drift.** The base binding is exact by design. When another change
    moves the file after the plan is validated, the close fails closed. To
    recover:
@@ -163,6 +174,9 @@ them to developer seats.
     - Fingerprinting the whole description would stale a close on any
       unrelated description edit. Today finalization rechecks scope instead
       of fingerprinting the description.
+    - A proof-only recheck on the linked row would leave the same window
+      open for every other gate input, such as `validation_criteria`. 2.2
+      reuses the full fingerprint comparison.
 
 ## As-Is Facts
 `kind: framing`
@@ -550,7 +564,8 @@ grammar and nothing else.
 `kind: framing`
 
 **Goal:** a leaf carrying a delete-lines proof closes only when the close
-candidate's file is byte-identical to the declared deletion.
+candidate's file is byte-identical to the declared deletion, and the close
+transition adopts only a task row whose gate inputs match the evaluation.
 
 ### 2.1 Size-proof check in close gate 8 [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -569,7 +584,6 @@ Split the committed-result check into the new module `src/gobby/mcp_proxy/tools/
 
 Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_tool.py` — no-edit-reason: it calls `_evaluate_close` with unchanged keyword arguments, and the new check runs inside it.
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py` — no-edit-reason: its `CloseEvaluationFingerprint.capture` call keeps its arguments, and its existing fingerprint comparison picks up the new field.
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_preview.py` — no-edit-reason: it only stores the captured `CloseEvaluationFingerprint` on `CloseEvaluation`.
 - `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py` — no-edit-reason: its task descriptions carry no delete-lines entry, so the check returns before any Git call and gate 8 is unchanged.
 - `tests/mcp_proxy/tools/tasks/test_lifecycle_close_orchestration.py` — no-edit-reason: it replaces `_evaluate_close` with mocks or runs proof-free descriptions.
@@ -614,10 +628,12 @@ Consumers unchanged:
   `validation_criteria` but not the description
   (`_close_evaluation_support.py:70-103`), so a refreshed proof would close
   unchecked today. `fingerprint_differences` (`:121`) iterates the
-  dataclass fields, so it names a new field without change.
-- Read-only, no change: `_lifecycle_close_finalization.py` (fresh scope at
-  about `:334`, fingerprint recheck at `:280`) and
-  `_lifecycle_review_gate.py`. The `capture` call sites
+  dataclass fields, so it names a new field without change. A later window,
+  between that comparison and the linker's re-fetch, is closed generically
+  by 2.2.
+- Read-only in this deliverable: `_lifecycle_close_finalization.py` (fresh
+  scope at about `:334`, fingerprint recheck at `:280`; 2.2 edits it later)
+  and `_lifecycle_review_gate.py`. The `capture` call sites
   (`_lifecycle_close.py:282`, `:449` and finalization `:280`) keep their
   arguments.
 - Rejected:
@@ -795,7 +811,8 @@ before the close. The docs describe only this check.
   test:
   `tests/mcp_proxy/tools/tasks/test_close_candidate.py::test_size_proof_mismatch_fails_task_scope_gate`.
 - 2.1.7 - A proof edited after evaluation stales the close. When the fresh
-  row changes only the proof's `base-blob` and `lines` for the same path,
+  row from the first fetch (`_lifecycle_close_finalization.py:248`) changes
+  only the proof's `base-blob` and `lines` for the same path,
   `_commit_close` returns the stale-close response, the task stays open,
   and `fingerprint_differences` names `size_proof_lines`. This holds for an
   ordinary close and for a deliberate close of an escalated task. A fresh
@@ -809,12 +826,111 @@ before the close. The docs describe only this check.
   scope justification cannot cure it. behavior: "size_proof_mismatch" in
   `src/gobby/install/shared/skills/gobby/references/tasks/closing.md`.
 
+### 2.2 Recheck close gate inputs on the linked row [category: code] (depends: 2.1)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py::commit_close`
+- `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::*` — scope-reason: add the linked-row fingerprint recheck tests beside the existing commit-close tests
+
+Consumers unchanged:
+- `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py` — no-edit-reason: it runs `_evaluate_close` then `commit_close` on a real harness with no concurrent row edit, so the linked row's fingerprint equals the evaluated one and the close proceeds as today.
+
+**Research context:**
+- Found by Adv2 during this plan's review. The Orchestrator placed it here
+  at 19:44 CT on 2026-10-05 so that ownership stays with one plan. It is
+  generic: any gate input changed in the window is adopted unchecked today,
+  not only 2.1's proof lines.
+- The race. Adv2's `gcode evidence` excerpts are each complete with no
+  warnings:
+  - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py:231-305`
+    (`6b94c6105da81a39e465b277bc6023b44cff419ee2a1b933630e46085d0c2829`):
+    `commit_close` fetches a fresh row (`:248`), then captures and compares
+    a fresh `CloseEvaluationFingerprint` (`:280-291`).
+  - Same file `:305-413`
+    (`ff6047cab49144a582443dae7a969442c8788cc4f073d9b700b2b13472cb998e`): it
+    rechecks scope (`:349`), then calls `link_close_commit_shas` with
+    `task=fresh` and adopts the returned `linked` row (`:377-383`).
+  - Same file `:413-481`
+    (`145726706434669abc42b441e1dd3ba6a27e75ce784c1694e22c75779baa0ff5`):
+    `close_task` runs with `expected_updated_at=linked.updated_at` (`:423`).
+  - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_preview.py:474-508`
+    (`aedae5351da6e763bd732e5ebd73f63e62ba66b0cf81dc84ecefc1e4d80b7d73`):
+    `link_close_commit_shas` re-fetches the row (`:502`) and returns it
+    (`:508`), even when every candidate is already linked (`:486-487`).
+  - `src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py:1-122`
+    (`598cbbbfdab8610c7898c5f7eed5096da04e5079024c7b5245a53064d6b13b9c`):
+    the fingerprint fields and `capture` (`:70-103`).
+  - A gate input such as `validation_criteria`, or 2.1's
+    `size_proof_lines`, that changes between the comparison at `:285` and
+    the linker's fetch at `:502` is therefore adopted by the
+    compare-and-set without a check. A change after `:502` fails the
+    compare-and-set with `TaskStaleStateError`.
+- Adv2 reproduced it with a read-only probe: an already-linked candidate and
+  a fake manager whose row changed only description and version. The helper
+  returned the changed row with no error.
+- Linking changes no fingerprint field. `link_commit` adds to
+  `task.commits`, which the fingerprint does not hold. Child state and
+  attribution are inputs to `capture`, not read from the row.
+- `_lifecycle_close_finalization.py` has 539 lines. The 850 heuristic does
+  not apply.
+- Rejected:
+  - a proof-only recheck, which leaves the window open for every other gate
+    input;
+  - a second fetch or a row lock. The fingerprint comparison on the row the
+    compare-and-set uses is enough.
+
+Implementation in `commit_close`
+(`src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py`):
+- Extract the existing comparison at `:285-291` into a module-private
+  helper `_gate_inputs_changed(evaluation, fingerprint) -> dict[str, Any] |
+  None`. It records `evaluation.extra["changed_gate_inputs"]` and returns
+  today's `stale_close_response(...)` with the same message ("Task gate
+  inputs changed after evaluation (...); retry close_task."), or `None`.
+- Call it at `:285` with `fresh_fingerprint`. Behavior there is unchanged.
+- Call it again right after the `link_error` check, before
+  `determine_close_outcome`, with `CloseEvaluationFingerprint.capture(linked,
+  children_state=fresh_children_state, attribution=fresh_attribution)`.
+  This reuses the child and attribution state captured for the first
+  comparison, and a non-`None` result is returned at once.
+- The module grows by about 10 lines.
+
+**Verification:**
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/tasks/test_close_task_flow.py tests/mcp_proxy/tools/tasks/test_close_candidate.py tests/mcp_proxy/tools/tasks/test_lifecycle_close_orchestration.py -q`,
+then `uv run ruff check src/gobby/mcp_proxy/tools/tasks`,
+`uv run ruff format --check src/gobby/mcp_proxy/tools/tasks` and
+`uv run mypy src/gobby/mcp_proxy/tools/tasks`.
+
+**Granularity:** three acceptance items, one production file, one outcome:
+the close transition adopts only a row whose gate inputs match the
+evaluation. The guard is independent of 2.1's Git check. It depends on 2.1
+only so that its test can exercise the `size_proof_lines` field.
+
+**Acceptance:**
+
+- 2.2.1 - The close is refused when `validation_criteria` changes between
+  the first fingerprint comparison and the linker's fetch. `_commit_close`
+  returns the stale-close response, `changed_gate_inputs` names
+  `validation_criteria`, and `close_task` is not called. test:
+  `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_linked_row_gate_input_change_stales_close`.
+- 2.2.2 - The close is likewise refused when, in the same window, only the
+  proof's `base-blob` and `lines` change, both for an ordinary close and for
+  a deliberate close of an escalated task. `changed_gate_inputs` names
+  `size_proof_lines`. test:
+  `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_linked_row_proof_edit_stales_close`.
+- 2.2.3 - With no concurrent edit, both of these close: a close that links
+  a new candidate, and one whose candidate is already linked. A benign
+  bookkeeping change on the linked row (`updated_at`, `path_cache`) also
+  still closes. test:
+  `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_linked_row_recheck_keeps_benign_closes`.
+
 ## Rollout
 `kind: framing`
 
-- 1.1 and 2.1 land through the Merge Manager in order.
-- After 2.1 lands, the Orchestrator schedules a daemon restart with the usual
-  global notice. It makes the close gate and both skill references live.
+- 1.1, 2.1 and 2.2 land through the Merge Manager in order.
+- After 2.2 lands, the Orchestrator schedules a daemon restart with the usual
+  global notice. It makes the close gate, the linked-row recheck and both
+  skill references live.
 - Until DAEMON BACK after that restart, no plan may author a `delete-lines`
   proof. 1.1 alone would accept a proof whose committed result nothing yet
   checks.
@@ -823,8 +939,8 @@ before the close. The docs describe only this check.
 ## V2: Verification
 `kind: verification`
 
-- Both leaves' focused pytest, ruff and mypy commands pass, as listed in each
-  deliverable.
+- All three leaves' focused pytest, ruff and mypy commands pass, as listed
+  in each deliverable.
 - A rerun of the As-Is reproduction with a valid proof deleting line 1
   returns no issue. The proof-free entry still returns the 927-line
   diagnostic.
