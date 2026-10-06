@@ -46,6 +46,7 @@ from gobby.sessions.transcript_limits import FLAT_ROW_LIMIT_MAX, RENDERED_LIMIT_
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_parsing import _parsed_to_dicts
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH, find_transcript_on_disk
+from gobby.sessions.transcript_search_timing import transcript_search_timing, transcript_to_thread
 from gobby.sessions.transcript_source import _resolve_effective_source
 from gobby.sessions.transcript_status import get_transcript_status_for_session
 from gobby.sessions.transcript_window import (
@@ -252,7 +253,8 @@ class TranscriptReader:
 
     async def _open_windowable(self, session_id: str) -> _Windowable | None:
         """Resolve one session's windowable snapshot, or None when unreadable."""
-        session = self._session_manager.get(session_id)
+        with transcript_search_timing("session_lookup"):
+            session = self._session_manager.get(session_id)
         if not session:
             return None
         try:
@@ -295,7 +297,7 @@ class TranscriptReader:
             finally:
                 tracker.flush()
 
-        return await asyncio.to_thread(render)
+        return await transcript_to_thread(render)
 
     async def get_rendered_messages(
         self,
@@ -396,8 +398,8 @@ class TranscriptReader:
         require_local_session_ownership(session)
         path = await self._get_live_transcript_path(session_id, session)
         if path and os.path.isfile(path):
-            st = await asyncio.to_thread(os.stat, path)
-            source = await asyncio.to_thread(
+            st = await transcript_to_thread(os.stat, path)
+            source = await transcript_to_thread(
                 detect_source_bounded, path, session_source=session.source
             )
             index = await get_or_build_index(
@@ -413,8 +415,8 @@ class TranscriptReader:
         if session.external_id:
             archive_path = get_archive_dir(self._archive_dir) / f"{session.external_id}.jsonl.gz"
             if archive_path.is_file():
-                st = await asyncio.to_thread(os.stat, str(archive_path))
-                sample = await asyncio.to_thread(
+                st = await transcript_to_thread(os.stat, str(archive_path))
+                sample = await transcript_to_thread(
                     _read_archive_sample, str(archive_path), SOURCE_SAMPLE_LINES
                 )
                 source = self._archive_source(session, sample, session_id)
@@ -423,7 +425,7 @@ class TranscriptReader:
                     mtime_ns=st.st_mtime_ns,
                     size=st.st_size,
                 )
-                st = await asyncio.to_thread(os.stat, str(archive_path))
+                st = await transcript_to_thread(os.stat, str(archive_path))
                 index = await get_or_build_index(
                     str(archive_path),
                     source,

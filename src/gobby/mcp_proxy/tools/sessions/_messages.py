@@ -12,6 +12,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.transcript_limits import RENDERED_LIMIT_MAX
+from gobby.sessions.transcript_search_timing import transcript_search_timing
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -193,14 +194,16 @@ def register_message_tools(
                 resume = _decode_cursor(cursor)
 
             if session_id:
-                resolved_id = _resolve_session_id(session_id)
-                start = 0
-                if resume is not None:
-                    if resume[0] != resolved_id:
-                        return {"success": False, "error": "cursor belongs to another session"}
-                    start = resume[1]
-                session_results: list[dict[str, Any]] = []
-                group = await _scan_session(resolved_id, start, session_results)
+                with transcript_search_timing():
+                    with transcript_search_timing("resolve_session_id"):
+                        resolved_id = _resolve_session_id(session_id)
+                    start = 0
+                    if resume is not None:
+                        if resume[0] != resolved_id:
+                            return {"success": False, "error": "cursor belongs to another session"}
+                        start = resume[1]
+                    session_results: list[dict[str, Any]] = []
+                    group = await _scan_session(resolved_id, start, session_results)
                 next_cursor = None if group is None else _encode_cursor(resolved_id, group)
                 return _search_response(query, session_results, 1, result_limit, next_cursor)
 
@@ -241,7 +244,8 @@ def register_message_tools(
                     next_cursor = _encode_cursor(sid, 0)
                     break
                 searched_sessions += 1
-                group = await _scan_session(sid, start, results)
+                with transcript_search_timing():
+                    group = await _scan_session(sid, start, results)
                 start = 0
                 if group is not None:
                     next_cursor = _encode_cursor(sid, group)
