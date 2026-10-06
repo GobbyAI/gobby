@@ -12,6 +12,7 @@ import pytest
 from gobby.agents.external_write_grants import apply_write_grant
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.sandbox_domains import GIT_DOMAINS, PACKAGE_REGISTRY_DOMAINS, trusted_domains
+from gobby.agents.sandbox_network import apply_network_override
 from gobby.agents.sandbox_policy import allowed_domains
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
@@ -51,6 +52,59 @@ async def test_trusted_definition_adds_seed_to_srt_allowlist(tmp_path: Path) -> 
     assert {domain.lower() for domain in expected} <= domains
     for body in (_body("none"), None):
         assert await resolve_spawn_sandbox(daemon_config, grant, body) == base
+
+
+@pytest.mark.parametrize(
+    ("definition", "override", "effective"),
+    [
+        pytest.param("none", None, "none", id="inherits-none"),
+        pytest.param("trusted", None, "trusted", id="inherits-trusted"),
+        pytest.param("none", "trusted", "trusted", id="widens-to-trusted"),
+        pytest.param("trusted", "none", "none", id="narrows-to-none"),
+    ],
+)
+async def test_override_sets_the_profile_for_one_launch(
+    tmp_path: Path,
+    definition: Literal["none", "trusted"],
+    override: Literal["none", "trusted"] | None,
+    effective: Literal["none", "trusted"],
+) -> None:
+    daemon_config = DaemonConfig()
+    grant = {"canonical_roots": [str(tmp_path)]}
+    loaded = _body(definition)
+
+    launch = apply_network_override(loaded, override)
+
+    assert launch is not None
+    assert launch.network == effective
+    assert await resolve_spawn_sandbox(daemon_config, grant, launch) == (
+        await resolve_spawn_sandbox(daemon_config, grant, _body(effective))
+    )
+    # The loaded definition keeps its profile, so a later launch with no override inherits it.
+    assert loaded.network == definition
+    later = apply_network_override(loaded, None)
+    assert later is not None
+    assert later.network == definition
+
+
+@pytest.mark.parametrize(
+    ("body", "override"),
+    [
+        pytest.param(_body("none"), "open", id="unknown-profile"),
+        pytest.param(_body("trusted"), "", id="empty-profile"),
+        pytest.param(None, "trusted", id="no-definition-trusted"),
+        pytest.param(None, "none", id="no-definition-none"),
+    ],
+)
+def test_override_refuses_unknown_profile_or_missing_definition(
+    body: AgentDefinitionBody | None, override: str
+) -> None:
+    with pytest.raises(ValueError, match="network"):
+        apply_network_override(body, override)
+
+
+def test_no_override_without_definition_stays_unresolved() -> None:
+    assert apply_network_override(None, None) is None
 
 
 def _runner() -> MagicMock:
