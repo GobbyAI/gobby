@@ -190,7 +190,7 @@ class MiniBuildHarness:
                 self.task_manager,
                 root,
                 "plan_file",
-                BuildOptions(isolation="none", skip_stages=self.skipped_stages),
+                BuildOptions(checkout_mode="none", skip_stages=self.skipped_stages),
                 skip_stages=self.skipped_stages,
             ),
             by_session_id=None,
@@ -351,7 +351,7 @@ class MiniBuildHarness:
             task.id,
             allow_automation=True,
             unattended=True,
-            isolation="none",
+            checkout_mode="none",
         )
         return task.id
 
@@ -371,7 +371,7 @@ class MiniBuildHarness:
             child.id,
             allow_automation=True,
             unattended=True,
-            isolation="none",
+            checkout_mode="none",
         )
         self.task_manager.stage_states.initialize_manifest(
             child.id,
@@ -415,7 +415,7 @@ class MiniBuildHarness:
                 "completed": False,
             }
         )
-        return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
+        return {"success": True, "run_id": run.id, "checkout_mode": kwargs["checkout_mode"]}
 
     async def _fake_pipeline_background(
         self,
@@ -637,7 +637,7 @@ def test_real_small_gobby_build_canary(tmp_path: Path) -> None:
             "--yes",
             "--skip-stage",
             "pr",
-            "--isolation",
+            "--checkout-mode",
             "none",
         ],
         cwd=Path(__file__).resolve().parents[2],
@@ -690,7 +690,7 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
     task_manager.update_task(
         task.id,
         allow_automation=True,
-        isolation="none",
+        checkout_mode="none",
     )
     task_manager.stage_states.initialize_manifest(
         task.id,
@@ -713,7 +713,7 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
             task_id=str(kwargs["task_id"]),
             run_id=reviewer_run_id,
         )
-        return {"success": True, "run_id": run.id, "isolation": "none"}
+        return {"success": True, "run_id": run.id, "checkout_mode": "none"}
 
     async def run_inline(func: object, *args: object, **kwargs: object) -> object:
         return cast(Any, func)(*args, **kwargs)
@@ -821,7 +821,7 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
     task_manager.update_task(
         task.id,
         allow_automation=True,
-        isolation="none",
+        checkout_mode="none",
     )
     task_manager.stage_states.initialize_manifest(
         task.id,
@@ -864,7 +864,7 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
             task_id=str(kwargs["task_id"]),
             run_id=replacement_run_id,
         )
-        return {"success": True, "run_id": run.id, "isolation": "none"}
+        return {"success": True, "run_id": run.id, "checkout_mode": "none"}
 
     services = SimpleNamespace(
         database=temp_db,

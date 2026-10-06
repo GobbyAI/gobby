@@ -33,7 +33,7 @@ describe("IsolationTargetSelector", () => {
 
     render(
       <IsolationTargetSelector
-        isolation="worktree"
+        checkoutMode="worktree"
         worktreeId="worktree-detached"
         cloneId={null}
         onWorktreeIdChange={vi.fn()}
@@ -60,7 +60,7 @@ describe("IsolationTargetSelector", () => {
 
     render(
       <IsolationTargetSelector
-        isolation="clone"
+        checkoutMode="clone"
         worktreeId={null}
         cloneId="clone-detached"
         onWorktreeIdChange={vi.fn()}

@@ -242,8 +242,8 @@ def _is_closed(task: object) -> bool:
     return bool(_field(task, "is_closed", False) or _field(task, "closed_at"))
 
 
-def _isolation(task: object) -> str:
-    return str(_field(task, "isolation", "worktree"))
+def _checkout_mode(task: object) -> str:
+    return str(_field(task, "checkout_mode", "worktree"))
 
 
 def _task_has_label(task: object, label: str) -> bool:
@@ -326,7 +326,7 @@ __all__ = [
     "_is_closed",
     "_is_epic",
     "_is_leaf",
-    "_isolation",
+    "_checkout_mode",
     "_matching_current_stage",
     "_previous_stage_done",
     "_prompt_context",

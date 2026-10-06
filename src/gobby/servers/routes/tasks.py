@@ -110,9 +110,9 @@ class TaskUpdateRequest(BaseModel):
         default=None,
         description="Enable or disable dispatcher automation for this task.",
     )
-    isolation: Literal["none", "worktree", "clone"] | None = Field(
+    checkout_mode: Literal["none", "worktree", "clone"] | None = Field(
         default=None,
-        description="Automation isolation mode for future dispatch.",
+        description="Automation checkout mode for future dispatch.",
     )
 
     @field_validator("task_type")
@@ -196,7 +196,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         """Attach a definitive build_state to each serialized task.
 
         Derived from allow_automation + the durable ``gobby build`` lifecycle
-        event — never from planning scaffolding (stages/agent/isolation) or
+        event — never from planning scaffolding (stages/agent/checkout_mode) or
         dispatch_failure_count, which misclassify a cleanly stopped build.
         """
         if not task_dicts:
@@ -455,15 +455,15 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             kwargs: dict[str, Any] = {}
             for field_name in request_data.model_fields_set:
                 kwargs[field_name] = getattr(request_data, field_name)
-            if "isolation" in kwargs:
-                if kwargs["isolation"] is None:
-                    kwargs.pop("isolation")
+            if "checkout_mode" in kwargs:
+                if kwargs["checkout_mode"] is None:
+                    kwargs.pop("checkout_mode")
                 else:
-                    kwargs["isolation"] = await server.run_db(
+                    kwargs["checkout_mode"] = await server.run_db(
                         validate_task_isolation_artifacts,
                         server.task_manager,
                         resolved_id,
-                        cast(str, kwargs["isolation"]),
+                        cast(str, kwargs["checkout_mode"]),
                     )
 
             if not kwargs:

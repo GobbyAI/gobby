@@ -13,7 +13,7 @@ import {
 } from "../fields";
 import type { BuildProfile, ProfileSource } from "./StagesTabData";
 import {
-  ISOLATION_OPTIONS,
+  CHECKOUT_MODE_OPTIONS,
   PROFILE_SOURCE_OPTIONS,
   createProfileDraft,
 } from "./StagesTabData";
@@ -136,12 +136,12 @@ export function ProfileDetailPanel({
             onChange={(value) => setField("source", value as ProfileSource)}
           />
           <SelectField
-            label="Isolation"
-            ariaLabel="Isolation"
-            value={draft.isolation}
-            options={[...ISOLATION_OPTIONS]}
+            label="Checkout mode"
+            ariaLabel="Checkout mode"
+            value={draft.checkout_mode}
+            options={[...CHECKOUT_MODE_OPTIONS]}
             onChange={(value) =>
-              setField("isolation", value as BuildProfile["isolation"])
+              setField("checkout_mode", value as BuildProfile["checkout_mode"])
             }
           />
           <SwitchField

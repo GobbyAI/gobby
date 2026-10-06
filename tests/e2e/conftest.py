@@ -2004,6 +2004,8 @@ _PRODUCTION_DAEMON_ARTIFACT_PREFIXES = (
     "comms_attachments/",
     "gcode-runtime/",
     "grants/",
+    # Live provider hooks record transport failures independently of the test daemon.
+    "hooks/failures/",
     "logs/",
     "run/sandbox/",
     "runtime/managed-executions/",

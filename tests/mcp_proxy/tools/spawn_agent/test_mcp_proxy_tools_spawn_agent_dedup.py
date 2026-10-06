@@ -161,7 +161,7 @@ class TestSpawnAgentDedup:
                     "prompt": "Test prompt",
                     "parent_session_id": "parent-789",
                     "task_id": "#101",
-                    "isolation": "worktree",
+                    "checkout_mode": "worktree",
                 },
             )
 
@@ -371,7 +371,7 @@ class TestSpawnAgentDedup:
                     "prompt": "Merge prompt",
                     "parent_session_id": "parent-merge-session",
                     "task_id": "#14084",
-                    "isolation": "none",
+                    "checkout_mode": "none",
                 },
             )
             await _drain_spawn_background_tasks()

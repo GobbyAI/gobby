@@ -459,7 +459,7 @@ def test_stage_pipeline_mutex_suppresses_expansion_terminal_event(
         task_type="epic",
         validation_criteria="Test task completion is observable.",
     )
-    task_manager.update_task(task.id, isolation="worktree", allow_automation=True)
+    task_manager.update_task(task.id, checkout_mode="worktree", allow_automation=True)
     initialize_manifest(
         temp_db,
         task.id,

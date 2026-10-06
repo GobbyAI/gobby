@@ -203,7 +203,7 @@ async def test_repair_marks_tracked_project_json_skip_worktree(tmp_path: Path) -
     _git(parent, "config", "user.name", "Test User")
     _git(parent, "add", ".gobby/project.json")
     _git(parent, "commit", "-m", "initial")
-    _git(parent, "worktree", "add", "-b", "isolation", str(worktree), "main")
+    _git(parent, "worktree", "add", "-b", "checkout_mode", str(worktree), "main")
     parent_exclude_path = parent / ".git" / "info" / "exclude"
     parent_exclude_before = parent_exclude_path.read_text(encoding="utf-8")
     (parent / ".mcp.json").write_text('{"mcpServers":{}}\n', encoding="utf-8")

@@ -138,7 +138,7 @@ def _epic_root(
         title="Epic root",
         task_type="epic",
         allow_automation=True,
-        isolation="none",
+        checkout_mode="none",
     )
     initialize_manifest(
         temp_db,

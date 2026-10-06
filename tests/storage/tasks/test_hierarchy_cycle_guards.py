@@ -10,7 +10,7 @@ from gobby.build.observability import _subtree_tasks
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import (
-    Isolation,
+    CheckoutMode,
     LocalTaskManager,
     _path_cache,
     cascade_build_state_to_subtree,
@@ -149,7 +149,7 @@ def test_build_subtree_readers_and_cascade_bound_cycles(
     updated = cascade_build_state_to_subtree(
         temp_db,
         root.id,
-        Isolation.none,
+        CheckoutMode.none,
         unattended=False,
         allow_automation=True,
     )

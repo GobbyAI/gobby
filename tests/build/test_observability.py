@@ -28,7 +28,7 @@ def _automated_task(temp_db, project_id: str, title: str = "Task"):
         validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(task.id, stage_names=["development"])
-    return manager.update_task(task.id, allow_automation=True, isolation="none")
+    return manager.update_task(task.id, allow_automation=True, checkout_mode="none")
 
 
 def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
@@ -252,7 +252,7 @@ def test_build_stop_target_disables_status_and_dispatch_for_tree(
         validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(root.id, stage_names=["planning", "development"])
-    root = manager.update_task(root.id, allow_automation=True, isolation="none")
+    root = manager.update_task(root.id, allow_automation=True, checkout_mode="none")
     child = manager.create_task(
         project_id=project_id,
         title="Child",
@@ -260,7 +260,7 @@ def test_build_stop_target_disables_status_and_dispatch_for_tree(
         validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(child.id, stage_names=["development"])
-    child = manager.update_task(child.id, allow_automation=True, isolation="none")
+    child = manager.update_task(child.id, allow_automation=True, checkout_mode="none")
     manager.lifecycle_events.record_lifecycle_event(
         root.id,
         from_state=None,
@@ -372,7 +372,7 @@ def test_build_stop_target_preserves_review_approved_stage(
         validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(root.id, stage_names=["expansion", "development"])
-    root = manager.update_task(root.id, allow_automation=True, isolation="none")
+    root = manager.update_task(root.id, allow_automation=True, checkout_mode="none")
     manager.lifecycle_events.record_lifecycle_event(
         root.id,
         from_state=None,
@@ -418,7 +418,7 @@ def test_build_resume_target_reopens_project_gate_before_dispatch(
         validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(root.id, stage_names=["planning", "development"])
-    root = manager.update_task(root.id, allow_automation=False, isolation="none")
+    root = manager.update_task(root.id, allow_automation=False, checkout_mode="none")
     manager.lifecycle_events.record_lifecycle_event(
         root.id,
         from_state=None,
@@ -615,7 +615,7 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(
         task_type="epic",
         validation_criteria="Test task completion is observable.",
     )
-    manager.update_task(parent.id, allow_automation=False, isolation="none")
+    manager.update_task(parent.id, allow_automation=False, checkout_mode="none")
     manager.initialize_task_manifest(
         parent.id, stage_names=["planning", "expansion", "development"]
     )
@@ -635,7 +635,7 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(
         validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(ancestor_blocked.id, stage_names=["development"])
-    manager.update_task(ancestor_blocked.id, allow_automation=True, isolation="none")
+    manager.update_task(ancestor_blocked.id, allow_automation=True, checkout_mode="none")
     no_stage = manager.create_task(
         project_id=project_id,
         title="No stage",
@@ -649,7 +649,7 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(
         validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(no_match.id, stage_names=["merge"])
-    manager.update_task(no_match.id, allow_automation=True, isolation="none")
+    manager.update_task(no_match.id, allow_automation=True, checkout_mode="none")
     temp_db.execute(
         "UPDATE task_stage_states SET state = 'needs_review' WHERE task_id = %s",
         (no_match.id,),
@@ -692,7 +692,7 @@ def test_explain_dispatch_reports_epic_descendant_gate(
         task_type="epic",
         validation_criteria="Test task completion is observable.",
     )
-    manager.update_task(root.id, allow_automation=True, isolation="none")
+    manager.update_task(root.id, allow_automation=True, checkout_mode="none")
     manager.initialize_task_manifest(root.id, stage_names=["development", "epic_qa", "merge"])
     temp_db.execute(
         "UPDATE task_stage_states SET state = 'done' WHERE task_id = %s AND stage_name = 'development'",

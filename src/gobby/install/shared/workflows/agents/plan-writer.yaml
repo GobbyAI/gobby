@@ -11,7 +11,7 @@ surfaces: [spawn, persona]
 provider: codex
 model: gpt-5.6-sol
 reasoning_effort: medium
-isolation: none
+checkout_mode: none
 blocked_tools:
   - "EnterWorktree"
 blocked_mcp_tools:

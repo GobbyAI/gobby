@@ -23,7 +23,7 @@ from gobby.build.validation import (
     _validate_epic_isolation_artifacts,
     _validate_task_ref_isolation_artifacts,
 )
-from gobby.config.build import Isolation
+from gobby.config.build import CheckoutMode
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 
@@ -47,16 +47,16 @@ async def build_leaf(
         raise ValueError(
             f"category {task.category} cannot be automated; expected one of: {allowed}"
         )
-    _validate_task_ref_isolation_artifacts(task_manager, task, opts.isolation)
+    _validate_task_ref_isolation_artifacts(task_manager, task, opts.checkout_mode)
 
     task_manager.update_task(
         task.id,
         allow_automation=True,
         unattended=opts.unattended,
-        isolation=opts.isolation,
+        checkout_mode=opts.checkout_mode,
         assigned_agent=opts.assigned_agent,
     )
-    if opts.isolation in {"worktree", "clone"} and target_branch:
+    if opts.checkout_mode in {"worktree", "clone"} and target_branch:
         task_manager.artifacts.set_artifact(task.id, "target_branch", target_branch)
     specs = initialize_stage_manifest(task_manager, task, opts, skip_stages, "leaf")
     initial_lifecycle = current_stage_name(task_manager, task.id, specs)
@@ -71,7 +71,7 @@ async def build_leaf(
         runtime=runtime,
     )
     if opts.quick and not opts.dry_run:
-        set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
+        set_automation_for_task_tree(task_manager, task, False, checkout_mode=opts.checkout_mode)
     return BuildResult(
         task_id=task.id,
         created=False,
@@ -100,7 +100,7 @@ async def build_epic(
     runtime: RuntimeHooks,
 ) -> BuildResult:
     artifacts = task_manager.artifacts.get_artifacts(task.id)
-    _validate_epic_isolation_artifacts(opts.isolation, artifacts)
+    _validate_epic_isolation_artifacts(opts.checkout_mode, artifacts)
     task_manager.artifacts.set_artifacts_atomic(
         task.id,
         target_branch=target_branch,
@@ -129,18 +129,18 @@ async def build_epic(
     if not opts.dry_run:
         cascade_result = task_manager.cascade_build_state_to_subtree(
             task.id,
-            isolation=opts.isolation,
+            checkout_mode=opts.checkout_mode,
             unattended=opts.unattended,
             skip_stages=skip_stages,
             allow_automation=True,
             parent_manifest_specs=cascade_specs,
-            include_merge_stage=opts.isolation in {"worktree", "clone"} and not opts.no_merge,
+            include_merge_stage=opts.checkout_mode in {"worktree", "clone"} and not opts.no_merge,
         )
         warnings.extend(
             f"Build cascade skipped task {failure.task_id}: {failure.error_type}: {failure.message}"
             for failure in cascade_result.failures
         )
-    if opts.isolation == "none":
+    if opts.checkout_mode == "none":
         _cascade_target_branch_to_subtree(task_manager, task.id, target_branch)
     initial_lifecycle = current_stage_name(task_manager, task.id, specs)
     record_build_event(task_manager, task.id, initial_lifecycle)
@@ -154,7 +154,7 @@ async def build_epic(
         runtime=runtime,
     )
     if opts.quick and not opts.dry_run:
-        set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
+        set_automation_for_task_tree(task_manager, task, False, checkout_mode=opts.checkout_mode)
     return BuildResult(
         task_id=task.id,
         created=False,
@@ -173,14 +173,14 @@ def set_automation_for_task_tree(
     task: Task,
     enabled: bool,
     *,
-    isolation: Isolation,
+    checkout_mode: CheckoutMode,
 ) -> None:
     if task.task_type != "epic":
         task_manager.update_task(task.id, allow_automation=enabled)
         return
     task_manager.cascade_build_state_to_subtree(
         task.id,
-        isolation=isolation,
+        checkout_mode=checkout_mode,
         unattended=False,
         allow_automation=enabled,
     )

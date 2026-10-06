@@ -414,7 +414,7 @@ def _automated_task(
         validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(task.id, stage_names=["development"])
-    return manager.update_task(task.id, allow_automation=True, isolation="none")
+    return manager.update_task(task.id, allow_automation=True, checkout_mode="none")
 
 
 def _seed_parked_daemon_stop_run(

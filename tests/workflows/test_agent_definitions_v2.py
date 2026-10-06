@@ -60,7 +60,7 @@ class TestAgentDefinitionBodyModel:
         assert body.model is None
         assert body.api_base is None
         assert body.api_token is None
-        assert body.isolation == "inherit"
+        assert body.checkout_mode == "inherit"
         assert body.base_branch == "inherit"
         assert body.timeout == 0
         assert body.workflows.rules == []
@@ -82,7 +82,7 @@ class TestAgentDefinitionBodyModel:
             },
             provider="codex",
             model="gpt-5.4",
-            isolation="worktree",
+            checkout_mode="worktree",
             base_branch="develop",
             timeout=300.0,
             workflows=make_agent_workflows(rules=["no-code-writing", "require-tests"]),
@@ -96,7 +96,7 @@ class TestAgentDefinitionBodyModel:
         )
         assert body.provider == "codex"
         assert body.model == "gpt-5.4"
-        assert body.isolation == "worktree"
+        assert body.checkout_mode == "worktree"
         assert body.base_branch == "develop"
         assert body.timeout == 300.0
         assert body.workflows.rules == ["no-code-writing", "require-tests"]
@@ -107,7 +107,9 @@ class TestAgentDefinitionBodyModel:
         from gobby.workflows.definitions import AgentDefinitionBody, AgentStepWorkflowBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 25, f"Expected 25 fields, got {len(fields)}: {list(fields.keys())}"
+        assert len(fields) == 26, f"Expected 26 fields, got {len(fields)}: {list(fields.keys())}"
+        assert "checkout_mode" in fields
+        assert "isolation" not in fields
         assert "network" in fields
         assert "prewarm_pre_commit_store" in fields
         assert "spawnable_agents" in fields
@@ -201,9 +203,9 @@ class TestAgentDefinitionBodyModel:
 
         for iso in ("none", "worktree", "clone"):
             body = make_agent_definition(
-                name="test", prompts={"agent": "Run the task."}, isolation=iso
+                name="test", prompts={"agent": "Run the task."}, checkout_mode=iso
             )
-            assert body.isolation == iso
+            assert body.checkout_mode == iso
 
     def test_api_base_and_token(self) -> None:
         """api_base and api_token configure local model endpoints."""
@@ -229,7 +231,7 @@ class TestAgentDefinitionBodyModel:
         assert body.api_token == "${MY_API_KEY}"
 
         body = make_agent_definition(name="test", prompts={"agent": "Run the task."})
-        assert body.isolation == "inherit"
+        assert body.checkout_mode == "inherit"
 
     def test_reasoning_effort_normalizes_string_values(self) -> None:
         """reasoning_effort keeps string normalization while rejecting coercion."""
@@ -284,7 +286,7 @@ class TestAgentDefinitionBodySerialization:
             prompts={"agent": "Write clean code."},
             provider="claude",
             model="claude-sonnet-4-6",
-            isolation="worktree",
+            checkout_mode="worktree",
             base_branch="main",
             timeout=120.0,
             workflows=make_agent_workflows(rules=["require-task-before-edit", "require-commit"]),
@@ -299,7 +301,7 @@ class TestAgentDefinitionBodySerialization:
         assert restored.prompts == original.prompts
         assert restored.provider == original.provider
         assert restored.model == original.model
-        assert restored.isolation == original.isolation
+        assert restored.checkout_mode == original.checkout_mode
         assert restored.base_branch == original.base_branch
         assert restored.timeout == original.timeout
         assert restored.workflows.rules == original.workflows.rules
@@ -416,7 +418,7 @@ class TestAgentDefinitionStorage:
             prompts={"agent": "Test everything."},
             provider="codex",
             model="gpt-5.4",
-            isolation="worktree",
+            checkout_mode="worktree",
             base_branch="develop",
             timeout=300.0,
             workflows=make_agent_workflows(rules=["no-code-writing"]),
@@ -437,7 +439,7 @@ class TestAgentDefinitionStorage:
         assert restored.prompts == original.prompts
         assert restored.provider == original.provider
         assert restored.model == original.model
-        assert restored.isolation == original.isolation
+        assert restored.checkout_mode == original.checkout_mode
         assert restored.base_branch == original.base_branch
         assert restored.timeout == original.timeout
         assert restored.workflows.rules == original.workflows.rules

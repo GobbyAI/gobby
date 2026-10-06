@@ -721,18 +721,18 @@ class TestUpdateTask:
     def test_update_isolation(self, client: TestClient, sample_task: dict) -> None:
         response = client.patch(
             f"/api/tasks/{sample_task['id']}",
-            json={"isolation": "none"},
+            json={"checkout_mode": "none"},
         )
 
         assert response.status_code == 200
-        assert response.json()["isolation"] == "none"
+        assert response.json()["checkout_mode"] == "none"
 
     def test_update_isolation_rejects_invalid_enum(
         self, client: TestClient, sample_task: dict
     ) -> None:
         response = client.patch(
             f"/api/tasks/{sample_task['id']}",
-            json={"isolation": "sandbox"},
+            json={"checkout_mode": "sandbox"},
         )
 
         assert response.status_code == 422
@@ -752,7 +752,7 @@ class TestUpdateTask:
 
         response = client.patch(
             f"/api/tasks/{sample_task['id']}",
-            json={"isolation": "worktree"},
+            json={"checkout_mode": "worktree"},
         )
 
         assert response.status_code == 400

@@ -115,7 +115,7 @@ def stage_review_setup(temp_db: HubDatabase, tmp_path: Path) -> StageReviewSetup
         "Plan review anchor",
         task_type="task",
         category="planning",
-        isolation="none",
+        checkout_mode="none",
         validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(task.id, stage_names=["planning"])

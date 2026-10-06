@@ -57,7 +57,7 @@ def _task(
         allow_automation=True,
         task_type="task",
         assigned_agent="backend-developer",
-        isolation="worktree",
+        checkout_mode="worktree",
     )
     initialize_manifest(temp_db, task.id, [spec("development", 0)])
     set_stage_state(

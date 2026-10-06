@@ -11,7 +11,7 @@ import yaml
 
 from gobby.dispatch.constants import MAX_ACTIVE_AGENTS
 
-Isolation = Literal["none", "worktree", "clone"]
+CheckoutMode = Literal["none", "worktree", "clone"]
 SkippableStage = Literal[
     "ideation",
     "research",
@@ -127,7 +127,7 @@ def _string_key_mapping(value: Mapping[Any, Any], source: str) -> dict[str, Any]
 
 __all__ = [
     "BuildConfig",
-    "Isolation",
+    "CheckoutMode",
     "SKIPPABLE_STAGES",
     "StageCapOverride",
     "SkippableStage",

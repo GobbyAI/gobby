@@ -12,7 +12,7 @@ import click
 import psycopg
 
 from gobby.cli.runtime import require_cli_database
-from gobby.config.build import Isolation
+from gobby.config.build import CheckoutMode
 from gobby.storage.build_profiles import (
     BuildProfileError,
     BuildProfileLoader,
@@ -108,7 +108,9 @@ def show_profile(name: str, source: str, project_id: str | None, include_deleted
 @click.option("--label", "display_label", required=True)
 @click.option("--description", required=True)
 @click.option("--skip-stages")
-@click.option("--isolation", type=click.Choice(["none", "worktree", "clone"]), default="worktree")
+@click.option(
+    "--checkout-mode", type=click.Choice(["none", "worktree", "clone"]), default="worktree"
+)
 @click.option("--unattended/--no-unattended", default=False)
 @click.option("--enabled/--disabled", default=True)
 @click.option("--source", type=click.Choice(["installed", "project"]), default="project")
@@ -119,7 +121,7 @@ def create_profile(
     display_label: str,
     description: str,
     skip_stages: str | None,
-    isolation: Isolation,
+    checkout_mode: CheckoutMode,
     unattended: bool,
     enabled: bool,
     source: str,
@@ -133,7 +135,7 @@ def create_profile(
                 display_label=display_label,
                 description=description,
                 skip_stages=_parse_csv(skip_stages),
-                isolation=isolation,
+                checkout_mode=checkout_mode,
                 unattended=unattended,
                 enabled=enabled,
                 source=_profile_source(source),
@@ -166,7 +168,7 @@ def _profile_toggle(name: str, source: str, project_id: str | None, enabled: boo
 @click.option("--label", "display_label")
 @click.option("--description")
 @click.option("--skip-stages")
-@click.option("--isolation", type=click.Choice(["none", "worktree", "clone"]))
+@click.option("--checkout-mode", type=click.Choice(["none", "worktree", "clone"]))
 @click.option("--unattended/--no-unattended", default=None)
 @click.option("--enabled/--disabled", default=None)
 @click.option("--tags")
@@ -177,7 +179,7 @@ def update_profile(
     display_label: str | None,
     description: str | None,
     skip_stages: str | None,
-    isolation: Isolation | None,
+    checkout_mode: CheckoutMode | None,
     unattended: bool | None,
     enabled: bool | None,
     tags: str | None,
@@ -189,8 +191,8 @@ def update_profile(
         updates["description"] = description
     if skip_stages is not None:
         updates["skip_stages"] = _parse_csv(skip_stages)
-    if isolation is not None:
-        updates["isolation"] = isolation
+    if checkout_mode is not None:
+        updates["checkout_mode"] = checkout_mode
     if unattended is not None:
         updates["unattended"] = unattended
     if enabled is not None:

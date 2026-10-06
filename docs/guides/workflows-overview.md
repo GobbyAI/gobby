@@ -95,7 +95,7 @@ stage is ready.
 Dispatch composes:
 
 - Build state from `gobby build`: `allow_automation`, `unattended`,
-  `isolation`, resolved stage manifest, `assigned_agent`,
+  `checkout_mode`, resolved stage manifest, `assigned_agent`,
   `additional_skills`, target branch, and PR/merge controls
 - Task lifecycle from `gobby-tasks`
 - Sparse dispatch state from `task_artifacts`

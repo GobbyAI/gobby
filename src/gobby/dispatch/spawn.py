@@ -11,10 +11,10 @@ from gobby.dispatch.context import services_daemon_config
 from gobby.dispatch.prompts import attach_plan_review_evidence
 from gobby.dispatch.skill_composition import inspect_skill_composition
 from gobby.dispatch.spawn_artifacts import (
-    SpawnIsolation,
+    SpawnCheckoutMode,
     _artifact_ref_resolves,
     _artifact_ref_sha,
-    _effective_spawn_isolation,
+    _effective_spawn_checkout_mode,
     _field,
     _guard_merge_ready_leaf_branch,
     _persist_spawn_artifacts,
@@ -63,11 +63,11 @@ __all__ = [
     "DispatchSpawnFailed",
     "DispatchSpawnUnavailable",
     "MAX_DISPATCH_SPAWN_ATTEMPTS",
-    "SpawnIsolation",
+    "SpawnCheckoutMode",
     "_artifact_ref_resolves",
     "_artifact_ref_sha",
     "_coordinator_session_matches_project",
-    "_effective_spawn_isolation",
+    "_effective_spawn_checkout_mode",
     "_field",
     "_guard_merge_ready_leaf_branch",
     "_persist_spawn_artifacts",
@@ -291,7 +291,7 @@ async def spawn_agent(
     workflow = (
         agent_body.workflows.pipeline if agent_body and agent_body.workflows.pipeline else None
     )
-    effective_isolation = _effective_spawn_isolation(
+    effective_checkout_mode = _effective_spawn_checkout_mode(
         task=task,
         action=action,
         agent_body=agent_body,
@@ -303,7 +303,7 @@ async def spawn_agent(
         task_manager=task_manager,
         project_id=project_id,
         services=services,
-        isolation=effective_isolation,
+        checkout_mode=effective_checkout_mode,
     )
     artifacts = await asyncio.to_thread(
         _sanitize_reusable_spawn_artifacts,
@@ -311,7 +311,7 @@ async def spawn_agent(
         task=task,
         artifacts=artifacts,
         services=services,
-        isolation=effective_isolation,
+        checkout_mode=effective_checkout_mode,
     )
     artifacts = await asyncio.to_thread(
         _repair_leaf_target_branch,
@@ -321,7 +321,7 @@ async def spawn_agent(
         project_id=project_id,
         services=services,
         artifacts=artifacts,
-        isolation=effective_isolation,
+        checkout_mode=effective_checkout_mode,
     )
     await asyncio.to_thread(
         _guard_merge_ready_leaf_branch,
@@ -331,15 +331,15 @@ async def spawn_agent(
         project_id=project_id,
         services=services,
         artifacts=artifacts,
-        isolation=effective_isolation,
+        checkout_mode=effective_checkout_mode,
     )
-    operation_root_artifacts = artifacts if effective_isolation != "none" else None
+    operation_root_artifacts = artifacts if effective_checkout_mode != "none" else None
     project_path = await _resolve_spawn_operation_root(db, project_id, operation_root_artifacts)
     worktree_id, clone_id = _spawn_workspace_ids(
         task=task,
         action=action,
         artifacts=artifacts,
-        isolation=effective_isolation,
+        checkout_mode=effective_checkout_mode,
     )
     prompt, evidence_service, evidence_id = await asyncio.to_thread(
         _prepare_plan_adversary_evidence,
@@ -361,7 +361,7 @@ async def spawn_agent(
             agent_lookup_name=action.agent_slug,
             task_id=action.task_id,
             task_manager=task_manager,
-            isolation=effective_isolation,
+            checkout_mode=effective_checkout_mode,
             branch_name=None,
             base_branch=artifacts.target_branch,
             clone_id=clone_id,

@@ -37,7 +37,7 @@ ROLES_DIR = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/rule
 GUIDANCE_HEADING = "## Seat Guidance"
 
 RECEIPT = "enhancer-pass-spent"
-ENHANCER_CALL = {"agent": "plan-enhancer-taskless-old", "isolation": "none"}
+ENHANCER_CALL = {"agent": "plan-enhancer-taskless-old", "checkout_mode": "none"}
 DEVELOPER: dict[str, Any] = {"_agent_type": "developer"}
 ASSISTANT: dict[str, Any] = {"_agent_type": "default", "_persona_name": "assistant"}
 ARCHIVIST: dict[str, Any] = {"_agent_type": "archivist"}
@@ -396,8 +396,8 @@ async def test_plan_writer_enhancer_pass_is_per_task(harness: _ProxyHarness) -> 
 
     # A different agent, another isolation, or no claimed task is refused.
     for arguments in (
-        {"agent": "developer", "isolation": "none"},
-        {"agent": "plan-enhancer-taskless-old", "isolation": "worktree"},
+        {"agent": "developer", "checkout_mode": "none"},
+        {"agent": "plan-enhancer-taskless-old", "checkout_mode": "worktree"},
         {"agent": "plan-enhancer-taskless-old"},
     ):
         refused = await harness.spawn(writer, **arguments)

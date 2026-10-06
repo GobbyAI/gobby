@@ -289,7 +289,7 @@ async def test_pre_spawn_snapshot_transport(
             task_id=stage_review_setup.task_id,
             run_id=run_id,
         )
-        return {"success": True, "run_id": run_id, "isolation": "none"}
+        return {"success": True, "run_id": run_id, "checkout_mode": "none"}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -379,7 +379,7 @@ async def test_pre_spawn_snapshot_transport(
             task_id=None,
             run_id=wrong_run_id,
         )
-        return {"success": True, "run_id": wrong_run_id, "isolation": "none"}
+        return {"success": True, "run_id": wrong_run_id, "checkout_mode": "none"}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",

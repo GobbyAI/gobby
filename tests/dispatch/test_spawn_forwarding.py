@@ -89,7 +89,7 @@ async def test_terminal_backend_reaches_the_effect(
         task_type="task",
         category="code",
         allow_automation=True,
-        isolation="none",
+        checkout_mode="none",
         validation_criteria="Spawn forwarding is observable.",
     )
     captured: dict[str, object] = {}

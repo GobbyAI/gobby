@@ -345,11 +345,11 @@ export function AgentProviderSettings({
         </div>
       </MetaRow>
 
-      <MetaRow label="Isolation">
+      <MetaRow label="Checkout mode">
         <NativeSelect
-          aria-label="Isolation"
-          value={isGitProject ? form.isolation : "inherit"}
-          onChange={(event) => set("isolation", event.target.value)}
+          aria-label="Checkout mode"
+          value={isGitProject ? form.checkout_mode : "inherit"}
+          onChange={(event) => set("checkout_mode", event.target.value)}
           disabled={!isGitProject}
         >
           <option value="inherit">(default)</option>

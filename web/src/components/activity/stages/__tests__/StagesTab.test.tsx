@@ -60,7 +60,7 @@ type ProfileRecord = {
   display_label: string;
   description: string;
   skip_stages: string[];
-  isolation: "none" | "worktree" | "clone";
+  checkout_mode: "none" | "worktree" | "clone";
   unattended: boolean;
   enabled: boolean;
   source: "installed" | "project";
@@ -109,7 +109,7 @@ function makeProfile(overrides: Partial<ProfileRecord> = {}): ProfileRecord {
     display_label: "Fast build",
     description: "Short autonomous build",
     skip_stages: ["verification"],
-    isolation: "worktree",
+    checkout_mode: "worktree",
     unattended: true,
     enabled: true,
     source: "project",

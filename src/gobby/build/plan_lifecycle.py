@@ -44,7 +44,7 @@ async def build_plan_file(
         task.id,
         allow_automation=True,
         unattended=opts.unattended,
-        isolation=opts.isolation,
+        checkout_mode=opts.checkout_mode,
         assigned_agent=opts.assigned_agent,
     )
     task_manager.artifacts.set_artifacts_atomic(
@@ -67,7 +67,7 @@ async def build_plan_file(
         runtime=runtime,
     )
     if opts.quick and not opts.dry_run:
-        set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
+        set_automation_for_task_tree(task_manager, task, False, checkout_mode=opts.checkout_mode)
     return BuildResult(
         task_id=task.id,
         created=True,

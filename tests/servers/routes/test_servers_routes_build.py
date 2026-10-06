@@ -103,8 +103,8 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
     opts = call.args[1]
     assert opts.quick is True
     assert opts.skip_stages == ["pr"]
-    assert opts.isolation == "worktree"
-    assert opts.isolation_explicit is True
+    assert opts.checkout_mode == "worktree"
+    assert opts.checkout_mode_explicit is True
     assert opts.no_merge is False
     assert opts.pr == "123"
     assert [
@@ -126,10 +126,10 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
 def test_buildrequest_accepts_profile_and_isolation_fields() -> None:
     from gobby.servers.routes.build import BuildRequest
 
-    request = BuildRequest(input_ref="#42", profile="default", isolation="worktree")
+    request = BuildRequest(input_ref="#42", profile="default", checkout_mode="worktree")
 
     assert request.profile == "default"
-    assert request.isolation == "worktree"
+    assert request.checkout_mode == "worktree"
 
 
 def test_post_api_build_omitted_backend_defaults_to_worktree() -> None:
@@ -151,8 +151,8 @@ def test_post_api_build_omitted_backend_defaults_to_worktree() -> None:
 
     assert response.status_code == 200
     opts = build.call_args.args[1]
-    assert opts.isolation == "worktree"
-    assert opts.isolation_explicit is False
+    assert opts.checkout_mode == "worktree"
+    assert opts.checkout_mode_explicit is False
 
 
 def test_post_api_build_resolves_project_from_request_context(tmp_path: Path) -> None:
@@ -235,15 +235,15 @@ def test_post_api_build_returns_structured_profile_errors() -> None:
     }
 
 
-@pytest.mark.parametrize("isolation", ["none", "worktree"])
-def test_post_api_build_rejects_clone_isolation_conflicts(isolation: str) -> None:
+@pytest.mark.parametrize("checkout_mode", ["none", "worktree"])
+def test_post_api_build_rejects_clone_isolation_conflicts(checkout_mode: str) -> None:
     response = _client().post(
         "/api/build",
-        json={"input_ref": "#42", "clone": True, "isolation": isolation},
+        json={"input_ref": "#42", "clone": True, "checkout_mode": checkout_mode},
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == f"clone=true conflicts with isolation={isolation}"
+    assert response.json()["detail"] == f"clone=true conflicts with checkout_mode={checkout_mode}"
 
 
 def test_post_api_build_stop_preserves_project_wide_control() -> None:
@@ -581,7 +581,7 @@ def test_post_api_build_restart_forwards_destructive_flags() -> None:
                 "force": True,
                 "no_resume": True,
                 "skip_stages": ["pr"],
-                "isolation": "worktree",
+                "checkout_mode": "worktree",
                 "target_branch": "release/build",
                 "stage": ["planning:max_work_attempts=99,max_review_rounds=99"],
                 "coordinator": "#6075",
@@ -599,7 +599,7 @@ def test_post_api_build_restart_forwards_destructive_flags() -> None:
     assert call.kwargs["no_resume"] is True
     opts = call.kwargs["opts"]
     assert opts.skip_stages == ["pr"]
-    assert opts.isolation == "worktree"
+    assert opts.checkout_mode == "worktree"
     assert opts.target_branch == "release/build"
     assert opts.coordinator_session_ref == "#6075"
     assert [
@@ -676,7 +676,7 @@ def test_post_api_build_restart_explicit_default_options_create_opts() -> None:
     opts = restart.call_args.kwargs["opts"]
     assert opts is not None
     assert opts.skip_stages == []
-    assert opts.isolation == "worktree"
+    assert opts.checkout_mode == "worktree"
     assert opts.no_merge is False
     assert opts.max_retries is None
 

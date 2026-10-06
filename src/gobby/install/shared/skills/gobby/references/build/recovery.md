@@ -32,7 +32,7 @@ destructive recovery, not a shortcut around review, failed evidence, or a claim.
 Control previews may record best-effort history; do not promise zero database
 writes for every `dry_run` surface.
 
-After a code fix affecting dispatch, spawn, controls, stages, handoff, isolation,
+After a code fix affecting dispatch, spawn, controls, stages, handoff, checkout_mode,
 or startup, keep affected builds blocked until the running daemon has the fix.
 Record stale agents and workspace metadata; coordinate stopping them as needed.
 Notify active sessions through `gobby-agents:send_message`, obtain a quiet
@@ -42,6 +42,6 @@ Use admin guidance for daemon lifecycle. A commit alone does not update runtime
 code. Keep stale-behavior defects open until the affected path is verified.
 
 Guides: [Build controls](../../../../../../../../docs/guides/cli-commands.md#build-automation)
-and [Isolation](../../../../../../../../docs/guides/dispatch.md#isolation).
+and [Checkout Modes](../../../../../../../../docs/guides/dispatch.md#checkout-modes).
 
 _Last verified: 2026-09-12_

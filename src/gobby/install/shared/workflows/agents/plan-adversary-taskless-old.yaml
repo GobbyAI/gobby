@@ -12,7 +12,7 @@ provider: grok
 model: grok-4.7
 reasoning_effort: xhigh
 reasoning_required: false
-isolation: none
+checkout_mode: none
 blocked_tools:
   - "EnterWorktree"
 blocked_mcp_tools:

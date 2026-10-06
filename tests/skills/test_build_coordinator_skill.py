@@ -40,7 +40,7 @@ def test_build_coordinator_documents_interactive_e2e_validation_pattern() -> Non
 def test_build_coordinator_forbids_changing_requirements_to_pass_e2e() -> None:
     content = _body()
     assert (
-        "preserve the requested agent/provider, stage route, isolation, scope, and criteria"
+        "preserve the requested agent/provider, stage route, checkout_mode, scope, and criteria"
         in content
     )
     assert "real user decision after practical fixes have been exhausted" in content
@@ -124,7 +124,7 @@ def test_build_coordinator_documents_set_handoff_tool_path() -> None:
 def test_build_coordinator_requires_restart_after_dispatch_affecting_fixes() -> None:
     content = _body("recovery")
     for expected in (
-        "dispatch, spawn, controls, stages, handoff, isolation, or startup",
+        "dispatch, spawn, controls, stages, handoff, checkout_mode, or startup",
         "keep affected builds blocked",
         "running daemon has the fix",
         "Record stale agents and workspace metadata",

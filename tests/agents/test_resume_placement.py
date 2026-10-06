@@ -159,7 +159,7 @@ def _metadata(
         "parent_session_id": h.parent_id,
         "machine_id": LOCAL_MACHINE_ID,
         "sandbox_config": SandboxConfig(enabled=True, backend=backend).model_dump(),
-        "worktree_id": h.isolation.worktree_id,
+        "worktree_id": h.checkout_mode.worktree_id,
         "placement": placement,
     }
 

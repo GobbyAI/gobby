@@ -42,7 +42,7 @@ def test_project_profile_rejects_pull_request_delivery_mode(
             display_label="Submit Upstream",
             description="Open PRs against upstream.",
             skip_stages=["merge"],
-            isolation="worktree",
+            checkout_mode="worktree",
             unattended=False,
             delivery_mode="pull_request",
             source="project",
@@ -59,7 +59,7 @@ def test_project_profile_rejects_active_duplicate_before_insert(
         display_label="Local Fast",
         description="Local only",
         skip_stages=[],
-        isolation="worktree",
+        checkout_mode="worktree",
         unattended=False,
         source="project",
         project_id=sample_project["id"],
@@ -71,7 +71,7 @@ def test_project_profile_rejects_active_duplicate_before_insert(
             display_label="Local Fast Duplicate",
             description="Duplicate",
             skip_stages=[],
-            isolation="worktree",
+            checkout_mode="worktree",
             unattended=False,
             source="project",
             project_id=sample_project["id"],
@@ -87,7 +87,7 @@ def test_profile_from_row_logs_malformed_json(
         display_label="Local Fast",
         description="Local only",
         skip_stages=[],
-        isolation="worktree",
+        checkout_mode="worktree",
         unattended=False,
         source="project",
         project_id=sample_project["id"],
@@ -115,7 +115,7 @@ def test_project_profile_rejects_invalid_delivery_target_repo(
             display_label="Bad Submit",
             description="Invalid target repo.",
             skip_stages=["merge"],
-            isolation="worktree",
+            checkout_mode="worktree",
             unattended=False,
             delivery_mode="auto",
             delivery_target_repo="too/many/parts",
@@ -134,7 +134,7 @@ def test_project_disabled_profile_blocks_installed_fallback(
         display_label="Default Override",
         description="Project override",
         skip_stages=[],
-        isolation="worktree",
+        checkout_mode="worktree",
         unattended=False,
         enabled=False,
         source="project",
@@ -154,7 +154,7 @@ def test_custom_profile_cannot_restore_without_bundled_counterpart(
         display_label="Local Fast",
         description="Local only",
         skip_stages=["pr", "merge"],
-        isolation="none",
+        checkout_mode="none",
         unattended=False,
         source="project",
         project_id=sample_project["id"],
@@ -184,7 +184,7 @@ def test_project_profile_round_trips_plan_enhancement_rounds(
         display_label="Enhance",
         description="Non-zero plan-enhancement rounds.",
         skip_stages=[],
-        isolation="worktree",
+        checkout_mode="worktree",
         unattended=False,
         plan_enhancement_rounds=2,
         source="project",
@@ -215,7 +215,7 @@ def test_create_rejects_negative_plan_enhancement_rounds(
             display_label="Bad",
             description="Negative rounds.",
             skip_stages=[],
-            isolation="worktree",
+            checkout_mode="worktree",
             unattended=False,
             plan_enhancement_rounds=-1,
             source="project",
@@ -302,6 +302,15 @@ profiles:
     loader = BuildProfileLoader(registry)
     loader.sync(temp_db)
     manager = BuildProfileManager(temp_db)
+    # Seed the pre-rename digest so a field spelling change cannot take sync ownership.
+    temp_db.execute(
+        "UPDATE build_profiles SET bundled_hash = %s WHERE name = %s AND source = 'installed'",
+        ("067ab202e2bbc59ff0e68416c412e72a17f1cce661cddd6d16c29df0e9be4f2a", "default"),
+    )
+    migrated = manager.get("default", source="installed", project_id=None)
+    assert migrated is not None
+    assert migrated.checkout_mode == "worktree"
+    assert migrated.state == "bundled"
     manager.set_enabled("default", source="installed", project_id=None, enabled=False)
 
     registry.write_text(

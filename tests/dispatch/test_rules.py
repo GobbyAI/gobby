@@ -96,7 +96,7 @@ def _task(**overrides):
         "is_escalated": False,
         "allow_automation": True,
         "unattended": False,
-        "isolation": "none",
+        "checkout_mode": "none",
         "assigned_agent": "backend-developer",
         "blocked_by": set(),
         "active_blocked_by": set(),
@@ -506,7 +506,7 @@ def test_isolation_rule_starts_development_and_defers_workspace_to_spawn() -> No
     from gobby.dispatch.actions import StartStageAction
 
     action = _evaluate(
-        _task_at("development", "ready", isolation="worktree"),
+        _task_at("development", "ready", checkout_mode="worktree"),
         _context(artifacts=_artifacts()),
     )
 
@@ -517,7 +517,7 @@ def test_isolation_rule_starts_development_and_defers_workspace_to_spawn() -> No
 def test_isolation_rule_starts_development_when_isolation_none() -> None:
     from gobby.dispatch.actions import StartStageAction
 
-    action = _evaluate(_task_at("development", "ready", isolation="none"))
+    action = _evaluate(_task_at("development", "ready", checkout_mode="none"))
 
     assert isinstance(action, StartStageAction)
     assert action.stage_name == "development"
@@ -525,7 +525,7 @@ def test_isolation_rule_starts_development_when_isolation_none() -> None:
 
 def test_dev_rule_blocked_by_missing_isolation_artifacts() -> None:
     action = _evaluate(
-        _task_at("development", "ready", isolation="worktree"),
+        _task_at("development", "ready", checkout_mode="worktree"),
         _context(artifacts=_artifacts()),
     )
 
@@ -537,7 +537,7 @@ def test_development_ready_with_dependency_does_not_start_workspace() -> None:
         _task_at(
             "development",
             "ready",
-            isolation="worktree",
+            checkout_mode="worktree",
             active_blocked_by={"27f6003c-1540-5098-9dfc-272e9497ba0e"},
         ),
         _context(artifacts=_artifacts()),
@@ -550,7 +550,7 @@ def test_dev_rule_fires_after_stage_start() -> None:
     from gobby.dispatch.actions import SpawnAgentAction
 
     action = _evaluate(
-        _task_at("development", "in_progress", isolation="worktree"),
+        _task_at("development", "in_progress", checkout_mode="worktree"),
         _context(artifacts=_artifacts(worktree_path="/tmp/wt", base_commit_sha="abc")),
     )
 

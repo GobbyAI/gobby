@@ -24,7 +24,7 @@ def _create_agent(
     db: PostgresHubDatabase,
     name: str = "test-agent",
     provider: str = "claude",
-    isolation: str | None = None,
+    checkout_mode: str | None = None,
     pipeline: str | None = None,
     base_branch: str = "main",
     project_id: str | None = None,
@@ -34,7 +34,7 @@ def _create_agent(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         provider=provider,
-        isolation=isolation,
+        checkout_mode=checkout_mode,
         base_branch=base_branch,
         workflows=make_agent_workflows(pipeline=pipeline),
     )
@@ -176,7 +176,7 @@ class TestIsolation:
         target_path.mkdir()
         _create_agent(
             definition_db,
-            isolation="worktree",
+            checkout_mode="worktree",
             base_branch="target-base",
             project_id=target_id,
         )
@@ -219,7 +219,7 @@ class TestIsolation:
         startup_path.mkdir()
         _create_agent(
             definition_db,
-            isolation="worktree",
+            checkout_mode="worktree",
             project_id=target_id,
         )
         monkeypatch.setattr(
@@ -252,7 +252,7 @@ class TestIsolation:
     ) -> None:
         """ISOLATION_DEPS_MISSING for worktree mode without deps."""
         db = definition_db
-        _create_agent(db, isolation="worktree")
+        _create_agent(db, checkout_mode="worktree")
 
         result = await evaluate_spawn(
             agent="test-agent",
@@ -268,7 +268,7 @@ class TestIsolation:
     async def test_isolation_deps_missing_clone(self, definition_db: PostgresHubDatabase) -> None:
         """ISOLATION_DEPS_MISSING for clone mode without deps."""
         db = definition_db
-        _create_agent(db, isolation="clone")
+        _create_agent(db, checkout_mode="clone")
 
         result = await evaluate_spawn(
             agent="test-agent",

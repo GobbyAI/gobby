@@ -30,7 +30,7 @@ def test_live_session_skill_defines_complete_lifecycle_and_recovery() -> None:
         '`labels=["live-session"]`',
         "`claim=true`",
         "`allow_automation=false`",
-        '`isolation="none"`',
+        '`checkout_mode="none"`',
         "`unattended=false`",
         "never create an empty commit",
         "post-close memory review",

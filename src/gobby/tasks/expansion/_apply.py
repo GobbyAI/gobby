@@ -48,7 +48,7 @@ def _inherit_build_state(
             task_id,
             allow_automation=True,
             unattended=parent.unattended,
-            isolation=parent.isolation.value,
+            checkout_mode=parent.checkout_mode.value,
         )
 
 
