@@ -60,8 +60,9 @@ them to developer seats.
      whole file's bytes.
    - Ranges must leave at least one line. Deleting every line is whole-file
      deletion.
-   - Candidate detection reads only the entry's ` — `-separated metadata
-     segments, never the target token, so a file named `delete-lines.py`
+   - Candidate detection reads the entry's ` — `-separated metadata
+     segments. It reads the target token only to check whether it is
+     literally `operation: delete-lines`, so a file named `delete-lines.py`
      stays an ordinary target.
    - A malformed candidate is an error, never an ordinary target. That
      includes a candidate whose path cannot be recovered.
@@ -317,6 +318,11 @@ Proof contract (the exact rules this leaf implements):
   - `<path>::*` — operation: delete-lines — base-blob: <40 hex> — lines: <ranges> — scope-reason: <text>
   ```
   - The separator is the em dash with single spaces (` — `).
+  - The bullet marker is optional. The regular expression accepts
+    `^\s*(?:[-*+]\s+)?`, because the inventory iterator also yields a
+    header-form entry (`Targets: <entry>`) without one. Everything after the
+    marker is matched exactly. `parse_delete_lines_proof` carries this in its
+    own expression, because it cannot import `_BULLET_RE`.
   - `<path>` is a canonical repository-relative POSIX file path. It is
     non-empty and has no leading `/`, no `.` or `..` component, no empty
     component (`//`), and no backslash, whitespace, backtick or colon. The
@@ -474,7 +480,8 @@ grammar and nothing else.
 
 **Acceptance:**
 
-- 1.1.1 - The canonical proof entry parses into path, base blob and ranges.
+- 1.1.1 - The canonical proof entry parses into path, base blob and ranges,
+  both as a bullet and in the header form without a bullet marker.
   Each non-canonical variant raises `DeleteLinesProofError`: missing,
   repeated or reordered key; backticked metadata; uppercase or short hex;
   non-`::*` target; `0`, a leading zero, `N-N`, descending, overlapping or
