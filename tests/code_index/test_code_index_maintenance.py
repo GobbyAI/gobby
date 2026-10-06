@@ -857,6 +857,7 @@ def _orphan_sweep_context(
                 graph_enabled=graph_enabled,
                 embedding_enabled=embedding_enabled,
                 maintenance_index_timeout_seconds=900,
+                maintenance_log_file="~/.gobby/logs/code-index-maintenance.log",
             ),
             run_db=run_db,
         ),

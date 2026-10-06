@@ -308,11 +308,7 @@ async def _sweep_orphaned_index_projects(context: CodeIndexContext) -> int:
                 exc_info=True,
             )
             log_gcode_maintenance_exception(
-                log_file=getattr(
-                    context.config,
-                    "maintenance_log_file",
-                    "~/.gobby/logs/code-index-maintenance.log",
-                ),
+                log_file=context.config.maintenance_log_file,
                 event="orphan_projection_cleanup",
                 project_id=project_id,
                 error=error,

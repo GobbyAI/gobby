@@ -1088,9 +1088,7 @@ fn maintenance_project_id_context_works_without_checkout() {
 #[test]
 #[serial_test::serial(serial_env)]
 fn maintenance_project_id_context_rejects_another_target() {
-    let error = maintenance_project_id_context(true, true)
-        .err()
-        .expect("scope rejection");
+    let error = maintenance_project_id_context(true, true).expect_err("scope rejection");
     assert!(
         error
             .to_string()
