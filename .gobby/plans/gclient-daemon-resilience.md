@@ -645,9 +645,10 @@ outcomes, and every wait below runs in the writer task or the spawned control ta
   cloned receiver, so one completion serves any number of dependent takes. Each
   release enqueues its own barrier, because a take may have gone out after the
   previous one. A close while a release barrier is pending enqueues
-  nothing: it sets `close_after_release` on the pane, and the close's detach or
-  kill is issued from that barrier's completion, after the release. A close with
-  no barrier pending enqueues its own `Close` barrier in the reserved slot. A
+  nothing: it reuses the pane's `pending_release()` receiver, and the close's
+  detach or kill is issued from that barrier's completion, after the release. A
+  close with no barrier pending enqueues its own `Close` barrier in the unbounded
+  writer channel. A
   pane's `Release` barrier first awaits the completion of that pane's own
   in-flight take, if any, so a release never reaches the daemon ahead of the take
   it undoes.
