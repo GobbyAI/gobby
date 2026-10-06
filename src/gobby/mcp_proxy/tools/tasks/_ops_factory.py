@@ -11,7 +11,7 @@ Tools included:
 - Artifacts (5): set/get artifact pointers and append idempotent description sections
 - Reindex (1): reindex_tasks
 - Build (1): build_task
-- Landing (1): set_landing_freeze
+- Landing (2): set_landing_freeze, land_commit
 """
 
 from collections.abc import Callable
@@ -113,7 +113,7 @@ def create_task_ops_registry(
     # Merge build automation entry point
     registry.merge_from(create_build_registry(ctx))
 
-    # Merge landing tools (freeze flag)
+    # Merge landing tools
     registry.merge_from(create_landing_registry(ctx))
 
     return registry

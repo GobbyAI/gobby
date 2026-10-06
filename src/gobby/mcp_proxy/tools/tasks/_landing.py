@@ -12,6 +12,10 @@ from gobby.mcp_proxy.tools.tasks._context import (
     RegistryContext,
     checkout_unresolved_error,
 )
+from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+from gobby.storage.hub.protocol import MainCheckoutLanding
+from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.land_commit import land_candidate
 from gobby.tasks.landing_policy import freeze_path, write_freeze
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.session_context import get_current_session_id
@@ -55,9 +59,10 @@ def create_landing_registry(ctx: RegistryContext) -> InternalToolRegistry:
             }
         common_dir = result.stdout.strip()
         try:
-            freeze = await asyncio.to_thread(
-                write_freeze, common_dir, on=on, reason=reason, session_id=session_id
-            )
+            async with ctx.task_manager.db.advisory_lock(MainCheckoutLanding(project_id)):
+                freeze = await asyncio.to_thread(
+                    write_freeze, common_dir, on=on, reason=reason, session_id=session_id
+                )
         except OSError as exc:
             return {"success": False, "error": f"Cannot write the landing freeze: {exc}"}
         return {"success": True, "freeze": asdict(freeze), "path": str(freeze_path(common_dir))}
@@ -78,6 +83,44 @@ def create_landing_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "required": ["on", "reason"],
         },
         func=set_landing_freeze,
+    )
+
+    async def land_commit(task_id: str, commit_sha: str) -> dict[str, Any]:
+        """Land a linked candidate for the reviewer who approved that exact SHA."""
+        session_id = get_current_session_id()
+        if not session_id:
+            return {"landed": False, "error": "session_required"}
+        try:
+            project_id = ctx.resolve_project_from_session(session_id)
+            resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id, project_id)
+            task = ctx.task_manager.get_task(resolved_id)
+            if task.project_id != project_id:
+                return {"landed": False, "error": "task_project_mismatch"}
+            return dict(
+                await land_candidate(
+                    ctx.task_manager.db,
+                    task=task,
+                    caller_session_id=session_id,
+                    commit_sha=commit_sha,
+                )
+            )
+        except CHECKOUT_RESOLUTION_ERRORS as exc:
+            return checkout_unresolved_error(exc)
+        except (TaskNotFoundError, ValueError) as exc:
+            return {"landed": False, "error": str(exc)}
+
+    registry.register(
+        name="land_commit",
+        description="Land a linked full commit SHA approved by the calling independent reviewer.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task reference or UUID"},
+                "commit_sha": {"type": "string", "description": "Full 40-character candidate SHA"},
+            },
+            "required": ["task_id", "commit_sha"],
+        },
+        func=land_commit,
     )
 
     return registry
