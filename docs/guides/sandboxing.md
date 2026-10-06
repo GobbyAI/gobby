@@ -259,6 +259,16 @@ their provider write grants; persistent preference and trust changes require an
 operator outside the managed run. Legacy Gemini paths do not enable Gemini as a
 Gobby provider.
 
+Executable configuration is protected even when its directory does not exist:
+Codex `rules`; Claude `agents`, `skills`, `commands` and project `.mcp.json`;
+Qwen `agents`, `skills` and `commands`; Droid `droids`, `commands` and `mcp.json`;
+and legacy Gemini `agents`, `commands` and `policies`. These surfaces can install
+hooks, start MCP commands, run shell preprocessing or grant tool approvals.
+Claude and Qwen skill directories carry executable frontmatter. Droid and Gemini
+native skills carry model instructions and supporting scripts, without automatic
+hook registration or shell preprocessing; their settings and plugin/extension
+controls remain protected. Ordinary skill execution still uses the managed sandbox.
+
 Plugin installation and activation surfaces are also immutable: Claude's
 `plugins/{cache,marketplaces,synced}` and installed/known marketplace registries;
 Codex's `plugins/cache` and portable marketplace manifests; Qwen's `extensions`
@@ -268,7 +278,7 @@ cache remain writable. Provider settings already protect plugin enablement and
 MCP commands. Installation and marketplace updates require an operator outside
 the managed run.
 
-Managed Grok launches use a per-run `GROK_HOME`: hook and trust configuration
+On macOS, managed Grok launches use a per-run `GROK_HOME`: hook and trust configuration
 is copied into protected files, while server-refreshed policy caches can change
 inside the private run home. Authentication files are linked without copying
 their contents. `GROK_AUTH_PATH` points at the private auth link, whose target and
@@ -278,6 +288,11 @@ single-use refresh tokens persist for subsequent sessions. The host home itself
 stays unwritable. Sessions, memory,
 logs, crashes, traces and worktrees remain shared writable runtime directories.
 The original home is recorded in read-only run assets for resumed launches.
+Linux SRT Grok launches fail closed before preparing run state or launching the
+CLI. The pinned SRT runtime drops glob write grants on Linux, and a single-file
+auth bind mount cannot be atomically replaced. This prevents a refresh from
+consuming a single-use token without persisting its replacement. Linux support
+requires a verified atomic persistence mechanism; other SRT providers are unaffected.
 
 ## Network And Credentials
 

@@ -10,6 +10,20 @@ pytestmark = pytest.mark.unit
 
 PROVIDERS = ("claude", "codex", "qwen", "droid", "grok", "agy", "gemini")
 CONTROL_FILES = (
+    ".codex/rules/default.rules",
+    ".claude/agents/worker.md",
+    ".claude/skills/example/SKILL.md",
+    ".claude/commands/example.md",
+    ".mcp.json",
+    ".qwen/agents/worker.md",
+    ".qwen/skills/example/SKILL.md",
+    ".qwen/commands/example.toml",
+    ".factory/droids/worker.md",
+    ".factory/commands/example.sh",
+    ".factory/mcp.json",
+    ".gemini/agents/worker.md",
+    ".gemini/commands/example.toml",
+    ".gemini/policies/allow.toml",
     ".claude/settings.json",
     ".claude/settings.local.json",
     ".claude.json",
@@ -97,10 +111,25 @@ async def test_provider_control_files_cannot_be_written(
         assert _contains(paths.deny_write_paths, control), (provider, relative)
     # Workspace grants must not enable persistent project-local hooks either.
     for relative in CONTROL_FILES:
-        if relative.startswith(
+        if relative == ".mcp.json" or relative.startswith(
             (".claude/", ".codex/", ".qwen/", ".factory/", ".gemini/", ".grok/", ".cursor/")
         ):
             assert _contains(paths.deny_write_paths, workspace / relative), relative
+
+
+async def test_alternate_codex_home_cannot_install_approval_rules(
+    isolated_home: Path, tmp_path: Path
+) -> None:
+    alternate = tmp_path / "codex-home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    paths = await compute_sandbox_paths(
+        SandboxConfig(enabled=True, backend="srt"),
+        str(workspace),
+        provider="codex",
+        env={"PATH": "", "CODEX_HOME": str(alternate)},
+    )
+    assert _contains(paths.deny_write_paths, alternate / "rules/default.rules")
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)

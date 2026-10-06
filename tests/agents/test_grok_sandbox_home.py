@@ -1,5 +1,6 @@
 """Synthetic configuration only: no operator auth or hook files are accessed."""
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -94,9 +95,13 @@ async def test_host_root_and_binary_are_unwritable_with_runtime_children_retaine
     assert str(grok_source / "logs") in paths.write_paths
 
 
+@pytest.mark.parametrize("auth_exists", [True, False])
 async def test_launch_uses_private_grok_home_and_protects_host_controls(
-    grok_source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    grok_source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, auth_exists: bool
 ) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    if not auth_exists:
+        (grok_source / "auth.json").unlink()
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     executable = tmp_path / "grok"

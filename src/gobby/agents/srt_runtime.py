@@ -603,6 +603,12 @@ async def prepare_sandbox_launch(
     if not config.enabled:
         return SandboxLaunch(backend=config.backend, enforced=False)
 
+    if config.backend == "srt" and provider == "grok" and sys.platform == "linux":
+        raise SrtRuntimeError(
+            "Linux SRT cannot safely persist Grok auth refresh: atomic temporary-file "
+            "grants and replacement of the auth bind mount are unsupported"
+        )
+
     if config.backend == "srt" and config.allow_network:
         rejected_policy = json.dumps(
             {

@@ -28,18 +28,32 @@ _PROVIDER_CONTROLS: dict[str, tuple[str, ...]] = {
     ".claude": (
         "settings.json",
         "settings.local.json",
+        "agents",
+        "skills",
+        "commands",
         "plugins/cache",
         "plugins/marketplaces",
         "plugins/synced",
         "plugins/installed_plugins.json",
         "plugins/known_marketplaces.json",
     ),
-    ".codex": ("hooks.json", "config.toml", "plugins/cache"),
-    ".qwen": ("settings.json", "trustedFolders.json", "extensions", "extension-store"),
+    ".codex": ("hooks.json", "config.toml", "rules", "plugins/cache"),
+    ".qwen": (
+        "settings.json",
+        "trustedFolders.json",
+        "agents",
+        "skills",
+        "commands",
+        "extensions",
+        "extension-store",
+    ),
     ".factory": (
         "hooks.json",
         "settings.json",
         "settings.local.json",
+        "mcp.json",
+        "droids",
+        "commands",
         "plugins/cache",
         "plugins/marketplaces",
         "plugins/installed_plugins.json",
@@ -47,7 +61,15 @@ _PROVIDER_CONTROLS: dict[str, tuple[str, ...]] = {
     ),
     ".grok": GROK_CONTROL_FILES,
     ".cursor": ("hooks.json",),
-    ".gemini": ("settings.json", "trustedFolders.json", "config/hooks.json", "extensions"),
+    ".gemini": (
+        "settings.json",
+        "trustedFolders.json",
+        "config/hooks.json",
+        "agents",
+        "commands",
+        "policies",
+        "extensions",
+    ),
     ".config/gemini": ("settings.json", "trustedFolders.json"),
     ".agents/plugins": ("marketplace.json",),
     ".claude-plugin": ("marketplace.json",),
@@ -65,6 +87,10 @@ def provider_control_write_paths(
 ) -> list[str]:
     """Protect host and inherited project control files, including alternate homes."""
     paths = [str(Path.home() / ".claude.json")]
+    auth_files: set[Path] = set()
+    if configured_auth := env.get("GROK_AUTH_PATH"):
+        auth = Path(configured_auth).expanduser().resolve()
+        auth_files.update((auth, auth.with_name("auth.json.lock")))
     control_roots: list[Path] = []
     for extra in extra_roots:
         # File and glob grants are not configuration directories. Inventing
@@ -73,7 +99,7 @@ def provider_control_write_paths(
             if has_magic(part):
                 extra = Path(*extra.parts[:index])
                 break
-        if extra.is_file():
+        if extra.is_file() or extra.resolve() in auth_files:
             extra = extra.parent
         control_roots.extend((extra, *extra.parents))
     # CLIs can inherit project settings from ancestors. Also protect absent files
@@ -87,6 +113,7 @@ def provider_control_write_paths(
         )
     )
     for root in roots:
+        paths.append(str(root / ".mcp.json"))
         for directory, controls in _PROVIDER_CONTROLS.items():
             paths.extend(str(root / directory / name) for name in controls)
     for variable, directory in _CONFIG_HOME_ENV.items():
