@@ -1385,8 +1385,6 @@ async def test_authenticated_valid_submission_closes_and_persists_payload(
 @pytest.mark.parametrize("reviewer_ended", [False, True], ids=["running", "late-success"])
 async def test_submit_close_review_claims_before_heavy_work(
     temp_db: HubDatabase,
-    postgres_database_url: str,
-    postgres_schema: str,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1529,7 +1527,9 @@ async def test_submit_close_review_claims_before_heavy_work(
         mcp_manager=None,
         session_manager=session_manager,
         services=SimpleNamespace(database=temp_db),
-        config=SimpleNamespace(mcp_client_proxy=SimpleNamespace(tool_timeout=10.0)),
+        config=SimpleNamespace(
+            mcp_client_proxy=SimpleNamespace(tool_timeout=10.0, tool_timeouts={})
+        ),
         run_db=run_db,
     )
     async with _live_mcp_http_server(
@@ -1537,13 +1537,7 @@ async def test_submit_close_review_claims_before_heavy_work(
         health_observer=observe_default_preflight,
     ) as port:
         gobby_home = tmp_path / "gobby-home"
-        # The child's bootstrap takes a postgresql:// URL; temp_db.conninfo is the
-        # key=value form, which failed the child's config read.
-        _write_test_bootstrap(
-            gobby_home,
-            f"{postgres_database_url}?options=-csearch_path%3D{postgres_schema}",
-            port,
-        )
+        _write_test_bootstrap(gobby_home, temp_db.conninfo, port)
         environment = os.environ.copy()
         for variable in (
             "GOBBY_CONFIG_FILE",
