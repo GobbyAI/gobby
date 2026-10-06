@@ -1064,3 +1064,186 @@ follows that one in `CloseEvaluationFingerprint`.
 - After the restart, a preview close on a scratch proof-bearing task in an
   isolated test repository reports `size_proof_mismatch` for a padded
   candidate.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Typed delete-lines proof in plan validation
+  category: code
+  task_type: bug
+  depends_on: []
+  validation_criteria: '1.1.1: The canonical proof entry parses into path, base blob
+    and ranges, both as a bullet and in the header form without a bullet marker. Each
+    non-canonical variant raises `DeleteLinesProofError`: missing, repeated or reordered
+    key; backticked metadata; uppercase or short hex; non-`::*` target; `0`, a leading
+    zero, `N-N`, descending, overlapping or adjacent ranges; `scope-reason` not last;
+    a second `operation:`; an en dash separator; a missing, absolute, `..`, `./`-prefixed
+    or doubled-slash path; an empty scope-reason; a backtick or reserved field after
+    `scope-reason:`. test: `tests/plans/test_production_size.py::test_parse_delete_lines_proof_grammar`.
+
+    1.1.2: Projection is byte-exact: CRLF lines survive, and a retained final line
+    without `\n` stays without it. Deleting the last line leaves the new last line''s
+    own terminator. A stale blob, an out-of-bounds range, a delete-every-line range,
+    a lone `\r` and invalid UTF-8 each raise. test: `tests/plans/test_production_size.py::test_project_delete_lines_binds_base_bytes`.
+
+    1.1.3: The projected count reuses the production rule: - deleting a Rust `#[cfg(test)]`
+    line that exposes test lines raises; - deleting only test-tail lines passes; -
+    a 1,005-line base projected to 990 production lines passes, and the same base
+    projected to 1,000 raises; - `production_line_count` matches the pre-change `_line_count`
+    on CRLF, lone-CR and Rust fixtures. test: `tests/plans/test_production_size.py::test_project_delete_lines_recounts_production_lines`.
+
+    1.1.4: The 927-line Rust fixture with a valid proof deleting only the re-export
+    line produces no `production-size-growth` issue. The same entry without the proof
+    still reproduces today''s diagnostic. test: `tests/plans/test_semantic_lint.py::test_production_size_growth_accepts_delete_lines_proof`.
+
+    1.1.5: Each of these reports `production-size-growth` with a `proof_error`: -
+    mixed: the proof plus a second entry for the path, or the proof plus `operation:
+    delete`; - ambiguous: a malformed proof, `operation: delete-lines` placed after
+    `scope-reason:`, and each candidate whose path cannot be recovered (empty backticks
+    before the metadata, `operation: delete-lines` in the target slot, an em dash
+    right after the bullet marker); - a malformed candidate on a file below 850 lines,
+    and one beside a valid split paragraph; - a proof on a `tests/` path or a generated
+    file; - a proof reached through a symlink. These are not candidates for `is_delete_lines_entry`,
+    and each keeps today''s behavior: an ordinary entry whose scope-reason only mentions
+    `delete-lines`, and an ordinary `src/delete-lines.py::*` target. test: `tests/plans/test_semantic_lint.py::test_production_size_growth_delete_lines_proof_fails_closed`.
+
+    1.1.6: A stale proof fails even beside a valid split paragraph naming a new bare-path
+    Target. The same stale proof passes when its section is in `completed_section_ids`.
+    test: `tests/plans/test_semantic_lint.py::test_production_size_growth_stale_proof_has_no_fallback`.
+
+    1.1.7: A deliverable targeting the proof path without depending on the proof owner
+    reports `shared-target-ordering`. A dependent deliverable passes. test: `tests/plans/test_semantic_lint.py::test_shared_target_ordering_requires_proof_owner_first`.
+
+    1.1.8: A proof entry yields exactly one strict-inventory path, one `collect_target_inventory`
+    path, and one wildcard `SymbolTarget` from `parse_target_line` with no issues.
+    test: `tests/plans/test_semantic_lint.py::test_delete_lines_proof_entry_is_one_target`.
+
+    1.1.9: `iter_description_target_lines` yields a real Targets block''s proof line
+    and skips a fenced example holding a `Targets:` line and a proof bullet. test:
+    `tests/plans/test_semantic_lint.py::test_iter_description_target_lines_skips_fenced_blocks`.
+
+    1.1.10: The contract documents the grammar, line model, count rule, fail-closed
+    list, field computation and proof-owner ordering. behavior: "Partial deletion
+    proof" in `docs/contracts/plan-coverage.md`.
+
+    1.1.11: The plan coverage reference names the proof as the alternative to a split
+    for a pure partial deletion. behavior: "delete-lines" in `src/gobby/install/shared/skills/gobby/references/plan/coverage.md`.'
+  labels:
+  - covers:production-size-partial-deletion-proof:1.1:1.1.1
+  - covers:production-size-partial-deletion-proof:1.1:1.1.2
+  - covers:production-size-partial-deletion-proof:1.1:1.1.3
+  - covers:production-size-partial-deletion-proof:1.1:1.1.4
+  - covers:production-size-partial-deletion-proof:1.1:1.1.5
+  - covers:production-size-partial-deletion-proof:1.1:1.1.6
+  - covers:production-size-partial-deletion-proof:1.1:1.1.7
+  - covers:production-size-partial-deletion-proof:1.1:1.1.8
+  - covers:production-size-partial-deletion-proof:1.1:1.1.9
+  - covers:production-size-partial-deletion-proof:1.1:1.1.10
+  - covers:production-size-partial-deletion-proof:1.1:1.1.11
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Size-proof check in close gate 8
+  category: code
+  task_type: bug
+  depends_on:
+  - '1.1'
+  validation_criteria: '2.1.1: With a candidate whose file equals base minus the declared
+    lines, the gate passes. With a candidate that also adds a line, it fails. Across
+    two linked commits, the net result at the candidate decides: an addition removed
+    again by the later candidate passes, and stopping at the earlier commit fails.
+    Two valid proofs for distinct paths pass only when both candidate files match,
+    and one mismatch fails. test: `tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_candidate_must_equal_projected_deletion`.
+
+    2.1.2: A candidate that renames or removes the path, replaces it with a symlink,
+    or turns it into a gitlink fails with expected and found entry details. test:
+    `tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_candidate_entry_must_be_regular_file`.
+
+    2.1.3: Each of these fails closed with a diagnostic `SizeProofResult`, never an
+    exception: - a base object missing from the store; - a malformed proof line in
+    the description; - a proof-bearing `completed` or `already_implemented` close
+    with no candidate; - a failed or timed-out Git call; - malformed `ls-tree` output.
+    Chunked base reads keep CRLF lines and a final line without `\n` byte for byte.
+    A path holding a pathspec metacharacter (`[`) matches only itself. test: `tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_unbindable_proof_fails_closed`.
+
+    2.1.4: `wont_fix`, `obsolete` and `duplicate` closes, and descriptions with no
+    Targets-block proof (including a fenced example and an ordinary `src/delete-lines.py::*`
+    target), pass without any `daemon_git` call. test: `tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_size_proofs_skip_without_obligation`.
+
+    2.1.5: A leaf description built by `_contract_section_body` from a plan section
+    with a proof yields, through `iter_description_target_lines` and `parse_delete_lines_proof`,
+    the same `DeleteLinesProof` as plan-side parsing. test: `tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_compiled_leaf_description_retains_proof`.
+
+    2.1.6: Through `_evaluate_close`, a mismatched candidate fails gate 8 (`task_scope`)
+    with `size_proof_mismatch` even when `scope_justification` is supplied. For both
+    `completed` and `already_implemented`, the exact deletion passes gate 8 and an
+    added line fails it. Each of these yields exactly one item-8 `task_scope` entry
+    with `size_proof_mismatch` and keeps any scope diagnostic: - a proof mismatch
+    together with a scope mismatch; - a proof mismatch while `evaluate_task_scope`
+    raises `RuntimeError`; - a proof mismatch on a deliberate close of an escalated
+    task. test: `tests/mcp_proxy/tools/tasks/test_close_candidate.py::test_size_proof_mismatch_fails_task_scope_gate`.
+
+    2.1.7: A proof edited after evaluation stales the close. When the fresh row from
+    the first fetch (`_lifecycle_close_finalization.py:248`) changes only the proof''s
+    `base-blob` and `lines` for the same path, `_commit_close` returns the stale-close
+    response, the task stays open, and `fingerprint_differences` names `size_proof_lines`.
+    This holds for an ordinary close and for a deliberate close of an escalated task.
+    A fresh row whose description changes only in prose, keeping the proof lines and
+    the declared Targets paths, still closes. test: `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_size_proof_edit_after_evaluation_stales_close`.
+
+    2.1.8: The contract documents the committed-result check, its close reasons, regular-file
+    rule, proof freshness and base-drift remediation. behavior: "Committed result"
+    in `docs/contracts/plan-coverage.md`.
+
+    2.1.9: The closing reference explains `size_proof_mismatch` and that a scope justification
+    cannot cure it. behavior: "size_proof_mismatch" in `src/gobby/install/shared/skills/gobby/references/tasks/closing.md`.'
+  labels:
+  - covers:production-size-partial-deletion-proof:2.1:2.1.1
+  - covers:production-size-partial-deletion-proof:2.1:2.1.2
+  - covers:production-size-partial-deletion-proof:2.1:2.1.3
+  - covers:production-size-partial-deletion-proof:2.1:2.1.4
+  - covers:production-size-partial-deletion-proof:2.1:2.1.5
+  - covers:production-size-partial-deletion-proof:2.1:2.1.6
+  - covers:production-size-partial-deletion-proof:2.1:2.1.7
+  - covers:production-size-partial-deletion-proof:2.1:2.1.8
+  - covers:production-size-partial-deletion-proof:2.1:2.1.9
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Recheck close gate inputs on the linked row
+  category: code
+  task_type: bug
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: The close is refused when `validation_criteria` changes
+    between the first fingerprint comparison and the linker''s fetch. `_commit_close`
+    returns the stale-close response, `changed_gate_inputs` names `validation_criteria`,
+    and `close_task` is not called. test: `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_linked_row_gate_input_change_stales_close`.
+
+    2.2.2: The close is likewise refused when, in the same window, only the proof''s
+    `base-blob` and `lines` change, both for an ordinary close and for a deliberate
+    close of an escalated task. `changed_gate_inputs` names `size_proof_lines`. test:
+    `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_linked_row_proof_edit_stales_close`.
+
+    2.2.3: With no concurrent edit, both of these close: a close that links a new
+    candidate, and one whose candidate is already linked. A benign bookkeeping change
+    on the linked row (`updated_at`, `path_cache`) also still closes, as does a linked-row
+    description edit that changes only prose and a Targets entry''s scope-reason while
+    keeping its path. test: `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_linked_row_recheck_keeps_benign_closes`.
+
+    2.2.4: With no proof in either description, the close is refused when, between
+    the first fingerprint comparison and the linker''s fetch, only the declared Targets
+    change from `src/a.py` to `src/b.py`. `_commit_close` returns the stale-close
+    response, `changed_gate_inputs` is exactly `["declared_targets"]`, and `close_task`
+    is not called. The same edit made before the first fetch stales at the first comparison
+    with the same `changed_gate_inputs`. test: `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_linked_row_targets_edit_stales_close`.'
+  labels:
+  - covers:production-size-partial-deletion-proof:2.2:2.2.1
+  - covers:production-size-partial-deletion-proof:2.2:2.2.2
+  - covers:production-size-partial-deletion-proof:2.2:2.2.3
+  - covers:production-size-partial-deletion-proof:2.2:2.2.4
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+```
