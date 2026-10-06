@@ -10,17 +10,19 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from datetime import timedelta
-from typing import Any
+from datetime import datetime, timedelta
+from typing import Any, cast
 
 import pytest
 
 import gobby.events.wake as wake_module
 import gobby.events.wake_batch as wake_batch_module
+import gobby.runner_init.orchestration as orchestration_module
 import gobby.storage.inter_session_messages as messages_module
 from gobby.agents.idle_detector import ComposerRead
 from gobby.events.live_wake import TerminalActivity
 from gobby.events.wake import LIVE_WAKE_FRESH_SECONDS, NativeWakeTarget, WakeDispatcher
+from gobby.events.wake_recovery import WakeReplayCoordinator
 from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.sessions.mailbox import MailboxService
@@ -28,8 +30,13 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.terminals.host_client import HostBatchTarget
+from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.native_runtime import NativeTerminalRuntime
+from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from gobby.utils.datetime import utc_now
-from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
+from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal, runtime_registry
+from tests.terminals.test_native_runtime import FakeHostClient
 
 pytestmark = pytest.mark.unit
 
@@ -50,12 +57,13 @@ class RecordingSender:
         clear_before_submit: bool = False,
         composer_confirmed_empty: bool = False,
         cli_source: str | None = None,
-    ) -> None:
+    ) -> datetime | None:
         await asyncio.sleep(0)
         if self._fail_next:
             self._fail_next = False
             raise RuntimeError("terminal write failed")
         self.submitted.append(identity)
+        return None
 
 
 def _register(session_manager: SessionManager, project_id: str, external_id: str) -> Session:
@@ -420,7 +428,7 @@ async def test_abandoned_write_allows_the_next_public_send(harness: Harness) -> 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("wake", [None, True], ids=["default-wake", "explicit-wake"])
 @pytest.mark.parametrize("batch", [False, True], ids=["single-terminal", "native-batch"])
-async def test_read_during_write_does_not_consume_the_completed_wake(
+async def test_read_before_enter_does_not_consume_the_dispatched_wake(
     harness: Harness, monkeypatch: pytest.MonkeyPatch, wake: bool | None, batch: bool
 ) -> None:
     clock = [utc_now()]
@@ -431,21 +439,28 @@ async def test_read_during_write_does_not_consume_the_completed_wake(
     release = asyncio.Event()
 
     class HeldSender(RecordingSender):
-        async def __call__(self, identity: str, message: str, **kwargs: Any) -> None:
+        async def __call__(self, identity: str, message: str, **kwargs: Any) -> datetime:
             started.set()
             await release.wait()
             await super().__call__(identity, message, **kwargs)
+            return clock[0]
 
     sender = HeldSender()
     dispatcher = harness.dispatcher(sender)
 
     async def native_send(targets: list[NativeWakeTarget]) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
         for target in targets:
-            await sender(target.terminal_id, "[Gobby] Check messages", submit=True)
-        return [
-            {"session_id": target.session_id, "delivered": True, "method": "terminal"}
-            for target in targets
-        ]
+            submitted_at = await sender(target.terminal_id, "[Gobby] Check messages", submit=True)
+            results.append(
+                {
+                    "session_id": target.session_id,
+                    "delivered": True,
+                    "method": "terminal",
+                    "submit_dispatched_at": submitted_at.isoformat(),
+                }
+            )
+        return results
 
     async def first_send() -> dict[str, Any]:
         if not batch:
@@ -460,7 +475,7 @@ async def test_read_during_write_does_not_consume_the_completed_wake(
         await asyncio.wait_for(started.wait(), timeout=5)
         clock[0] += timedelta(seconds=1)
         harness.read_mailbox()
-        # A slow write must start its recovery window only when it completes.
+        # A slow prelude must start its recovery window only at Enter dispatch.
         clock[0] += timedelta(seconds=LIVE_WAKE_FRESH_SECONDS + 1)
         release.set()
         assert (await asyncio.wait_for(send, timeout=5))["delivered"] is True
@@ -492,3 +507,169 @@ async def test_expiry_without_unread_mail_does_not_replay_a_wake(
     assert sender.submitted == [harness.terminal_id]
     assert (await harness.send(dispatcher, "new unread mail"))["delivered"] is True
     assert sender.submitted == [harness.terminal_id, harness.terminal_id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wake", [None, True], ids=["default-wake", "explicit-wake"])
+@pytest.mark.parametrize("batch", [False, True], ids=["single-terminal", "native-batch"])
+async def test_submit_hook_read_before_sender_settles_does_not_strand_paused_mail(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, wake: bool | None, batch: bool
+) -> None:
+    clock = [utc_now()]
+    monkeypatch.setattr(wake_module, "utc_now", lambda: clock[0])
+    monkeypatch.setattr(wake_batch_module, "utc_now", lambda: clock[0])
+    monkeypatch.setattr(messages_module, "utc_now", lambda: clock[0])
+
+    class SubmittedSender(RecordingSender):
+        async def __call__(self, identity: str, message: str, **kwargs: Any) -> datetime:
+            dispatched_at = clock[0]
+            await super().__call__(identity, message, **kwargs)
+            # Enter is already on the PTY. Its hook acknowledges before the
+            # sender's latch settlement/host acknowledgement returns to wake.py.
+            clock[0] += timedelta(milliseconds=5)
+            harness.read_mailbox()
+            clock[0] += timedelta(milliseconds=20)
+            return dispatched_at
+
+    sender = SubmittedSender()
+    dispatcher = harness.dispatcher(sender)
+
+    async def native_send(targets: list[NativeWakeTarget]) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        for target in targets:
+            dispatched_at = await sender(target.terminal_id, "[Gobby] Check messages", submit=True)
+            results.append(
+                {
+                    "session_id": target.session_id,
+                    "delivered": True,
+                    "method": "terminal",
+                    "submit_dispatched_at": dispatched_at.isoformat(),
+                }
+            )
+        return results
+
+    if batch:
+        dispatcher._native_batch_sender = native_send
+        harness.messages.create_message(
+            harness.sender_session.id,
+            harness.recipient,
+            "one",
+            metadata_json='{"wake_requested":true}',
+        )
+        [first] = await dispatcher.dispatch_live_wakes([harness.recipient])
+    else:
+        first = await harness.public_send(dispatcher, "one", wake)
+    assert first["delivered"] is True
+    clock[0] += timedelta(seconds=5)
+    second = await harness.public_send(dispatcher, "after prompt read", wake)
+
+    async def run_db(operation: Any, *args: Any) -> Any:
+        return operation(*args)
+
+    replay = WakeReplayCoordinator(
+        message_manager=harness.messages,
+        session_manager=harness.session_manager,
+        dispatcher=dispatcher,
+        run_db=run_db,
+    )
+    await replay.request_replay(harness.recipient)
+    assert second["delivered"] is True
+    assert sender.submitted == [harness.terminal_id, harness.terminal_id]
+    assert harness.messages.get_undelivered_messages(harness.recipient) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("batch", [False, True], ids=["sequence", "native-batch"])
+@pytest.mark.parametrize(
+    "read_after_enter", [False, True], ids=["pre-enter-read", "submit-hook-read"]
+)
+async def test_real_wake_adapter_orders_mailbox_read_at_enter_dispatch(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, batch: bool, read_after_enter: bool
+) -> None:
+    clock = [utc_now()]
+    for module in (wake_module, wake_batch_module, messages_module, orchestration_module):
+        monkeypatch.setattr(module, "utc_now", lambda: clock[0])
+    host = FakeHostClient()
+    row = harness.terminals.rows[harness.terminal_id]
+    row.host_epoch = host.host_epoch
+    row.locator = {"host_terminal_id": "ht-1"}
+    runtime = NativeTerminalRuntime(host)
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, harness.terminals),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
+    monkeypatch.setattr(
+        orchestration_module, "wake_write_services", lambda: (harness.terminals, coordinator)
+    )
+    submits: list[datetime] = []
+
+    async def pace(seconds: float) -> None:
+        # The old turn may read while text is paced before the new Enter.
+        if seconds and not read_after_enter:
+            clock[0] += timedelta(milliseconds=5)
+            harness.read_mailbox()
+        clock[0] += timedelta(seconds=seconds)
+
+    monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", pace)
+
+    def on_enter() -> None:
+        submits.append(clock[0])
+        if read_after_enter:
+            clock[0] += timedelta(milliseconds=5)
+            harness.read_mailbox()
+        clock[0] += timedelta(milliseconds=20)
+
+    async def write(**kwargs: Any) -> dict[str, Any]:
+        result = await FakeHostClient.write(host, **kwargs)
+        if kwargs.get("kind") == "key" and kwargs.get("data") == b"\r":
+            on_enter()
+        return result
+
+    async def write_batch(targets: list[HostBatchTarget]) -> list[dict[str, Any]]:
+        result = await FakeHostClient.write_batch(host, targets)
+        if any(operation.data == b"\r" for target in targets for operation in target.operations):
+            on_enter()
+        return result
+
+    monkeypatch.setattr(host, "write", write)
+    monkeypatch.setattr(host, "write_batch", write_batch)
+    dispatcher = WakeDispatcher(
+        session_manager=harness.session_manager,
+        ism_manager=harness.messages,
+        tmux_sender=orchestration_module._send_tmux_session_wake,
+        terminal_manager=harness.terminals,
+        native_batch_sender=orchestration_module._send_native_wake_batch if batch else None,
+    )
+    harness.messages.create_message(
+        harness.sender_session.id, harness.recipient, "one", metadata_json='{"wake_requested":true}'
+    )
+    [first] = await dispatcher.dispatch_live_wakes([harness.recipient])
+    assert first["delivered"] is True
+    assert len(submits) == 1
+    clock[0] += timedelta(seconds=5)
+    second = await harness.public_send(dispatcher, "two", None)
+
+    async def run_db(operation: Any, *args: Any) -> Any:
+        return operation(*args)
+
+    replay = WakeReplayCoordinator(
+        message_manager=harness.messages,
+        session_manager=harness.session_manager,
+        dispatcher=dispatcher,
+        run_db=run_db,
+    )
+    await replay.request_replay(harness.recipient)
+    if read_after_enter:
+        assert second["delivered"] is True
+        assert len(submits) == 2
+        assert harness.messages.get_undelivered_messages(harness.recipient) == []
+    else:
+        third = await harness.public_send(dispatcher, "three", None)
+        assert second["skipped"] == third["skipped"] == "debounced"
+        assert len(submits) == 1
+        clock[0] += timedelta(milliseconds=5)
+        harness.read_mailbox()
+        assert (await harness.public_send(dispatcher, "after submit read", None))["delivered"]
+        assert len(submits) == 2
+    assert row.unresolved_writes == {}

@@ -93,7 +93,7 @@ class TmuxSender(Protocol):
         clear_before_submit: bool = False,
         composer_confirmed_empty: bool = False,
         cli_source: str | None = None,
-    ) -> Coroutine[Any, Any, None]: ...
+    ) -> Coroutine[Any, Any, datetime | None]: ...
 
 
 # sdk_resumer signature: (sdk_session_id: str, message: str) -> None
@@ -775,7 +775,7 @@ class WakeDispatcher:
                 # merely opting out of a drain does not supply that proof.
                 send = partial(send, composer_confirmed_empty=True)
             try:
-                await send(
+                submitted_at = await send(
                     terminal_id,
                     prompt,
                     submit=True,
@@ -821,7 +821,9 @@ class WakeDispatcher:
                     error_code="terminal_wake_failed",
                     error_message=detail,
                 )
-        await self._record_live_wake(session_id, utc_now())
+        await self._record_live_wake(
+            session_id, submitted_at if isinstance(submitted_at, datetime) else utc_now()
+        )
         return {
             "session_id": session_id,
             "delivered": True,
@@ -886,8 +888,8 @@ class WakeDispatcher:
     async def _should_send_live_wake(self, session_id: str) -> bool:
         """Return False while the last delivered wake to this session is outstanding.
 
-        Only a mailbox read after the write completes consumes its hold. A read
-        during the write cannot acknowledge a prompt that is still being queued.
+        Only a mailbox read after Enter dispatch consumes its hold. A read
+        during the prelude cannot acknowledge a prompt that is still being queued.
         The recovery timeout permits another wake only while mail remains unread.
         """
 
@@ -906,13 +908,13 @@ class WakeDispatcher:
 
         return not await self._run_db(wake_outstanding)
 
-    async def _record_live_wake(self, session_id: str, completed_at: datetime) -> None:
-        """Start the unread-wake hold and recovery timeout after a successful write."""
+    async def _record_live_wake(self, session_id: str, submitted_at: datetime) -> None:
+        """Persist the successful wake's Enter-dispatch hold and recovery cutoff."""
         await self._run_db(
             SessionVariableManager(self._session_manager.db).set_variable,
             session_id,
             LIVE_WAKE_SENT_AT_VARIABLE,
-            completed_at.isoformat(),
+            submitted_at.isoformat(),
         )
 
     async def _resolve_sdk_session_id(self, session_id: str) -> str | None:

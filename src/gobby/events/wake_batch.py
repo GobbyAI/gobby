@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import AsyncExitStack
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.events.live_wake import wake_debounced_result, wake_failure
@@ -180,7 +181,13 @@ async def _send_native(
                 error_message="Native wake batch returned no result for the recipient",
             )
         if result.get("delivered") is True:
-            await dispatcher._record_live_wake(target.session_id, completed_at)
+            submitted_at = result.get("submit_dispatched_at")
+            await dispatcher._record_live_wake(
+                target.session_id,
+                datetime.fromisoformat(submitted_at)
+                if isinstance(submitted_at, str)
+                else completed_at,
+            )
         normalized.append(result)
     return normalized
 
