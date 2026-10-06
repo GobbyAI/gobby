@@ -4,13 +4,27 @@ Task: #22959 (Investigate current-daemon cleanup gaps across project removal,
 worktrees, caches and telemetry), under #22949 (Lane 7 - Planning/research).
 Author: Plan Writer 3 (gobby#15468). Measured 2026-10-05 between 22:35 and
 23:30 UTC. Source binding is HEAD `d830d904737191dacbdd7d153d22992d1ee5f154`.
+The revision after the enhancer pass re-checked identity, statistics, backups,
+worktrees, configs and creator transcripts between 01:00 and 01:20 UTC on
+2026-10-06, with code citations bound to HEAD
+`fec30c7e2a96be75f59dbc696a35ff9343062d2f`.
 
 Method: every measurement was read-only. Database reads used the diagnostic
 script in Appendix A, which opens a `READ ONLY` transaction with a 120 s
 statement timeout and never applies migrations. Filesystem reads used `du`,
-`stat`, `find`, `readlink`, `lsof`, `ps` and `grep`. Nothing was deleted,
-vacuumed, reindexed or migrated. `~/.gobby/bootstrap.yaml` and
-`~/.gobby/local_cli_token` were not read.
+`stat`, `find`, `readlink`, `lsof`, `ps`, `zgrep` and `grep`. Nothing was
+deleted, vacuumed, reindexed or migrated.
+
+Identity: this was an operator-identity run.
+`GOBBY_MANAGED_EXECUTION_BOOTSTRAP` was unset, so gobby's CLI runtime
+resolved the database the way every `gobby` command does, by loading the
+bootstrap config inside the Python process
+(`src/gobby/storage/hub/runtime.py:86-95`). No connection detail was printed
+or logged, and no agent opened `~/.gobby/bootstrap.yaml` or
+`~/.gobby/local_cli_token`. The connected role is `gobby` with
+`rolsuper = true` and `rolbypassrls = true`. Among the measured tables, row
+security is enabled only on `projects`, and its `gobby_migration_owner_access`
+policy covers this role. Every count below is therefore hub-wide.
 
 Starting evidence: the Researcher #14550 report. It was never committed and
 now sits at `~/.gobby/research-archive/code-index-storage-gaps-2026-09-26.md`
@@ -26,11 +40,11 @@ path, the line range and the `excerpt_hash`.
 
 | Miss | Verdict | Fix class |
 |---|---|---|
-| (a) Project removal leaves state | Confirmed. The purge leaves worktree and clone dirs, Cargo targets and backups. Three tables with no FK hold orphan rows today. | A small current-daemon guard plus a schema FK. |
+| (a) Project removal leaves state | Confirmed. The purge has no filesystem step, so it never removes worktree or clone dirs, Cargo targets or backups. Three tables with no FK hold orphan rows today. | A small guard for registered worktrees and clones. The FK delete action per table is a Josh decision. Backups and main-checkout Cargo targets stay an explicit gap. |
 | (b) Orphan worktrees | Confirmed as relics: 1.0 GB plus empty dirs. None has a registry row. Creator attribution is an evidence gap. | Josh-approved operator removal. The guard in (a) prevents new orphans from purge. |
-| (c) Old 21 GB `cargo-target` | Confirmed stale. The 21 GB was created ad hoc by agents. Gobby's own legacy entries are empty. | Josh-approved operator removal. No code change. |
+| (c) Old 21 GB `cargo-target` | Confirmed stale. Transcripts show agent sessions setting `CARGO_TARGET_DIR` to all five `wt-*` dirs. Gobby's own legacy entries are empty. | Josh-approved operator removal. No code change. |
 | (d) `unmodeled_observation_events` size | The prune keeps up. Size comes from volume plus index churn: 84% of rows are one unmodeled Codex tool. | A product decision, then a data-only modeling fix. |
-| (e) `token_events` retention | The policy exists (180 days, #19655) and was never implemented. No row is eligible until 2027-01-27. | Schema index plus a delete contract, landing before 2027-01-27. |
+| (e) `token_events` retention | The policy exists (180 days, #19655) and was never implemented. No row is eligible until 2027-01-27. | Schema index plus a delete contract that keeps session lifetime totals intact, landing before 2027-01-27. |
 
 ## (a) Project removal
 
@@ -81,7 +95,22 @@ Live leftovers from removed projects:
 - `metrics_events_archive`: 1 row with `project_id` `3d14159f-a60c-489e-b060-d41b48249ba3`.
 - `tool_schema_hashes`: 2 rows with `project_id` `3d14159f-a60c-489e-b060-d41b48249ba3`.
 - `token_events`, `sessions`, `tasks` and the `CASCADE` tables have zero orphans.
-- No project row is currently soft-deleted.
+  For `token_events`, both the `project_id` check and the `session_id` check
+  against `sessions` return 0.
+- No project row is currently soft-deleted (`soft_deleted` query, Appendix B).
+- `~/.gobby/backups` holds per-project dirs only for live projects:
+  `1d7a5bc4…` (game-goblins, 1.0 MB) and `d45545c5…` (gobby, 265 MB). The
+  removed projects `5baa0e37` and `3d14159f` have no backup dir today. The
+  other entries (`hub` 8.7 GB, `gclient`, `gterm`, `native`,
+  `22943-cutover-prep-14639`) are not keyed by project. Who writes them, and
+  under what retention, was not traced.
+
+Soft delete also releases the checkout routing rows. `soft_delete` calls
+`unregister_project` in the same transaction, so `project_checkouts` no
+longer names the project's main checkout by the time purge runs:
+
+- `src/gobby/storage/projects.py:646`
+  `excerpt_hash=3857441011dafa42771fde990bf2cd71a74c07ed8a26e6ddf98838e4fd2e3886`
 
 ### Root cause
 
@@ -98,44 +127,75 @@ were removed by today's purge or by an older delete path cannot be proven.
 
 1. **Purge guard.** `_purge_project` returns `PurgeOutcome.failed` while the
    project still has `worktrees` or `clones` rows, with a message naming the
-   count. Existing cron retries then pick the project up again once an
-   operator has deleted those checkouts through the existing worktree and
-   clone delete tools. Those tools already remove Cargo targets (see the
-   citation under (b)) and keep dirty checkouts.
+   count. The check sits beside the active-terminal refusal (step 2), before
+   any destructive phase. Existing cron retries then pick the project up
+   again once an operator has deleted those checkouts through the existing
+   worktree and clone delete tools. Those tools already remove Cargo targets
+   (see the citation under (b)) and keep dirty checkouts.
    - This is a guard of about five lines. It adds no deletion mechanism to
      purge, so nothing is lost when the purge moves to Rust; the contract
      ports unchanged.
-   - Isolated test: in `tests/projects/`, a purge of a project with one
-     active `worktrees` row returns `failed` and leaves the project row in
-     place. Once the row is gone, the same purge returns `purged`.
-2. **Schema FK.** Add `ON DELETE CASCADE` FKs from `metrics_events`,
-   `metrics_events_archive` and `tool_schema_hashes` to `projects`.
-   - This is a schema change in `crates/gcore/assets/schema/baseline.sql`,
-     which Rust owns and which therefore survives the migration.
-   - The migration must first delete the 53 orphan rows listed above. That
-     is a destructive step, so Josh approves it before landing.
+   - Scope: the guard prevents registry-cascade loss for registered
+     worktrees and clones only.
+   - Isolated tests in `tests/projects/`: a purge of a project with one
+     active `worktrees` row, and separately with one `clones` row, returns
+     `failed` and leaves the project row, its cron jobs, vectors and hub rows
+     untouched. Once the row is gone, the same purge returns `purged`.
+2. **Explicit gap: backups and main-checkout Cargo targets.** Purge cannot
+   infer these from surviving rows, because soft delete has already released
+   `project_checkouts`. Before specifying any retirement, trace the backup
+   writers and their retention and restore policy, and identify which
+   main-checkout targets Gobby owns. Any cleanup contract must capture that
+   ownership evidence before soft delete releases it. Source checkouts and
+   foreign targets are preserved. The current evidence justifies no generic
+   filesystem sweep.
+3. **FK delete action per table (Josh decision).** `metrics_events`,
+   `metrics_events_archive` and `tool_schema_hashes` have no FK to
+   `projects`. Orphan rows alone do not prove that CASCADE is the wanted
+   behavior:
+   - `.gobby/plans/completed/hub-data-retention.md:62` (#19655) keeps
+     `metrics_events_archive` aggregates indefinitely, so CASCADE there
+     contradicts the existing policy. The options are CASCADE, `SET NULL`
+     (anonymize, which needs a rule for aggregation-key collisions once
+     `project_id` is cleared), or no FK with the rows kept.
+   - The writers, readers and project-removal semantics of `metrics_events`
+     (raw rows, 30 days) and `tool_schema_hashes` were not traced. Trace them
+     before choosing their action.
+   - Whatever is chosen lands as a schema change in
+     `crates/gcore/assets/schema/baseline.sql`, which Rust owns and which
+     therefore survives the migration.
    - `memory_dream_truth_state` is excluded: it has zero orphans and its
      project semantics were not traced.
-   - Isolated test: a purge on the isolated test hub (port 60892) removes
-     seeded rows from all three tables.
+   - Isolated test: a purge on the isolated test hub (port 60892) produces
+     the chosen outcome for seeded rows in each table.
+4. **The 53 orphan rows.** Adding a FK requires resolving them first. Before
+   any delete, export the exact rows to a verified file (keys, counts, schema
+   identity, and a restore procedure tested on the isolated hub). The
+   alternative is Josh's explicit approval of an irreversible loss.
 
 Rollback: revert the guard commit. The FK migration needs a down-migration
-that drops the constraints; the deleted orphan rows are not restorable,
-which is why the approval gate applies.
+that drops the constraints. Deleted orphan rows come back only from the
+verified export.
 
 ## (b) Orphan worktrees under removed projects
 
 ### Evidence
 
-Registry: 9 `worktrees` rows and 4 `clones` rows, all `active`, and every
-registered path exists. The gobby repository's `git worktree list` shows the
-main checkout, the 7 lane worktrees and `~/Projects/gobby-wiki`.
-`~/Projects/gobby-web-dev` belongs to the gobby-web project. None of the
-paths below has a registry row.
+Registry (`registry_owner` query, Appendix B): 9 `worktrees` rows and 4
+`clones` rows, all `active`, and every registered path exists. All belong to
+the gobby project except `~/Projects/gobby-web-dev`, which belongs to
+gobby-web. `git worktree list --porcelain` for the gobby repository shows
+the main checkout, the 7 lane worktrees and `~/Projects/gobby-wiki`. The
+gobby-web repository's list shows `~/Projects/gobby-web` and
+`~/Projects/gobby-web-dev`. Those two lists cover every repository with a
+registered worktree. The 4 registered clones are standalone repositories,
+checked by path only. None of the paths below has a registry row or an entry
+in those two lists, and `lsof -d cwd` shows no process with its cwd inside any of them
+(re-checked 2026-10-06 01:15 UTC).
 
 | Path | Size | mtime | Contents and status |
 |---|---:|---|---|
-| `~/.gobby/worktrees/gobby-cli/task-396-module-clustering-from-the-dependency-gr` | 1.0 GB | 2026-08-03 | Only a real `target/` dir is left. `gobby-cli` is not a project row. |
+| `~/.gobby/worktrees/gobby-cli/task-396-module-clustering-from-the-dependency-gr` | 1.0 GB | 2026-08-03 | Only a real `target/` dir is left; `git rev-parse` reports it is not a repository. `gobby-cli` is not a project row. |
 | `~/.gobby/worktrees/test-project/gobby-integration-1-readiness-epic` | 8 KB | 2026-06-20 | `README.md` plus a `.git` pointing at a pytest tmp dir (`pytest-730/test_build_readiness_cascades_0`). |
 | `~/.gobby/worktrees/epic-22010-native-ask` | 0 | 2026-09-11 | Empty directory. |
 | `~/.gobby/worktrees/game-goblins` | 0 | 2026-09-27 | Empty directory. The project is live. |
@@ -215,23 +275,38 @@ Rollback: the `gobby-cli` `target/` is a rebuildable build cache. The
 - No source, document or commit contains `cargo-target/wt-`; `git log -S` and
   `gcode grep` both come back empty.
 
-**Creator.** Agent sessions set the variable by hand. Transcripts
-`~/.gobby/session_transcripts/05ec4c9c-2573-4177-b12f-679b31231331.jsonl.gz` and
-`c1af71ce-098f-4e67-8d44-6e2d3810b5d3.jsonl.gz` contain
-`CARGO_TARGET_DIR=/Users/josh/.gobby/cache/cargo-target/wt-main` and
-`.../wt-gobby-22529`, during the 2026-09-18/19 shared-target incident that
-#22532 fixed. The `wt-*` dirs were never Gobby-owned.
+**Creator.** Agent sessions set the variable by hand, during the 2026-09-18/19
+shared-target incident that #22532 fixed. Each `wt-*` dir has at least one
+transcript under `~/.gobby/session_transcripts/` containing
+`CARGO_TARGET_DIR=…/cache/cargo-target/<dir>`:
 
-**No current use**, checked 2026-10-05:
+| Dir | Transcripts |
+|---|---|
+| `wt-main` | `05ec4c9c-2573-4177-b12f-679b31231331.jsonl.gz` |
+| `wt-gobby-22529` | `c1af71ce-098f-4e67-8d44-6e2d3810b5d3.jsonl.gz` |
+| `wt-gobby-22544` | `1e9b3d25-46ba-47b7-a900-344c3295dd6d.jsonl.gz`, `01a0b791-f74f-7b53-8b8a-2c362dae075f.jsonl.gz` |
+| `wt-gobby-22544-gterm` | `1e9b3d25-46ba-47b7-a900-344c3295dd6d.jsonl.gz`, `01a0b791-f74f-7b53-8b8a-2c362dae075f.jsonl.gz` |
+| `wt-lane-22581-gcode-import-communities` | `01a0bbeb-fff0-7b03-9d7d-f2b3faafbb54.jsonl.gz` |
+
+The search covered the 742 transcripts modified between 2026-09-17 and
+2026-09-23 (Appendix C). The `wt-*` dirs were never Gobby-owned.
+
+**No current use**, within the inventory below (checked 2026-10-05, with the
+cwd and config checks repeated 2026-10-06 01:15 UTC):
 
 - no file in any entry is newer than 2026-09-20 (`find -newermt`);
-- `lsof` shows no open file under the root;
+- `lsof` shows no open file under the root, and `lsof -d cwd` shows no
+  process cwd inside it;
 - no process environment carries a `CARGO_TARGET_DIR` into it;
-- `~/.cargo/config*`, the repo `.cargo/config.toml` and the shell profiles do
-  not reference it;
+- `~/.cargo/config` and `~/.cargo/config.toml` do not exist. The repo
+  `.cargo/config.toml`, `~/.zshrc`, `~/.zprofile`, `~/.zshenv` and
+  `~/.profile` do not reference it. `~/.bashrc` and `~/.bash_profile` do not
+  exist;
 - no checkout's `target` link points into it. The main checkout, all 7 lane
   worktrees and `ask-probe-source` resolve into `cargo-target-v2`;
-  `gobby-cli/task-396` and `gobbyai-crane` have real dirs.
+  `gobby-cli/task-396` and `gobbyai-crane` have real dirs. Checkouts outside
+  the registry, the two worktree lists and `~/.gobby/clones` were not
+  inspected.
 
 ### Root cause and migration responsibility
 
@@ -243,8 +318,9 @@ keep foreign target dirs. Retiring them is operator maintenance.
 ### Minimal fix
 
 No code change. A one-time `rm -rf` of the five `wt-*` dirs and the two empty
-UUID dirs, approved by Josh. Immediately before it runs, repeat the four
-no-use checks above.
+UUID dirs, approved by Josh. Immediately before it runs, repeat every no-use
+check above and confirm each path is a real directory, not a symlink, with
+the size this report records.
 
 Rollback: none needed. These are rebuildable build caches, and any consumer
 that turns up later rebuilds.
@@ -335,18 +411,27 @@ Sample keys:
 | `unmodeled_observation_events_pkey` | 21 MB (0 scans) |
 
 `last_seen_at` is a key column in two of these indexes, so the duplicate-path
-UPDATE can never be HOT: `n_tup_hot_upd = 0` of 14,503 updates since stats
-start. Every refresh therefore writes new entries into all four indexes.
+UPDATE can never be HOT: `n_tup_hot_upd = 0` of 14,503 updates in the
+cumulative counters. Every refresh therefore writes new entries into all four
+indexes.
 
 The group-recompute index works out to about 430 bytes per row against a key
 of about 80 bytes. That points to bloat, but it is an **estimate**:
 `pgstattuple` is not installed, so leaf density was not measured.
 
-**Autovacuum.** Settings are stock: 50 + 0.2 × reltuples 446,135, a threshold
-of about 89k dead tuples. The table holds 22,671 dead tuples, and
-`last_autovacuum` is null. Postgres started at `2026-10-05 05:51 UTC`, so the
-cumulative stats cover only about 17 h. Whether autovacuum ever ran before
-that is an **evidence gap**.
+**Autovacuum.** Settings are stock (`autovacuum` and `track_counts` on):
+50 + 0.2 × reltuples 446,135, a threshold of about 89k dead tuples. The table
+held 22,671 dead tuples (28,903 at the 2026-10-06 re-check), with
+`last_autovacuum` null and `vacuum_count = autovacuum_count = 0`.
+
+The window those counters cover is not established. PostgreSQL 18.4 started
+at `2026-10-05 05:51 UTC`, and `pg_stat_database.stats_reset` is null, so no
+explicit reset was recorded. PostgreSQL keeps cumulative statistics across a
+clean shutdown and resets them after crash recovery
+(https://www.postgresql.org/docs/18/monitoring-stats.html). Whether the
+05:51 start followed a clean shutdown was not checked. The counters may
+therefore cover about 17 hours or a much longer span. The table's lifetime
+vacuum history is an **evidence gap**.
 
 ### Root cause
 
@@ -389,13 +474,21 @@ mapping belongs in that branch.
 
 - Isolated test: extend `tests/sessions/test_transcript_renderer.py::test_classify_tool`
   so the four names classify as known.
-- Rendering one Codex `exec` block with a tracker writes no occurrence row,
-  checked on the isolated test hub.
-- After about 30 days, the existing prune shrinks the live rows by about 90%
-  without any maintenance.
+- Isolated test through the real provider paths: parse a Codex
+  `custom_tool_call` for `exec` and `wait`, and a Grok `run_terminal_command`
+  and `use_tool`, through the parser into the renderer with a tracker. None
+  writes an occurrence row, checked on the isolated test hub. A bare
+  `classify_tool` call does not exercise the Codex normalization.
+- Expected effect, conditional: the four names make up about 91.5% of the
+  snapshot (422,377 of 461,477 rows). If modeling stops every occurrence
+  write and replay refresh for them, their rows become eligible 30 days
+  after their final `last_seen_at`, and the next daily prune removes them.
+  Future row counts still depend on arrivals and replay for other names, and
+  allocated disk does not shrink on its own.
 
-Index redesign is not recommended. Once the volume is fixed, churn falls by
-the same factor.
+Index redesign is not recommended now. Refresh churn should fall roughly in
+proportion to the volume removed. That is an estimate to re-measure 30 days
+after the fix.
 
 ### Maintenance and rollback conditions
 
@@ -405,7 +498,22 @@ the same factor.
     `pgstatindex()` read-only;
   - or use a reviewed bloat-estimate query.
 - Only measured bloat justifies `REINDEX INDEX CONCURRENTLY` on the bloated
-  indexes. That runs without blocking writes and needs no clean window.
+  indexes. Concurrent mode lets ordinary writes continue through most of the
+  rebuild, but it still takes a `SHARE UPDATE EXCLUSIVE` lock, waits for
+  transactions that could use the index, needs disk for a second copy of the
+  index, and leaves an invalid `_ccnew` index behind if it fails
+  (https://www.postgresql.org/docs/18/sql-reindex.html). Under #22956,
+  approve the exact index list and run it as an operator-controlled bounded
+  maintenance step:
+  - check free disk against the index size, and check for blockers in
+    `pg_stat_activity`;
+  - set reviewed `lock_timeout` and `statement_timeout` values;
+  - rebuild one index at a time;
+  - after any cancellation or failure, check `pg_index.indisvalid` and drop
+    only the invalid `_ccnew` copy. The original index stays valid until the
+    swap succeeds.
+
+  Concurrent mode alone does not prove that no maintenance window is needed.
 - `VACUUM FULL` of the heap belongs in the #22956 (Decide retention and
   cleanup for token_events, unmodeled_observation_events, dropped-column TOAST
   and the old cargo target) clean window.
@@ -456,28 +564,60 @@ latent.
 ### Retention definition
 
 The existing policy holds: 180 days by `event_at`. No new product decision is
-required.
+required. The lifetime-totals dependency below is an implementation
+dependency and an evidence gap, not a new TTL decision.
 
 One input for Josh: at the current rate, the 180-day steady state is about
-7 million rows. Assuming linear scaling, that is roughly 3.4 GB on disk.
-Shortening the window is the only lever if that is too large.
+7 million rows. The 3.4 GB figure assumes unchanged workload and storage
+density. A shorter window reduces steady-state rows. Bytes per row, index
+layout and reclaim also affect disk.
+
+**Lifetime totals depend on retained rows today.** #19655 line 63 says
+"session-level usage totals remain on `sessions`". The current processor
+seeds its running totals from `get_session_totals`, which sums the session's
+`token_events` rows (`src/gobby/storage/token_events.py:262-274`). It then
+recomputes the totals from those rows and writes them back to `sessions`:
+
+- `src/gobby/sessions/processor_usage.py:116`
+  `excerpt_hash=5e133a8ea8dce62a28baf81f250143d3fba772e132cd5656117fe9d0797b53db`
+- `src/gobby/sessions/processor_usage.py:300-314`
+  `excerpt_hash=ccf5a40044e63d7d2ac601932cbea927bd985c9d66a7c7b43c1f71f81b194de2`
+
+A plain 180-day delete would therefore shrink the lifetime totals of any
+session that spans the cutoff and later receives a usage update. A full
+transcript replay is a second, untraced path that could reinsert expired
+rows.
 
 ### Minimal fix
 
 1. **Schema (Rust-owned).** Add `idx_token_events_event_at (event_at, id)` to
    `crates/gcore/assets/schema/baseline.sql`.
-2. **Delete contract.** Implement the #19655 contract in whichever daemon owns
-   periodic maintenance when it lands, before 2027-01-27: daily, batches of
-   10,000 by `event_at`, at most 20 batches per run, with the deleted count
-   logged.
+2. **Lifetime totals first.** Before deletion is enabled, the usage path must
+   stop deriving `sessions` totals from retained `token_events` rows alone,
+   and replay must be traced against the cutoff. This is a prerequisite of
+   the delete contract, and it lands in the same daemon.
+3. **Delete contract.** Implement the full #19655 contract
+   (`hub-data-retention.md:32-41,166-169`) in whichever daemon owns periodic
+   maintenance when it lands, before 2027-01-27:
+   - one hub-global loop, with an advisory lock electing a single owner per
+     cycle;
+   - ordered batches of 10,000 by `event_at`, one transaction per batch;
+   - at most 20 batches per cycle, with a 100 ms cooperative yield between
+     batches;
+   - the deleted count logged.
+
+   An index plus a capped daily DELETE alone is not the full contract.
 
 A new Python loop now would be discarded mechanism; the deadline leaves room
 to land it once. Isolated tests:
 
 - seeded rows at 179 days, 180 days ± 1 s and 181 days delete only past the
   cutoff;
-- batch bound and per-run cap;
-- an empty table is a no-op.
+- batch bound and per-cycle cap;
+- an empty table is a no-op;
+- prune an old event, ingest a new event in the same session, and replay its
+  transcript: the session's lifetime totals change only by the new usage,
+  and the expired row is not permanently reinserted.
 
 Rollback: disable the loop. Deleted rows are gone, which is why the cutoff
 test pins the boundary.
@@ -565,7 +705,17 @@ sizes|SELECT c.relname, pg_size_pretty(pg_total_relation_size(c.oid)) AS total, 
 ;;
 churn|SELECT relname, n_tup_ins, n_tup_upd, n_tup_hot_upd, n_tup_del, n_dead_tup, autovacuum_count FROM pg_stat_user_tables WHERE relname IN ('unmodeled_observation_events','token_events')
 ;;
-stats_window|SELECT pg_postmaster_start_time() AS started
+identity|SELECT current_user, session_user, current_setting('row_security') AS row_security, (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS rolsuper, (SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user) AS rolbypassrls
+;;
+rls_tables|SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname IN ('unmodeled_observation_events','token_events','metrics_events','metrics_events_archive','tool_schema_hashes','worktrees','clones','projects','sessions') ORDER BY c.relname
+;;
+policies|SELECT tablename, policyname, roles::text, cmd FROM pg_policies WHERE tablename IN ('unmodeled_observation_events','token_events','metrics_events','metrics_events_archive','tool_schema_hashes','worktrees','clones','projects','sessions') ORDER BY tablename, policyname
+;;
+stats_reset|SELECT datname, stats_reset, pg_postmaster_start_time() AS postmaster_start FROM pg_stat_database WHERE datname = current_database()
+;;
+version|SELECT current_setting('server_version') AS server_version, current_setting('autovacuum') AS autovacuum, current_setting('track_counts') AS track_counts
+;;
+table_vacuum|SELECT relname, last_vacuum, last_autovacuum, vacuum_count, autovacuum_count, n_live_tup, n_dead_tup FROM pg_stat_user_tables WHERE relname IN ('unmodeled_observation_events','token_events') ORDER BY relname
 ;;
 idx_usage|SELECT relname, indexrelname, pg_size_pretty(pg_relation_size(indexrelid)) AS size, idx_scan FROM pg_stat_user_indexes WHERE relname IN ('unmodeled_observation_events','token_events') ORDER BY relname, pg_relation_size(indexrelid) DESC
 ;;
@@ -585,7 +735,13 @@ no_fk_orphans|SELECT 'metrics_events' AS t, project_id, count(*) FROM metrics_ev
 ;;
 code_index_orphans|SELECT project_id, count(*) FROM code_calls t WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.id=t.project_id) AND NOT EXISTS (SELECT 1 FROM code_indexed_project_states s WHERE s.project_id=t.project_id) GROUP BY 1
 ;;
-registry|SELECT 'worktree' AS kind, worktree_path AS path, status FROM worktrees UNION ALL SELECT 'clone', clone_path, status FROM clones
+te_orphans|SELECT count(*) AS token_events_without_session FROM token_events t WHERE NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id = t.session_id)
+;;
+soft_deleted|SELECT id, name, deleted_at FROM projects WHERE deleted_at IS NOT NULL
+;;
+projects|SELECT id, name FROM projects ORDER BY name
+;;
+registry_owner|SELECT 'worktree' AS kind, project_id, worktree_path AS path, status FROM worktrees UNION ALL SELECT 'clone', project_id, clone_path, status FROM clones ORDER BY 1, 3
 ```
 
 ## Appendix C: filesystem commands
@@ -598,4 +754,15 @@ lsof 2>/dev/null | grep -F '/.gobby/cache/cargo-target/'
 ps -Ewwax | grep -oE 'CARGO_TARGET_DIR=[^ ]*cache/cargo-target/[^ ]*' | sort -u
 grep -h -c 'Periodic unmodeled-observation cleanup' ~/.gobby/logs/daemon.log*
 grep -h '63dac488-3956-5023-a761-6d0ad76c2601' ~/.gobby/logs/code-index-maintenance.log
+du -sh ~/.gobby/backups/*
+git -C ~/Projects/gobby worktree list --porcelain | grep '^worktree '
+git -C ~/Projects/gobby-web-dev worktree list --porcelain | grep '^worktree '
+git -C ~/.gobby/worktrees/gobby-cli/task-396-module-clustering-from-the-dependency-gr rev-parse --git-common-dir
+lsof -d cwd -Fn | grep -E '^n.*(/\.gobby/cache/cargo-target/|/\.gobby/worktrees/(gobby-cli|test-project|epic-22010-native-ask|game-goblins)|/\.gobby/clones/gobby$)'
+for f in ~/.cargo/config ~/.cargo/config.toml .cargo/config.toml ~/.zshrc ~/.zprofile ~/.zshenv ~/.bashrc ~/.bash_profile ~/.profile; do [ -f "$f" ] && { grep -q -E 'cargo-target([^-]|$)' "$f" && echo "MATCH $f" || echo "clean $f"; }; done
+for n in 'wt-main' 'wt-gobby-22529' 'wt-gobby-22544[^-]' 'wt-lane-22581-gcode-import-communities' 'wt-gobby-22544-gterm'; do echo "== $n"; find ~/.gobby/session_transcripts -name '*.jsonl.gz' -newermt 2026-09-17 ! -newermt 2026-09-23 -print0 | xargs -0 zgrep -l -E "CARGO_TARGET_DIR=[^ \"]*cargo-target/$n"; done
 ```
+
+The `zgrep` loop ran on 2026-10-06 for all five dirs, and each returned at
+least one transcript. The `lsof -d cwd` command printed nothing, and the
+config loop printed only `clean` lines.
