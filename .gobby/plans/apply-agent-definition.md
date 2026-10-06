@@ -621,7 +621,7 @@ SessionStart re-activation keeps it.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/mcp_proxy/tools/apply_agent_definition.py`
+- `src/gobby/mcp_proxy/tools/apply_agent_definition.py::*` — scope-reason: 1.1 creates the module: the shared activation core (build_definition_changes, activation_decision, commit_definition_changes) and apply_agent_definition_impl
 - `src/gobby/mcp_proxy/tools/apply_persona.py` — operation: delete
 - `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::*` — scope-reason: 1.1 replaced the nested apply_persona registration with apply_agent_definition; #23647 registers apply_persona again beside it
 - `src/gobby/hooks/event_handlers/_session_start/agents.py::build_agent_changes`
@@ -631,8 +631,8 @@ Targets:
 - `src/gobby/servers/websocket/chat/_session_launch.py::start_hydrated_session`
 - `src/gobby/servers/websocket/chat/_session.py::ChatSessionMixin._create_chat_session_inner`
 - `src/gobby/servers/websocket/handlers/session_config.py::_set_attached_session_agent`
-- `tests/mcp_proxy/tools/test_apply_agent_definition.py`
-- `tests/hooks/test_session_start_reactivation.py`
+- `tests/mcp_proxy/tools/test_apply_agent_definition.py::*` — scope-reason: 1.1 creates the tool's activation, refusal, seat, relaunch and concurrency tests
+- `tests/hooks/test_session_start_reactivation.py::*` — scope-reason: 1.1 creates the SessionStart compact, provider-pin, dropped-skill and drift-relaunch reactivation tests
 - `tests/servers/websocket/test_attached_session_agent.py::*` — scope-reason: the fixture seeds the target's variables at the base agent, plus the role-change refusal and current-agent echo case
 - `tests/mcp_proxy/tools/test_apply_persona.py` — operation: delete
 - `tests/workflows/test_step_snapshot_semantics.py::*` — scope-reason: retarget module paths; persona switch tests become refusal and no-op tests
@@ -1044,7 +1044,7 @@ Targets:
 - `src/gobby/mcp_proxy/tools/apply_agent_definition.py::*` — scope-reason: commit_definition_changes ends the previous step instance in its transaction, build_definition_changes seeds the step gate for every declared step workflow, _session_has_assigned_or_active_task is deleted, and apply_agent_definition_impl fills the receipt's step_workflow
 - `src/gobby/hooks/session_activation.py::_missing_step_state`
 - `src/gobby/hooks/session_activation.py::_ensure_step_instance`
-- `tests/hooks/test_interactive_step_instance.py`
+- `tests/hooks/test_interactive_step_instance.py::*` — scope-reason: 1.2 creates the interactive step-instance creation, reconcile repair, spawned preservation and replacement tests
 - `tests/workflows/test_step_snapshot_semantics.py::*` — scope-reason: invert the tests that pinned the no-instance non-goal
 - `tests/hooks/test_session_activation_reconciliation.py::*` — scope-reason: step recovery no longer requires a spawned session or task
 
@@ -2121,6 +2121,18 @@ deferral:
   returns with the tool. The plan has 49 acceptance items over eight
   deliverables, and the remaining items keep their ids. The stale M1 was
   withdrawn for re-derivation (memory f5577ae0).
+- 2026-10-06: Close-review repair under #23648 (CR7 gobby#15396 F1, the
+  Orchestrator's ruling). With completed-section exemptions stubbed out, the
+  close-review sandbox condition of #23620 (memory 1033f9db), validation
+  failed on four bare Targets naming files that 1.1 and 1.2 created and the
+  index now reports symbols for. 1.1's `apply_agent_definition.py`,
+  `test_apply_agent_definition.py` and `test_session_start_reactivation.py`
+  and 1.2's `test_interactive_step_instance.py` become `::*` Targets with a
+  scope-reason naming what the section creates, the #23618 pattern
+  (f39512cb1a). M1 inputs are unchanged. 1.1's two delete Targets stay bare
+  paths while `apply_persona.py` and `test_apply_persona.py` are absent; the
+  sandbox failure they meet once #23647 restores the files belongs to
+  #23620's root fix.
 
 ## V2: Verification
 `kind: verification`
