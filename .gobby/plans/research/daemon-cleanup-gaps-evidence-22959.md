@@ -97,8 +97,11 @@ run, which is the only retry.
   `excerpt_hash=129e77971c29a472d6369be037fabf9eae0a91e7a1b6a0eeb802f668f015ffd6`.
   Then one final transaction locks the project row, re-checks terminals,
   detaches foreign references, and deletes `terminals`, `tasks`, `plans`,
-  `sessions` and `projects` directly. Every other project-owned table goes
-  through FK actions on that final delete:
+  `sessions` and `projects` directly. Other project-owned rows rely on FK
+  actions on that final delete where those FKs exist. Tables without an FK
+  (listed below) fall outside the automatic cascade: the `code_*` tables
+  are handled by the separate gcode invalidation, and the rest have no
+  traced cleanup:
   `src/gobby/projects/purge.py:352-357`
   `excerpt_hash=d6e18fb8c9a4e7d75f16eefab740ae8afdf53331a36d388074c94273d2cbe621`.
 
