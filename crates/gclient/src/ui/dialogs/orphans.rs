@@ -10,8 +10,8 @@ use ratatui::Frame;
 
 use crate::ui::chrome::Chrome;
 use crate::ui::widgets::{
-    action_button_row_rects, modal_choice_rows, render_action_button, render_modal_description,
-    render_modal_header, render_modal_shell, ActionButtonSpec,
+    action_button_row_rects, centered_popup_rect, modal_choice_rows, render_action_button,
+    render_modal_description, render_modal_header, render_panel_shell, ActionButtonSpec,
 };
 
 use super::{primary_button_style, secondary_button_style, OrphanRow};
@@ -22,6 +22,17 @@ const POPUP_WIDTH: u16 = 72;
 /// the two border rows.
 const BASE_HEIGHT: u16 = 7;
 
+/// Rows the candidate list takes: one per orphan, or one for the note that
+/// there are none.
+fn list_rows(rows: usize) -> u16 {
+    rows.clamp(1, usize::from(u16::MAX)) as u16
+}
+
+/// The popup over `rows` orphans, border included.
+pub fn popup_area(area: Rect, rows: usize) -> Option<Rect> {
+    centered_popup_rect(area, POPUP_WIDTH, BASE_HEIGHT + list_rows(rows))
+}
+
 pub fn render_destroy_orphans(
     frame: &mut Frame,
     area: Rect,
@@ -31,8 +42,9 @@ pub fn render_destroy_orphans(
     selected: usize,
 ) -> Vec<Rect> {
     let p = &chrome.palette;
-    let list_rows = rows.len().clamp(1, usize::from(u16::MAX)) as u16;
-    let Some(inner) = render_modal_shell(frame, area, POPUP_WIDTH, BASE_HEIGHT + list_rows, p)
+    let list_rows = list_rows(rows.len());
+    let Some(inner) = popup_area(area, rows.len())
+        .and_then(|popup| render_panel_shell(frame, popup, p.accent, p.panel_bg))
     else {
         return Vec::new();
     };

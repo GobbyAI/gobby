@@ -65,8 +65,8 @@ pub struct MenuBarHits {
 pub fn render_menu_bar(frame: &mut Frame, rect: Rect, chrome: &Chrome) -> MenuBarHits {
     let p = &chrome.palette;
     let bar = Style::new()
-        .bg(p.band)
-        .fg(p.band_ink.ink(p.subtext0))
+        .bg(p.bar)
+        .fg(p.bar_ink.ink(p.subtext0))
         .add_modifier(Modifier::BOLD);
     // The title stays open while a submenu cascades from its menu.
     let root = std::iter::successors(chrome.menu.as_ref(), |menu| menu.parent.as_deref()).last();
@@ -148,7 +148,7 @@ mod tests {
             let cell = &buffer[(x, 0)];
             assert_eq!(
                 (cell.fg, cell.bg),
-                (palette.band_ink.ink(palette.subtext0), palette.band),
+                (palette.bar_ink.ink(palette.subtext0), palette.bar),
                 "x={x}"
             );
             assert!(cell.modifier.contains(Modifier::BOLD), "x={x}");
@@ -189,7 +189,7 @@ mod tests {
             let expected = if (view.left()..view.right()).contains(&x) {
                 (palette.selection_ink.text, palette.selection)
             } else {
-                (palette.band_ink.ink(palette.subtext0), palette.band)
+                (palette.bar_ink.ink(palette.subtext0), palette.bar)
             };
             assert_eq!((cell.fg, cell.bg), expected, "x={x}");
         }

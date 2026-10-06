@@ -461,7 +461,7 @@ fn draw_menu_bar(chrome: &Chrome, width: u16) -> (MenuBarHits, Buffer) {
 /// header fill and the open title on the selection; both titles read at AA
 /// and the bar stands at least 1.15:1 off the ground.
 #[test]
-fn menu_bar_takes_the_header_fill_and_opens_on_the_selection() {
+fn menu_bar_takes_the_bar_fill_and_opens_on_the_selection() {
     const WIDTH: u16 = 80;
     let open = MenuBarMenu::ALL[1];
     for appearance in APPEARANCES {
@@ -483,7 +483,7 @@ fn menu_bar_takes_the_header_fill_and_opens_on_the_selection() {
                 .find(|(index, _)| MenuBarMenu::ALL[*index] == open)
                 .map(|(_, rect)| *rect)
                 .unwrap_or_else(|| panic!("{case}: no {open:?} title"));
-            let bar = (p.band_ink.ink(p.subtext0), p.band);
+            let bar = (p.bar_ink.ink(p.subtext0), p.bar);
             let opened = (p.selection_ink.text, p.selection);
             for x in 0..WIDTH {
                 let cell = &buffer[(x, 0)];
@@ -498,10 +498,51 @@ fn menu_bar_takes_the_header_fill_and_opens_on_the_selection() {
                 let reached = ratio(fg, bg);
                 assert!(reached >= TEXT_CONTRAST, "{case}: {label} {reached:.2}");
             }
-            let off = contrast_ratio(rgb(p.band), appearance.ground(&p));
+            let off = contrast_ratio(rgb(p.bar), appearance.ground(&p));
             assert!(off >= UNFOCUSED_CONTRAST, "{case}: bar on ground {off:.2}");
         }
     }
+}
+
+/// #23626 C: the sidebar section headers and the unselected tabs keep the
+/// band (`sidebar` and `tabs` tests pin them to it) and the menu bar takes
+/// its own fill. In colour the bar stands 1.4:1 off the band, or at least
+/// 1.25:1 where a further step would cost its titles AA, and keeps 1.15:1
+/// off the ground and the selection. Monochrome keeps the bar apart by
+/// lightness alone.
+#[test]
+fn headers_and_unselected_tabs_keep_the_band_and_the_menu_bar_steps_off_it() {
+    let mut failures = Vec::new();
+    for appearance in APPEARANCES {
+        for (case, _, p) in appearance.drawn() {
+            let mut expect = |holds: bool, what: String| {
+                if !holds {
+                    failures.push(format!("{case}: {what}"));
+                }
+            };
+            expect(p.bar != p.band, format!("bar is the band {}", hex(p.band)));
+            if case.ends_with("monochrome") {
+                continue;
+            }
+            let off_band = ratio(p.bar, p.band);
+            expect(off_band >= 1.25, format!("bar on band {off_band:.2}"));
+            let off_ground = contrast_ratio(rgb(p.bar), appearance.ground(&p));
+            expect(
+                off_ground >= UNFOCUSED_CONTRAST,
+                format!("bar on ground {off_ground:.2}"),
+            );
+            let off_selection = ratio(p.bar, p.selection);
+            expect(
+                off_selection >= UNFOCUSED_CONTRAST,
+                format!("bar on selection {off_selection:.2}"),
+            );
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+
+    // The value the design board and fills.py give Restored Dark.
+    let restored = Palette::from_theme(&Theme::named(ThemeName::Restored, ThemeKind::Dark));
+    assert_eq!(hex(restored.bar), "#3c3e3a");
 }
 
 /// Criteria 14 and 15: Dark and Light set an unfocused pane a lightness

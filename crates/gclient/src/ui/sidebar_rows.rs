@@ -282,8 +282,9 @@ pub(crate) fn worktree_glyph_offset(row: &SidebarRow) -> u16 {
 /// the state glyph, definition and pinned reference; a terminal row shows
 /// the state glyph and foreground app, with the pane's address at the
 /// right edge while the name leaves it room. A group row is the project
-/// name in bold accent and a rule. Agent task titles scroll on the second line;
-/// a worktree name too long for its row drops its task and scrolls.
+/// name in bold accent and a rule. An agent title too long for its row
+/// scrolls after its pinned reference, as its task title does on the second
+/// line; a worktree name too long for its row drops its task and scrolls.
 pub fn row_line<'a>(
     row: &'a SidebarRow,
     width: u16,
@@ -417,18 +418,33 @@ pub(crate) fn row_line_with_scrolling<'a>(
             spans.push(Span::styled(glyph.0.to_string(), glyph.1));
             if budget > 1 {
                 spans.push(Span::raw(" "));
+                let budget = budget - 2;
                 let definition = (row.definition.as_str(), title_style);
-                let segments = if row.reference.is_empty() {
-                    vec![definition]
+                let pinned = pinned_width(row);
+                if pinned < budget {
+                    // `{ref}: ` stays put and a title the row cannot hold,
+                    // such as a lane seat's manual title, scrolls after it
+                    // on the shared clock like the task line.
+                    if pinned > 0 {
+                        spans.push(Span::styled(row.reference.as_str(), identifier_style));
+                        spans.push(Span::styled(": ", secondary_style));
+                    }
+                    spans.extend(ticker_spans(
+                        &[definition],
+                        budget - pinned,
+                        chrome.ticker,
+                        max_travel,
+                        title_scrolling,
+                    ));
                 } else {
-                    vec![
+                    let segments = [
                         (row.reference.as_str(), identifier_style),
                         (": ", secondary_style),
                         definition,
-                    ]
-                };
-                let name: String = segments.iter().map(|(text, _)| *text).collect();
-                spans.extend(split_segments(&truncate_end(&name, budget - 2), &segments));
+                    ];
+                    let name: String = segments.iter().map(|(text, _)| *text).collect();
+                    spans.extend(split_segments(&truncate_end(&name, budget), &segments));
+                }
             }
         }
         RowKind::Group => {
@@ -484,26 +500,45 @@ fn card_spans(
     spans
 }
 
-/// Cells a scrolling title overruns its marquee budget by at `width`: an
-/// agent's task line, or a worktree name too long for its row. Zero when
-/// it fits or the row never scrolls. The longest overrun among the rows
-/// drawn together sets their shared period.
+/// Cells a scrolling title overruns its marquee budget by at `width`: the
+/// longer of an agent's title after its pinned `{ref}: ` and its task line,
+/// or a worktree name too long for its row. Zero when it fits or the row
+/// never scrolls. The longest overrun among the rows drawn together sets
+/// their shared period.
 pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
-    let (text_width, budget) = match row.kind {
-        RowKind::Agent => match task_line(row) {
-            Some((lead, title)) => (
-                display_width(&lead) + display_width(&title),
-                usize::from(width).saturating_sub(3 + display_width(nest_prefix(row))),
-            ),
-            None => return 0,
-        },
-        RowKind::Worktree => (display_width(&row.label), worktree_name_budget(row, width)),
-        _ => return 0,
-    };
-    if budget < TICKER_MIN_WINDOW {
+    match row.kind {
+        RowKind::Agent => {
+            let budget = usize::from(width).saturating_sub(3 + display_width(nest_prefix(row)));
+            let name = overrun(
+                display_width(&row.definition),
+                budget.saturating_sub(pinned_width(row)),
+            );
+            let task = task_line(row).map_or(0, |(lead, title)| {
+                overrun(display_width(&lead) + display_width(&title), budget)
+            });
+            name.max(task)
+        }
+        RowKind::Worktree => overrun(display_width(&row.label), worktree_name_budget(row, width)),
+        _ => 0,
+    }
+}
+
+/// Cells `text_width` overruns a marquee `window` by; zero when it fits or
+/// the window is too narrow to scroll.
+fn overrun(text_width: usize, window: usize) -> usize {
+    if window < TICKER_MIN_WINDOW {
         return 0;
     }
-    text_width.saturating_sub(budget)
+    text_width.saturating_sub(window)
+}
+
+/// Cells an agent's pinned `{ref}: ` takes on line one; zero without a ref.
+fn pinned_width(row: &SidebarRow) -> usize {
+    if row.reference.is_empty() {
+        0
+    } else {
+        display_width(&row.reference) + 2
+    }
 }
 
 /// An agent's second line, `Working task 22944` then ` Title`: the number

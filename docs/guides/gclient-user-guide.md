@@ -818,6 +818,7 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Wheel over a pane | Scroll its scrollback; on an alternate screen the wheel sends arrow keys instead |
 | Wheel over the tab bar | Switch tabs |
 | Wheel over the sidebar | Scroll the section under the pointer |
+| Wheel over the keybinding help, the alert log, the navigator, or the Open worktree or Destroy orphaned terminals list | Do what its arrow keys do: the help and the log scroll three rows a notch, the navigator and the two lists move their selection one row; a notch outside the popup does nothing |
 | Click a tab, the new-tab button, or an edge count | Switch tabs, open one, or page the bar one screen |
 | Drag a tab onto another tab | Reorder tabs, including when the terminal delivers only press and release events |
 | Click a project card / worktree row | Focus the project (expanding its card) / open the worktree |
