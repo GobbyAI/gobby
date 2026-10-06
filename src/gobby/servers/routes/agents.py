@@ -9,7 +9,7 @@ import asyncio
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -129,6 +129,7 @@ class CreateAgentDefinitionRequest(BaseModel):
     sources: list[str] | None = None
     surfaces: list[str] | None = None
     prompts: AgentPromptBlocks = Field(default_factory=AgentPromptBlocks)
+    execution_mode: Literal["one_shot", "interactive"] = "one_shot"
     provider: str = "inherit"
     model: str | None = None
     reasoning_effort: str | None = None
@@ -169,6 +170,7 @@ class UpdateAgentDefinitionRequest(BaseModel):
     sources: list[str] | None = None
     surfaces: list[str] | None = None
     prompts: AgentPromptBlocks | None = None
+    execution_mode: Literal["one_shot", "interactive"] | None = None
     provider: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
@@ -432,6 +434,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 sources=request.sources,
                 surfaces=request.surfaces,
                 prompts=request.prompts,
+                execution_mode=request.execution_mode,
                 provider=request.provider,
                 model=request.model,
                 reasoning_effort=request.reasoning_effort,
@@ -508,6 +511,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     "sources",
                     "surfaces",
                     "prompts",
+                    "execution_mode",
                     "provider",
                     "model",
                     "reasoning_effort",

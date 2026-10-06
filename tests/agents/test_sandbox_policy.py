@@ -100,7 +100,7 @@ def _run_cache(
     run_id: str = "run-1",
 ) -> tuple[SandboxRunPaths, Path]:
     gobby_home = tmp_path / "gobby-home"
-    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
     paths = sandbox_policy.prepare_sandbox_run_paths(
         run_id,
         {},
@@ -115,7 +115,7 @@ def test_gcode_runtime_write_exception_matches_workspace_hash(
 ) -> None:
     gobby_home = Path("/Users/josh/.gobby")
     workspace = gobby_home / "worktrees/gobby/task-21329-detach-close-criteria-review"
-    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
 
     assert sandbox_policy.gcode_runtime_write_exceptions(workspace) == [
         str(gobby_home / "gcode-runtime/9717da2af3b3bf43")
@@ -130,7 +130,7 @@ async def test_srt_policy_allows_only_current_workspace_gcode_runtime(
     runtime_root = gobby_home / "gcode-runtime"
     workspace = gobby_home / "worktrees/gobby/task-21620"
     unrelated_runtime = runtime_root / "unrelated-run"
-    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
 
     async def no_git_metadata(*_args: object, **_kwargs: object) -> GitFailed:
         return GitFailed(
@@ -171,7 +171,7 @@ def test_sensitive_write_roots_exclude_gcode_runtime_parent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gobby_home = Path("/opt/gobby-home")
-    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
 
     write_roots = set(sandbox_policy.sensitive_write_roots())
 
@@ -352,7 +352,7 @@ def test_shutdown_pre_commit_store_spare_waits_for_replenish_and_removes_paths(
 ) -> None:
     source = _operator_store(tmp_path / "operator-pre-commit", "operator")
     gobby_home = tmp_path / "gobby-home"
-    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
     managed_root = sandbox_policy.managed_execution_root()
     spare, temporary = sandbox_policy.pre_commit_store_spare_paths(managed_root)
     clone_started = threading.Event()
@@ -672,7 +672,7 @@ def test_managed_grant_lock_path_names_the_lock_beside_the_run_grant(
     ungranted lock fails the refresh with EPERM instead of making it wait.
     """
     gobby_home = tmp_path / "gobby-home"
-    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
     run_root = sandbox_policy.managed_execution_root() / "1c9d0c7e"
     run_root.mkdir(parents=True)
 
@@ -703,7 +703,7 @@ def test_managed_grant_lock_path_refuses_a_bootstrap_outside_the_managed_root(
     variable would open an arbitrary path for writing.
     """
     gobby_home = tmp_path / "gobby-home"
-    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
 
@@ -723,7 +723,7 @@ def test_prepare_sandbox_run_paths_skips_pre_commit_prewarm_when_definition_opts
     source = _operator_store(tmp_path / "operator-pre-commit", "operator")
     monkeypatch.setenv("PRE_COMMIT_HOME", str(source))
     gobby_home = tmp_path / "gobby-home"
-    monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
     spare, _temporary = sandbox_policy.pre_commit_store_spare_paths()
     _operator_store(spare, "spare")
     spare_inode = spare.stat().st_ino
@@ -750,3 +750,39 @@ def test_prepare_sandbox_run_paths_skips_pre_commit_prewarm_when_definition_opts
     assert clones == []
     assert schedules == []
     assert sandbox_policy._pre_commit_spare_thread is None
+
+
+@pytest.mark.asyncio
+async def test_break_glass_file_is_a_credential_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.utils import local_token
+
+    home = tmp_path / "home"
+    workspace = tmp_path / "allowed"
+    workspace.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    monkeypatch.setattr(local_token, "_daemon_bootstrap", None)
+    bootstrap = workspace / "bootstrap.yaml"
+    local_token.bind_daemon_bootstrap(bootstrap)
+
+    async def no_git_metadata(*_args: object, **_kwargs: object) -> GitFailed:
+        return GitFailed(
+            status="failed",
+            argv=("git", "rev-parse"),
+            returncode=128,
+            stdout="",
+            stderr="not a git repository",
+        )
+
+    monkeypatch.setattr("gobby.agents.sandbox.daemon_git.run", no_git_metadata)
+    for path in (bootstrap, workspace / "break_glass", workspace / ".break_glass-staging"):
+        assert str(path) in sandbox_policy.sensitive_roots()
+        assert str(path) in sandbox_policy.sensitive_write_roots()
+    with pytest.raises(ValueError, match="sandbox allow path contains sensitive root"):
+        await compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+            provider="codex",
+            env={"PATH": ""},
+        )

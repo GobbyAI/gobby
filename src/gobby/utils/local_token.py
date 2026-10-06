@@ -13,10 +13,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from gobby.config.bootstrap_io import bootstrap_path
 from gobby.paths import get_gobby_home
 from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
+
+_daemon_bootstrap: Path | None = None
+
+
+def bind_daemon_bootstrap(path: Path) -> None:
+    """Bind the one startup credential location owned by this daemon process."""
+    global _daemon_bootstrap
+    _daemon_bootstrap = path.expanduser().resolve()
+
+
+def daemon_bootstrap_path() -> Path:
+    """Client processes keep the default bootstrap until daemon startup binds it."""
+    return _daemon_bootstrap if _daemon_bootstrap is not None else bootstrap_path()
+
 
 # This is a filename, not a credential value.
 LOCAL_API_TOKEN_FILENAME = "local_cli_token"  # nosec B105
