@@ -394,10 +394,10 @@ the user skips adversarial review, the coordinator uses
 `derive_plan_handoff_manifest` and `apply_plan_handoff_manifest`, followed by
 expansion-mode validation. It does not synthesize adversary evidence.
 
-The plan council (the standing Plan Writer, Program Director, and Plan
-Adversary seats) runs the interactive flow Josh set on 2026-09-26 with no
-numbered review rounds: the Writer drafts and spawns one enhancer pass, the
-Program Director disposes each enhancer edit or puts the product decision to
+The planning runbook spawns the Plan Writer, Plan Enhancer, and Plan Adversary
+as live seats. The interactive flow has no numbered review rounds: the Writer
+drafts and presents the live Enhancer's edits, the Program Director disposes
+each enhancer edit or puts the product decision to
 Josh, the Writer edits, the Adversary reviews and converses with the Writer by
 `send_message` to consensus, the Writer records one dated prose consensus
 entry under `## V1 Plan Changelog`, and the Adversary then derives and applies
@@ -406,7 +406,7 @@ M1 from those bytes through `derive_plan_handoff_manifest` and
 Writer commits the rendered bytes unchanged. Any edit after derivation
 requires fresh hashes. The Program Director then reviews the stamped plan and
 Josh approves it. Josh's approval gates expansion, not the manifest write:
-the council stamps M1 before approval, and nothing expands until Josh
+the Adversary stamps M1 before approval, and nothing expands until Josh
 approves the stamped bytes. The evidence-round
 protocol in this contract remains the path for spawned taskless reviewers and
 `gobby build` stage reviews.

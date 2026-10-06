@@ -16,6 +16,15 @@ checkout_mode: none
 blocked_tools:
   - "EnterWorktree"
 blocked_mcp_tools:
+  - "gobby-plans:prepare_plan_review_round"
+  - "gobby-plans:get_plan_review_snapshot"
+  - "gobby-plans:bind_evidence_run"
+  - "gobby-plans:derive_plan_review_manifest"
+  - "gobby-plans:validate_plan_review_coverage"
+  - "gobby-plans:append_plan_changelog_round"
+  - "gobby-plans:finalize_plan_review_evidence"
+  - "gobby-plans:apply_plan_review_manifest"
+  - "gobby-plans:checkpoint_plan_review_lesson_mint"
   - "gobby-worktrees:create_worktree"
   - "gobby-agents:spawn_agent"
   - "gobby-agents:dispatch_batch"
@@ -32,7 +41,8 @@ prompts:
     the seat sessions and the coordinator session that owns the run. There is
     no assigned task.
 
-    Load `restraint`, `gobby:references/plan/review.md`, and `proportionality`
+    Load `restraint`, `gobby:references/plan/review.md`,
+    `gobby:references/plan/coverage.md`, and `proportionality`
     through the Gobby MCP proxy before reviewing; review.md owns the finding
     schema, categories, and repair matrix. Each `fix` takes the lowest
     restraint rung that fully repairs the defect. A deliverable that builds
@@ -50,7 +60,10 @@ prompts:
        converse until you reach consensus. Send the coordinator any
        disagreement the two of you cannot resolve.
     3. On consensus, once plan-writer has committed its dated consensus entry
-       under `## V1 Plan Changelog` and sent you the SHA, you own
+       under `## V1 Plan Changelog` and sent you the SHA, verify that committed
+       entry. Send EVENT=CONSENSUS naming that SHA to both plan-writer and the
+       coordinator through gobby-agents:send_message. The successful message
+       handler enters stamp; never call set_variable to enter it. You then own
        `## M1 Task Manifest`: derive it with
        `gobby-plans:derive_plan_handoff_manifest` from complete routing
        decisions, and apply it with `gobby-plans:apply_plan_handoff_manifest`
@@ -82,21 +95,24 @@ step_workflow:
     required_skills:
       - restraint
       - gobby:references/plan/review.md
+      - gobby:references/plan/coverage.md
       - proportionality
     restraint_loaded: false
     skill_loaded: false
     proportionality_loaded: false
     seat_complete: false
+    consensus: false
 
   exit_condition: "vars.seat_complete"
   steps:
     - name: load_skill
       mcp_error_policy: stay
-      description: "Load the restraint, gobby:references/plan/review.md, and proportionality methodology skills"
+      description: "Load restraint, plan review and coverage, and proportionality"
       status_message: |
-        Load all three skills through mcp__gobby__call_tool before reviewing:
+        Load all four skills through mcp__gobby__call_tool before reviewing:
         call_tool("gobby-skills", "get_skill", {"name": "restraint"}),
-        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/review.md"}), and
+        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/review.md"}),
+        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/coverage.md"}) for gobby:references/plan/coverage.md, and
         call_tool("gobby-skills", "get_skill", {"name": "proportionality"}).
         Fetch the get_skill_file schema with get_tool_schema in a separate outer
         result first, and follow each page.next_cursor with only cursor until null.
@@ -110,6 +126,9 @@ step_workflow:
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
+      blocked_mcp_tools:
+        - "gobby-plans:derive_plan_handoff_manifest"
+        - "gobby-plans:apply_plan_handoff_manifest"
       on_mcp_success:
         - server: gobby-skills
           tool: get_skill_file
@@ -135,13 +154,54 @@ step_workflow:
 
     - name: review
       mcp_error_policy: stay
-      description: "Review the plan, reach consensus with the writer, and stamp M1"
+      description: "Review the plan and verify the writer's committed consensus entry"
       status_message: |
         Review the plan plan-writer passes you, send findings over send_message
-        until consensus, then derive and apply the M1 manifest with the
-        handoff-manifest tools, validate in expansion mode, send the digest,
-        and call end_agent_run.
+        until consensus. Verify the writer's committed consensus entry and SHA,
+        then send EVENT=CONSENSUS naming the SHA to the writer and coordinator.
+        The successful send_message handler enters stamp; do not call set_variable.
       allowed_tools: "all"
+      blocked_tools:
+        - "Edit"
+        - "Write"
+      blocked_mcp_tools:
+        - "gobby-plans:derive_plan_handoff_manifest"
+        - "gobby-plans:apply_plan_handoff_manifest"
+        - "gobby-tasks:create_task"
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:close_task"
+        - "gobby-tasks:reopen_task"
+        - "gobby-tasks:escalate_task"
+        - "gobby-tasks-ops:submit_for_review"
+        - "gobby-tasks-ops:approve_review"
+        - "gobby-tasks-ops:reject_review"
+        - "gobby-agents:spawn_agent"
+        - "gobby-agents:dispatch_batch"
+        - "gobby-agents:kill_agent"
+        - "gobby-plans:apply_plan_review_repairs"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: send_message
+          when: "'EVENT=CONSENSUS' in str(tool_input.get('content'))"
+          action: set_variable
+          variable: consensus
+          value: true
+      transitions:
+        - to: stamp
+          when: "vars.consensus"
+
+    - name: stamp
+      mcp_error_policy: stay
+      description: "Derive and apply M1 after verified consensus"
+      status_message: |
+        Send EVENT=CONSENSUS naming the verified SHA to both the writer and
+        coordinator before stamping. Derive and apply the M1 manifest with
+        gobby-plans:derive_plan_handoff_manifest and
+        gobby-plans:apply_plan_handoff_manifest. Use the exact returned hashes
+        and digest; derive again after any plan edit. Validate in expansion mode,
+        send the manifest digest to the writer and coordinator, then call end_agent_run.
+      allowed_tools: "all"
+      allowed_mcp_tools: "all"
       blocked_tools:
         - "Edit"
         - "Write"
@@ -157,7 +217,6 @@ step_workflow:
         - "gobby-agents:spawn_agent"
         - "gobby-agents:dispatch_batch"
         - "gobby-agents:kill_agent"
-        - "gobby-plans:apply_plan_review_repairs"
       on_mcp_success:
         - server: gobby-agents
           tool: end_agent_run

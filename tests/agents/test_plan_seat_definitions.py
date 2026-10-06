@@ -30,6 +30,74 @@ pytestmark = pytest.mark.unit
 
 SEATS = ("plan-writer", "plan-enhancer", "plan-adversary")
 
+HANDOFF_TOOLS = {
+    "gobby-plans:derive_plan_handoff_manifest",
+    "gobby-plans:apply_plan_handoff_manifest",
+}
+
+
+def test_adversary_stamps_only_after_consensus() -> None:
+    body = _load("plan-adversary")
+    workflow = body.step_workflow
+    assert workflow is not None
+    steps = {step.name: step for step in workflow.steps}
+    assert set(steps) == {"load_skill", "review", "stamp"}
+    for name in ("load_skill", "review"):
+        assert HANDOFF_TOOLS <= set(steps[name].blocked_mcp_tools or [])
+    stamp = steps["stamp"]
+    assert not HANDOFF_TOOLS.intersection(body.blocked_mcp_tools or [])
+    assert not HANDOFF_TOOLS.intersection(stamp.blocked_mcp_tools or [])
+    assert stamp.allowed_mcp_tools == "all" or HANDOFF_TOOLS <= set(stamp.allowed_mcp_tools or [])
+    review = steps["review"]
+    assert [(entry.to, entry.when) for entry in review.transitions] == [("stamp", "vars.consensus")]
+    handlers = review.on_mcp_success or []
+    assert len(handlers) == 1
+    handler = handlers[0]
+    assert _field(handler, "server") == "gobby-agents"
+    assert _field(handler, "tool") == "send_message"
+    assert _field(handler, "when") == "'EVENT=CONSENSUS' in str(tool_input.get('content'))"
+    assert _field(handler, "action") == "set_variable"
+    assert _field(handler, "variable") == "consensus"
+    assert _field(handler, "value") is True
+    assert workflow.variables["consensus"] is False
+    assert workflow.exit_condition == "vars.seat_complete"
+    assert any(
+        _field(entry, "tool") == "end_agent_run"
+        and _field(entry, "variable") == "seat_complete"
+        and _field(entry, "value") is True
+        for entry in (stamp.on_mcp_success or [])
+    )
+
+
+def test_adversary_blocks_all_evidence_round_tools() -> None:
+    tools = {
+        "prepare_plan_review_round",
+        "get_plan_review_snapshot",
+        "bind_evidence_run",
+        "derive_plan_review_manifest",
+        "validate_plan_review_coverage",
+        "append_plan_changelog_round",
+        "finalize_plan_review_evidence",
+        "apply_plan_review_manifest",
+        "apply_plan_review_repairs",
+        "checkpoint_plan_review_lesson_mint",
+    }
+    assert {f"gobby-plans:{name}" for name in tools} <= set(
+        _load("plan-adversary").blocked_mcp_tools or []
+    )
+
+
+@pytest.mark.parametrize("name", ("plan-writer", "plan-adversary"))
+def test_planning_seats_require_coverage_skill(name: str) -> None:
+    workflow = _load(name).step_workflow
+    assert workflow is not None
+    assert "gobby:references/plan/coverage.md" in workflow.variables["required_skills"]
+    load = next(step for step in workflow.steps if step.name == "load_skill")
+    assert "gobby:references/plan/coverage.md" in (load.status_message or "")
+    assert [entry.when for entry in load.transitions] == [
+        "all(skill_loaded(skill) for skill in vars.required_skills)"
+    ]
+
 
 def _load(name: str) -> AgentDefinitionBody:
     path = get_bundled_agents_path() / f"{name}.yaml"
