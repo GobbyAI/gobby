@@ -198,6 +198,19 @@ def test_lane_manager_is_read_only_with_event_lines_and_hold_resume() -> None:
     assert "edit requests to the Orchestrator" in prompt
 
 
+def test_lane_manager_resumes_stalled_seats_by_pane_only_on_the_persona_surface() -> None:
+    # Orchestrator ruling on #22996 I1: spawned agents are refused the operator
+    # tools capture_output and send_keys, so a spawned lane-manager escalates.
+    prompt = _prompt("lane-manager")
+
+    assert "operator tools a spawned agent is refused" in prompt
+    assert "applies only in a pane (the persona surface)" in prompt
+    assert "As a spawned lane-manager, report the stalled seat to the Orchestrator instead" in (
+        prompt
+    )
+    assert "`continue: check your queued Gobby messages and proceed\\n`" in prompt
+
+
 def test_coordination_seats_sync_as_installed_rows(definition_db: PostgresHubDatabase) -> None:
     result = sync_bundled_agents(definition_db)
 
