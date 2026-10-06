@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -11,6 +12,8 @@ import pytest
 
 import gobby.storage.task_close_reviews as review_storage
 import gobby.tasks.agentic_close_review as review_payloads
+from gobby.agents.terminal_delivery import deliver_and_cleanup_terminal_run
+from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.storage.agents import AgentRunTerminalReason, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -25,6 +28,7 @@ from gobby.storage.task_close_reviews import (
     TerminalTaskCloseReviewStatus,
 )
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks.close_review_delivery import terminal_review_delivery
 from gobby.utils.machine_id import require_machine_id
 
 
@@ -650,6 +654,99 @@ def _intent(*, caller_session_id: str | None = None) -> dict[str, Any]:
             requested_reasoning_effort=None,
         ),
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("submitted", [False, True], ids=["no-verdict", "finalizing-verdict"])
+async def test_reviewer_completion_requires_persisted_verdict(
+    temp_db: HubDatabase, submitted: bool
+) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    review, created = store.create_or_get_active(**_intent())
+    assert created
+    promoted = _promote(store, review)
+    assert promoted.agent_run_id is not None
+    runs = LocalAgentRunManager(temp_db)
+    _activate_run(runs, promoted.agent_run_id)
+    running = store.bind_run(promoted.id, promoted.agent_run_id)
+    assert running is not None
+    if submitted:
+        claimed = store.claim_finalizing(
+            running.id, promoted.agent_run_id, verdict={"status": "valid", "summary": "Reviewed"}
+        )
+        assert claimed is not None
+
+    completed = runs.complete(promoted.agent_run_id, tool_calls_count=4, turns_used=1)
+
+    assert completed is not None
+    assert completed.status == ("success" if submitted else "error")
+    if submitted:
+        assert completed.error is None
+    else:
+        assert completed.error is not None and review.id in completed.error
+        assert completed.terminal_reason == "review_verdict_missing"
+        delivery = terminal_review_delivery(temp_db, promoted.agent_run_id)
+        assert isinstance(delivery, tuple)
+        payload, message = delivery
+        assert payload["review_id"] == review.id
+        assert payload["status"] == "error"
+        assert payload["reviewer_status"] == "error"
+        assert payload["reviewer_terminal_reason"] == completed.terminal_reason
+        assert payload["reviewer_error"] == completed.error
+        assert payload["reviewer_ended_without_verdict"] is True
+        assert "without a verdict" in message
+        notifications: list[tuple[str, str, dict[str, Any]]] = []
+
+        async def wake_caller(
+            session_id: str, message: str, result: dict[str, Any]
+        ) -> dict[str, bool]:
+            notifications.append((session_id, message, result))
+            return {"ism_persisted": True}
+
+        registry = CompletionEventRegistry(wake_callback=wake_caller)
+        registry.register(promoted.agent_run_id, [review.caller_session_id])
+        await deliver_and_cleanup_terminal_run(
+            db=temp_db,
+            completion_registry=registry,
+            run_id=promoted.agent_run_id,
+            result={"status": "success"},
+            message="",
+            run_db=asyncio.to_thread,
+        )
+        assert len(notifications) == 1
+        recipient, delivered_message, delivered_payload = notifications[0]
+        assert recipient == review.caller_session_id
+        assert delivered_payload["review_id"] == review.id
+        assert delivered_payload["status"] == "error"
+        assert delivered_payload["reviewer_terminal_reason"] == "review_verdict_missing"
+        assert "without a verdict" in delivered_message
+        delivered = store.get(review.id)
+        assert delivered is not None and delivered.delivered_at is not None
+
+
+def test_mid_review_failure_delivery_preserves_runner_end_reason(temp_db: HubDatabase) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    review, created = store.create_or_get_active(**_intent())
+    assert created
+    promoted = _promote(store, review)
+    assert promoted.agent_run_id is not None
+    runs = LocalAgentRunManager(temp_db)
+    _activate_run(runs, promoted.agent_run_id)
+    assert store.bind_run(review.id, promoted.agent_run_id) is not None
+    error = "Provider exited with code 7 at current_step=review."
+    failed = runs.fail(promoted.agent_run_id, error, terminal_reason="provider_error")
+    assert failed is not None
+
+    delivery = terminal_review_delivery(temp_db, promoted.agent_run_id)
+
+    assert isinstance(delivery, tuple)
+    payload, message = delivery
+    assert payload["status"] == "error"
+    assert payload["review_id"] == review.id
+    assert payload["reviewer_status"] == "error"
+    assert payload["reviewer_terminal_reason"] == "provider_error"
+    assert payload["reviewer_error"] == error
+    assert error in message
 
 
 def _other_task_intent(tasks: LocalTaskManager, project_id: str, title: str) -> dict[str, Any]:
