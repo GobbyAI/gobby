@@ -305,7 +305,8 @@ class AgentEventHandlerMixin(EventHandlersBase):
             return
 
         is_spawned_agent = bool(variables.get("is_spawned_agent"))
-        agent_name = variables.get("_agent_type", "default")
+        persona_name = variables.get("_persona_name")
+        agent_name = persona_name or variables.get("_agent_type", "default")
 
         from gobby.workflows.agent_resolver import resolve_agent
 
@@ -313,7 +314,9 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if not agent_body:
             return
 
-        prompt_surface: Literal["persona", "agent"] = "agent" if is_spawned_agent else "persona"
+        prompt_surface: Literal["persona", "agent"] = (
+            "agent" if is_spawned_agent and not persona_name else "persona"
+        )
         definition_surface: Literal["spawn", "persona"] = (
             "spawn" if prompt_surface == "agent" else "persona"
         )

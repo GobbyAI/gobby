@@ -120,3 +120,22 @@ def register_agent_spawn_tools(
             task_id=task_id,
             task_manager=ctx.task_manager,
         )
+
+    @registry.tool(
+        name="apply_persona",
+        description="Switch the current session's persona prompt and skills live, preserving its seat.",
+    )
+    async def apply_persona(
+        agent: str,
+        variables: dict[str, Any] | None = None,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+
+        return await apply_persona_impl(
+            agent=agent,
+            db=ctx.db,
+            variables=variables,
+            task_id=task_id,
+            task_manager=ctx.task_manager,
+        )

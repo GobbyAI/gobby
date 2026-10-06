@@ -18,7 +18,7 @@ def get_session_skill_exclusions(
     installing skills cannot leave a stale discovery allowlist behind.
     """
     variables = SessionVariableManager(db).get_variables(session_id)
-    agent_name = variables.get("_agent_type")
+    agent_name = variables.get("_persona_name") or variables.get("_agent_type")
     if not isinstance(agent_name, str) or not agent_name or agent_name == "none":
         return set()
     if project_id is None:

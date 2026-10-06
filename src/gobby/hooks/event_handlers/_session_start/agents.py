@@ -214,6 +214,7 @@ def activate_default_agent(
         return None
 
     _ta_format = time.monotonic()
+    active_skills = committed["variables"].get("_active_skill_names")
     if active_skills is None:
         injected_names = sorted(
             skill.name
