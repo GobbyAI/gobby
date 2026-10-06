@@ -97,7 +97,7 @@ def handlers(session_manager: SessionManager) -> EventHandlers:
 
 def test_agent_has_step_workflow_uses_typed_resolver(db: HubDatabase) -> None:
     session = SimpleNamespace(project_id="project-id")
-    agent = SimpleNamespace(step_workflow=object())
+    agent = SimpleNamespace(step_workflow=SimpleNamespace(steps=[object()]))
     with patch("gobby.workflows.agent_resolver.resolve_agent", return_value=agent) as resolve:
         exists = _agent_has_step_workflow(
             db,
@@ -688,7 +688,7 @@ def test_active_rule_names_cache_purges_expired_entries(
     assert ("fresh-agent", project_id) in _ACTIVE_RULE_NAMES_CACHE
 
 
-def test_parent_shaped_taskless_session_does_not_restore_step_workflow(
+def test_parent_shaped_taskless_session_restores_step_workflow(
     db: HubDatabase,
     session_manager: SessionManager,
     project_id: str,
@@ -714,16 +714,20 @@ def test_parent_shaped_taskless_session_does_not_restore_step_workflow(
     assert session.agent_run_id is None
     assert session.agent_depth == 0
     variables = {"_agent_type": "worker"}
+    SessionVariableManager(db).merge_variables(session_id, variables)
 
     missing = _missing_step_state(db, session_id, variables, session, None)
     created = _ensure_step_instance(db, session_id, variables, session)
 
-    assert missing == []
-    assert created is False
-    assert AgentStepInstanceManager(db).get_for_session(session_id) is None
+    assert missing == ["step_workflow_instance"]
+    assert created is True
+    instance = AgentStepInstanceManager(db).get_for_session(session_id)
+    assert instance is not None
+    assert instance.agent_name == "worker"
+    assert instance.current_step == "claim"
 
 
-def test_parent_shaped_taskless_session_ignores_agent_run_step_fallback(
+def test_parent_shaped_taskless_session_reports_agent_run_step_fallback(
     db: HubDatabase,
     session_manager: SessionManager,
     project_id: str,
@@ -754,7 +758,7 @@ def test_parent_shaped_taskless_session_ignores_agent_run_step_fallback(
 
     missing = _missing_step_state(db, session_id, {}, session, agent_run)
 
-    assert missing == []
+    assert missing == ["step_workflow_instance"]
     assert AgentStepInstanceManager(db).get_for_session(session_id) is None
 
 
@@ -938,7 +942,7 @@ def test_completion_seed_after_step_instance_recovery(
 
 
 @pytest.mark.parametrize("step_name", [None, "worker-steps"])
-def test_taskless_spawn_does_not_restore_step_workflow_from_agent_run(
+def test_taskless_spawn_restores_step_workflow_from_agent_run(
     db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
@@ -970,7 +974,9 @@ def test_taskless_spawn_does_not_restore_step_workflow_from_agent_run(
     instance = AgentStepInstanceManager(db).get_for_session(child_id)
     assert "step_workflow_instance" not in result.missing
     assert variables["is_spawned_agent"] is True
-    assert instance is None
+    assert instance is not None
+    assert instance.agent_name == "worker"
+    assert instance.current_step == "claim"
 
 
 def test_existing_step_workflow_current_step_is_preserved(
