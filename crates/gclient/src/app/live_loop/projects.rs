@@ -19,12 +19,11 @@ use crate::ui::{Chrome, Mode};
 
 use super::super::sidebar_model::{ProjectEntry, WorktreeEntry};
 use super::super::{PaneId, Workspace};
-use super::actions::{
-    activate_live_tab, close_live_pane, open_live_rename, spawn_live_shell, terminate_live_terminal,
-};
+use super::actions::{activate_live_tab, open_live_rename};
 use super::control::{close_barrier, focus_live_pane, release_live_control};
 use super::daemon_ops::{kill_live_panes, place_live_terminal};
 use super::jobs::JobOutcome;
+use super::lifecycle::{close_live_pane, spawn_live_shell, terminate_live_terminal};
 use super::menu::{attention_id, ContextMenuKind, MenuAction};
 use super::modal_input::{close_modal, edit_text, ModalOutcome};
 use super::mouse::Placement;
