@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 
 pytestmark = pytest.mark.unit
@@ -66,6 +67,23 @@ def test_parse_custom_tool_call_as_tool_use() -> None:
     }
 
 
+@pytest.mark.parametrize("payload_type", ["custom_tool_call", "function_call"])
+@pytest.mark.parametrize("name", ["exec", "wait", "functions.exec", "functions.wait"])
+def test_code_cell_tools_have_provider_qualified_names(payload_type: str, name: str) -> None:
+    payload = {
+        "type": payload_type,
+        "call_id": "cell-call",
+        "name": name,
+        "input": "text(1);" if name.endswith("exec") else '{"cell_id":"cell-1"}',
+    }
+    msg = CodexTranscriptParser().parse_line(_response_item(payload), 9)
+
+    assert msg is not None
+    assert msg.tool_name == f"functions.{name.removeprefix('functions.')}"
+    assert msg.tool_use_id == "cell-call"
+    assert msg.raw_json["payload"]["name"] == name
+
+
 def test_parse_custom_tool_call_output_decodes_json_string_payload() -> None:
     parser = CodexTranscriptParser()
     line = _response_item(
@@ -83,7 +101,7 @@ def test_parse_custom_tool_call_output_decodes_json_string_payload() -> None:
 
     msg = parser.parse_line(line, 10)
 
-    assert msg is not None
+    assert isinstance(msg, ParsedMessage)
     assert msg.role == "tool"
     assert msg.content_type == "tool_result"
     assert msg.tool_use_id == "call_123"

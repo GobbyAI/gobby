@@ -10,6 +10,10 @@ _PROTOCOL_TOOL_NAME = "protocol_context"
 TOOL_TYPE_MAP = {
     "bash": "bash",
     "shell": "bash",
+    "run_terminal_command": "bash",
+    "use_tool": "tool",
+    "functions.exec": "code_execution",
+    "functions.wait": "code_execution_wait",
     "read": "read",
     "read_file": "read",
     "write": "write",
