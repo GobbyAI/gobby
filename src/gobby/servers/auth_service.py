@@ -12,6 +12,7 @@ from typing import Literal, NamedTuple
 
 from starlette.requests import HTTPConnection
 
+from gobby.config.bootstrap import is_loopback_host
 from gobby.identity import DUMMY_PASSWORD_HASH, verify_password_hash
 from gobby.servers.grant_auth import (
     GRANT_HEADER,
@@ -33,6 +34,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.managed_credential_types import resolve_auth_schema
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.users import LocalUserManager, User
+from gobby.utils.break_glass import BREAK_GLASS_HEADER, break_glass_matches, break_glass_path
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
     AgentApiTokenRejection,
@@ -209,6 +211,7 @@ class AuthService:
         local_machine_id: str | None = None,
         effect_fence: EffectFence | None = None,
         clock: Callable[[], int] | None = None,
+        break_glass_file: Path | None = None,
     ) -> None:
         self._database_getter = database_getter
         self._auth_schema: str | None = None
@@ -222,6 +225,7 @@ class AuthService:
         self._local_machine_id = local_machine_id
         self._effect_fence = effect_fence
         self._clock = clock
+        self._break_glass_file = break_glass_file
 
     def bind_runtime(
         self,
@@ -321,6 +325,8 @@ class AuthService:
 
     def _legacy_rejection(self, request: HTTPConnection) -> str | None:
         """Return why operator, browser, or managed credentials were refused, or None."""
+        if self._break_glass_admits(request):
+            return None
         authorization = request.headers.get("Authorization")
         if authorization is not None:
             parts = authorization.split(maxsplit=1)
@@ -352,6 +358,8 @@ class AuthService:
         self, request: HTTPConnection
     ) -> AgentApiTokenClaims | None | Literal[False]:
         """Return agent claims, None for the local operator, or False if rejected."""
+        if self._break_glass_admits(request):
+            return None
         authorization = request.headers.get("Authorization")
         if authorization is not None:
             parts = authorization.split(maxsplit=1)
@@ -367,6 +375,17 @@ class AuthService:
         if session_token is not None:
             return None if self.validate_session(session_token) else False
         return False
+
+    def _break_glass_admits(self, request: HTTPConnection) -> bool:
+        if request.scope.get("type") != "http" or request.client is None:
+            return False
+        if not is_loopback_host(request.client.host):
+            return False
+        value = request.headers.get(BREAK_GLASS_HEADER)
+        return value is not None and break_glass_matches(
+            self._break_glass_file if self._break_glass_file is not None else break_glass_path(),
+            value,
+        )
 
     @property
     def effect_fence(self) -> EffectFence | None:
