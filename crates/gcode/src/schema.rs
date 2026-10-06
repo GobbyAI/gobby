@@ -33,6 +33,7 @@ const TABLE_CONTRACTS: &[TableContract] = &[
             "indexer_version",
             "community_id_watermark",
             "partition_signature",
+            "community_input_digest",
             "created_at",
             "updated_at",
         ],

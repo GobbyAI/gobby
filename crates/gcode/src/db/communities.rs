@@ -111,9 +111,10 @@ pub struct ReplaceTxn<'a> {
     prior: Vec<StoredCommunity>,
     watermark: i32,
     partition_signature: Option<String>,
+    input_digest: Option<String>,
 }
 
-pub fn begin_replace<'a>(
+pub fn begin_community_refresh<'a>(
     conn: &'a mut Client,
     machine_id: &str,
     project_id: &str,
@@ -123,7 +124,7 @@ pub fn begin_replace<'a>(
     let mut tx = conn.transaction()?;
     let state = tx
         .query_opt(
-            "SELECT community_id_watermark, partition_signature
+            "SELECT community_id_watermark, partition_signature, community_input_digest
              FROM code_indexed_project_states
              WHERE machine_id = $1 AND project_id = $2
              FOR UPDATE",
@@ -132,18 +133,45 @@ pub fn begin_replace<'a>(
         .ok_or_else(|| anyhow!("indexed project state is missing for community replacement"))?;
     let watermark = state.get(0);
     let partition_signature = state.get(1);
-    let prior = read_rows(&mut tx, &machine_id, &project_id, true)?;
+    let input_digest = state.get(2);
     Ok(ReplaceTxn {
         tx,
         machine_id,
         project_id,
-        prior,
+        prior: Vec::new(),
         watermark,
         partition_signature,
+        input_digest,
     })
 }
 
 impl ReplaceTxn<'_> {
+    pub fn load_prior(&mut self) -> anyhow::Result<()> {
+        self.prior = read_rows(&mut self.tx, &self.machine_id, &self.project_id, true)?;
+        Ok(())
+    }
+
+    pub fn input_digest(&self) -> Option<&str> {
+        self.input_digest.as_deref()
+    }
+
+    pub fn community_count(&mut self) -> anyhow::Result<usize> {
+        let row = self.tx.query_one(
+            "SELECT COUNT(*) FROM code_communities WHERE machine_id = $1 AND project_id = $2",
+            &[&self.machine_id, &self.project_id],
+        )?;
+        Ok(usize::try_from(row.get::<_, i64>(0))?)
+    }
+
+    pub fn commit_input_digest(mut self, input_digest: &str) -> anyhow::Result<()> {
+        self.tx.execute(
+            "UPDATE code_indexed_project_states SET community_input_digest = $3
+             WHERE machine_id = $1 AND project_id = $2",
+            &[&self.machine_id, &self.project_id, &input_digest],
+        )?;
+        self.tx.commit()?;
+        Ok(())
+    }
     pub fn prior(&self) -> &[StoredCommunity] {
         &self.prior
     }
@@ -188,11 +216,12 @@ impl ReplaceTxn<'_> {
         Ok(())
     }
 
-    pub fn commit(
+    pub fn commit_with_input_digest(
         mut self,
         rows: Vec<StoredCommunity>,
         watermark: i32,
         partition_signature: &str,
+        input_digest: Option<&str>,
     ) -> anyhow::Result<()> {
         self.tx.execute(
             "DELETE FROM code_communities WHERE machine_id = $1 AND project_id = $2",
@@ -249,13 +278,15 @@ impl ReplaceTxn<'_> {
         }
         self.tx.execute(
             "UPDATE code_indexed_project_states
-             SET community_id_watermark = $3, partition_signature = $4
+             SET community_id_watermark = $3, partition_signature = $4,
+                 community_input_digest = $5
              WHERE machine_id = $1 AND project_id = $2",
             &[
                 &self.machine_id,
                 &self.project_id,
                 &watermark,
                 &partition_signature,
+                &input_digest,
             ],
         )?;
         self.tx.commit()?;
@@ -265,5 +296,28 @@ impl ReplaceTxn<'_> {
     pub fn skip(self) -> anyhow::Result<()> {
         self.tx.rollback()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+pub fn begin_replace<'a>(
+    conn: &'a mut Client,
+    machine_id: &str,
+    project_id: &str,
+) -> anyhow::Result<ReplaceTxn<'a>> {
+    let mut replace = begin_community_refresh(conn, machine_id, project_id)?;
+    replace.load_prior()?;
+    Ok(replace)
+}
+
+#[cfg(test)]
+impl ReplaceTxn<'_> {
+    pub fn commit(
+        self,
+        rows: Vec<StoredCommunity>,
+        watermark: i32,
+        partition_signature: &str,
+    ) -> anyhow::Result<()> {
+        self.commit_with_input_digest(rows, watermark, partition_signature, None)
     }
 }
