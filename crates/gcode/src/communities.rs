@@ -78,11 +78,15 @@ pub(crate) fn refresh_project_communities(
     conn: &mut Client,
     ctx: &Context,
 ) -> anyhow::Result<CommunityRefreshReport> {
+    let mut timings = crate::index::indexer::IndexTimings::new("communities.imports");
     let imports = load_project_imports(conn, ctx)?;
+    timings.phase("communities.partition");
     let partition = build_partition(&imports.identity, &imports.rows)?;
     let machine_id = gobby_core::machine::read_local_machine_id()?;
     let target_project_id = storage_project_id(ctx);
+    timings.phase("communities.replace_lock");
     let mut replace = db::begin_replace(conn, &machine_id, target_project_id)?;
+    timings.phase("communities.parent_seed");
     let target_signature = replace.partition_signature().map(str::to_owned);
     if let ProjectIndexScope::Overlay {
         parent_project_id, ..
@@ -103,6 +107,7 @@ pub(crate) fn refresh_project_communities(
         });
     }
 
+    timings.phase("communities.assign_ids");
     let prior = replace
         .prior()
         .iter()
@@ -133,6 +138,7 @@ pub(crate) fn refresh_project_communities(
         })
         .count();
     let communities = rows.len();
+    timings.phase("communities.persist");
     replace.commit(rows, watermark, &stored_signature)?;
     Ok(CommunityRefreshReport {
         communities,

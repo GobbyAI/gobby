@@ -7,6 +7,7 @@ import os
 import signal
 import sys
 import tomllib
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -263,13 +264,38 @@ async def test_gateway_passes_option_like_project_id_as_a_value_on_clear(
     ]
 
 
-async def test_gateway_builds_incremental_index_args(
+async def test_incremental_index_enables_phase_timing_without_mutating_launch_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    processes = [FakeProcess(stdout=GCODE_PIN_STDOUT), FakeProcess(stdout=b"{}")]
+    captured_envs: list[dict[str, str] | None] = []
+
+    async def create_process(*args: str, env: Mapping[str, str] | None = None) -> FakeProcess:
+        captured_envs.append(dict(env) if env is not None else None)
+        return processes.pop(0)
+
+    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", create_process)
+    launch_env = {"GOBBY_HOME": str(tmp_path), "EXISTING_LAUNCH_SETTING": "kept"}
+    gateway = GcodeGateway(binary="/tmp/gcode")
+    await gateway.incremental_index(tmp_path, ["src/app.py"], env=launch_env)
+
+    assert captured_envs[1] == {**launch_env, "GCODE_INDEX_TIMINGS": "1"}
+    assert "GCODE_INDEX_TIMINGS" not in launch_env
+
+
+@pytest.mark.asyncio
+async def test_gateway_builds_incremental_index_args(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     processes = [
         FakeProcess(stdout=GCODE_PIN_STDOUT),
-        FakeProcess(stdout=b'{"completed_files": ["src/app.py"], "busy_files": []}'),
+        FakeProcess(
+            stdout=b'{"completed_files": ["src/app.py"], "busy_files": []}',
+            stderr=b"gcode_index_phase phase=command.index event=end\ngcode diagnostic\n",
+        ),
     ]
     calls = _patch_subprocess(monkeypatch, processes)
     gateway = GcodeGateway(binary="/tmp/gcode")
@@ -281,6 +307,8 @@ async def test_gateway_builds_incremental_index_args(
     )
 
     assert result.success is True
+    assert "gcode_index_phase " in result.stderr
+    assert capsys.readouterr().err == "gcode diagnostic\n"
     assert calls[1] == (
         "/tmp/gcode",
         "index",

@@ -27,7 +27,7 @@ from gobby.utils import spawn
 from gobby.utils.native_bin import resolve_native_bin
 
 MIN_GCODE_GRAPH_VERSION = MANAGED_BIN_VERSION_PINS["gcode"]
-MIN_GCODE_PRUNE_BUDGET_VERSION = "1.9.10"
+MIN_GCODE_PRUNE_BUDGET_VERSION = "1.9.11"
 GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION = "0.9.5"
 _VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+(?:\.\d+)?)\b")
 _PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")
@@ -628,6 +628,9 @@ class GcodeGateway:
         env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         binary = await self._ensure_version()
+        base_env = env if env is not None else self._child_env
+        timing_env = dict(os.environ if base_env is None else base_env)
+        timing_env["GCODE_INDEX_TIMINGS"] = "1"
         return await self._run_command_result(
             [
                 binary,
@@ -641,7 +644,7 @@ class GcodeGateway:
                 "json",
             ],
             timeout=timeout,
-            env=env,
+            env=timing_env,
         )
 
     async def nightly_repair(
@@ -855,7 +858,13 @@ class GcodeGateway:
     ) -> GcodeCommandResult:
         result = await self._capture_command_result(command, timeout=timeout, env=env)
         if result.returncode == 0:
-            forward_subprocess_stderr(result.stderr)
+            forward_subprocess_stderr(
+                "\n".join(
+                    line
+                    for line in result.stderr.splitlines()
+                    if not line.startswith("gcode_index_phase ")
+                )
+            )
         return result
 
     async def _capture_command_result(

@@ -12,6 +12,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import TYPE_CHECKING, Protocol
 
 from gobby.code_index.eligibility import overlay_project_id_for_root
@@ -311,6 +312,7 @@ class CodeIndexTrigger:
             )
             return
 
+        started = perf_counter()
         try:
             if self._launch_source is not None:
                 factory = self._launch_source.launch_factory
@@ -337,6 +339,16 @@ class CodeIndexTrigger:
                         env=launch.env,
                     )
             self._daemon_config_breaker.record_success()
+            logger.debug(
+                "gcode index timing project=%s root=%s files=%s active_batches=%s "
+                "elapsed_seconds=%.3f subprocess_seconds=%.3f",
+                project_id,
+                root_key,
+                len(files),
+                len(self._active_tasks_by_root.get(root_key, set())),
+                perf_counter() - started,
+                result.duration_seconds,
+            )
             if result.success:
                 self._clear_retry_backoff(root_key)
                 self._suspended_by_root.pop(root_key, None)
@@ -361,11 +373,23 @@ class CodeIndexTrigger:
             else:
                 detail = result.stderr.strip() or result.stdout.strip() or "(no output)"
                 if result.timed_out:
+                    phases = "\n".join(
+                        line
+                        for line in result.stderr.splitlines()
+                        if line.startswith("gcode_index_phase ")
+                    )
                     logger.warning(
-                        "gcode index timed out after %gs for project %s at %s",
+                        "gcode index timed out after %gs for project %s at %s; "
+                        "files=%s active_batches=%s elapsed_seconds=%.3f "
+                        "subprocess_seconds=%.3f phases=%s",
                         result.timeout_seconds,
                         project_id,
                         root_key,
+                        len(files),
+                        len(self._active_tasks_by_root.get(root_key, set())),
+                        perf_counter() - started,
+                        result.duration_seconds,
+                        phases or "(no phase diagnostics)",
                     )
                 else:
                     logger.warning(

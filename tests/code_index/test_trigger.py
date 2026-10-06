@@ -696,13 +696,18 @@ async def test_partial_lock_contention_requeues_only_busy_files(
 async def test_timeout_result_requeues_with_command_backoff(
     harness: TriggerHarness,
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     root_key = harness.trigger._root_key(str(tmp_path))
     harness.trigger._pending_by_root[root_key] = {"src/foo.py"}
     harness.gateway.outcomes.append(
         _result(
             returncode=None,
-            stderr="gcode timed out after 0.01s",
+            stderr=(
+                "private subprocess detail\n"
+                "gcode_index_phase pid=12 phase=communities.replace_lock event=start "
+                "elapsed_ms=0 total_ms=20\ngcode timed out after 0.01s"
+            ),
             timed_out=True,
         )
     )
@@ -712,6 +717,10 @@ async def test_timeout_result_requeues_with_command_backoff(
 
     assert harness.trigger._pending_by_root[root_key] == {"src/foo.py"}
     assert harness.trigger._retry_delay_by_root[root_key] == 10.0
+    assert "files=1 active_batches=0" in caplog.text
+    assert "subprocess_seconds=" in caplog.text
+    assert "phase=communities.replace_lock event=start" in caplog.text
+    assert "private subprocess detail" not in caplog.text
 
 
 @pytest.mark.asyncio
