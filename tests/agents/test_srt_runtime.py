@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import threading
 from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
@@ -347,11 +348,16 @@ async def test_network_capabilities_are_preserved_without_a_provider(tmp_path: P
 
 
 @pytest.mark.parametrize(
-    ("provider", "temp_env_name"),
-    [("claude", "CLAUDE_CODE_TMPDIR"), ("codex", "TMPDIR"), ("grok", "TMPDIR")],
+    ("provider", "temp_env_name", "platform_name"),
+    [
+        ("claude", "CLAUDE_CODE_TMPDIR", "darwin"),
+        ("claude", "CLAUDE_CODE_TMPDIR", "linux"),
+        ("codex", "TMPDIR", "darwin"),
+        ("codex", "TMPDIR", "linux"),
+        ("grok", "TMPDIR", "darwin"),
+    ],
 )
 @pytest.mark.asyncio
-@pytest.mark.parametrize("platform_name", ["darwin", "linux"])
 @pytest.mark.parametrize("allow_run_sockets", [False, True])
 async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_writable(
     monkeypatch: pytest.MonkeyPatch,
@@ -1151,6 +1157,51 @@ async def test_prepare_srt_launch_grants_write_on_the_managed_grant_lock_only(
 
 class _StopAfterRunPaths(Exception):
     pass
+
+
+@pytest.mark.parametrize("allow_run_sockets", [False, True])
+async def test_linux_grok_refused_before_run_state_preparation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, allow_run_sockets: bool
+) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(srt_runtime, "_resolve_provider_executable", lambda *_: "grok")
+
+    def unexpected_run_paths(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("Grok run state prepared before Linux auth persistence refusal")
+
+    monkeypatch.setattr(srt_runtime, "prepare_sandbox_run_paths", unexpected_run_paths)
+    with pytest.raises(SrtRuntimeError, match="Linux.*Grok.*auth"):
+        await prepare_sandbox_launch(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            provider="grok",
+            workspace_path=str(tmp_path),
+            run_id="linux-grok",
+            resolver=None,
+            daemon_port=60887,
+            websocket_port=60888,
+            api_base=None,
+            env={},
+            allow_run_unix_sockets=allow_run_sockets,
+        )
+
+
+async def test_disabled_linux_grok_keeps_unenforced_launch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    launch = await prepare_sandbox_launch(
+        config=SandboxConfig(enabled=False, backend="srt"),
+        provider="grok",
+        workspace_path=str(tmp_path),
+        run_id="linux-grok-disabled",
+        resolver=None,
+        daemon_port=60887,
+        websocket_port=60888,
+        api_base=None,
+        env={},
+    )
+    assert not launch.enforced
+    assert launch.backend == "srt"
 
 
 async def test_prepare_sandbox_launch_forwards_pre_commit_prewarm_opt_out(
