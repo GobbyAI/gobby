@@ -30,6 +30,7 @@ from gobby.sessions.compact_markers import (
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
 )
 from gobby.sessions.continuation_retry import (
+    continuation_write_allowed,
     resubmit_until_before_agent,
     turn_lifecycle_generation,
 )
@@ -41,8 +42,11 @@ from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.terminals.pane_io import (
+    ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE,
+    SUBMIT_UNVERIFIED_ERROR_CODE,
     SUBMIT_VERIFY_SECONDS,
     ComposerReader,
+    SubmitResult,
     clear_composer,
     composer_gate_for_write,
     submit_text,
@@ -573,7 +577,7 @@ async def _send_handoff_compact_continuation(
     # submits, so hold the shared lock across its whole clear/submit/verify run and
     # the BEFORE_AGENT re-submit ladder that may type it again.
     async with composer_action_lock(str(getattr(pane, "target", "") or "")):
-        sent = await _type_handoff_compact_continuation(
+        result = await _type_handoff_compact_continuation(
             pane,
             prompt,
             session_id,
@@ -581,8 +585,18 @@ async def _send_handoff_compact_continuation(
             cli_source=cli_source,
             composer_read=composer_read,
             verify_seconds=SUBMIT_VERIFY_SECONDS,
+            db=db,
         )
-        if sent and db is not None and baseline is not None:
+        sent = result.ok
+        if (
+            (
+                sent
+                or result.error_code
+                in {SUBMIT_UNVERIFIED_ERROR_CODE, ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE}
+            )
+            and db is not None
+            and baseline is not None
+        ):
             sent = await resubmit_until_before_agent(
                 pane,
                 prompt,
@@ -612,19 +626,24 @@ async def _type_handoff_compact_continuation(
     cli_source: str | None,
     composer_read: ComposerReader | None,
     verify_seconds: float,
-) -> bool:
+    db: HubDatabase | None = None,
+) -> SubmitResult:
     """Type the pull prompt and prove it left the composer, or report the failure.
 
     The prompt gets the same verified-submit ladder as the compaction command that
     precedes it: a Delivered Enter is not a submitted prompt, so the composer is read
     back after every Enter. A held prompt gets bare-Enter retries without being
-    retyped. If it never leaves, the caller drains the draft before its durable
-    fallback delivers it exactly once. A drain that itself fails still reports the
-    failure: a duplicated prompt is a far smaller harm than a lost handoff.
+    retyped. An unverified submit retains its text and error code so the caller can
+    await BEFORE_AGENT before considering any retry. A proven held draft is drained
+    after its retry budget, then reported for durable fallback.
     """
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)
     try:
+        if db is not None and not await asyncio.to_thread(
+            continuation_write_allowed, db, session_id
+        ):
+            return SubmitResult(False, "session is unavailable or waiting for operator interaction")
         # An operator draft in the composer would be submitted with the pull
         # prompt, so require a positively empty composer before typing anything.
         # Only an unprobed composer keeps the blind drain: after a confirmed-empty
@@ -636,7 +655,7 @@ async def _type_handoff_compact_continuation(
             action="the set_handoff continuation",
         )
         if not writable:
-            return False
+            return SubmitResult(False, "composer is not confirmed writable")
         ok, reason = (
             (True, None) if composer_state == "empty" else await clear_composer(pane, cli_source)
         )
@@ -646,7 +665,11 @@ async def _type_handoff_compact_continuation(
                 session_id,
                 reason,
             )
-            return False
+            return SubmitResult(False, reason)
+        if db is not None and not await asyncio.to_thread(
+            continuation_write_allowed, db, session_id
+        ):
+            return SubmitResult(False, "session is unavailable or waiting for operator interaction")
         result = await submit_text(
             pane,
             prompt,
@@ -657,7 +680,14 @@ async def _type_handoff_compact_continuation(
             verify_seconds=verify_seconds,
         )
         if result.ok:
-            return True
+            return result
+        if result.error_code in {
+            SUBMIT_UNVERIFIED_ERROR_CODE,
+            ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE,
+        }:
+            # Enter may have submitted. Clearing now could erase operator text,
+            # while falling back now would strand an awaiting_handoff seat.
+            return result
         logger.error(
             "Failed to submit the set_handoff compact continuation prompt for session %s: %s",
             session_id,
@@ -675,13 +705,14 @@ async def _type_handoff_compact_continuation(
                 session_id,
                 clear_reason,
             )
+        return result
     except Exception:
         logger.warning(
             "Failed to send set_handoff compact continuation prompt for session %s",
             session_id,
             exc_info=True,
         )
-    return False
+    return SubmitResult(False, "continuation write failed")
 
 
 async def _continue_after_codex_compaction_ready(
