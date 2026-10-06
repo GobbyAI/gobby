@@ -2132,9 +2132,10 @@ Targets:
 - `src/gobby/servers/websocket/terminal_sizing.py::TerminalSizingMixin._apply_terminal_sizing`
 - `src/gobby/servers/websocket/terminal_ws_create.py::TerminalCreateMixin._handle_terminal_create`
 - `src/gobby/servers/websocket/terminal_ws_create.py::TerminalCreateMixin._handle_terminal_kill`
+- `src/gobby/terminals/termination.py::kill_terminal`
 - `tests/servers/test_terminal_ws_attach_honesty.py::*` — scope-reason: adds the executor-routing assertion beside the attach tests
 - `tests/servers/test_terminal_ws_golden.py::*` — scope-reason: adds the no-storage scroll assertion; reply shapes are unchanged
-- `tests/servers/test_terminal_ws_create.py::*` — scope-reason: adds the executor-routing assertion for create and kill
+- `tests/servers/test_terminal_ws_create.py::*` — scope-reason: adds the executor-routing assertion for create and kill, including a live native row through kill_terminal
 - `tests/servers/test_terminal_ws_resize.py::*` — scope-reason: adds the sizing executor assertion
 - `tests/servers/test_terminal_ws_lease.py::*` — scope-reason: keeps the sizing-patch regression beside the shared handler diagnostic added by D3b
 - `tests/servers/test_terminal_ws_input.py::*` — scope-reason: the no-direct-write source assertion reads terminal_ws_write.py with terminal_ws.py
@@ -2144,9 +2145,18 @@ Consumers unchanged:
 - `src/gobby/servers/websocket/proxy_relay.py` — no-edit-reason: awaits `_apply_terminal_sizing` with the same signature.
 - `src/gobby/servers/websocket/terminal_ws_control.py` — no-edit-reason: awaits `_apply_terminal_sizing` with the same signature.
 - `src/gobby/adapters/acp_client_requests.py` — no-edit-reason: calls `_handle_terminal_create` with the same signature.
+- `src/gobby/servers/routes/sessions/lifecycle.py` — no-edit-reason: awaits `kill_terminal` with an unchanged signature.
+- `src/gobby/terminals/workspace_ops.py` — no-edit-reason: awaits `kill_terminal` with an unchanged signature.
+- `src/gobby/terminals/workspace_agent_panes.py` — no-edit-reason: awaits `kill_terminal` with an unchanged signature.
 - `tests/servers/test_terminal_list_watermark.py` — no-edit-reason: calls the create and kill handlers with unchanged signatures.
 - `tests/servers/test_terminal_ws_kill.py` — no-edit-reason: calls `_handle_terminal_kill` with an unchanged signature.
 - `tests/terminals/test_backend_selection.py` — no-edit-reason: calls `_handle_terminal_create` with an unchanged signature.
+- `tests/terminals/test_termination.py` — no-edit-reason: awaits `kill_terminal` with synchronous fakes that a worker thread calls unchanged.
+- `tests/terminals/test_in_doubt_kill_truth.py` — no-edit-reason: awaits `kill_terminal` with synchronous fakes that a worker thread calls unchanged.
+- `tests/terminals/test_host_reconcile_orphans.py` — no-edit-reason: awaits `kill_terminal` with an unchanged signature.
+- `tests/terminals/test_workspace_agent_panes.py` — no-edit-reason: wraps `kill_terminal` in recording spies with an unchanged signature.
+- `tests/agents/test_spawn_executor_placement_bind.py` — no-edit-reason: awaits `kill_terminal` with an unchanged signature.
+- `tests/mcp_proxy/tools/spawn_agent/test_placement.py` — no-edit-reason: wraps `kill_terminal` in a recording spy with an unchanged signature.
 
 Route every synchronous storage call in these handlers onto a worker thread with
 `asyncio.to_thread`, the mechanism `terminal_list` and the shipped D1b-D1d handlers
@@ -2156,9 +2166,14 @@ finalize, as two hops around the async resize (get, then `set_dims` only after t
 host accepts the resize; a host refusal keeps the stale dims so the next resize
 retries; ruling of 2026-10-01, recorded in `76c4bed031`); `terminal_set_scroll_offset` deletes
 its row lookup and reads `backend` from the attach snapshot `record.terminal` (#22557
-already stores it); create and kill. Operator writes already pass the attach
+already stores it); create and kill, including the reread `get` and `mark_exited`
+inside `kill_terminal` (PD ruling 2026-10-01, correction pass after close review
+cd1ee9c3). Operator writes already pass the attach
 snapshot's row (`_deliver_operator_write`), so no keystroke calls the write
-coordinator's `_require()`.
+coordinator's `_require()`. The PD ruling of 2026-10-01 after close review cd1ee9c3
+brings `kill_terminal` into scope: the live kill path's `TerminalStore.get` and
+`mark_exited` run inside `kill_terminal`, so they move to `asyncio.to_thread` inside
+the `settle_lock`.
 
 **Decomposition:** `terminal_ws.py` is 896 lines on 0.5.0 (#23080 grew it from 829). Before
 the executor edits, move the input, paste and operator-write path into new
@@ -3029,6 +3044,18 @@ F02 resolution direction: keep direct typing uninterrupted across a daemon resta
   coverage row stays stale under the #23619 known exception. No blocker or
   proportionality objection remains. The stale M1 is withdrawn per the PD ruling
   on #23106 (memory `f5577ae0`) for the Adversary to derive afresh from these bytes.
+- 2026-10-05: D1a delta consensus (Plan Writer gobby#15544, Adversary gobby#15470,
+  task #23618 criterion 8) on 0.5.0 `fef4581f44`. D1a takes closed leaf #23243's
+  `kill_terminal` extension: the `termination.py::kill_terminal` Target, the
+  create-test scope-reason naming a live native row through `kill_terminal`, the
+  reread `get` and `mark_exited` prose clause, and every Consumers unchanged entry
+  the leaf lists. A symbol Target takes no scope-reason, so the leaf's 2026-10-01
+  reason sits in the prose. The leaf's joint `test_termination.py` and
+  `test_in_doubt_kill_truth.py` entry splits into one entry per file, and the five
+  further `kill_terminal` consumers that consumer-coverage names join the
+  inventory. Acceptance items are unchanged; the Adversary re-derives M1 from these
+  bytes. The Orchestrator (gobby#14972) folded this delta into criterion 8 and ruled
+  the exact symbol Target.
 
 ## M1 Task Manifest
 `kind: manifest`
