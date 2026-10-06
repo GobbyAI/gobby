@@ -41,7 +41,7 @@ path, the line range and the `excerpt_hash`.
 | Miss | Verdict | Fix class |
 |---|---|---|
 | (a) Project removal leaves state | Confirmed. The purge has no filesystem step, so it never removes worktree or clone dirs, Cargo targets or backups. Three tables with no FK hold orphan rows today. | A small guard for registered worktrees and clones. The FK delete action per table is a Josh decision. Backups and main-checkout Cargo targets stay an explicit gap. |
-| (b) Orphan worktrees | Confirmed as relics: 1.0 GB plus empty dirs. None has a registry row. Creator attribution is an evidence gap. | Josh-approved operator removal. The in-transaction guard in (a) prevents purge from orphaning registered worktrees; clones need the caller-cleanup trace first. |
+| (b) Orphan worktrees | Confirmed as relics: 1.0 GB plus empty dirs. None has a registry row. Creator attribution is an evidence gap. | Josh-approved operator removal. The in-transaction guard in (a) prevents purge from cascading away registered worktree rows. A racing creator's directory is removed only when its compensation succeeds; clones need the caller-cleanup trace first. |
 | (c) Old 21 GB `cargo-target` | Confirmed stale. Transcripts show agent sessions setting `CARGO_TARGET_DIR` to all five `wt-*` dirs. Gobby's own legacy entries are empty. | Josh-approved operator removal. No code change. |
 | (d) `unmodeled_observation_events` size | The prune keeps up. Size comes from volume plus index churn: 84% of rows are one unmodeled Codex tool. | A product decision, then a data-only modeling fix. |
 | (e) `token_events` retention | The policy exists (180 days, #19655) and was never implemented. No row is eligible until 2027-01-27. | Schema index plus a delete contract that keeps session lifetime totals intact, landing before 2027-01-27. |
@@ -175,20 +175,34 @@ were removed by today's purge or by an older delete path cannot be proven.
      worktrees and clones only.
 
    **Creator side of the race.** A creator that loses the race fails its
-   INSERT after its directory exists. Worktree creation already removes the
-   git worktree when the insert raises:
+   INSERT after its directory exists. Worktree creation then calls its
+   rollback when the insert raises:
    `src/gobby/worktrees/creation.py:169-191`
    `excerpt_hash=8f4ca0dbd270695b0e0078ebdb5d80cf7f6b7ecdb2f7b5155a7f51d3df2ae8d3`.
+   That rollback is best-effort. `_cleanup_git_worktree` awaits
+   `delete_worktree` but discards its `GitOperationResult`, and only an
+   exception is logged. A `success=False` result ("Failed to remove worktree
+   even with fallback") with the directory still on disk passes as normal
+   completion:
+   `src/gobby/worktrees/creation.py:257-275`
+   `excerpt_hash=18c6b880bdaf462638203b21aa64ac6cabfe8bc26bf31a9f6591c230675782c3`.
    Clone isolation records the on-disk path in `partial_state` before the
    insert (`src/gobby/agents/isolation_clone.py:171-185`
    `excerpt_hash=3adebc08fcf85ac1837b8a53937dba03ef08eb5decdfec1ba1fff799e1764472`),
    and `cleanup_environment` deletes a partial clone on prepare failure
    (`src/gobby/agents/isolation_clone.py:218-219`
    `excerpt_hash=9333c23254b32c0da96ab886a5ec0fa7f2d30441b5d0dc95793473c6914e97ff`).
-   Two gaps remain, and both are prerequisites:
+   The guard therefore prevents registry-cascade orphans. It prevents
+   directory orphans only when the creator's compensation succeeds. Three
+   gaps remain, and all are prerequisites:
+   - **Worktree compensation result is ignored.** The minimal repair makes
+     `_cleanup_git_worktree` inspect the result and, on failure, log and
+     return the exact unreclaimed path and the cleanup error, so the
+     creation failure reports it. No generic sweeper. This is a current
+     cleanup defect, routed to the Orchestrator as found work.
    - Whether every clone spawn caller invokes `cleanup_environment` after a
-     failed insert was not traced. Until it is, the guarantee holds for
-     worktrees only.
+     failed insert was not traced. Until it is, the clone guarantee is
+     withheld.
    - Neither creation path refuses a soft-deleted project (no `deleted_at`
      check in either). A creator could keep registering checkouts for a
      soft-deleted project and hold its purge off indefinitely. Creation
@@ -204,7 +218,11 @@ were removed by today's purge or by an older delete path cannot be proven.
      count, then resume registration. Either the final check fails the
      purge with the row kept, or the insert fails and the creator removes
      its directory. No registry row or directory is orphaned. Repeat for a
-     clone once the caller cleanup is traced.
+     clone once the caller cleanup is traced;
+   - failed compensation: with `delete_worktree` stubbed to return
+     `success=False` after a failed insert, worktree creation reports the
+     exact unreclaimed path and the cleanup error in its failure result and
+     log. It does not report a clean rollback.
 2. **Explicit gap: backups and main-checkout Cargo targets.** Purge cannot
    infer these from surviving rows, because soft delete has already released
    `project_checkouts`. Before specifying any retirement, trace the backup
@@ -300,7 +318,9 @@ directories against registry rows.
 ### Minimal fix
 
 No new code beyond (a). The in-transaction purge guard there stops purge from
-orphaning registered worktrees. The same guarantee for clones waits on the
+cascading away registered worktree rows. A racing creator's directory is
+removed only when its compensation succeeds, which needs the rollback-result
+repair listed in (a). The same guarantee for clones waits on the
 caller-cleanup trace and the soft-deleted admission check listed in (a).
 
 The relics need a one-time operator removal, approved by Josh. Immediately
@@ -742,6 +762,14 @@ test pins the boundary.
    `VACUUM FULL`, if measured bloat justifies them after the volume fix. No
    current task covers them; #22956 owns only the dropped-column TOAST
    VACUUM FULL. See (d), Maintenance and rollback conditions.
+4. **Worktree creation rollback ignores a failed removal.**
+   `_cleanup_git_worktree` (`src/gobby/worktrees/creation.py:257-275`)
+   discards the `GitOperationResult` from `delete_worktree`, so a
+   `success=False` removal leaves the directory on disk with only a normal
+   creation-failure message. The minimal repair inspects the result and
+   reports the exact unreclaimed path and cleanup error. No runtime
+   reproduction was run, and no existing relic is attributed to this path.
+   Owner: worktree lifecycle. See (a), Creator side of the race.
 
 ## Related work
 
