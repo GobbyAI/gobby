@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from gobby.agents.detection.matcher import CompiledManifest
 from gobby.agents.detection.registry import DetectionManifestRegistry
-from gobby.events.wake import WakeDispatcher
+from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.storage.terminals import Terminal
 from gobby.terminals.runtime import WriteOutcome
 from gobby.terminals.write_coordinator import WriteCoordinator, WriteRequest
@@ -100,7 +100,7 @@ def main() -> None:
         session: Any = None,
         priority: str = "normal",
         bypass_debounce: bool = False,
-        prompt: str = "Message from Gobby daemon: New activity available.",
+        prompt: str = CONTINUE_WAKE_MESSAGE,
     ) -> dict[str, Any]:
         if cleanup.quiesced:
             return {"delivered": False, "skipped": "proof_quiesced"}
