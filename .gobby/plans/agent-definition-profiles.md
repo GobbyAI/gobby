@@ -168,7 +168,7 @@ non-goals.
     phrases. Each role file becomes a pointer: `apply_persona(agent=<seat>)`.
     Roster and `default.yaml` are unchanged.
 12. **Seats inherit provider, model, and isolation.** `provider: inherit`, no
-    `model`, `isolation: inherit`, `timeout: 0`, `surfaces: [spawn, persona]`
+    `model`, `checkout_mode: inherit`, `timeout: 0`, `surfaces: [spawn, persona]`
     with one prompt text under a YAML anchor used by both blocks. A pane gets
     its provider from Josh's launch line; a spawned seat gets the caller's.
 13. **Rollout is a PD-owned cutover restart at the 3.2 boundary, then a
@@ -716,7 +716,7 @@ permitted spawn paths."
 text of record, with rules, skills, tool restrictions, and step workflows
 declared. Common shape for every seat (Decisions 8, 9, 12): `name`, `version:
 "1.0"`, `description`, `tags: [gobby, seat]`, `surfaces: [spawn, persona]`,
-`provider: inherit`, `isolation: inherit`, `timeout: 0`, `prompts:` with
+`provider: inherit`, `checkout_mode: inherit`, `timeout: 0`, `prompts:` with
 `agent: &seat |` and `persona: *seat`, `workflows.rule_selectors.include:
 ["tag:default", "tag:roles", ...]`, `blocked_mcp_tools:
 ["gobby-agents:kill_agent"]`, and `workflows.variables: {}` unless stated. Each
@@ -1365,7 +1365,7 @@ the grammar).
 
 Seat invariants to pin:
 - `surfaces == [spawn, persona]`, `prompts.persona == prompts.agent`,
-  `provider == inherit`, no `model`, `isolation == inherit` and `timeout == 0`.
+  `provider == inherit`, no `model`, `checkout_mode == inherit` and `timeout == 0`.
 - Every top-level key is either an `AgentDefinitionBody` field or one of the
   sync metadata keys `tags`, `priority` and `type`.
   `validate_workflow_definition_data` strips exactly `priority`, `tags`, `type`
