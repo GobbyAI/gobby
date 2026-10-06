@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, cast
 
-from gobby.config.build import Isolation
+from gobby.config.build import CheckoutMode
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
@@ -14,20 +14,20 @@ _ISOLATION_VALUES = ("none", "worktree", "clone")
 logger = logging.getLogger(__name__)
 
 
-def normalize_task_isolation(value: str) -> Isolation:
-    """Validate and return a task isolation value."""
+def normalize_task_checkout_mode(value: str) -> CheckoutMode:
+    """Validate and return a task checkout mode."""
     if value not in _ISOLATION_VALUES:
-        raise ValueError("isolation must be one of: none, worktree, clone")
-    return cast(Isolation, value)
+        raise ValueError("checkout_mode must be one of: none, worktree, clone")
+    return cast(CheckoutMode, value)
 
 
 def validate_task_isolation_artifacts(
     task_manager: LocalTaskManager,
     task_id: str,
-    isolation: str,
-) -> Isolation:
+    checkout_mode: str,
+) -> CheckoutMode:
     """Reject retargeting to an isolation family that conflicts with current artifacts."""
-    normalized = normalize_task_isolation(isolation)
+    normalized = normalize_task_checkout_mode(checkout_mode)
     if normalized == "none":
         return normalized
 

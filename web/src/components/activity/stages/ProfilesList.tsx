@@ -91,7 +91,7 @@ export function ProfilesList({
                 {profile.display_label}
               </TickerText>
               <Chip>{profile.source}</Chip>
-              <Chip>{profile.isolation}</Chip>
+              <Chip>{profile.checkout_mode}</Chip>
               {profile.name === "default" && <Chip tone="accent">default</Chip>}
             </Button>
             <div className="px-1">

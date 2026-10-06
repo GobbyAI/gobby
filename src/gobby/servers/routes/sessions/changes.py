@@ -74,7 +74,7 @@ def register_changes_routes(router: APIRouter, server: HTTPServer) -> None:
             raise HTTPException(500, "Failed to compute session changes") from e
         return {
             "files": [{"path": f.path, "status": f.status} for f in files],
-            "isolation": workspace.isolation,
+            "checkout_mode": workspace.checkout_mode,
         }
 
     @router.get("/{session_id}/changes/diff")

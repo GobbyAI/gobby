@@ -65,7 +65,7 @@ class AgentSpawnRequest(ReasoningEffortMixin):
     agent_name: str = "default"
     prompt: str | None = None
     web_chat: bool = False
-    isolation: Literal["none", "worktree", "clone"] | None = None
+    checkout_mode: Literal["none", "worktree", "clone"] | None = None
     provider: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
@@ -87,7 +87,7 @@ class AgentSpawnResponse(BaseModel):
     child_session_id: str | None = None
     conversation_id: str | None = None
     prompt: str | None = None
-    isolation: str | None = None
+    checkout_mode: str | None = None
     branch_name: str | None = None
     pid: int | None = None
     message: str | None = None
@@ -116,7 +116,7 @@ class BatchSpawnResponse(BaseModel):
 
 _BUILT_IN_DEFAULTS: dict[str, Any] = {
     "agent_name": "default",
-    "isolation": "inherit",
+    "checkout_mode": "inherit",
     "model": None,
     "reasoning_effort": None,
     "reasoning_required": False,
@@ -368,7 +368,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             agent_lookup_name=req.agent_name,
             task_id=req.task_id,
             task_manager=task_manager,
-            isolation=req.isolation,
+            checkout_mode=req.checkout_mode,
             branch_name=req.branch_name,
             base_branch=req.base_branch,
             worktree_storage=server.services.worktree_storage,
@@ -408,7 +408,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 success=True,
                 run_id=result.get("run_id"),
                 child_session_id=result.get("child_session_id"),
-                isolation=result.get("isolation"),
+                checkout_mode=result.get("checkout_mode"),
                 branch_name=result.get("branch_name"),
                 pid=result.get("pid"),
                 message=result.get("message"),

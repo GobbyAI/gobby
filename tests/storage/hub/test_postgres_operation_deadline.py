@@ -236,10 +236,10 @@ def test_deadline_configuration_allows_repeatable_read_before_first_query(
     with database_operation_deadline(timeout_seconds=0.4):
         with database.bounded_transaction(repeatable_read_read_only=True) as txn:
             row = txn.execute(
-                "SELECT current_setting('transaction_isolation') AS isolation, "
+                "SELECT current_setting('transaction_isolation') AS checkout_mode, "
                 "current_setting('transaction_read_only') AS read_only"
             ).fetchone()
-            assert row == {"isolation": "repeatable read", "read_only": "on"}
+            assert row == {"checkout_mode": "repeatable read", "read_only": "on"}
 
 
 def test_nested_deadline_settings_restore_to_each_owning_scope(

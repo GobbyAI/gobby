@@ -11,7 +11,7 @@ export interface AgentFormData {
   model: string;
   reasoning_effort: string;
   reasoning_required: boolean;
-  isolation: string;
+  checkout_mode: string;
   base_branch: string;
   timeout: number;
   pipeline: string;
@@ -32,7 +32,7 @@ export interface AgentItemForPanel {
     reasoning_effort?: string | null;
     reasoning_required?: boolean | null;
     fallback_agent: string | null;
-    isolation: string | null;
+    checkout_mode: string | null;
     base_branch: string;
     timeout: number;
     workflows: {

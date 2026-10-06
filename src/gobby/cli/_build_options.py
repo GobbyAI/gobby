@@ -66,7 +66,7 @@ def _restart_options_were_supplied(opts: BuildOptions) -> bool:
     return bool(
         opts.skip_stages
         or opts.profile != "default"
-        or opts.isolation_explicit
+        or opts.checkout_mode_explicit
         or opts.no_merge
         or opts.pr is not None
         or opts.stage_caps

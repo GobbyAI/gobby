@@ -55,7 +55,7 @@ from gobby.storage.tasks._models import (
     VALID_CATEGORIES,
     VALID_TASK_TYPES,
     AgentTaskClaimConflictError,
-    Isolation,
+    CheckoutMode,
     MaybeUnset,
     ParentTaskClosedError,
     SeqNumCollisionError,
@@ -95,7 +95,7 @@ __all__ = [
     # Core classes
     "Task",
     "LocalTaskManager",
-    "Isolation",
+    "CheckoutMode",
     "DispatchMutex",
     "TaskDispatchMutexManager",
     "TaskArtifacts",

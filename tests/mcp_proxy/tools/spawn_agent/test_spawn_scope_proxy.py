@@ -169,7 +169,7 @@ async def test_listless_spawned_caller_through_the_proxy(
                 "agent": "spawn-scope-worker",
                 "parent_session_id": caller.id,
                 "project_path": project.root_path,
-                "isolation": "none",
+                "checkout_mode": "none",
             },
             session_id=caller.id,
             enforce_workflow=True,

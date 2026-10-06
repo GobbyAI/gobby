@@ -255,11 +255,11 @@ async def _workspace_check(task_manager: LocalTaskManager, task: Task) -> _Works
     if artifacts.clone_path:
         return await _inspect_workspace("clone", artifacts.clone_path)
 
-    isolation = getattr(task.isolation, "value", task.isolation)
-    if isolation in _ARTIFACT_ISOLATION:
+    checkout_mode = getattr(task.checkout_mode, "value", task.checkout_mode)
+    if checkout_mode in _ARTIFACT_ISOLATION:
         return _WorkspaceCheck(
             family="none",
-            error=f"missing_{isolation}_artifact_path",
+            error=f"missing_{checkout_mode}_artifact_path",
         )
     return _WorkspaceCheck(family="none")
 

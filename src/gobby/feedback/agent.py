@@ -285,7 +285,7 @@ class FeedbackReviewerAgent:
                 runner,
                 agent_body=agent_body,
                 agent_lookup_name=FEEDBACK_REVIEWER_AGENT_NAME,
-                isolation="none",
+                checkout_mode="none",
                 git_manager=self.git_manager,
                 timeout=timeout_seconds,
                 parent_session_id=launcher_session_id,

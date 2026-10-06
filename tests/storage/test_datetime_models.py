@@ -49,7 +49,7 @@ def test_task_from_row_normalizes_timestamptz_fields_and_preserves_dates() -> No
             "due_date": "2026-01-20",
             "allow_automation": False,
             "unattended": False,
-            "isolation": "worktree",
+            "checkout_mode": "worktree",
             "assigned_agent": None,
             "implementation_domain": "backend",
             "additional_skills": None,

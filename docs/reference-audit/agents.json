@@ -19,7 +19,7 @@
         "runtime-tools",
         "blocked-child-communication",
         "recovery-checkpoints",
-        "isolation",
+        "checkout-modes",
         "recommended-patterns",
         "related-guides"
       ],

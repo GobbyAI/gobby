@@ -56,7 +56,7 @@ def _agent_summary(row: AgentDefinitionRow) -> dict[str, Any]:
         "provider": body.get("provider"),
         "mode": body.get("mode"),
         "model": body.get("model"),
-        "isolation": body.get("isolation"),
+        "checkout_mode": body.get("checkout_mode"),
         "surfaces": body.get("surfaces", ["spawn"]),
         "has_steps": bool(steps),
         "step_count": len(steps),

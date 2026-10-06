@@ -222,7 +222,7 @@ async def test_update_task_schema_rejects_unsupported_fields(
         "start_date",
         "due_date",
         "allow_automation",
-        "isolation",
+        "checkout_mode",
         "assigned_agent",
         "implementation_domain",
         "additional_skills",

@@ -1133,6 +1133,90 @@ fn config_revision_baseline_is_nondestructive() -> anyhow::Result<()> {
 }
 
 #[test]
+fn checkout_mode_migration_preserves_modes_and_agent_settings() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    let migration_index = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 460)
+        .expect("checkout mode migration must stay registered");
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..migration_index])?
+        .apply()?;
+    let project_id = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO projects(id, name) VALUES ($1, 'checkout mode migration')",
+        &[&project_id],
+    )?;
+    for mode in ["none", "worktree", "clone"] {
+        client.execute(
+            "INSERT INTO tasks(id, project_id, title, isolation, validation_criteria) \
+             VALUES ($1, $2, $3, $3, 'migration preserves checkout mode')",
+            &[&Uuid::new_v4(), &project_id, &mode],
+        )?;
+        client.execute(
+            "INSERT INTO build_profiles(id, name, display_label, description, source, isolation) \
+             VALUES ($1, $2, $2, 'migration test', 'installed', $2)",
+            &[&Uuid::new_v4(), &mode],
+        )?;
+    }
+    for mode in ["none", "worktree", "clone", "inherit"] {
+        let body = serde_json::json!({
+            "name": mode,
+            "isolation": mode,
+            "provider": "codex",
+            "network": "trusted",
+            "sandbox": {"network": true, "isolation": "unchanged"}
+        });
+        client.execute(
+            "INSERT INTO agent_definitions(id, name, source, definition_json) \
+             VALUES ($1, $2, 'custom', $3::text::jsonb)",
+            &[&Uuid::new_v4(), &mode, &body.to_string()],
+        )?;
+    }
+    let report = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert_eq!(report.migrations_applied, 1);
+    for table in ["tasks", "build_profiles"] {
+        let modes: Vec<String> = client
+            .query(
+                &format!("SELECT checkout_mode FROM {table} ORDER BY checkout_mode"),
+                &[],
+            )?
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
+        assert_eq!(modes, ["clone", "none", "worktree"]);
+    }
+    for row in client.query(
+        "SELECT name, definition_json::text FROM agent_definitions",
+        &[],
+    )? {
+        let name: String = row.get(0);
+        let body: serde_json::Value = serde_json::from_str(row.get::<_, &str>(1))?;
+        assert_eq!(body["checkout_mode"], name);
+        assert!(body.get("isolation").is_none());
+        assert_eq!(body["provider"], "codex");
+        assert_eq!(body["network"], "trusted");
+        assert_eq!(body["sandbox"]["network"], true);
+        assert_eq!(body["sandbox"]["isolation"], "unchanged");
+    }
+    let invalid_mode = client
+        .execute("UPDATE tasks SET checkout_mode = 'current'", &[])
+        .expect_err("retired checkout modes must fail the renamed constraint");
+    assert_eq!(invalid_mode.code(), Some(&SqlState::CHECK_VIOLATION));
+    assert_eq!(
+        SchemaRunner::new(&mut client, "public")?
+            .apply()?
+            .migrations_applied,
+        0
+    );
+    Ok(())
+}
+
+#[test]
 fn task_config_alias_upgrade_preserves_overrides_and_stamps_receipt() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()

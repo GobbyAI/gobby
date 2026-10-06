@@ -473,7 +473,7 @@ gates remain in the agent call path; HTTP claim/release is not an agent workarou
 
 `PATCH /api/tasks/{task_id}` accepts metadata fields such as `title`,
 `description`, `priority`, `task_type`, `labels`, `parent_task_id`, `category`,
-`validation_criteria`, `allow_automation`, and `isolation`. `isolation` must be
+`validation_criteria`, `allow_automation`, and `checkout_mode`. `checkout_mode` must be
 `none`, `worktree`, or `clone`. Retargeting to `worktree` is rejected when clone
 artifacts exist, and retargeting to `clone` is rejected when worktree artifacts
 exist.
@@ -520,7 +520,7 @@ there is no corresponding PUT route. Use configuration management for changes.
 `POST /api/build` accepts `input_ref`, `profile`, `project_id`, `coordinator`,
 `dry_run`, `unattended`, delivery fields, `quick`, `skip_stages`, `stage`,
 `target_branch`, `agent`, `reset_expansion_output`, `max_active_agents`,
-`max_retries`, the planning-seed fields, and build isolation fields. `isolation`
+`max_retries`, the planning-seed fields, and build isolation fields. `checkout_mode`
 accepts `none`, `worktree`, or `clone`; `workspace_backend` (`worktree` or
 `clone`) and `clone` are supported aliases. Contradictory isolation
 inputs return `400` instead of silently choosing one value.

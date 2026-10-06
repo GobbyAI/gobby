@@ -54,7 +54,7 @@ class SessionWorkspace:
 
     working_dir: str
     base_ref: str
-    isolation: str  # "none" | "worktree" | "clone"
+    checkout_mode: str  # "none" | "worktree" | "clone"
 
 
 @dataclass(slots=True, frozen=True)
@@ -160,7 +160,7 @@ def resolve_session_workspace(
 
     repo_path = _resolve_checkout_root(session_manager, session, session_id)
     if repo_path and Path(repo_path).is_dir():
-        return SessionWorkspace(working_dir=repo_path, base_ref="HEAD", isolation="none")
+        return SessionWorkspace(working_dir=repo_path, base_ref="HEAD", checkout_mode="none")
     return None
 
 
@@ -204,7 +204,7 @@ def _resolve_isolated_workspace(task_manager: Any, session_id: str) -> SessionWo
         if iso_path and Path(iso_path).is_dir():
             base = artifacts.base_commit_sha or "HEAD"
             kind = "worktree" if artifacts.worktree_path else "clone"
-            return SessionWorkspace(working_dir=iso_path, base_ref=base, isolation=kind)
+            return SessionWorkspace(working_dir=iso_path, base_ref=base, checkout_mode=kind)
     return None
 
 

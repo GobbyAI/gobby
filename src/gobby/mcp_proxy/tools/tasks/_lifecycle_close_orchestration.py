@@ -405,7 +405,7 @@ async def _launch_promoted_review(
                 "prompt": prompt,
                 "agent": TASK_CLOSE_REVIEWER_AGENT,
                 "task_id": None,
-                "isolation": "none",
+                "checkout_mode": "none",
                 "parent_session_id": review.caller_session_id,
                 "project_path": evaluation.repo_path,
                 "notify_parent_on_completion": True,

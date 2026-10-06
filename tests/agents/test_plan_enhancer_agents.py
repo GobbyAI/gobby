@@ -136,7 +136,7 @@ class TestTasklessEnhancer:
     """plan-enhancer-taskless-old: advisory, surfaces suggestions to the parent."""
 
     def test_isolation_none(self, taskless: AgentDefinitionBody) -> None:
-        assert taskless.isolation == "none"
+        assert taskless.checkout_mode == "none"
 
     def test_has_no_claim_step(self, taskless: AgentDefinitionBody) -> None:
         # Taskless reviewers never claim or mutate Gobby tasks.

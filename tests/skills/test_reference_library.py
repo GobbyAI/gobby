@@ -133,7 +133,7 @@ async def test_reference_contract_3_2_2(
         task_launch_args = task_registry.call.call_args.args[1]
         assert task_launch_args["agent"] == "task-close-reviewer"
         assert task_launch_args["task_id"] is None
-        assert task_launch_args["isolation"] == "none"
+        assert task_launch_args["checkout_mode"] == "none"
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         create_spawn_agent_registry(MagicMock())._prepare_call("spawn_agent", task_launch_args)
@@ -217,8 +217,8 @@ async def test_reference_contract_3_2_2(
         assert build_opts.profile == "submit"
         assert build_opts.quick is True
         assert build_opts.skip_stages == ["qa"]
-        assert build_opts.isolation == "clone"
-        assert build_opts.isolation_explicit is True
+        assert build_opts.checkout_mode == "clone"
+        assert build_opts.checkout_mode_explicit is True
         assert build_opts.unattended is True
         assert build_opts.unattended_explicit is True
         assert str(build_opts.clones_dir) == "/tmp"

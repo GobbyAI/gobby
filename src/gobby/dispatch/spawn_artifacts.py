@@ -44,13 +44,13 @@ _TASKLESS_MAIN_CONTEXT_AGENT_SLUGS = frozenset(
     {"plan-adversary-taskless-old", "plan-enhancer-taskless-old"}
 )
 
-SpawnIsolation = Literal["none", "worktree", "clone"]
+SpawnCheckoutMode = Literal["none", "worktree", "clone"]
 
 __all__ = [
-    "SpawnIsolation",
+    "SpawnCheckoutMode",
     "_artifact_ref_resolves",
     "_artifact_ref_sha",
-    "_effective_spawn_isolation",
+    "_effective_spawn_checkout_mode",
     "_field",
     "_guard_merge_ready_leaf_branch",
     "_persist_spawn_artifacts",
@@ -72,13 +72,13 @@ async def _prepare_spawn_artifacts(
     task_manager: LocalTaskManager,
     project_id: str,
     services: object | None,
-    isolation: SpawnIsolation | None,
+    checkout_mode: SpawnCheckoutMode | None,
 ) -> TaskArtifacts:
     artifacts = TaskArtifactManager(db).get_artifacts(action.task_id)
-    if isolation not in {"worktree", "clone"}:
+    if checkout_mode not in {"worktree", "clone"}:
         return artifacts
 
-    backend = cast(Literal["worktree", "clone"], isolation)
+    backend = cast(Literal["worktree", "clone"], checkout_mode)
     if task.task_type != "epic":
         try:
             (
@@ -154,11 +154,11 @@ def _sanitize_reusable_spawn_artifacts(
     task: Task,
     artifacts: TaskArtifacts,
     services: object | None,
-    isolation: SpawnIsolation | None,
+    checkout_mode: SpawnCheckoutMode | None,
 ) -> TaskArtifacts:
     """Clear stale task workspace pointers before passing explicit reuse IDs to spawn."""
     fields: dict[str, str | int | None] = {}
-    if isolation == "worktree" and artifacts.worktree_id:
+    if checkout_mode == "worktree" and artifacts.worktree_id:
         if _worktree_artifact_is_stale(
             db=db,
             task=task,
@@ -172,7 +172,7 @@ def _sanitize_reusable_spawn_artifacts(
                     "base_commit_sha": None,
                 }
             )
-    elif isolation == "clone" and artifacts.clone_id:
+    elif checkout_mode == "clone" and artifacts.clone_id:
         if _clone_artifact_is_stale(
             db=db,
             task=task,
@@ -201,9 +201,9 @@ def _repair_leaf_target_branch(
     project_id: str,
     services: object | None,
     artifacts: TaskArtifacts,
-    isolation: SpawnIsolation | None,
+    checkout_mode: SpawnCheckoutMode | None,
 ) -> TaskArtifacts:
-    if isolation not in {"worktree", "clone"} or not task.parent_task_id:
+    if checkout_mode not in {"worktree", "clone"} or not task.parent_task_id:
         return artifacts
     if task.task_type == "epic" or artifacts.worktree_id or artifacts.clone_id:
         return artifacts
@@ -229,9 +229,9 @@ def _guard_merge_ready_leaf_branch(
     project_id: str,
     services: object | None,
     artifacts: TaskArtifacts,
-    isolation: SpawnIsolation | None,
+    checkout_mode: SpawnCheckoutMode | None,
 ) -> None:
-    if isolation not in {"worktree", "clone"}:
+    if checkout_mode not in {"worktree", "clone"}:
         return
     if _uses_epic_integration_workspace(task, action):
         return
@@ -241,9 +241,9 @@ def _guard_merge_ready_leaf_branch(
     stage_name = _field(stage, "name", None) or _field(stage, "stage_name", None)
     if stage_name not in _DEVELOPMENT_FORWARD_ISOLATION_STAGES:
         return
-    if isolation == "worktree" and artifacts.worktree_id:
+    if checkout_mode == "worktree" and artifacts.worktree_id:
         return
-    if isolation == "clone" and artifacts.clone_id:
+    if checkout_mode == "clone" and artifacts.clone_id:
         return
     if not artifacts.target_branch:
         return
@@ -485,50 +485,50 @@ def _spawn_workspace_ids(
     task: object,
     action: SpawnAgentAction,
     artifacts: TaskArtifacts,
-    isolation: SpawnIsolation | None,
+    checkout_mode: SpawnCheckoutMode | None,
 ) -> tuple[str | None, str | None]:
     if _uses_epic_integration_workspace(task, action):
-        if isolation == "worktree" and artifacts.integration_workspace_id:
+        if checkout_mode == "worktree" and artifacts.integration_workspace_id:
             return artifacts.integration_workspace_id, None
-        if isolation == "clone" and artifacts.integration_clone_id:
+        if checkout_mode == "clone" and artifacts.integration_clone_id:
             return None, artifacts.integration_clone_id
-    if isolation == "worktree":
+    if checkout_mode == "worktree":
         return artifacts.worktree_id, None
-    if isolation == "clone":
+    if checkout_mode == "clone":
         return None, artifacts.clone_id
     return None, None
 
 
-def _effective_spawn_isolation(
+def _effective_spawn_checkout_mode(
     *,
     task: object,
     action: SpawnAgentAction,
     agent_body: object | None,
-) -> SpawnIsolation | None:
+) -> SpawnCheckoutMode | None:
     if action.agent_slug in _TASKLESS_MAIN_CONTEXT_AGENT_SLUGS:
         return "none"
     stage_name = _spawn_stage_name(action)
-    task_isolation = _task_spawn_isolation(task)
+    task_checkout_mode = _task_spawn_checkout_mode(task)
     if stage_name in _PRE_DEVELOPMENT_ISOLATION_STAGES:
         return "none"
 
-    agent_isolation = getattr(agent_body, "isolation", None)
+    agent_checkout_mode = getattr(agent_body, "checkout_mode", None)
     if stage_name in _DEVELOPMENT_FORWARD_ISOLATION_STAGES:
-        if task_isolation is not None:
-            return task_isolation
-        if agent_isolation in _EXPLICIT_AGENT_ISOLATIONS:
-            return cast(SpawnIsolation, agent_isolation)
+        if task_checkout_mode is not None:
+            return task_checkout_mode
+        if agent_checkout_mode in _EXPLICIT_AGENT_ISOLATIONS:
+            return cast(SpawnCheckoutMode, agent_checkout_mode)
         return None
 
-    if agent_isolation in _EXPLICIT_AGENT_ISOLATIONS:
-        return cast(SpawnIsolation, agent_isolation)
-    return task_isolation
+    if agent_checkout_mode in _EXPLICIT_AGENT_ISOLATIONS:
+        return cast(SpawnCheckoutMode, agent_checkout_mode)
+    return task_checkout_mode
 
 
-def _task_spawn_isolation(task: object) -> SpawnIsolation | None:
-    task_isolation = getattr(task, "isolation", None)
-    if task_isolation in _EXPLICIT_AGENT_ISOLATIONS:
-        return cast(SpawnIsolation, task_isolation)
+def _task_spawn_checkout_mode(task: object) -> SpawnCheckoutMode | None:
+    task_checkout_mode = getattr(task, "checkout_mode", None)
+    if task_checkout_mode in _EXPLICIT_AGENT_ISOLATIONS:
+        return cast(SpawnCheckoutMode, task_checkout_mode)
     return None
 
 

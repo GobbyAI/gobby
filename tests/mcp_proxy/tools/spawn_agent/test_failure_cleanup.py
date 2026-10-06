@@ -186,7 +186,7 @@ async def test_finalize_failure_envelope_includes_isolation_identity() -> None:
             spawn_result=spawn_result,
             spawn_request=None,
             isolation_ctx=isolation_context,
-            effective_isolation="worktree",
+            effective_checkout_mode="worktree",
             base_commit_sha="base-sha",
             handler=handler,
             spawn_config=spawn_config,

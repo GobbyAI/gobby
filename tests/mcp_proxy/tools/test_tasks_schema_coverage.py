@@ -117,7 +117,7 @@ class TestToolSchemas:
             "start_date",
             "due_date",
             "allow_automation",
-            "isolation",
+            "checkout_mode",
             "assigned_agent",
             "implementation_domain",
             "additional_skills",
@@ -132,7 +132,7 @@ class TestToolSchemas:
             if parameter.kind not in {Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD}
         }
         assert set(props) <= manager_fields
-        assert set(props["isolation"]["enum"]) == {"none", "worktree", "clone"}
+        assert set(props["checkout_mode"]["enum"]) == {"none", "worktree", "clone"}
         assert set(props["implementation_domain"]["enum"]) == {"backend", "frontend", "fullstack"}
         assert props["affected_files"]["type"] == "array"
         assert props["affected_files"]["items"]["type"] == "string"

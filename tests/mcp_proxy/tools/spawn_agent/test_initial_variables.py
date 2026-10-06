@@ -1110,7 +1110,7 @@ class TestDispatchBatchIsolationParity:
                         {
                             "agent": "merge-worker",
                             "task_id": "#14094",
-                            "isolation": "none",
+                            "checkout_mode": "none",
                             "worktree_id": "wt-347a5e",
                             "prompt": prompt,
                         }
@@ -1132,7 +1132,7 @@ class TestDispatchBatchIsolationParity:
         assert spawn_kwargs["prompt"] == prompt
         assert spawn_kwargs["agent_lookup_name"] == "merge-worker"
         assert spawn_kwargs["task_id"] == "#14094"
-        assert spawn_kwargs["isolation"] == "none"
+        assert spawn_kwargs["checkout_mode"] == "none"
         assert spawn_kwargs["worktree_id"] == "wt-347a5e"
         assert spawn_kwargs["parent_session_id"] == "parent-789"
 
@@ -1246,7 +1246,7 @@ class TestDispatchBatchIsolationParity:
                     "suggestions": suggestions,
                     "agent": "backend-developer",
                     "clone_id": "clone-abc",
-                    "isolation": "clone",
+                    "checkout_mode": "clone",
                     "branch_name": "feat-9981",
                     "base_branch": "0.2.28",
                     "parent_session_id": "parent-789",

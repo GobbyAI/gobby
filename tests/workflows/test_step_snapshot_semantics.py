@@ -1323,7 +1323,7 @@ async def _run_post_launch_failure_case(
                 ),
                 task_id=task.id,
                 task_manager=task_manager,
-                isolation="none",
+                checkout_mode="none",
                 parent_session_id=parent_session_id,
                 project_path=str(sample_project["repo_path"]),
                 session_manager=session_manager,

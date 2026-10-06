@@ -78,7 +78,7 @@ rows:
 | --- | --- |
 | `allow_automation` | Opt-in gate; tasks without it are invisible to dispatcher scans |
 | `unattended` | Stored task flag for automation posture; build writes the resolved profile or explicit value |
-| `isolation` | Execution isolation: `none`, `worktree`, or `clone` |
+| `checkout_mode` | Execution isolation: `none`, `worktree`, or `clone` |
 | Stage manifest rows | Ordered lifecycle stages in `task_stage_states` |
 | `assigned_agent` | Leaf-stage agent chosen by expansion or build input |
 | `additional_skills` | Extra skills loaded into the dispatched worker |
@@ -96,7 +96,7 @@ Task-scoped `build_resume` preserves isolation and stage shape. Reissuing
 recorded workspaces fail validation. Existing manifests normally ignore profile
 `skip_stages` with a warning and reject explicit skips. Expanded-epic PR-skip
 repair is the narrow exception described in [Dispatch](./dispatch.md#entry-points). CLI uses
-`--isolation none|worktree|clone`, MCP `build_task` uses `isolation`, and HTTP
+`--checkout-mode none|worktree|clone`, MCP `build_task` uses `checkout_mode`, and HTTP
 `POST /api/build` accepts the same values.
 
 Inspect `gobby-profiles:list_profiles` and explicit-scope `show_profile` to

@@ -103,7 +103,7 @@ source of truth after daemon startup and sync.
 
 After materialization and base validation, `/gobby plan` offers an optional
 enhancement loop. When selected, the parent session spawns
-`plan-enhancer-taskless-old` (no `task_id`, `isolation="none"`) with the plan path,
+`plan-enhancer-taskless-old` (no `task_id`, `checkout_mode="none"`) with the plan path,
 round number, max rounds, and parent session id. The enhancer loads
 `gobby:references/plan/enhancement.md` and standalone `proportionality`, then returns ranked Better/Bigger
 suggestions to the parent via `send_message` and calls `end_agent_run`. It never

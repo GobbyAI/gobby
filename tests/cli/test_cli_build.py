@@ -53,7 +53,7 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "--quick" in result.output
     assert "--skip-stage" in result.output
     assert "--clone" in result.output
-    assert "--isolation" in result.output
+    assert "--checkout-mode" in result.output
     assert "--no-merge" in result.output
     assert "--pr" in result.output
     assert "--stage" in result.output
@@ -153,8 +153,8 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     assert opts.profile == "submit"
     assert opts.quick is True
     assert opts.skip_stages == ["qa", "pr"]
-    assert opts.isolation == "clone"
-    assert opts.isolation_explicit is True
+    assert opts.checkout_mode == "clone"
+    assert opts.checkout_mode_explicit is True
     assert opts.no_merge is True
     assert opts.pr == "123"
     assert [
@@ -198,16 +198,16 @@ def test_build_cli_omitted_backend_defaults_to_worktree(tmp_path: Path) -> None:
     assert result.exit_code == 0
     opts = build.call_args.args[1]
     assert opts.quick is True
-    assert opts.isolation == "worktree"
-    assert opts.isolation_explicit is False
+    assert opts.checkout_mode == "worktree"
+    assert opts.checkout_mode_explicit is False
     assert build.call_args.kwargs == {
         "db": open_db.return_value,
         "project_id": "project-1",
     }
 
 
-@pytest.mark.parametrize("isolation", ["none", "worktree", "clone"])
-def test_build_cli_accepts_explicit_isolation(tmp_path: Path, isolation: str) -> None:
+@pytest.mark.parametrize("checkout_mode", ["none", "worktree", "clone"])
+def test_build_cli_accepts_explicit_isolation(tmp_path: Path, checkout_mode: str) -> None:
     from gobby.cli import cli
 
     plan_file = tmp_path / "plan.md"
@@ -223,21 +223,21 @@ def test_build_cli_accepts_explicit_isolation(tmp_path: Path, isolation: str) ->
     ):
         result = CliRunner().invoke(
             cli,
-            ["build", str(plan_file), "--isolation", isolation],
+            ["build", str(plan_file), "--checkout-mode", checkout_mode],
         )
 
     assert result.exit_code == 0
     opts = build.call_args.args[1]
-    assert opts.isolation == isolation
-    assert opts.isolation_explicit is True
+    assert opts.checkout_mode == checkout_mode
+    assert opts.checkout_mode_explicit is True
     assert build.call_args.kwargs == {
         "db": open_db.return_value,
         "project_id": "project-1",
     }
 
 
-@pytest.mark.parametrize("isolation", ["none", "worktree"])
-def test_build_cli_rejects_clone_conflicts(tmp_path: Path, isolation: str) -> None:
+@pytest.mark.parametrize("checkout_mode", ["none", "worktree"])
+def test_build_cli_rejects_clone_conflicts(tmp_path: Path, checkout_mode: str) -> None:
     from gobby.cli import cli
 
     plan_file = tmp_path / "plan.md"
@@ -245,34 +245,34 @@ def test_build_cli_rejects_clone_conflicts(tmp_path: Path, isolation: str) -> No
 
     result = CliRunner().invoke(
         cli,
-        ["build", str(plan_file), "--clone", "--isolation", isolation],
+        ["build", str(plan_file), "--clone", "--checkout-mode", checkout_mode],
     )
 
     assert result.exit_code != 0
-    assert f"--clone conflicts with --isolation {isolation}" in result.output
+    assert f"--clone conflicts with --checkout-mode {checkout_mode}" in result.output
 
 
 def test_build_payload_omits_workspace_backend_when_not_explicit() -> None:
     from gobby.cli.build import _build_payload
 
     payload = _build_payload(
-        BuildOptions(quick=True, isolation="worktree", isolation_explicit=False),
+        BuildOptions(quick=True, checkout_mode="worktree", checkout_mode_explicit=False),
         "#42",
     )
 
     assert "workspace_backend" not in payload
-    assert "isolation" not in payload
+    assert "checkout_mode" not in payload
 
 
 def test_build_payload_sends_explicit_isolation() -> None:
     from gobby.cli.build import _build_payload
 
     payload = _build_payload(
-        BuildOptions(quick=True, isolation="worktree", isolation_explicit=True),
+        BuildOptions(quick=True, checkout_mode="worktree", checkout_mode_explicit=True),
         "#42",
     )
 
-    assert payload["isolation"] == "worktree"
+    assert payload["checkout_mode"] == "worktree"
     assert "workspace_backend" not in payload
 
 
@@ -980,7 +980,7 @@ def test_build_restart_cli_forwards_build_shaping_options() -> None:
                 "--yes",
                 "--skip-stage",
                 "pr",
-                "--isolation",
+                "--checkout-mode",
                 "clone",
                 "--target-branch",
                 "release/build",
@@ -996,8 +996,8 @@ def test_build_restart_cli_forwards_build_shaping_options() -> None:
     local_opts = restart_target.call_args.kwargs["opts"]
     assert daemon_opts is local_opts
     assert local_opts.skip_stages == ["pr"]
-    assert local_opts.isolation == "clone"
-    assert local_opts.isolation_explicit is True
+    assert local_opts.checkout_mode == "clone"
+    assert local_opts.checkout_mode_explicit is True
     assert local_opts.target_branch == "release/build"
     assert local_opts.coordinator_session_ref == "#6075"
     assert [
@@ -1010,7 +1010,7 @@ def test_build_restart_cli_forwards_build_shaping_options() -> None:
 def test_build_restart_empty_pr_counts_as_supplied() -> None:
     from gobby.cli.build import _restart_options_payload, _restart_options_were_supplied
 
-    opts = BuildOptions(isolation_explicit=False, pr="")
+    opts = BuildOptions(checkout_mode_explicit=False, pr="")
 
     assert _restart_options_were_supplied(opts) is True
     assert _restart_options_payload(opts)["pr"] == ""
@@ -1019,7 +1019,7 @@ def test_build_restart_empty_pr_counts_as_supplied() -> None:
 def test_build_restart_empty_stage_caps_do_not_count_as_supplied() -> None:
     from gobby.cli.build import _restart_options_were_supplied
 
-    opts = BuildOptions(isolation_explicit=False, stage_caps=[])
+    opts = BuildOptions(checkout_mode_explicit=False, stage_caps=[])
 
     assert _restart_options_were_supplied(opts) is False
 

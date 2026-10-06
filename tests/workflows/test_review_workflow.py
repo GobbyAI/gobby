@@ -35,7 +35,7 @@ SPAWN_AGENT_PARAMETERS = frozenset(
         "agent",
         "task_id",
         "allow_closed_task",
-        "isolation",
+        "checkout_mode",
         "branch_name",
         "base_branch",
         "clone_id",

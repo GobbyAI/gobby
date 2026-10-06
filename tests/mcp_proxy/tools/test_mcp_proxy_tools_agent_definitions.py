@@ -384,7 +384,7 @@ class TestCreateAgentDefinition:
 
     def test_invalid_definition(self, definition_db: PostgresHubDatabase) -> None:
         mgr = _setup(definition_db)
-        result = create_agent_definition(mgr, "bad", {"isolation": "invalid_isolation"})
+        result = create_agent_definition(mgr, "bad", {"checkout_mode": "invalid_isolation"})
         assert result["success"] is False
         assert "Validation failed" in result["error"]
 

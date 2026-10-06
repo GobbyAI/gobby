@@ -471,7 +471,7 @@ async def test_spawn_agent_impl_injects_symbol_repair_diagnostics(tmp_path: Path
             agent_lookup_name="planner",
             parent_session_id="parent-1",
             provider="codex",
-            isolation="none",
+            checkout_mode="none",
             daemon_config=daemon_config,
         )
         # The spawn phase runs as a background task; finish it while execute_spawn is patched.

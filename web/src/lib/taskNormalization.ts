@@ -140,7 +140,7 @@ export type RawTaskPayload = {
   state?: Partial<CanonicalTaskState> | null;
   allow_automation?: boolean | null;
   yolo?: boolean | null;
-  isolation?: string | null;
+  checkout_mode?: string | null;
   dispatch_failure_count?: number | null;
   additional_skills?: string[] | null;
   assigned_agent?: string | null;
@@ -235,7 +235,7 @@ const OPTIONAL_TASK_FIELD_VALIDATORS = {
   category: isOptionalString,
   description: isOptionalString,
   validation_criteria: isOptionalString,
-  isolation: isOptionalString,
+  checkout_mode: isOptionalString,
   assigned_agent: isOptionalString,
   priority: isOptionalNumber,
   seq_num: isOptionalNumber,

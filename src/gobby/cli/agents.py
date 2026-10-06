@@ -104,7 +104,7 @@ def _agent_definition_summary(row: AgentDefinitionRow) -> dict[str, Any]:
         "provider": body.provider,
         "model": body.model,
         "mode": raw.get("mode"),
-        "isolation": body.isolation,
+        "checkout_mode": body.checkout_mode,
         "surfaces": body.surfaces,
         "has_steps": body.step_workflow is not None,
         "step_count": len(body.step_workflow.steps) if body.step_workflow else 0,
@@ -387,7 +387,7 @@ def show_agent_definition(name: str, json_format: bool) -> None:
     click.echo(f"Provider: {detail['provider']}")
     if detail.get("model"):
         click.echo(f"Model: {detail['model']}")
-    click.echo(f"Isolation: {detail['isolation']}")
+    click.echo(f"Checkout mode: {detail['checkout_mode']}")
     click.echo(f"Surfaces: {', '.join(detail['surfaces'])}")
     click.echo(f"Source: {detail['source']}")
     if detail.get("project_id"):

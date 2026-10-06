@@ -7,7 +7,7 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import _automation
 from gobby.storage.tasks._automation import list_automation_candidates
-from gobby.storage.tasks._models import Isolation
+from gobby.storage.tasks._models import CheckoutMode
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 from tests.storage.tasks._stage_test_helpers import (
     create_task,
@@ -36,8 +36,8 @@ def _task_at_stage(
     initialize_manifest(temp_db, task.id, [spec("planning", 0)])
     set_stage_state(temp_db, task.id, "planning", stage_state)
     temp_db.execute(
-        "UPDATE tasks SET allow_automation = TRUE, isolation = %s WHERE id = %s",
-        (Isolation.none.value, task.id),
+        "UPDATE tasks SET allow_automation = TRUE, checkout_mode = %s WHERE id = %s",
+        (CheckoutMode.none.value, task.id),
     )
     return task
 
@@ -87,8 +87,8 @@ def test_list_automation_candidates_excludes_done_and_null_current_stage(
         task_type="task",
     )
     temp_db.execute(
-        "UPDATE tasks SET allow_automation = TRUE, isolation = %s WHERE id = %s",
-        (Isolation.none.value, no_manifest.id),
+        "UPDATE tasks SET allow_automation = TRUE, checkout_mode = %s WHERE id = %s",
+        (CheckoutMode.none.value, no_manifest.id),
     )
     temp_db.execute("DELETE FROM task_stage_states WHERE task_id = %s", (no_manifest.id,))
 
@@ -165,8 +165,8 @@ def test_list_automation_candidates_allows_reopened_child_under_epic_gate(
         task_type="epic",
     )
     temp_db.execute(
-        "UPDATE tasks SET allow_automation = TRUE, isolation = %s WHERE id = %s",
-        (Isolation.none.value, root.id),
+        "UPDATE tasks SET allow_automation = TRUE, checkout_mode = %s WHERE id = %s",
+        (CheckoutMode.none.value, root.id),
     )
     initialize_manifest(
         temp_db,
@@ -184,8 +184,8 @@ def test_list_automation_candidates_allows_reopened_child_under_epic_gate(
         category="code",
     )
     temp_db.execute(
-        "UPDATE tasks SET allow_automation = TRUE, isolation = %s WHERE id = %s",
-        (Isolation.none.value, child.id),
+        "UPDATE tasks SET allow_automation = TRUE, checkout_mode = %s WHERE id = %s",
+        (CheckoutMode.none.value, child.id),
     )
     initialize_manifest(temp_db, child.id, [spec("development", 0), spec("merge", 1)])
     set_stage_state(temp_db, child.id, "development", "needs_review")

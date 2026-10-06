@@ -276,7 +276,7 @@ async def checkpoint_agent_worktree(
     """Checkpoint a terminal child's authorized worktree without releasing its task.
 
     Callers may further restrict the dirty set with ``allowed_paths``; this never
-    replaces the original-parent, isolation, active-writer, or attribution checks.
+    replaces the original-parent, checkout_mode, active-writer, or attribution checks.
     """
     if task_manager is None or worktree_storage is None:
         return _error("Task and worktree services are required", "checkpoint_unavailable")

@@ -15,7 +15,7 @@
         "manifest-rows",
         "rule-chain",
         "build-state",
-        "isolation",
+        "checkout-modes",
         "reviews",
         "lifecycle-events",
         "readiness"

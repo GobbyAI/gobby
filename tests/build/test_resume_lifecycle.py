@@ -147,7 +147,7 @@ async def test_development_resume_ticks_with_active_child_epic_integration_works
     await resume_existing_lifecycle(
         task_manager,
         root,
-        BuildOptions(isolation="worktree", target_branch="main"),
+        BuildOptions(checkout_mode="worktree", target_branch="main"),
         [],
         [],
         temp_db,
@@ -232,7 +232,7 @@ async def test_development_resume_leaves_invalid_child_epic_workspace_for_dispat
     await resume_existing_lifecycle(
         task_manager,
         root,
-        BuildOptions(isolation="worktree", target_branch="main"),
+        BuildOptions(checkout_mode="worktree", target_branch="main"),
         [],
         [],
         temp_db,
@@ -335,7 +335,7 @@ def test_repair_expanded_epic_root_manifest_replaces_under_dispatch_mutex(
     repaired = repair_expanded_epic_root_manifest_for_resume(
         task_manager,
         task,
-        BuildOptions(isolation="worktree"),
+        BuildOptions(checkout_mode="worktree"),
         skip_stages=[],
     )
 

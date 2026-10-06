@@ -30,7 +30,7 @@ from gobby.build.observability import (
     get_build_status,
     list_build_history,
 )
-from gobby.build.options import resolve_build_isolation
+from gobby.build.options import resolve_build_checkout_mode
 from gobby.build.profiles import BuildProfileError
 from gobby.config.build import StageCapOverride as BuildStageCapOverride
 from gobby.servers.responses import JSONResponse
@@ -60,7 +60,7 @@ class BuildRequest(BaseModel):
     quick: bool = False
     skip_stages: list[str] = Field(default_factory=list)
     workspace_backend: Literal["worktree", "clone"] | None = None
-    isolation: Literal["none", "worktree", "clone"] | None = None
+    checkout_mode: Literal["none", "worktree", "clone"] | None = None
     clone: bool = False
     unattended: bool | None = None
     no_merge: bool = False
@@ -96,7 +96,7 @@ class BuildControlRequest(BaseModel):
     profile: str | None = None
     skip_stages: list[str] = Field(default_factory=list)
     workspace_backend: Literal["worktree", "clone"] | None = None
-    isolation: Literal["none", "worktree", "clone"] | None = None
+    checkout_mode: Literal["none", "worktree", "clone"] | None = None
     clone: bool = False
     no_merge: bool = False
     pr: str | None = None
@@ -115,7 +115,7 @@ _RESTART_OPTION_FIELDS = frozenset(
         "skip_stages",
         "profile",
         "workspace_backend",
-        "isolation",
+        "checkout_mode",
         "clone",
         "no_merge",
         "pr",
@@ -158,8 +158,8 @@ def _resolved_path(value: str | None) -> Path | None:
 def _build_options(request_data: BuildRequest) -> BuildOptions:
     clones_dir = _resolved_path(request_data.clones_dir)
     cwd = _existing_directory(request_data.cwd, field_name="cwd")
-    isolation = resolve_build_isolation(
-        isolation=request_data.isolation,
+    checkout_mode = resolve_build_checkout_mode(
+        checkout_mode=request_data.checkout_mode,
         workspace_backend=request_data.workspace_backend,
         clone=request_data.clone,
     )
@@ -168,8 +168,8 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         quick=request_data.quick,
         skip_stages=request_data.skip_stages,
         skip_stages_explicit="skip_stages" in request_data.model_fields_set,
-        isolation=isolation.isolation,
-        isolation_explicit=isolation.explicit,
+        checkout_mode=checkout_mode.checkout_mode,
+        checkout_mode_explicit=checkout_mode.explicit,
         unattended=request_data.unattended if request_data.unattended is not None else False,
         unattended_explicit="unattended" in request_data.model_fields_set,
         no_merge=request_data.no_merge,
@@ -194,8 +194,8 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
 
 def _restart_options(request_data: BuildControlRequest) -> BuildOptions:
     cwd = _existing_directory(request_data.cwd, field_name="cwd")
-    isolation = resolve_build_isolation(
-        isolation=request_data.isolation,
+    checkout_mode = resolve_build_checkout_mode(
+        checkout_mode=request_data.checkout_mode,
         workspace_backend=request_data.workspace_backend,
         clone=request_data.clone,
     )
@@ -203,8 +203,8 @@ def _restart_options(request_data: BuildControlRequest) -> BuildOptions:
         profile=request_data.profile or "default",
         skip_stages=request_data.skip_stages,
         skip_stages_explicit="skip_stages" in request_data.model_fields_set,
-        isolation=isolation.isolation,
-        isolation_explicit=isolation.explicit,
+        checkout_mode=checkout_mode.checkout_mode,
+        checkout_mode_explicit=checkout_mode.explicit,
         no_merge=request_data.no_merge,
         pr=request_data.pr,
         stage_caps=_parse_stage_options(request_data.stage),

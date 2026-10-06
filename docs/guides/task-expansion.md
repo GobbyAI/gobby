@@ -459,7 +459,7 @@ call_tool("gobby-workflows", "get_pipeline_status", {
 
 `gobby-tasks-ops:build_task` is the MCP entrypoint for lifecycle automation.
 It accepts an `input_ref` pointing at a plan file, epic, or automated leaf, plus
-automation options such as `quick`, `stage`, `isolation`, `workspace_backend`,
+automation options such as `quick`, `stage`, `checkout_mode`, `workspace_backend`,
 `target_branch`, `agent`, `reset_expansion_output`, `max_active_agents`, and
 `max_retries`. Use the registered build schema for isolation and workspace options.
 

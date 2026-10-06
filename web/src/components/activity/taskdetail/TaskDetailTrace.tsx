@@ -15,13 +15,15 @@ const taskDetailPillClassName =
 export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
   const labels = task.labels?.filter(Boolean) ?? [];
   const commits = task.commits?.filter(Boolean) ?? [];
-  const isolation =
-    task.isolation && task.isolation !== "none" ? task.isolation : null;
+  const checkout_mode =
+    task.checkout_mode && task.checkout_mode !== "none"
+      ? task.checkout_mode
+      : null;
   const dispatchFailures = task.dispatch_failure_count ?? 0;
   const showAutomationRow =
     Boolean(task.allow_automation) ||
     Boolean(task.yolo) ||
-    isolation !== null ||
+    checkout_mode !== null ||
     dispatchFailures > 0;
 
   const hasTrace =
@@ -75,15 +77,15 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
                   Dispatch on
                 </span>
               )}
-              {isolation && (
+              {checkout_mode && (
                 <span
                   className={cn(
                     taskDetailPillClassName,
                     "font-mono tracking-normal",
                   )}
-                  title="Isolation kind for automated work"
+                  title="Checkout mode for automated work"
                 >
-                  {isolation}
+                  {checkout_mode}
                 </span>
               )}
               {task.yolo && (

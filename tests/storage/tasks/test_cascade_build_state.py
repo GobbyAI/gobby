@@ -8,7 +8,7 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import (
-    Isolation,
+    CheckoutMode,
     LocalTaskManager,
     StageManifestSpec,
     StageState,
@@ -67,7 +67,7 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
     task_manager.initialize_task_manifest(epic.id, stage_names=["development", "merge"])
 
     kwargs = {
-        "isolation": Isolation.clone,
+        "checkout_mode": CheckoutMode.clone,
         "unattended": True,
         "allow_automation": True,
     }
@@ -80,7 +80,7 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
         task = task_manager.get_task(task_id)
         assert task.allow_automation is True
         assert task.unattended is True
-        assert task.isolation is Isolation.clone
+        assert task.checkout_mode is CheckoutMode.clone
         assert not any(label.startswith("stage-:") for label in task.labels or [])
 
     updated_epic = task_manager.get_task(epic.id)
@@ -237,7 +237,7 @@ def test_cascade_reports_manifest_failure_without_enabling_failed_child(
     result = cascade_build_state_to_subtree(
         temp_db,
         epic.id,
-        isolation=Isolation.worktree,
+        checkout_mode=CheckoutMode.worktree,
         unattended=True,
         allow_automation=True,
     )
@@ -288,7 +288,7 @@ def test_cascade_can_force_merge_into_legacy_child_manifest_scope(
     cascade_build_state_to_subtree(
         temp_db,
         epic.id,
-        isolation=Isolation.worktree,
+        checkout_mode=CheckoutMode.worktree,
         unattended=False,
         allow_automation=True,
         include_merge_stage=True,
@@ -324,7 +324,7 @@ def test_cascade_never_forces_merge_onto_an_expansion_only_parent(
     result = cascade_build_state_to_subtree(
         temp_db,
         epic.id,
-        isolation=Isolation.worktree,
+        checkout_mode=CheckoutMode.worktree,
         unattended=False,
         allow_automation=True,
         include_merge_stage=True,
