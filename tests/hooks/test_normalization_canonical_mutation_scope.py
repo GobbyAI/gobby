@@ -8,13 +8,81 @@ import pytest
 from gobby.hooks._normalization_bindings import _BASH_LOOP_BINDING_UNSTABLE_PARAMETERS
 from gobby.hooks._normalization_canonical import (
     _classify_shell_segment_without_redirection,
-    _merge_shell_segment_metadata,
     _set_canonical_tool_metadata,
 )
+from gobby.hooks._normalization_metadata import _merge_shell_segment_metadata
 from gobby.hooks._normalization_operands import _resolve_long_option
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash probe.sh",
+        "sh -- probe.sh",
+        "zsh -f probe.sh",
+        "env MODE=test bash -e probe.sh",
+        "bash /tmp/scratchpad/probe.sh",
+    ],
+)
+def test_script_file_execution_requires_only_a_claim(tmp_path: Path, command: str) -> None:
+    data = _shell_write_metadata(command, tmp_path)
+
+    assert data.get("canonical_script_execution") is True
+    assert data["canonical_tool_kind"] == "execute"
+    assert not data.get("canonical_repo_mutation")
+    assert not data.get("canonical_write_file_paths")
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize("shell", ["sh", "bash", "zsh"])
+def test_script_indirection_writes_are_classified(tmp_path: Path, shell: str) -> None:
+    target = tmp_path / "owned.py"
+    data = _shell_write_metadata(f"{shell} -c 'touch {target}'", tmp_path)
+
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_write_file_paths"] == [str(target)]
+    assert not data.get("canonical_script_execution")
+
+
+@pytest.mark.parametrize("shell", ["sh", "bash"])
+def test_decoded_scratch_script_writes_remain_exempt(tmp_path: Path, shell: str) -> None:
+    target = tmp_path / "scratchpad" / "probe.py"
+    data = _shell_write_metadata(f"{shell} -c 'touch {target}'", tmp_path / "repo")
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_file_paths"] == [str(target)]
+    assert data["canonical_repo_mutation"] is False
+    assert not data.get("canonical_script_execution")
+
+
+def test_nested_shell_string_uses_parent_cwd_without_changing_it(tmp_path: Path) -> None:
+    data = _shell_write_metadata(
+        f"cd {tmp_path} && bash -c \"sh -c 'cd child && touch inner.py'\" && touch outer.py",
+        tmp_path,
+    )
+
+    assert data["canonical_file_paths"] == [
+        str(tmp_path / "child" / "inner.py"),
+        str(tmp_path / "outer.py"),
+    ]
+    assert data["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'sh -c "$PROGRAM"',
+        "sh -c 'exec \"$PROGRAM\"'",
+        "bash -c 'touch /project/owned.py\nprintf \"'",
+    ],
+)
+def test_unresolved_shell_program_requires_a_claim(tmp_path: Path, command: str) -> None:
+    data = _shell_write_metadata(command, tmp_path)
+
+    assert data.get("canonical_script_execution") is True
 
 
 def test_mixed_unexpanded_mutation_paths_mark_scope_unknown() -> None:

@@ -787,6 +787,65 @@ class TestNativeTrackerClaimNudge:
 class TestRequireTaskBeforeEdit:
     """Verify require-task-before-edit blocks edits without claimed task."""
 
+    @pytest.mark.parametrize(
+        ("command", "claimed", "blocked"),
+        [
+            ("bash /project/probe.sh", False, True),
+            ("bash /tmp/scratchpad/probe.sh", False, True),
+            ("bash /project/probe.sh", True, False),
+            ('sh -c "$PROGRAM"', False, True),
+            ('sh -c "$PROGRAM"', True, False),
+            ("bash -c 'touch /project/owned.py\nprintf \"'", False, True),
+            ("sh -c 'touch /project/owned.py'", False, True),
+            ("bash -c 'touch /tmp/scratchpad/probe.py'", False, False),
+            ("sh -c 'cat /project/source.py'", False, False),
+        ],
+    )
+    def test_script_execution_claim_gate(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        command: str,
+        claimed: bool,
+        blocked: bool,
+    ) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+        _sync_bundled(db)
+        row = manager.get_by_name("require-task-before-edit")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.when is not None
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": command, "cwd": "/project"},
+            "project_root": "/project",
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+        context = {
+            "variables": {
+                "require_task_before_edit": True,
+                "task_claimed": claimed,
+                "plan_mode": False,
+            },
+            "event": event,
+            "tool_input": data["tool_input"],
+            "source": "codex",
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+
+        assert bool(evaluator.evaluate(body.when)) is blocked
+
     def test_block_effect_is_not_tied_to_native_tool_names(self, db, manager) -> None:
         """The block effect should rely on canonical mutation semantics."""
         _sync_bundled(db)
