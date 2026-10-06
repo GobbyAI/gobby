@@ -47,37 +47,24 @@ them to developer seats.
    description on 2026-10-05. Option A (preflight only) was rejected: nothing
    would stop the implementation from adding lines that the plan never
    declared.
-2. **Grammar.** One Targets bullet carries the proof, in this fixed order:
-   ```text
-   - `<path>::*` — operation: delete-lines — base-blob: <40 hex> — lines: <ranges> — scope-reason: <text>
-   ```
-   - The separator is the em dash with single spaces (` — `).
-   - `base-blob` is 40 lowercase hex characters. The repository object format
-     is `sha1` (`git rev-parse --show-object-format`).
-   - `<ranges>` is a comma-and-space list of `N` or `A-B` items. Numbers are
-     decimal with no leading zero, and `A-B` requires `A < B`. Ranges are
-     strictly ascending, with at least one retained line between neighbours.
-     They must leave at least one line; deleting every line is whole-file
-     deletion.
+2. **Grammar.** One Targets bullet carries the proof as a fixed-order `::*`
+   entry: `operation: delete-lines`, `base-blob`, `lines`, then
+   `scope-reason`. Deliverable 1.1 holds the exact grammar, path rule,
+   scope-reason rule and candidate rule under "Proof contract", so its
+   compiled leaf carries them. The design choices behind them:
    - `scope-reason` comes last, because `symbol_targets.parse_target_line`
      consumes everything after it.
    - Metadata carries no backticks. A second backticked span would parse as
      another target token.
    - The target is always `::*`, because the committed check constrains the
      whole file's bytes.
-   - `<path>` is a canonical repository-relative POSIX file path. It is
-     non-empty and has no leading `/`, no `.` or `..` component, no empty
-     component (`//`), and no backslash, whitespace, backtick or colon.
-   - The `scope-reason` text is non-empty. It carries no backtick and no
-     further reserved field (` — operation:`, ` — base-blob:`, ` — lines:`
-     or ` — scope-reason:`).
-   One anchored regular expression matches the entry. A Targets entry is a
-   proof candidate when its text before the first `scope-reason:` contains
-   `delete-lines`, or when the line contains ` — operation: delete-lines`
-   anywhere. A plain mention of `delete-lines` inside scope-reason prose is
-   not a candidate. A candidate the expression does not match is an error,
-   including a candidate whose path cannot be recovered. No key may repeat,
-   be reordered or be omitted, and no other `operation:` may appear.
+   - Ranges must leave at least one line. Deleting every line is whole-file
+     deletion.
+   - Candidate detection reads only the entry's ` — `-separated metadata
+     segments, never the target token, so a file named `delete-lines.py`
+     stays an ordinary target.
+   - A malformed candidate is an error, never an ordinary target. That
+     includes a candidate whose path cannot be recovered.
 3. **Exclusivity.**
    - A proof is the only Targets entry for its path in its deliverable.
    - Every other deliverable that targets the same path must transitively
@@ -89,23 +76,19 @@ them to developer seats.
    - Exclusivity is a plan-validation rule only. The close gate does not
      re-check it: two same-path proofs with different results cannot both
      match the candidate's bytes, so byte equality already binds the file.
-4. **Line model and counting.**
-   - Lines are the base bytes split after each `\n`. A non-empty tail with no
-     final `\n` is the last line, and a line keeps its own terminator.
-   - The projection concatenates the retained lines unchanged, so CRLF endings
-     and the final-newline state of retained lines survive byte for byte.
-   - The base must decode as strict UTF-8. A `\r` not followed by `\n` fails
-     the proof, so the `\n` line model and the universal-newline count agree.
-   - Base and projection are both counted with the existing production rule:
-     universal-newline iteration, where a Rust file stops at its first
-     `#[cfg(test)]` line.
-   - The projected production count must be at most the base count and below
-     1,000. Deleting a `#[cfg(test)]` line that exposes test lines therefore
-     fails. A base already at or above 1,000 needs no separate guard. It
-     passes only when the deletion brings the projection below 1,000,
-     because shrinking a file into compliance should not force a split.
-   - Deleting only Rust test-tail lines passes: the file shrinks and the
-     production count does not grow.
+4. **Line model and counting.** Deliverable 1.1 holds the exact line model
+   and count rule under "Proof contract". In short:
+   - the projection keeps the retained lines byte for byte, terminators
+     included;
+   - the base must be strict UTF-8 with no lone `\r`, so the `\n` line model
+     and the universal-newline count agree;
+   - base and projection are both counted with today's production rule, and
+     the projected count must be at most the base count and below 1,000.
+   A base already at or above 1,000 needs no separate guard. It passes only
+   when the deletion brings the projection below 1,000, because shrinking a
+   file into compliance should not force a split. Deleting a Rust
+   `#[cfg(test)]` line that exposes test lines fails. Deleting only
+   test-tail lines passes.
 5. **Fail-closed preflight.**
    - A proof is validated whenever it is present, whatever the file's size.
    - It applies only to a hand-maintained production file that is neither a
@@ -152,6 +135,12 @@ them to developer seats.
    - The gate-8 block stays in `_evaluate_close`, because many tests patch
      `_lifecycle_close.evaluate_task_scope`. The new logic lives in a new
      module, and `_evaluate_close` gains only the call and the result wiring.
+   - The proof lines are bound for the whole close. The task description is
+     mutable during the bounded review, while the candidate and object store
+     are not. `CloseEvaluationFingerprint` therefore captures the
+     description's proof lines, and finalization's existing fingerprint
+     recheck turns a proof edited after evaluation into a stale close. A
+     description edit outside the proof lines still closes.
 9. **Base drift.** The base binding is exact by design. When another change
    moves the file after the plan is validated, the close fails closed. To
    recover:
@@ -167,9 +156,12 @@ them to developer seats.
     - A new lint code breaks the CLI fallback (item 6).
     - Moving the gate-8 block out of `_evaluate_close` churns many test
       patch sites.
-    - Re-checking the proof in finalization or in the review gate is not
-      needed. Every close call re-runs `_evaluate_close`, and the candidate
-      and object store are immutable within a call.
+    - Re-running the Git check in finalization or in the review gate is not
+      needed. The candidate and object store are immutable, and the
+      fingerprint already binds the proof lines (item 8).
+    - Fingerprinting the whole description would stale a close on any
+      unrelated description edit. Today finalization rechecks scope instead
+      of fingerprinting the description.
 
 ## As-Is Facts
 `kind: framing`
@@ -319,6 +311,51 @@ Move the production-size primitives out of `src/gobby/plans/semantic_lint.py` in
   plan-structure exclusivity rule that bans other owners. The ordering rule
   is enough, and it keeps follow-on edits possible.
 
+Proof contract (the exact rules this leaf implements):
+- Grammar. One Targets bullet, with its fields in this fixed order:
+  ```text
+  - `<path>::*` — operation: delete-lines — base-blob: <40 hex> — lines: <ranges> — scope-reason: <text>
+  ```
+  - The separator is the em dash with single spaces (` — `).
+  - `<path>` is a canonical repository-relative POSIX file path. It is
+    non-empty and has no leading `/`, no `.` or `..` component, no empty
+    component (`//`), and no backslash, whitespace, backtick or colon. The
+    target is always `<path>::*`.
+  - `base-blob` is 40 lowercase hex characters. The repository object
+    format is `sha1` (`git rev-parse --show-object-format`).
+  - `<ranges>` is a comma-and-space list of `N` or `A-B` items. Numbers are
+    decimal with no leading zero, and `A-B` requires `A < B`. Ranges are
+    strictly ascending, with at least one retained line between neighbours,
+    and they must leave at least one line.
+  - `scope-reason` comes last. Its text is non-empty, with no backtick and
+    no further reserved field (` — operation:`, ` — base-blob:`,
+    ` — lines:` or ` — scope-reason:`).
+  - No key may repeat, be reordered or be omitted, and no other
+    `operation:` may appear.
+- Candidate rule. Split the entry on `_PRIMARY_TOKEN_SEPARATOR` (` — `) and
+  strip the bullet marker from the first segment, as
+  `_is_whole_file_deletion` does. The entry is a proof candidate when either
+  of these holds:
+  - any segment starts with `operation: delete-lines`;
+  - a segment after the first, and before the first segment that starts
+    with `scope-reason:`, contains `delete-lines`.
+  The first segment counts only when it starts with `operation:
+  delete-lines`, which no valid target does. A file or symbol named
+  `delete-lines` therefore stays an ordinary target, and a plain mention of
+  `delete-lines` in scope-reason prose is not a candidate. Every candidate
+  must parse. A candidate that does not parse is an error, including one
+  whose path cannot be recovered.
+- Line model. Lines are the base bytes split after each `\n`. A non-empty
+  tail with no final `\n` is the last line, and each line keeps its own
+  terminator. The projection concatenates the retained lines unchanged, so
+  CRLF endings and the final-newline state survive byte for byte. The base
+  must decode as strict UTF-8, and a `\r` not followed by `\n` fails.
+- Count rule. Base and projection are both counted with today's production
+  rule: universal-newline iteration, where a `.rs` file stops at its first
+  `#[cfg(test)]` line. The projected count must be at most the base count
+  and below `PRODUCTION_SIZE_CEILING` (1,000). A base at or above 1,000
+  passes only when the projection drops below 1,000.
+
 Implementation, new module `src/gobby/plans/production_size.py` (all symbols
 new):
 - `PRODUCTION_SIZE_GROWTH_THRESHOLD = 850` and `PRODUCTION_SIZE_CEILING =
@@ -335,13 +372,10 @@ new):
 - `DeleteLinesProofError(ValueError)`, and frozen dataclasses
   `DeleteLinesProof(path, base_blob, ranges)` and
   `ProjectedDeletion(data, blob, base_count, projected_count)`.
-- `is_delete_lines_entry(line: str) -> bool`: true when the text before the
-  first `scope-reason:` contains `delete-lines`, or when the line contains
-  ` — operation: delete-lines` anywhere (Decision Record item 2).
 - `parse_delete_lines_proof(line: str) -> DeleteLinesProof`: one anchored
-  regular expression implementing Decision Record item 2, then three
+  regular expression implementing the Proof contract grammar, then three
   validations:
-  - the canonical-path rule;
+  - the path rule;
   - the scope-reason rule (non-empty, no backtick, no reserved field);
   - range validation: canonical `N` / `A-B` with `A < B`, no leading zeros,
     strictly ascending, with a retained line between neighbours.
@@ -367,6 +401,11 @@ Implementation in `src/gobby/plans/semantic_lint.py`:
 - `_line_count` keeps its lenient contract: `errors="ignore"` and `OSError`
   counts as 0. It reads the text and returns
   `production_line_count(text, suffix=path.suffix)`.
+- New public `is_delete_lines_entry(line: str) -> bool` beside
+  `_is_whole_file_deletion` implements the Proof contract candidate rule.
+  It reuses `_PRIMARY_TOKEN_SEPARATOR` and `_BULLET_RE`, which stay in
+  `semantic_lint.py`. It lives here because `production_size.py` may not
+  import `semantic_lint.py`.
 - `_lint_production_size_growth` first scans the raw entries from
   `iter_target_block_lines(plan_doc, section)` for lines that satisfy
   `is_delete_lines_entry`, before it iterates the strict inventory. The
@@ -389,9 +428,9 @@ Implementation in `src/gobby/plans/semantic_lint.py`:
   strict-inventory loop then skips the threshold and split heuristic for
   every path that has a candidate, whatever the file's size.
 - `_lint_shared_target_ordering` collects proof owners (deliverables whose
-  Targets block holds a `delete-lines` entry for a path). For every other
-  owner of that path it requires `_has_dependency_path(graph, other,
-  proof_owner)`, else it reports `shared-target-ordering` with message
+  Targets block holds a candidate that parses to a proof for a path). For
+  every other owner of that path it requires `_has_dependency_path(graph,
+  other, proof_owner)`, else it reports `shared-target-ordering` with message
   "section X targets P before the delete-lines proof in section Y binds its
   base".
 - New public `iter_description_target_lines(description: str | None) ->
@@ -442,10 +481,7 @@ grammar and nothing else.
   adjacent ranges; `scope-reason` not last; a second `operation:`; an en
   dash separator; a missing, absolute, `..`, `./`-prefixed or doubled-slash
   path; an empty scope-reason; a backtick or reserved field after
-  `scope-reason:`. `is_delete_lines_entry` is true for
-  ` — operation: delete-lines` placed after `scope-reason:`, and false for
-  an ordinary entry whose scope-reason prose only mentions `delete-lines`.
-  test:
+  `scope-reason:`. test:
   `tests/plans/test_production_size.py::test_parse_delete_lines_proof_grammar`.
 - 1.1.2 - Projection is byte-exact: CRLF lines survive, and a retained final
   line without `\n` stays without it. Deleting the last line leaves the new
@@ -469,13 +505,16 @@ grammar and nothing else.
   - mixed: the proof plus a second entry for the path, or the proof plus
     `operation: delete`;
   - ambiguous: a malformed proof, `operation: delete-lines` placed after
-    `scope-reason:`, and a candidate whose path cannot be recovered;
+    `scope-reason:`, and each candidate whose path cannot be recovered
+    (empty backticks before the metadata, `operation: delete-lines` in the
+    target slot, an em dash right after the bullet marker);
   - a malformed candidate on a file below 850 lines, and one beside a valid
     split paragraph;
   - a proof on a `tests/` path or a generated file;
   - a proof reached through a symlink.
-  An ordinary entry whose scope-reason only mentions `delete-lines` is not
-  a candidate and keeps today's diagnostic. test:
+  These are not candidates for `is_delete_lines_entry`, and each keeps
+  today's behavior: an ordinary entry whose scope-reason only mentions
+  `delete-lines`, and an ordinary `src/delete-lines.py::*` target. test:
   `tests/plans/test_semantic_lint.py::test_production_size_growth_delete_lines_proof_fails_closed`.
 - 1.1.6 - A stale proof fails even beside a valid split paragraph naming a
   new bare-path Target. The same stale proof passes when its section is in
@@ -514,6 +553,8 @@ Targets:
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py::_evaluate_close`
 - `tests/mcp_proxy/tools/tasks/test_size_proof_gate.py`
 - `tests/mcp_proxy/tools/tasks/test_close_candidate.py::*` — scope-reason: add the gate-8 size-proof wiring tests on this module's real Git repository fixture
+- `src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py::CloseEvaluationFingerprint`
+- `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::*` — scope-reason: add the proof-edit stale-close test beside the existing fingerprint and commit-close tests
 - `docs/contracts/plan-coverage.md`
 - `src/gobby/install/shared/skills/gobby/references/tasks/closing.md`
 
@@ -521,8 +562,9 @@ Split the committed-result check into the new module `src/gobby/mcp_proxy/tools/
 
 Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_tool.py` — no-edit-reason: it calls `_evaluate_close` with unchanged keyword arguments, and the new check runs inside it.
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py` — no-edit-reason: its `CloseEvaluationFingerprint.capture` call keeps its arguments, and its existing fingerprint comparison picks up the new field.
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_preview.py` — no-edit-reason: it only stores the captured `CloseEvaluationFingerprint` on `CloseEvaluation`.
 - `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py` — no-edit-reason: its task descriptions carry no delete-lines entry, so the check returns before any Git call and gate 8 is unchanged.
-- `tests/mcp_proxy/tools/tasks/test_close_task_flow.py` — no-edit-reason: its task descriptions carry no delete-lines entry, so the check returns before any Git call and gate 8 is unchanged.
 - `tests/mcp_proxy/tools/tasks/test_lifecycle_close_orchestration.py` — no-edit-reason: it replaces `_evaluate_close` with mocks or runs proof-free descriptions.
 - `tests/mcp_proxy/tools/tasks/test_mcp_close_checklist.py` — no-edit-reason: its task descriptions carry no delete-lines entry, so the gate-8 checklist entries are unchanged.
 - `tests/mcp_proxy/tools/test_task_lifecycle_coverage.py` — no-edit-reason: its task descriptions carry no delete-lines entry, so the check returns before any Git call.
@@ -555,21 +597,40 @@ Consumers unchanged:
   `iter_description_target_lines`, which skips fenced examples. This plan's
   own leaves mention `delete-lines` in prose, so parsing only the Targets
   block is required.
+- Proof freshness. The task description is mutable during the bounded
+  review, while the candidate commit and the object store are not.
+  `commit_close` (`_lifecycle_close_finalization.py:231-481`, imported by
+  `_lifecycle_close` as `_commit_close`) fetches a fresh task row (`:248`),
+  captures a fresh
+  `CloseEvaluationFingerprint` and returns a stale-close response when it
+  differs from the evaluated one (`:280-285`). `capture` records
+  `validation_criteria` but not the description
+  (`_close_evaluation_support.py:70-103`), so a refreshed proof would close
+  unchecked today. `fingerprint_differences` (`:121`) iterates the
+  dataclass fields, so it names a new field without change.
 - Read-only, no change: `_lifecycle_close_finalization.py` (fresh scope at
-  about `:334`) and `_lifecycle_review_gate.py`. Every close call re-runs
-  `_evaluate_close`. Within a call the candidate commit and the object store
-  are immutable, so the gate is deterministic and a changed proof or
-  candidate is rechecked on the next call.
+  about `:334`, fingerprint recheck at `:280`) and
+  `_lifecycle_review_gate.py`. The `capture` call sites
+  (`_lifecycle_close.py:282`, `:449` and finalization `:280`) keep their
+  arguments.
 - Rejected:
   - a 14th gate, because `test_close_task_flow.py` pins items 1..13;
   - moving the gate-8 block, because tests patch
     `_lifecycle_close.evaluate_task_scope` in many places;
   - checking at plan validation only, because landing marks the section
-    complete before the close.
+    complete before the close;
+  - fingerprinting the whole description, which would stale a close on any
+    unrelated description edit;
+  - re-running the Git check in finalization, because the fingerprint
+    already binds the proof lines and the candidate is immutable.
 
 Implementation, new module `src/gobby/mcp_proxy/tools/tasks/_size_proof_gate.py`
 (all symbols new):
 - `SIZE_PROOF_CLOSE_REASONS = frozenset({"completed", "already_implemented"})`.
+- `size_proof_lines(description: str | None) -> tuple[str, ...]`: in order,
+  the lines from `iter_description_target_lines(description)` that satisfy
+  `is_delete_lines_entry`. The gate and the close fingerprint both use it,
+  so they bind identical inputs.
 - A frozen dataclass `SizeProofResult(checked_paths: tuple[str, ...],
   failures: tuple[str, ...], action: str | None)`, with property `passed`,
   `message` (the failures joined) and `details()` (`checked_paths`,
@@ -579,9 +640,8 @@ Implementation, new module `src/gobby/mcp_proxy/tools/tasks/_size_proof_gate.py`
   works in this order:
   1. When `reason` is not in `SIZE_PROOF_CLOSE_REASONS`, return a passing
      empty result.
-  2. Collect lines from `iter_description_target_lines(description)` that
-     satisfy `is_delete_lines_entry`. When there are none, return a passing
-     empty result with no Git call.
+  2. Take `size_proof_lines(description)`. When it is empty, return a
+     passing empty result with no Git call.
   3. Parse each with `parse_delete_lines_proof`. A parse error is a failure.
   4. When `candidate_commit_sha` is None, fail with the action "link the
      commit that delivered the deletion with link_commit and pass it as
@@ -602,9 +662,12 @@ Implementation, new module `src/gobby/mcp_proxy/tools/tasks/_size_proof_gate.py`
      an object ID equal to `ProjectedDeletion.blob`. Anything else is a
      failure naming expected and found mode, type and object ID.
   Every failure lands in the returned `SizeProofResult`. Only cancellation
-  escapes the function. The mismatch action names the remediation: make the
-  candidate's file equal the declared deletion; if the base moved, follow
-  Decision Record item 9.
+  escapes the function. The mismatch action names the remediation:
+  - make the candidate's file equal the declared deletion;
+  - if the base moved, refresh `base-blob` and `lines` in the canonical plan
+    and revalidate it, re-derive M1 through the stale-manifest route, and
+    have the Orchestrator update the leaf's Targets entry to the refreshed
+    line.
 - In `_evaluate_close`, await `evaluate_size_proofs(description=task.description,
   reason=reason, candidate_commit_sha=evaluation.candidate_commit_sha,
   repo_path=repo_path)` before the scope `try`, so a scope evaluation error
@@ -633,6 +696,19 @@ Implementation, new module `src/gobby/mcp_proxy/tools/tasks/_size_proof_gate.py`
   The new import sits beside the existing `_task_scope` imports. The module
   grows by about 25 lines and stays below 940.
 
+Implementation in `src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py`
+(763 lines):
+- `CloseEvaluationFingerprint` gains the field `size_proof_lines:
+  tuple[str, ...]`, and `capture` sets it to
+  `size_proof_lines(task.description)`. The import runs one way:
+  `_close_evaluation_support` imports `_size_proof_gate`, which imports
+  only `gobby.plans` and `gobby.utils` modules. Nothing under `gobby.plans`
+  imports `mcp_proxy`.
+- With no call-site change, finalization's existing recheck then returns
+  the stale-close response when the proof lines changed after evaluation,
+  and `fingerprint_differences` names `size_proof_lines`. A description edit
+  outside the proof lines leaves the fingerprint equal.
+
 Docs:
 - `docs/contracts/plan-coverage.md`: after the 1.1 "Partial deletion proof"
   paragraph, add a "Committed result" paragraph covering:
@@ -641,7 +717,11 @@ Docs:
   - byte equality is checked through blob IDs, and only a regular-file entry
     passes;
   - `scope_justification` never cures a mismatch;
-  - the base-drift remediation of Decision Record item 9.
+  - a proof edited after evaluation stales the close;
+  - the base-drift remediation: refresh `base-blob` and `lines` in the
+    canonical plan and revalidate it, re-derive M1 through the
+    stale-manifest route, and have the Orchestrator update the leaf's
+    Targets entry to the refreshed line.
 - The skill reference `tasks/closing.md`: after the `task_scope_mismatch`
   sentence, add one sentence on `size_proof_mismatch` and its remediation.
   `_Last verified` is bumped.
@@ -654,10 +734,12 @@ then `uv run ruff check src/gobby/mcp_proxy/tools/tasks`,
 temporary Git repositories, as `test_close_candidate.py::candidate_repo`
 does.
 
-**Granularity:** eight acceptance items, two production files, one outcome:
-the close gate enforces the declared result. The wiring is the call and the
-single gate-8 result in `_evaluate_close`, and it is tested with the
-module. The docs describe only this check.
+**Granularity:** nine acceptance items, three production files, one
+outcome: the close gate enforces the declared result. The wiring is the
+call and the single gate-8 result in `_evaluate_close`, plus one
+fingerprint field, and it is tested with the module. Splitting off the
+fingerprint field would leave a gate whose proof can change unchecked
+before the close. The docs describe only this check.
 
 **Acceptance:**
 
@@ -685,8 +767,9 @@ module. The docs describe only this check.
   test:
   `tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_unbindable_proof_fails_closed`.
 - 2.1.4 - `wont_fix`, `obsolete` and `duplicate` closes, and descriptions
-  with no Targets-block proof (including a fenced example), pass without
-  any `daemon_git` call. test:
+  with no Targets-block proof (including a fenced example and an ordinary
+  `src/delete-lines.py::*` target), pass without any `daemon_git` call.
+  test:
   `tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_size_proofs_skip_without_obligation`.
 - 2.1.5 - A leaf description built by `_contract_section_body` from a plan
   section with a proof yields, through `iter_description_target_lines` and
@@ -698,16 +781,24 @@ module. The docs describe only this check.
   is supplied. For both `completed` and `already_implemented`, the exact
   deletion passes gate 8 and an added line fails it. Each of these yields
   exactly one item-8 `task_scope` entry with `size_proof_mismatch` and
-  keeps the scope diagnostic:
+  keeps any scope diagnostic:
   - a proof mismatch together with a scope mismatch;
   - a proof mismatch while `evaluate_task_scope` raises `RuntimeError`;
   - a proof mismatch on a deliberate close of an escalated task.
   test:
   `tests/mcp_proxy/tools/tasks/test_close_candidate.py::test_size_proof_mismatch_fails_task_scope_gate`.
-- 2.1.7 - The contract documents the committed-result check, its close
-  reasons, regular-file rule and base-drift remediation. behavior:
-  "Committed result" in `docs/contracts/plan-coverage.md`.
-- 2.1.8 - The closing reference explains `size_proof_mismatch` and that a
+- 2.1.7 - A proof edited after evaluation stales the close. When the fresh
+  row changes only the proof's `base-blob` and `lines` for the same path,
+  `_commit_close` returns the stale-close response, the task stays open,
+  and `fingerprint_differences` names `size_proof_lines`. This holds for an
+  ordinary close and for a deliberate close of an escalated task. A fresh
+  row whose description changes outside the proof lines still closes.
+  test:
+  `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_size_proof_edit_after_evaluation_stales_close`.
+- 2.1.8 - The contract documents the committed-result check, its close
+  reasons, regular-file rule, proof freshness and base-drift remediation.
+  behavior: "Committed result" in `docs/contracts/plan-coverage.md`.
+- 2.1.9 - The closing reference explains `size_proof_mismatch` and that a
   scope justification cannot cure it. behavior: "size_proof_mismatch" in
   `src/gobby/install/shared/skills/gobby/references/tasks/closing.md`.
 
