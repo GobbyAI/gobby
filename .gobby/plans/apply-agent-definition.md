@@ -2165,3 +2165,326 @@ before and after and happens outside quiet hours:
 9. In that successor, `get_variable("_agent_type")` returns the seat, and a
    `set_variable` lands on the successor's row (the session `#N` the pane now
    reports), not on the predecessor's.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: apply_agent_definition tool and shared activation core
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: Activation from the base agent writes `_agent_type`,
+    the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
+    in one merge. test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activation_writes_full_delta_and_agent_type`.
+
+    1.1.2: Unknown name, missing persona surface, declared pipeline, spawned session,
+    unresolved task and colliding variables each return their typed `error_code` and
+    write nothing. test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_refusals_write_nothing`.
+
+    1.1.3: The same agent with the same pin returns `status: unchanged` without a
+    write, even when the repeat call passes changed `variables` and a `task_id` (no
+    task resolution, merge or reinjection). A seat-to-seat or seat-to-base change
+    through the tool returns `role_change_requires_relaunch`. test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_same_seat_noop_and_role_change_refused`.
+
+    1.1.4: A tool the seat blocks is refused by `_check_agent_tool_enforcement` after
+    activation, and skill exclusions follow `_agent_type`. test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_blocked_tools_and_skill_exclusions_follow_seat`.
+
+    1.1.5: A compact SessionStart on an activated seat keeps its skills, rules and
+    identity. test: `tests/hooks/test_session_start_reactivation.py::test_compact_sessionstart_keeps_seat_skills_and_rules`.
+
+    1.1.6: Web-chat persona launch activates through `apply_agent_definition_impl`.
+    test: `tests/servers/websocket/chat/test_servers_websocket_chat_session.py::test_web_chat_launch_uses_apply_agent_definition`.
+
+    1.1.8: A `provider: inherit` seat on a `codex` session keeps one pin across tool
+    activation, a `compact` SessionStart and a repeat tool call. The SessionStart
+    stores the same pin, and the repeat call returns `unchanged` without a write.
+    test: `tests/hooks/test_session_start_reactivation.py::test_inherit_provider_pin_is_stable_across_entry_points`.
+
+    1.1.9: Activating a seat that selects every skill and sets no skill format, over
+    a base agent that restricted both, stores `_active_skill_names: None` and `_skill_format:
+    None`. test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activation_clears_inherited_skill_restriction`.
+
+    1.1.10: A `compact` SessionStart after the seat''s definition drops its skill
+    selectors and format stores `_active_skill_names: None` and `_skill_format: None`.
+    test: `tests/hooks/test_session_start_reactivation.py::test_reactivation_clears_dropped_skill_restriction`.
+
+    1.1.11: A hand-launched pane that activates a seat whose definition blocks `gobby-worktrees:create_worktree`
+    (`blocked_mcp_tools`) and `EnterWorktree` (`blocked_tools`) is refused both by
+    `_check_agent_tool_enforcement`, and stays refused after a `compact` SessionStart.
+    #23477 relies on this for the plan-family seats (Orchestrator, via gobby#15389,
+    2026-10-05). test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activated_seat_refuses_worktree_tools`.
+
+    1.1.12: On a row at seat X whose definition declares a variable that seat Y does
+    not, `relaunch=True` to Y writes Y''s delta and key list and sets that variable
+    to `None`. `relaunch=True` from X to `default` writes the base agent''s delta
+    the same way. The same calls without `relaunch` are refused `role_change_requires_relaunch`
+    and write nothing. test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_relaunch_switches_seat_and_clears_previous_keys`.
+
+    1.1.13: A web-chat launch after `set_agent` from X to Y, and from X to `default`,
+    calls `apply_agent_definition_impl` with `relaunch=True`, sets `skip_default_agent_activation`,
+    sends no `agent_name_override`, and completes. test: `tests/servers/websocket/chat/test_servers_websocket_chat_session.py::test_agent_switch_relaunches_through_activation`.
+
+    1.1.14: `activate_default_agent` with an `agent_name_override` naming seat Y keeps
+    seat X on a row stored at X and logs one warning naming the session, X and Y.
+    It activates Y on a base-agent row. test: `tests/hooks/event_handlers/test_activate_agent_override.py::test_override_never_changes_role`.
+
+    1.1.16: After seat X''s definition drops `x_only` and a `compact` SessionStart
+    re-activates X, `x_only` keeps its value and `_agent_definition_keys` still names
+    it. A later `relaunch=True` to Y sets `x_only` to `None`. test: `tests/hooks/test_session_start_reactivation.py::test_drift_then_relaunch_clears_retired_definition_key`.
+
+    1.1.17: With `default_agent` configured as a definition that declares `base_only`,
+    activating seat Y through the tool without `relaunch` succeeds and sets `base_only`
+    to `None`. test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_activation_over_configured_base_clears_base_keys`.
+
+    1.1.18: Two concurrent tool activations from the base agent, to Y and to Z, both
+    pass step 7. Exactly one returns `applied`, the other returns `activation_superseded`,
+    and the row holds only the winner''s delta. test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_concurrent_activations_recheck_permission_under_lock`.
+
+    1.1.19: On a row at seat X, a SessionStart activation of X whose delta was built
+    before a `relaunch=True` committed writes nothing. This holds for a relaunch to
+    Y and for a relaunch to `default`. It returns `None` and logs one warning naming
+    the session, the new agent and X. The row keeps the relaunched agent''s delta.
+    test: `tests/hooks/test_session_start_reactivation.py::test_stale_sessionstart_behind_relaunch_keeps_current_seat`.'
+  labels:
+  - covers:apply-agent-definition:1.1:1.1.1
+  - covers:apply-agent-definition:1.1:1.1.2
+  - covers:apply-agent-definition:1.1:1.1.3
+  - covers:apply-agent-definition:1.1:1.1.4
+  - covers:apply-agent-definition:1.1:1.1.5
+  - covers:apply-agent-definition:1.1:1.1.6
+  - covers:apply-agent-definition:1.1:1.1.8
+  - covers:apply-agent-definition:1.1:1.1.9
+  - covers:apply-agent-definition:1.1:1.1.10
+  - covers:apply-agent-definition:1.1:1.1.11
+  - covers:apply-agent-definition:1.1:1.1.12
+  - covers:apply-agent-definition:1.1:1.1.13
+  - covers:apply-agent-definition:1.1:1.1.14
+  - covers:apply-agent-definition:1.1:1.1.16
+  - covers:apply-agent-definition:1.1:1.1.17
+  - covers:apply-agent-definition:1.1:1.1.18
+  - covers:apply-agent-definition:1.1:1.1.19
+  tdd: false
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Step workflows on interactive sessions
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: An interactive seat whose definition declares steps
+    gets an instance at the first step on activation, with no task claimed. test:
+    `tests/hooks/test_interactive_step_instance.py::test_interactive_seat_with_step_workflow_gets_instance_without_task`.
+
+    1.2.2: A seat or plain session whose definition has no step workflow gets no instance.
+    test: `tests/hooks/test_interactive_step_instance.py::test_seat_without_step_workflow_gets_none`.
+
+    1.2.3: A failed instance save leaves the activation variables in place and the
+    next hook event''s reconcile materializes the instance. test: `tests/hooks/test_interactive_step_instance.py::test_reconcile_repairs_missing_instance_after_failed_save`.
+
+    1.2.4: A spawned session''s spawn-time instance is untouched, including when the
+    reconciler activates its run agent over a stored `_agent_type` of `default`. test:
+    `tests/hooks/test_interactive_step_instance.py::test_spawned_step_instance_unchanged`.
+
+    1.2.5: The old no-instance non-goal test is inverted. test: `tests/workflows/test_step_snapshot_semantics.py::test_definition_activation_materializes_step_instance`.
+
+    1.2.6: A relaunch from seat X with steps to seat Y with steps leaves one instance,
+    Y''s, at Y''s first step. A relaunch from X to `default` leaves no instance. test:
+    `tests/hooks/test_interactive_step_instance.py::test_relaunch_switch_replaces_step_instance`.
+
+    1.2.7: With `default_agent` configured as a definition that declares steps, activating
+    seat Y through the tool without `relaunch` leaves one instance, Y''s, at Y''s
+    first step. test: `tests/hooks/test_interactive_step_instance.py::test_activation_over_configured_base_replaces_base_instance`.
+
+    1.2.8: A relaunch from seat X to seat Y, both with steps, ends with one instance,
+    Y''s, in two cases: - A reconcile holding X''s pre-switch snapshot runs after
+    the transition commits, while Y''s own instance save is injected to fail. - A
+    reconcile thread starts while the transition is paused inside the merge on a `threading.Event`.
+    Each join is bounded at 10 seconds. A merge failure injected inside the transition
+    leaves X''s variables and X''s instance. test: `tests/hooks/test_interactive_step_instance.py::test_switch_serializes_with_stale_reconcile`.'
+  labels:
+  - covers:apply-agent-definition:1.2:1.2.1
+  - covers:apply-agent-definition:1.2:1.2.2
+  - covers:apply-agent-definition:1.2:1.2.3
+  - covers:apply-agent-definition:1.2:1.2.4
+  - covers:apply-agent-definition:1.2:1.2.5
+  - covers:apply-agent-definition:1.2:1.2.6
+  - covers:apply-agent-definition:1.2:1.2.7
+  - covers:apply-agent-definition:1.2:1.2.8
+  tdd: false
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Definition drift receipt on re-activation
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  validation_criteria: '1.3.1: A resume or compact SessionStart whose seat definition
+    changed applies the current row, stores the new pin, and injects the drift line
+    exactly once, including on a session that already stores `_agent_identity_reinject:
+    False` and `_agent_definition_drift: None`. test: `tests/hooks/test_session_start_reactivation.py::test_reactivation_reports_definition_drift_once`.
+
+    1.3.2: An unchanged pin injects no drift line, including for a `provider: inherit`
+    seat on a `codex` session whose pin the tool wrote. test: `tests/hooks/test_session_start_reactivation.py::test_unchanged_pin_injects_no_drift_line`.
+
+    1.3.3: On a stepped seat advanced past its first step, a compact or resume SessionStart
+    after a change to the definition''s rules, tool blocks and step list stores the
+    new pin, rule set and blocked tools and injects one drift line. The step instance
+    keeps its id, its current step and its snapshot. test: `tests/hooks/test_session_start_reactivation.py::test_drift_reactivation_keeps_running_step_instance`.
+
+    1.3.4: A same-seat tool call after the seat''s row changed stores the new pin
+    and stages one drift line, which the next injection delivers once and the one
+    after it does not. An unchanged repeat call stages none. test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_same_seat_changed_row_reports_drift_once`.'
+  labels:
+  - covers:apply-agent-definition:1.3:1.3.1
+  - covers:apply-agent-definition:1.3:1.3.2
+  - covers:apply-agent-definition:1.3:1.3.3
+  - covers:apply-agent-definition:1.3:1.3.4
+  tdd: false
+  source_section: '1.3'
+  implementation_domain: backend
+- title: /clear successor keeps its seat and its run
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  - '1.3'
+  validation_criteria: '1.4.1: A `/clear` successor of an activated seat carries `_agent_type`
+    and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat.py::test_clear_successor_inherits_agent_type_and_pin`.
+
+    1.4.2: The successor gets a fresh step instance at the first step of the current
+    definition. After a definition edit, that is the new step list. test: `tests/hooks/test_clear_successor_seat.py::test_clear_successor_gets_fresh_step_instance`.
+
+    1.4.3: A base-agent predecessor with no run carries nothing: the successor has
+    no `_agent_type`, and its `agent_run_id` stays null. test: `tests/hooks/test_clear_successor_seat.py::test_base_agent_clear_successor_unchanged`.
+
+    1.4.4: After a staged `/clear`, a spawned interactive seat keeps its run. - After
+    SessionEnd `clear`, the run is still `running` and its terminal is still live.
+    - After the successor''s SessionStart: - the run''s `child_session_id`, the successor''s
+    `agent_run_id` and the run terminal''s `session_id` all name the successor; -
+    the predecessor''s `agent_run_id` is null; - the successor activates with `is_spawned_agent:
+    True`; - runs the predecessor spawned have the successor as `parent_session_id`;
+    - `list_termination_candidates` does not return the run. test: `tests/hooks/test_clear_successor_seat.py::test_spawned_interactive_seat_keeps_run_binding_after_clear`.
+
+    1.4.5: A `clear` end on a run-bound `awaiting_handoff` session neither completes
+    the run nor marks its terminal exited. A `clear` end on a session with no staged
+    attempt still does both. test: `tests/hooks/test_session_end_handlers.py::test_staged_clear_end_hands_run_to_successor`.
+
+    1.4.6: When a newer successor supersedes a bound one, the run moves from the superseded
+    successor to the newer one. test: `tests/hooks/test_clear_successor_seat.py::test_superseding_successor_takes_the_run`.
+
+    1.4.7: A depth-5 seat''s terminal clear successor, whose SessionStart payload
+    carries no `agent_depth`, stores the predecessor''s `agent_depth` and `spawned_by_agent_id`,
+    and so does a superseding successor. `can_spawn_child` refuses both. test: `tests/hooks/test_clear_successor_seat.py::test_clear_successor_keeps_spawn_depth`.'
+  labels:
+  - covers:apply-agent-definition:1.4:1.4.1
+  - covers:apply-agent-definition:1.4:1.4.2
+  - covers:apply-agent-definition:1.4:1.4.3
+  - covers:apply-agent-definition:1.4:1.4.4
+  - covers:apply-agent-definition:1.4:1.4.5
+  - covers:apply-agent-definition:1.4:1.4.6
+  - covers:apply-agent-definition:1.4:1.4.7
+  tdd: false
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Seat rules match `_agent_type` only
+  category: config
+  task_type: chore
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.5.1: Every `rules/roles/` condition matches a seat through
+    `_agent_type` alone, and a context that carries only `_persona_name` matches none
+    of them. test: `tests/workflows/test_seat_rules.py::test_persona_name_alone_matches_no_seat_rule`.
+
+    1.5.2: Seat guidance injection still matches a session whose `_agent_type` names
+    a seat and skips one that names no seat. test: `tests/workflows/test_seat_rules.py::test_seat_common_matches_spawned_and_skips_non_seats`.'
+  labels:
+  - covers:apply-agent-definition:1.5:1.5.1
+  - covers:apply-agent-definition:1.5:1.5.2
+  tdd: false
+  source_section: '1.5'
+  assigned_agent: backend-developer
+- title: Managed pane identity follows its run across /clear
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  validation_criteria: '1.6.1: After a staged clear, a wrapper `call_tool` for a session-scoped
+    tool that carries the pane''s frozen headers and token is admitted, where today
+    it is refused 403, and is attributed to the successor: a `set_variable` through
+    it lands on the successor''s row, and the predecessor''s row is unchanged. test:
+    `tests/servers/test_managed_clear_identity.py::test_successor_tool_call_is_attributed_to_successor`.
+
+    1.6.2: A hook event with the frozen headers resolves `_platform_session_id` to
+    the successor, and `POST /api/sessions/<predecessor>/variables/get` returns the
+    successor''s variables. test: `tests/servers/test_managed_clear_identity.py::test_successor_hook_and_variables_follow_run`.
+
+    1.6.3: Nothing is forwarded in these cases: - before the take; - for a token whose
+    run has ended, which is refused `run_inactive`; - for a token of another run;
+    - for a session with no run. test: `tests/servers/test_managed_clear_identity.py::test_no_forwarding_without_live_run_binding`.
+
+    1.6.4: After a staged clear, `POST /api/llm/chat/completions` with the frozen
+    bearer and a valid `tool_chat` grant issued for the predecessor passes real auth
+    and grant checks, and the stubbed tool chat service receives `ToolChatRequest.session_id`
+    equal to the successor. Once the run ends, the same request is refused `run_inactive`.
+    test: `tests/servers/test_managed_clear_identity.py::test_successor_chat_completion_keeps_issued_grant`.'
+  labels:
+  - covers:apply-agent-definition:1.6:1.6.1
+  - covers:apply-agent-definition:1.6:1.6.2
+  - covers:apply-agent-definition:1.6:1.6.3
+  - covers:apply-agent-definition:1.6:1.6.4
+  tdd: false
+  source_section: '1.6'
+  implementation_domain: backend
+- title: Idle TTL on agent definitions
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.1.1: `idle_ttl_seconds` accepts a positive integer with
+    `execution_mode: interactive`, and rejects zero, a negative value, and any value
+    on a `one_shot` definition. test: `tests/workflows/test_agent_definitions_v2.py::test_idle_ttl_requires_interactive_execution_mode`.
+
+    2.1.2: An interactive spawn of a definition with a TTL stores `idle_ttl_seconds`
+    at the top level of `resume_metadata`. An interactive definition without a TTL,
+    a spawn-time `one_shot` override, and a `one_shot` definition overridden to `interactive`
+    store none. test: `tests/mcp_proxy/tools/spawn_agent/test_factory.py::test_idle_ttl_is_persisted_only_for_interactive_runs`.
+
+    2.1.3: Resume carries `idle_ttl_seconds` through with `execution_mode`. test:
+    `tests/agents/watchdog/test_interactive_lifecycle_cleanup.py::test_missing_interactive_terminal_resumes_after_task_close`.'
+  labels:
+  - covers:apply-agent-definition:2.1:2.1.1
+  - covers:apply-agent-definition:2.1:2.1.2
+  - covers:apply-agent-definition:2.1:2.1.3
+  tdd: false
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Bundled references and guides
+  category: docs
+  task_type: chore
+  depends_on:
+  - '1.2'
+  - '1.4'
+  - '1.6'
+  - '2.1'
+  validation_criteria: '3.1.1: The persona reference keeps `apply_persona` for the
+    live persona switch, and routes whole-definition activation to `apply_agent_definition`
+    with its relaunch refusal. behavior: "role_change_requires_relaunch" in `src/gobby/install/shared/skills/gobby/references/agents/personas.md`.
+
+    3.1.2: The epic-review reference, its pinned test phrase and the review pipeline''s
+    `mode` input keep `apply_persona` for the in-line review. test: `tests/skills/test_review_skill.py::test_epic_review_references_pin_routing_and_verdict_mapping`.
+
+    3.1.3: The agents guide documents both tools, the activation contract, the continuity
+    table and `idle_ttl_seconds`. behavior: "role_change_requires_relaunch" in `docs/guides/agents.md`.
+
+    3.1.4: The workflows overview names both tools, and the variables audit points
+    at `build_definition_changes`. file: `docs/guides/workflows-overview.md`.'
+  labels:
+  - covers:apply-agent-definition:3.1:3.1.1
+  - covers:apply-agent-definition:3.1:3.1.2
+  - covers:apply-agent-definition:3.1:3.1.3
+  - covers:apply-agent-definition:3.1:3.1.4
+  tdd: false
+  source_section: '3.1'
+  assigned_agent: tech-writer
+```
