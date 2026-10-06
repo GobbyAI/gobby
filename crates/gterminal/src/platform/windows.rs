@@ -4,11 +4,14 @@ use std::{
     mem::{size_of, MaybeUninit},
     path::PathBuf,
     ptr::{copy_nonoverlapping, null_mut},
-    sync::{
-        atomic::{AtomicU64, Ordering as AtomicOrdering},
-        Arc, LazyLock, Mutex,
-    },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    sync::{Arc, LazyLock, Mutex},
+    time::{Duration, Instant},
+};
+
+#[cfg(any(test, feature = "vt-engine"))]
+use std::{
+    sync::atomic::{AtomicU64, Ordering as AtomicOrdering},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use windows_sys::{
@@ -19,6 +22,7 @@ use windows_sys::{
             STATUS_SUCCESS, UNICODE_STRING,
         },
         System::{
+            Console::GetConsoleWindow,
             DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData},
             Diagnostics::{
                 Debug::ReadProcessMemory,
@@ -34,8 +38,8 @@ use windows_sys::{
             Ole::CF_UNICODETEXT,
             Threading::{
                 GetExitCodeProcess, GetProcessTimes, OpenProcess, QueryFullProcessImageNameW,
-                TerminateProcess, CREATE_NO_WINDOW, PROCESS_BASIC_INFORMATION,
-                PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+                TerminateProcess, PROCESS_BASIC_INFORMATION, PROCESS_QUERY_INFORMATION,
+                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
             },
         },
         UI::{
@@ -64,6 +68,7 @@ const PROCESS_RUNTIME_MARKER_CACHE_CAPACITY: usize = 1_024;
 const PROCESS_RUNTIME_MARKER_CACHE_RETENTION: Duration = Duration::from_secs(60);
 const PROCESS_RUNTIME_MARKER_NEGATIVE_TTL: Duration = Duration::from_secs(1);
 
+#[cfg(any(test, feature = "vt-engine"))]
 static NEXT_PANE_RUNTIME_MARKER: AtomicU64 = AtomicU64::new(1);
 static PROCESS_RUNTIME_MARKER_CACHE: LazyLock<Mutex<HashMap<u32, CachedProcessRuntimeMarker>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -76,9 +81,11 @@ pub use windows_daemon::{
     current_process_is_detached_server_daemon, detach_server_daemon_command,
     launch_server_daemon_command,
 };
-pub(super) use windows_daemon::{launch_server_daemon_with_wmi, windows_environment_key_cmp};
+#[cfg(test)]
+use windows_daemon::{launch_server_daemon_with_wmi, windows_environment_key_cmp};
 
 /// Encode native or targeted semantic Win32 input for a compatible ConPTY destination.
+#[cfg(any(test, feature = "vt-engine"))]
 pub(crate) fn encode_windows_conpty_fallback(key: &crate::input::TerminalKey) -> Option<Vec<u8>> {
     use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 
@@ -132,6 +139,7 @@ pub(crate) fn apply_pane_runtime_marker_platform(command: &mut portable_pty::Com
     }
 }
 
+#[cfg(any(test, feature = "vt-engine"))]
 fn next_pane_runtime_marker() -> String {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -196,6 +204,7 @@ pub(crate) fn detached_custom_command_process_platform(command: &str) -> std::pr
     detached_custom_command_process_with_comspec(command, std::env::var_os("ComSpec"))
 }
 
+#[cfg(test)]
 fn detached_custom_command_process_with_comspec(
     command: &str,
     comspec: Option<std::ffi::OsString>,
@@ -208,12 +217,6 @@ fn detached_custom_command_process_with_comspec(
 }
 
 #[cfg(test)]
-pub(crate) fn pane_custom_command_pty_builder_platform(
-    command: &str,
-) -> portable_pty::CommandBuilder {
-    pane_custom_command_pty_builder_with_comspec(command, std::env::var_os("ComSpec"))
-}
-
 fn pane_custom_command_pty_builder_with_comspec(
     command: &str,
     comspec: Option<std::ffi::OsString>,
@@ -226,18 +229,6 @@ fn pane_custom_command_pty_builder_with_comspec(
 }
 
 #[cfg(test)]
-pub(crate) fn scrollback_editor_argv(path: &std::path::Path) -> std::io::Result<Vec<String>> {
-    let editor = std::env::var("VISUAL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            std::env::var("EDITOR")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-        });
-    scrollback_editor_argv_with_env(path, editor.as_deref())
-}
-
 fn scrollback_editor_argv_with_env(
     path: &std::path::Path,
     editor: Option<&str>,
@@ -261,17 +252,15 @@ fn scrollback_editor_argv_with_env(
     Ok(argv)
 }
 
+#[cfg(test)]
 pub(crate) fn configure_background_command_platform(command: &mut std::process::Command) {
     use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 
     command.creation_flags(CREATE_NO_WINDOW);
 }
 
 #[cfg(test)]
-pub(crate) fn available_pane_shell(child_pid: u32) -> Option<String> {
-    available_pane_shell_from_snapshot(child_pid, &snapshot_processes())
-}
-
 fn available_pane_shell_from_snapshot(
     child_pid: u32,
     entries: &[WindowsProcessEntry],
