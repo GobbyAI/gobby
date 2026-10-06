@@ -98,6 +98,7 @@ TRUE_RESTRICTION_RULES = frozenset(
         "block-tools-after-handoff-compact",
         "block-unresolved-scope-shell-write",
         "block-web-chat-send-keys",
+        "limit-spawn-network-override",
         "limit-spawnable-agents",
         "no-agent-spawn-for-merge",
         "no-brew-install",
