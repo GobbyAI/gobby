@@ -148,6 +148,15 @@ def active_task_id_for_edit(variables: dict[str, Any]) -> str | None:
     return None
 
 
+def claims_without_edit_target(variables: dict[str, Any]) -> bool:
+    """Whether the session holds claims but none receives its edits (#23665).
+
+    The active claim ended while the others wait on review, landing or close, so an
+    edit must wait for a reclaim that makes one of them active.
+    """
+    return bool(_claimed_tasks(variables)) and active_task_id_for_edit(variables) is None
+
+
 def resolve_target_task_id(variables: dict[str, Any], task_ref: Any) -> str | None:
     """Resolve a lifecycle tool task reference to a task UUID tracked in session variables."""
     if task_ref is None:
