@@ -109,8 +109,8 @@ async def composer_fixture(
     (nested / "bin").symlink_to(native_bin, target_is_directory=True)
     link_operator_srt(home)
     # Short private socket root accommodates macOS AF_UNIX limits.
-    root = Path(tempfile.mkdtemp(prefix="p22915-", dir="/tmp"))
-    host = root / "host"
+    root = Path(tempfile.mkdtemp(prefix="p"))
+    host = root / "h"
     host.mkdir(mode=0o700)
     scope = ProofScope(
         root, _PROJECT, frozenset(map(str, spec.excluded_identities)), spec.reviewed_commit
