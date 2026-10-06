@@ -73,7 +73,7 @@ impl Workspace<LiveDaemon> {
     }
 
     /// Marks a relist due; the live loop runs it beside itself.
-    pub(super) fn request_relist(&mut self) {
+    pub(in crate::app) fn request_relist(&mut self) {
         self.relist.pending = true;
     }
 

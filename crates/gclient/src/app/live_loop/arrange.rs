@@ -1,7 +1,7 @@
 //! Client-side layout plans for daemon workspace tabs.
 
 use crate::app::{ArrangeLayout, ArrangeTarget};
-use crate::daemon::{Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceOp};
+use crate::daemon::{Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceErrorCode, WorkspaceOp};
 use crate::frame_source::FrameError;
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
@@ -9,7 +9,34 @@ use crate::Workspace;
 
 use super::actions::activate_live_tab;
 use super::control::focus_live_pane;
-use super::workspace_actions::{daemon_pane_id, send_workspace_op};
+use super::workspace_actions::daemon_pane_id;
+
+/// Send `op` and wait for it; `true` when the daemon accepted it. A refusal
+/// lands on the status line; a close refused `not_found` is done. Awaited
+/// inline until A4b (#23232) moves arrange and the grid off the loop.
+async fn send_op(
+    workspace: &Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    op: WorkspaceOp,
+) -> Result<bool, FrameError> {
+    let closing = matches!(
+        op,
+        WorkspaceOp::PaneClose { .. } | WorkspaceOp::TabClose { .. }
+    );
+    match workspace.daemon().workspace_op(op).await {
+        Ok(_) => Ok(true),
+        Err(DaemonError::Workspace(error))
+            if closing && error.code == WorkspaceErrorCode::NotFound =>
+        {
+            Ok(true)
+        }
+        Err(DaemonError::Workspace(error)) => {
+            chrome.notify(Toast::warning(error.reason));
+            Ok(false)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
 
 fn push_move(ops: &mut Vec<WorkspaceOp>, tab_id: &str, pane: &str, beside: &str, axis: LayoutAxis) {
     ops.push(WorkspaceOp::PaneMove {
@@ -175,13 +202,13 @@ pub(super) async fn apply_arrange(
     };
     let focused = chrome.focused_pane();
     for op in plan_arrange(layout, &target.tab, &panes) {
-        if !send_workspace_op(workspace, chrome, op).await? {
+        if !send_op(workspace, chrome, op).await? {
             return Ok(());
         }
     }
     if let Some(pane) = focused {
         chrome.focus_pane(pane);
-        focus_live_pane(workspace, pane).await?;
+        focus_live_pane(workspace, pane);
     }
     Ok(())
 }
@@ -247,7 +274,7 @@ pub(super) async fn create_grid(
     // Once vertical splits are added, a head's nearest split is vertical.
     // Size the columns first, while their nearest split is horizontal.
     for (index, pane) in columns.iter().take(cols - 1).enumerate() {
-        if !send_workspace_op(
+        if !send_op(
             workspace,
             chrome,
             WorkspaceOp::PaneResize {
@@ -285,7 +312,7 @@ pub(super) async fn create_grid(
             panes.push(created);
         }
         for (index, pane) in panes.iter().take(rows - 1).enumerate() {
-            if !send_workspace_op(
+            if !send_op(
                 workspace,
                 chrome,
                 WorkspaceOp::PaneResize {

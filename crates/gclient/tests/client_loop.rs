@@ -5997,13 +5997,29 @@ async fn wheel_and_scrollbar_drive_scrollback() {
             )
             .await;
         }
-        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 4).await;
+        // One offset is in flight per pane and the latest wish replaces a
+        // pending one (plan A2), so a burst may skip middle offsets but always
+        // lands on the last.
+        wait_until(|| offsets().last() == Some(&10)).await;
         settle_live_event().await;
-        assert_eq!(
-            offsets(),
-            vec![3, 6, 9, 10],
-            "up steps three rows a notch, clamps at the top, and a notch that cannot move sends nothing"
+        let burst = offsets();
+        assert!(
+            burst.windows(2).all(|pair| pair[0] < pair[1])
+                && burst.iter().all(|rows| rows % 3 == 0 || *rows == 10),
+            "up steps three rows a notch and clamps at the top: {burst:?}"
         );
+        // At the top, a notch that cannot move sends nothing at all.
+        send_mouse(
+            &input_tx,
+            MouseEventKind::ScrollUp,
+            column,
+            row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        settle_live_event().await;
+        assert_eq!(offsets(), burst, "a notch that cannot move sends nothing");
+        let base = burst.len();
         send_mouse(
             &input_tx,
             MouseEventKind::ScrollDown,
@@ -6012,9 +6028,9 @@ async fn wheel_and_scrollbar_drive_scrollback() {
             KeyModifiers::NONE,
         )
         .await;
-        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 5).await;
+        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", base + 1).await;
         assert_eq!(
-            offsets()[4],
+            offsets()[base],
             7,
             "down steps three rows toward the live edge"
         );
@@ -6034,9 +6050,9 @@ async fn wheel_and_scrollbar_drive_scrollback() {
             KeyModifiers::NONE,
         )
         .await;
-        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 6).await;
+        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", base + 2).await;
         assert_eq!(
-            offsets()[5],
+            offsets()[base + 1],
             jump,
             "a track click jumps the scrollback there"
         );
@@ -6080,9 +6096,9 @@ async fn wheel_and_scrollbar_drive_scrollback() {
             KeyModifiers::NONE,
         )
         .await;
-        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 7).await;
+        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", base + 3).await;
         assert_eq!(
-            offsets()[6],
+            offsets()[base + 2],
             dragged,
             "a thumb drag maps the drop row to an offset"
         );
@@ -6097,7 +6113,7 @@ async fn wheel_and_scrollbar_drive_scrollback() {
         settle_live_event().await;
         assert_eq!(
             offsets().len(),
-            7,
+            base + 3,
             "a thumb press and its release send nothing of their own"
         );
 
@@ -6150,7 +6166,7 @@ async fn wheel_and_scrollbar_drive_scrollback() {
         );
         assert_eq!(
             offsets().len(),
-            7,
+            base + 3,
             "a pane on its alternate screen never scrolls scrollback"
         );
         drop(input_tx);
@@ -11123,6 +11139,7 @@ async fn worktree_flows_round_trip_the_daemon() {
     create_worktree(
         &mut workspace,
         &mut chrome,
+        &mpsc::unbounded_channel().0,
         "project-1",
         "feature",
         Some("0.5.0"),
@@ -12763,6 +12780,9 @@ async fn closing_an_unshown_agent_row_kills_that_row_not_the_focused_pane() {
         // Unblocked row: focus, open in new tab, mark seen, take control, close.
         press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 4)).await;
         wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
+        // The kill is a job: its reply drops the pane and relists.
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", 2).await;
+        settle_live_event().await;
         drop(input_tx);
     };
 
@@ -12949,9 +12969,14 @@ async fn an_unknown_sidebar_id_still_resolves_to_no_pane() {
     // Driven outside the loop, where ordering is deterministic. A bare
     // terminal id without the row prefix is not a row id either.
     for entry in ["run:missing", "session:missing", "terminal-a"] {
-        focus_agent(&mut workspace, &mut chrome, entry)
-            .await
-            .expect("an unresolved row is not an error");
+        focus_agent(
+            &mut workspace,
+            &mut chrome,
+            &mpsc::unbounded_channel().0,
+            entry,
+        )
+        .await
+        .expect("an unresolved row is not an error");
         assert_eq!(chrome.focused_pane(), Some(pane), "{entry} moves nothing");
     }
     mock.shutdown().await;
@@ -13923,6 +13948,129 @@ async fn a_relist_older_than_a_pane_opened_here_does_not_reap_it() {
         workspace.pane_for_terminal("terminal-late").is_some(),
         "an answer older than the pane reaped it: {:?}",
         mock.activity()
+    );
+    mock.shutdown().await;
+}
+
+/// R6 F2: a re-attach without a reconnect retires the pane's writer. Keys
+/// still queued for the old attachment are reported unsent and never go out
+/// under it; the next key goes out under the new one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reattach_abandons_writes_queued_for_the_old_attachment() {
+    const TERMINAL_ID: &str = "terminal-reattached";
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..6 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [{"terminal_id": TERMINAL_ID, "backend": "native", "state": "live"}],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("attached pane");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let typed = |mock: &MockDaemon| -> Vec<(String, Value)> {
+        websocket_requests(mock, "terminal_input")
+            .iter()
+            .map(|body| {
+                (
+                    body["data"].as_str().unwrap_or_default().to_owned(),
+                    body["attachment_id"].clone(),
+                )
+            })
+            .collect()
+    };
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        // The hold is one-shot, so x's reply must be out before it is set.
+        timeout(WAIT_BUDGET, async {
+            while mock.replies("terminal_input") < 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("x is answered");
+        // 'y' is held on the wire; 'z' and 'w' queue behind it.
+        let release = mock.hold_ws("terminal_input", |_| true);
+        for key in ['y', 'z', 'w'] {
+            send_key(&input_tx, KeyCode::Char(key), KeyModifiers::NONE).await;
+        }
+        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
+        settle_before_lag(&mock).await;
+        lag_the_loop_receiver(&mock, &daemon);
+        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+        // The new attachment is installed once the loop sizes it.
+        timeout(WAIT_BUDGET, async {
+            while !websocket_requests(&mock, "terminal_set_viewport")
+                .iter()
+                .any(|body| body["attachment_id"] == "attachment-2")
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("attachment-2 installed");
+        release.notify_one();
+        // The new attachment observes, so 'q' takes control again first.
+        send_key(&input_tx, KeyCode::Char('q'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        timeout(WAIT_BUDGET, async {
+            while !typed(&mock).iter().any(|(data, _)| data == "q") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("q goes out under the new attachment");
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("reattached loop");
+    let sent = typed(&mock);
+    let data: Vec<&str> = sent.iter().map(|(data, _)| data.as_str()).collect();
+    assert_eq!(
+        data,
+        ["x", "y", "q"],
+        "z and w were queued for the retired attachment and never sent"
+    );
+    assert_ne!(sent[2].1, sent[0].1, "q goes out under the new attachment");
+    let titles: Vec<&str> = chrome
+        .alert_log
+        .iter()
+        .map(|toast| toast.title.as_str())
+        .collect();
+    // y was on the wire when its attachment went away; z and w never left.
+    assert_eq!(
+        titles,
+        ["Input delivery unconfirmed.", "Input not sent: 2 bytes."],
+        "only y is unconfirmed; z and w are reported unsent"
     );
     mock.shutdown().await;
 }

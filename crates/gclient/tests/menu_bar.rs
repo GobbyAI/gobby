@@ -21,7 +21,10 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 use serde_json::json;
+use std::time::Duration;
 use tempfile::TempDir;
+use tokio::sync::mpsc::unbounded_channel;
+use tokio::time::timeout;
 
 use mock_daemon::MockDaemon;
 
@@ -292,18 +295,26 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
                 let requests_before = fixture.mock.requests().len();
                 let workspace_before = fixture.mock.workspace_requests().len();
                 let action = item.action.clone();
+                let (outcomes, mut outcomes_rx) = unbounded_channel();
                 let exit = apply_live_menu_action(
                     &mut fixture.workspace,
                     &mut fixture.chrome,
+                    &outcomes,
                     kind.clone(),
                     action.clone(),
                 )
                 .await
                 .expect("menu action dispatch");
+                // A daemon op runs as a job; its outcome is its effect.
+                let effect = exit
+                    || observable_state(&fixture) != before
+                    || fixture.mock.requests().len() > requests_before
+                    || fixture.mock.workspace_requests().len() > workspace_before
+                    || timeout(Duration::from_secs(2), outcomes_rx.recv())
+                        .await
+                        .is_ok_and(|outcome| outcome.is_some());
                 assert!(
-                    exit || observable_state(&fixture) != before
-                        || fixture.mock.requests().len() > requests_before
-                        || fixture.mock.workspace_requests().len() > workspace_before,
+                    effect,
                     "{kind:?} item {:?} had no effect from {action:?}",
                     item.label,
                 );
@@ -377,9 +388,15 @@ async fn pick_menu_row(
     };
     assert_eq!(kind, ContextMenuKind::MenuBar(title));
     assert_eq!(picked, action);
-    let exit = apply_live_menu_action(&mut fixture.workspace, &mut fixture.chrome, kind, picked)
-        .await
-        .expect("dispatch the row");
+    let exit = apply_live_menu_action(
+        &mut fixture.workspace,
+        &mut fixture.chrome,
+        &unbounded_channel().0,
+        kind,
+        picked,
+    )
+    .await
+    .expect("dispatch the row");
     assert!(!exit);
     draw(terminal, fixture);
     row
@@ -471,9 +488,15 @@ async fn clicking_the_appearance_row_opens_its_choices_and_a_pick_saves_it() {
         panic!("the Light click dispatches: {outcome:?}");
     };
     assert_eq!(action, MenuAction::SetAppearance("light"));
-    apply_live_menu_action(&mut fixture.workspace, &mut fixture.chrome, kind, action)
-        .await
-        .expect("dispatch the pick");
+    apply_live_menu_action(
+        &mut fixture.workspace,
+        &mut fixture.chrome,
+        &unbounded_channel().0,
+        kind,
+        action,
+    )
+    .await
+    .expect("dispatch the pick");
     assert_eq!(fixture.chrome.theme.kind, ThemeKind::Light);
     let saved = load_prefs(fixture.home.path()).expect("load prefs");
     assert_eq!(saved.theme, "light");

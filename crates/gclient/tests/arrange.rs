@@ -16,6 +16,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 use serde_json::json;
+use tokio::sync::mpsc::unbounded_channel;
 
 const WINDOW: ContextMenuKind = ContextMenuKind::MenuBar(MenuBarMenu::Window);
 
@@ -46,6 +47,7 @@ async fn choose(
     apply_live_menu_action(
         workspace,
         chrome,
+        &unbounded_channel().0,
         ContextMenuKind::Submenu(Submenu::Arrange(target.clone())),
         MenuAction::Arrange { layout, target },
     )
@@ -304,6 +306,7 @@ async fn stale_arrange_targets_are_refused() {
         apply_live_menu_action(
             &mut workspace,
             &mut chrome,
+            &unbounded_channel().0,
             ContextMenuKind::Submenu(Submenu::Arrange(target.clone())),
             MenuAction::Arrange {
                 layout: ArrangeLayout::Tiled,
@@ -377,6 +380,7 @@ async fn new_grid_menu_opens_dialog() {
     apply_live_menu_action(
         &mut workspace,
         &mut chrome,
+        &unbounded_channel().0,
         ContextMenuKind::MenuBar(MenuBarMenu::Window),
         MenuAction::OpenNewGrid,
     )
@@ -444,6 +448,7 @@ async fn create_grid_spawns_rows_times_cols_shells_and_evens_them() {
     apply_live_menu_action(
         &mut workspace,
         &mut chrome,
+        &unbounded_channel().0,
         ContextMenuKind::MenuBar(MenuBarMenu::Window),
         MenuAction::NewGrid { rows: 2, cols: 3 },
     )

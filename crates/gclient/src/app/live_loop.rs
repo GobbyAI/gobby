@@ -37,6 +37,7 @@ use host_recovery::HostRecoveries;
 mod actions;
 pub(super) mod arrange;
 mod control;
+mod daemon_ops;
 mod focus_hints;
 pub(super) mod host_recovery;
 pub(super) mod jobs;
@@ -58,11 +59,15 @@ mod suspend;
 mod terminal_location;
 mod workspace_actions;
 mod workspaces;
+pub(super) mod writer;
 
 use actions::{apply_live_modal_outcome, apply_live_mouse_outcome, handle_live_action};
-use control::{apply_control_outcome, apply_live_write_outcome, focus_live_pane, send_live_input};
+use control::{
+    apply_control_outcome, apply_live_write_outcome, focus_live_pane, send_live_input,
+    start_live_control, UNCONFIRMED_INPUT,
+};
 use focus_hints::{offer_focus_hints, FocusMemo};
-use jobs::{stage_live_geometry, LoopJobs};
+use jobs::{issue_response, stage_live_geometry, LoopJobs};
 use jobs_apply::apply_job_outcome;
 use modal_input::{route_modal_key, ModalOutcome};
 use mouse::{route_mouse, MouseOutcome};
@@ -186,9 +191,7 @@ pub async fn run_live_loop<B: Backend>(
     }
     if !launch_pending {
         if let Some(pane_id) = chrome.focused_pane() {
-            if let Err(error) = focus_live_pane(workspace, pane_id).await {
-                chrome.notify(Toast::error(error.to_string()));
-            }
+            focus_live_pane(workspace, pane_id);
         }
     }
 
@@ -196,7 +199,7 @@ pub async fn run_live_loop<B: Backend>(
         // The click and the keystroke only record the control request they
         // need; it is started here so neither ever waits on the daemon
         // (#22573).
-        workspace.start_control_request(&control_tx);
+        start_live_control(workspace, &jobs, &control_tx);
         if !launch_pending && reconnect_stage.is_none() && relist_job.is_none() {
             workspace.refresh_relist();
             relist_job = workspace.start_relist();
@@ -222,7 +225,7 @@ pub async fn run_live_loop<B: Backend>(
             // polled, its request would never leave, and the keys queued for
             // it would wait forever (#22573).
             Some(outcome) = control_rx.recv() => {
-                apply_control_outcome(workspace, chrome, outcome).await;
+                apply_control_outcome(workspace, chrome, &jobs, outcome);
                 sync_live_chrome(workspace, chrome);
             }
             Some(outcome) = jobs.rx.recv() => {
@@ -234,7 +237,7 @@ pub async fn run_live_loop<B: Backend>(
                     workspace.latch_exit("terminal input closed");
                     continue;
                 };
-                match route_live_input(workspace, chrome, &event, &mut prefix_armed).await {
+                match route_live_input(workspace, chrome, &mut jobs, &event, &mut prefix_armed).await {
                     Ok(true) => {
                         workspace.latch_exit("quit");
                     }
@@ -302,9 +305,7 @@ pub async fn run_live_loop<B: Backend>(
                             sync_live_chrome(workspace, chrome);
                             recoveries.extend(workspace.start_due_attaches(Instant::now(), true));
                             if let Some(pane_id) = chrome.focused_pane() {
-                                if let Err(error) = focus_live_pane(workspace, pane_id).await {
-                                    chrome.notify(Toast::error(error.to_string()));
-                                }
+                                focus_live_pane(workspace, pane_id);
                             }
                             if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
                                 workspace.latch_exit(error.to_string());
@@ -375,6 +376,14 @@ pub async fn run_live_loop<B: Backend>(
                     let mut output = std::io::stdout();
                     apply_text_read(chrome, *pane_id, text.clone(), &mut output)?;
                     output.flush()?;
+                }
+                if let Some((pane_id, Ok(gobby_terminal::protocol::ServerMessage::InputRefused {
+                    ..
+                }))) = &frame
+                {
+                    if workspace.panes.get(pane_id).is_some_and(super::Pane::let_go) {
+                        chrome.notify(Toast::warning(UNCONFIRMED_INPUT));
+                    }
                 }
                 if let Some((pane_id, Err(error))) = frame {
                     // A direct pane reconnects straight to its host first; its
@@ -600,7 +609,7 @@ pub async fn run_live_loop<B: Backend>(
         // Again after the event, not only before it: the event just handled is
         // usually the click or key that asked for the grant, and an event that
         // also ends the loop gets no next iteration to start it in (#22573).
-        workspace.start_control_request(&control_tx);
+        start_live_control(workspace, &jobs, &control_tx);
         // The settings toggle only records the wish; the terminal flag is
         // flipped here, outside any borrow of the chrome.
         if let Some(on) = chrome.pending_mouse_capture.take() {
@@ -664,6 +673,7 @@ async fn await_relist_job(job: &mut Option<RelistFuture>) -> Result<Relist, Daem
 async fn route_live_input(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    jobs: &mut LoopJobs,
     event: &RawInputEvent,
     prefix_armed: &mut bool,
 ) -> Result<bool, FrameError> {
@@ -687,7 +697,7 @@ async fn route_live_input(
                     .search_buffer
                     .push_str(text);
             } else {
-                send_live_input(workspace, chrome, pane_id, text.as_bytes(), true).await?;
+                send_live_input(workspace, chrome, jobs, pane_id, text.as_bytes(), true)?;
             }
         }
         return Ok(false);
@@ -695,7 +705,7 @@ async fn route_live_input(
     if let RawInputEvent::Mouse(mouse) = event {
         let outcome = route_mouse(&*workspace, chrome, mouse);
         if outcome != MouseOutcome::Ignore {
-            return apply_live_mouse_outcome(workspace, chrome, outcome).await;
+            return apply_live_mouse_outcome(workspace, chrome, jobs, outcome).await;
         }
     }
     if route_mouse_selection(workspace, chrome, event) {
@@ -714,15 +724,15 @@ async fn route_live_input(
         chrome.dismiss_toasts();
         if chrome.mode == Mode::Respond {
             *prefix_armed = false;
-            route_response_input(workspace, chrome, &input.key)
-                .await
-                .map_err(FrameError::from)?;
+            if let Some(submission) = route_response_input(workspace, chrome, &input.key) {
+                issue_response(workspace.daemon(), jobs, submission);
+            }
             return Ok(false);
         }
         let outcome = route_modal_key(&*workspace, chrome, &input);
         if outcome != ModalOutcome::Passthrough {
             *prefix_armed = false;
-            return apply_live_modal_outcome(workspace, chrome, outcome).await;
+            return apply_live_modal_outcome(workspace, chrome, jobs.outcomes(), outcome).await;
         }
         match resolve_chord(&chrome.keymap, chrome.mode, &input.key, *prefix_armed) {
             Resolution::Prefix => {
@@ -733,19 +743,19 @@ async fn route_live_input(
             Resolution::Action(action) => {
                 *prefix_armed = false;
                 chrome.mode = Mode::Terminal;
-                handle_live_action(workspace, chrome, action).await?;
+                handle_live_action(workspace, chrome, jobs.outcomes(), action).await?;
             }
             Resolution::Unbound => {
                 *prefix_armed = false;
                 chrome.mode = Mode::Terminal;
                 if let Some(pane_id) = chrome.focused_pane() {
-                    send_live_input(workspace, chrome, pane_id, &input.bytes, false).await?;
+                    send_live_input(workspace, chrome, jobs, pane_id, &input.bytes, false)?;
                 }
             }
         }
     } else if let Some(bytes) = text_bytes(event) {
         if let Some(pane_id) = chrome.focused_pane() {
-            send_live_input(workspace, chrome, pane_id, &bytes, false).await?;
+            send_live_input(workspace, chrome, jobs, pane_id, &bytes, false)?;
         }
     }
     Ok(false)

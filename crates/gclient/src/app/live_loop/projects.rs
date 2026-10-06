@@ -5,8 +5,9 @@
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent};
+use tokio::sync::mpsc::UnboundedSender;
 
-use crate::daemon::{Daemon, DaemonError, LiveDaemon, WorkspaceOp};
+use crate::daemon::{Daemon, DaemonError, LiveDaemon, WorkspaceErrorCode, WorkspaceOp};
 use crate::frame_source::FrameError;
 use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::dialogs::project::{complete_directory, expand_home, plural};
@@ -21,13 +22,14 @@ use super::super::{PaneId, Workspace};
 use super::actions::{
     activate_live_tab, close_live_pane, open_live_rename, spawn_live_shell, terminate_live_terminal,
 };
-use super::control::{focus_live_pane, release_live_control};
+use super::control::{close_barrier, focus_live_pane, release_live_control};
+use super::daemon_ops::{kill_live_panes, place_live_terminal};
+use super::jobs::JobOutcome;
 use super::menu::{attention_id, ContextMenuKind, MenuAction};
 use super::modal_input::{close_modal, edit_text, ModalOutcome};
 use super::mouse::Placement;
 use super::sync_live_chrome;
 use super::terminal_location::locate_terminal_workspace;
-use super::workspace_actions::{place_live_terminal, send_workspace_op};
 
 /// Make `project_id` the focused project: its roster replaces the current
 /// one and its tab set the tab bar; the outgoing set stays parked in the
@@ -92,12 +94,14 @@ async fn attach_project_workspace(
 pub async fn focus_agent(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     entry_id: &str,
 ) -> Result<(), FrameError> {
-    let Some(pane) = reveal_agent(workspace, chrome, entry_id).await? else {
+    let Some(pane) = reveal_agent(workspace, chrome, outcomes, entry_id).await? else {
         return Ok(());
     };
-    focus_live_pane(workspace, pane).await
+    focus_live_pane(workspace, pane);
+    Ok(())
 }
 
 /// Open a fresh tab in the agent's project holding its pane, or focus the
@@ -105,6 +109,7 @@ pub async fn focus_agent(
 pub async fn open_agent_in_new_tab(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     entry_id: &str,
 ) -> Result<(), FrameError> {
     let Some(pane) = agent_pane(workspace, chrome, entry_id).await? else {
@@ -112,9 +117,18 @@ pub async fn open_agent_in_new_tab(
     };
     if !chrome.focus_pane(pane) {
         let terminal_id = workspace.pane(pane).terminal_id.clone();
-        place_live_terminal(workspace, chrome, Placement::Tab, &terminal_id, None, None).await?;
+        place_live_terminal(
+            workspace,
+            chrome,
+            outcomes,
+            Placement::Tab,
+            &terminal_id,
+            None,
+            None,
+        );
     }
-    focus_live_pane(workspace, pane).await
+    focus_live_pane(workspace, pane);
+    Ok(())
 }
 
 /// Reveal the agent's pane on the chrome the way its row's click does and
@@ -122,6 +136,7 @@ pub async fn open_agent_in_new_tab(
 pub(super) async fn reveal_agent(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     entry_id: &str,
 ) -> Result<Option<PaneId>, FrameError> {
     let Some(pane) = agent_pane(workspace, chrome, entry_id).await? else {
@@ -129,7 +144,15 @@ pub(super) async fn reveal_agent(
     };
     if !chrome.focus_pane(pane) {
         let terminal_id = workspace.pane(pane).terminal_id.clone();
-        place_live_terminal(workspace, chrome, Placement::Tab, &terminal_id, None, None).await?;
+        place_live_terminal(
+            workspace,
+            chrome,
+            outcomes,
+            Placement::Tab,
+            &terminal_id,
+            None,
+            None,
+        );
     }
     Ok(Some(pane))
 }
@@ -139,6 +162,7 @@ pub(super) async fn reveal_agent(
 pub(super) async fn focus_terminal(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     terminal_id: &str,
 ) -> Result<(), FrameError> {
     if !locate_terminal_workspace(workspace, chrome, terminal_id, true).await? {
@@ -149,20 +173,22 @@ pub(super) async fn focus_terminal(
         place_live_terminal(
             workspace,
             chrome,
+            outcomes,
             Placement::SplitRight,
             terminal_id,
             None,
             None,
-        )
-        .await?;
+        );
     }
-    focus_live_pane(workspace, pane).await
+    focus_live_pane(workspace, pane);
+    Ok(())
 }
 
 /// Close `pane_id` without deriving the target from the chrome's focus.
 pub(super) async fn close_live_terminal(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     pane_id: PaneId,
 ) -> Result<(), FrameError> {
     if !workspace.panes.contains_key(&pane_id) {
@@ -173,13 +199,17 @@ pub(super) async fn close_live_terminal(
     // its slot; an unshown pane only needs its control lease released.
     if workspace.pane(pane_id).external {
         if chrome.focus_pane(pane_id) {
-            close_live_pane(workspace, chrome).await?;
+            close_live_pane(workspace, chrome, outcomes).await?;
         } else {
-            release_live_control(workspace, pane_id).await?;
+            release_live_control(workspace, pane_id);
         }
         return Ok(());
     }
-    terminate_live_terminal(workspace, pane_id).await?;
+    // The kill waits for what was typed into the pane before the close.
+    let after = close_barrier(workspace, outcomes, pane_id)
+        .into_iter()
+        .collect();
+    kill_live_panes(workspace, outcomes, vec![pane_id], after, None);
     sync_live_chrome(workspace, chrome);
     Ok(())
 }
@@ -262,6 +292,7 @@ async fn terminal_pane(
 pub async fn open_worktree(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     worktree_id: &str,
 ) -> Result<(), FrameError> {
     let found = workspace.sidebar().projects.iter().find_map(|project| {
@@ -286,7 +317,7 @@ pub async fn open_worktree(
     let before = chrome.tabs().tabs.len();
     let cwd = Some(path.to_string_lossy().into_owned());
     let worktree = Some(worktree_id.to_owned());
-    spawn_live_shell(workspace, chrome, Placement::Tab, cwd, worktree).await?;
+    spawn_live_shell(workspace, chrome, outcomes, Placement::Tab, cwd, worktree).await?;
     if chrome.tabs().tabs.len() > before {
         if let Some(tab) = chrome.active_tab_mut() {
             tab.worktree_id = Some(worktree_id.to_owned());
@@ -352,6 +383,7 @@ pub fn open_new_worktree_dialog<D: Daemon>(
 pub async fn create_worktree(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     project_id: &str,
     branch: &str,
     base: Option<&str>,
@@ -364,7 +396,7 @@ pub async fn create_worktree(
         Ok(row) => {
             workspace.fetch_sidebar_rows().await?;
             close_modal(chrome);
-            open_worktree(workspace, chrome, &row.id).await
+            open_worktree(workspace, chrome, outcomes, &row.id).await
         }
         Err(error) => {
             set_dialog_error(chrome, daemon_reason(&error));
@@ -462,8 +494,20 @@ pub async fn remove_worktree(
         .filter(|tab| !tab.is_local())
         .map(|tab| tab.id.clone())
         .collect();
+    // Awaited inline until A4a moves worktree removal off the loop. A tab
+    // the daemon already closed is done; a refused close is shown and the
+    // rest still go.
     for tab in tabs {
-        send_workspace_op(workspace, chrome, WorkspaceOp::TabClose { tab, node: None }).await?;
+        match workspace
+            .daemon()
+            .workspace_op(WorkspaceOp::TabClose { tab, node: None })
+            .await
+        {
+            Ok(_) => {}
+            Err(DaemonError::Workspace(error)) if error.code == WorkspaceErrorCode::NotFound => {}
+            Err(DaemonError::Workspace(error)) => chrome.notify(Toast::warning(error.reason)),
+            Err(error) => return Err(error.into()),
+        }
     }
     match workspace.daemon().delete_worktree(worktree_id).await {
         Ok(()) => {

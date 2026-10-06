@@ -5,6 +5,7 @@ mod attach;
 mod attention;
 mod live;
 mod live_attach;
+mod live_control;
 mod live_loop;
 mod live_workspace;
 mod pane;
@@ -20,7 +21,9 @@ pub mod workspace_ops;
 mod workspace_panes;
 
 pub use attach::AttachState;
-pub use live::{ControlOutcome, SidebarFetch, SidebarFetchFuture};
+pub use live::{SidebarFetch, SidebarFetchFuture};
+pub use live_control::ControlOutcome;
+use live_control::PendingControl;
 pub use live_loop::arrange::plan_arrange;
 pub use live_loop::jobs::{
     spawn_job, Coalescer, JobKey, JobLedger, JobOutcome, JobResult, JobTag, OpIntent,
@@ -155,13 +158,6 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     /// Stamps each started control request so a reply that outlived its focus
     /// change can be told from the one the pane is waiting on.
     next_control_seq: u64,
-}
-
-/// A control request recorded but not yet started.
-#[derive(Debug, Clone, Copy)]
-pub struct PendingControl {
-    pub(super) pane_id: PaneId,
-    pub(super) takeover: bool,
 }
 
 impl<D: Daemon> crate::teardown::ShutdownWorkspace for Workspace<D> {
@@ -803,6 +799,9 @@ impl<D: Daemon> Workspace<D> {
 
     pub fn observe_daemon_disconnect(&mut self, _generation: Generation, error: DaemonError) {
         self.daemon_ready = false;
+        // An op still placing a terminal answers on the old connection, which
+        // the generation gate drops, so its placement would never settle.
+        self.pending_placements.clear();
         for pane in self.panes.values_mut() {
             // The host owns an existing direct input grant. Losing the daemon
             // does not revoke it; a host refusal still clears it on that stream.

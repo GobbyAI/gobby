@@ -17,6 +17,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::Terminal;
 use std::time::Duration;
+use tokio::sync::mpsc::unbounded_channel;
 mod mock_daemon;
 use mock_daemon::MockDaemon;
 
@@ -291,6 +292,7 @@ async fn help_menu_ends_with_about_gobby_and_both_entries_open() {
         apply_live_menu_action(
             &mut workspace,
             &mut chrome,
+            &unbounded_channel().0,
             ContextMenuKind::MenuBar(MenuBarMenu::Help),
             action,
         )

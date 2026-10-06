@@ -6,11 +6,14 @@ use crate::ui::chrome::attention_pane;
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog};
 use crate::ui::sidebar_rows::project_label;
 use crate::ui::{Action, Chrome, Mode};
+use tokio::sync::mpsc::UnboundedSender;
 
 use super::super::attention::open_response_dialog;
 use super::super::Workspace;
 use super::actions::{activate_live_tab, handle_live_action};
 use super::control::{focus_live_pane, observe_live_pane, release_live_control, take_live_control};
+use super::daemon_ops::apply_daemon_menu_action;
+use super::jobs::JobOutcome;
 use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
 use super::modal_input::open_alerts_dialog;
 use super::orphans::{agent_orphan, destroy_orphans, open_destroy_orphans_dialog};
@@ -19,7 +22,6 @@ use super::projects::{
     open_agent_in_new_tab, open_new_worktree_dialog, open_open_worktree_dialog,
     open_remove_worktree_dialog, open_worktree, rename_project, reveal_agent,
 };
-use super::workspace_actions::apply_daemon_menu_action;
 
 /// A context menu item. A keymap action runs as its chord would once the
 /// menu's pane or tab is the focused one (the pane is observed, so the lease
@@ -30,6 +32,7 @@ use super::workspace_actions::apply_daemon_menu_action;
 pub async fn apply_live_menu_action(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     kind: ContextMenuKind,
     action: MenuAction,
 ) -> Result<bool, FrameError> {
@@ -45,16 +48,16 @@ pub async fn apply_live_menu_action(
             super::arrange::apply_arrange(workspace, chrome, layout, &target).await?;
         }
         MenuAction::Act(action) => {
-            focus_menu_target(workspace, chrome, &kind).await?;
+            focus_menu_target(workspace, chrome, outcomes, &kind).await?;
             if action == Action::Quit {
                 return Ok(true);
             }
-            handle_live_action(workspace, chrome, action).await?;
+            handle_live_action(workspace, chrome, outcomes, action).await?;
         }
         MenuAction::Respond(entry_id) => {
             if let Some(pane) = attention_pane(workspace, &entry_id) {
                 chrome.focus_pane(pane);
-                focus_live_pane(workspace, pane).await?;
+                focus_live_pane(workspace, pane);
             }
             open_response_dialog(workspace, chrome, Some(&entry_id)).await?;
         }
@@ -62,7 +65,7 @@ pub async fn apply_live_menu_action(
             focus_project(workspace, chrome, &project_id).await?;
         }
         MenuAction::OpenWorktreeTab(worktree_id) => {
-            open_worktree(workspace, chrome, &worktree_id).await?;
+            open_worktree(workspace, chrome, outcomes, &worktree_id).await?;
         }
         MenuAction::NewWorktree(project_id) => {
             open_new_worktree_dialog(workspace, chrome, &project_id);
@@ -80,9 +83,11 @@ pub async fn apply_live_menu_action(
             let current = project_label(workspace, chrome, &project_id).unwrap_or_default();
             rename_project(chrome, &project_id, &current);
         }
-        MenuAction::FocusAgent(entry_id) => focus_agent(workspace, chrome, &entry_id).await?,
+        MenuAction::FocusAgent(entry_id) => {
+            focus_agent(workspace, chrome, outcomes, &entry_id).await?
+        }
         MenuAction::OpenAgentInNewTab(entry_id) => {
-            open_agent_in_new_tab(workspace, chrome, &entry_id).await?;
+            open_agent_in_new_tab(workspace, chrome, outcomes, &entry_id).await?;
         }
         MenuAction::MarkSeen(entry_id) => mark_agent_seen(workspace, &entry_id).await?,
         MenuAction::ShowAlerts => open_alerts_dialog(chrome),
@@ -105,19 +110,19 @@ pub async fn apply_live_menu_action(
                 });
                 chrome.mode = Mode::ConfirmClose;
             } else {
-                close_live_terminal(workspace, chrome, pane).await?;
+                close_live_terminal(workspace, chrome, outcomes, pane).await?;
             }
         }
         MenuAction::TakeControl(pane) => {
-            focus_menu_target(workspace, chrome, &kind).await?;
+            focus_menu_target(workspace, chrome, outcomes, &kind).await?;
             take_live_control(workspace, pane);
         }
         MenuAction::ReleaseControl(pane) => {
-            focus_menu_target(workspace, chrome, &kind).await?;
-            release_live_control(workspace, pane).await?;
+            focus_menu_target(workspace, chrome, outcomes, &kind).await?;
+            release_live_control(workspace, pane);
         }
         _ => {
-            if !apply_daemon_menu_action(workspace, chrome, &action).await? {
+            if !apply_daemon_menu_action(workspace, chrome, outcomes, &action) {
                 apply_local_menu_action(workspace, chrome, &action);
             }
         }
@@ -176,22 +181,23 @@ fn open_about_dialog(chrome: &mut Chrome) {
 async fn focus_menu_target(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     kind: &ContextMenuKind,
 ) -> Result<(), FrameError> {
     match kind {
         ContextMenuKind::Pane(pane) if chrome.focused_pane() != Some(*pane) => {
             chrome.focus_pane(*pane);
-            observe_live_pane(workspace, *pane).await?;
+            observe_live_pane(workspace, *pane);
         }
         ContextMenuKind::Tab(index) if *index != chrome.active_index() => {
             activate_live_tab(workspace, chrome, *index).await?;
         }
         ContextMenuKind::Worktree(worktree_id) => {
-            open_worktree(workspace, chrome, worktree_id).await?;
+            open_worktree(workspace, chrome, outcomes, worktree_id).await?;
         }
         ContextMenuKind::Agent(entry_id) => {
-            if let Some(pane) = reveal_agent(workspace, chrome, entry_id).await? {
-                observe_live_pane(workspace, pane).await?;
+            if let Some(pane) = reveal_agent(workspace, chrome, outcomes, entry_id).await? {
+                observe_live_pane(workspace, pane);
             }
         }
         ContextMenuKind::MenuBar(_) => {}

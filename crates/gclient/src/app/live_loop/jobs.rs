@@ -9,15 +9,18 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::hash::Hash;
 
+use gobby_terminal::protocol::ClientMessage;
 use ratatui::backend::Backend;
 use ratatui::Terminal;
+use serde_json::{json, Value};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::daemon::{Daemon, DaemonError, Generation, LiveDaemon, WorkspaceOp};
-use crate::frame_source::FrameError;
+use crate::frame_source::{FrameError, FrameSource, PaneFrameSource};
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
 
+use super::super::attention::{PendingAttention, ResponseSubmission};
 use super::super::{PaneId, Workspace};
 use super::focus_hints::{self, FocusMemo, ShownFocus};
 
@@ -28,7 +31,14 @@ mod tests;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum JobKey {
     Geometry(PaneId),
+    /// A pane's scroll offset; the latest one wins.
+    Scroll(PaneId),
     FocusHints,
+    /// A pane writer's outcomes; the tag id is the write's `client_write_seq`.
+    Write(PaneId),
+    Respond,
+    /// A layout op; ops are not coalesced, so every outcome applies.
+    Op,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +68,40 @@ pub enum JobResult {
     },
     Resized {
         pane: PaneId,
+        result: Result<(), DaemonError>,
+    },
+    /// A proxied pane's scroll offset reached the daemon, or failed to.
+    Scrolled { result: Result<(), DaemonError> },
+    /// The daemon's reply to one write of `bytes`.
+    Write {
+        pane: PaneId,
+        bytes: usize,
+        reply: Value,
+    },
+    /// A write whose send failed, so the daemon may or may not have it.
+    WriteUnconfirmed { pane: PaneId },
+    /// Writes the writer dropped unsent after an unconfirmed write or a
+    /// connection change.
+    WriteAbandoned {
+        pane: PaneId,
+        messages: usize,
+        bytes: usize,
+    },
+    /// Kills of some panes' terminals, then their close op. `kept` names the
+    /// panes whose kill was refused or never sent.
+    Killed {
+        killed: bool,
+        kept: Vec<PaneId>,
+        result: Result<(), DaemonError>,
+    },
+    Responded {
+        pending: PendingAttention,
+        result: Result<(), DaemonError>,
+    },
+    /// A layout op or op chain; `unplaced` names a terminal whose expected
+    /// placement it never made.
+    Ops {
+        unplaced: Option<String>,
         result: Result<(), DaemonError>,
     },
 }
@@ -193,6 +237,7 @@ impl<T> JobLedger<T> {
 pub(super) enum Pending {
     FocusHints(ShownFocus),
     Geometry(PaneId, u16, u16),
+    Scroll(PaneId, u32),
 }
 
 /// One entry of the geometry pass: a shown pane, its inner rect and the
@@ -226,6 +271,11 @@ impl LoopJobs {
 
     /// Follow the daemon connection: a new generation frees every key the
     /// old one held.
+    /// Where a long-lived task, such as a pane writer, posts its outcomes.
+    pub(super) fn outcomes(&self) -> &UnboundedSender<JobOutcome> {
+        &self.tx
+    }
+
     pub(super) fn sync_generation(&mut self, current: Generation) -> Generation {
         if current != self.generation {
             self.ledger.forget_generation(self.generation);
@@ -314,11 +364,63 @@ impl LoopJobs {
                     }
                 }
             }
+            Pending::Scroll(pane_id, rows) => {
+                let daemon = workspace.daemon().clone();
+                let Some(pane) = workspace.panes.get_mut(&pane_id) else {
+                    return false;
+                };
+                let body = json!({
+                    "type": "terminal_set_scroll_offset",
+                    "terminal_id": pane.terminal_id,
+                    "attachment_id": pane.attachment_id(),
+                    "rows_from_live_edge": rows,
+                });
+                match pane.frame_source_mut() {
+                    Some(PaneFrameSource::Proxy(_)) => {
+                        spawn_job(&self.tx, tag.clone(), async move {
+                            JobResult::Scrolled {
+                                result: daemon.notify(body).await,
+                            }
+                        });
+                        true
+                    }
+                    // A host socket takes it without a round trip; a full
+                    // writer is the pane's status, as for typed input.
+                    Some(source) => {
+                        let message = ClientMessage::SetScrollOffset {
+                            rows_from_live_edge: rows,
+                        };
+                        match source.send_input(&message) {
+                            Ok(()) => {}
+                            Err(error @ FrameError::Backpressure) => {
+                                pane.status_message = Some(error.to_string());
+                            }
+                            Err(error) => chrome.notify(Toast::error(error.to_string())),
+                        }
+                        false
+                    }
+                    None => false,
+                }
+            }
         }
     }
 }
 
 /// Send `op` beside the loop; its outcome comes back tagged with `intent`.
+/// Send an attention answer beside the loop; its outcome toasts at apply.
+pub(super) fn issue_response(daemon: &LiveDaemon, jobs: &LoopJobs, submission: ResponseSubmission) {
+    let tag = JobTag {
+        id: 0,
+        generation: daemon.generation(),
+        key: JobKey::Respond,
+    };
+    let daemon = daemon.clone();
+    spawn_job(&jobs.tx, tag, async move {
+        let (pending, result) = submission.send(daemon).await;
+        JobResult::Responded { pending, result }
+    });
+}
+
 pub(super) fn issue_workspace_op(
     daemon: &LiveDaemon,
     tx: &UnboundedSender<JobOutcome>,

@@ -1,6 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::daemon::{Answer, Daemon, DaemonError, LiveDaemon, RosterEntry};
+use crate::frame_source::FrameError;
 use crate::ui::dialogs::Dialog;
 use crate::ui::status::Toast;
 use crate::ui::text::truncate_end;
@@ -9,11 +10,18 @@ use crate::ui::{Chrome, Mode};
 use super::Workspace;
 
 #[derive(Clone, Debug)]
-pub(super) struct PendingAttention {
+pub struct PendingAttention {
     entry_id: String,
     attention_id: String,
     fingerprint: String,
     option_values: Vec<u64>,
+}
+
+/// An answer the person submitted, waiting to be sent.
+#[derive(Debug)]
+pub(super) struct ResponseSubmission {
+    pending: PendingAttention,
+    answer: Answer,
 }
 
 struct Prompt {
@@ -100,15 +108,17 @@ fn blocked_attention_toast(entry: &RosterEntry) -> Option<Toast> {
     Some(Toast::warning(title).with_body(body))
 }
 
-pub(super) async fn route_response_input(
+/// Route a key to the open response dialog. Enter yields the answer to send;
+/// the loop sends it as a job, so a slow daemon never holds up a frame.
+pub(super) fn route_response_input(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
     key: &KeyEvent,
-) -> Result<(), DaemonError> {
+) -> Option<ResponseSubmission> {
     if !matches!(chrome.dialog, Some(Dialog::Respond { .. })) {
         chrome.mode = Mode::Terminal;
         workspace.pending_attention = None;
-        return Ok(());
+        return None;
     }
 
     match key.code {
@@ -135,10 +145,10 @@ pub(super) async fn route_response_input(
                 }
             }
         }
-        KeyCode::Enter => submit_response(workspace, chrome).await?,
+        KeyCode::Enter => return submit_response(workspace, chrome),
         _ => {}
     }
-    Ok(())
+    None
 }
 
 fn adjust_selection(chrome: &mut Chrome, delta: isize) {
@@ -158,33 +168,70 @@ fn adjust_selection(chrome: &mut Chrome, delta: isize) {
     }
 }
 
-async fn submit_response(
+/// Take the pending prompt before the answer is sent, so it is answered once
+/// however many times Enter is pressed while the daemon is slow to reply. The
+/// dialog stays open until the outcome lands.
+fn submit_response(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
-) -> Result<(), DaemonError> {
-    let Some(pending) = workspace.pending_attention.clone() else {
-        return Ok(());
-    };
+) -> Option<ResponseSubmission> {
+    let pending = workspace.pending_attention.as_ref()?;
     let Some(Dialog::Respond { selected, text, .. }) = &chrome.dialog else {
-        return Ok(());
+        return None;
     };
     let answer = if let Some(option) = pending.option_values.get(*selected) {
         Answer::option(&pending.fingerprint, *option)
     } else if !text.is_empty() {
         Answer::text(&pending.fingerprint, text)
     } else {
-        return Ok(());
+        return None;
     };
+    let pending = workspace.pending_attention.take()?;
+    Some(ResponseSubmission { pending, answer })
+}
 
-    workspace
-        .daemon()
-        .respond(&pending.entry_id, &pending.attention_id, &answer)
-        .await?;
-    workspace.pending_attention = None;
-    chrome.dialog = None;
-    chrome.mode = Mode::Terminal;
-    chrome.notify(Toast::success("Response sent."));
-    Ok(())
+impl ResponseSubmission {
+    /// Send the answer; the prompt comes back with the outcome.
+    pub(super) async fn send(
+        self,
+        daemon: LiveDaemon,
+    ) -> (PendingAttention, Result<(), DaemonError>) {
+        let result = daemon
+            .respond(
+                &self.pending.entry_id,
+                &self.pending.attention_id,
+                &self.answer,
+            )
+            .await;
+        (self.pending, result)
+    }
+}
+
+/// Land a sent answer. Success closes the dialog it came from; a refusal
+/// leaves that dialog open with its prompt answerable again, and says why.
+pub(super) fn apply_response(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    pending: PendingAttention,
+    result: Result<(), DaemonError>,
+) {
+    let dialog_open = matches!(chrome.dialog, Some(Dialog::Respond { .. }))
+        && workspace.pending_attention.is_none();
+    match result {
+        Ok(()) => {
+            if dialog_open {
+                chrome.dialog = None;
+                chrome.mode = Mode::Terminal;
+            }
+            chrome.notify(Toast::success("Response sent."));
+        }
+        Err(error) => {
+            if dialog_open {
+                workspace.pending_attention = Some(pending);
+            }
+            chrome.notify(Toast::error(FrameError::from(error).to_string()));
+        }
+    }
 }
 
 fn parse_prompt(entry: RosterEntry) -> Option<Prompt> {
