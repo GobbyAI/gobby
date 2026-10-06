@@ -175,9 +175,9 @@ interface FilterableSession {
   agent_depth: number;
   seq_num: number | null;
   created_at: string;
-  claimed_task_refs?: number[];
-  created_task_refs?: number[];
-  closed_task_refs?: number[];
+  claimed_task_refs?: number[] | null;
+  created_task_refs?: number[] | null;
+  closed_task_refs?: number[] | null;
   blockedCount?: number;
 }
 
