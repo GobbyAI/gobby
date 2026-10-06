@@ -33,7 +33,9 @@ pub fn index_files(
     ctx: &Context,
     options: IndexOptions<'_>,
 ) -> anyhow::Result<IndexOutcome> {
+    let mut timings = super::IndexTimings::new("index.connect");
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    timings.phase("index.pipeline");
     index_files_with_connection(&mut conn, request, ctx, options)
 }
 
@@ -59,6 +61,7 @@ fn index_discovered_files(
     ctx: &Context,
     options: &mut IndexOptions<'_>,
 ) -> anyhow::Result<IndexOutcome> {
+    let mut timings = super::IndexTimings::new("primary.seed");
     let project_id = ctx.project_id.as_str();
     let start = Instant::now();
     let discovery_start = Instant::now();
@@ -78,6 +81,7 @@ fn index_discovered_files(
         api::IndexWriteMode::Primary,
     )?;
 
+    timings.phase("primary.discovery");
     let excludes = effective_excludes(&ctx.indexing.extra_excludes);
     let (mut candidates, mut content_only) =
         walker::discover_files_with_options(root_path, &excludes, discovery_options(ctx));
@@ -87,11 +91,13 @@ fn index_discovered_files(
     }
     outcome.set_unsupported_file_types(unsupported_file_types(root_path, &content_only));
     let discovered_files = candidates.len() + content_only.len();
+    timings.phase("primary.import_context");
     let import_context = parser::build_import_resolution_context(root_path, &candidates);
     let mut semantic_resolver =
         create_semantic_resolver_if_needed(root_path, &candidates, request.require_cpp_semantics)?;
 
     // Build current file state for incremental detection and orphan cleanup.
+    timings.phase("primary.reconcile");
     let current_files = current_file_state(root_path, &candidates, &content_only);
     let stale: Option<HashSet<String>> = if !request.full {
         Some(get_stale_files(
@@ -134,6 +140,7 @@ fn index_discovered_files(
     outcome.scanned_files = discovered_files;
     outcome.durations.discovery_ms = discovery_start.elapsed().as_millis() as u64;
 
+    timings.phase("primary.files");
     let indexing_start = Instant::now();
     let mut adopted_paths = Vec::new();
     let mut progress = ActiveIndexProgress::new(options.progress.take(), eligible_files);
@@ -227,6 +234,7 @@ fn index_discovered_files(
     }
     // Resolve cross-file local-import calls now that every file's symbols are in
     // the hub. Order-independent and bounded by this run's changed files.
+    timings.phase("primary.local_imports");
     resolve_local_import_calls(conn, project_id, &outcome.indexed_file_paths)?;
     if request.full && request.path_filter.is_none() {
         resolve_project_local_import_calls(conn, project_id)?;
@@ -237,6 +245,7 @@ fn index_discovered_files(
     outcome.record_promotion_owners(promoted_owners);
     outcome.durations.indexing_ms = indexing_start.elapsed().as_millis() as u64;
 
+    timings.phase("primary.stats");
     let stats_start = Instant::now();
     refresh_project_stats(
         conn,
@@ -250,7 +259,9 @@ fn index_discovered_files(
     outcome.durations.stats_ms = stats_start.elapsed().as_millis() as u64;
     outcome.durations.total_ms = start.elapsed().as_millis() as u64;
 
+    timings.phase("primary.communities");
     refresh_communities(conn, ctx, &mut outcome);
+    timings.phase("primary.projection_attachment");
     attach_projection_sync(&mut outcome, request);
     Ok(outcome)
 }
@@ -261,6 +272,7 @@ fn index_explicit_files_with_connection(
     ctx: &Context,
     options: &mut IndexOptions<'_>,
 ) -> anyhow::Result<IndexOutcome> {
+    let mut timings = super::IndexTimings::new("primary_explicit.seed");
     let project_id = ctx.project_id.as_str();
     let start = Instant::now();
     let discovery_start = Instant::now();
@@ -281,6 +293,7 @@ fn index_explicit_files_with_connection(
     )?;
     outcome.scanned_files = request.explicit_files.len();
 
+    timings.phase("primary_explicit.discovery");
     let excludes = effective_excludes(&ctx.indexing.extra_excludes);
     let mut routed_files = Vec::new();
     let mut ast_files = Vec::new();
@@ -351,12 +364,14 @@ fn index_explicit_files_with_connection(
             import_candidates.push(path.clone());
         }
     }
+    timings.phase("primary_explicit.import_context");
     let import_context = parser::build_import_resolution_context(root_path, &import_candidates);
 
     let mut semantic_resolver =
         create_semantic_resolver_if_needed(root_path, &ast_files, request.require_cpp_semantics)?;
     outcome.durations.discovery_ms = discovery_start.elapsed().as_millis() as u64;
 
+    timings.phase("primary_explicit.files");
     let indexing_start = Instant::now();
     let routed_file_count = routed_files.len();
     let mut adopted_paths = Vec::new();
@@ -410,6 +425,7 @@ fn index_explicit_files_with_connection(
     }
     // Resolve cross-file local-import calls now that every file's symbols are in
     // the hub. Order-independent and bounded by this run's changed files.
+    timings.phase("primary_explicit.local_imports");
     resolve_local_import_calls(conn, project_id, &outcome.indexed_file_paths)?;
     let mut trigger_paths = outcome.indexed_file_paths.clone();
     trigger_paths.extend(adopted_paths);
@@ -417,6 +433,7 @@ fn index_explicit_files_with_connection(
     outcome.record_promotion_owners(promoted_owners);
     outcome.durations.indexing_ms = indexing_start.elapsed().as_millis() as u64;
 
+    timings.phase("primary_explicit.stats");
     let stats_start = Instant::now();
     refresh_project_stats(
         conn,
@@ -430,7 +447,9 @@ fn index_explicit_files_with_connection(
     outcome.durations.stats_ms = stats_start.elapsed().as_millis() as u64;
     outcome.durations.total_ms = start.elapsed().as_millis() as u64;
 
+    timings.phase("primary_explicit.communities");
     refresh_communities(conn, ctx, &mut outcome);
+    timings.phase("primary_explicit.projection_attachment");
     attach_projection_sync(&mut outcome, request);
     Ok(outcome)
 }
