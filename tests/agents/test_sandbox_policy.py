@@ -776,7 +776,7 @@ async def test_break_glass_file_is_a_credential_root(
         )
 
     monkeypatch.setattr("gobby.agents.sandbox.daemon_git.run", no_git_metadata)
-    for path in (bootstrap, workspace / "break_glass"):
+    for path in (bootstrap, workspace / "break_glass", workspace / ".break_glass-staging"):
         assert str(path) in sandbox_policy.sensitive_roots()
         assert str(path) in sandbox_policy.sensitive_write_roots()
     with pytest.raises(ValueError, match="sandbox allow path contains sensitive root"):

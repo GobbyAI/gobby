@@ -17,6 +17,12 @@ from gobby.runner_pid_file import PidOwnershipResolution
 from gobby.shutdown_intent import ShutdownIntent
 
 
+@pytest.fixture(autouse=True)
+def _isolate_daemon_bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    monkeypatch.setattr("gobby.utils.local_token._daemon_bootstrap", None)
+
+
 @dataclass
 class FakeOwnership:
     released: int = 0
@@ -42,7 +48,9 @@ class FakeLease:
 
 
 @pytest.mark.asyncio
-async def test_standby_never_constructs_full_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_standby_never_constructs_full_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     events: list[str] = []
     lease = FakeLease(False, events)
     ownership = FakeOwnership()
@@ -81,7 +89,7 @@ async def test_standby_never_constructs_full_runner(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(runner_module, "GobbyRunner", ForbiddenRunner)
 
     await runner_module.run_gobby(
-        config_path=Path("/tmp/bootstrap.yaml"),
+        config_path=tmp_path / "bootstrap.yaml",
         ownership_resolution=cast(PidOwnershipResolution, ownership),
     )
 

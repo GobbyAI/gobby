@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from gobby.paths import get_gobby_home
-from gobby.utils.break_glass import break_glass_path
+from gobby.utils.break_glass import break_glass_path, break_glass_staging_path
 from gobby.utils.local_token import daemon_bootstrap_path
 
 
@@ -17,6 +17,7 @@ def credential_roots() -> list[Path]:
         home / "tools" / "srt",
         daemon_bootstrap_path(),
         break_glass_path(),
+        break_glass_staging_path(),
     ]
 
 

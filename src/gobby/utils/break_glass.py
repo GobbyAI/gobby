@@ -3,6 +3,8 @@
 import os
 import secrets
 import stat
+import string
+import tempfile
 from pathlib import Path
 
 from gobby.utils.local_token import daemon_bootstrap_path
@@ -17,17 +19,56 @@ def break_glass_path(gobby_home: Path | None = None) -> Path:
     ) / BREAK_GLASS_FILENAME
 
 
+def break_glass_staging_path(gobby_home: Path | None = None) -> Path:
+    return break_glass_path(gobby_home).parent / ".break_glass-staging"
+
+
+def _validate_existing_credential(path: Path) -> None:
+    credential = _read_credential(path)
+    if (
+        credential is None
+        or len(credential) != 43
+        or any(
+            character not in string.ascii_letters + string.digits + "_-" for character in credential
+        )
+    ):
+        raise ValueError(
+            f"Invalid break-glass credential at {path}; remove the damaged file and restart "
+            "to recreate it."
+        )
+
+
 def ensure_break_glass_credential(gobby_home: Path) -> None:
-    """Create once with owner-only permissions; preserve a concurrent winner."""
-    try:
-        fd = os.open(break_glass_path(gobby_home), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
+    """Publish a complete owner-only credential once; preserve a concurrent winner."""
+    path = break_glass_path(gobby_home)
+    if os.path.lexists(path):
+        _validate_existing_credential(path)
         return
-    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+    staging = break_glass_staging_path(gobby_home)
+    staging.mkdir(mode=0o700, exist_ok=True)
+    directory_fd = os.open(staging, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(directory_fd)
+        if metadata.st_mode & 0o077 or metadata.st_uid != os.getuid():
+            raise PermissionError(f"Break-glass staging directory must be owner-only: {staging}")
+    finally:
+        os.close(directory_fd)
+    with tempfile.NamedTemporaryFile(mode="w", encoding="ascii", dir=staging) as stream:
         stream.write(secrets.token_urlsafe(32))
+        stream.flush()
+        os.fsync(stream.fileno())
+        try:
+            os.link(stream.name, path)
+        except FileExistsError:
+            _validate_existing_credential(path)
+        directory_fd = os.open(gobby_home, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
 
 
-def break_glass_matches(path: Path, presented: str) -> bool:
+def _read_credential(path: Path) -> str | None:
     """Read and validate the same inode, refusing symlinks and non-regular files."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -38,8 +79,16 @@ def break_glass_matches(path: Path, presented: str) -> bool:
                 or metadata.st_mode & 0o077
                 or metadata.st_uid != os.getuid()
             ):
-                return False
+                return None
             credential = stream.read().strip()
     except (OSError, UnicodeError):
+        return None
+    return credential
+
+
+def break_glass_matches(path: Path, presented: str) -> bool:
+    """Match only an owner-only regular credential inode."""
+    credential = _read_credential(path)
+    if not credential:
         return False
-    return bool(credential) and secrets.compare_digest(credential.encode(), presented.encode())
+    return secrets.compare_digest(credential.encode(), presented.encode())

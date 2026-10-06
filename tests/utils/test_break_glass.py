@@ -8,6 +8,69 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("damaged", [b"", b"partial"])
+def test_damaged_existing_credential_requires_explicit_repair(
+    tmp_path: Path, damaged: bytes
+) -> None:
+    from gobby.utils.break_glass import ensure_break_glass_credential
+
+    path = tmp_path / "break_glass"
+    path.write_bytes(damaged)
+    path.chmod(0o600)
+    with pytest.raises(ValueError, match="remove.*restart") as error:
+        ensure_break_glass_credential(tmp_path)
+    assert str(path) in str(error.value)
+    assert path.read_bytes() == damaged
+
+
+def test_failed_fsync_never_publishes_a_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.utils.break_glass import ensure_break_glass_credential
+
+    def failed_fsync(_fd: int) -> None:
+        raise OSError("simulated full disk")
+
+    monkeypatch.setattr(os, "fsync", failed_fsync)
+    with pytest.raises(OSError, match="simulated full disk"):
+        ensure_break_glass_credential(tmp_path)
+    assert not (tmp_path / "break_glass").exists()
+    assert list((tmp_path / ".break_glass-staging").iterdir()) == []
+
+
+def test_exclusive_publication_preserves_a_concurrent_winner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.utils.break_glass import ensure_break_glass_credential
+
+    winner = b"W" * 43
+
+    def winning_link(_source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+        path = Path(destination)
+        path.write_bytes(winner)
+        path.chmod(0o600)
+        raise FileExistsError(path)
+
+    monkeypatch.setattr(os, "link", winning_link)
+    ensure_break_glass_credential(tmp_path)
+    assert (tmp_path / "break_glass").read_bytes() == winner
+    assert list((tmp_path / ".break_glass-staging").iterdir()) == []
+
+
+def test_staging_symlink_cannot_redirect_credential_bytes(
+    tmp_path: Path,
+) -> None:
+    from gobby.utils.break_glass import ensure_break_glass_credential
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / ".break_glass-staging").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(OSError):
+        ensure_break_glass_credential(tmp_path)
+    assert list(outside.iterdir()) == []
+    assert not (tmp_path / "break_glass").exists()
+
+
 def test_credential_is_owner_only_and_never_rewritten(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -459,7 +459,8 @@ async def run_gobby(
             await asyncio.to_thread(ensure_break_glass_credential, daemon_bootstrap_path().parent)
         except Exception:
             logger.warning(
-                "Could not create break-glass credential at %s",
+                "Could not create break-glass credential at %s; "
+                "if the existing file is damaged, remove it and restart to recreate it",
                 daemon_bootstrap_path().parent / "break_glass",
             )
         # gdaemon takes the public ports before this runner binds the backend pair
