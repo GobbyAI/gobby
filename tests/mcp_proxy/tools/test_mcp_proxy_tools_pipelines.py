@@ -4,13 +4,24 @@ TDD tests for the pipelines MCP registry and tools.
 """
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.utils.local_token import AgentApiTokenClaims
 from gobby.utils.project_context import reset_project_context, set_project_context
-from gobby.utils.session_context import session_context_for_test
+from gobby.utils.session_context import (
+    PrincipalResolver,
+    RequestPrincipal,
+    SessionContext,
+    reset_request_principal,
+    reset_session_context,
+    session_context_for_test,
+    set_request_principal,
+    set_session_context,
+)
 from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.loader_cache import DiscoveredWorkflow
 
@@ -622,43 +633,6 @@ class TestApprovePipelineTool:
         assert "approve_pipeline" in tool_names
 
     @pytest.mark.asyncio
-    async def test_approve_pipeline_calls_executor_approve(
-        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
-    ) -> None:
-        """Test that approve_pipeline calls executor.approve()."""
-        from unittest.mock import AsyncMock
-
-        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
-
-        execution = PipelineExecution(
-            id="pe-abc123",
-            pipeline_name="deploy",
-            project_id="11111111-1111-4111-8111-111111110001",
-            status=ExecutionStatus.COMPLETED,
-            created_at=TEST_TIME,
-            updated_at=TEST_TIME,
-        )
-        mock_executor.approve = AsyncMock(return_value=execution)
-
-        registry = create_workflows_registry(
-            loader=mock_loader,
-            pipeline_executor_resolver=lambda _project_id: mock_executor,
-        )
-
-        await registry.call(
-            "approve_pipeline",
-            {"token": "approval-token-xyz", "approved_by": "user@example.com"},
-        )
-
-        mock_executor.approve.assert_called_once_with(
-            token="approval-token-xyz",
-            approved_by="user@example.com",
-        )
-        assert mock_executor.approve.call_count == 1
-        assert mock_executor.approve.call_args is not None
-
-    @pytest.mark.asyncio
     async def test_approve_pipeline_returns_execution_status(
         self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
@@ -758,43 +732,6 @@ class TestRejectPipelineTool:
         assert "reject_pipeline" in tool_names
 
     @pytest.mark.asyncio
-    async def test_reject_pipeline_calls_executor_reject(
-        self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
-    ) -> None:
-        """Test that reject_pipeline calls executor.reject()."""
-        from unittest.mock import AsyncMock
-
-        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
-
-        execution = PipelineExecution(
-            id="pe-abc123",
-            pipeline_name="deploy",
-            project_id="11111111-1111-4111-8111-111111110001",
-            status=ExecutionStatus.CANCELLED,
-            created_at=TEST_TIME,
-            updated_at=TEST_TIME,
-        )
-        mock_executor.reject = AsyncMock(return_value=execution)
-
-        registry = create_workflows_registry(
-            loader=mock_loader,
-            pipeline_executor_resolver=lambda _project_id: mock_executor,
-        )
-
-        await registry.call(
-            "reject_pipeline",
-            {"token": "approval-token-xyz", "rejected_by": "user@example.com"},
-        )
-
-        mock_executor.reject.assert_called_once_with(
-            token="approval-token-xyz",
-            rejected_by="user@example.com",
-        )
-        assert mock_executor.reject.call_count == 1
-        assert mock_executor.reject.call_args is not None
-
-    @pytest.mark.asyncio
     async def test_reject_pipeline_returns_cancelled_status(
         self, mock_loader: MagicMock, mock_executor: MagicMock, mock_execution_manager: MagicMock
     ) -> None:
@@ -871,6 +808,144 @@ class TestRejectPipelineTool:
 
         assert result["success"] is False
         assert "executor" in result["error"].lower()
+
+
+def _principal(principal: RequestPrincipal) -> PrincipalResolver:
+    """A request whose authenticated caller resolves to ``principal``."""
+
+    async def resolve() -> RequestPrincipal:
+        return principal
+
+    return resolve
+
+
+@contextmanager
+def _decision_caller(resolver: PrincipalResolver | None, session_id: str | None) -> Iterator[None]:
+    """Seed the request principal (None leaves it unseeded) and the calling session."""
+    principal_token = None if resolver is None else set_request_principal(resolver)
+    session_token = set_session_context(
+        None if session_id is None else SessionContext(session_id=session_id)
+    )
+    try:
+        yield
+    finally:
+        reset_session_context(session_token)
+        if principal_token is not None:
+            reset_request_principal(principal_token)
+
+
+AGENT_CLAIMS = AgentApiTokenClaims(
+    session_id="agent-session", project_id=CALLER_PROJECT_ID, machine_id="machine", iat=1, exp=2
+)
+# Each decision tool, the executor method it calls, and that method's decider keyword.
+DECISION_TOOLS = [
+    ("approve_pipeline", "approve", "approved_by"),
+    ("reject_pipeline", "reject", "rejected_by"),
+]
+
+
+class TestPipelineDecisionProvenance:
+    """approve_pipeline and reject_pipeline record the authenticated caller, never caller text."""
+
+    @pytest.mark.parametrize("tool", [tool for tool, _, _ in DECISION_TOOLS])
+    def test_schema_takes_only_the_token(
+        self, mock_loader: MagicMock, mock_executor: MagicMock, tool: str
+    ) -> None:
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+
+        registry = create_workflows_registry(
+            loader=mock_loader,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
+        )
+
+        schema = registry.get_schema(tool)
+        assert schema is not None
+        assert set(schema["inputSchema"]["properties"]) == {"token"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("tool", "method", "keyword"), DECISION_TOOLS)
+    @pytest.mark.parametrize(
+        ("resolver", "session_id", "decider"),
+        [
+            pytest.param(None, "sess-1", "session:sess-1", id="in-process-session"),
+            pytest.param(_principal(None), "sess-1", "session:sess-1", id="operator-session"),
+            pytest.param(_principal(None), None, "operator", id="operator"),
+            pytest.param(
+                _principal(AGENT_CLAIMS), "sess-1", "session:agent-session", id="agent-token"
+            ),
+        ],
+    )
+    async def test_records_the_authenticated_caller(
+        self,
+        mock_loader: MagicMock,
+        mock_executor: MagicMock,
+        tool: str,
+        method: str,
+        keyword: str,
+        resolver: PrincipalResolver | None,
+        session_id: str | None,
+        decider: str,
+    ) -> None:
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
+
+        execution = PipelineExecution(
+            id="pe-abc123",
+            pipeline_name="deploy",
+            project_id=CALLER_PROJECT_ID,
+            status=ExecutionStatus.COMPLETED,
+            created_at=TEST_TIME,
+            updated_at=TEST_TIME,
+        )
+        decide = AsyncMock(return_value=execution)
+        setattr(mock_executor, method, decide)
+        registry = create_workflows_registry(
+            loader=mock_loader,
+            pipeline_executor_resolver=lambda _project_id: mock_executor,
+        )
+
+        with _decision_caller(resolver, session_id):
+            result = await registry.call(tool, {"token": "approval-token-xyz"})
+
+        assert result["success"] is True
+        decide.assert_awaited_once_with(token="approval-token-xyz", **{keyword: decider})
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", [tool for tool, _, _ in DECISION_TOOLS])
+    @pytest.mark.parametrize(
+        ("resolver", "session_id"),
+        [
+            pytest.param(_principal(False), "sess-1", id="rejected-credentials"),
+            pytest.param(None, None, id="in-process-without-session"),
+        ],
+    )
+    async def test_refuses_a_caller_with_no_authenticated_identity(
+        self,
+        mock_loader: MagicMock,
+        tool: str,
+        resolver: PrincipalResolver | None,
+        session_id: str | None,
+    ) -> None:
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+
+        executor = MagicMock()
+        executor.approve = AsyncMock()
+        executor.reject = AsyncMock()
+        registry = create_workflows_registry(
+            loader=mock_loader,
+            pipeline_executor_resolver=lambda _project_id: executor,
+        )
+
+        with _decision_caller(resolver, session_id):
+            result = await registry.call(tool, {"token": "approval-token-xyz"})
+
+        assert result == {
+            "success": False,
+            "error_code": "forbidden",
+            "error": "Approval decisions need an authenticated caller",
+        }
+        executor.approve.assert_not_awaited()
+        executor.reject.assert_not_awaited()
 
 
 class TestGetPipelineStatusTool:

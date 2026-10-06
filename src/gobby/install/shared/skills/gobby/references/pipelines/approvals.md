@@ -6,14 +6,16 @@ request is not blanket permission to approve unrelated side effects.
 
 Place `approval: {required: true, message: ..., timeout_seconds: ...}` on the step
 before its side effects. Persist the execution ID; read the returned approval
-token from that run. `gobby-workflows:approve_pipeline(token=..., approved_by=...)`
-consumes the single-use token and continues execution, including the gated step.
-It may return another approval wait; inspect the new status/token. Use an honest
-actor identity and only approval already granted by the user or owning policy.
+token from that run. `gobby-workflows:approve_pipeline(token=...)` consumes the
+single-use token and continues execution, including the gated step. It may return
+another approval wait; inspect the new status/token. Apply only approval already
+granted by the user or owning policy. The recorded approver is your authenticated
+caller identity, `session:<id>` or `operator`; no argument sets it.
 
-`reject_pipeline(token=..., rejected_by=...)` marks the step failed and execution
-cancelled. Configured approval expiry has the same state outcome through daemon
-maintenance, normally a 60-second sweep. No timeout means no configured expiry.
+`reject_pipeline(token=...)` marks the step failed and execution cancelled, and
+records the rejecter the same way. Configured approval expiry has the same state
+outcome through daemon maintenance, normally a 60-second sweep. No timeout means
+no configured expiry.
 
 Approval resumes the captured definition when present. Editing an installed
 pipeline does not rewrite a paused run. A stale/already-used token requires
@@ -28,4 +30,4 @@ fresh attempt. Approval itself does not guarantee downstream success.
 
 Verified guide: [pipelines.md](../../../../../../../../docs/guides/pipelines.md#approval).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-06_
