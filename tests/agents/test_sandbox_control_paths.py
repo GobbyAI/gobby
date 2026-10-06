@@ -35,6 +35,20 @@ CONTROL_FILES = (
     ".gemini/settings.json",
     ".gemini/trustedFolders.json",
     ".config/gemini/settings.json",
+    ".claude/plugins/cache/public/hooks/hooks.json",
+    ".claude/plugins/marketplaces/public/.mcp.json",
+    ".claude/plugins/synced/public/.mcp.json",
+    ".claude/plugins/installed_plugins.json",
+    ".claude/plugins/known_marketplaces.json",
+    ".codex/plugins/cache/public/.mcp.json",
+    ".qwen/extensions/public/qwen-extension.json",
+    ".qwen/extension-store/state.json",
+    ".gemini/extensions/public/gemini-extension.json",
+    ".agents/plugins/marketplace.json",
+    ".claude-plugin/marketplace.json",
+    ".factory/plugins/cache/public/hooks/hooks.json",
+    ".factory/plugins/installed_plugins.json",
+    ".factory/plugins/known_marketplaces.json",
 )
 CREDENTIAL_FILES = (
     ".ssh/id_ed25519",
@@ -191,3 +205,24 @@ async def test_extra_workspace_grant_cannot_install_persistent_hooks(
     assert _contains(paths.write_paths, extra_checkout / grant)
     assert _contains(paths.deny_write_paths, extra_checkout / ".claude/settings.json")
     assert _contains(paths.deny_write_paths, extra_checkout / ".codex/hooks.json")
+
+
+async def test_claude_plugin_runtime_caches_remain_writable(
+    isolated_home: Path, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    paths = await compute_sandbox_paths(
+        SandboxConfig(enabled=True, backend="srt"),
+        str(workspace),
+        provider="claude",
+        env={"PATH": ""},
+    )
+    for relative in (
+        ".claude/plugins/plugin-directory-cache-v2.json",
+        ".claude/plugins/install-counts-cache.json",
+        ".claude/plugins/data/public/state",
+    ):
+        target = isolated_home / relative
+        assert _contains(paths.write_paths, target)
+        assert not _contains(paths.deny_write_paths, target)

@@ -135,6 +135,37 @@ async def test_launch_uses_private_grok_home_and_protects_host_controls(
     assert str(private / "hooks") in policy["denyWrite"]
     assert str(private / "config.toml") in policy["denyWrite"]
     assert str(private / "managed_config.toml") not in policy["denyWrite"]
+    assert launch.provider_env["GROK_AUTH_PATH"] == str(private / "auth.json")
+    assert str(grok_source / "auth.json") in policy["allowWrite"]
+    assert str(grok_source / "auth.json.lock") in policy["allowWrite"]
+    assert str(grok_source / ".*.*.tmp") in policy["allowWrite"]
+    assert (private / "auth.json.lock").resolve() == grok_source / "auth.json.lock"
+    for granted in (grok_source / "auth.json", grok_source / ".*.*.tmp"):
+        assert not any(path.startswith(str(granted) + "/") for path in policy["denyWrite"])
+
+
+def test_auth_override_uses_shared_refresh_target_and_lock(
+    grok_source: Path, tmp_path: Path
+) -> None:
+    auth = tmp_path / "auth-store" / "custom.json"
+    auth.parent.mkdir()
+    auth.write_text('{"synthetic": "old-token"}')
+    result = prepare_grok_sandbox_home(
+        tmp_path / "cache", {"GROK_AUTH_PATH": str(auth)}, assets=tmp_path / "assets"
+    )
+    assert (result.home / "auth.json").resolve() == auth
+    assert (result.home / "auth.json.lock").resolve() == auth.parent / "auth.json.lock"
+    assert str(auth) in result.runtime_write_paths
+    assert str(auth.parent) not in result.runtime_write_paths
+
+
+def test_reused_home_cannot_change_auth_target(grok_source: Path, tmp_path: Path) -> None:
+    cache, assets = tmp_path / "cache", tmp_path / "assets"
+    prepare_grok_sandbox_home(cache, {}, assets=assets)
+    other_auth = grok_source / "other-auth.json"
+    other_auth.write_text("{}")
+    with pytest.raises(ValueError, match="auth target changed"):
+        prepare_grok_sandbox_home(cache, {"GROK_AUTH_PATH": str(other_auth)}, assets=assets)
 
 
 def test_incomplete_preparation_cannot_be_reused(grok_source: Path, tmp_path: Path) -> None:

@@ -259,10 +259,23 @@ their provider write grants; persistent preference and trust changes require an
 operator outside the managed run. Legacy Gemini paths do not enable Gemini as a
 Gobby provider.
 
+Plugin installation and activation surfaces are also immutable: Claude's
+`plugins/{cache,marketplaces,synced}` and installed/known marketplace registries;
+Codex's `plugins/cache` and portable marketplace manifests; Qwen's `extensions`
+and `extension-store`; Droid's plugin cache, marketplaces and registries; and
+legacy Gemini extensions. Claude's plugin data, directory-cache and install-count
+cache remain writable. Provider settings already protect plugin enablement and
+MCP commands. Installation and marketplace updates require an operator outside
+the managed run.
+
 Managed Grok launches use a per-run `GROK_HOME`: hook and trust configuration
 is copied into protected files, while server-refreshed policy caches can change
 inside the private run home. Authentication files are linked without copying
-their contents; atomic refresh replaces the run-local link. Sessions, memory,
+their contents. `GROK_AUTH_PATH` points at the private auth link, whose target and
+advisory lock remain shared with the host. Grok's atomic writer follows that link;
+the auth target, lock and sibling `.*.*.tmp` files have explicit write grants so
+single-use refresh tokens persist for subsequent sessions. The host home itself
+stays unwritable. Sessions, memory,
 logs, crashes, traces and worktrees remain shared writable runtime directories.
 The original home is recorded in read-only run assets for resumed launches.
 
