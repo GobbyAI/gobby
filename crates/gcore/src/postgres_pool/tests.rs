@@ -65,6 +65,102 @@ async fn direct_connection(database_url: &str) -> anyhow::Result<tokio_postgres:
     Ok(client)
 }
 
+#[tokio::test]
+async fn dedicated_session_is_discarded() -> anyhow::Result<()> {
+    let Some(database_url) = test_database_url() else {
+        return Ok(());
+    };
+    let name = unique_application_name();
+    let pool = Pool::build(&database_url, settings(&name, 2, Duration::from_secs(5)))?;
+    let observer = direct_connection(&database_url).await?;
+    let key = format!("dedicated-session-'{}", uuid::Uuid::new_v4());
+    let dedicated = pool.dedicated_session().await?;
+    let pid: i32 = dedicated.query("SELECT pg_backend_pid()", &[]).await?[0].try_get(0)?;
+    assert!(dedicated.try_session_lock(&key).await?);
+    assert!(
+        !observer
+            .query_one("SELECT pg_try_advisory_lock(hashtext($1))", &[&key])
+            .await?
+            .try_get::<_, bool>(0)?
+    );
+    dedicated
+        .simple_query("SET TIME ZONE 'Pacific/Honolulu'")
+        .await?;
+
+    let held = pool.get().await?;
+    assert_eq!(pool.status().size, 2);
+    assert_eq!(pool.status().available, 0);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), pool.get())
+            .await
+            .is_err()
+    );
+
+    drop(dedicated);
+    wait_until(
+        &observer,
+        "dedicated session lock release",
+        "SELECT pg_try_advisory_lock(hashtext($1))",
+        &[&key],
+    )
+    .await?;
+    assert!(
+        observer
+            .query_one("SELECT pg_advisory_unlock(hashtext($1))", &[&key])
+            .await?
+            .try_get::<_, bool>(0)?
+    );
+    wait_for_size(&pool, 1).await?;
+    let replacement = pool.get().await?;
+    let (replacement_pid, role, timezone, _) = session(&replacement).await?;
+    assert_ne!(replacement_pid, pid);
+    assert_eq!(role, RUNTIME_ROLE);
+    assert_eq!(timezone, "UTC");
+    assert_eq!(pool.status().size, 2);
+    drop(replacement);
+    drop(held);
+    assert_eq!(pool.status().available, 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn dedicated_session_runs_as_runtime_role() -> anyhow::Result<()> {
+    let Some(database_url) = test_database_url() else {
+        return Ok(());
+    };
+    let pool = Pool::build(
+        &database_url,
+        settings(&unique_application_name(), 2, Duration::from_secs(5)),
+    )?;
+    let dedicated = pool.dedicated_session().await?;
+    let rows = dedicated
+        .query("SELECT current_user::text, $1::text", &[&"bound value"])
+        .await?;
+    assert_eq!(rows[0].try_get::<_, String>(0)?, RUNTIME_ROLE);
+    assert_eq!(rows[0].try_get::<_, String>(1)?, "bound value");
+    let key = format!("dedicated-unlock-{}", uuid::Uuid::new_v4());
+    assert!(!dedicated.session_unlock(&key).await?);
+    assert!(dedicated.try_session_lock(&key).await?);
+    assert!(dedicated.session_unlock(&key).await?);
+    let observer = direct_connection(&database_url).await?;
+    assert!(
+        observer
+            .query_one("SELECT pg_try_advisory_lock(hashtext($1))", &[&key])
+            .await?
+            .try_get::<_, bool>(0)?
+    );
+    assert!(!dedicated.try_session_lock(&key).await?);
+    assert!(
+        observer
+            .query_one("SELECT pg_advisory_unlock(hashtext($1))", &[&key])
+            .await?
+            .try_get::<_, bool>(0)?
+    );
+    assert!(dedicated.try_session_lock(&key).await?);
+    assert!(dedicated.session_unlock(&key).await?);
+    Ok(())
+}
+
 async fn server_connections(
     observer: &tokio_postgres::Client,
     application_name: &str,
