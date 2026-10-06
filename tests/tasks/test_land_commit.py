@@ -216,6 +216,25 @@ async def test_refuses_without_callers_land_receipt(case: LandingCase) -> None:
     assert all(receipt.kind != LANDING for receipt in list_close_receipts(case.db, task.id))
 
 
+@pytest.mark.parametrize("release", ["escalation", "transfer"])
+async def test_former_claimant_cannot_land_its_own_task(case: LandingCase, release: str) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "review me"})
+    task = case.task()
+    case.link(task, sha)
+    manager = LocalTaskManager(case.db)
+    if release == "escalation":
+        manager.escalate_task(task.id, "Handed off: review pending")
+    else:
+        manager.claim_task(task.id, case.delegator, force=True)
+    case.approve(task, sha)
+    refused = await case.land(task, sha, caller=case.claimant)
+    assert refused["error"] == "caller_was_claimant"
+    assert case.git("rev-parse", "trunk") == case.base
+    landed = await case.land(task, sha)
+    assert landed["landed"] is True
+    assert case.git("rev-parse", "trunk") == sha
+
+
 async def test_fast_forward_lands_exact_candidate(case: LandingCase) -> None:
     sha = case.candidate("lane", {"docs/change.md": "land me"})
     task = case.task()

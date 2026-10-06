@@ -15,6 +15,7 @@ from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.project_checkouts import require_root
+from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.close_receipts import (
     CLOSE_RECEIPT_AUTHOR_TYPE,
@@ -339,9 +340,13 @@ async def land_candidate(
                 # Every attempt re-reads the tip, so a candidate already landed counts.
                 tip = await _tip(main, branch)
                 receipts = list_close_receipts(db, task.id)
+                with db.transaction() as conn:
+                    claimants = claimant_sessions(conn, task.id)
                 blockers: list[str] = []
                 if current_task.claimed_by_session_id == caller_session_id:
                     blockers.append("caller_is_claimant")
+                elif caller_session_id in claimants:
+                    blockers.append("caller_was_claimant")
                 if not any(
                     receipt.kind == INDEPENDENT_REVIEW_APPROVAL
                     and receipt.author_session_id == caller_session_id
