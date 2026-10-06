@@ -4,6 +4,7 @@ sources: [claude, qwen, codex, droid]
 surfaces: [spawn, persona]
 provider: inherit
 timeout: 0
+spawnable_agents: ["*"]
 
 prompts:
   persona: |
