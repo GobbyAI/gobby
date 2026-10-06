@@ -78,7 +78,7 @@ def test_session_change_diff_runtime_error_returns_empty_diff_with_error(
     workspace = SessionWorkspace(
         working_dir=str(tmp_path),
         base_ref="HEAD",
-        isolation="none",
+        checkout_mode="none",
     )
     monkeypatch.setattr(
         changes_routes,

@@ -814,7 +814,7 @@ class TestCreateDefinition:
                 "provider": "codex",
                 "model": "gpt-5.4",
                 "version": "1.2.0",
-                "isolation": "worktree",
+                "checkout_mode": "worktree",
                 "base_branch": "develop",
                 "timeout": 300.0,
             },
@@ -1628,7 +1628,14 @@ class TestUpdateDefinitionNestedFields:
     # Endpoint credentials, spawn/message authority and the sync-owned sandbox
     # network are not editable through PUT.
     IMMUTABLE_BODY_FIELDS = frozenset(
-        {"api_base", "api_token", "network", "send_message_targets", "spawnable_agents"}
+        {
+            "api_base",
+            "api_token",
+            "execution_mode",
+            "network",
+            "send_message_targets",
+            "spawnable_agents",
+        }
     )
     # Row columns the requests carry that the body does not store.
     ROW_ONLY_FIELDS = frozenset({"tags", "project_id"})

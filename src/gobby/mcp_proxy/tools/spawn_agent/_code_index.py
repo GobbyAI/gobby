@@ -9,14 +9,14 @@ _PLANNING_CODE_INDEX_AGENTS = frozenset({"planner", "plan-adversary", "plan-enha
 
 def code_index_preflight_mode(
     *,
-    isolation: str,
+    checkout_mode: str,
     agent_name: str | None,
     initial_variables: dict[str, Any] | None,
     task_category: str | None,
 ) -> str | None:
     if _requires_planning_code_index(agent_name, initial_variables):
         return "required"
-    if isolation in {"worktree", "clone"} and task_category != "docs":
+    if checkout_mode in {"worktree", "clone"} and task_category != "docs":
         return "best_effort"
     return None
 

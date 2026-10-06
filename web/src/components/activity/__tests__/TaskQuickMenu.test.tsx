@@ -29,7 +29,7 @@ function makeTask(overrides: Partial<GobbyTask> = {}): GobbyTask {
     stages: [],
     allow_automation: null,
     yolo: null,
-    isolation: null,
+    checkout_mode: null,
   } satisfies GobbyTask;
   return { ...base, ...overrides };
 }
@@ -96,7 +96,7 @@ describe("TaskQuickMenu — build_state drives build controls (#14770 / D3)", ()
   });
 
   it("does not treat planning scaffolding as a started build (#12010/#13909)", () => {
-    // The exact regression: stages + assigned_agent + isolation present, but
+    // The exact regression: stages + assigned_agent + checkout_mode present, but
     // the build was never started. The old hasBuildEvidence heuristic showed
     // 'Resume Build' here; build_state must show 'Build'.
     renderMenu(
@@ -104,7 +104,7 @@ describe("TaskQuickMenu — build_state drives build controls (#14770 / D3)", ()
         build_state: "never_started",
         assigned_agent: "backend-developer",
         additional_skills: ["tech-writer"],
-        isolation: "worktree",
+        checkout_mode: "worktree",
         dispatch_failure_count: 3,
         current_stage: {
           name: "development",

@@ -761,7 +761,7 @@ async def create_isolation(
         return None
 
     base_commit_sha = resolve_branch_sha(str(target_branch))
-    if action.isolation == "worktree":
+    if action.checkout_mode == "worktree":
         return set_artifacts_atomic(
             db=db,
             task_id=action.task_id,
@@ -769,7 +769,7 @@ async def create_isolation(
             worktree_id=str(uuid.uuid4()),
             base_commit_sha=base_commit_sha,
         )
-    if action.isolation == "clone":
+    if action.checkout_mode == "clone":
         return set_artifacts_atomic(
             db=db,
             task_id=action.task_id,

@@ -268,7 +268,7 @@ fn frame_digest(terminal: &Terminal<TestBackend>) -> String {
 
 /// herdr help label for a gclient action: herdr's workspace/agent nouns are
 /// gclient's terminal/attention nouns (UPSTREAM.md keymap provenance).
-fn herdr_help_label(name: &str) -> Option<&'static str> {
+fn upstream_help_label(name: &str) -> Option<&'static str> {
     Some(match name {
         "previous_terminal" => "previous workspace",
         "next_terminal" => "next workspace",
@@ -339,7 +339,7 @@ fn keybind_help_groups(chrome: &Chrome) -> Vec<(&'static str, Vec<HelpRow>)> {
                 .iter()
                 .filter(|entry| names.contains(&entry.name))
                 .map(|entry| {
-                    let label = herdr_help_label(entry.name).unwrap_or(entry.description);
+                    let label = upstream_help_label(entry.name).unwrap_or(entry.description);
                     (entry.keys.clone(), Cow::Borrowed(label))
                 })
                 .collect();

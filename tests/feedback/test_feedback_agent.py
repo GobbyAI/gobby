@@ -166,7 +166,7 @@ async def test_named_reviewer_launches_waits_and_reads_submitted_report(
     assert spawn_kwargs["agent_lookup_name"] == FEEDBACK_REVIEWER_AGENT_NAME
     assert spawn_kwargs["parent_session_id"] == "launcher-session-1"
     assert spawn_kwargs["notify_parent_on_completion"] is True
-    assert spawn_kwargs["isolation"] == "none"
+    assert spawn_kwargs["checkout_mode"] == "none"
     assert spawn_kwargs["timeout"] == 900.0
     assert registry.waits == [("agent-run-1", 930.0)]
 

@@ -134,7 +134,7 @@ class CreateAgentDefinitionRequest(BaseModel):
     reasoning_effort: str | None = None
     reasoning_required: bool | None = None
     fallback_agent: str | None = None
-    isolation: str | None = "inherit"
+    checkout_mode: str | None = "inherit"
     base_branch: str = "inherit"
     timeout: float = 0
     prewarm_pre_commit_store: bool = True
@@ -174,7 +174,7 @@ class UpdateAgentDefinitionRequest(BaseModel):
     reasoning_effort: str | None = None
     reasoning_required: bool | None = None
     fallback_agent: str | None = None
-    isolation: str | None = None
+    checkout_mode: str | None = None
     base_branch: str | None = None
     timeout: float | None = None
     prewarm_pre_commit_store: bool | None = None
@@ -437,7 +437,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 reasoning_effort=request.reasoning_effort,
                 reasoning_required=request.reasoning_required,
                 fallback_agent=request.fallback_agent,
-                isolation=request.isolation,
+                checkout_mode=request.checkout_mode,
                 base_branch=request.base_branch,
                 timeout=request.timeout,
                 prewarm_pre_commit_store=request.prewarm_pre_commit_store,
@@ -513,7 +513,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     "reasoning_effort",
                     "reasoning_required",
                     "fallback_agent",
-                    "isolation",
+                    "checkout_mode",
                     "base_branch",
                     "timeout",
                     "prewarm_pre_commit_store",

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from gobby.config.build import Isolation
+from gobby.config.build import CheckoutMode
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.build_profiles import BuildProfileManager, BuildProfileSource
 from gobby.storage.hub.protocol import HubDatabase
@@ -94,7 +94,7 @@ def create_profiles_registry(
         display_label: str,
         description: str,
         skip_stages: list[str] | None = None,
-        isolation: Isolation = "worktree",
+        checkout_mode: CheckoutMode = "worktree",
         unattended: bool = False,
         enabled: bool = True,
         source: BuildProfileSource = "project",
@@ -106,7 +106,7 @@ def create_profiles_registry(
             display_label=display_label,
             description=description,
             skip_stages=skip_stages or [],
-            isolation=isolation,
+            checkout_mode=checkout_mode,
             unattended=unattended,
             enabled=enabled,
             source=source,
@@ -125,7 +125,7 @@ def create_profiles_registry(
                 "display_label": {"type": "string"},
                 "description": {"type": "string"},
                 "skip_stages": {"type": "array", "items": {"type": "string"}},
-                "isolation": {"type": "string", "enum": ["none", "worktree", "clone"]},
+                "checkout_mode": {"type": "string", "enum": ["none", "worktree", "clone"]},
                 "unattended": {"type": "boolean"},
                 "enabled": {"type": "boolean"},
                 "source": {"type": "string", "enum": ["installed", "project"]},

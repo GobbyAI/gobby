@@ -23,11 +23,11 @@ def _options(*, assigned_agent: str | None = None) -> BuildOptions:
     return BuildOptions(
         quick=False,
         skip_stages=["qa"],
-        isolation="none",
+        checkout_mode="none",
         # A request that names an isolation marks it explicit, matching the
         # entry layer; otherwise resolve_build_profile_options overlays the
         # profile default back over the test's value.
-        isolation_explicit=True,
+        checkout_mode_explicit=True,
         no_merge=False,
         pr=None,
         target_branch="main",
@@ -101,7 +101,7 @@ async def test_build_epic_cascades_resolved_dispatch_state_to_subtree(
         *[task_manager.get_task(item.id) for item in descendants],
     ]:
         assert task.allow_automation is True
-        assert task.isolation == "none"
+        assert task.checkout_mode == "none"
         assert task.unattended is False
         assert not any(label.startswith("stage-:") for label in task.labels or [])
 

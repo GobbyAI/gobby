@@ -390,7 +390,7 @@ def _spawn_agent(client: httpx.Client) -> dict[str, Any]:
             "task_id": task_id,
             "agent_name": "default",
             "provider": "claude",
-            "isolation": "none",
+            "checkout_mode": "none",
             "terminal_backend": backend,
             "prompt": f"stack {backend}",
             # No run timeout: the agents must outlive both daemon restarts

@@ -99,7 +99,7 @@ class AgentDefinitionBody(BaseModel):
     def normalize_empty_strings(cls, data: Any) -> Any:
         """Replace empty strings with 'inherit' for Literal fields that don't accept ''."""
         if isinstance(data, dict):
-            defaults = {"isolation": "inherit", "provider": "inherit"}
+            defaults = {"checkout_mode": "inherit", "provider": "inherit"}
             for field, default in defaults.items():
                 if field in data and data[field] == "":
                     data[field] = default
@@ -144,7 +144,7 @@ class AgentDefinitionBody(BaseModel):
     )
     # False skips the sandbox's pre-commit store prewarm for definitions that never commit.
     prewarm_pre_commit_store: StrictBool = True
-    isolation: Literal["none", "worktree", "clone", "inherit"] | None = "inherit"
+    checkout_mode: Literal["none", "worktree", "clone", "inherit"] | None = "inherit"
     base_branch: str = "inherit"
     timeout: float = 0
     # Orchestration
@@ -168,6 +168,8 @@ class AgentDefinitionBody(BaseModel):
         """Reject removed keys so extra=ignore cannot silently drop them."""
         if not isinstance(data, dict):
             return data
+        if "isolation" in data:
+            raise ValueError("top-level isolation is no longer accepted: use checkout_mode")
         replacements = {
             "steps": "step_workflow.steps",
             "step_variables": "step_workflow.variables",

@@ -17,7 +17,7 @@ interface CloneItem {
 }
 
 interface IsolationTargetSelectorProps {
-  isolation: string;
+  checkoutMode: string;
   worktreeId: string | null;
   cloneId: string | null;
   onWorktreeIdChange: (id: string | null) => void;
@@ -25,7 +25,7 @@ interface IsolationTargetSelectorProps {
 }
 
 export function IsolationTargetSelector({
-  isolation,
+  checkoutMode,
   worktreeId,
   cloneId,
   onWorktreeIdChange,
@@ -35,20 +35,20 @@ export function IsolationTargetSelector({
   const [clones, setClones] = useState<CloneItem[]>([]);
 
   useEffect(() => {
-    if (isolation === "worktree") {
+    if (checkoutMode === "worktree") {
       fetch("/api/source-control/worktrees?status=active")
         .then((response) => response.json())
         .then((data) => setWorktrees(data.worktrees || []))
         .catch(() => setWorktrees([]));
-    } else if (isolation === "clone") {
+    } else if (checkoutMode === "clone") {
       fetch("/api/source-control/clones")
         .then((response) => response.json())
         .then((data) => setClones(data.clones || []))
         .catch(() => setClones([]));
     }
-  }, [isolation]);
+  }, [checkoutMode]);
 
-  if (isolation === "worktree" && worktrees.length > 0) {
+  if (checkoutMode === "worktree" && worktrees.length > 0) {
     return (
       <FormField label="Worktree">
         {({ id, describedBy, invalid }) => (
@@ -71,7 +71,7 @@ export function IsolationTargetSelector({
     );
   }
 
-  if (isolation === "clone" && clones.length > 0) {
+  if (checkoutMode === "clone" && clones.length > 0) {
     return (
       <FormField label="Clone">
         {({ id, describedBy, invalid }) => (

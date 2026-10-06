@@ -29,7 +29,7 @@ async def test_invalid_external_grant_rejects_before_allocation() -> None:
     runner = _make_runner()
     with patch(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
-    ) as isolation:
+    ) as checkout_mode:
         result = await spawn_agent_impl(
             prompt="work",
             runner=runner,
@@ -40,7 +40,7 @@ async def test_invalid_external_grant_rejects_before_allocation() -> None:
         )
     assert result["success"] is False
     assert "roots cannot be granted" in result["error"]
-    isolation.assert_not_called()
+    checkout_mode.assert_not_called()
     runner.can_spawn.assert_not_called()
 
 

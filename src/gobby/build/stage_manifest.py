@@ -137,11 +137,15 @@ def _initial_stage_names(
     manifest = list(dict.fromkeys(manifest))
     if opts.pr and "pr" not in manifest:
         _insert_before_merge(manifest, "pr")
-    if opts.isolation in {"worktree", "clone"} and not opts.no_merge and "merge" not in manifest:
+    if (
+        opts.checkout_mode in {"worktree", "clone"}
+        and not opts.no_merge
+        and "merge" not in manifest
+    ):
         manifest.append("merge")
     if opts.no_merge:
         manifest = [stage_name for stage_name in manifest if stage_name != "merge"]
-    if opts.isolation == "none" and not opts.pr and input_kind == "leaf":
+    if opts.checkout_mode == "none" and not opts.pr and input_kind == "leaf":
         manifest = [stage_name for stage_name in manifest if stage_name not in {"pr", "merge"}]
     return manifest
 

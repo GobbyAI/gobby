@@ -330,7 +330,7 @@ def create_spawn_agent_registry(
     @registry.tool(
         name="spawn_agent",
         description=(
-            "Spawn a subagent to execute a task. Supports isolation modes: "
+            "Spawn a subagent to execute a task. Supports checkout modes: "
             "'none' (work in current directory), 'worktree' (create git worktree), "
             "'clone' (create shallow clone). Can use named agent definitions or raw parameters. "
             "Accepts #N, N, UUID, or prefix for parent_session_id."
@@ -342,7 +342,7 @@ def create_spawn_agent_registry(
         task_id: str | None = None,
         allow_closed_task: bool = False,
         # Isolation
-        isolation: Literal["none", "worktree", "clone"] | None = None,
+        checkout_mode: Literal["none", "worktree", "clone"] | None = None,
         branch_name: str | None = None,
         base_branch: str | None = None,
         clone_id: str | None = None,
@@ -377,7 +377,7 @@ def create_spawn_agent_registry(
             task_id: Optional - link to task (supports N, #N, UUID)
             allow_closed_task: Permit spawning against a closed, non-escalated
                 task for read-only review work (no auto-claim occurs)
-            isolation: Isolation mode (none/worktree/clone)
+            checkout_mode: Checkout mode (none/worktree/clone)
             branch_name: Git branch name (auto-generated from task if not provided)
             base_branch: Base branch for worktree/clone
             clone_id: Existing clone ID to reuse
@@ -633,7 +633,7 @@ def create_spawn_agent_registry(
             task_id=task_id,
             task_manager=task_manager,
             allow_closed_task=allow_closed_task,
-            isolation=isolation,
+            checkout_mode=checkout_mode,
             branch_name=branch_name,
             base_branch=base_branch,
             clone_id=clone_id,
@@ -691,7 +691,7 @@ def create_spawn_agent_registry(
         agent: str = "backend-developer",
         worktree_id: str | None = None,
         clone_id: str | None = None,
-        isolation: Literal["none", "worktree", "clone"] | None = None,
+        checkout_mode: Literal["none", "worktree", "clone"] | None = None,
         branch_name: str | None = None,
         base_branch: str | None = None,
         provider: str | None = None,
@@ -711,7 +711,7 @@ def create_spawn_agent_registry(
             agent: Agent definition name (default: "backend-developer")
             worktree_id: Shared worktree for all agents (full UUID or unique id prefix)
             clone_id: Existing clone ID for all agents
-            isolation: Isolation mode (none/worktree/clone)
+            checkout_mode: Checkout mode (none/worktree/clone)
             branch_name: Git branch name for isolation
             base_branch: Base branch for worktree/clone
             provider: AI provider override
@@ -792,7 +792,7 @@ def create_spawn_agent_registry(
                     task_id=task_id,
                     worktree_id=_coalesce_string(suggestion, "worktree_id", worktree_id),
                     clone_id=_coalesce_string(suggestion, "clone_id", clone_id),
-                    isolation=_coalesce_string(suggestion, "isolation", isolation),
+                    checkout_mode=_coalesce_string(suggestion, "checkout_mode", checkout_mode),
                     branch_name=_coalesce_string(suggestion, "branch_name", branch_name),
                     base_branch=_coalesce_string(suggestion, "base_branch", base_branch),
                     provider=_coalesce_string(suggestion, "provider", provider),

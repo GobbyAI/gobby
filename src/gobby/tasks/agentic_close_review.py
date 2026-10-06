@@ -135,18 +135,22 @@ def build_agentic_review_prompt(
         prompt += (
             f"close_receipts={receipts}. "
             "close_receipts are daemon-attested records written by other sessions through "
-            "record_close_receipt. The daemon set each author_session from the recording "
+            "record_close_receipt or land_commit. The daemon set each author_session from the recording "
             "session's own identity, refused the task's claimant and task-close reviewers as "
-            "authors, accepted activation only from the task's creator or delegator "
-            "(author_role), and verified commit_sha as a commit in the task repository. Treat "
+            "authors, accepted activation and landing_approval only from the task's creator or "
+            "delegator (author_role), and verified commit_sha as a commit in the task "
+            "repository. Treat "
             "a receipt as that session's attestation and weigh it with the linked evidence; it "
             "is never an automatic verdict. An independent_review_approval receipt with "
             "verdict LAND is evidence that the independent session approved exactly that "
             "commit, and still requires your own review of the code. An activation receipt is "
             "evidence that the named commit was landed and activated; judge its facts (daemon "
             "PID, health, schema, or a promoted binary's version, sha256, inode, signature) "
-            "against what the criterion requires. A receipt only supports a criterion about "
-            "its own commit when matches_linked_commit is true. "
+            "against what the criterion requires. A landing_approval is the creator's or "
+            "delegator's approval to land that SHA despite the named reasons. A landing receipt "
+            "is the daemon's record that land_commit landed that SHA, with its branch, landed "
+            "tip, mode and activation class. Neither is a verdict. A receipt only supports a "
+            "criterion about its own commit when matches_linked_commit is true. "
         )
     if coordinator_owned_pending and closure_reason not in NO_WORK_CLOSE_REASONS:
         prompt += (

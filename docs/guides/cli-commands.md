@@ -467,8 +467,8 @@ gobby build restart REF [--project PROJECT] [--dry-run] [--force] [--yes] [--no-
 | `--coordinator [current\|SESSION_UUID]` | Wake a coordinator session when build-spawned agents complete. `current` resolves from `GOBBY_SESSION_ID`; with `--project`, use `current` or a full session UUID. |
 | `--skip-stage STAGE` | Skip one lifecycle stage; repeat for multiple stages. |
 | `--stage STAGE:KEY=VALUE` | Override stage settings such as review caps. |
-| `--isolation MODE` | Set build isolation to `none`, `worktree`, or `clone`. Omitted isolation comes from the resolved profile. |
-| `--clone` | Shorthand for `--isolation clone`; conflicts with `--isolation none` and `--isolation worktree`. |
+| `--checkout-mode MODE` | Set build isolation to `none`, `worktree`, or `clone`. Omitted isolation comes from the resolved profile. |
+| `--clone` | Shorthand for `--checkout-mode clone`; conflicts with `--checkout-mode none` and `--checkout-mode worktree`. |
 | `--delivery-mode MODE` | Override `auto` or `pull_request` delivery intent. |
 | `--delivery-target-repo OWNER/REPO` | Override the PR target repository. |
 | `--no-merge` | Skip final promotion; requires worktree or clone isolation. |
@@ -567,7 +567,7 @@ gobby tasks delete TASKS... [OPTIONS]
 | Command | Key options |
 | --- | --- |
 | `tasks create` | `--description`, `--validation-criteria` (required except epics), `--priority`, `--type`, `--depends-on`, `--project` |
-| `tasks update` | `--title`, `--validation-criteria`, `--priority`, `--parent`, `--task-type`, `--isolation` |
+| `tasks update` | `--title`, `--validation-criteria`, `--priority`, `--parent`, `--task-type`, `--checkout-mode` |
 | `tasks close` | `--reason` |
 | `tasks de-escalate` | `--reason`, `--reset-validation` |
 | `tasks delete` | `--cascade`, `--unlink`, `--yes` |

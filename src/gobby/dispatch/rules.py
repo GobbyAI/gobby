@@ -19,6 +19,7 @@ from gobby.dispatch._rule_actions import (
 from gobby.dispatch._rule_merge import _has_workspace_merge_source, _workspace_merge_action
 from gobby.dispatch._rule_state import (
     _agent_dispatchable,
+    _checkout_mode,
     _children,
     _current_stage,
     _default_agent,
@@ -30,7 +31,6 @@ from gobby.dispatch._rule_state import (
     _is_closed,
     _is_epic,
     _is_leaf,
-    _isolation,
     _matching_current_stage,
     _previous_stage_done,
     _registry_entry,
@@ -139,12 +139,12 @@ def development_isolation_rule(task: object, context: object) -> Action | None:
     if is_blocked_by_deps(task):
         return None
 
-    isolation = _isolation(task)
-    if isolation == "none":
+    checkout_mode = _checkout_mode(task)
+    if checkout_mode == "none":
         return StartStageAction(task_id=_task_id(task), stage_name=_stage_name(stage))
-    if isolation not in {"worktree", "clone"}:
+    if checkout_mode not in {"worktree", "clone"}:
         return EscalateAction(
-            task_id=_task_id(task), reason=f"development_isolation_invalid:{isolation}"
+            task_id=_task_id(task), reason=f"development_checkout_mode_invalid:{checkout_mode}"
         )
 
     return StartStageAction(task_id=_task_id(task), stage_name=_stage_name(stage))

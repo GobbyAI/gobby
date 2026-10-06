@@ -62,17 +62,17 @@ def _register_isolated_agent(
     *,
     project: Project,
     isolated_path: Path,
-    isolation: str,
+    checkout_mode: str,
 ) -> str:
     sessions = SessionManager(db)
     parent = sessions.register(
-        external_id=f"parent-{isolation}",
+        external_id=f"parent-{checkout_mode}",
         machine_id="21000000-0000-4000-8000-000000000001",
         source="test",
         project_id=project.id,
     )
     child = sessions.register(
-        external_id=f"child-{isolation}",
+        external_id=f"child-{checkout_mode}",
         machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=project.id,
@@ -86,7 +86,7 @@ def _register_isolated_agent(
         prompt="work in isolation",
     )
 
-    if isolation == "worktree":
+    if checkout_mode == "worktree":
         worktree = LocalWorktreeManager(db).create(
             project_id=project.id,
             branch_name="task-worktree",
@@ -152,6 +152,8 @@ def test_agent_and_operator_plan_validation_match_with_project_flag(
     from gobby.runtime_grants import GrantBundle, sign_grant
     from gobby.runtime_grants.launch import write_grant_file
     from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
+    from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
+    from tests.fixtures.gdaemon_binary import select_test_gdaemon
     from tests.runtime_grants.support import GOLDEN_SECRET
 
     fixture = authorization_fixture
@@ -279,6 +281,11 @@ Validate the same plan through both principals.
     gobby_home.mkdir()
     (gobby_home / "machine_id").write_text(str(fixture.machine_id), encoding="utf-8")
     base_env["GOBBY_HOME"] = str(gobby_home)
+    checkout_gdaemon = select_test_gdaemon(
+        Path(__file__).resolve().parents[2], base_env, native_bin_name("gdaemon")
+    )
+    if checkout_gdaemon is not None:
+        base_env[NATIVE_BIN_DIR_ENV] = str(checkout_gdaemon.parent)
 
     operator = subprocess.run(
         command,
@@ -312,16 +319,16 @@ Validate the same plan through both principals.
     assert "permission denied" not in (agent.stdout + agent.stderr).lower()
 
 
-@pytest.mark.parametrize("isolation", ["worktree", "clone"])
+@pytest.mark.parametrize("checkout_mode", ["worktree", "clone"])
 @pytest.mark.asyncio
 async def test_isolated_agent_init_preserves_primary_checkout(
     temp_db: HubDatabase,
     tmp_path: Path,
-    isolation: str,
+    checkout_mode: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     canonical_path = tmp_path / "canonical"
-    isolated_path = tmp_path / isolation
+    isolated_path = tmp_path / checkout_mode
     canonical_path.mkdir()
     isolated_path.mkdir()
     project = _seed_canonical_checkout(temp_db, canonical_path, name="shared-project")
@@ -330,7 +337,7 @@ async def test_isolated_agent_init_preserves_primary_checkout(
         temp_db,
         project=project,
         isolated_path=isolated_path,
-        isolation=isolation,
+        checkout_mode=checkout_mode,
     )
 
     monkeypatch.setenv("GOBBY_SESSION_ID", child_session_id)
@@ -340,17 +347,17 @@ async def test_isolated_agent_init_preserves_primary_checkout(
     _assert_canonical_checkout(temp_db, project.id, canonical_path)
 
 
-@pytest.mark.parametrize("isolation", ["worktree", "clone"])
+@pytest.mark.parametrize("checkout_mode", ["worktree", "clone"])
 @pytest.mark.parametrize("variant", ["exact", "trailing-separator", "symlink"])
 def test_hook_project_sync_preserves_primary_checkout_before_session_resolution(
     temp_db: HubDatabase,
     tmp_path: Path,
-    isolation: str,
+    checkout_mode: str,
     variant: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     canonical_path = tmp_path / "canonical"
-    isolated_path = tmp_path / isolation
+    isolated_path = tmp_path / checkout_mode
     canonical_path.mkdir()
     isolated_path.mkdir()
     project = _seed_canonical_checkout(temp_db, canonical_path, name="shared-project")
@@ -359,7 +366,7 @@ def test_hook_project_sync_preserves_primary_checkout_before_session_resolution(
         temp_db,
         project=project,
         isolated_path=isolated_path,
-        isolation=isolation,
+        checkout_mode=checkout_mode,
     )
     project_path = _isolation_path_variant(tmp_path, isolated_path, variant)
     monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
@@ -375,16 +382,16 @@ def test_hook_project_sync_preserves_primary_checkout_before_session_resolution(
     _assert_canonical_checkout(temp_db, project.id, canonical_path)
 
 
-@pytest.mark.parametrize("isolation", ["worktree", "clone"])
+@pytest.mark.parametrize("checkout_mode", ["worktree", "clone"])
 @pytest.mark.parametrize("variant", ["exact", "trailing-separator", "symlink"])
 def test_registered_overlay_cannot_replace_primary_checkout(
     temp_db: HubDatabase,
     tmp_path: Path,
-    isolation: str,
+    checkout_mode: str,
     variant: str,
 ) -> None:
     canonical_path = tmp_path / "canonical"
-    isolated_path = tmp_path / isolation
+    isolated_path = tmp_path / checkout_mode
     canonical_path.mkdir()
     isolated_path.mkdir()
     project = _seed_canonical_checkout(temp_db, canonical_path, name="shared-project")
@@ -392,7 +399,7 @@ def test_registered_overlay_cannot_replace_primary_checkout(
         temp_db,
         project=project,
         isolated_path=isolated_path,
-        isolation=isolation,
+        checkout_mode=checkout_mode,
     )
     overlay_path = _isolation_path_variant(tmp_path, isolated_path, variant)
 

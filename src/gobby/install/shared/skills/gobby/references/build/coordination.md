@@ -8,7 +8,7 @@ For an explicitly assigned build-coordination run, keep product work and
 coordination work separate: a target tree and a claimed coordination epic
 outside it. Use an existing coordination epic when resuming. Load task and
 source-control procedures. Inspect target dependencies/manifests and preserve
-the requested agent/provider, stage route, isolation, scope, and criteria.
+the requested agent/provider, stage route, checkout_mode, scope, and criteria.
 Implementation leaves normally use `development`; change stages only through
 supported lifecycle operations and applicable authorization.
 

@@ -52,7 +52,7 @@ def test_restart_manifest_replacement_rolls_back_when_reinitialize_fails(
             temp_db,
             task,
             [task],
-            BuildOptions(isolation="worktree"),
+            BuildOptions(checkout_mode="worktree"),
         )
 
     rows = task_manager.stage_states.list_for_task(task.id)

@@ -75,7 +75,7 @@ TASK_REVIEW_OPERATIONS = (
     "reject_review",
     "submit_for_review",
 )
-LANDING_OPERATIONS = ("set_landing_freeze",)
+LANDING_OPERATIONS = ("set_landing_freeze", "land_commit")
 READ_ONLY_TASK_TOOLS = (
     "check_dependency_cycles",
     "explain_dispatch",

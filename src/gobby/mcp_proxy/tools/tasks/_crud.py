@@ -559,7 +559,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         start_date: str | None = None,
         due_date: str | None = None,
         allow_automation: bool | None = None,
-        isolation: str | None = None,
+        checkout_mode: str | None = None,
         assigned_agent: str | None = None,
         implementation_domain: str | None = None,
         additional_skills: list[str] | None = None,
@@ -648,10 +648,10 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             kwargs["due_date"] = due_date
         if allow_automation is not None:
             kwargs["allow_automation"] = allow_automation
-        if isolation is not None:
+        if checkout_mode is not None:
             try:
-                kwargs["isolation"] = validate_task_isolation_artifacts(
-                    ctx.task_manager, resolved_id, isolation
+                kwargs["checkout_mode"] = validate_task_isolation_artifacts(
+                    ctx.task_manager, resolved_id, checkout_mode
                 )
             except ValueError as e:
                 return {"error": str(e)}
@@ -753,10 +753,10 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "description": "Enable or disable dispatcher automation for this task.",
                     "default": None,
                 },
-                "isolation": {
+                "checkout_mode": {
                     "type": "string",
                     "enum": ["none", "worktree", "clone"],
-                    "description": "Automation isolation mode for future dispatch.",
+                    "description": "Automation checkout mode for future dispatch.",
                     "default": None,
                 },
                 "assigned_agent": {

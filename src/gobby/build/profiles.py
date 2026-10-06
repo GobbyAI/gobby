@@ -33,8 +33,10 @@ def resolve_build_profile_options(
         if has_request_skip_stages
         else list(profile.skip_stages),
         skip_stages_explicit=has_request_skip_stages,
-        isolation=profile.isolation if not opts.isolation_explicit else opts.isolation,
-        isolation_explicit=opts.isolation_explicit,
+        checkout_mode=profile.checkout_mode
+        if not opts.checkout_mode_explicit
+        else opts.checkout_mode,
+        checkout_mode_explicit=opts.checkout_mode_explicit,
         unattended=profile.unattended if not opts.unattended_explicit else opts.unattended,
         unattended_explicit=opts.unattended_explicit,
         no_merge=opts.no_merge,

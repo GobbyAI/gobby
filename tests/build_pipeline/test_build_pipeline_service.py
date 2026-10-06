@@ -25,7 +25,7 @@ from tests.fixtures.isolated_checkout import (
 
 if TYPE_CHECKING:
     from gobby.build.service import BuildOptions, BuildResult
-    from gobby.config.build import Isolation, StageCapOverride
+    from gobby.config.build import CheckoutMode, StageCapOverride
 
 pytestmark = pytest.mark.unit
 
@@ -56,8 +56,8 @@ class _OptionOverrides(TypedDict, total=False):
     quick: bool
     skip_stages: list[str]
     skip_stages_explicit: bool
-    isolation: Isolation
-    isolation_explicit: bool
+    checkout_mode: CheckoutMode
+    checkout_mode_explicit: bool
     unattended: bool
     unattended_explicit: bool
     no_merge: bool
@@ -85,11 +85,11 @@ def _options(**overrides: Unpack[_OptionOverrides]) -> BuildOptions:
     values: _OptionOverrides = {
         "quick": False,
         "skip_stages": [],
-        "isolation": "worktree",
+        "checkout_mode": "worktree",
         # Mirror the entry-layer contract: a build request that names an
         # isolation also marks it explicit, so resolve_build_profile_options
         # does not overlay the profile default back over the test's value.
-        "isolation_explicit": True,
+        "checkout_mode_explicit": True,
         "no_merge": False,
         "pr": None,
         "target_branch": None,
@@ -215,7 +215,7 @@ async def test_build_coordinator_summary_survives_and_root_attaches_before_tick(
 
     await _build(
         f"#{task.seq_num}",
-        _options(isolation="none", coordinator_session_ref=f"#{coordinator.seq_num}"),
+        _options(checkout_mode="none", coordinator_session_ref=f"#{coordinator.seq_num}"),
         db=temp_db,
         project_id=project_id,
     )
@@ -226,7 +226,7 @@ async def test_build_coordinator_summary_survives_and_root_attaches_before_tick(
         "build_project_id": project_id,
         "coordinator_project_id": project_id,
         "coordinator_session_id": coordinator.id,
-        "isolation": "none",
+        "checkout_mode": "none",
         "quick": False,
     }
     assert run is not None
@@ -268,7 +268,7 @@ async def test_build_rejects_coordinator_from_another_project(
     with pytest.raises(ValueError, match="must belong to the build project"):
         await _build(
             f"#{task.seq_num}",
-            _options(isolation="none", coordinator_session_ref=coordinator.id),
+            _options(checkout_mode="none", coordinator_session_ref=coordinator.id),
             db=temp_db,
             project_id=project_id,
         )
@@ -306,7 +306,7 @@ async def test_build_accepts_cross_project_uuid_coordinator_with_explicit_projec
     await _build(
         f"#{task.seq_num}",
         _options(
-            isolation="none",
+            checkout_mode="none",
             coordinator_session_ref=coordinator.id,
             project_explicit=True,
         ),
@@ -364,7 +364,7 @@ async def test_build_rejects_retired_test_arch_stage(
     with pytest.raises(ValueError, match="unknown stage: test_arch"):
         await _build(
             f"#{task.seq_num}",
-            _options(isolation="none", stage_caps=[StageCapOverride(stage_name="test_arch")]),
+            _options(checkout_mode="none", stage_caps=[StageCapOverride(stage_name="test_arch")]),
             db=temp_db,
             project_id=project_id,
         )
@@ -383,7 +383,7 @@ async def test_plan_file_basename_resolves_from_project_plans_dir(
 
     result = await _build(
         plan_file.name,
-        _options(quick=True, isolation="none"),
+        _options(quick=True, checkout_mode="none"),
         db=temp_db,
         project_id=project_id,
     )
@@ -415,7 +415,7 @@ async def test_plan_file_relative_path_resolves_from_request_cwd(
 
     result = await _build(
         plan_file.name,
-        _options(quick=True, isolation="none", cwd=target_repo, project_explicit=True),
+        _options(quick=True, checkout_mode="none", cwd=target_repo, project_explicit=True),
         db=temp_db,
         project_id=project_id,
     )
@@ -436,7 +436,7 @@ async def test_plan_file_quick_initializes_planning_pulse(
 
     result = await _build(
         str(plan_file),
-        _options(quick=True, isolation="none"),
+        _options(quick=True, checkout_mode="none"),
         db=temp_db,
         project_id=project_id,
     )
@@ -457,7 +457,7 @@ async def test_approved_plan_file_seed_starts_at_expansion(
 
     result = await _build(
         str(plan_file),
-        _options(quick=True, isolation="none", planning_seed_state="approved"),
+        _options(quick=True, checkout_mode="none", planning_seed_state="approved"),
         db=temp_db,
         project_id=project_id,
     )
@@ -480,7 +480,7 @@ async def test_needs_review_plan_file_seed_sets_planning_review_round_count(
         str(plan_file),
         _options(
             quick=True,
-            isolation="none",
+            checkout_mode="none",
             planning_seed_state="needs_review",
             completed_plan_review_rounds=2,
         ),
@@ -512,7 +512,7 @@ async def test_build_accepts_isolation_for_single_leaf_and_merges_by_default(
 
     result = await _build(
         f"#{leaf.seq_num}",
-        _options(isolation="worktree"),
+        _options(checkout_mode="worktree"),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -549,7 +549,7 @@ async def test_build_rejects_isolation_change_on_epic_with_existing_artifact(
     ):
         await _build(
             f"#{epic.seq_num}",
-            _options(isolation="clone"),
+            _options(checkout_mode="clone"),
             db=temp_db,
             project_id=sample_project["id"],
         )
@@ -591,7 +591,7 @@ async def test_build_validates_clones_dir_when_clone_isolation(
     with pytest.raises(ValueError, match="clones_dir.*writable"):
         await _build(
             str(plan_file),
-            _options(isolation="clone", clones_dir=clones_dir),
+            _options(checkout_mode="clone", clones_dir=clones_dir),
             db=temp_db,
             project_id=project_id,
         )
@@ -613,7 +613,7 @@ async def test_build_rejects_no_merge_without_isolation(
     with pytest.raises(ValueError, match="--no-merge requires"):
         await _build(
             f"#{leaf.seq_num}",
-            _options(isolation="none", no_merge=True),
+            _options(checkout_mode="none", no_merge=True),
             db=temp_db,
             project_id=sample_project["id"],
         )
@@ -630,7 +630,7 @@ async def test_build_plan_file_creates_planning_epic_artifacts_manifest_and_kick
 
     result = await _build(
         str(plan_file),
-        _options(skip_stages=["pr"], isolation="worktree", target_branch="main"),
+        _options(skip_stages=["pr"], checkout_mode="worktree", target_branch="main"),
         db=temp_db,
         project_id=project_id,
     )
@@ -647,7 +647,7 @@ async def test_build_plan_file_creates_planning_epic_artifacts_manifest_and_kick
     assert task.task_type == "epic"
     assert task.category == "planning"
     assert task.allow_automation is True
-    assert task.isolation == "worktree"
+    assert task.checkout_mode == "worktree"
     assert not any(label.startswith("stage-:") for label in task.labels or [])
     assert artifacts.plan_file_path == str(plan_file)
     assert artifacts.target_branch == "main"
@@ -674,13 +674,13 @@ async def test_build_plan_file_rerun_resumes_open_root_for_same_plan_file(
 
     first = await _build(
         str(plan_file),
-        _options(isolation="none"),
+        _options(checkout_mode="none"),
         db=temp_db,
         project_id=project_id,
     )
     second = await _build(
         str(plan_file),
-        _options(isolation="none"),
+        _options(checkout_mode="none"),
         db=temp_db,
         project_id=project_id,
     )
@@ -757,7 +757,7 @@ async def test_build_plan_file_uses_registered_open_root_task(
                 uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:run-registered-root-{len(spawn_calls)}")
             ),
         )
-        return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
+        return {"success": True, "run_id": run.id, "checkout_mode": kwargs["checkout_mode"]}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -779,7 +779,7 @@ async def test_build_plan_file_uses_registered_open_root_task(
 
     result = await build(
         str(plan_file),
-        _options(isolation="none"),
+        _options(checkout_mode="none"),
         db=temp_db,
         project_id=project_id,
         services=SimpleNamespace(
@@ -841,7 +841,7 @@ async def test_build_plan_file_planning_spawn_forces_main_context(
             task_id=str(kwargs["task_id"]),
             run_id="6999b22f-d065-5323-8c1a-040ef2794312",
         )
-        return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
+        return {"success": True, "run_id": run.id, "checkout_mode": kwargs["checkout_mode"]}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -849,7 +849,7 @@ async def test_build_plan_file_planning_spawn_forces_main_context(
     )
     result = await build(
         str(plan_file),
-        _options(isolation="worktree", target_branch="main"),
+        _options(checkout_mode="worktree", target_branch="main"),
         db=temp_db,
         project_id=project_id,
         services=SimpleNamespace(
@@ -861,11 +861,11 @@ async def test_build_plan_file_planning_spawn_forces_main_context(
     )
     task = task_manager.get_task(result.task_id)
 
-    assert task.isolation == "worktree"
+    assert task.checkout_mode == "worktree"
     assert spawn_kwargs["agent_lookup_name"] == "planner"
     # Pre-development stages run in the main context; workspaces are
     # provisioned lazily at development-forward spawns (#19573).
-    assert spawn_kwargs["isolation"] == "none"
+    assert spawn_kwargs["checkout_mode"] == "none"
     assert spawn_kwargs["worktree_id"] is None
     assert spawn_kwargs["clone_id"] is None
 
@@ -921,7 +921,7 @@ async def test_build_plan_file_plan_adversary_spawn_forces_main_context(
             task_id=str(kwargs["task_id"]),
             run_id="535030c1-bb91-53a6-bc54-822cbc481271",
         )
-        return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
+        return {"success": True, "run_id": run.id, "checkout_mode": kwargs["checkout_mode"]}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -931,7 +931,7 @@ async def test_build_plan_file_plan_adversary_spawn_forces_main_context(
         str(plan_file),
         _options(
             quick=True,
-            isolation="worktree",
+            checkout_mode="worktree",
             target_branch="main",
             planning_seed_state="needs_review",
         ),
@@ -946,11 +946,11 @@ async def test_build_plan_file_plan_adversary_spawn_forces_main_context(
     )
     task = task_manager.get_task(result.task_id)
 
-    assert task.isolation == "worktree"
+    assert task.checkout_mode == "worktree"
     assert spawn_kwargs["agent_lookup_name"] == "plan-adversary"
     # Pre-development stages run in the main context; workspaces are
     # provisioned lazily at development-forward spawns (#19573).
-    assert spawn_kwargs["isolation"] == "none"
+    assert spawn_kwargs["checkout_mode"] == "none"
     assert spawn_kwargs["worktree_id"] is None
     assert spawn_kwargs["clone_id"] is None
 
@@ -985,7 +985,7 @@ async def test_build_plan_file_dry_run_rolls_back_preview_side_effects(
         str(plan_file),
         _options(
             dry_run=True,
-            isolation="none",
+            checkout_mode="none",
             stage_caps=[StageCapOverride("planning", max_work_attempts=4)],
         ),
         db=temp_db,
@@ -995,7 +995,7 @@ async def test_build_plan_file_dry_run_rolls_back_preview_side_effects(
         str(plan_file),
         _options(
             dry_run=True,
-            isolation="none",
+            checkout_mode="none",
             stage_caps=[StageCapOverride("planning", max_work_attempts=4)],
         ),
         db=temp_db,
@@ -1097,7 +1097,7 @@ async def test_plan_file_bare_stage_overrides_do_not_select_manifest(
         str(plan_file),
         _options(
             dry_run=True,
-            isolation="none",
+            checkout_mode="none",
             skip_stages=["pr"],
             skip_stages_explicit=True,
             stage_caps=[
@@ -1142,7 +1142,7 @@ async def test_plan_file_relative_hidden_path_resolves_from_request_cwd(
 
     result = await _build(
         ".gobby/plans/gcore-rust-foundation.md",
-        _options(dry_run=True, isolation="none", cwd=repo_path),
+        _options(dry_run=True, checkout_mode="none", cwd=repo_path),
         db=temp_db,
         project_id=project_id,
     )
@@ -1235,7 +1235,7 @@ async def test_build_passes_active_agent_cap_separately_from_stage_work_cap(
     result = await _build(
         str(plan_file),
         _options(
-            isolation="none",
+            checkout_mode="none",
             max_active_agents=4,
             stage_caps=[StageCapOverride("planning", max_work_attempts=6)],
         ),
@@ -1276,7 +1276,7 @@ async def test_build_launch_resumes_paused_dispatcher_before_tick(
 
     result = await _build(
         str(task.seq_num),
-        _options(isolation="none", quick=True),
+        _options(checkout_mode="none", quick=True),
         db=temp_db,
         project_id=project_id,
     )
@@ -1302,7 +1302,7 @@ async def test_max_retries_zero_sets_one_attempt_per_resolved_stage(
 
     result = await _build(
         str(plan_file),
-        _options(isolation="none", max_retries=0),
+        _options(checkout_mode="none", max_retries=0),
         db=temp_db,
         project_id=project_id,
     )
@@ -1327,7 +1327,7 @@ async def test_stage_override_wins_over_max_retries_default(
     result = await _build(
         str(plan_file),
         _options(
-            isolation="none",
+            checkout_mode="none",
             max_retries=0,
             stage_caps=[StageCapOverride("planning", max_work_attempts=4)],
         ),
@@ -1408,7 +1408,7 @@ async def test_build_leaf_uses_category_primary_stage_and_sets_agent(
 
     result = await _build(
         f"#{leaf.seq_num}",
-        _options(isolation="none", assigned_agent="backend-developer"),
+        _options(checkout_mode="none", assigned_agent="backend-developer"),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -1419,7 +1419,7 @@ async def test_build_leaf_uses_category_primary_stage_and_sets_agent(
     assert result.initial_lifecycle == "development"
     assert [row.stage_name for row in rows] == ["development"]
     assert updated.allow_automation is True
-    assert updated.isolation == "none"
+    assert updated.checkout_mode == "none"
     assert updated.assigned_agent == "backend-developer"
 
 
@@ -1438,18 +1438,18 @@ async def test_build_existing_leaf_omitted_backend_defaults_to_worktree(
         task_type="task",
         validation_criteria="Test task completion is observable.",
     )
-    task_manager.update_task(leaf.id, isolation="none")
+    task_manager.update_task(leaf.id, checkout_mode="none")
     task_manager.initialize_task_manifest(leaf.id, stage_names=["development"])
 
     await _build(
         f"#{leaf.seq_num}",
-        _options(quick=True, isolation="worktree", isolation_explicit=False),
+        _options(quick=True, checkout_mode="worktree", checkout_mode_explicit=False),
         db=temp_db,
         project_id=sample_project["id"],
     )
 
     updated = task_manager.get_task(leaf.id)
-    assert updated.isolation == "worktree"
+    assert updated.checkout_mode == "worktree"
     assert [row.stage_name for row in task_manager.stage_states.list_for_task(leaf.id)] == [
         "development"
     ]
@@ -1470,18 +1470,18 @@ async def test_build_existing_leaf_explicit_isolation_overrides_task_isolation(
         task_type="task",
         validation_criteria="Test task completion is observable.",
     )
-    task_manager.update_task(leaf.id, isolation="none")
+    task_manager.update_task(leaf.id, checkout_mode="none")
     task_manager.initialize_task_manifest(leaf.id, stage_names=["development", "merge"])
 
     await _build(
         f"#{leaf.seq_num}",
-        _options(isolation="worktree", isolation_explicit=True),
+        _options(checkout_mode="worktree", checkout_mode_explicit=True),
         db=temp_db,
         project_id=sample_project["id"],
     )
 
     updated = task_manager.get_task(leaf.id)
-    assert updated.isolation == "worktree"
+    assert updated.checkout_mode == "worktree"
 
 
 @pytest.mark.asyncio
@@ -1501,7 +1501,7 @@ async def test_build_rerun_same_manifest_preserves_active_stage(
     )
     await _build(
         f"#{leaf.seq_num}",
-        _options(isolation="none"),
+        _options(checkout_mode="none"),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -1515,7 +1515,7 @@ async def test_build_rerun_same_manifest_preserves_active_stage(
 
     await _build(
         f"#{leaf.seq_num}",
-        _options(isolation="none"),
+        _options(checkout_mode="none"),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -1544,7 +1544,7 @@ async def test_build_rejects_skip_stage_on_existing_lifecycle(
     )
     await _build(
         f"#{leaf.seq_num}",
-        _options(isolation="none"),
+        _options(checkout_mode="none"),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -1553,7 +1553,7 @@ async def test_build_rejects_skip_stage_on_existing_lifecycle(
     with pytest.raises(ValueError, match="--skip-stage can only shape a new lifecycle"):
         await _build(
             f"#{leaf.seq_num}",
-            _options(isolation="none", skip_stages=["merge"]),
+            _options(checkout_mode="none", skip_stages=["merge"]),
             db=temp_db,
             project_id=sample_project["id"],
         )
@@ -1581,7 +1581,7 @@ async def test_build_existing_lifecycle_stage_caps_update_rows(
     await _build(
         f"#{leaf.seq_num}",
         _options(
-            isolation="none",
+            checkout_mode="none",
             stage_caps=[StageCapOverride("development", max_review_rounds=4)],
         ),
         db=temp_db,
@@ -1631,7 +1631,7 @@ async def test_build_task_ref_dry_run_rolls_back_existing_lifecycle_mutations(
         f"#{task.seq_num}",
         _options(
             dry_run=True,
-            isolation="none",
+            checkout_mode="none",
             assigned_agent="backend-developer",
             stage_caps=[StageCapOverride("development", max_work_attempts=7)],
             max_retries=1,
@@ -1693,7 +1693,7 @@ async def test_build_epic_dry_run_resume_skips_subtree_cascade_locking(
 
     result = await _build(
         f"#{epic.seq_num}",
-        _options(dry_run=True, isolation="worktree", target_branch="main"),
+        _options(dry_run=True, checkout_mode="worktree", target_branch="main"),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -1734,7 +1734,7 @@ async def test_build_epic_cascade_initializes_child_from_resolved_scope(
     await _build(
         f"#{epic.seq_num}",
         _options(
-            isolation="none",
+            checkout_mode="none",
             stage_caps=[StageCapOverride("development", max_review_rounds=8)],
         ),
         db=temp_db,
@@ -1783,7 +1783,7 @@ async def test_build_epic_defers_integration_worktrees_to_spawn(
 
     await _build(
         f"#{root.seq_num}",
-        _options(isolation="worktree", target_branch="main"),
+        _options(checkout_mode="worktree", target_branch="main"),
         db=temp_db,
         project_id=project_id,
     )
@@ -1836,7 +1836,7 @@ async def test_epic_no_merge_skips_only_root_promotion(
 
     await _build(
         f"#{root.seq_num}",
-        _options(isolation="worktree", no_merge=True, target_branch="main"),
+        _options(checkout_mode="worktree", no_merge=True, target_branch="main"),
         db=temp_db,
         project_id=project_id,
     )
@@ -1877,7 +1877,7 @@ async def test_existing_epic_cascade_forces_child_merge_with_legacy_root_manifes
 
     await _build(
         f"#{root.seq_num}",
-        _options(isolation="worktree", target_branch="main"),
+        _options(checkout_mode="worktree", target_branch="main"),
         db=temp_db,
         project_id=project_id,
     )
@@ -1926,7 +1926,7 @@ async def test_build_epic_cascade_preserves_active_child_with_cap_drift(
 
     await _build(
         f"#{root.seq_num}",
-        _options(isolation="worktree", target_branch="main"),
+        _options(checkout_mode="worktree", target_branch="main"),
         db=temp_db,
         project_id=project_id,
     )
@@ -1976,7 +1976,7 @@ async def test_build_epic_cascade_skips_closed_descendants_with_existing_lifecyc
         task_type="task",
         validation_criteria="Test task completion is observable.",
     )
-    task_manager.update_task(closed_child.id, isolation="worktree")
+    task_manager.update_task(closed_child.id, checkout_mode="worktree")
     task_manager.initialize_task_manifest(
         closed_child.id,
         stage_names=["development", "pr", "merge"],
@@ -1987,7 +1987,7 @@ async def test_build_epic_cascade_skips_closed_descendants_with_existing_lifecyc
         f"#{epic.seq_num}",
         _options(
             quick=True,
-            isolation="none",
+            checkout_mode="none",
             stage_caps=[StageCapOverride("development", max_work_attempts=6)],
         ),
         db=temp_db,
@@ -1999,7 +1999,7 @@ async def test_build_epic_cascade_skips_closed_descendants_with_existing_lifecyc
     open_rows = task_manager.stage_states.list_for_task(open_child.id)
 
     assert closed_after.allow_automation is False
-    assert closed_after.isolation == "worktree"
+    assert closed_after.checkout_mode == "worktree"
     assert [row.stage_name for row in closed_rows] == ["development", "pr", "merge"]
     assert [row.stage_name for row in open_rows] == ["development", "pr", "merge"]
     assert open_rows[0].max_work_attempts == 6
@@ -2055,7 +2055,7 @@ async def test_build_epic_cascade_skips_busy_descendant_manifest_initialization(
         f"#{epic.seq_num}",
         _options(
             quick=True,
-            isolation="none",
+            checkout_mode="none",
             stage_caps=[StageCapOverride("development", max_work_attempts=6)],
         ),
         db=temp_db,
@@ -2105,7 +2105,7 @@ async def test_build_leaf_with_services_creates_agent_run_by_completion(
             task_id=leaf.id,
             run_id="1b777bbd-8f4f-515e-8b86-417fb05afba2",
         )
-        return {"success": True, "run_id": run.id, "isolation": "none"}
+        return {"success": True, "run_id": run.id, "checkout_mode": "none"}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -2120,7 +2120,7 @@ async def test_build_leaf_with_services_creates_agent_run_by_completion(
 
     result = await build(
         f"#{leaf.seq_num}",
-        _options(isolation="none", assigned_agent="backend-developer"),
+        _options(checkout_mode="none", assigned_agent="backend-developer"),
         db=temp_db,
         project_id=sample_project["id"],
         services=services,
@@ -2150,7 +2150,7 @@ async def test_build_leaf_rejects_non_automated_category(
     with pytest.raises(ValueError, match="category manual cannot be automated"):
         await _build(
             f"#{leaf.seq_num}",
-            _options(isolation="none"),
+            _options(checkout_mode="none"),
             db=temp_db,
             project_id=sample_project["id"],
         )
@@ -2189,7 +2189,7 @@ async def test_build_task_ref_automates_existing_expansion_output(
 
     result = await _build(
         f"#{parent.seq_num}",
-        _options(isolation="none"),
+        _options(checkout_mode="none"),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -2284,7 +2284,7 @@ async def test_build_task_ref_repairs_legacy_expanded_epic_manifest_without_pr(
 
     result = await _build(
         f"#{parent.seq_num}",
-        _options(isolation="none", skip_stages=["pr"], skip_stages_explicit=True),
+        _options(checkout_mode="none", skip_stages=["pr"], skip_stages_explicit=True),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -2378,7 +2378,7 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
 
     result = await _build(
         f"#{parent.seq_num}",
-        _options(isolation="none", skip_stages=["pr"], skip_stages_explicit=True),
+        _options(checkout_mode="none", skip_stages=["pr"], skip_stages_explicit=True),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -2460,7 +2460,7 @@ async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
 
     result = await _build(
         f"#{parent.seq_num}",
-        _options(isolation="none", skip_stages=["pr"], skip_stages_explicit=True),
+        _options(checkout_mode="none", skip_stages=["pr"], skip_stages_explicit=True),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -2565,7 +2565,7 @@ async def test_build_resume_cascades_skipped_pr_to_descendants(
 
     await _build(
         f"#{parent.seq_num}",
-        _options(isolation="worktree", skip_stages=["pr"], skip_stages_explicit=True),
+        _options(checkout_mode="worktree", skip_stages=["pr"], skip_stages_explicit=True),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -2633,7 +2633,7 @@ async def test_build_resume_development_epic_defers_workspace_provisioning(
 
     result = await _build(
         f"#{parent.seq_num}",
-        _options(isolation="worktree", skip_stages=["pr"], skip_stages_explicit=True),
+        _options(checkout_mode="worktree", skip_stages=["pr"], skip_stages_explicit=True),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -2681,7 +2681,7 @@ async def test_build_task_ref_can_reset_existing_expansion_output(
 
     result = await _build(
         f"#{parent.seq_num}",
-        _options(isolation="none", reset_expansion_output=True),
+        _options(checkout_mode="none", reset_expansion_output=True),
         db=temp_db,
         project_id=sample_project["id"],
     )

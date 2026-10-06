@@ -22,7 +22,7 @@ from gobby.build import (
 )
 from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
 from gobby.build.profiles import BuildProfileError
-from gobby.config.build import Isolation
+from gobby.config.build import CheckoutMode
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.uuid_validation import is_full_uuid
@@ -142,7 +142,7 @@ def _make_build_options(
     quick: bool,
     skip_stage: tuple[str, ...],
     stage_cap: tuple[str, ...],
-    isolation: Isolation | None,
+    checkout_mode: CheckoutMode | None,
     use_clone: bool,
     no_merge: bool,
     pr: str | None,
@@ -160,14 +160,14 @@ def _make_build_options(
     project_explicit: bool = False,
     caller_project_id: str | None = None,
 ) -> BuildOptions:
-    resolved_isolation: Isolation = isolation or ("clone" if use_clone else "worktree")
+    resolved_checkout_mode: CheckoutMode = checkout_mode or ("clone" if use_clone else "worktree")
     return BuildOptions(
         profile=profile or "default",
         quick=quick,
         skip_stages=_parse_skip_stages(skip_stage),
         skip_stages_explicit=bool(skip_stage),
-        isolation=resolved_isolation,
-        isolation_explicit=isolation is not None or use_clone,
+        checkout_mode=resolved_checkout_mode,
+        checkout_mode_explicit=checkout_mode is not None or use_clone,
         no_merge=no_merge,
         pr=pr,
         stage_caps=_parse_stage_cap(stage_cap),
@@ -208,9 +208,9 @@ def _make_build_options(
     help="Stage cap/settings override, e.g. development:max_review_rounds=4.",
 )
 @click.option(
-    "--isolation",
+    "--checkout-mode",
     type=click.Choice(["none", "worktree", "clone"]),
-    help="Build workspace isolation mode.",
+    help="Build checkout mode.",
 )
 @click.option("--clone", "use_clone", is_flag=True, default=False, help="Use clone workspaces.")
 @click.option("--no-merge", is_flag=True, default=False, help="Leave isolated work unmerged.")
@@ -290,7 +290,7 @@ def build_command(
     quick: bool,
     skip_stage: tuple[str, ...],
     stage_cap: tuple[str, ...],
-    isolation: Isolation | None,
+    checkout_mode: CheckoutMode | None,
     use_clone: bool,
     no_merge: bool,
     pr: str | None,
@@ -332,15 +332,15 @@ def build_command(
         return
     if input_ref != "restart" and target_ref is not None:
         raise click.ClickException(f"Unexpected build argument: {target_ref}")
-    if use_clone and isolation in {"none", "worktree"}:
-        raise click.ClickException(f"--clone conflicts with --isolation {isolation}")
+    if use_clone and checkout_mode in {"none", "worktree"}:
+        raise click.ClickException(f"--clone conflicts with --checkout-mode {checkout_mode}")
     project_context = _resolve_build_project_context(project_ref, Path.cwd())
     opts = _make_build_options(
         profile=profile,
         quick=quick,
         skip_stage=skip_stage,
         stage_cap=stage_cap,
-        isolation=isolation,
+        checkout_mode=checkout_mode,
         use_clone=use_clone,
         no_merge=no_merge,
         pr=pr,

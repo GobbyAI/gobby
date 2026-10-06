@@ -34,7 +34,7 @@ export interface AgentDefInfo {
     fallback_agent: string | null;
     sources?: string[] | null;
     version?: string | null;
-    isolation: string | null;
+    checkout_mode: string | null;
     base_branch: string;
     timeout: number;
     workflows: {
@@ -97,7 +97,7 @@ export const DEFAULT_AGENT_FORM: AgentFormData = {
   reasoning_effort: "auto",
   reasoning_required: false,
   fallback_agent: "",
-  isolation: "inherit",
+  checkout_mode: "inherit",
   base_branch: "inherit",
   timeout: 0,
   pipeline: "",
@@ -250,7 +250,7 @@ export function agentToDraft(agent: AgentDefInfo): AgentDraft {
       reasoning_effort: definition.reasoning_effort ?? "auto",
       reasoning_required: Boolean(definition.reasoning_required),
       fallback_agent: definition.fallback_agent ?? "",
-      isolation: definition.isolation ?? "inherit",
+      checkout_mode: definition.checkout_mode ?? "inherit",
       base_branch: definition.base_branch,
       timeout: definition.timeout,
       pipeline:

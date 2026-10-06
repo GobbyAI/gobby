@@ -308,7 +308,7 @@ creating a separate worktree. That is expected: file edits still happen in the
 current checkout, while delivery tooling uses the recorded artifacts and target
 branch when it merges the parent workspace.
 
-For spawned agents, `gobby-agents.spawn_agent` accepts `isolation`, `worktree_id`,
+For spawned agents, `gobby-agents.spawn_agent` accepts `checkout_mode`, `worktree_id`,
 `clone_id`, `branch_name`, `base_branch`, `provider`, `task_id`, and
 `project_path`. Pass an existing `worktree_id` when a prepared worktree should be
 reused; otherwise automation can create one from the requested branch settings.

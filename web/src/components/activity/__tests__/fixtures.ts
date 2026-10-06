@@ -64,7 +64,7 @@ export function makeTask(
 
     allow_automation: null,
     yolo: null,
-    isolation: null,
+    checkout_mode: null,
     ...overrides,
   };
 }

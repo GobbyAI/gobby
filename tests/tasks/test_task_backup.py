@@ -214,7 +214,7 @@ class TestTaskBackupManager:
             task.id,
             allow_automation=True,
             unattended=True,
-            isolation="clone",
+            checkout_mode="clone",
         )
 
         backup_manager.backup()
@@ -224,7 +224,7 @@ class TestTaskBackupManager:
         imported = task_manager.get_task(task.id)
         assert imported.allow_automation is True
         assert imported.unattended is True
-        assert imported.isolation == "clone"
+        assert imported.checkout_mode == "clone"
         assert imported.assigned_agent == "backend-developer"
         assert imported.implementation_domain == "backend"
         assert imported.additional_skills == ["test-driven-development"]

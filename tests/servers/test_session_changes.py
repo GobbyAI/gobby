@@ -84,7 +84,7 @@ async def test_compute_session_changes_detects_new_edited_deleted(tmp_path: Path
     (repo / ".gobby").mkdir()
     (repo / ".gobby" / "state.json").write_text("{}", encoding="utf-8")
 
-    workspace = SessionWorkspace(working_dir=str(repo), base_ref="HEAD", isolation="none")
+    workspace = SessionWorkspace(working_dir=str(repo), base_ref="HEAD", checkout_mode="none")
     changes = await compute_session_changes(workspace)
 
     by_path = {c.path: c.status for c in changes}
@@ -104,10 +104,10 @@ async def test_compute_changes_against_base_commit_includes_committed_work(tmp_p
     _git(repo, "commit", "-qm", "session work")
 
     # Diffing against HEAD would show nothing; against the base commit it appears.
-    head_ws = SessionWorkspace(working_dir=str(repo), base_ref="HEAD", isolation="worktree")
+    head_ws = SessionWorkspace(working_dir=str(repo), base_ref="HEAD", checkout_mode="worktree")
     assert await compute_session_changes(head_ws) == []
 
-    base_ws = SessionWorkspace(working_dir=str(repo), base_ref=base_sha, isolation="worktree")
+    base_ws = SessionWorkspace(working_dir=str(repo), base_ref=base_sha, checkout_mode="worktree")
     base_changes = await compute_session_changes(base_ws)
     assert {c.path for c in base_changes} == {"edited.txt"}
 
@@ -118,7 +118,7 @@ async def test_compute_session_file_diff_for_edited_and_untracked(tmp_path: Path
     _init_repo(repo)
     (repo / "edited.txt").write_text("line1\nCHANGED\n", encoding="utf-8")
     (repo / "fresh.txt").write_text("brand new\n", encoding="utf-8")
-    workspace = SessionWorkspace(working_dir=str(repo), base_ref="HEAD", isolation="none")
+    workspace = SessionWorkspace(working_dir=str(repo), base_ref="HEAD", checkout_mode="none")
 
     edited_diff = await compute_session_file_diff(workspace, "edited.txt")
     assert "edited.txt" in edited_diff
@@ -150,7 +150,7 @@ def test_new_file_diff_rejects_oversized_file_before_reading(
 async def test_compute_session_file_diff_rejects_path_traversal(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
-    workspace = SessionWorkspace(working_dir=str(repo), base_ref="HEAD", isolation="none")
+    workspace = SessionWorkspace(working_dir=str(repo), base_ref="HEAD", checkout_mode="none")
 
     with pytest.raises(ValueError, match="unsafe or not a safe relative path"):
         await compute_session_file_diff(workspace, "../outside.txt")
@@ -204,7 +204,7 @@ def test_resolve_session_workspace_prefers_isolated_worktree(
         session_manager=session_manager, task_manager=task_manager, session_id="sess-1"
     )
     assert ws == SessionWorkspace(
-        working_dir=str(worktree), base_ref="abc123", isolation="worktree"
+        working_dir=str(worktree), base_ref="abc123", checkout_mode="worktree"
     )
 
 
@@ -240,7 +240,7 @@ def test_resolve_session_workspace_prefers_isolated_worktree_without_checkout(
     )
 
     assert ws == SessionWorkspace(
-        working_dir=str(worktree), base_ref="abc123", isolation="worktree"
+        working_dir=str(worktree), base_ref="abc123", checkout_mode="worktree"
     )
 
 
@@ -283,7 +283,7 @@ def test_resolve_session_workspace_falls_back_to_project_repo(
     ws = resolve_session_workspace(
         session_manager=session_manager, task_manager=task_manager, session_id="sess-1"
     )
-    assert ws == SessionWorkspace(working_dir=str(repo), base_ref="HEAD", isolation="none")
+    assert ws == SessionWorkspace(working_dir=str(repo), base_ref="HEAD", checkout_mode="none")
 
 
 def test_resolve_session_workspace_recovers_from_project_shape_error(
@@ -319,7 +319,7 @@ def test_resolve_session_workspace_recovers_from_project_shape_error(
         session_manager=session_manager, task_manager=task_manager, session_id="sess-1"
     )
     assert ws == SessionWorkspace(
-        working_dir=str(worktree), base_ref="abc123", isolation="worktree"
+        working_dir=str(worktree), base_ref="abc123", checkout_mode="worktree"
     )
 
 
@@ -342,7 +342,7 @@ def test_resolve_session_workspace_uses_project_repo_after_task_list_shape_error
     ws = resolve_session_workspace(
         session_manager=session_manager, task_manager=task_manager, session_id="sess-1"
     )
-    assert ws == SessionWorkspace(working_dir=str(repo), base_ref="HEAD", isolation="none")
+    assert ws == SessionWorkspace(working_dir=str(repo), base_ref="HEAD", checkout_mode="none")
 
 
 def test_resolve_session_workspace_uses_project_repo_after_artifact_shape_error(
@@ -364,7 +364,7 @@ def test_resolve_session_workspace_uses_project_repo_after_artifact_shape_error(
     ws = resolve_session_workspace(
         session_manager=session_manager, task_manager=task_manager, session_id="sess-1"
     )
-    assert ws == SessionWorkspace(working_dir=str(repo), base_ref="HEAD", isolation="none")
+    assert ws == SessionWorkspace(working_dir=str(repo), base_ref="HEAD", checkout_mode="none")
 
 
 def test_resolve_session_workspace_propagates_unexpected_project_error(
@@ -442,7 +442,9 @@ def test_resolve_session_workspace_uses_machine_checkout(  # tdd-red window
         session_manager=session_manager, task_manager=None, session_id="sess-1"
     )
 
-    assert ws == SessionWorkspace(working_dir=isolated.root_path, base_ref="HEAD", isolation="none")
+    assert ws == SessionWorkspace(
+        working_dir=isolated.root_path, base_ref="HEAD", checkout_mode="none"
+    )
 
 
 def test_resolve_session_workspace_fails_closed_without_checkout(  # tdd-red window

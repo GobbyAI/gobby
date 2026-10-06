@@ -47,7 +47,7 @@ function agentDefinition(overrides: Record<string, unknown> = {}) {
       reasoning_effort: null,
       reasoning_required: false,
       fallback_agent: null,
-      isolation: "worktree",
+      checkout_mode: "worktree",
       base_branch: "inherit",
       timeout: 0,
       workflows: {

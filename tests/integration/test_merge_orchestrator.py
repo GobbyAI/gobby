@@ -262,7 +262,7 @@ async def test_orchestrator_yaml_loads(tmp_path: Path) -> None:
     # dispatches workers; doesn't edit code itself).
     assert data["provider"] == "codex"
     assert data["model"] == "gpt-5.6-sol"
-    assert data["isolation"] == "none"
+    assert data["checkout_mode"] == "none"
 
     plan_step = next(step for step in data["step_workflow"]["steps"] if step["name"] == "plan")
     assert "gobby-agents:list_agent_runs" in plan_step["allowed_mcp_tools"]

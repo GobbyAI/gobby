@@ -9,7 +9,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import table_column_names
 from gobby.storage.tasks._models import (
     UNSET,
-    Isolation,
+    CheckoutMode,
     MaybeUnset,
     ParentTaskClosedError,
     validate_category,
@@ -102,7 +102,7 @@ def update_task(
     allow_automation: MaybeUnset[bool] = UNSET,
     unattended: MaybeUnset[bool] = UNSET,
     yolo: MaybeUnset[bool] = UNSET,
-    isolation: MaybeUnset[Isolation | str | None] = UNSET,
+    checkout_mode: MaybeUnset[CheckoutMode | str | None] = UNSET,
     assigned_agent: MaybeUnset[str | None] = UNSET,
     implementation_domain: MaybeUnset[str | None] = UNSET,
     additional_skills: MaybeUnset[list[str] | None] = UNSET,
@@ -194,11 +194,11 @@ def update_task(
     if unattended is not UNSET:
         updates.append("unattended = %s")
         params.append(bool(unattended))
-    if isolation is not UNSET:
-        if isolation is None:
-            raise ValueError("isolation cannot be None")
-        updates.append("isolation = %s")
-        params.append(Isolation(cast(str, isolation)).value)
+    if checkout_mode is not UNSET:
+        if checkout_mode is None:
+            raise ValueError("checkout_mode cannot be None")
+        updates.append("checkout_mode = %s")
+        params.append(CheckoutMode(cast(str, checkout_mode)).value)
     if assigned_agent is not UNSET:
         updates.append("assigned_agent = %s")
         params.append(assigned_agent)
@@ -326,7 +326,7 @@ def update_task_metadata(
     allow_automation: MaybeUnset[bool] = UNSET,
     unattended: MaybeUnset[bool] = UNSET,
     yolo: MaybeUnset[bool] = UNSET,
-    isolation: MaybeUnset[Isolation | str | None] = UNSET,
+    checkout_mode: MaybeUnset[CheckoutMode | str | None] = UNSET,
     assigned_agent: MaybeUnset[str | None] = UNSET,
     implementation_domain: MaybeUnset[str | None] = UNSET,
     additional_skills: MaybeUnset[list[str] | None] = UNSET,
@@ -402,7 +402,7 @@ def update_task_metadata(
         allow_automation=allow_automation,
         unattended=unattended,
         yolo=yolo,
-        isolation=isolation,
+        checkout_mode=checkout_mode,
         assigned_agent=assigned_agent,
         implementation_domain=implementation_domain,
         additional_skills=additional_skills,

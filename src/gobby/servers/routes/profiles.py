@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from gobby.config.build import Isolation
+from gobby.config.build import CheckoutMode
 from gobby.storage.build_profiles import BuildProfileError, BuildProfileManager
 
 if TYPE_CHECKING:
@@ -24,7 +24,7 @@ class ProfileCreateRequest(BaseModel):
     display_label: str
     description: str
     skip_stages: list[str] = Field(default_factory=list)
-    isolation: Isolation = "worktree"
+    checkout_mode: CheckoutMode = "worktree"
     unattended: bool = False
     enabled: bool = True
     source: ProfileSource = "project"
@@ -38,7 +38,7 @@ class ProfileUpdateRequest(BaseModel):
     display_label: str | None = None
     description: str | None = None
     skip_stages: list[str] | None = None
-    isolation: Isolation | None = None
+    checkout_mode: CheckoutMode | None = None
     unattended: bool | None = None
     enabled: bool | None = None
     tags: list[str] | None = None
@@ -94,7 +94,7 @@ def create_profiles_router(server: HTTPServer) -> APIRouter:
                 display_label=request_data.display_label,
                 description=request_data.description,
                 skip_stages=request_data.skip_stages,
-                isolation=request_data.isolation,
+                checkout_mode=request_data.checkout_mode,
                 unattended=request_data.unattended,
                 enabled=request_data.enabled,
                 source=request_data.source,

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.dispatch.actions import SpawnAgentAction
-from gobby.dispatch.spawn import _effective_spawn_isolation
+from gobby.dispatch.spawn import _effective_spawn_checkout_mode
 from gobby.dispatch.spawn_artifacts import (
     _clone_artifact_is_stale,
     _worktree_artifact_is_stale,
@@ -21,10 +21,10 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize("agent_slug", ["planner", "plan-adversary"])
-@pytest.mark.parametrize("task_isolation", ["worktree", "clone"])
+@pytest.mark.parametrize("task_checkout_mode", ["worktree", "clone"])
 def test_task_bound_planning_agents_force_none_isolation(
     agent_slug: str,
-    task_isolation: str,
+    task_checkout_mode: str,
 ) -> None:
     action = SpawnAgentAction(
         task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
@@ -33,22 +33,22 @@ def test_task_bound_planning_agents_force_none_isolation(
         prompt="go",
         initial_variables={"stage_name": "planning"},
     )
-    task = SimpleNamespace(isolation=task_isolation)
-    agent_body = SimpleNamespace(isolation="none")
+    task = SimpleNamespace(checkout_mode=task_checkout_mode)
+    agent_body = SimpleNamespace(checkout_mode="none")
 
-    assert _effective_spawn_isolation(task=task, action=action, agent_body=agent_body) == "none"
+    assert _effective_spawn_checkout_mode(task=task, action=action, agent_body=agent_body) == "none"
 
 
 @pytest.mark.parametrize(
     "stage_name",
     ["ideation", "research", "architecture", "prd", "planning", "expansion"],
 )
-@pytest.mark.parametrize("task_isolation", ["worktree", "clone"])
-@pytest.mark.parametrize("agent_isolation", ["worktree", "clone"])
+@pytest.mark.parametrize("task_checkout_mode", ["worktree", "clone"])
+@pytest.mark.parametrize("agent_checkout_mode", ["worktree", "clone"])
 def test_pre_development_stages_force_none_isolation(
     stage_name: str,
-    task_isolation: str,
-    agent_isolation: str,
+    task_checkout_mode: str,
+    agent_checkout_mode: str,
 ) -> None:
     action = SpawnAgentAction(
         task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
@@ -57,10 +57,10 @@ def test_pre_development_stages_force_none_isolation(
         prompt="go",
         initial_variables={"stage_name": stage_name},
     )
-    task = SimpleNamespace(isolation=task_isolation)
-    agent_body = SimpleNamespace(isolation=agent_isolation)
+    task = SimpleNamespace(checkout_mode=task_checkout_mode)
+    agent_body = SimpleNamespace(checkout_mode=agent_checkout_mode)
 
-    assert _effective_spawn_isolation(task=task, action=action, agent_body=agent_body) == "none"
+    assert _effective_spawn_checkout_mode(task=task, action=action, agent_body=agent_body) == "none"
 
 
 def test_taskless_plan_adversary_forces_none_isolation() -> None:
@@ -71,10 +71,10 @@ def test_taskless_plan_adversary_forces_none_isolation() -> None:
         prompt="go",
         initial_variables={"stage_name": "planning"},
     )
-    task = SimpleNamespace(isolation="worktree")
-    agent_body = SimpleNamespace(isolation="clone")
+    task = SimpleNamespace(checkout_mode="worktree")
+    agent_body = SimpleNamespace(checkout_mode="clone")
 
-    assert _effective_spawn_isolation(task=task, action=action, agent_body=agent_body) == "none"
+    assert _effective_spawn_checkout_mode(task=task, action=action, agent_body=agent_body) == "none"
 
 
 def test_taskless_plan_enhancer_forces_none_isolation() -> None:
@@ -85,10 +85,10 @@ def test_taskless_plan_enhancer_forces_none_isolation() -> None:
         prompt="go",
         initial_variables={"stage_name": "planning"},
     )
-    task = SimpleNamespace(isolation="worktree")
-    agent_body = SimpleNamespace(isolation="clone")
+    task = SimpleNamespace(checkout_mode="worktree")
+    agent_body = SimpleNamespace(checkout_mode="clone")
 
-    assert _effective_spawn_isolation(task=task, action=action, agent_body=agent_body) == "none"
+    assert _effective_spawn_checkout_mode(task=task, action=action, agent_body=agent_body) == "none"
 
 
 class RaisingInitialVariables(dict[str, object]):
@@ -104,10 +104,10 @@ def test_main_context_isolation_bypasses_stage_lookup() -> None:
         prompt="go",
         initial_variables=RaisingInitialVariables({"stage_name": "development"}),
     )
-    task = SimpleNamespace(isolation="clone")
-    agent_body = SimpleNamespace(isolation="worktree")
+    task = SimpleNamespace(checkout_mode="clone")
+    agent_body = SimpleNamespace(checkout_mode="worktree")
 
-    assert _effective_spawn_isolation(task=task, action=action, agent_body=agent_body) == "none"
+    assert _effective_spawn_checkout_mode(task=task, action=action, agent_body=agent_body) == "none"
 
 
 def test_missing_worktree_record_is_retained_when_target_cleanup_fails(tmp_path: Path) -> None:

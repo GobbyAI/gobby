@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -67,3 +68,51 @@ async def test_set_landing_freeze_records_setter_and_clearer(
         clearer.id,
     )
     assert cleared["freeze"]["set_by_session_id"] == clearer.id
+
+
+@pytest.mark.asyncio
+async def test_land_commit_requires_session_and_forwards_resolved_task(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    caller = SessionManager(temp_db).register(
+        external_id="landing-reviewer",
+        machine_id=isolated.machine_id,
+        source="codex",
+        project_id=isolated.project.id,
+    )
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        isolated.project.id,
+        "Candidate",
+        created_in_session_id=caller.id,
+        validation_criteria="Forward the resolved task and candidate SHA to the landing service.",
+    )
+    registry = create_task_ops_registry(tasks)
+    sha = "a" * 40
+    response = {"landed": True, "mode": "ff", "landed_tip": sha}
+    service = AsyncMock(return_value=response)
+    with patch("gobby.mcp_proxy.tools.tasks._landing.land_candidate", service):
+        unsessioned = await registry.call("land_commit", {"task_id": task.id, "commit_sha": sha})
+        service.assert_not_awaited()
+        with session_context_for_test(caller.id):
+            missing = await registry.call("land_commit", {"task_id": "#999999", "commit_sha": sha})
+            service.assert_not_awaited()
+            landed = await registry.call(
+                "land_commit",
+                {
+                    "task_id": f"#{task.seq_num}",
+                    "commit_sha": sha,
+                },
+            )
+    assert unsessioned == {"landed": False, "error": "session_required"}
+    assert missing["landed"] is False
+    assert landed == response
+    service.assert_awaited_once_with(
+        temp_db,
+        task=tasks.get_task(task.id),
+        caller_session_id=caller.id,
+        commit_sha=sha,
+    )

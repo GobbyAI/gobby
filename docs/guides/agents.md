@@ -90,7 +90,7 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `reasoning_required` | Whether unsupported reasoning should fail instead of warn |
 | `fallback_agent` | Optional fallback definition for provider rotation |
 | `api_base` / `api_token` | Optional custom model endpoint configuration |
-| `isolation` | `none`, `worktree`, `clone`, or `inherit` |
+| `checkout_mode` | `none`, `worktree`, `clone`, or `inherit` |
 | `prewarm_pre_commit_store` | Whether a sandboxed spawn copies the pre-commit hook store into its run cache (default `true`); set `false` for definitions that never commit |
 | `base_branch` | Branch used for new isolation, or `inherit` |
 | `timeout` | Runtime limit in seconds; `0` means unlimited |
@@ -149,7 +149,7 @@ name: docs-worker
 description: Documentation implementation worker
 surfaces: [spawn, persona]
 provider: inherit
-isolation: inherit
+checkout_mode: inherit
 timeout: 1200
 
 prompts:
@@ -446,7 +446,7 @@ rejected. A successful checkpoint returns commit/path evidence and releases the
 temporary worktree claim while preserving the task claim. It does not validate
 or close the task. If a release error includes a commit, inspect it before retrying.
 
-## Isolation
+## Checkout Modes
 
 Isolation is a runtime setting for spawned runs:
 
@@ -455,10 +455,10 @@ Isolation is a runtime setting for spawned runs:
 | `none` | Work in the caller's current repository context |
 | `worktree` | Create or reuse a git worktree with separate branch state |
 | `clone` | Use a separate clone for stronger filesystem isolation |
-| `inherit` | Definition-only; resolves to `none` unless the spawn passes `isolation` |
+| `inherit` | Definition-only; resolves to `none` unless the spawn passes `checkout_mode` |
 
 Docs leaf work may run inside a parent epic's existing isolation context. In
-that case the agent definition can keep `isolation: inherit`, and dispatch
+that case the agent definition can keep `checkout_mode: inherit`, and dispatch
 provides the concrete worktree or clone context.
 
 ## Recommended Patterns

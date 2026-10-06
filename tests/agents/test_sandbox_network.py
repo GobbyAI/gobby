@@ -93,7 +93,7 @@ async def test_unreadable_seed_refuses_trusted_spawn_only(
         patch(f"{_IMPL}.authorize_write_grant", return_value=None),
         patch(f"{_IMPL}.get_project_context", return_value={"id": "p", "project_path": "/repo"}),
         patch(f"{_IMPL}.get_machine_id", return_value="21000000-0000-4000-8000-000000000001"),
-        patch(f"{_IMPL}.get_isolation_handler") as isolation,
+        patch(f"{_IMPL}.get_isolation_handler") as checkout_mode,
         patch(f"{_IMPL}.prepare_terminal_spawn") as prepare,
         patch(f"{_IMPL}.execute_spawn") as execute,
     ):
@@ -109,7 +109,7 @@ async def test_unreadable_seed_refuses_trusted_spawn_only(
         assert result["success"] is False
         assert result["error_code"] == "sandbox_required"
         runner.can_spawn.assert_not_called()
-        isolation.assert_not_called()
+        checkout_mode.assert_not_called()
         prepare.assert_not_called()
         execute.assert_not_called()
 

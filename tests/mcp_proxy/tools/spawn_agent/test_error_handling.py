@@ -44,7 +44,7 @@ class TestSpawnAgentImplErrorBranches:
 
         assert (
             code_index_preflight_mode(
-                isolation="worktree",
+                checkout_mode="worktree",
                 agent_name="backend-developer",
                 initial_variables=None,
                 task_category="code",
@@ -57,7 +57,7 @@ class TestSpawnAgentImplErrorBranches:
 
         assert (
             code_index_preflight_mode(
-                isolation="none",
+                checkout_mode="none",
                 agent_name="planner",
                 initial_variables={"stage_name": "planning"},
                 task_category="planning",
@@ -441,7 +441,7 @@ class TestSpawnAgentImplErrorBranches:
                 runner=runner,
                 provider="claude",
                 parent_session_id="sess-1",
-                isolation="worktree",
+                checkout_mode="worktree",
                 cleanup_isolation_on_failure=True,
                 git_manager=MagicMock(),
                 worktree_storage=MagicMock(),
@@ -1062,7 +1062,7 @@ test"""
                 parent_session_id="sess-1",
                 agent_lookup_name=agent_name,
                 provider="codex",
-                isolation="none",
+                checkout_mode="none",
                 initial_variables={"stage_name": "planning", "stage_state": stage_state},
             )
             await _drain_spawn_background_tasks()
@@ -1124,7 +1124,7 @@ test"""
                 parent_session_id="sess-1",
                 agent_lookup_name="planner",
                 provider="codex",
-                isolation="none",
+                checkout_mode="none",
                 initial_variables={"stage_name": "planning", "stage_state": "in_progress"},
             )
             await _drain_spawn_background_tasks()

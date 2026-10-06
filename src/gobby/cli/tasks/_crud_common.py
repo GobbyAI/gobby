@@ -7,7 +7,7 @@ import click
 from gobby.storage.tasks import TASK_TYPE_CHOICES
 
 TASK_TYPE_CHOICE = click.Choice(TASK_TYPE_CHOICES)
-ISOLATION_CHOICE = click.Choice(["none", "worktree", "clone"])
+CHECKOUT_MODE_CHOICE = click.Choice(["none", "worktree", "clone"])
 
 
 def current_stage_display(state: dict[str, Any]) -> str:

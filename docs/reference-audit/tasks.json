@@ -1104,6 +1104,18 @@
       "audience": "agent; calling session required"
     },
     {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "land_commit",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_landing.py",
+        "symbol": "land_commit"
+      },
+      "verification": ["registered-inventory", "source-contract"],
+      "audience": "agent; calling independent reviewer required"
+    },
+    {
       "surface": "cli",
       "command": "gobby tasks compact analyze",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",

@@ -5,7 +5,7 @@ from functools import partial
 import click
 
 from gobby.cli.tasks._crud_common import (
-    ISOLATION_CHOICE,
+    CHECKOUT_MODE_CHOICE,
     TASK_TYPE_CHOICE,
 )
 from gobby.cli.tasks._crud_common import (
@@ -233,9 +233,9 @@ def show_task(task_id: str) -> None:
     help="New task type",
 )
 @click.option(
-    "--isolation",
-    type=ISOLATION_CHOICE,
-    help="New automation isolation mode",
+    "--checkout-mode",
+    type=CHECKOUT_MODE_CHOICE,
+    help="New automation checkout mode",
 )
 @click.option(
     "--affected-file",
@@ -256,7 +256,7 @@ def update_task(
     priority: int | None,
     parent_task_id: str | None,
     task_type: str | None,
-    isolation: str | None,
+    checkout_mode: str | None,
     affected_files: tuple[str, ...],
     clear_affected_files: bool,
 ) -> None:
@@ -276,7 +276,7 @@ def update_task(
         priority,
         parent_task_id,
         task_type,
-        isolation,
+        checkout_mode,
         replacement_files,
     )
 
