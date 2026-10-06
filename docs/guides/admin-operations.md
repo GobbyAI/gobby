@@ -99,6 +99,13 @@ routes still require a valid grant. The credential is never logged or copied to
 clients, and managed sandboxes are denied read and write access. If startup cannot
 create it, the daemon warns with its path and continues without this recovery aid.
 
+Temporary credential files live in the owner-only `.break_glass-staging` directory
+beside the bootstrap. Managed sandboxes cannot read or write that directory.
+
+If an existing credential is empty or partial, startup reports its path and a
+repair hint. Remove the damaged file at that path and restart the daemon to
+recreate it. Valid existing credentials remain unchanged.
+
 ### Rotate The Local Token
 
 1. Check the current state with `gobby auth token`.

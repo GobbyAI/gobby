@@ -17,7 +17,7 @@ daemon access and never participate in secret-envelope encryption.
 | Canonical HTTP credential | `Authorization: Bearer <token>` |
 | Local alias | `X-Gobby-Local-Token: <token>` |
 | Browser credential | `gobby_session` cookie created by `/api/auth/login` |
-| Break-glass credential | `break_glass` beside the daemon's bound bootstrap (default `~/.gobby/break_glass`), created once with mode `0600`; never logged or copied, read/write denied to managed sandboxes |
+| Break-glass credential | `break_glass` beside the daemon's bound bootstrap (default `~/.gobby/break_glass`), created once with mode `0600`; never logged or copied; the credential and its owner-only `.break_glass-staging` directory are read/write denied to managed sandboxes |
 
 `X-Gobby-Break-Glass` admits an observed loopback HTTP peer holding the owner-only
 break-glass credential before hub credential lookup. Grant routes still require
