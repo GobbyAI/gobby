@@ -11,6 +11,7 @@ from typing import TypedDict
 
 import psycopg
 
+from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.project_checkouts import require_root
@@ -267,8 +268,8 @@ async def _record_and_notify(
         receipt, created = record_close_receipt(
             db, task=task, author_session_id=caller, kind=LANDING, commit_sha=sha, facts=facts
         )
-    except psycopg.Error:
-        # The ref already moved; a later call records the receipt from the reflog.
+    except (psycopg.Error, IndeterminateCommitError):
+        # The ref already moved; a later call replays the receipt or records it from the reflog.
         return {**_facts_result(sha, facts), "receipt_pending": True}
     result = _receipt_result(receipt)
     if created:
@@ -290,7 +291,7 @@ async def _record_and_notify(
         for recipient in sorted(recipients):
             try:
                 manager.create_message(caller, recipient, content)
-            except psycopg.Error:
+            except (psycopg.Error, IndeterminateCommitError):
                 unreached.append(recipient)
         if unreached:
             result["notification_pending"] = unreached

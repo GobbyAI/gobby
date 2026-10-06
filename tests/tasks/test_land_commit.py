@@ -19,6 +19,7 @@ import psycopg
 import pytest
 
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
+from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
@@ -908,7 +909,7 @@ async def test_merge_landing_replay_preserves_retest_obligation(case: LandingCas
     case.direct({"docs/moved-2.md": "moved\n"})
     pending_task = case.reviewed(pending_lane, "Receipt pending")
     with patch.object(
-        land_commit, "record_close_receipt", side_effect=psycopg.OperationalError("hub down")
+        land_commit, "record_close_receipt", side_effect=IndeterminateCommitError("unobserved")
     ):
         pending = await case.land(pending_task, pending_lane)
     retried = await case.land(pending_task, pending_lane)
