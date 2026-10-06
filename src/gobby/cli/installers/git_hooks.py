@@ -75,16 +75,20 @@ def _landing_guard_hook() -> str:
 # coverage manifests. POSIX sh: no interpreter start per ref update.
 GOBBY_REF_LINES=$(cat)
 gobby_refuse() {
-    echo "Gobby refused the update of $GOBBY_PROTECTED_REF: $1." >&2
+    echo "Gobby refused the update of ${GOBBY_PROTECTED_REF:-the protected branch}: $1." >&2
     echo "Code lands through gobby-tasks-ops:land_commit (operator override: GOBBY_LAND_COMMIT=1)." >&2
     exit 1
 }
 GOBBY_PROTECTED_REF=
 if [ "$1" = "prepared" ] && [ "${GOBBY_LAND_COMMIT:-}" != "1" ]; then
-    GOBBY_COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir) || exit 1
-    GOBBY_MAIN_HEAD=$(cat "$GOBBY_COMMON_DIR/HEAD" 2>/dev/null)
-    case $GOBBY_MAIN_HEAD in
-    "ref: "*) GOBBY_PROTECTED_REF=${GOBBY_MAIN_HEAD#ref: } ;;
+    GOBBY_COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir) ||
+        gobby_refuse "cannot find the main checkout"
+    # git reads HEAD in every ref format (a reftable HEAD file is a stub). Status 1 is
+    # a detached HEAD, which protects nothing; any other failure refuses.
+    GOBBY_PROTECTED_REF=$(git --git-dir="$GOBBY_COMMON_DIR" symbolic-ref -q HEAD)
+    case $? in
+    0|1) ;;
+    *) gobby_refuse "cannot resolve the main checkout's HEAD" ;;
     esac
 fi
 if [ -n "$GOBBY_PROTECTED_REF" ]; then

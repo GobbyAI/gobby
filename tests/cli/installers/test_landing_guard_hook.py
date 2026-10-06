@@ -54,7 +54,7 @@ REFUSED_PATHS = {
 class _Repo:
     """A temporary repository whose reference-transaction hook is the guard."""
 
-    def __init__(self, tmp_path: Path) -> None:
+    def __init__(self, tmp_path: Path, *init_args: str) -> None:
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         git = shutil.which("git")
@@ -72,7 +72,7 @@ class _Repo:
             "GIT_COMMITTER_EMAIL": "test@gobby.local",
         }
         self.root = tmp_path / "repo"
-        self.ok(tmp_path, "init", "-q", "-b", "main", str(self.root))
+        self.ok(tmp_path, "init", "-q", "-b", "main", *init_args, str(self.root))
         hook = self.root / ".git" / "hooks" / "reference-transaction"
         hook.write_text(f"#!/bin/sh\n{HOOK_TEMPLATES['reference-transaction']}", encoding="utf-8")
         hook.chmod(0o755)
@@ -99,8 +99,8 @@ class _Repo:
         self.ok(cwd, "reset", "-q", "--", *paths)
 
 
-def _baseline(tmp_path: Path) -> _Repo:
-    repo = _Repo(tmp_path)
+def _baseline(tmp_path: Path, *init_args: str) -> _Repo:
+    repo = _Repo(tmp_path, *init_args)
     # The first commit creates the protected ref, which the guard allows even for code.
     created = repo.commit(
         repo.root, {"src/gobby/base.py": "x = 1\n", BASE_PLAN: "plan\n", BASE_MANIFEST: "m\n"}
@@ -195,6 +195,32 @@ def test_guard_classifies_unusual_paths_fail_closed(tmp_path: Path) -> None:
     _assert_refused(agents, "src/gobby/AGENTS.md")
     assert spaced.returncode == 0, spaced.stderr
     assert accented.returncode == 0, accented.stderr
+
+
+def test_guard_resolves_reftable_head_and_fails_closed(tmp_path: Path) -> None:
+    (tmp_path / "reftable").mkdir()
+    (tmp_path / "corrupt").mkdir()
+    reftable = _baseline(tmp_path / "reftable", "--ref-format=reftable")
+    corrupt = _baseline(tmp_path / "corrupt")
+    reftable_lane = tmp_path / "reftable" / "lane"
+    corrupt_lane = tmp_path / "corrupt" / "lane"
+    reftable.ok(reftable.root, "worktree", "add", "-q", "-b", "lane", str(reftable_lane))
+    corrupt.ok(corrupt.root, "worktree", "add", "-q", "-b", "lane", str(corrupt_lane))
+    reftable_commit = reftable.commit(reftable_lane, {"src/gobby/a.py": "a = 1\n"})
+    main_before = reftable.ok(reftable.root, "rev-parse", "main")
+    # The reftable HEAD file is a stub that names no real branch.
+    head_stub = (reftable.root / ".git" / "HEAD").read_text(encoding="utf-8")
+    update_ref = reftable.git(reftable_lane, "update-ref", "refs/heads/main", "lane")
+    (corrupt.root / ".git" / "HEAD").write_text("garbage\n", encoding="utf-8")
+    lane_commit = corrupt.commit(corrupt_lane, {"tests/test_a.py": "a = 1\n"})
+
+    assert reftable_commit.returncode == 0, reftable_commit.stderr
+    assert head_stub == "ref: refs/heads/.invalid\n"
+    _assert_refused(update_ref, "src/gobby/a.py")
+    assert reftable.ok(reftable.root, "rev-parse", "main") == main_before
+    assert lane_commit.returncode != 0
+    assert "cannot resolve the main checkout's HEAD" in lane_commit.stderr
+    assert LAND_COMMIT_TEXT in lane_commit.stderr
 
 
 async def test_land_commit_passes_installed_guard(
