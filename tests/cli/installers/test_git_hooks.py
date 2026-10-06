@@ -125,6 +125,9 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
         "GIT_AUTHOR_EMAIL": "test@gobby.local",
         "GIT_COMMITTER_NAME": "Test",
         "GIT_COMMITTER_EMAIL": "test@gobby.local",
+        # These commits move the main checkout's branch to exercise pre-commit;
+        # the protected-branch guard has its own tests.
+        "GOBBY_LAND_COMMIT": "1",
     }
     return subprocess.run(
         ["git", "-C", str(repo), *args],

@@ -94,6 +94,7 @@ TRUE_RESTRICTION_RULES = frozenset(
         "block-cross-session-foreign-staged-commit",
         "block-direct-provider-launch",
         "block-docker-policy-edits",
+        "block-landing-override",
         "block-spawned-agent-create-task",
         "block-tools-after-handoff-compact",
         "block-unresolved-scope-shell-write",
