@@ -756,7 +756,7 @@ its flags in the handler of the call that ends the unit of work, so two
 consecutive units run through the loop without a manual reset; 3.5 pins that
 with engine tests.
 
-### 3.1 Coordination seats: assistant, program-director, lane-manager [category: config] (depends: 2.2)
+### 3.1 Coordination seats: assistant, orchestrator, lane-manager [category: config] (depends: 2.2)
 `kind: deliverable`
 
 Targets:
@@ -764,10 +764,26 @@ Targets:
 - `src/gobby/install/shared/workflows/agents/orchestrator.yaml`
 - `src/gobby/install/shared/workflows/agents/lane-manager.yaml`
 
-Amended 2026-10-06 (#23671): 3.1.2 and the second Target take the #22903
-cross-plan seat rename, so the coordination seat ships as `orchestrator`
-in `orchestrator.yaml`, as #22996 states. The rest of this section keeps the
-`program-director` name.
+Amended 2026-10-06 (#23671, #23689): this section carries the #22903
+cross-plan seat rename and the Orchestrator's 13:39 CT rulings on #22996
+(gobby#14972):
+- (a) The coordination seat ships as `orchestrator` in `orchestrator.yaml`,
+  not `program-director.yaml`. The seat rules match `_agent_type`
+  `'orchestrator'`, as the shipped roles rules already do.
+- (b) Selectors: the `orchestrator` seat gets every worker-safety rule except
+  `no-daemon-management`, `no-daemon-management-http` and
+  `block-git-worktree-mutations`, so a spawned orchestrator keeps cutover,
+  restart and worktree-cleanup authority. It also gets
+  `name:no-force-push-interactive` and `name:no-destructive-git-interactive`.
+  `assistant` and `lane-manager` keep `tag:worker-safety`.
+- (c) `send_message_targets`: `assistant` `[parent, session, project]`;
+  `orchestrator` `[parent, session, project, global]`; `lane-manager`
+  `[parent, session, project]`.
+- (d) HOLD text: HOLD after two consecutive 5-minute loads above 30, lifted
+  after two below 24.
+
+Earlier mentions of `program-director` and the PD in this section now mean
+the `orchestrator` seat.
 
 **Research context:** `comms-agent.yaml` (persona only, `blocked_tools` at
 `:46`, `blocked_mcp_tools` at `:62`) is the nearest existing shape for a
@@ -775,9 +791,10 @@ message-routing seat; keep it, the assistant is a distinct definition. Role text
 of record: `.gobby/roles/assistant.md` (routes only; relays Josh's words to the PD
 verbatim; half-hour status per lane; relays each installed watchdog
 `ALARM[load]` (one-minute load above 24) to the PD once; heavy-slot
-admission holds at five-minute load 24; keeps the roster and role files
+admission HOLDs after two consecutive 5-minute loads above 30 and lifts after
+two below 24 (ruling (d)); keeps the roster and role files
 current; read-only DB helper; one-line Telegram confirmation),
-`program-director.md` (coordination only, code only to close gaps in lane
+`orchestrator.md` (coordination only, code only to close gaps in lane
 candidates; files and delegates tasks; reviews candidates with the Code
 Reviewer, lands, restarts and cuts over with notices; +0.0.1 crate patch
 bump with `Cargo.lock` on every binary release; confirms each merge and
@@ -785,21 +802,32 @@ removes only clean, merged, inactive worktrees; updates the Archivist on
 every land, bounce, reroute, park, task, restart; drives the planning queue
 through Josh's plan flow (Decision 14); answers Josh in its own session;
 decisions as buttons via the Assistant), `lane-manager.md` (routes
-PD-assigned work in PD order; heavy-slot admission below five-minute load
-24; ACKs HOLD/RESUME; one `wait_for_coordination` idle subscription per
+PD-assigned work in PD order; heavy-slot admission only while no HOLD
+stands, where HOLD follows two consecutive 5-minute loads above 30 and lifts
+after two below 24 (ruling (d)); ACKs HOLD/RESUME; one `wait_for_coordination` idle subscription per
 active lane; `send_message(wake=true)` for actions; event lines to the
 Assistant `LANE= EVENT=STARTED|CANDIDATE|BOUNCE|CLOSED TASK=#NNNNN
 TASK_TITLE= RUN= WT= COMMIT= NOTE=`; verdict blockers to the PD; no
 review, land, restart, or code).
-Selectors: all three add `tag:worker-safety` exclusions that block interactive
-destructive shell (`no-destructive-shell-interactive`) stay via `tag:default`;
-program-director additionally includes `name:no-force-push-interactive`,
-`name:no-destructive-git-interactive`; lane-manager carries the Decision 8
+Selectors (ruling (b)): all three include `tag:default` and `tag:roles`, and
+interactive destructive-shell blocking (`no-destructive-shell-interactive`)
+stays through `tag:default`. `assistant` and `lane-manager` include
+`tag:worker-safety`. `orchestrator` includes `tag:worker-safety`,
+`name:no-force-push-interactive` and `name:no-destructive-git-interactive`,
+and its `rule_selectors.exclude` lists exactly `name:no-daemon-management`,
+`name:no-daemon-management-http` and `name:block-git-worktree-mutations`.
+Exclusion wins: the selector resolver subtracts exclude matches from the
+whole included set (`gobby.workflows.selectors`). Message scope (ruling (c)):
+`send_message_targets` is `[parent, session, project]` on `assistant` and
+`lane-manager` and `[parent, session, project, global]` on `orchestrator`;
+the field defaults to parent only (`AgentDefinitionBody.send_message_targets`),
+and the `scope-spawned-agent-send-message` rule enforces it for spawned
+seats. lane-manager carries the Decision 8
 read-only `blocked_tools` list; assistant carries no write block, and its
 `docs/` and `.gobby/roles/` scope is enforced by `assistant-write-scope`
 (2.2), which the prompt names. Task edits (2.1, memory 1c5c5469): the
 assistant prompt says it calls `gobby-tasks:update_task` only when Josh
-asks; the program-director prompt says it edits tasks as needed and
+asks; the orchestrator prompt says it edits tasks as needed and
 fields other seats' edit requests; the lane-manager prompt sends edit
 requests to the PD. Continuity: compact, never clear. No
 `step_workflow` and no `required_skills` (Decision 7).
@@ -808,14 +836,25 @@ requests to the PD. Continuity: compact, never clear. No
 
 - 3.1.1 - `assistant` validates, is `seat`-tagged, carries the routing-only
   contract, status cadence, restart alerts, one-line Telegram confirmation,
-  and task edits only when Josh asks.
+  and task edits only when Josh asks. It includes `tag:worker-safety`, its
+  `send_message_targets` is `[parent, session, project]`, and its HOLD text
+  is HOLD after two consecutive 5-minute loads above 30, lifted after two
+  below 24.
   file: `src/gobby/install/shared/workflows/agents/assistant.yaml`.
 - 3.1.2 - `orchestrator` validates, is `seat`-tagged, and carries the
   coordination-only contract, restart authority with notices, Archivist updates,
-  decision routing, and task-edit authority as needed. file:
+  decision routing, and task-edit authority as needed. The seat rules match
+  `_agent_type` `'orchestrator'`. Its selectors include `tag:worker-safety`,
+  `name:no-force-push-interactive` and `name:no-destructive-git-interactive`
+  and exclude exactly `name:no-daemon-management`,
+  `name:no-daemon-management-http` and `name:block-git-worktree-mutations`,
+  and its `send_message_targets` is `[parent, session, project, global]`. file:
   `src/gobby/install/shared/workflows/agents/orchestrator.yaml`.
 - 3.1.3 - `lane-manager` validates, is `seat`-tagged, read-only, and carries the
-  event-line grammar and HOLD/RESUME behavior. file:
+  event-line grammar and HOLD/RESUME behavior, with HOLD after two consecutive
+  5-minute loads above 30, lifted after two below 24. It includes
+  `tag:worker-safety`, and its `send_message_targets` is
+  `[parent, session, project]`. file:
   `src/gobby/install/shared/workflows/agents/lane-manager.yaml`.
 - 3.1.4 - All three select `tag:roles` and carry the `seat` tag. behavior:
   "tag:roles" in `src/gobby/install/shared/workflows/agents/lane-manager.yaml`.
@@ -1173,6 +1212,12 @@ The rulings contradict several parts of the earlier body, which are dropped:
 
 The earlier body is in Git history at 366796ff6a.
 
+Amended 2026-10-06 (#23689, Orchestrator gobby#14972 13:42 CT): this plan's
+side of the re-scope is done. Sections 3.4, 3.5 and M1 are verify-only for
+the implementing leaf, #22999. It changes only the Targets above and never
+edits this plan or re-derives its M1; plan amendments go through the Plan
+Writer.
+
 **Research context:** #23339 "Planning seat agent definitions" closed at
 53a9be0fee (commits 3b7df025f5, 5ad9b42ac3, 53a9be0fee and 290613d7f3; later
 edits by #23477). It delivered the following:
@@ -1276,10 +1321,10 @@ The deliverable, in `plan-adversary.yaml` unless named otherwise:
   test: `tests/agents/test_plan_seat_definitions.py::test_seat_instructions_carry_seat_role`.
   test: `tests/agents/test_plan_seat_definitions.py::test_writer_spawns_no_enhancer_enhancer_stays_live`.
   test: `tests/agents/test_plan_seat_definitions.py::test_seat_spawns_admitted_from_pipeline_child`.
-- 3.4.5 - Sections 3.4, 3.5 and M1 of this plan match this scope, M1 is
-  re-derived with fresh hashes, base and expansion-mode plan validation both
-  pass, and `docs/contracts/plan-coverage.md` no longer says the Writer spawns
-  an enhancer pass. file: `docs/contracts/plan-coverage.md`.
+- 3.4.5 - `docs/contracts/plan-coverage.md` no longer says the Writer spawns
+  an enhancer pass. The implementing leaf verifies, without editing this plan
+  or re-deriving its M1, that sections 3.4, 3.5 and M1 match the shipped
+  definitions. file: `docs/contracts/plan-coverage.md`.
 
 ### 3.5 Seat bundle contract test for the eight standing seats [category: test] (depends: 3.1, 3.2, 3.3, 3.4)
 `kind: deliverable`
@@ -1302,6 +1347,11 @@ catalogue is therefore Decision 2's catalogue without `plan-writer` and
 the #22903 rename, which corrects #23000's `program-director`. Item IDs
 3.5.1 to 3.5.5 and their test artifacts are unchanged.
 
+Amended 2026-10-06 (#23689): this section is verify-only for the plan. The
+implementing leaf, #23000, changes only its two test Targets and never edits
+this plan. The coordination-seat invariants below carry the Orchestrator's
+13:39 CT rulings (b) and (c) on #22996, as stated in 3.1.
+
 **Research context:** `tests/workflows/test_workflows_agent_definitions.py`
 already loads every bundled YAML (`AGENTS_DIR = get_bundled_agents_path()`,
 `SKILLS_DIR = get_bundled_skills_path()`, `_load_yaml`, `_agent`, `_step`) and
@@ -1322,6 +1372,13 @@ Seat invariants to pin:
   and `version`, and `version` is a body field after 1.1. The check also
   rejects `terminal_backend`, `backend` and `sandbox`.
 - `rule_selectors.include` contains `tag:roles`.
+- `assistant` and `lane-manager` include `tag:worker-safety`. `orchestrator`
+  includes `tag:worker-safety`, `name:no-force-push-interactive` and
+  `name:no-destructive-git-interactive`, and its `rule_selectors.exclude` is
+  exactly `name:no-daemon-management`, `name:no-daemon-management-http` and
+  `name:block-git-worktree-mutations`.
+- `send_message_targets` is `[parent, session, project]` on `assistant` and
+  `lane-manager` and `[parent, session, project, global]` on `orchestrator`.
 - Every `step_workflow.variables.required_skills` entry resolves.
 - The read-only seats (`lane-manager`, `code-reviewer`, `log-monitor` and
   `researcher`) carry the Decision 8 `blocked_tools` list.
@@ -1371,7 +1428,12 @@ One run-scoped `plan-adversary` pass goes through the same engine:
 
 **Acceptance:**
 
-- 3.5.1 - Every `seat`-tagged bundled definition satisfies the invariants above.
+- 3.5.1 - Every `seat`-tagged bundled definition satisfies the invariants
+  above, including the coordination seats' selectors (`orchestrator` excludes
+  exactly `name:no-daemon-management`, `name:no-daemon-management-http` and
+  `name:block-git-worktree-mutations`) and `send_message_targets`
+  (`[parent, session, project, global]` on `orchestrator`,
+  `[parent, session, project]` on `assistant` and `lane-manager`).
   test: `tests/workflows/test_seat_definitions.py::test_seat_definitions_share_the_seat_contract`.
 - 3.5.2 - Every `required_skills` entry in every bundled definition, the
   planning runbook agents included, resolves to a bundled skill or skill file.
@@ -1789,21 +1851,29 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
   tdd: true
   source_section: '2.2'
   implementation_domain: backend
-- title: 'Coordination seats: assistant, program-director, lane-manager'
+- title: 'Coordination seats: assistant, orchestrator, lane-manager'
   category: config
   task_type: feature
   depends_on:
   - '2.2'
   validation_criteria: '3.1.1: `assistant` validates, is `seat`-tagged, carries the
     routing-only contract, status cadence, restart alerts, one-line Telegram confirmation,
-    and task edits only when Josh asks. file: `src/gobby/install/shared/workflows/agents/assistant.yaml`.
+    and task edits only when Josh asks. It includes `tag:worker-safety`, its `send_message_targets`
+    is `[parent, session, project]`, and its HOLD text is HOLD after two consecutive
+    5-minute loads above 30, lifted after two below 24. file: `src/gobby/install/shared/workflows/agents/assistant.yaml`.
 
     3.1.2: `orchestrator` validates, is `seat`-tagged, and carries the coordination-only
     contract, restart authority with notices, Archivist updates, decision routing,
-    and task-edit authority as needed. file: `src/gobby/install/shared/workflows/agents/orchestrator.yaml`.
+    and task-edit authority as needed. The seat rules match `_agent_type` `''orchestrator''`.
+    Its selectors include `tag:worker-safety`, `name:no-force-push-interactive` and
+    `name:no-destructive-git-interactive` and exclude exactly `name:no-daemon-management`,
+    `name:no-daemon-management-http` and `name:block-git-worktree-mutations`, and
+    its `send_message_targets` is `[parent, session, project, global]`. file: `src/gobby/install/shared/workflows/agents/orchestrator.yaml`.
 
     3.1.3: `lane-manager` validates, is `seat`-tagged, read-only, and carries the
-    event-line grammar and HOLD/RESUME behavior. file: `src/gobby/install/shared/workflows/agents/lane-manager.yaml`.
+    event-line grammar and HOLD/RESUME behavior, with HOLD after two consecutive 5-minute
+    loads above 30, lifted after two below 24. It includes `tag:worker-safety`, and
+    its `send_message_targets` is `[parent, session, project]`. file: `src/gobby/install/shared/workflows/agents/lane-manager.yaml`.
 
     3.1.4: All three select `tag:roles` and carry the `seat` tag. behavior: "tag:roles"
     in `src/gobby/install/shared/workflows/agents/lane-manager.yaml`.'
@@ -1908,9 +1978,9 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
     test: `tests/agents/test_plan_seat_definitions.py::test_writer_spawns_no_enhancer_enhancer_stays_live`.
     test: `tests/agents/test_plan_seat_definitions.py::test_seat_spawns_admitted_from_pipeline_child`.
 
-    3.4.5: Sections 3.4, 3.5 and M1 of this plan match this scope, M1 is re-derived
-    with fresh hashes, base and expansion-mode plan validation both pass, and `docs/contracts/plan-coverage.md`
-    no longer says the Writer spawns an enhancer pass. file: `docs/contracts/plan-coverage.md`.'
+    3.4.5: `docs/contracts/plan-coverage.md` no longer says the Writer spawns an enhancer
+    pass. The implementing leaf verifies, without editing this plan or re-deriving
+    its M1, that sections 3.4, 3.5 and M1 match the shipped definitions. file: `docs/contracts/plan-coverage.md`.'
   labels:
   - covers:agent-definition-profiles:3.4:3.4.1
   - covers:agent-definition-profiles:3.4:3.4.2
@@ -1929,7 +1999,11 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
   - '3.3'
   - '3.4'
   validation_criteria: '3.5.1: Every `seat`-tagged bundled definition satisfies the
-    invariants above. test: `tests/workflows/test_seat_definitions.py::test_seat_definitions_share_the_seat_contract`.
+    invariants above, including the coordination seats'' selectors (`orchestrator`
+    excludes exactly `name:no-daemon-management`, `name:no-daemon-management-http`
+    and `name:block-git-worktree-mutations`) and `send_message_targets` (`[parent,
+    session, project, global]` on `orchestrator`, `[parent, session, project]` on
+    `assistant` and `lane-manager`). test: `tests/workflows/test_seat_definitions.py::test_seat_definitions_share_the_seat_contract`.
 
     3.5.2: Every `required_skills` entry in every bundled definition, the planning
     runbook agents included, resolves to a bundled skill or skill file. test: `tests/workflows/test_seat_definitions.py::test_required_skills_resolve_to_bundled_skills`.
