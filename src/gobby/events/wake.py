@@ -361,7 +361,7 @@ class WakeDispatcher:
             try:
                 async with lock:
                     result = await self._dispatch_live_wake_unlocked(
-                        session_id, priority=priority, bypass_debounce=True
+                        session_id, priority=priority, require_unread=True
                     )
             except asyncio.CancelledError:
                 raise
@@ -439,7 +439,9 @@ class WakeDispatcher:
         try:
             async with lock:
                 locked = time.monotonic()
-                result = await self._dispatch_live_wake_unlocked(session_id, priority=priority)
+                result = await self._dispatch_live_wake_unlocked(
+                    session_id, priority=priority, require_unread=True
+                )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -477,8 +479,20 @@ class WakeDispatcher:
         priority: str = "normal",
         bypass_debounce: bool = False,
         prompt: str = CONTINUE_WAKE_MESSAGE,
+        require_unread: bool = False,
     ) -> dict[str, Any]:
         """Send a live wake signal while holding the per-session wake lock."""
+        # A hook may have read the durable message while this retry was waiting.
+        # Replaying that wake would put an unbacked prompt in the composer.
+        if require_unread and not await self._run_db(
+            self._ism_manager.get_undelivered_messages, session_id
+        ):
+            return {
+                "session_id": session_id,
+                "delivered": False,
+                "method": "next_call_context",
+                "skipped": "mailbox_read",
+            }
         if session is None:
 
             def read_session() -> Any | None:
@@ -534,10 +548,9 @@ class WakeDispatcher:
         if session_type == "web_chat":
             if not bypass_debounce and not await self._should_send_live_wake(session_id):
                 return wake_debounced_result(session_id, method="web_chat")
-            attempted_at = utc_now()
             result = await self._dispatch_web_chat_wake(session_id, priority=priority)
             if result.get("delivered"):
-                await self._record_live_wake(session_id, attempted_at)
+                await self._record_live_wake(session_id, utc_now())
             return result
 
         # The managed terminal row resolves the runtime for native and tmux
@@ -577,7 +590,6 @@ class WakeDispatcher:
                 )
                 if state_failure is not None:
                     return state_failure
-                attempted_at = utc_now()
                 try:
                     await asyncio.wait_for(
                         self._sdk_resumer(sdk_session_id, f"{prompt}\n"),
@@ -598,7 +610,7 @@ class WakeDispatcher:
                         "error_code": "sdk_resume_failed",
                         "error_message": "SDK resume failed",
                     }
-                await self._record_live_wake(session_id, attempted_at)
+                await self._record_live_wake(session_id, utc_now())
                 return {
                     "session_id": session_id,
                     "delivered": True,
@@ -762,7 +774,6 @@ class WakeDispatcher:
                 # The sender needs the positive proof to settle an old wake latch;
                 # merely opting out of a drain does not supply that proof.
                 send = partial(send, composer_confirmed_empty=True)
-            attempted_at = utc_now()
             try:
                 await send(
                     terminal_id,
@@ -810,7 +821,7 @@ class WakeDispatcher:
                     error_code="terminal_wake_failed",
                     error_message=detail,
                 )
-        await self._record_live_wake(session_id, attempted_at)
+        await self._record_live_wake(session_id, utc_now())
         return {
             "session_id": session_id,
             "delivered": True,
@@ -875,10 +886,9 @@ class WakeDispatcher:
     async def _should_send_live_wake(self, session_id: str) -> bool:
         """Return False while the last delivered wake to this session is outstanding.
 
-        A delivered wake is outstanding while it is fresh, mail sent by its
-        attempt is unread, and no message has been read since the attempt; any
-        read consumes it. Durable ISMs are stored unconditionally, so later
-        messages still queue and the agent sees them on that read.
+        Only a mailbox read after the write completes consumes its hold. A read
+        during the write cannot acknowledge a prompt that is still being queued.
+        The recovery timeout permits another wake only while mail remains unread.
         """
 
         def wake_outstanding() -> bool:
@@ -891,22 +901,18 @@ class WakeDispatcher:
             except ValueError:
                 return False
             if (utc_now() - cutoff).total_seconds() >= LIVE_WAKE_FRESH_SECONDS:
-                return False
-            return self._ism_manager.has_unread_without_read_since(session_id, cutoff)
+                return not bool(self._ism_manager.get_undelivered_messages(session_id))
+            return not self._ism_manager.has_read_since(session_id, cutoff)
 
         return not await self._run_db(wake_outstanding)
 
-    async def _record_live_wake(self, session_id: str, attempted_at: datetime) -> None:
-        """Record a delivered live wake by the time its attempt started.
-
-        Messages sent after that time did not ride this wake, and a read after
-        it consumes the wake, so the next message wakes the session again.
-        """
+    async def _record_live_wake(self, session_id: str, completed_at: datetime) -> None:
+        """Start the unread-wake hold and recovery timeout after a successful write."""
         await self._run_db(
             SessionVariableManager(self._session_manager.db).set_variable,
             session_id,
             LIVE_WAKE_SENT_AT_VARIABLE,
-            attempted_at.isoformat(),
+            completed_at.isoformat(),
         )
 
     async def _resolve_sdk_session_id(self, session_id: str) -> str | None:
