@@ -976,4 +976,126 @@ fn explicit_project_id_without_bootstrap_ignores_agent_environment() {
     );
 }
 
+fn maintenance_project_id_context(
+    caller_has_project: bool,
+    wrong_target: bool,
+) -> anyhow::Result<Context> {
+    use gobby_core::grant::{
+        CachedSettings, DirectConnections, PrincipalKind, managed_direct_grant, write_coherent_pair,
+    };
+
+    let tmp = tempfile::tempdir().expect("isolated maintenance runtime");
+    let home = tmp.path().join("home");
+    let cwd = tmp.path().join("caller");
+    std::fs::create_dir_all(&home).expect("runtime home");
+    std::fs::create_dir_all(&cwd).expect("caller directory");
+    if caller_has_project {
+        write_project_json(
+            &cwd,
+            serde_json::json!({"id": uuid::Uuid::new_v4().to_string()}),
+        );
+    }
+    let orphan_id = uuid::Uuid::new_v4().to_string();
+    let target_id = if wrong_target {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        orphan_id.clone()
+    };
+    let machine_id = uuid::Uuid::new_v4().to_string();
+    std::fs::write(home.join("machine_id"), &machine_id).expect("machine identity");
+    let endpoint = TcpListener::bind("127.0.0.1:0").expect("isolated endpoint");
+    let daemon_url = format!(
+        "http://{}",
+        endpoint.local_addr().expect("endpoint address")
+    );
+    let mut grant = managed_direct_grant(
+        &orphan_id,
+        &machine_id,
+        &DirectConnections::postgres("postgresql://fixture@127.0.0.1:1/unused"),
+    );
+    grant.principal.kind = PrincipalKind::Maintenance;
+    let grant = grant.with_checksum();
+    let grant_path = home.join("maintenance-grant.json");
+    write_coherent_pair(
+        &grant_path,
+        &grant,
+        &CachedSettings {
+            config_revision: grant.config_revision,
+            settings: Default::default(),
+        },
+    )
+    .expect("coherent maintenance grant");
+    temp_env::with_vars(
+        [
+            ("GOBBY_HOME", Some(home.as_os_str())),
+            ("GOBBY_DAEMON_URL", Some(std::ffi::OsStr::new(&daemon_url))),
+            (
+                "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+                Some(grant_path.as_os_str()),
+            ),
+            ("GOBBY_AGENT_RUN_ID", None),
+            ("GOBBY_MANAGED_EXECUTION_ID", None),
+            ("GOBBY_AGENT_API_TOKEN", None),
+            ("GOBBY_SESSION_ID", None),
+            ("GOBBY_PARENT_SESSION_ID", None),
+        ],
+        || {
+            let original_cwd = std::env::current_dir().expect("original working directory");
+            std::env::set_current_dir(&cwd).expect("caller working directory");
+            let result = Context::resolve_for_project_id_with_services(
+                &target_id,
+                true,
+                ServiceConfigSelection::database_only(),
+            );
+            std::env::set_current_dir(original_cwd).expect("restore working directory");
+            result
+        },
+    )
+}
+
+#[test]
+#[serial_test::serial(serial_env)]
+fn maintenance_project_id_context_ignores_unrelated_checkout() {
+    let context = maintenance_project_id_context(true, false).expect("orphan maintenance context");
+    assert!(context.project_root.as_os_str().is_empty());
+    assert_eq!(
+        context.project_id,
+        context
+            .grant_ai
+            .expect("grant runtime")
+            .bundle
+            .principal
+            .project_id
+    );
+}
+
+#[test]
+#[serial_test::serial(serial_env)]
+fn maintenance_project_id_context_works_without_checkout() {
+    let context = maintenance_project_id_context(false, false).expect("checkout-free maintenance");
+    assert!(context.project_root.as_os_str().is_empty());
+    assert_eq!(
+        context.project_id,
+        context
+            .grant_ai
+            .expect("grant runtime")
+            .bundle
+            .principal
+            .project_id
+    );
+}
+
+#[test]
+#[serial_test::serial(serial_env)]
+fn maintenance_project_id_context_rejects_another_target() {
+    let error = maintenance_project_id_context(true, true)
+        .err()
+        .expect("scope rejection");
+    assert!(
+        error
+            .to_string()
+            .contains("grant project does not match local project")
+    );
+}
+
 mod runtime_contract;

@@ -426,10 +426,17 @@ impl Context {
     ) -> anyhow::Result<Self> {
         let project_id = normalize_project_id(project_id)?;
         let request = grant::AcquireRequest::from_process_for_project_id(&project_id);
-        // A managed grant belongs to the caller's parent project. The requested
-        // code-index ID may be an overlay and is validated against the DB binding
-        // after acquisition rather than presented as the grant's parent identity.
-        let managed_root = if request.managed_bootstrap.is_some() {
+        let maintenance_request = request
+            .managed_bootstrap
+            .as_deref()
+            .map(grant::load_grant_file)
+            .transpose()
+            .map_err(CliError::grant)?
+            .is_some_and(|bundle| bundle.principal.kind == grant::PrincipalKind::Maintenance);
+        // Agent and chat grants belong to the caller's parent project; their
+        // requested ID may be an overlay. Maintenance instead grants the exact
+        // cleanup target, which need not have a checkout or registry entry.
+        let managed_root = if request.managed_bootstrap.is_some() && !maintenance_request {
             Some(detect_project_root()?)
         } else {
             None
@@ -439,8 +446,18 @@ impl Context {
             .map(grant::AcquireRequest::from_process)
             .unwrap_or(request);
         let acquired = grant::acquire_with(&request).map_err(CliError::grant)?;
+        // Acquisition may refresh or reread the file used for classification.
+        // Decide scope from the acquired principal and bind maintenance to its
+        // exact target rather than admitting it through an agent overlay.
+        let maintenance = acquired.bundle.principal.kind == grant::PrincipalKind::Maintenance;
+        if maintenance && acquired.bundle.principal.project_id != project_id {
+            return Err(CliError::grant(grant::GrantError::Malformed(
+                "grant project does not match requested maintenance project".to_owned(),
+            ))
+            .into());
+        }
         let database_url = db::database_url_from_acquired(&acquired)?;
-        if acquired.bundle.principal.kind.is_managed() {
+        if acquired.bundle.principal.kind.is_managed() && !maintenance {
             let mut conn = db::connect_readonly(&database_url)?;
             super::managed_scope::validate(
                 &mut conn,

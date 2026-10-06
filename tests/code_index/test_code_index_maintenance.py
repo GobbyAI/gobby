@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
+from gobby.code_index import maintenance_log
 from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.eligibility import resolve_indexed_project
 from gobby.code_index.gcode_gateway import (
@@ -32,6 +33,20 @@ from gobby.code_index.sync_breaker import BreakerState, SyncCircuitBreaker
 from gobby.runtime_grants.launch import ManagedLaunch
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def isolate_maintenance_logs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep dedicated orphan diagnostics in this test's temporary home."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    yield
+    for path in list(maintenance_log._LOGGERS):
+        if Path(path).is_relative_to(tmp_path):
+            configured_logger = maintenance_log._LOGGERS.pop(path)
+            for handler in tuple(configured_logger.handlers):
+                configured_logger.removeHandler(handler)
+                handler.close()
+
 
 T = TypeVar("T")
 DAEMON_CONFIG_STDERR = (
