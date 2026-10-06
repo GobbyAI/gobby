@@ -173,8 +173,9 @@ Josh's approval:
    the render-tick retry issues through `start_due_attaches`). The remaining
    inline `attach_ready_panes().await` callers mark panes due for that seam
    instead of gaining a second attach path in `jobs.rs`, and C3's direct-first
-   retry lands in `begin_proxy_recovery`. **Restraint rung 2:** reuse the shipped
-   seam.
+   step lands on the shipped host-local recovery seam in
+   `crates/gclient/src/app/live_loop/host_recovery.rs`. **Restraint rung 2:** reuse
+   the shipped seam.
 10. The shared frame broadcast stays as it is: one
     `broadcast::channel(BROADCAST_CAPACITY)` in
     `crates/gclient/src/daemon/live_connect.rs`, with `ProxyFrameSource::recv`
@@ -592,18 +593,18 @@ Targets:
 - `crates/gclient/src/app/live_loop/control.rs::*` — scope-reason: every daemon-awaiting function becomes a sync issue or a job outcome apply
 - `crates/gclient/src/app/pane.rs::*` — scope-reason: add the bounded writer, queue accounting and release state across Pane construction and input helpers
 - `crates/gclient/src/app/live.rs::*` — scope-reason: the control-request machinery moves out to the new control module
-- `crates/gclient/src/app/live_control.rs`
+- `crates/gclient/src/app/live_control.rs::*` — scope-reason: A2 creates this module from the control-request machinery of `live.rs` and `mod.rs` and adds the release drain
 - `crates/gclient/src/app/mod.rs::*` — scope-reason: gains the `mod live_control;` declaration only
 - `crates/gclient/src/app/live_loop/workspace_actions.rs::*` — scope-reason: the small op senders move out to the daemon-ops module and `send_workspace_op` is deleted
-- `crates/gclient/src/app/live_loop/daemon_ops.rs`
+- `crates/gclient/src/app/live_loop/daemon_ops.rs::*` — scope-reason: A2 creates this module: the small op senders issue `WorkspaceOp` jobs here
 - `crates/gclient/src/app/attention.rs::submit_response`
 - `crates/gclient/src/app/live_loop/actions.rs::*` — scope-reason: the remaining callers of the control, scroll and op senders drop their awaits
 - `crates/gclient/src/app/live_loop/lifecycle.rs`
 - `crates/gclient/src/app/live_loop/projects.rs::*` — scope-reason: callers of the release and op senders drop their awaits
-- `crates/gclient/src/app/live_loop/jobs.rs`
-- `crates/gclient/src/app/live_loop/jobs_apply.rs`
+- `crates/gclient/src/app/live_loop/jobs.rs::*` — scope-reason: `JobKey` and `JobResult` gain the write, respond and op keys and outcomes; `Pending`, `LoopJobs::outcomes` and `LoopJobs::dispatch` carry them, and `issue_response` and `issue_workspace_op` come in
+- `crates/gclient/src/app/live_loop/jobs_apply.rs::*` — scope-reason: `apply_job_outcome` gains the write, response and op arms and the refusal toast
 - `crates/gclient/src/frame_source.rs::*` — scope-reason: `UnixSocketFrameSource::send_input` hands back its per-write `done` receiver so a direct pane's release barrier can await the last accepted write
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the typed-input, release-order and op-job liveness cases
 
 Consumers unchanged:
 - `crates/gclient/src/app/scripted_input.rs` — no-edit-reason: mentions `send_live_write` only in a doc comment; the scripted path has its own writer.
@@ -844,10 +845,11 @@ carries the same fact). Planned verification: `cargo nextest run -p gobby-client
 `kind: deliverable`
 
 Targets:
-- `crates/gclient/src/app/live_attach.rs::*` — scope-reason: attach and recovery futures record their start, emit the WARN records, and drop and detach a stale-generation result
+- `crates/gclient/src/app/live_attach.rs::*` — scope-reason: the daemon frame-recovery group leaves for the recovery child module; the root's `start_due_attaches` records its start and WARNs, and attach results drop and detach a stale-generation result
+- `crates/gclient/src/app/live_attach/recovery.rs`
 - `crates/gclient/src/app/live.rs::*` — scope-reason: the `created` arm of `apply_live_event` marks the new pane due instead of awaiting `attach_ready_panes`
 - `crates/gclient/src/app/attach.rs::Pane::begin_attaching`
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the held-attach, stale-attach and recovery liveness cases
 
 Consumers unchanged:
 - `crates/gclient/tests/frame_delivery.rs` — no-edit-reason: exercises the inline attach path, unchanged.
@@ -859,6 +861,45 @@ render-tick retry issues through `start_due_attaches`. By Decision 9 attach and
 recovery stay on that `RecoveryFuture` seam in
 `crates/gclient/src/app/live_attach.rs`; the planned `live_attach/handshake.rs`
 and a second attach path in `jobs.rs` are dropped. A3 keeps four obligations.
+
+**Decomposition first.** `crates/gclient/src/app/live_attach.rs` has 951 production
+lines on 0.5.0 `fec30c7e2a` (the validator stops counting at its `#[cfg(test)]` line
+952; 954 raw), above the 850-line growth threshold. Before any new behavior, A3 makes
+one move: the daemon frame-recovery group leaves
+`crates/gclient/src/app/live_attach.rs` for the new
+`crates/gclient/src/app/live_attach/recovery.rs`, unchanged. Moved: the
+`impl Workspace<LiveDaemon>` methods `begin_frame_recovery`, `begin_proxy_recovery`,
+`begin_daemon_recovery`, `begin_host_frame_recovery`, `apply_frame_recovery`,
+`begin_host_reregister`, `begin_recovery_attach` and `abandon_frame_recoveries`, and
+the free functions `detach_attachment` and `detach_reply` (root lines 188-436,
+657-673 and 687-740, 320 lines with their separators).
+
+Module shape and visibility. The root declares a private `mod recovery;` above the
+`#[cfg(test)]` sentinel of its existing `#[path = "live_attach/tests.rs"] mod tests;`,
+so the declaration counts as production, and the child opens with
+`use super::*;` and its own `impl Workspace<LiveDaemon>` block, the shape the
+`relist` child of `live.rs` already uses. The types `Recovery`, `RecoveryStep`,
+`DetachOutcome`, `RecoveryFuture`, `ProxyAttachOutcome` and `DirectAttach` stay in
+the root: a child reads its parent's private types, fields and helpers, and
+`crate::app::live_attach::RecoveryFuture` keeps the path its two importers use. This
+is a sibling extraction on Decision 9's single `RecoveryFuture` seam, not a second
+path. Methods called from `app::live_loop` widen from `pub(super)` to
+`pub(in crate::app)`, which reaches the same callers from one module deeper:
+`begin_frame_recovery`, `begin_host_frame_recovery`, `apply_frame_recovery`,
+`abandon_frame_recoveries`, `begin_daemon_recovery` and `begin_host_reregister`.
+`begin_recovery_attach` becomes `pub(super)` because the root's `start_due_attaches`
+still calls it. `begin_proxy_recovery`, `detach_attachment` and `detach_reply` stay
+private to the child. Root helpers the moved code calls (`request_direct_attachment`,
+`request_proxy_source`, `finish_direct_attach`, `begin_proxy_attach`,
+`finish_proxy_attach`, `defer_pane_attach`, `retire_pane_attachment` and
+`clear_fallback_flight`) keep their visibility. Clippy's
+unused-import lint settles which root imports remain.
+
+Headroom. After the move the root holds about 633 production lines and
+`recovery.rs` about 326. A3's own growth (start instants and WARN records, mostly in
+`recovery.rs`, plus the stale-result gate and the due-attach record in the root's
+`start_due_attaches`) leaves both files more than 200 lines under the 850 threshold
+and well under the 1,000-line ceiling.
 
 The `created` event no longer awaits `attach_ready_panes()` inside
 `apply_live_event` (`live.rs` ~356): it marks the new pane due, and the next
@@ -901,14 +942,28 @@ subscriber and the shipped seam.
 leaves pass, it participates in the single shared clean-cutover gate in
 Constraints.
 
-**Research context:** Observed on 0.5.0 `7d33430cc2`: `live_attach.rs` defines
-`RecoveryFuture` (~50), `begin_frame_recovery` (~175), `apply_frame_recovery`
-(~253) and `start_due_attaches` (~441); `attach_ready_panes` (~63) still awaits
+**Research context:** Observed on 0.5.0 `fec30c7e2a` (post-#23228): `live_attach.rs`
+defines `RecoveryFuture` (55), `begin_frame_recovery` (193), `apply_frame_recovery`
+(305) and `start_due_attaches` (545); `attach_ready_panes` (68) still awaits
 `request_direct_source` then `begin_live_proxy_attach` per pane. Inline callers:
-`live.rs` ~143 and ~356, `actions.rs` ~811, `workspace_actions.rs` ~416 and ~527,
-`projects.rs` ~49, `terminal_location.rs` ~146. No WARN exists for frame
-failure, recovery give-up or direct-handshake timeout; `daemon/live.rs` ~473
-("daemon request timed out") and `live_sidebar.rs` ~323 are the only request
+`live.rs` 145 (`open_live_terminal`) and 280 (`drain_receiver`, after a batch of
+applied events), `live_loop/actions.rs` 869, `workspace_actions.rs` 380 and 490,
+`projects.rs` 51, `terminal_location.rs` 146. The `created` arm of
+`apply_live_event` (`live.rs` 307-316) already only inserts a detached pane through
+`ensure_live_pane` (unchanged since `9c15ad3f37`), and the live loop applies events
+at `live_loop/reconnect.rs` 73 with no attach await, so A3.1 and A3.7 may already
+hold: the A3 executor first runs both red-or-green and reports a green-first result
+to the Orchestrator rather than coding around it. Consumer sweep for the moved
+symbols (`gcode grep -w <symbol> crates/gclient`): `live_loop.rs` calls
+`begin_host_frame_recovery` (396), `begin_frame_recovery` (400),
+`apply_frame_recovery` (440) and `abandon_frame_recoveries` (460) and imports
+`RecoveryFuture` (29); `live_loop/host_recovery.rs` calls `begin_host_reregister`
+(299) and `begin_daemon_recovery` (321) and imports
+`crate::app::live_attach::RecoveryFuture` (27). Method-call syntax and the root type
+path stay, so neither file is an A3 Target. `live_attach/tests.rs` exercises only
+`direct_reply_locator`, which stays in the root. No WARN exists for frame
+failure, recovery give-up or direct-handshake timeout; `daemon/live.rs` 494
+("daemon request timed out") and `live_sidebar.rs` 323 are the only request
 WARNs. `AttachState` and `Pane::begin_attaching` live in
 `crates/gclient/src/app/attach.rs`; `DETACH_DEADLINE` is 2 s. Rejected: awaiting
 the attach inside the branch with a timeout (still parks the loop); a
@@ -945,9 +1000,9 @@ Targets:
 - `crates/gclient/src/app/live_loop.rs::*` — scope-reason: `run_live_loop` routes `Opened` outcomes
 - `crates/gclient/src/app/live_loop/reconnect.rs::*` — scope-reason: `handle_live_event` (~54) plans missing opens
 - `crates/gclient/src/app/live_loop/unresolved.rs`
-- `crates/gclient/src/app/live_loop/jobs.rs`
-- `crates/gclient/src/app/live_loop/jobs_apply.rs`
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/src/app/live_loop/jobs.rs::*` — scope-reason: `JobKey` gains `Terminal` and `JobResult` gains `Opened`
+- `crates/gclient/src/app/live_loop/jobs_apply.rs::*` — scope-reason: `apply_job_outcome` gains the `Opened` arm
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the unresolved-terminal open job cases
 
 The existing async `open_unresolved_terminals` stays for inline reconcile and test
 callers. A sync `plan_unresolved_opens` sibling snapshots the missing terminal ids;
@@ -1003,9 +1058,9 @@ Targets:
 - `crates/gclient/src/app/live_loop.rs::*` — scope-reason: `run_live_loop` routes the new outcomes and its `Lagged` arm (~419) drops its await on `apply_live_event`
 - `crates/gclient/src/app/live_loop/reconnect.rs::*` — scope-reason: `handle_live_event` (~54-75) drops its await on the now-sync `apply_live_event` and drains the refetch flags
 - `crates/gclient/src/app/live_loop/projects.rs::*` — scope-reason: `focus_project` issues a scoped roster job and `restore_focused` runs when it lands
-- `crates/gclient/src/app/live_loop/jobs.rs`
-- `crates/gclient/src/app/live_loop/jobs_apply.rs`
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/src/app/live_loop/jobs.rs::*` — scope-reason: `JobKey` and `JobResult` gain the `Roster` and `Attention` keys and outcomes
+- `crates/gclient/src/app/live_loop/jobs_apply.rs::*` — scope-reason: `apply_job_outcome` gains the refetch drain and the `Roster` and `Attention` arms
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the scoped-roster and REST-failure WARN cases
 
 Consumers unchanged:
 - `crates/gclient/tests/client_loop.rs` — no-edit-reason: calls `fetch_roster` and `drain_live_events` inline, unchanged.
@@ -1077,9 +1132,9 @@ Targets:
 - `crates/gclient/src/app/live_loop/local_adoption.rs`
 - `crates/gclient/src/app/live_loop/workspace_actions.rs::*` — scope-reason: `spawn_owned_live_shell` issues its create, adoption and attach steps as chained jobs
 - `crates/gclient/src/app/live_loop/terminal_location.rs::*` — scope-reason: the location move marks its pane due instead of awaiting the attach
-- `crates/gclient/src/app/live_loop/jobs.rs`
-- `crates/gclient/src/app/live_loop/jobs_apply.rs`
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/src/app/live_loop/jobs.rs::*` — scope-reason: `JobKey` and `JobResult` gain the `Spawned` chain family and `JobLedger` gains `committed_orphans`
+- `crates/gclient/src/app/live_loop/jobs_apply.rs::*` — scope-reason: `apply_job_outcome` gains the chained lifecycle, adoption and disposal arms
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the chained lifecycle, adoption and committed-orphan cases
 
 Spawn shell (`lifecycle.rs`): the task does `terminal_create` only; the `Spawned`
 outcome registers the pending spawn, computes the placement op from current `Chrome`
@@ -1188,9 +1243,9 @@ inside `run_live_loop`. Planned verification: `cargo nextest run -p gobby-client
 
 Targets:
 - `crates/gclient/src/app/live_loop/orphans.rs::*` — scope-reason: `fetch_orphans` becomes a job and the destroy dialog's kills fan out with a `DestroySummary` reducer
-- `crates/gclient/src/app/live_loop/jobs.rs`
-- `crates/gclient/src/app/live_loop/jobs_apply.rs`
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/src/app/live_loop/jobs.rs::*` — scope-reason: `JobKey` and `JobResult` gain the orphan inventory and destroy fan-out keys and outcomes
+- `crates/gclient/src/app/live_loop/jobs_apply.rs::*` — scope-reason: `apply_job_outcome` gains the orphan inventory and kill fan-out arms that feed `DestroySummary`
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the held orphan fetch and kill fan-out case
 
 `fetch_orphans` becomes a job, and the destroy dialog's kills fan out concurrently
 with a `DestroySummary` reducer that keeps one result per requested orphan. The
@@ -1218,7 +1273,7 @@ verification: `cargo nextest run -p gobby-client --test loop_liveness`.
 Targets:
 - `crates/gclient/src/app/live_loop/reconnect.rs::*` — scope-reason: the reconnect job records its start, emits the start and finish WARN, and drops a stale-generation outcome
 - `crates/gclient/src/app/live_loop/startup.rs::*` — scope-reason: the staged roster outcome passes the same generation gate
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the stale-reconcile, no-await audit and reconnect WARN cases
 
 Consumers unchanged:
 - `crates/gclient/tests/startup_latency.rs` — no-edit-reason: covers the shipped staged launch and reconnect jobs (X3), unchanged.
@@ -1298,7 +1353,7 @@ Targets:
 - `crates/gclient/src/ui/chrome.rs::WorkspaceView`
 - `crates/gclient/src/ui/status.rs::render_status_line`
 - `docs/guides/gclient-user-guide.md`
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the slow workspace-op health case
 
 Consumers unchanged:
 - `crates/gclient/src/ui/chrome_render.rs` — no-edit-reason: `render_navigation_chrome` is generic over `WorkspaceView`; the new trait method has a default.
@@ -1366,7 +1421,7 @@ nextest run -p gobby-client --test loop_liveness`; screen goldens unchanged
 Targets:
 - `crates/gclient/src/app/live_sidebar.rs::*` — scope-reason: the git and roster poll functions gate on `DaemonHealth`
 - `docs/guides/gclient-user-guide.md`
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the sidebar-poll pause case
 
 The sidebar's `GIT_REFRESH_INTERVAL` (10 s) and `ROSTER_REFRESH_INTERVAL` (15 s)
 polls (`request_git_refresh_if_due`, `request_roster_refresh_if_due`, in
@@ -1598,7 +1653,7 @@ Targets:
 - `crates/gclient/src/app/live_loop/control.rs::*` — scope-reason: test direct input before daemon readiness for daemonless panes, and move focus locally without a daemon release while the daemon is absent
 - `crates/gclient/src/app/live.rs::*` — scope-reason: `install_live_rows` adopts daemonless native panes by terminal id without duplication
 - `crates/gclient/tests/startup.rs::*` — scope-reason: add missing-token and daemonless launch cases beside the existing unreachable-daemon test
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the daemonless launch, typing and adoption cases
 - `docs/guides/gclient-user-guide.md`
 
 Consumers unchanged:
@@ -1757,7 +1812,7 @@ Targets:
 - `crates/gclient/src/app/live_loop/control.rs::*` — scope-reason: `send_live_input` tests `direct_input` before `daemon_ready`
 - `docs/contracts/gterm-protocols.md`
 - `docs/guides/gclient-user-guide.md`
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the direct-granted and proxied disconnect cases
 
 `observe_daemon_disconnect` (in `disconnect.rs` after R1) and the reconnect path's
 pre-reconcile clear (`reconnect_daemon_ws` in `live.rs`) call `Pane::clear_control` on
@@ -1812,13 +1867,14 @@ updated at close through the post-task memory review. Planned verification:
 `kind: deliverable`
 
 Targets:
-- `crates/gclient/src/app/live_attach.rs::*` — scope-reason: `finish_direct_attach` (~108) and `install_direct_source` (~125) offer every `lease_unconfirmed` pane to the per-pane retake schedule
+- `crates/gclient/src/app/live_attach.rs::*` — scope-reason: `finish_direct_attach` and `install_direct_source` leave for the direct child module, and one `mod direct;` line comes in
+- `crates/gclient/src/app/live_attach/direct.rs`
 - `crates/gclient/src/app/live.rs::*` — scope-reason: `install_live_rows` offers each adopted `lease_unconfirmed` pane to the per-pane retake schedule
 - `crates/gclient/src/app/live_loop/control.rs::*` — scope-reason: `apply_control_outcome` clears `lease_unconfirmed` only on a confirmed host grant and schedules the bounded retry
-- `crates/gclient/src/app/live_control.rs`
+- `crates/gclient/src/app/live_control.rs::*` — scope-reason: `pending_control` becomes a per-pane map and `start_control_request` starts every ready entry
 - `crates/gclient/src/app/pane.rs::*` — scope-reason: apply rebind/take outcomes to unconfirmed direct panes without dropping their live source
 - `crates/gclient/src/frame_source.rs::*` — scope-reason: rebind the preserved direct frame stream to the fresh daemon attachment id before issuing the reconnect take
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the rebind, per-pane retake and host-grant confirmation cases
 
 After the reconcile re-attaches panes (new attachment ids from the fresh daemon),
 every pane with `lease_unconfirmed` first sends the existing `BindAttachment` on
@@ -1842,8 +1898,33 @@ offering several panes would overwrite all but the last. In `live_control.rs`
 pane, and `start_control_request` starts every ready entry. Each pane keeps its
 own `control_request` sequence, ordinary focused takes use the same map, and A2's
 release-barrier dependency applies per take. The retake entry points are
-`finish_direct_attach` and `install_direct_source` in `live_attach.rs` and C0c's
-`install_live_rows` adoption; each offers its pane when it is `lease_unconfirmed`.
+`finish_direct_attach` and `install_direct_source` (in `direct.rs` after the move
+below) and C0c's `install_live_rows` adoption; each offers its pane when it is
+`lease_unconfirmed`.
+
+**Decomposition first.** `crates/gclient/src/app/live_attach.rs` has 951 production
+lines on 0.5.0 `fec30c7e2a`, so before the retake offer C2 makes one move:
+`finish_direct_attach` and `install_direct_source` leave
+`crates/gclient/src/app/live_attach.rs` for the new
+`crates/gclient/src/app/live_attach/direct.rs`, unchanged (root lines 112-166, 55
+lines with the separator).
+
+Module shape and visibility. The root declares a private `mod direct;` beside A3's
+`mod recovery;`, above the root's `#[cfg(test)]` sentinel; the child opens with
+`use super::*;` and its own
+`impl Workspace<LiveDaemon>` block. `finish_direct_attach` becomes `pub(super)`
+because two siblings call it: the root's `attach_ready_panes` (103) and the
+`DirectAttached` arm of A3's moved `apply_frame_recovery` (359 on `fec30c7e2a`).
+`install_direct_source` stays private; `finish_direct_attach` (124) is its only
+caller. The free direct helpers `request_direct_source`,
+`request_direct_attachment`, `connect_direct_reply` and `direct_reply_locator` stay
+in the root, since the root, A3's child and `live_attach/tests.rs` all reach them,
+and `DirectAttach` stays beside `RecoveryStep`. Consumer sweep:
+`gcode grep -w finish_direct_attach crates/gclient` and
+`gcode grep -w install_direct_source crates/gclient` find no caller outside
+`live_attach`; call syntax stays, so A3's child is not a C2 Target. Headroom: after
+A3 the root holds about 633 lines plus A3's growth, this move takes 55 more, and
+`direct.rs` starts near 61 lines; each retake offer is a few lines.
 
 Confirmation and retry. `granted: true` confirms only the daemon lease, so
 `apply_control_outcome` clears `lease_unconfirmed` only when the reply also
@@ -1900,53 +1981,98 @@ loop_liveness`.
 `kind: deliverable`
 
 Targets:
-- `crates/gclient/src/app/live_attach.rs::*` — scope-reason: `begin_proxy_recovery` retries the held direct locator before the daemon proxy path
-- `crates/gclient/src/app/pane.rs::*` — scope-reason: mark a directly re-attached pane `lease_unconfirmed` with the provisional status
-- `crates/gclient/tests/frame_source_live.rs::*` — scope-reason: adds the direct-reconnect case beside the existing direct-transport tests
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/src/app/live_loop/host_recovery.rs::*` — scope-reason: the restored arm of `apply_host_recovery` marks the re-attached pane provisional and offers it to C2's per-pane retake when the daemon is ready
+- `crates/gclient/src/app/pane.rs::*` — scope-reason: `restore_host_control` keeps Held and host input but sets `lease_unconfirmed` and the provisional status instead of confirming the grant
+- `crates/gclient/src/app/live_attach/recovery.rs`
+- `crates/gclient/tests/host_upgrade_recovery.rs::*` — scope-reason: adds the provisional-authority and every-unconfirmed-pane retake cases beside the shipped host-local recovery tests
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the lost-fallback reclaim cases
 - `docs/contracts/gterm-protocols.md`
 - `docs/guides/gclient-user-guide.md`
 
-`begin_frame_recovery` (shipped by #22747, X2) sends every frame error to the
-daemon proxy path through `begin_proxy_recovery` today. For a
-direct native pane it first retries the direct path with the locator already held:
-connect `frame_socket_path`, `AttachTerminal{host_terminal_id}`,
-`BindAttachment(attachment_id)`. Two authority cases follow:
-- Surviving daemon grant. It is keyed by attachment id, so the rebound stream
-  types again at once.
+Status, 0.5.0 `fec30c7e2a`: the direct-first order this section first planned has
+shipped as plan 2.3's host-local recovery (#23076, #23419). On a frame error the
+live loop tries `begin_host_frame_recovery` before `begin_frame_recovery`. For an
+`Eof`, `Lag`, `Cancelled`, `Io`, `Protocol` or `Daemon` error on a pane that holds a
+host locator, `begin_host_recovery` reconnects straight to the frame host (`Hello`
+with the local token, then a user `AttachTerminal`) under one absolute
+`HOST_RECOVERY_BUDGET`, honoring cancellation before the first poll and carrying the
+pane's host epoch to the result. `apply_host_recovery` installs the restored `Direct`
+source when the pane still has that terminal and epoch, calls
+`Pane::restore_host_control`, records the pane in `host_recovered`, and starts
+`begin_host_reregister` when the daemon is already on a newer generation than the
+attachment. Only `Failed` falls through to `begin_daemon_recovery`.
+`Pane::send_host_input` sends `BindAttachment` before the first input on the new
+stream. C3 keeps all of this and covers what plan 2.3 predates: C0's local fallback
+authority and C1's `lease_unconfirmed`.
+
+Two authority cases follow a host-local re-attach:
+- Surviving daemon grant. It is keyed by attachment id and the host keeps it, so the
+  rebound stream types again at once.
 - Lost C0 fallback. The failed frame connection owned it, and its detach cleared
   it. The replacement stream holds authority only if gterm's first-holder rule
   admits it (no control owner, no grant and no other local holder); otherwise it
   receives `InputRefused`.
 
-gclient cannot tell these apart before input. After a direct re-attach, the pane
-therefore shows `Reconnected; input authority unconfirmed.`, sets
-`lease_unconfirmed` and claims nothing. An `InputRefused` drops it to Observe with
-take-back, as C0c specifies. Once the daemon is ready, `install_direct_source`
-offers it to C2's per-pane schedule, and the retake grants the fresh attachment
-id on the new stream. Only a connect failure or a gterm refusal (`not_found`, `capacity`) falls
-through to the daemon path with the existing `Pane::defer_attach` backoff. The
-contract's frame-protocol section and the guide's reconnect section state the order.
+gclient cannot tell these apart before input, yet `Pane::restore_host_control`
+confirms unconditionally today (Held, no take-back, host input granted). C3 makes
+that restore provisional: the pane stays Held with host input on, so bytes keep
+flowing on the new stream, but it sets `lease_unconfirmed` and shows
+`Reconnected; input authority unconfirmed.`. An `InputRefused` drops it to Observe
+with take-back through the existing `Pane::refuse_host_input`, as C0c specifies. The
+terminal and epoch gate, cancellation, the absolute budget and the changed-generation
+re-register stay as shipped.
+
+Retake. Once the daemon is ready, each unconfirmed host-recovered pane goes to C2's
+per-pane schedule, and the retake grants the attachment its stream binds. The
+restored arm of `apply_host_recovery` offers the pane when `daemon_ready` holds and
+no re-register is needed. When one is needed, the `Reregistered` arm of
+`apply_frame_recovery` in `crates/gclient/src/app/live_attach/recovery.rs` (A3's
+move) adopts the fresh attachment and today re-requests control only for the
+focused pane; C3 keeps the focused pane's request and adds one for every other
+`lease_unconfirmed` pane. A daemon
+still away leaves the pane unconfirmed and typing; on its return,
+`start_due_attaches` re-registers host-recovered panes and the `Reregistered` arm
+makes the offer. The contract's frame-protocol section and the guide's reconnect
+section state the order: host-local reconnect first, the daemon path second, and the
+provisional status until the retake. **Restraint rung 2:** reuse the shipped
+host-local seam, bind-on-first-input, `refuse_host_input` and C2's per-pane map; add
+no second reconnect path.
 
 **Cutover:** C3 changes gclient and does not promote independently; after all
 leaves pass, it participates in the single shared clean-cutover gate in
 Constraints.
 
-**Research context:** Observed: `UnixSocketFrameSource::connect` and
-`from_stream` (`crates/gclient/src/frame_source.rs` ~437-587) open the frames socket
-from an `AttachLocator` (`frame_socket_path`, `host_terminal_id`, ~37-43);
-`recover_proxy_source` (pre-A3) always asks the daemon; the existing test
-`granted_direct_input_echoes_and_revoke_refuses` in
-`crates/gclient/tests/frame_source_live.rs` runs a real mock frame host. Planned
-verification: `cargo nextest run -p gobby-client --test frame_source_live --test
-loop_liveness`; docs link check.
+**Research context:** Observed on 0.5.0 `fec30c7e2a`: `live_loop.rs` 382-419 tries
+`begin_host_frame_recovery` (`live_attach.rs` 282-302) before
+`begin_frame_recovery`; `begin_host_recovery` (`host_recovery.rs` 165-256) and
+`apply_host_recovery` (`host_recovery.rs` 261-324) own the shipped path.
+`apply_host_recovery` has two callers, `live_loop.rs` 448 and `live_attach.rs` 176
+(inside `recv_live_frame`); its signature stays, so both call sites are unchanged.
+`Pane::restore_host_control` (`pane.rs` 516-520) has one caller, the restored arm
+(`host_recovery.rs` 283). `Pane::refuse_host_input` (`pane.rs` 609-620) handles
+`InputRefused` from `live_loop.rs` 380 and `workspace_panes.rs` 77.
+`Pane::send_host_input` binds lazily when `host_bound_attachment` differs from the
+attachment id. The `Reregistered` arm sits at `live_attach.rs` 365-391 on
+`fec30c7e2a` and in `recovery.rs` after A3. Shipped coverage that stays green:
+`crates/gclient/tests/host_upgrade_recovery.rs` tests
+`pane_reconnects_to_host_without_daemon`,
+`held_native_input_survives_daemon_outage_and_host_refusal_still_applies`,
+`host_local_failure_falls_back_to_daemon_attach`,
+`host_recovered_pane_reattaches_after_daemon_generation_change` and
+`take_control_during_host_reregister_waits_for_the_fresh_attachment`; any of them
+that pins the daemon request sequence after a restore admits the new retake.
+Rejected: a second direct-first step in `begin_proxy_recovery` (duplicates the
+shipped seam, and it runs only after the host-local path declined or failed). gterm's
+grant and first-holder rule are host memory (`crates/gterminal/src/host/state.rs`,
+read-only here). Planned verification: `cargo nextest run -p gobby-client --test
+host_upgrade_recovery --test loop_liveness`; docs link check.
 
 **Acceptance:**
 
-- C3.1 - A direct source error followed by a successful direct reconnect records
-  `AttachTerminal` plus `BindAttachment` and no `terminal_attach` daemon request.
-  test:
-  `crates/gclient/tests/frame_source_live.rs::a_direct_source_error_reattaches_directly_before_asking_the_daemon`.
+- C3.1 - A host-local re-attach keeps the pane Held and typing on the new stream,
+  sets `lease_unconfirmed` and shows `Reconnected; input authority unconfirmed.`
+  instead of confirming the grant. test:
+  `crates/gclient/tests/host_upgrade_recovery.rs::a_host_local_reattach_marks_input_authority_unconfirmed`.
 - C3.2 - The contract and guide state direct-first recovery. behavior: "direct
   re-attach" in `docs/contracts/gterm-protocols.md`.
 - C3.3 - With the daemon absent, a fallback holder's stream fails and the
@@ -1958,6 +2084,10 @@ loop_liveness`; docs link check.
   retake grants, cannot reclaim fallback. Its input is refused until the retake
   grants the fresh attachment id; after that, bytes reach the PTY. test:
   `crates/gclient/tests/loop_liveness.rs::a_fallback_stream_lost_during_daemon_return_types_only_after_the_retake`.
+- C3.5 - After the daemon returns on a new generation, every unconfirmed
+  host-recovered pane, focused or not, issues its own take once its re-register
+  lands, and each grant clears `lease_unconfirmed`. test:
+  `crates/gclient/tests/host_upgrade_recovery.rs::every_unconfirmed_host_recovered_pane_retakes_after_reregister`.
 
 ## P4: daemon terminal handlers off the event loop and off the serial lane
 `kind: framing`
@@ -2128,6 +2258,8 @@ Consumers unchanged:
 - `src/gobby/runner.py` — no-edit-reason: reads `TerminalHostConfig`; the new field has a default.
 - `tests/config/test_terminal_host.py` — no-edit-reason: constructs `TerminalHostConfig` with defaults.
 - `tests/config/test_terminals.py` — no-edit-reason: constructs `TerminalHostConfig` with defaults.
+- `tests/terminals/test_host_upgrade.py` — no-edit-reason: constructs `TerminalHostConfig` for its host fixture; the new field has a default.
+- `tests/terminals/test_input_grant_rebind.py` — no-edit-reason: constructs `TerminalHostConfig` with `socket_dir` and `health_interval_seconds`; the new field has a default.
 - `tests/terminals/test_host_shutdown_preservation.py` — no-edit-reason: constructs `TerminalHostConfig` with defaults.
 - `tests/test_runner_lifecycle_processes.py` — no-edit-reason: constructs `TerminalHostConfig` with defaults.
 
@@ -2827,6 +2959,28 @@ F02 resolution direction: keep direct typing uninterrupted across a daemon resta
   deletion hold, and the whole-M1 withdrawal keeps the earlier narrative. No blocker or
   proportionality objection remains. R5 (gobby#14944) packet: LAND on content. The
   Adversary derives the fresh M1 from these bytes.
+- 2026-10-05: Validation repair consensus (Plan Writer gobby#15528, Adversary
+  gobby#15471, task #23613) on 0.5.0 `a634d39747`. #23228 grew
+  `crates/gclient/src/app/live_attach.rs` to 951 production lines, so
+  production-size-growth failed A3, C2 and C3. A3 moves the daemon frame-recovery
+  group into the new `live_attach/recovery.rs` child, and C2 moves
+  `finish_direct_attach` and `install_direct_source` into the new
+  `live_attach/direct.rs` child. C3 is retargeted onto the shipped host-local
+  recovery seam (plan 2.3, #23076, #23419): the host-local restore becomes
+  provisional under `lease_unconfirmed`, and every unconfirmed pane retakes after
+  the re-register (C3.1 rewritten, C3.5 added). Decision 9's C3 clause follows.
+  Bare Targets that now carry indexed symbols become `::*` with scope-reasons in
+  A2, A3b, A4a, A4b, A4c, A5, B1, B3, C0c, C1, C2 and C3. `jobs.rs` and
+  `jobs_apply.rs` take `::*` rather than exact symbols because their consumers are
+  edit Targets elsewhere in the plan. D3 records two unchanged `TerminalHostConfig`
+  test consumers. The Orchestrator (gobby#14972) ruled C3 onto the shipped seam,
+  kept A3's obligations with a red-or-green-first check on A3.1 and A3.7, skipped
+  the enhancer pass and widened the task scope to the full normalization set.
+  Resolved with the Adversary: the task criteria name that full set, child-module
+  declarations sit above the root's `#[cfg(test)]` sentinel, and C3 keeps the
+  focused pane's retake while adding every other unconfirmed pane. No blocker or
+  proportionality objection remains. The Adversary derives M1 for the edited
+  sections from these bytes.
 
 ## M1 Task Manifest
 `kind: manifest`
