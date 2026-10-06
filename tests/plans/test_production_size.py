@@ -42,6 +42,8 @@ _REJECTED = {
     "symbol-target": _variant("mod.rs::*", "mod.rs::run"),
     "line-zero": _variant("lines: 1, 3-4", "lines: 0"),
     "leading-zero": _variant("lines: 1, 3-4", "lines: 01"),
+    "arabic-indic-zero": _variant("lines: 1, 3-4", "lines: ٠"),
+    "fullwidth-digit": _variant("lines: 1, 3-4", "lines: １"),
     "empty-span": _variant("lines: 1, 3-4", "lines: 3-3"),
     "reversed-span": _variant("lines: 1, 3-4", "lines: 4-3"),
     "descending": _variant("lines: 1, 3-4", "lines: 5, 2"),
@@ -63,6 +65,7 @@ _REJECTED = {
     "empty-scope-reason": _variant("remove the re-export", ""),
     "backticked-reason": _variant("remove the re-export", "remove `UNNAMED_PANE`"),
     "reserved-field-in-reason": _variant("remove the re-export", f"drop — base-blob: {BLOB}"),
+    "reserved-field-opens-reason": _variant("remove the re-export", "— operation: delete"),
 }
 
 

@@ -18,7 +18,7 @@ _RUST_TEST_MODULE_RE = re.compile(r"^\s*#\[cfg\(test\)\]")
 _PROOF_RE = re.compile(
     r"^\s*(?:[-*+]\s+)?`(?P<path>[^`]*)::\*` — operation: delete-lines"
     r" — base-blob: (?P<blob>[0-9a-f]{40})"
-    r" — lines: (?P<ranges>\d+(?:-\d+)?(?:, \d+(?:-\d+)?)*)"
+    r" — lines: (?P<ranges>[0-9]+(?:-[0-9]+)?(?:, [0-9]+(?:-[0-9]+)?)*)"
     r" — scope-reason: (?P<reason>.*)$"
 )
 _RESERVED_FIELDS = tuple(
@@ -88,7 +88,8 @@ def parse_delete_lines_proof(line: str) -> DeleteLinesProof:
     if any(char.isspace() or char in "\\:" for char in path):
         raise DeleteLinesProofError(f"path {path!r} has whitespace, a backslash or a colon")
     reason = match.group("reason")
-    if not reason.strip() or "`" in reason or any(key in reason for key in _RESERVED_FIELDS):
+    # The separator's space before a reason was consumed by the match, so restore it.
+    if not reason.strip() or "`" in reason or any(key in f" {reason}" for key in _RESERVED_FIELDS):
         raise DeleteLinesProofError(
             "scope-reason must be non-empty, with no backtick and no further reserved field"
         )
