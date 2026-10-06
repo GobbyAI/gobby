@@ -607,7 +607,12 @@ async def submit_close_review(
     than what the daemon goes on to do (#23393).
     """
     store = TaskCloseReviewStore(ctx.task_manager.db)
-    review = store.get(review_id)
+    try:
+        canonical_id = str(UUID(review_id))
+    except ValueError:
+        review = None
+    else:
+        review = store.get(canonical_id)
     authenticated = _authenticate_submission(ctx, review)
     if authenticated is not None:
         if review is None and (run_id := get_current_agent_run_id()):

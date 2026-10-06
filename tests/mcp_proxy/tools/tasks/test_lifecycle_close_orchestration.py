@@ -1360,7 +1360,7 @@ async def test_authenticated_valid_submission_closes_and_persists_payload(
 
     result = await submit_close_review(
         _ctx(),
-        review_id="review",
+        review_id=store.review.id,
         verdict=_verdict("valid"),
         evaluate_close=evaluate,
         commit_close=commit,
@@ -1634,7 +1634,7 @@ async def test_late_verdict_after_run_end_is_applied(
 
     result = await submit_close_review(
         _ctx(),
-        review_id="review",
+        review_id=store.review.id,
         verdict=_verdict("valid"),
         evaluate_close=AsyncMock(return_value=_evaluation(ready=True)),
         commit_close=commit,
@@ -1906,7 +1906,7 @@ async def test_invalid_and_stale_submissions_clear_active_lock(
 
         result = await submit_close_review(
             _ctx(),
-            review_id="review",
+            review_id=store.review.id,
             verdict=_verdict("invalid"),
             evaluate_close=AsyncMock(return_value=evaluation),
             commit_close=AsyncMock(),
@@ -1941,7 +1941,7 @@ async def test_external_pending_submission_stays_open_and_names_live_criteria(
 
     result = await submit_close_review(
         _ctx(),
-        review_id="review",
+        review_id=store.review.id,
         verdict=_verdict("valid"),
         evaluate_close=AsyncMock(return_value=evaluation),
         commit_close=commit,
@@ -1969,7 +1969,7 @@ async def test_malformed_submission_returns_review_to_running(
 
     result = await submit_close_review(
         _ctx(),
-        review_id="review",
+        review_id=store.review.id,
         verdict={},
         evaluate_close=AsyncMock(return_value=evaluation),
         commit_close=AsyncMock(),
@@ -1992,7 +1992,7 @@ async def test_wrong_reviewer_run_is_rejected_without_transition(
 
     result = await submit_close_review(
         _ctx(),
-        review_id="review",
+        review_id=store.review.id,
         verdict=_verdict("valid"),
         evaluate_close=AsyncMock(),
         commit_close=AsyncMock(),
@@ -2176,7 +2176,7 @@ def _ctx(
 def _review(*, status: str, run_id: str | None) -> TaskCloseReview:
     now = datetime(2026, 8, 22, tzinfo=UTC)
     return TaskCloseReview(
-        id="review",
+        id=str(uuid4()),
         task_id="task",
         task_ref="#42",
         caller_session_id="parent",
@@ -2247,10 +2247,12 @@ def _arguments() -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("wrong_review_id", ["not-a-uuid", str(uuid4())])
 async def test_corrected_submission_preserves_review_after_wrong_id_and_malformed_verdict(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
+    wrong_review_id: str,
 ) -> None:
     tasks = LocalTaskManager(temp_db)
     task = tasks.create_task(
@@ -2328,7 +2330,7 @@ async def test_corrected_submission_preserves_review_after_wrong_id_and_malforme
 
     rejected_id = await submit_close_review(
         ctx,
-        review_id=str(uuid4()),
+        review_id=wrong_review_id,
         verdict=_verdict("invalid"),
         evaluate_close=evaluate,
         commit_close=commit,
@@ -2341,7 +2343,7 @@ async def test_corrected_submission_preserves_review_after_wrong_id_and_malforme
     monkeypatch.setattr(orchestration, "get_current_session_id", lambda: caller.id)
     foreign = await submit_close_review(
         ctx,
-        review_id=str(uuid4()),
+        review_id=wrong_review_id,
         verdict=_verdict("invalid"),
         evaluate_close=evaluate,
         commit_close=commit,
