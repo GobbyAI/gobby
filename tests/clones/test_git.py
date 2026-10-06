@@ -8,6 +8,7 @@ import asyncio
 import logging
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -479,6 +480,51 @@ class TestCloneGitManagerDeleteClone:
         clone_path = clones_root / "project" / "clone"
         clone_path.mkdir(parents=True)
         (clone_path / "file.txt").write_text("content")
+
+        result = await manager.delete_clone(clone_path, force=True)
+
+        assert result.success is True
+        assert not clone_path.exists()
+
+    async def test_delete_clone_refuses_while_a_live_session_works_inside(
+        self, manager: CloneGitManager, clones_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A live session inside the clone blocks deletion, even forced (#23631)."""
+        clone_path = clones_root / "project" / "clone"
+        clone_path.mkdir(parents=True)
+        database = object()
+        asked: list[tuple[object, str]] = []
+
+        def occupied(db: object, path: str) -> str:
+            asked.append((db, path))
+            return f"Live session gobby#15411 working in {path}; it was not deleted"
+
+        monkeypatch.setattr(
+            "gobby.clones.git.get_app_context", lambda: SimpleNamespace(database=database)
+        )
+        monkeypatch.setattr("gobby.clones.git.refuse_occupied_worktree", occupied)
+
+        result = await manager.delete_clone(clone_path, force=True)
+
+        resolved = str(clone_path.resolve())
+        assert result.success is False
+        assert result.error == "clone_in_use"
+        assert (
+            result.message == f"Live session gobby#15411 working in {resolved}; it was not deleted"
+        )
+        assert asked == [(database, resolved)]
+        assert clone_path.exists()
+
+    async def test_delete_clone_proceeds_when_no_live_session_is_inside(
+        self, manager: CloneGitManager, clones_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unoccupied clone deletes as before."""
+        clone_path = clones_root / "project" / "clone"
+        clone_path.mkdir(parents=True)
+        monkeypatch.setattr(
+            "gobby.clones.git.get_app_context", lambda: SimpleNamespace(database=object())
+        )
+        monkeypatch.setattr("gobby.clones.git.refuse_occupied_worktree", lambda _db, _path: None)
 
         result = await manager.delete_clone(clone_path, force=True)
 
