@@ -6,7 +6,7 @@ import ast
 import logging
 import posixpath
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 
@@ -275,7 +275,7 @@ def uncovered_pytest_paths(
 
 def coverage_failure_message(
     python_tests: tuple[str, ...],
-    python_sources: Mapping[str, tuple[str, ...]],
+    python_sources: Mapping[str, Sequence[str]],
     web_paths: tuple[str, ...],
 ) -> str | None:
     """Describe the first uncovered test obligation in checklist priority order."""

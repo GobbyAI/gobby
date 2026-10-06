@@ -12,16 +12,14 @@ from typing import Any, Literal
 from gobby.config.shell_lexing import parse_shell_command
 from gobby.tasks.close_test_coverage import (
     changed_python_source_paths,
+    changed_web_source_paths,
     coverage_failure_message,
     related_python_source_tests,
     uncovered_pytest_paths,
+    uncovered_vitest_related_paths,
 )
 from gobby.tasks.close_test_coverage import (
     changed_python_test_paths as _changed_python_test_paths,
-)
-from gobby.tasks.close_test_coverage import (
-    changed_web_source_paths,
-    uncovered_vitest_related_paths,
 )
 from gobby.tasks.close_test_coverage import pytest_module_paths as _pytest_module_paths
 from gobby.tasks.close_test_coverage import (
