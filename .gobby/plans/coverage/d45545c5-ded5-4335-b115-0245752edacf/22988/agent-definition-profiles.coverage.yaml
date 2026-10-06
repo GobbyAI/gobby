@@ -1,11 +1,11 @@
 header:
   plan_id: agent-definition-profiles
-  plan_hash: e84da72ad89fedfcb07a4b63395f378e8900789a0e5da68c553ddee2a46fa0cb
+  plan_hash: 94b061e2e5736660cb5fd6cb36c34c8bab85f151a5ad7c735385bfbc7d6b096c
   root_task_ref: '22988'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-09-28T13:44:02Z'
+  generated_at: '2026-10-06T15:48:50Z'
   task_tree_source: db
-  task_tree_source_hash: fb06376b9c9d92fee7de514e6e9c006e5b0c038974b9516358d387afd46be1cd
+  task_tree_source_hash: 3c7df89836ad6f8365717f4da124ab0c19868f51f7ed13d87d87c296ad034f6b
   evidence_summary: []
   evidence: []
 rows:
@@ -183,7 +183,7 @@ rows:
 - section_id: '3.1'
   item_id: 3.1.2
   plan_node_hash: d5325a48b882df6ae793aec864954f51776bcb2dcb1075372123dbe7ae027784
-  status: covered
+  status: invalid
   leaves:
   - leaf_task_ref: '#22996'
     validation_criteria_snippet: '3.1.1: `assistant` validates, is `seat`-tagged,
@@ -342,9 +342,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#22999'
-    validation_criteria_snippet: "3.4.1: `plan-writer` validates, is `seat`-tagged,\
-      \ and declares the load skills \u2192 draft \u2192 enhance \u2192 revise \u2192\
-      \ adversary \u2192 handoff loop with the bounded enhancer ..."
+    validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06 10:41
+      CT): these criteria replace the superseded 3.4 criteria and map to the amended
+      plan items 3.4.1 to 3.4.5. ...'
     matched_artifact_ref: src/gobby/install/shared/workflows/agents/plan-writer.yaml
   deferral_target: null
   detail: ''
@@ -354,33 +354,33 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#22999'
-    validation_criteria_snippet: "3.4.1: `plan-writer` validates, is `seat`-tagged,\
-      \ and declares the load skills \u2192 draft \u2192 enhance \u2192 revise \u2192\
-      \ adversary \u2192 handoff loop with the bounded enhancer ..."
+    validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06 10:41
+      CT): these criteria replace the superseded 3.4 criteria and map to the amended
+      plan items 3.4.1 to 3.4.5. ...'
     matched_artifact_ref: src/gobby/install/shared/workflows/agents/plan-adversary.yaml
   deferral_target: null
   detail: ''
 - section_id: '3.4'
   item_id: 3.4.3
   plan_node_hash: ac557796b09e0d885e3b9a7ae33693d81cb63284a90ab1db1b3b245a89bf7f8e
-  status: covered
+  status: invalid
   leaves:
   - leaf_task_ref: '#22999'
-    validation_criteria_snippet: "3.4.1: `plan-writer` validates, is `seat`-tagged,\
-      \ and declares the load skills \u2192 draft \u2192 enhance \u2192 revise \u2192\
-      \ adversary \u2192 handoff loop with the bounded enhancer ..."
+    validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06 10:41
+      CT): these criteria replace the superseded 3.4 criteria and map to the amended
+      plan items 3.4.1 to 3.4.5. ...'
     matched_artifact_ref: tests/agents/test_plan_adversary_no_edits_on_reject.py::test_instructions_forbid_plan_edits_on_rejection
   deferral_target: null
   detail: ''
 - section_id: '3.4'
   item_id: 3.4.4
   plan_node_hash: 3bbed879f43aa9bd3427de205de28224f73776d07befce2db6cd5d7ad7d3d17c
-  status: covered
+  status: invalid
   leaves:
   - leaf_task_ref: '#22999'
-    validation_criteria_snippet: "3.4.1: `plan-writer` validates, is `seat`-tagged,\
-      \ and declares the load skills \u2192 draft \u2192 enhance \u2192 revise \u2192\
-      \ adversary \u2192 handoff loop with the bounded enhancer ..."
+    validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06 10:41
+      CT): these criteria replace the superseded 3.4 criteria and map to the amended
+      plan items 3.4.1 to 3.4.5. ...'
     matched_artifact_ref: tests/agents/test_plan_adversary_internal_research_definition.py::test_taskless_review_status_allows_protocol_failure_without_verdict
   deferral_target: null
   detail: ''
@@ -390,9 +390,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#22999'
-    validation_criteria_snippet: "3.4.1: `plan-writer` validates, is `seat`-tagged,\
-      \ and declares the load skills \u2192 draft \u2192 enhance \u2192 revise \u2192\
-      \ adversary \u2192 handoff loop with the bounded enhancer ..."
+    validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06 10:41
+      CT): these criteria replace the superseded 3.4 criteria and map to the amended
+      plan items 3.4.1 to 3.4.5. ...'
     matched_artifact_ref: derive_plan_handoff_manifest
   deferral_target: null
   detail: ''
@@ -512,5 +512,5 @@ rows:
   plan_node_hash: c71f025e84d4950ddaf2a3ddfb1aa9a7427de7e6f6c52514f34d0d238561005a
   status: deferred
   leaves: []
-  deferral_target: '#23003'
+  deferral_target: '#22998'
   detail: deferral is valid

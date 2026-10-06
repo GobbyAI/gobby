@@ -370,7 +370,7 @@ replacement merge orchestration.
 
 ```yaml
 deferral:
-  task_ref: "TBD-batch-retirement"
+  task_ref: "#23678"
   reason: "External prerequisites: the merge-orchestrator removal planned under #23460 must be installed in the DB registry first, and #23341 (Remove gobby build) must land."
   owner: "orchestrator"
   original_acceptance_items:
