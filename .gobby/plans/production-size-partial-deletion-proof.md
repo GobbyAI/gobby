@@ -146,7 +146,9 @@ them to developer seats.
      are not. `CloseEvaluationFingerprint` therefore captures the
      description's proof lines, and finalization's existing fingerprint
      recheck turns a proof edited after evaluation into a stale close. A
-     description edit outside the proof lines still closes.
+     description edit still closes, provided the other deterministic gates
+     pass and it keeps both the proof lines and the normalized declared
+     Targets paths (next bullet).
    - That recheck runs before `link_close_commit_shas` re-fetches the row,
      and it is the re-fetched row's `updated_at` that the close transition
      uses as its compare-and-set. 2.2 repeats the comparison on that linked
@@ -155,9 +157,10 @@ them to developer seats.
      `TaskStaleStateError`.
    - Finalization's scope recheck also runs before that fetch, and scope
      reads the row's declared Targets. 2.2 therefore adds the description's
-     normalized declared Targets paths to the fingerprint. An edit to a
-     Targets entry's symbol or scope-reason that keeps its path still
-     closes.
+     normalized declared Targets paths to the fingerprint. A proof-free
+     edit that changes a declared Targets path stales the close (2.2.4).
+     An edit to a Targets entry's symbol or scope-reason that keeps its
+     path still closes.
 9. **Base drift.** The base binding is exact by design. When another change
    moves the file after the plan is validated, the close fails closed. To
    recover:
@@ -738,7 +741,8 @@ Implementation in `src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py`
 - With no call-site change, finalization's existing recheck then returns
   the stale-close response when the proof lines changed after evaluation,
   and `fingerprint_differences` names `size_proof_lines`. A description edit
-  outside the proof lines leaves the fingerprint equal.
+  that keeps the proof lines leaves this field equal. 2.2 also binds the
+  declared Targets paths.
 
 Docs:
 - `docs/contracts/plan-coverage.md`: after the 1.1 "Partial deletion proof"
@@ -824,7 +828,8 @@ before the close. The docs describe only this check.
   `_commit_close` returns the stale-close response, the task stays open,
   and `fingerprint_differences` names `size_proof_lines`. This holds for an
   ordinary close and for a deliberate close of an escalated task. A fresh
-  row whose description changes outside the proof lines still closes.
+  row whose description changes only in prose, keeping the proof lines and
+  the declared Targets paths, still closes.
   test:
   `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_size_proof_edit_after_evaluation_stales_close`.
 - 2.1.8 - The contract documents the committed-result check, its close
@@ -1038,6 +1043,13 @@ follows that one in `CloseEvaluationFingerprint`.
   - The Orchestrator placed the generic linked-row race in this plan as 2.2
     (19:44 CT), and the Targets variant with it (20:02 CT). No disagreement
     went unresolved.
+- 2026-10-05 20:07 CDT: Adv2's M1 pre-apply cross-check on `9912e87f83`
+  raised F-BENIGN-DESCRIPTION-BOUND. Decision Record item 8 and 2.1.7
+  promised that any description edit outside the proof lines still closes,
+  which contradicts 2.2.4. The wording now says such an edit closes only
+  when it keeps both the proof lines and the normalized declared Targets
+  paths and the other gates pass. The fix is wording only; the tests are
+  unchanged.
 
 ## V2: Verification
 `kind: verification`
