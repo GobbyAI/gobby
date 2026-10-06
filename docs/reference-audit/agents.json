@@ -323,6 +323,21 @@
     },
     {
       "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/personas.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_spawn_tools.py",
+        "symbol": "register_agent_spawn_tools.apply_persona"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "apply_persona"
+    },
+    {
+      "surface": "mcp",
       "reference": "src/gobby/install/shared/skills/gobby/references/agents/checkpoints.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/agents_checkpoint_tools.py",

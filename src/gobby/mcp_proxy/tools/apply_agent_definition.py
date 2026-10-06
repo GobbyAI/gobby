@@ -262,6 +262,10 @@ def commit_definition_changes(
             new_keys |= previous_keys
         delta["_agent_definition_keys"] = sorted(new_keys)
         delta.update(overlays or {})
+        if current.get("_persona_name") and "_persona_name" not in (overlays or {}):
+            # SessionStart refreshes seat enforcement while keeping the live persona.
+            delta.pop("_active_skill_names", None)
+            delta.pop("_skill_format", None)
         manager.merge_variables(session_id, delta)
         merged = manager.get_variables(session_id)
         return {"status": "applied", "agent": agent, "variables": merged}
@@ -351,7 +355,12 @@ async def apply_agent_definition_impl(
     changes, rules, skills = build_definition_changes(
         body, session_id, db, all_skills=all_skills, is_spawned=False
     )
-    overlays = {"_agent_context_injected": False, "_agent_identity_reinject": True, **extra}
+    overlays = {
+        "_persona_name": None,
+        "_agent_context_injected": False,
+        "_agent_identity_reinject": True,
+        **extra,
+    }
     collision = colliding_definition_variable_error(variables, changes=changes, extra_vars=overlays)
     if collision:
         return _refusal("variable_collision", collision)

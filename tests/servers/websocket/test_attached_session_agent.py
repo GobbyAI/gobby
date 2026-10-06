@@ -87,7 +87,7 @@ async def test_persona_command_does_not_confirm_indeterminate_write() -> None:
 
 
 @pytest.mark.asyncio
-async def test_attached_terminal_role_change_refused_before_write() -> None:
+async def test_attached_terminal_seat_allows_live_persona_switch() -> None:
     server, websocket = _attached_target()
     with (
         patch(
@@ -106,13 +106,12 @@ async def test_attached_terminal_role_change_refused_before_write() -> None:
         await _set_attached_session_agent(
             cast(SessionControlMixin, server), websocket, "session-1", "y"
         )
-    server.write_coordinator.write.assert_not_awaited()
-    assert server._send_error.await_args.kwargs["code"] == "ROLE_CHANGE_REQUIRES_RELAUNCH"
-    text = server._send_error.await_args.args[1]
-    assert "start a new terminal session" in text
-    assert "'x'" in text and "'y'" in text
+    server.write_coordinator.write.assert_awaited_once()
+    request = server.write_coordinator.write.await_args.args[0]
+    assert request.payload == "/gobby persona y"
+    server._send_error.assert_not_awaited()
     assert json.loads(websocket.send.await_args.args[0]) == {
         "type": "agent_changed",
         "target_session_id": "session-1",
-        "agent_name": "x",
+        "agent_name": "y",
     }

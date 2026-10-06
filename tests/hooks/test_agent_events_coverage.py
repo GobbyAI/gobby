@@ -419,16 +419,18 @@ class TestHandleBeforeAgent:
                 "gobby.workflows.state_manager.SessionVariableManager.get_variables",
                 return_value={
                     "_agent_type": "backend-developer",
+                    "_persona_name": "qa-reviewer",
                     "_agent_context_injected": False,
                     "_agent_context_rehydrate_pending": True,
                     "is_spawned_agent": True,
                 },
             ),
             patch("gobby.workflows.state_manager.SessionVariableManager.merge_variables"),
-            patch("gobby.workflows.agent_resolver.resolve_agent", return_value=agent),
+            patch("gobby.workflows.agent_resolver.resolve_agent", return_value=agent) as resolve,
         ):
             result = handler.handle_before_agent(event)
 
+        assert resolve.call_args.args[0] == "backend-developer"
         assert result.context is not None
         assert "AGENT SENTINEL" in result.context
         assert "PERSONA SENTINEL" not in result.context

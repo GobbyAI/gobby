@@ -488,7 +488,7 @@ async def test_activated_seat_refuses_worktree_tools(
     assert_worktree_tools_blocked(temp_db, session_id)
 
 
-def test_registry_exposes_apply_agent_definition_only() -> None:
+def test_registry_exposes_definition_and_persona() -> None:
     registry = InternalToolRegistry("gobby-agents")
     context = cast(AgentsRegistryContext, MagicMock())
     with patch(
@@ -496,11 +496,11 @@ def test_registry_exposes_apply_agent_definition_only() -> None:
         return_value=InternalToolRegistry("spawn"),
     ):
         register_agent_spawn_tools(registry, context)
-    retired = "apply_persona"
+    persona = "apply_persona"
     names = {tool["name"] for tool in registry.list_tools()}
     assert "apply_agent_definition" in names
-    assert retired not in names
-    assert importlib.util.find_spec(f"gobby.mcp_proxy.tools.{retired}") is None
+    assert persona in names
+    assert importlib.util.find_spec(f"gobby.mcp_proxy.tools.{persona}") is not None
 
 
 class TestBuildDefinitionChanges:
