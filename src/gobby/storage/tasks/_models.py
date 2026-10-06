@@ -233,7 +233,9 @@ class AgentTaskClaimConflictError(ValueError):
             return
         super().__init__(
             f"Session already owns open claimed task {claimed_task_ref}. "
-            "Finish and close it, or for a genuine blocker or explicitly directed recovery use "
+            "Finish and close it. To start other work while it waits on review, landing or "
+            "close, commit its attributed files and get a reviewer's independent_review_approval "
+            "receipt. For a genuine blocker or explicitly directed recovery use "
             f'escalate_task(task_id="{claimed_task_ref}", reason="<concrete reason>") '
             "to release ownership. Alternatively, arrange an authorized transfer to another "
             "session with claim capacity. force=true does not bypass your existing claim. "

@@ -9,6 +9,7 @@ from typing import Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._authorization import require_claim_authority
 from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session_activity
+from gobby.mcp_proxy.tools.tasks._claim_handoff import handed_off_claim_ids
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._formatters import (
@@ -243,6 +244,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if claim:
                 task = ctx.task_manager.create_task_for_agent(
                     session_id=resolved_session_id,
+                    handed_off_task_ids=handed_off_claim_ids(ctx, resolved_session_id, project_id),
                     **task_fields,
                 )
             else:

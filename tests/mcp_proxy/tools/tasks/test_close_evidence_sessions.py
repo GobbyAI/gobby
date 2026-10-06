@@ -1154,7 +1154,7 @@ async def test_linked_session_runs_after_it_claims_another_task_are_not_credited
             _session_link("other-task", "2026-09-29T02:14:00+00:00"),
             _session_link("task", "2026-09-28T13:55:00+00:00"),
         ],
-        # The owner's own later claim never bounds its window.
+        # The owner's own later claim bounds its window too (#23665).
         QA: [
             _session_link("owner-next", "2026-09-28T21:00:00+00:00"),
             _session_link("task", "2026-09-28T20:00:00+00:00"),
@@ -1195,7 +1195,7 @@ async def test_linked_session_runs_after_it_claims_another_task_are_not_credited
     by_session = {evidence.sessions[0]: evidence for evidence in merged}
     assert by_session[IMPLEMENTER].validation_runs == runs[IMPLEMENTER][:1]
     assert by_session[IMPLEMENTER].command_runs == runs[IMPLEMENTER][:1]
-    assert by_session[QA].validation_runs == runs[QA]
+    assert by_session[QA].validation_runs == runs[QA][:1]
 
 
 async def _implementer_runs_after_claims(
@@ -1294,3 +1294,86 @@ async def test_linked_session_runs_after_returning_to_an_earlier_task_are_not_cr
     )
 
     assert credited == (before,)
+
+
+async def _owner_runs_after_claims(
+    db_claims: list[dict[str, Any]],
+    transcript_claims: tuple[TranscriptTaskClaim, ...],
+    runs: tuple[Any, ...],
+) -> tuple[Any, ...]:
+    """Derive close evidence where QA alone owns and closes the task."""
+    ctx = _context(
+        [_link(QA, "claimed", "2026-09-29T20:00:00+00:00")],
+        {QA: _session(QA, "2026-09-29T19:00:00+00:00")},
+    )
+    ctx.session_var_manager.get_variables.return_value = {}
+    ctx.session_task_manager.get_session_tasks.return_value = db_claims
+
+    async def record(session: Any, *args: Any, **kwargs: Any) -> TranscriptEvidence:
+        return TranscriptEvidence(
+            validation_runs=runs,
+            command_runs=runs,
+            task_claims=transcript_claims,
+            sessions=(QA,),
+        )
+
+    with (
+        patch(f"{_SUPPORT}.resolve_validation_detection_config"),
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_transcript_evidence", new=AsyncMock(side_effect=record)),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+        patch(f"{_SUPPORT}.merge_transcript_evidence", side_effect=lambda *sets: list(sets)),
+    ):
+        merged: Any = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=QA,
+            closing_session_id=QA,
+            owner_window_start="2026-09-29T20:00:00+00:00",
+            task_edited_files=set(),
+            repo_path="/repo",
+        )
+    (evidence,) = merged
+    assert evidence.command_runs == evidence.validation_runs
+    return tuple(evidence.validation_runs)
+
+
+@pytest.mark.asyncio
+async def test_owner_runs_for_newer_work_after_a_hand_off_do_not_judge_the_close() -> None:
+    """#23665: a handed-off task's close ignores the owner's runs for its newer claim."""
+    green = _run_at(QA, "2026-09-29T20:30:00+00:00", "success")
+    newer_red = _run_at(QA, "2026-09-29T22:00:00+00:00", "failure")
+    newer_green = _run_at(QA, "2026-09-29T22:30:00+00:00", "success")
+
+    credited = await _owner_runs_after_claims(
+        [
+            _session_link("newer-task", "2026-09-29T21:00:00+00:00"),
+            _session_link("task", "2026-09-29T20:00:00+00:00"),
+        ],
+        (_claim("newer-task", "2026-09-29T21:00:00+00:00"),),
+        (green, newer_red, newer_green),
+    )
+
+    assert credited == (green,)
+
+
+@pytest.mark.asyncio
+async def test_owner_runs_after_reactivating_the_handed_off_task_are_credited() -> None:
+    """#23665: reclaiming the task once the newer claim is handed off resumes its window."""
+    newer_red = _run_at(QA, "2026-09-29T22:00:00+00:00", "failure")
+    red = _run_at(QA, "2026-09-30T01:00:00+00:00", "failure")
+    green = _run_at(QA, "2026-09-30T01:30:00+00:00", "success")
+
+    credited = await _owner_runs_after_claims(
+        [
+            _session_link("newer-task", "2026-09-29T21:00:00+00:00"),
+            _session_link("task", "2026-09-29T20:00:00+00:00"),
+        ],
+        (
+            _claim("newer-task", "2026-09-29T21:00:00+00:00"),
+            _claim("task", "2026-09-30T00:00:00+00:00"),
+        ),
+        (newer_red, red, green),
+    )
+
+    assert credited == (red, green)

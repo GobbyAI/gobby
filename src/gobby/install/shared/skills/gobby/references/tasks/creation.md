@@ -30,15 +30,22 @@ call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={
 
 Create with `claim=true` or claim existing work before edits. A successful
 already-claimed response means read the task and continue; do not claim again.
-One session cannot accumulate ordinary open claims. Cross-project claims are
-rejected. `TASK_CLAIM_CONFLICT` covers two different claim failures:
+One session holds at most one active claim. A claim is handed off, and stops
+holding capacity, once a reviewer recorded an `independent_review_approval`
+receipt for it and none of its attributed files is uncommitted. It stays claimed
+while it waits on landing or close, and a new claim becomes the active one that
+receives your edits. Reclaiming a handed-off task makes it active again only when
+no other active claim exists. Closing it judges only runs made while it was
+active. Cross-project claims are rejected. `TASK_CLAIM_CONFLICT` covers two
+different claim failures:
 
 - `TaskAlreadyClaimedError` / foreign ownership (`claimed_by`): coordinate with
   the named owner. An authorized receiving session with claim capacity can use
   `claim_task(task_id="<task>", force=true)` to transfer that owner's claim.
 - `AgentTaskClaimConflictError` / same-session accumulation (`claimed_task_id`,
-  `claimed_task_ref`): your session owns the named different open task. Finish
-  and close it normally. For a genuine blocker or explicitly directed recovery,
+  `claimed_task_ref`): your session owns the named different active task. Finish
+  and close it normally, or hand it off as above. For a genuine blocker or
+  explicitly directed recovery,
   use `escalate_task(task_id="<existing claim>", reason="<concrete reason>")`;
   escalation releases canonical ownership, freeing your claim capacity. Do not
   escalate to bypass validation, committing, or closing. Alternatively, arrange
@@ -66,4 +73,4 @@ requested scope. Use closing guidance for no-work dispositions.
 
 Guide: [Create and Claim](../../../../../../../../docs/guides/tasks.md#create-and-claim).
 
-_Last verified: 2026-10-02_
+_Last verified: 2026-10-06_

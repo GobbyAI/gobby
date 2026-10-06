@@ -189,6 +189,15 @@ def task_edited_file_set_for_checkout(
     return set(_task_edited_file_checkouts(variables).get(task_id, {}).get(root, []))
 
 
+def task_live_checkout_files(variables: dict[str, Any], task_id: str) -> dict[str, set[str]]:
+    """Return this task's live attributed paths by checkout root, without released pairs."""
+    return {
+        root: set(files)
+        for root, files in _task_edited_file_checkouts(variables).get(task_id, {}).items()
+        if files
+    }
+
+
 def task_edited_checkout_paths(
     variables: dict[str, Any], task_id: str
 ) -> frozenset[tuple[str, str]]:

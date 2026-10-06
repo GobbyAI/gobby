@@ -99,9 +99,14 @@ call_tool(server_name="gobby-tasks", tool_name="claim_task", arguments={
 
 `claim_task` sets canonical ownership for the current session and detects claim
 conflicts. `force=true` overrides another owner and should be reserved for
-explicit recovery situations. A session cannot accumulate ordinary open claims;
-finish its existing claim before claiming another task. An `already_claimed`
-response means read the task and continue, rather than claiming it again.
+explicit recovery situations. A session holds at most one active claim: finish
+its existing claim, or hand it off, before claiming another task. A claim is
+handed off once a reviewer recorded an `independent_review_approval` receipt for
+it and none of its attributed files is uncommitted. It stays claimed while it
+waits on landing or close, and the new claim receives the session's edits.
+Reclaiming a handed-off task makes it active again only when no other active
+claim exists. An `already_claimed` response means read the task and continue,
+rather than claiming it again.
 
 ### Close
 
@@ -380,7 +385,8 @@ gobby tasks validation-history '#14390'
 or current diff. Validation commands come from the transcripts of the claiming and
 closing sessions and of every earlier session that claimed or worked the task,
 each within its own link window (a session that no longer exists or has no
-readable transcript is skipped). A task-attributed edit after a clean run makes that run stale; a
+readable transcript is skipped). Runs a session made while it worked another
+claimed task, including the owner's after a hand-off, are excluded. A task-attributed edit after a clean run makes that run stale; a
 commit does not. Code, refactor, and test tasks require a clean test-category
 run, config tasks accept any clean validation command, and documentation,
 planning, research, manual, and no-edit tasks skip that checklist item. Parent

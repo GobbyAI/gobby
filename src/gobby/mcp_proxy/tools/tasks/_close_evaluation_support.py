@@ -347,7 +347,13 @@ async def derive_close_transcript_evidence(
                 task_checkout_paths,
                 archive_dir=archive_dir,
             )
-            if task_links is not None and session_id not in required:
+            if session_id not in required or session_id == owner_session_id:
+                # The owner leaves too: once this task is handed off it may claim newer
+                # work, whose runs must neither fail nor pass this close (#23665).
+                if task_links is None:
+                    task_links = await asyncio.to_thread(
+                        ctx.session_task_manager.get_session_tasks, session_id
+                    )
                 # session_tasks keeps one row per task, so a return to this task
                 # after a departure shows only in the transcript's own claims.
                 claims = await _resolve_transcript_claims(
