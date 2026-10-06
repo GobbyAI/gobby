@@ -65,10 +65,19 @@ them to developer seats.
      another target token.
    - The target is always `::*`, because the committed check constrains the
      whole file's bytes.
-   One anchored regular expression matches the entry. Any Targets entry whose
-   text before `scope-reason:` contains `delete-lines` is a proof candidate,
-   and a candidate the expression does not match is an error. No key may
-   repeat, be reordered or be omitted, and no other `operation:` may appear.
+   - `<path>` is a canonical repository-relative POSIX file path. It is
+     non-empty and has no leading `/`, no `.` or `..` component, no empty
+     component (`//`), and no backslash, whitespace, backtick or colon.
+   - The `scope-reason` text is non-empty. It carries no backtick and no
+     further reserved field (` — operation:`, ` — base-blob:`, ` — lines:`
+     or ` — scope-reason:`).
+   One anchored regular expression matches the entry. A Targets entry is a
+   proof candidate when its text before the first `scope-reason:` contains
+   `delete-lines`, or when the line contains ` — operation: delete-lines`
+   anywhere. A plain mention of `delete-lines` inside scope-reason prose is
+   not a candidate. A candidate the expression does not match is an error,
+   including a candidate whose path cannot be recovered. No key may repeat,
+   be reordered or be omitted, and no other `operation:` may appear.
 3. **Exclusivity.**
    - A proof is the only Targets entry for its path in its deliverable.
    - Every other deliverable that targets the same path must transitively
@@ -77,6 +86,9 @@ them to developer seats.
    - A proof entry never satisfies whole-file deletion
      (`_is_whole_file_deletion` requires exactly `operation: delete`). An
      entry carrying both operations fails the proof grammar.
+   - Exclusivity is a plan-validation rule only. The close gate does not
+     re-check it: two same-path proofs with different results cannot both
+     match the candidate's bytes, so byte equality already binds the file.
 4. **Line model and counting.**
    - Lines are the base bytes split after each `\n`. A non-empty tail with no
      final `\n` is the last line, and a line keeps its own terminator.
@@ -89,7 +101,9 @@ them to developer seats.
      `#[cfg(test)]` line.
    - The projected production count must be at most the base count and below
      1,000. Deleting a `#[cfg(test)]` line that exposes test lines therefore
-     fails, and so does a base already at or above 1,000.
+     fails. A base already at or above 1,000 needs no separate guard. It
+     passes only when the deletion brings the projection below 1,000,
+     because shrinking a file into compliance should not force a split.
    - Deleting only Rust test-tail lines passes: the file shrinks and the
      production count does not grow.
 5. **Fail-closed preflight.**
@@ -123,6 +137,12 @@ them to developer seats.
    - Rename, removal, symlink (`120000`) and gitlink (`160000`) fail.
    - An exec-bit change leaves the bytes untouched and cannot grow the file,
      so the size proof does not cover it.
+   - Gate 8 still records exactly one result. A proof failure takes
+     precedence as `size_proof_mismatch` and carries any simultaneous scope
+     diagnostic. A scope evaluation error never skips the proof check, and a
+     deliberate close of an escalated task never waives it.
+   - A Git error, timeout or parse error during the check is a failure. Only
+     cancellation escapes the check.
 8. **Where the gate runs.**
    - The close path is the only enforcement point. `_task_has_landed_commit`
      marks a section complete as soon as a tagged commit reaches HEAD, before
@@ -315,13 +335,17 @@ new):
 - `DeleteLinesProofError(ValueError)`, and frozen dataclasses
   `DeleteLinesProof(path, base_blob, ranges)` and
   `ProjectedDeletion(data, blob, base_count, projected_count)`.
-- `is_delete_lines_entry(line: str) -> bool`: true when the text before any
-  `scope-reason:` contains `delete-lines`.
+- `is_delete_lines_entry(line: str) -> bool`: true when the text before the
+  first `scope-reason:` contains `delete-lines`, or when the line contains
+  ` — operation: delete-lines` anywhere (Decision Record item 2).
 - `parse_delete_lines_proof(line: str) -> DeleteLinesProof`: one anchored
-  regular expression implementing Decision Record item 2, then range
-  validation: canonical `N` / `A-B` with `A < B`, no leading zeros, strictly
-  ascending, with a retained line between neighbours. It raises
-  `DeleteLinesProofError` with a specific reason.
+  regular expression implementing Decision Record item 2, then three
+  validations:
+  - the canonical-path rule;
+  - the scope-reason rule (non-empty, no backtick, no reserved field);
+  - range validation: canonical `N` / `A-B` with `A < B`, no leading zeros,
+    strictly ascending, with a retained line between neighbours.
+  It raises `DeleteLinesProofError` with a specific reason.
 - `project_delete_lines(proof, data: bytes) -> ProjectedDeletion`, which
   raises `DeleteLinesProofError` when:
   - `git_blob_id(data) != proof.base_blob` (the message names both IDs);
@@ -343,22 +367,27 @@ Implementation in `src/gobby/plans/semantic_lint.py`:
 - `_line_count` keeps its lenient contract: `errors="ignore"` and `OSError`
   counts as 0. It reads the text and returns
   `production_line_count(text, suffix=path.suffix)`.
-- `_lint_production_size_growth` checks each strict-inventory path before
-  the production-path filter. It collects that file's Targets-block entries
-  (as `_is_whole_file_deletion` does) and runs the proof branch when any
-  entry satisfies `is_delete_lines_entry`. The branch reports one
-  `production-size-growth` issue with `details` `file_path` and
-  `proof_error` when any of these hold:
-  - there is more than one entry for the path;
+- `_lint_production_size_growth` first scans the raw entries from
+  `iter_target_block_lines(plan_doc, section)` for lines that satisfy
+  `is_delete_lines_entry`, before it iterates the strict inventory. The
+  raw scan catches a candidate whose path `_primary_target_path` cannot
+  recover, which strict inventory drops. Each candidate runs the proof
+  branch. The branch reports one `production-size-growth` issue with
+  `details` `file_path` and `proof_error` when any of these hold.
+  `file_path` is the parsed path, else `_primary_target_path(line)`, which
+  may be `None`.
   - parsing fails;
+  - more than one Targets entry has the proof's path as its
+    `_primary_target_path`;
   - the path is not hand-maintained production;
   - the path, or any parent below the project root, is a symlink, which the
     branch checks with `source_path.is_symlink()` and by comparing
     `resolve()` against `project_root.resolve() / file_path`;
   - reading raises `OSError`;
   - `project_delete_lines` raises.
-  A valid proof satisfies the lint for that file. Either way the branch then
-  skips the threshold and split heuristic for the file.
+  A valid proof satisfies the lint for that file. Either way, the
+  strict-inventory loop then skips the threshold and split heuristic for
+  every path that has a candidate, whatever the file's size.
 - `_lint_shared_target_ordering` collects proof owners (deliverables whose
   Targets block holds a `delete-lines` entry for a path). For every other
   owner of that path it requires `_has_dependency_path(graph, other,
@@ -377,7 +406,8 @@ Implementation in `src/gobby/plans/semantic_lint.py`:
 Docs:
 - `docs/contracts/plan-coverage.md`, Target Inventory: after the whole-file
   deletion paragraph, add a "Partial deletion proof" paragraph with the
-  fenced grammar, the line model, the count rule and the fail-closed list.
+  fenced grammar, the candidate rule, the line model, the count rule and the
+  fail-closed list.
   It also explains how to compute the fields: `git hash-object --no-filters
   <path>` for `base-blob`, 1-based line numbers from the current file.
 - Same file, Validator Lints table:
@@ -410,7 +440,12 @@ grammar and nothing else.
   repeated or reordered key; backticked metadata; uppercase or short hex;
   non-`::*` target; `0`, a leading zero, `N-N`, descending, overlapping or
   adjacent ranges; `scope-reason` not last; a second `operation:`; an en
-  dash separator. test:
+  dash separator; a missing, absolute, `..`, `./`-prefixed or doubled-slash
+  path; an empty scope-reason; a backtick or reserved field after
+  `scope-reason:`. `is_delete_lines_entry` is true for
+  ` — operation: delete-lines` placed after `scope-reason:`, and false for
+  an ordinary entry whose scope-reason prose only mentions `delete-lines`.
+  test:
   `tests/plans/test_production_size.py::test_parse_delete_lines_proof_grammar`.
 - 1.1.2 - Projection is byte-exact: CRLF lines survive, and a retained final
   line without `\n` stays without it. Deleting the last line leaves the new
@@ -420,7 +455,8 @@ grammar and nothing else.
 - 1.1.3 - The projected count reuses the production rule:
   - deleting a Rust `#[cfg(test)]` line that exposes test lines raises;
   - deleting only test-tail lines passes;
-  - a base at or above 1,000 production lines raises even after deletion;
+  - a 1,005-line base projected to 990 production lines passes, and the
+    same base projected to 1,000 raises;
   - `production_line_count` matches the pre-change `_line_count` on CRLF,
     lone-CR and Rust fixtures.
   test: `tests/plans/test_production_size.py::test_project_delete_lines_recounts_production_lines`.
@@ -432,10 +468,15 @@ grammar and nothing else.
   `proof_error`:
   - mixed: the proof plus a second entry for the path, or the proof plus
     `operation: delete`;
-  - ambiguous: a malformed proof;
+  - ambiguous: a malformed proof, `operation: delete-lines` placed after
+    `scope-reason:`, and a candidate whose path cannot be recovered;
+  - a malformed candidate on a file below 850 lines, and one beside a valid
+    split paragraph;
   - a proof on a `tests/` path or a generated file;
   - a proof reached through a symlink.
-  test: `tests/plans/test_semantic_lint.py::test_production_size_growth_delete_lines_proof_fails_closed`.
+  An ordinary entry whose scope-reason only mentions `delete-lines` is not
+  a candidate and keeps today's diagnostic. test:
+  `tests/plans/test_semantic_lint.py::test_production_size_growth_delete_lines_proof_fails_closed`.
 - 1.1.6 - A stale proof fails even beside a valid split paragraph naming a
   new bare-path Target. The same stale proof passes when its section is in
   `completed_section_ids`. test:
@@ -497,11 +538,16 @@ Consumers unchanged:
   when nothing is linked and no `commit_sha` is given, and never infers
   HEAD. `_foreign_close_commit` accepts another task's commit once
   `link_commit` links it. That is the `already_implemented` remediation.
-- Git access uses `gobby.utils.daemon_git.daemon_git`:
-  - `stream_bytes(args, cwd=..., consume=..., timeout=...)` returns raw
-    stdout bytes, for `cat-file blob`;
-  - `run(args, cwd=..., timeout=...)` returns `GitOk` text, for
-    `ls-tree -z`.
+- Git access uses `gobby.utils.daemon_git.daemon_git`
+  (`src/gobby/utils/daemon_git.py`):
+  - `stream_bytes(args, *, cwd, consume, timeout=10.0)` (`:289`) returns a
+    `GitResult`. It delivers raw stdout to `consume` in byte chunks before
+    it returns. `GitOk.stdout` is a `str` (`:25-33`) and carries no blob
+    bytes, so the caller collects the chunks itself. Used for
+    `cat-file blob`.
+  - `run(args, *, cwd, timeout=10.0)` (`:263`) returns a `GitResult`, and
+    only a `GitOk` result's `stdout` is parsed. Used for `ls-tree -z`.
+  - A failure comes back as a `GitFailed` or `GitTimeout` value.
   The close path already uses this service in `_lifecycle_close_preview.py`.
 - Persistence: `_contract_section_body` (excerpt `d39e3ecd…`) puts the
   section's Targets lines, metadata included, into the leaf description, and
@@ -540,26 +586,52 @@ Implementation, new module `src/gobby/mcp_proxy/tools/tasks/_size_proof_gate.py`
   4. When `candidate_commit_sha` is None, fail with the action "link the
      commit that delivered the deletion with link_commit and pass it as
      commit_sha".
-  5. For each proof, `stream_bytes(("cat-file", "blob", base_blob))`. A
-     non-`GitOk` result is a failure: "base blob not in the object store".
-  6. Run `project_delete_lines` on those bytes. Its errors are failures.
-  7. Run `daemon_git.run(("ls-tree", "-z", "--full-tree", candidate, "--",
-     path))`. Exactly one record must have this path, type `blob`, mode
-     `100644` or `100755` and object ID equal to `ProjectedDeletion.blob`.
-     Otherwise it is a failure naming expected and found mode, type and
-     object ID.
-  The mismatch action names the remediation: make the candidate's file
-  equal the declared deletion; if the base moved, follow Decision Record
-  item 9.
-- In `_evaluate_close`, after the `try` that sets `scope` and before
-  `if scope is not None:`, await `evaluate_size_proofs(description=task.description,
+  5. For each proof, collect the base bytes in a fresh per-call
+     `bytearray` with `await daemon_git.stream_bytes(("cat-file", "blob",
+     base_blob), cwd=repo_path, consume=buffer.extend, timeout=10.0)`. A
+     `GitFailed`, a `GitTimeout` or an ordinary exception is a failure
+     ("base blob not readable from the object store", plus the available
+     diagnostic), and the partial bytes are discarded.
+  6. Run `project_delete_lines(proof, bytes(buffer))`. Its errors are
+     failures.
+  7. Await `daemon_git.run(("--literal-pathspecs", "ls-tree", "-z",
+     "--full-tree", candidate, "--", path), cwd=repo_path, timeout=10.0)`.
+     A non-`GitOk` result, an ordinary exception, a malformed record or a
+     record count other than one is a failure. Otherwise the one record
+     must have exactly this path, type `blob`, mode `100644` or `100755` and
+     an object ID equal to `ProjectedDeletion.blob`. Anything else is a
+     failure naming expected and found mode, type and object ID.
+  Every failure lands in the returned `SizeProofResult`. Only cancellation
+  escapes the function. The mismatch action names the remediation: make the
+  candidate's file equal the declared deletion; if the base moved, follow
+  Decision Record item 9.
+- In `_evaluate_close`, await `evaluate_size_proofs(description=task.description,
   reason=reason, candidate_commit_sha=evaluation.candidate_commit_sha,
-  repo_path=repo_path)`. The gate-8 `pass_gate` branch becomes
-  `elif size_proofs.passed:`. After the scope block, when not
-  `size_proofs.passed`, call `evaluation.collect_failure(8, "task_scope",
-  "size_proof_mismatch", size_proofs.message, action=size_proofs.action,
-  details=size_proofs.details())`. The new import sits beside the existing
-  `_task_scope` imports. The module grows by about 15 lines.
+  repo_path=repo_path)` before the scope `try`, so a scope evaluation error
+  never skips it. Gate 8 then records exactly one item-8 `task_scope`
+  result. This matters because `collect_failure` appends a gate entry on
+  every call (`_lifecycle_close_preview.py:182-208`).
+  - When `size_proofs.passed`, the existing branches run unchanged:
+    `task_scope_unavailable`, `task_scope_mismatch` or `pass_gate`.
+  - Otherwise a single `evaluation.collect_failure(8, "task_scope",
+    "size_proof_mismatch", size_proofs.message, ...)` records the failure:
+    - `reasons` holds the proof failures plus any simultaneous scope
+      diagnostic (the unavailable message or the scope mismatch message);
+    - `actions` holds the proof action, plus the scope action when scope
+      also failed;
+    - `details` is `{"size_proofs": size_proofs.details(), "scope":
+      scope.details() if scope else None}`;
+    - `extra=scope.details()` is passed when scope also mismatched, as the
+      existing mismatch branch does.
+  - When a proof failed, the `except RuntimeError` branch keeps its message
+    for that combined failure instead of recording its own entry. The scope
+    snapshot, `scope_justification` and advisory-drift assignments are
+    unchanged.
+  - `scope_justification` never cures a proof failure. A deliberate close
+    of an escalated task waives only gate 13 and the TDD check
+    (`_lifecycle_close.py:128`, `:732`), so it never waives gate 8 either.
+  The new import sits beside the existing `_task_scope` imports. The module
+  grows by about 25 lines and stays below 940.
 
 Docs:
 - `docs/contracts/plan-coverage.md`: after the 1.1 "Partial deletion proof"
@@ -583,9 +655,9 @@ temporary Git repositories, as `test_close_candidate.py::candidate_repo`
 does.
 
 **Granularity:** eight acceptance items, two production files, one outcome:
-the close gate enforces the declared result. The wiring is three statements
-in `_evaluate_close` and is tested with the module. The docs describe only
-this check.
+the close gate enforces the declared result. The wiring is the call and the
+single gate-8 result in `_evaluate_close`, and it is tested with the
+module. The docs describe only this check.
 
 **Acceptance:**
 
@@ -593,15 +665,24 @@ this check.
   the gate passes. With a candidate that also adds a line, it fails. Across
   two linked commits, the net result at the candidate decides: an addition
   removed again by the later candidate passes, and stopping at the earlier
-  commit fails. test:
+  commit fails. Two valid proofs for distinct paths pass only when both
+  candidate files match, and one mismatch fails. test:
   `tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_candidate_must_equal_projected_deletion`.
 - 2.1.2 - A candidate that renames or removes the path, replaces it with a
   symlink, or turns it into a gitlink fails with expected and found entry
   details. test:
   `tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_candidate_entry_must_be_regular_file`.
-- 2.1.3 - Each of these fails closed: a base object missing from the store,
-  a malformed proof line in the description, and a proof-bearing
-  `completed` or `already_implemented` close with no candidate. test:
+- 2.1.3 - Each of these fails closed with a diagnostic `SizeProofResult`,
+  never an exception:
+  - a base object missing from the store;
+  - a malformed proof line in the description;
+  - a proof-bearing `completed` or `already_implemented` close with no
+    candidate;
+  - a failed or timed-out Git call;
+  - malformed `ls-tree` output.
+  Chunked base reads keep CRLF lines and a final line without `\n` byte for
+  byte. A path holding a pathspec metacharacter (`[`) matches only itself.
+  test:
   `tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_unbindable_proof_fails_closed`.
 - 2.1.4 - `wont_fix`, `obsolete` and `duplicate` closes, and descriptions
   with no Targets-block proof (including a fenced example), pass without
@@ -614,7 +695,14 @@ this check.
   `tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_compiled_leaf_description_retains_proof`.
 - 2.1.6 - Through `_evaluate_close`, a mismatched candidate fails gate 8
   (`task_scope`) with `size_proof_mismatch` even when `scope_justification`
-  is supplied. The exact deletion passes gate 8. test:
+  is supplied. For both `completed` and `already_implemented`, the exact
+  deletion passes gate 8 and an added line fails it. Each of these yields
+  exactly one item-8 `task_scope` entry with `size_proof_mismatch` and
+  keeps the scope diagnostic:
+  - a proof mismatch together with a scope mismatch;
+  - a proof mismatch while `evaluate_task_scope` raises `RuntimeError`;
+  - a proof mismatch on a deliberate close of an escalated task.
+  test:
   `tests/mcp_proxy/tools/tasks/test_close_candidate.py::test_size_proof_mismatch_fails_task_scope_gate`.
 - 2.1.7 - The contract documents the committed-result check, its close
   reasons, regular-file rule and base-drift remediation. behavior:
