@@ -35,6 +35,7 @@ from gobby.hooks.envelope_dedupe import (
 )
 from gobby.hooks.inbox_lifecycle import replay_stopping, start_replay
 from gobby.hooks.receipt_effects import apply_acknowledged_receipt
+from gobby.hooks.replay_fence import archive_superseded_hook
 from gobby.hooks.runtime_compat import (
     SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
     envelope_has_hook_response_capability,
@@ -94,13 +95,12 @@ def _iter_inbox_files(inbox_dir: Path) -> list[Path]:
 def _quarantine_file(path: Path, *, reason: str, detail: str) -> bool:
     """Move an unreadable or invalid inbox file into quarantine with metadata."""
     quarantine_dir = get_hook_quarantine_dir(path.parent)
-    quarantine_dir.mkdir(parents=True, exist_ok=True)
     target = quarantine_dir / path.name
     meta_path = quarantine_dir / f"{path.name}.meta.json"
 
     try:
+        quarantine_dir.mkdir(parents=True, exist_ok=True)
         target.write_bytes(path.read_bytes())
-        path.unlink(missing_ok=True)
         meta_path.write_text(
             json.dumps(
                 {
@@ -113,6 +113,7 @@ def _quarantine_file(path: Path, *, reason: str, detail: str) -> bool:
             + "\n",
             encoding="utf-8",
         )
+        path.unlink(missing_ok=True)
     except FileNotFoundError:
         logger.debug(
             "Hook inbox file %s disappeared before quarantine (reason=%s)",
@@ -541,6 +542,14 @@ async def _drain_hook_inbox_once_locked(
             path, envelope, restart_horizon_ms
         ):
             logger.debug("Skipping live hook inbox envelope %s", path.name)
+            continue
+
+        archived = await asyncio.to_thread(
+            archive_superseded_hook, app, envelope, path, _quarantine_file
+        )
+        if archived is not None:
+            if archived:
+                hook_settled()
             continue
 
         if not envelope_has_hook_response_capability(envelope.get("response_capability")):
