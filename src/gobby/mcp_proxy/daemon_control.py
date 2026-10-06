@@ -5,6 +5,7 @@ import logging
 import os
 import signal
 import sys
+import tempfile
 from typing import Any, Literal
 
 import httpx
@@ -17,6 +18,11 @@ logger = logging.getLogger("gobby.daemon.control")
 
 DaemonShutdownIntent = Literal["stop", "restart"]
 DaemonShutdownSource = Literal["mcp_stop", "mcp_restart"]
+
+# Above `gobby start`'s own health (120 s) and readiness (300 s) waits, leaving
+# room for managed services and the schema apply.
+DAEMON_START_TIMEOUT_SECONDS = 600.0
+_START_OUTPUT_TAIL_CHARS = 2000
 
 
 async def check_daemon_http_health(
@@ -59,10 +65,8 @@ def get_daemon_pid() -> int | None:
                 continue
 
             cmdline_str = " ".join(cmdline)
-            # Match either gobby.runner or gobby.cli daemon start
-            if "gobby.runner" in cmdline_str or (
-                "gobby.cli" in cmdline_str and "daemon" in cmdline_str
-            ):
+            # Every start path (`gobby start`, service units) runs `-m gobby.runner`.
+            if "gobby.runner" in cmdline_str:
                 if test_protect:
                     in_home = home_marker is not None and home_marker in cmdline_str
                     in_config = config_marker is not None and config_marker in cmdline_str
@@ -100,8 +104,13 @@ async def _terminate_start_process(proc: asyncio.subprocess.Process) -> None:
         await proc.wait()
 
 
-async def start_daemon_process(port: int, websocket_port: int) -> dict[str, Any]:
-    """Start daemon in a new process."""
+async def start_daemon_process() -> dict[str, Any]:
+    """Start the daemon with `gobby start` and wait for that command to exit.
+
+    `gobby start` owns the singleton claim, managed services, the schema apply and
+    the health and readiness waits; it exits 0 once the daemon is ready, and reads
+    the same bootstrap ports the caller dials.
+    """
     if is_daemon_running():
         pid = get_daemon_pid()
         return {
@@ -111,64 +120,41 @@ async def start_daemon_process(port: int, websocket_port: int) -> dict[str, Any]
             "message": f"Daemon is already running with PID {pid}",
         }
 
-    cmd = [
-        sys.executable,
-        "-m",
-        "gobby.cli.app",
-        "daemon",
-        "start",
-        "--port",
-        str(port),
-        "--websocket-port",
-        str(websocket_port),
-    ]
-
+    cmd = [sys.executable, "-m", "gobby.cli", "start"]
     try:
-        # Use asyncio.create_subprocess_exec to avoid blocking the event loop
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-
-        # Do NOT await communicate() - this blocks until exit.
-        # Instead, wait a brief moment to check for immediate crash.
-        await asyncio.sleep(0.5)
-
-        if proc.returncode is not None:
-            return {
-                "success": False,
-                "message": "Start failed - process exited immediately",
-                "error": f"Process exited with code {proc.returncode}",
-            }
-
-        # Process is running - check health
-        if await check_daemon_http_health(port, timeout=5.0):
-            return {
-                "success": True,
-                "pid": proc.pid,
-                "output": "Daemon started successfully",
-            }
-
-        # If health check fails but process is still running, check pid directly
-        # This might happen if listening takes longer than health check
-        pid = get_daemon_pid()
-        if pid:
-            return {
-                "success": True,
-                "pid": pid,
-                "output": "Daemon started (health check pending)",
-            }
-
-        await _terminate_start_process(proc)
-        return {
-            "success": False,
-            "message": "Start failed - process running but unhealthy",
-            "error": "Health check timed out",
-        }
-
-    except Exception as e:
+        # A file, unlike a pipe, never holds the wait open for a grandchild, and the
+        # caller's stdin and stdout carry the MCP stdio protocol.
+        with tempfile.TemporaryFile() as output:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                returncode: int | None = await asyncio.wait_for(
+                    proc.wait(), timeout=DAEMON_START_TIMEOUT_SECONDS
+                )
+            except TimeoutError:
+                await _terminate_start_process(proc)
+                returncode = None
+            output.seek(0)
+            tail = output.read().decode(errors="replace")[-_START_OUTPUT_TAIL_CHARS:].strip()
+    except OSError as e:
         return {"success": False, "error": str(e), "message": f"Failed to start: {e}"}
+
+    if returncode == 0:
+        return {"success": True, "output": tail}
+    outcome = (
+        f"timed out after {DAEMON_START_TIMEOUT_SECONDS:.0f}s"
+        if returncode is None
+        else f"exited with code {returncode}"
+    )
+    return {
+        "success": False,
+        "message": f"gobby start {outcome}",
+        "error": f"gobby start {outcome}: {tail}",
+    }
 
 
 async def stop_daemon_process(
@@ -264,4 +250,4 @@ async def restart_daemon_process(
             "error": f"Ports {port} and/or {websocket_port} not free after 10 retries",
         }
 
-    return await start_daemon_process(port, websocket_port)
+    return await start_daemon_process()

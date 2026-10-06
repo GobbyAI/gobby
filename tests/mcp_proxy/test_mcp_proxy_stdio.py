@@ -1,9 +1,12 @@
 """Tests for the MCP proxy stdio module."""
 
 import asyncio
+import os
 import signal
+import subprocess
 import sys
 from collections.abc import Awaitable, Callable, Coroutine
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -119,21 +122,13 @@ class TestGetDaemonPid:
         # Disable the test-protect fence to exercise production-path behavior.
         monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
         with patch("gobby.mcp_proxy.daemon_control.psutil.process_iter") as mock_iter:
-            # Matches logic: "gobby.cli.app" and "daemon" and "start"
+            # Every start path runs the daemon as `-m gobby.runner`.
             mock_iter.return_value = [
                 MagicMock(
                     info={
                         "pid": 12345,
                         "name": "python",
-                        "cmdline": [
-                            "python",
-                            "-m",
-                            "gobby.cli.app",
-                            "daemon",
-                            "start",
-                            "--port",
-                            "60887",
-                        ],
+                        "cmdline": ["python", "-m", "gobby.runner", "--verbose"],
                     }
                 ),
             ]
@@ -149,14 +144,14 @@ class TestGetDaemonPid:
                     info={
                         "pid": current_pid,
                         "name": "python",
-                        "cmdline": ["python", "-m", "gobby.cli.app", "daemon", "start"],
+                        "cmdline": ["python", "-m", "gobby.runner"],
                     }
                 )
                 mock_proc_other = MagicMock(
                     info={
                         "pid": 888,
                         "name": "python",
-                        "cmdline": ["python", "-m", "gobby.cli.app", "daemon", "start"],
+                        "cmdline": ["python", "-m", "gobby.runner"],
                     }
                 )
 
@@ -238,150 +233,106 @@ class TestIsDaemonRunning:
 class TestStartDaemonProcess:
     """Tests for start_daemon_process function."""
 
+    @staticmethod
+    def _serve_with(
+        script: str, launches: list[tuple[tuple[str, ...], dict[str, Any]]]
+    ) -> Callable[..., Coroutine[Any, Any, asyncio.subprocess.Process]]:
+        """Record each launch and run ``script`` in its place with the same options."""
+        real_create_subprocess_exec = asyncio.create_subprocess_exec
+
+        async def spawn(*argv: str, **kwargs: Any) -> asyncio.subprocess.Process:
+            launches.append((argv, kwargs))
+            return await real_create_subprocess_exec(sys.executable, "-c", script, **kwargs)
+
+        return spawn
+
     @pytest.mark.asyncio
     async def test_returns_already_running_if_daemon_running(self) -> None:
         """Test returns already_running if daemon is already running."""
         with patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=True):
             with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345):
-                result = await start_daemon_process(60887, 60888)
+                result = await start_daemon_process()
 
                 assert result["success"] is False
                 assert result["already_running"] is True
                 assert result["pid"] == 12345
 
     @pytest.mark.asyncio
-    async def test_starts_daemon_successfully(self) -> None:
-        """Test successful daemon start."""
-        mock_proc = MagicMock()
-        mock_proc.returncode = None
-        mock_proc.pid = 12345
-
-        with patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False):
-            with patch(
-                "gobby.mcp_proxy.daemon_control.asyncio.create_subprocess_exec",
-                new_callable=AsyncMock,
-            ) as mock_exec:
-                mock_exec.return_value = mock_proc
-                with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345):
-                    with patch(
-                        "gobby.mcp_proxy.daemon_control.check_daemon_http_health",
-                        new_callable=AsyncMock,
-                        return_value=True,
-                    ):
-                        with patch(
-                            "gobby.mcp_proxy.daemon_control.asyncio.sleep", new_callable=AsyncMock
-                        ):
-                            result = await start_daemon_process(60887, 60888)
-
-                            assert result["success"] is True
-                            assert result["pid"] == 12345
-                            assert "started successfully" in result["output"]
-                            _, kwargs = mock_exec.call_args
-                            assert kwargs["stdout"] is asyncio.subprocess.DEVNULL
-                            assert kwargs["stderr"] is asyncio.subprocess.DEVNULL
-
-    @pytest.mark.asyncio
-    async def test_noisy_start_child_cannot_block_on_output_pipes(self) -> None:
-        """A child writing more than pipe capacity exits without a reader."""
-        real_create_subprocess_exec = asyncio.create_subprocess_exec
-        spawned: list[asyncio.subprocess.Process] = []
-
-        async def spawn_noisy_child(*_args: str, **kwargs: Any) -> asyncio.subprocess.Process:
-            proc = await real_create_subprocess_exec(
-                sys.executable,
-                "-c",
-                (
-                    "import os,time; data=b'x'*(256*1024); "
-                    "os.write(1,data); os.write(2,data); time.sleep(1)"
-                ),
-                **kwargs,
-            )
-            spawned.append(proc)
-            return proc
-
+    async def test_runs_gobby_start_to_exit_and_reports_its_output(self) -> None:
+        """`gobby start` runs to exit; output past pipe capacity cannot block it."""
+        launches: list[tuple[tuple[str, ...], dict[str, Any]]] = []
+        noisy_ready = (
+            "import os; data=b'x'*(256*1024); os.write(1,data); os.write(2,data); "
+            "os.write(1,b'Daemon ready')"
+        )
         with (
             patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False),
             patch(
                 "gobby.mcp_proxy.daemon_control.asyncio.create_subprocess_exec",
-                side_effect=spawn_noisy_child,
+                side_effect=self._serve_with(noisy_ready, launches),
             ),
-            patch(
-                "gobby.mcp_proxy.daemon_control.check_daemon_http_health",
-                new_callable=AsyncMock,
-                return_value=True,
-            ),
-            patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345),
         ):
-            result = await start_daemon_process(60887, 60888)
+            result = await asyncio.wait_for(start_daemon_process(), timeout=10.0)
 
         assert result["success"] is True, result
-        assert len(spawned) == 1
-        proc = spawned[0]
-        try:
-            assert proc.stdout is None
-            assert proc.stderr is None
-            await asyncio.wait_for(proc.wait(), timeout=2.0)
-        finally:
-            if proc.returncode is None:
-                proc.kill()
-            await proc.communicate()
+        assert result["output"].endswith("Daemon ready")
+        [(argv, kwargs)] = launches
+        assert argv == (sys.executable, "-m", "gobby.cli", "start")
+        # The caller's stdin and stdout carry the MCP stdio protocol.
+        assert kwargs["stdin"] is asyncio.subprocess.DEVNULL
+        assert kwargs["stderr"] is asyncio.subprocess.STDOUT
 
     @pytest.mark.asyncio
-    async def test_handles_start_failure(self) -> None:
-        """Test handles daemon start failure."""
-        mock_proc = MagicMock()
-        mock_proc.returncode = 1
-
-        with patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False):
-            with patch(
+    async def test_launched_command_resolves_to_gobby_start(self, tmp_path: Path) -> None:
+        """The launched module and subcommand exist: `--help` on the same argv succeeds."""
+        with (
+            patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False),
+            patch(
                 "gobby.mcp_proxy.daemon_control.asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
-            ) as mock_exec:
-                mock_exec.return_value = mock_proc
-                with patch("gobby.mcp_proxy.daemon_control.asyncio.sleep", new_callable=AsyncMock):
-                    result = await start_daemon_process(60887, 60888)
+                side_effect=OSError("not launched"),
+            ) as mock_exec,
+        ):
+            result = await start_daemon_process()
 
-                    assert result["success"] is False
-                    assert "process exited immediately" in result["message"]
-                    assert result["error"] == "Process exited with code 1"
+        assert result["success"] is False
+        assert "not launched" in result["error"]
+        resolved = subprocess.run(
+            [*mock_exec.call_args.args, "--help"],
+            env=os.environ | {"GOBBY_HOME": str(tmp_path)},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert resolved.returncode == 0, resolved.stdout + resolved.stderr
+        assert "Start the Gobby daemon." in resolved.stdout
 
     @pytest.mark.asyncio
-    async def test_handles_timeout(self) -> None:
-        """Test handles start command checks timeout."""
-        mock_proc = MagicMock()
-        mock_proc.returncode = None
-        mock_proc.pid = 12345
-        mock_proc.wait = AsyncMock(return_value=0)
-
-        with patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False):
-            with patch(
+    async def test_reports_failed_start_with_its_output(self) -> None:
+        """A non-zero exit fails the start and carries the command's own reason."""
+        launches: list[tuple[tuple[str, ...], dict[str, Any]]] = []
+        refusal = "import sys; sys.stderr.write('Refusing to start: worktree'); sys.exit(1)"
+        with (
+            patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False),
+            patch(
                 "gobby.mcp_proxy.daemon_control.asyncio.create_subprocess_exec",
-                new_callable=AsyncMock,
-            ) as mock_exec:
-                mock_exec.return_value = mock_proc
-                with patch(
-                    "gobby.mcp_proxy.daemon_control.check_daemon_http_health",
-                    new_callable=AsyncMock,
-                    return_value=False,
-                ):
-                    with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=None):
-                        with patch(
-                            "gobby.mcp_proxy.daemon_control.asyncio.sleep", new_callable=AsyncMock
-                        ):
-                            result = await start_daemon_process(60887, 60888)
+                side_effect=self._serve_with(refusal, launches),
+            ),
+        ):
+            result = await asyncio.wait_for(start_daemon_process(), timeout=10.0)
 
-                            assert result["success"] is False
-                            assert "unhealthy" in result["message"]
-                            mock_proc.terminate.assert_called_once_with()
-                            mock_proc.wait.assert_awaited_once_with()
+        assert result == {
+            "success": False,
+            "message": "gobby start exited with code 1",
+            "error": "gobby start exited with code 1: Refusing to start: worktree",
+        }
 
     @pytest.mark.asyncio
-    async def test_unhealthy_child_is_killed_if_termination_times_out(self) -> None:
-        """A stubborn startup child is killed and reaped before failure returns."""
+    async def test_hung_start_is_terminated_then_killed(self) -> None:
+        """Past the bound, the start is terminated, killed if it ignores that, and reaped."""
         mock_proc = MagicMock()
         mock_proc.returncode = None
-        mock_proc.pid = 12345
-        mock_proc.wait = AsyncMock(side_effect=[TimeoutError, 0])
+        mock_proc.wait = AsyncMock(side_effect=[TimeoutError, TimeoutError, 0])
 
         with (
             patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False),
@@ -390,33 +341,23 @@ class TestStartDaemonProcess:
                 new_callable=AsyncMock,
                 return_value=mock_proc,
             ),
-            patch(
-                "gobby.mcp_proxy.daemon_control.check_daemon_http_health",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-            patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=None),
-            patch("gobby.mcp_proxy.daemon_control.asyncio.sleep", new_callable=AsyncMock),
         ):
-            result = await start_daemon_process(60887, 60888)
+            result = await start_daemon_process()
 
         assert result["success"] is False
+        assert result["message"] == "gobby start timed out after 600s"
         mock_proc.terminate.assert_called_once_with()
         mock_proc.kill.assert_called_once_with()
-        assert mock_proc.wait.await_count == 2
+        assert mock_proc.wait.await_count == 3
 
-    @pytest.mark.asyncio
-    async def test_handles_exception(self) -> None:
-        """Test handles unexpected exception."""
-        with patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False):
-            with patch(
-                "gobby.mcp_proxy.daemon_control.asyncio.create_subprocess_exec",
-                side_effect=Exception("Unexpected error"),
-            ):
-                result = await start_daemon_process(60887, 60888)
+    def test_start_bound_exceeds_gobby_start_waits(self) -> None:
+        """The bound must not cut off a start that `gobby start` would still finish."""
+        from gobby.cli.daemon import DAEMON_HEALTH_TIMEOUT_SECONDS
+        from gobby.cli.daemon_start import STARTUP_READINESS_TIMEOUT_SECONDS
+        from gobby.mcp_proxy.daemon_control import DAEMON_START_TIMEOUT_SECONDS
 
-                assert result["success"] is False
-                assert "Unexpected error" in result["error"]
+        own_waits = DAEMON_HEALTH_TIMEOUT_SECONDS + STARTUP_READINESS_TIMEOUT_SECONDS
+        assert DAEMON_START_TIMEOUT_SECONDS > own_waits
 
 
 class TestStopDaemonProcess:
@@ -549,7 +490,7 @@ class TestRestartDaemonProcess:
                             shutdown_intent="restart",
                             shutdown_source="mcp_restart",
                         )
-                        mock_start.assert_called_once_with(60887, 60888)
+                        mock_start.assert_called_once_with()
 
 
 class TestCheckDaemonHttpHealth:
@@ -760,7 +701,7 @@ class TestEnsureDaemonRunning:
                         )()
 
         assert result is None
-        mock_start.assert_awaited_once_with(61999, 60888)
+        mock_start.assert_awaited_once_with()
         mock_config.assert_called_once_with(resolve_database_url=False)
         mock_health.assert_awaited_once_with(
             61999,
