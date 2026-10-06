@@ -151,13 +151,16 @@ fn refresh_with_partition_builder(
         .filter(|community| !matched_ids.contains(&community.community_id))
         .count();
     let rows = stored_rows(&machine_id, target_project_id, &partition, &assigned);
+    let prior_by_id: HashMap<_, _> = replace
+        .prior()
+        .iter()
+        .map(|prior| (prior.community_id, prior))
+        .collect();
     let changed = rows
         .iter()
         .filter(|row| {
-            replace
-                .prior()
-                .iter()
-                .find(|prior| prior.community_id == row.community_id)
+            prior_by_id
+                .get(&row.community_id)
                 .is_some_and(|prior| stored_content_changed(prior, row))
         })
         .count();
