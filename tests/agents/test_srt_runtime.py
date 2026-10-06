@@ -366,6 +366,10 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     gobby_home = tmp_path / "gobby-home"
     workspace = tmp_path / "workspace"
     untrusted_mcp_root = tmp_path / "untrusted-mcp-root"
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(Path, "home", lambda: home)
     runtime = tmp_path / "runtime"
     workspace.mkdir()
     untrusted_mcp_root.mkdir()
