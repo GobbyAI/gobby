@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from gobby.hooks._path_scope import resolve_tool_path
 from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import _SHELLS, _unwrap
 
@@ -15,25 +16,22 @@ class ShellExecution:
     script_file: bool = False
 
 
-def path_invokes_script(words: list[str], cwd: str | None) -> bool:
-    """Gate path-invoked shebang scripts; unreadable paths fail closed.
+def path_invokes_script(words: list[str], cwd: str | None, base: Path | None) -> bool:
+    """Gate path-invoked shebang scripts; unresolvable or unreadable paths fail closed.
 
-    Only the two-byte executable signature is read, never the program body.
+    ``cwd`` is the command's own ``cd`` state and ``base`` the tool call's working
+    directory. Only the two-byte executable signature is read, never the program body.
     """
     words = _unwrap(words)
     if not words or "/" not in words[0]:
         return False
-    path = Path(words[0])
-    if not path.is_absolute():
-        if cwd is None:
-            return True
-        path = Path(cwd) / path
     try:
-        if not path.is_file():
+        path = resolve_tool_path(words[0], resolve_tool_path(cwd, base) if cwd else base)
+        if path is None or not path.is_file():
             return True
         with path.open("rb") as executable:
             return executable.read(2) == b"#!"
-    except OSError:
+    except (OSError, RuntimeError):
         return True
 
 

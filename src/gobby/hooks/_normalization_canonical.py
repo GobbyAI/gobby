@@ -1,6 +1,7 @@
 """Canonical tool metadata inference."""
 
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from gobby.hooks._inline_interpreter_classifier import (
@@ -70,7 +71,7 @@ from gobby.hooks._normalization_shell import (
     strip_input_redirections,
     strip_output_redirections,
 )
-from gobby.hooks._path_scope import apply_path_scope_metadata
+from gobby.hooks._path_scope import apply_path_scope_metadata, current_tool_cwd
 from gobby.hooks._python_pipeline_classifier import (
     _classify_python_pipeline_with_targets,
     _classify_python_source_with_targets,
@@ -146,7 +147,7 @@ def _is_neutral_echo_segment(tokens: list[ShellToken], parts: list[str]) -> bool
 
 
 def _normalize_shell_tool_metadata(
-    command: str, *, cwd: str | None = None, depth: int = 0
+    command: str, *, cwd: str | None = None, depth: int = 0, base_cwd: Path | None = None
 ) -> dict[str, Any]:
     """Infer canonical semantics from visible shell command segments."""
     try:
@@ -237,6 +238,7 @@ def _normalize_shell_tool_metadata(
                     persistent_cwd,
                     depth=depth,
                     piped_stdin=segment.separator_before == "|",
+                    base_cwd=base_cwd,
                 ),
                 shell_words=tuple(raw_parts),
                 shell_raw_words=source_parts,
@@ -292,6 +294,7 @@ def _classify_shell_segment(
     *,
     depth: int = 0,
     piped_stdin: bool = False,
+    base_cwd: Path | None = None,
 ) -> _ShellSegmentMetadata:
     redirection_paths = _rebase_shell_paths(extract_redirection_paths(tokens), cwd)
     input_paths = _rebase_navigation_shell_paths(_input_redirection_paths(tokens), cwd)
@@ -337,7 +340,7 @@ def _classify_shell_segment(
 
     if redirection_paths:
         base_metadata = _classify_shell_segment_without_redirection(
-            stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin
+            stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin, base_cwd=base_cwd
         )
         extra = _without_code_index_navigation(base_metadata.extra)
         if extra.get("canonical_code_navigation_action") == "read" and redirects_stdout_to_file(
@@ -364,7 +367,7 @@ def _classify_shell_segment(
     if input_paths:
         # Input redirection operands are stdin, never positional arguments.
         base_metadata = _classify_shell_segment_without_redirection(
-            stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin
+            stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin, base_cwd=base_cwd
         )
         if _interpreter_reads_program_from_stdin(stdin_parts):
             base_metadata = _ShellSegmentMetadata(
@@ -399,14 +402,14 @@ def _classify_shell_segment(
             )
         # A heredoc only feeds stdin; the command still writes what it names.
         return _classify_shell_segment_without_redirection(
-            stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin
+            stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin, base_cwd=base_cwd
         )
 
     if _is_neutral_echo_segment(tokens, plain_parts):
         return _ShellSegmentMetadata("execute", neutral_setup=True)
 
     return _classify_shell_segment_without_redirection(
-        plain_parts, cwd, depth=depth, shell_stdin=shell_stdin
+        plain_parts, cwd, depth=depth, shell_stdin=shell_stdin, base_cwd=base_cwd
     )
 
 
@@ -443,6 +446,7 @@ def _classify_shell_segment_without_redirection(
     *,
     depth: int = 0,
     shell_stdin: bool = False,
+    base_cwd: Path | None = None,
 ) -> _ShellSegmentMetadata:
     if not parts:
         return _ShellSegmentMetadata("execute")
@@ -456,7 +460,7 @@ def _classify_shell_segment_without_redirection(
                 "execute", confidence="low", extra={"canonical_script_execution": True}
             )
 
-    if path_invokes_script(parts, cwd):
+    if path_invokes_script(parts, cwd, base_cwd):
         return _ShellSegmentMetadata("execute", extra={"canonical_script_execution": True})
 
     execution = shell_execution(parts, stdin=shell_stdin)
@@ -466,7 +470,9 @@ def _classify_shell_segment_without_redirection(
         ):
             return _ShellSegmentMetadata("execute", extra={"canonical_script_execution": True})
         if execution.command is not None:
-            nested = _normalize_shell_tool_metadata(execution.command, cwd=cwd, depth=depth + 1)
+            nested = _normalize_shell_tool_metadata(
+                execution.command, cwd=cwd, depth=depth + 1, base_cwd=base_cwd
+            )
             extra = {
                 key: value
                 for key, value in nested.items()
@@ -797,7 +803,7 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
     elif tool_name == "Bash":
         command = _get_command_text(tool_input)
         if command:
-            metadata = _normalize_shell_tool_metadata(command)
+            metadata = _normalize_shell_tool_metadata(command, base_cwd=current_tool_cwd(data))
     elif "mcp_server" in data and "mcp_tool" in data:
         metadata = _build_canonical_tool_metadata("mcp")
 

@@ -93,6 +93,60 @@ def test_unreadable_direct_execution_path_requires_a_claim(tmp_path: Path) -> No
     assert not data.get("canonical_repo_mutation")
 
 
+def _invocation_metadata(
+    command: str, *, event_cwd: Path | None = None, tool_cwd: Path | None = None
+) -> dict[str, Any]:
+    tool_input: dict[str, Any] = {"command": command}
+    if tool_cwd is not None:
+        tool_input["cwd"] = str(tool_cwd)
+    data: dict[str, Any] = {"tool_name": "Bash", "tool_input": tool_input}
+    if event_cwd is not None:
+        data["cwd"] = str(event_cwd)
+    _set_canonical_tool_metadata(data)
+    return data
+
+
+def _signature_fixture(directory: Path) -> None:
+    directory.mkdir(parents=True)
+    (directory / "tool").write_bytes(b"\xcf\xfa\xed\xfe")
+    (directory / "script").write_bytes(b"#!/bin/sh\n")
+
+
+@pytest.mark.parametrize(
+    ("command", "cwd_source", "gated"),
+    [
+        ("./bin/tool --version", "event", False),
+        ("bin/tool", "tool_input", False),
+        ("cd bin && ./tool", "event", False),
+        ("bash -c './bin/tool'", "event", False),
+        ("./bin/script", "event", True),
+        ("./bin/tool", None, True),
+    ],
+)
+def test_relative_command_paths_resolve_against_the_tool_cwd(
+    tmp_path: Path, command: str, cwd_source: str | None, gated: bool
+) -> None:
+    _signature_fixture(tmp_path / "bin")
+    data = _invocation_metadata(
+        command,
+        event_cwd=tmp_path if cwd_source == "event" else None,
+        tool_cwd=tmp_path if cwd_source == "tool_input" else None,
+    )
+
+    assert bool(data.get("canonical_script_execution")) is gated
+
+
+@pytest.mark.parametrize(("name", "gated"), [("tool", False), ("script", True)])
+def test_home_command_paths_expand_before_the_signature_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, gated: bool
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _signature_fixture(tmp_path / "bin")
+    data = _invocation_metadata(f"~/bin/{name}", event_cwd=tmp_path / "elsewhere")
+
+    assert bool(data.get("canonical_script_execution")) is gated
+
+
 @pytest.mark.parametrize("shell", ["sh", "bash", "zsh"])
 def test_script_indirection_writes_are_classified(tmp_path: Path, shell: str) -> None:
     target = tmp_path / "owned.py"
