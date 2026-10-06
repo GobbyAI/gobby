@@ -649,6 +649,17 @@ async def prepare_sandbox_launch(
             run_paths_started,
         )
     run_environment = run_paths.environment(provider)
+    grok_writes: tuple[str, ...] = ()
+    grok_denies: tuple[str, ...] = ()
+    if config.backend == "srt" and provider == "grok":
+        from gobby.agents.grok_sandbox_home import prepare_grok_sandbox_home
+
+        grok_home = await asyncio.to_thread(
+            prepare_grok_sandbox_home, run_paths.cache, env, assets=run_paths.assets
+        )
+        run_environment["GROK_HOME"] = str(grok_home.home)
+        grok_writes = grok_home.runtime_write_paths
+        grok_denies = grok_home.protected_write_paths
     prompt_file = env.get("GOBBY_PROMPT_FILE")
     if prompt_file and Path(prompt_file).is_file():
         run_prompt = run_paths.assets / "prompt.md"
@@ -669,11 +680,13 @@ async def prepare_sandbox_launch(
         update={
             "extra_write_paths": [
                 *retained_writes,
+                *grok_writes,
                 *(str(path) for path in run_paths.writable),
                 str(run_paths.cargo_home),
                 str(run_paths.cargo_target),
                 *([str(grant_lock)] if grant_lock is not None else []),
-            ]
+            ],
+            "extra_deny_write_paths": [*config.extra_deny_write_paths, *grok_denies],
         }
     )
     effective_env = {**env, **run_environment}
