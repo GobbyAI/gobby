@@ -3029,3 +3029,788 @@ F02 resolution direction: keep direct typing uninterrupted across a daemon resta
   coverage row stays stale under the #23619 known exception. No blocker or
   proportionality objection remains. The stale M1 is withdrawn per the PD ruling
   on #23106 (memory `f5577ae0`) for the Adversary to derive afresh from these bytes.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Decompose the near-ceiling gclient files
+  category: refactor
+  task_type: chore
+  depends_on: []
+  validation_criteria: 'R1.1: The exit, resize and suspend signal helpers live in
+    their own module. file: `crates/gclient/src/app/live_loop/signals.rs`.
+
+    R1.2: The local-tab adoption group lives in its own module. file: `crates/gclient/src/app/live_loop/local_adoption.rs`.
+
+    R1.3: `live_loop.rs`, `workspace_actions.rs`, `actions.rs` and `mod.rs` each end
+    under 850 raw lines. behavior: "each of the four moved-from files is under 850
+    lines" in `crates/gclient/src/app/live_loop.rs`.
+
+    R1.4: The disconnect and control-retirement methods live in their own module.
+    file: `crates/gclient/src/app/disconnect.rs`.
+
+    R1.5: The terminal lifecycle actions live in their own module. file: `crates/gclient/src/app/live_loop/lifecycle.rs`.
+
+    R1.7: No behaviour change: the full gclient suite and the screen goldens pass
+    unchanged. behavior: "cargo nextest run -p gobby-client passes with no golden
+    regeneration" in `crates/gclient/tests/screens.rs`.'
+  labels:
+  - covers:gclient-daemon-resilience:R1:R1.1
+  - covers:gclient-daemon-resilience:R1:R1.2
+  - covers:gclient-daemon-resilience:R1:R1.3
+  - covers:gclient-daemon-resilience:R1:R1.4
+  - covers:gclient-daemon-resilience:R1:R1.5
+  - covers:gclient-daemon-resilience:R1:R1.7
+  tdd: false
+  source_section: R1
+  assigned_agent: backend-developer
+- title: Loop-liveness test scaffolding
+  category: test
+  task_type: chore
+  depends_on: []
+  validation_criteria: 'A0.1: `hold_ws` keeps a matching websocket request pending
+    until released and `replies` counts the released reply. file: `crates/gclient/tests/mock_daemon/mod.rs`.
+
+    A0.2: The liveness probe is a reusable helper and its baseline test passes. test:
+    `crates/gclient/tests/loop_liveness.rs::held_websocket_request_stays_pending_until_released`.'
+  labels:
+  - covers:gclient-daemon-resilience:A0:A0.1
+  - covers:gclient-daemon-resilience:A0:A0.2
+  tdd: false
+  source_section: A0
+  assigned_agent: backend-developer
+- title: Job plumbing, focus hints and geometry
+  category: code
+  task_type: bug
+  depends_on:
+  - R1
+  - A0
+  validation_criteria: 'A1.1: The job types, ledger, coalescer and `spawn_job` exist
+    and are `Send`. file: `crates/gclient/src/app/live_loop/jobs.rs`.
+
+    A1.2: `run_live_loop` consumes job outcomes in a branch under `control_rx` and
+    its post-select code contains no daemon await. symbol: `run_live_loop`.
+
+    A1.3: A held focus-hint op never stalls frames or ticks. test: `crates/gclient/tests/loop_liveness.rs::a_held_focus_hint_op_never_stalls_frames_or_ticks`.
+
+    A1.4: A resize burst sends at most one resize per pane in flight and the latest
+    geometry wins. test: `crates/gclient/tests/loop_liveness.rs::resize_burst_sends_at_most_one_resize_per_pane_in_flight`.
+
+    A1.5: The coalescer keeps one in flight and the latest pending. test: `crates/gclient/src/app/live_loop/jobs/tests.rs::coalescer_keeps_one_in_flight_and_latest_pending`.
+
+    A1.6: A direct source accepts `SetViewport`; when its bounded writer is full,
+    the latest viewport is refused with `Backpressure`, the status line reports it,
+    and frames, ticks and input on another pane keep progressing. test: `crates/gclient/tests/loop_liveness.rs::direct_set_viewport_backpressure_is_visible_and_never_stalls_the_loop`.
+
+    A1.7: An old-generation job is held, `forget_generation` runs, the same key is
+    issued anew, and then the old result lands before the new one. The old result
+    settles nothing, and the new result clears the current marker and releases exactly
+    one coalesced follow-up. test: `crates/gclient/tests/loop_liveness.rs::a_late_old_generation_outcome_never_settles_the_reissued_job`.'
+  labels:
+  - covers:gclient-daemon-resilience:A1:A1.1
+  - covers:gclient-daemon-resilience:A1:A1.2
+  - covers:gclient-daemon-resilience:A1:A1.3
+  - covers:gclient-daemon-resilience:A1:A1.4
+  - covers:gclient-daemon-resilience:A1:A1.5
+  - covers:gclient-daemon-resilience:A1:A1.6
+  - covers:gclient-daemon-resilience:A1:A1.7
+  tdd: true
+  source_section: A1
+  implementation_domain: backend
+- title: Typed input and control path
+  category: code
+  task_type: bug
+  depends_on:
+  - A1
+  validation_criteria: 'A2.1: No function in `control.rs` awaits the daemon; writes
+    go through the pane writer and releases through the pending flag. file: `crates/gclient/src/app/live_loop/control.rs`.
+
+    A2.2: Typing into a tmux pane while `terminal_input` is held keeps frames flowing.
+    test: `crates/gclient/tests/loop_liveness.rs::typing_into_a_tmux_pane_while_terminal_input_is_held_keeps_frames_flowing`.
+
+    A2.3: A focus move writes release before take on the wire. test: `crates/gclient/tests/loop_liveness.rs::a_focus_move_writes_release_before_take_on_the_wire`.
+
+    A2.4: A write error from a stale generation does not mark the pane read-only.
+    test: `crates/gclient/tests/loop_liveness.rs::a_write_error_from_a_stale_generation_does_not_mark_the_pane_read_only`.
+
+    A2.5: The control-request machinery lives in its own module, and its control task
+    awaits every pending release barrier before writing a take. file: `crates/gclient/src/app/live_control.rs`.
+
+    A2.6: `send_workspace_op` no longer exists; every op sender is sync and the refusal
+    toast is raised at apply. file: `crates/gclient/src/app/live_loop/daemon_ops.rs`.
+
+    A2.7: Holding an attention-response request never stalls rendering; the response
+    outcome applies exactly once after release. test: `crates/gclient/tests/loop_liveness.rs::a_held_attention_response_never_stalls_frames_or_applies_twice`.
+
+    A2.8: Flooding a pane while `terminal_input` is held keeps its queue at or below
+    256 messages and 1 MiB, rejects only the newest over-cap messages with `Backpressure`,
+    preserves accepted FIFO order after release, and leaves another direct pane''s
+    input plus rendering live. test: `crates/gclient/tests/loop_liveness.rs::a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking`.
+
+    A2.9: With `terminal_input` held on pane A, bytes typed into A and then a focus
+    move to B produce, on the wire, A''s accepted writes, then A''s release, then
+    B''s take. If the held write then errors after its request was written, A reports
+    `WriteUnconfirmed` for it and `WriteAbandoned` with the exact count for the writes
+    queued behind it. No A write is sent after the release or under B''s authority,
+    and nothing is replayed. Frames and ticks advance throughout. test: `crates/gclient/tests/loop_liveness.rs::held_input_then_focus_move_delivers_or_reports_before_release`.
+
+    A2.10: Closing a pane with queued writes flushes or reports them before the detach,
+    and a generation change reports the old generation''s queued writes as abandoned
+    and its in-flight write as unconfirmed, without sending either under the new attachment
+    id. test: `crates/gclient/tests/loop_liveness.rs::close_and_generation_change_never_replay_queued_input`.
+
+    A2.11: On a direct pane, the frame writer''s receipt resolves while the mock gterm
+    delays reading the socket until after it processes the revoke. The release barrier
+    resolves on the local receipt alone. The mock''s typed `InputRefused` is reported
+    as `WriteUnconfirmed` with no byte count, and nothing is replayed. In a second
+    run the mock reads before the revoke, and the bytes are accepted with no refusal
+    status. test: `crates/gclient/tests/loop_liveness.rs::direct_flush_receipt_orders_locally_and_late_consumption_is_unconfirmed`.
+
+    A2.12: A daemon `terminal_input` whose request is written and whose reply is never
+    delivered (the mock drops the connection with the reply outstanding) is reported
+    as `WriteUnconfirmed`, and writes queued behind it are reported as `WriteAbandoned`
+    with their exact count. After reconnect the new generation sends none of them.
+    A correlated typed refusal is reported as refused with its request''s size. test:
+    `crates/gclient/tests/loop_liveness.rs::indeterminate_daemon_write_is_unconfirmed_and_never_replayed`.
+
+    A2.13: With a held writer, focus moves A to B to C. Each take waits on its own
+    receiver for every earlier release, each release follows its pane''s accepted
+    bytes and that pane''s own take, and exactly one daemon release per pane is sent.
+    test: `crates/gclient/tests/loop_liveness.rs::focus_a_b_c_with_a_held_writer_orders_every_release_before_the_next_take`.
+
+    A2.14: Closing A while its release barrier is pending sends one release and then
+    the close''s detach from the same completion. The barrier slot never overfills
+    and the detach never precedes the release. test: `crates/gclient/tests/loop_liveness.rs::closing_a_pane_while_its_release_is_pending_detaches_after_the_release`.
+
+    A2.15: `WriteAbandoned` and `WriteUnconfirmed` reports from the old generation
+    still show their status after a reconnect. test: `crates/gclient/tests/loop_liveness.rs::old_generation_write_uncertainty_is_reported_after_reconnect`.
+
+    A2.16: With B''s writer full behind a held write, focus moves B to A, back to
+    B and to A again. B''s second release goes out after B''s second take, A''s second
+    take goes out after it, and no take is refused as already in flight. test: `crates/gclient/tests/loop_liveness.rs::a_second_release_behind_a_full_backlog_is_never_lost`.
+
+    A2.17: Closing a direct pane whose frame writer is stalled sends no kill until
+    the pane''s typed bytes flush, and none of them go through the daemon. test: `crates/gclient/tests/loop_liveness.rs::closing_a_direct_pane_kills_after_its_typed_bytes_flush`.
+
+    A2.18: With direct pane A''s frame writer stalled, focus moves to B. B''s take
+    is written within the frame writer''s bound, and typing into B is accepted. A
+    reports `Input delivery unconfirmed.` exactly once, nothing is replayed, and frames
+    and ticks advance. test: `crates/gclient/tests/loop_liveness.rs::a_stalled_direct_release_is_bounded_and_never_blocks_the_next_take`.
+
+    A2.19: A re-attach without a reconnect retires the pane''s writer. Writes queued
+    for the old attachment are reported as `Input not sent`, and the next key goes
+    out under the new attachment. test: `crates/gclient/tests/client_loop.rs::a_reattach_abandons_writes_queued_for_the_old_attachment`.'
+  labels:
+  - covers:gclient-daemon-resilience:A2:A2.1
+  - covers:gclient-daemon-resilience:A2:A2.2
+  - covers:gclient-daemon-resilience:A2:A2.3
+  - covers:gclient-daemon-resilience:A2:A2.4
+  - covers:gclient-daemon-resilience:A2:A2.5
+  - covers:gclient-daemon-resilience:A2:A2.6
+  - covers:gclient-daemon-resilience:A2:A2.7
+  - covers:gclient-daemon-resilience:A2:A2.8
+  - covers:gclient-daemon-resilience:A2:A2.9
+  - covers:gclient-daemon-resilience:A2:A2.10
+  - covers:gclient-daemon-resilience:A2:A2.11
+  - covers:gclient-daemon-resilience:A2:A2.12
+  - covers:gclient-daemon-resilience:A2:A2.13
+  - covers:gclient-daemon-resilience:A2:A2.14
+  - covers:gclient-daemon-resilience:A2:A2.15
+  - covers:gclient-daemon-resilience:A2:A2.16
+  - covers:gclient-daemon-resilience:A2:A2.17
+  - covers:gclient-daemon-resilience:A2:A2.18
+  - covers:gclient-daemon-resilience:A2:A2.19
+  tdd: true
+  source_section: A2
+  implementation_domain: backend
+- title: Attach and recovery as jobs
+  category: code
+  task_type: bug
+  depends_on:
+  - A2
+  validation_criteria: 'A3.1: The `created` event path marks the pane due for `start_due_attaches`
+    instead of awaiting `attach_ready_panes`. symbol: `apply_live_event`.
+
+    A3.2: A held attach on one pane keeps the other pane rendering. test: `crates/gclient/tests/loop_liveness.rs::a_held_attach_on_one_pane_keeps_the_other_pane_rendering`.
+
+    A3.3: An attach outcome from a previous generation is dropped and its attachment
+    detached. test: `crates/gclient/tests/loop_liveness.rs::an_attach_outcome_from_a_previous_generation_is_dropped_and_detached`.
+
+    A3.4: Recovery detaches then attaches while input still routes. test: `crates/gclient/tests/loop_liveness.rs::recovery_detaches_then_attaches_while_input_still_routes`.
+
+    A3.6: A frame error and every recovery give-up leave one structured record with
+    pane, terminal, attachment, generation, stage, error class and `elapsed_ms`, while
+    a successful replacement closes the attempt. The same test covers a direct-handshake
+    timeout and a `RetireReason::Lag` retirement. test: `crates/gclient/tests/loop_liveness.rs::frame_errors_and_recovery_giveups_are_logged_with_pane_context`.
+
+    A3.7: A newly created terminal whose `terminal_attach` reply takes three seconds
+    does not stop frames, ticks or input on existing direct panes. test: `crates/gclient/tests/loop_liveness.rs::a_slow_new_terminal_attach_never_stalls_streaming_direct_panes`.'
+  labels:
+  - covers:gclient-daemon-resilience:A3:A3.1
+  - covers:gclient-daemon-resilience:A3:A3.2
+  - covers:gclient-daemon-resilience:A3:A3.3
+  - covers:gclient-daemon-resilience:A3:A3.4
+  - covers:gclient-daemon-resilience:A3:A3.6
+  - covers:gclient-daemon-resilience:A3:A3.7
+  tdd: true
+  source_section: A3
+  implementation_domain: backend
+- title: Open unresolved terminals as jobs
+  category: code
+  task_type: bug
+  depends_on:
+  - A3
+  validation_criteria: 'A3b.1: A held unresolved-terminal open keeps frames, ticks
+    and direct input progressing, installs the terminal once after release, and coalesces
+    repeated workspace events. test: `crates/gclient/tests/loop_liveness.rs::a_held_open_unresolved_terminal_job_is_coalesced_and_nonblocking`.
+
+    A3b.2: The inline reconcile helper remains available while the live workspace
+    event path issues `Opened` jobs without awaiting. symbol: `open_unresolved_terminals`.
+
+    A3b.4: A failed unresolved-terminal open emits one WARN with terminal, generation,
+    error class and `elapsed_ms`; the error is no longer discarded. test: `crates/gclient/tests/loop_liveness.rs::an_unresolved_terminal_open_failure_is_logged_with_elapsed_time`.'
+  labels:
+  - covers:gclient-daemon-resilience:A3b:A3b.1
+  - covers:gclient-daemon-resilience:A3b:A3b.2
+  - covers:gclient-daemon-resilience:A3b:A3b.4
+  tdd: true
+  source_section: A3b
+  implementation_domain: backend
+- title: Event-driven refetches and roster jobs
+  category: code
+  task_type: bug
+  depends_on:
+  - A3b
+  validation_criteria: 'A4a.1: A roster for a project no longer focused is dropped
+    (was A4.3). test: `crates/gclient/tests/loop_liveness.rs::a_roster_for_a_project_no_longer_focused_is_dropped`.
+
+    A4a.2: `apply_live_event` is sync and sets refetch flags instead of awaiting (was
+    A4.5). symbol: `apply_live_event`.
+
+    A4a.3: Failed REST components and both `Lagged` entry paths emit WARN records
+    with operation/source, generation, error class or skipped count, and `elapsed_ms`,
+    while successful partial rows still apply (was A4.8). test: `crates/gclient/tests/loop_liveness.rs::rest_failures_and_lagged_events_warn_with_elapsed_time`.'
+  labels:
+  - covers:gclient-daemon-resilience:A4a:A4a.1
+  - covers:gclient-daemon-resilience:A4a:A4a.2
+  - covers:gclient-daemon-resilience:A4a:A4a.3
+  tdd: true
+  source_section: A4a
+  implementation_domain: backend
+- title: Lifecycle and shell-adoption actions as chained jobs
+  category: code
+  task_type: bug
+  depends_on:
+  - A4a
+  validation_criteria: 'A4b.1: A held `terminal_create` keeps the window interactive
+    and places the pane after the create lands (was A4.1). test: `crates/gclient/tests/loop_liveness.rs::a_held_terminal_create_keeps_the_window_interactive_and_places_after_create`.
+
+    A4b.2: Closing a tab issues `TabClose` only after every kill settles (was A4.2).
+    test: `crates/gclient/tests/loop_liveness.rs::closing_a_tab_issues_tab_close_only_after_every_kill_settles`.
+
+    A4b.3: Two new tabs before the first create lands place both (was A4.4). test:
+    `crates/gclient/tests/loop_liveness.rs::two_new_tabs_before_the_first_create_lands_place_both`.
+
+    A4b.4: Splitting right while the old connection''s release/take or terminal-create
+    reply is held keeps direct input, frame ingest and rendering live; the placement
+    is applied only after its own job settles (was A4.6). test: `crates/gclient/tests/loop_liveness.rs::split_right_with_a_held_control_or_create_reply_keeps_the_window_live`.
+
+    A4b.5: A held `TabCreate` in the gclient-owned shell adoption chain keeps frames,
+    ticks and direct input live; the chain resumes from each outcome, and a refused
+    step rolls back the adopted tab (was A4.9). test: `crates/gclient/tests/loop_liveness.rs::a_held_adoption_step_keeps_the_window_live_and_rolls_back_on_refusal`.
+
+    A4b.6: A `terminal_create` reply that lands after the loop''s generation changed
+    kills the unplaced terminal exactly once after the new workspace installs and
+    places no pane. A create whose connection is lost before its reply is neither
+    replayed nor compensated. test: `crates/gclient/tests/loop_liveness.rs::a_stale_committed_create_is_compensated_once_and_an_unanswered_create_is_not_replayed`.
+
+    A4b.7: An adoption `TabCreate` reply that lands after its target project closed
+    runs one rollback `TabClose` for the captured tab. test: `crates/gclient/tests/loop_liveness.rs::a_stale_committed_adoption_step_rolls_back_its_captured_tab`.
+
+    A4b.8: A stale create reply is disposed exactly once in both orders: arriving
+    after the new generation''s model is installed, it is killed at once; arriving
+    before, it is killed when that model installs. A disposal kill whose reply is
+    lost keeps its entry and raises one toast. The next install re-evaluates the entry
+    and clears it once the terminal is gone. test: `crates/gclient/tests/loop_liveness.rs::a_stale_create_is_disposed_once_in_either_order_and_a_failed_disposal_stays_owned`.
+
+    A4b.9: A held arrange or create-grid `workspace_op` keeps frames flowing, and
+    the grid chain places panes from the returned ids. test: `crates/gclient/tests/loop_liveness.rs::a_held_arrange_or_grid_op_keeps_frames_flowing_and_places_from_returned_ids`.'
+  labels:
+  - covers:gclient-daemon-resilience:A4b:A4b.1
+  - covers:gclient-daemon-resilience:A4b:A4b.2
+  - covers:gclient-daemon-resilience:A4b:A4b.3
+  - covers:gclient-daemon-resilience:A4b:A4b.4
+  - covers:gclient-daemon-resilience:A4b:A4b.5
+  - covers:gclient-daemon-resilience:A4b:A4b.6
+  - covers:gclient-daemon-resilience:A4b:A4b.7
+  - covers:gclient-daemon-resilience:A4b:A4b.8
+  - covers:gclient-daemon-resilience:A4b:A4b.9
+  tdd: true
+  source_section: A4b
+  implementation_domain: backend
+- title: Orphan inventory and destroy fan-out as jobs
+  category: code
+  task_type: bug
+  depends_on:
+  - A4b
+  validation_criteria: 'A4c.1: Holding orphan inventory leaves the dialog and window
+    live; after release, orphan kills fan out concurrently and `DestroySummary` preserves
+    one result per requested orphan regardless of completion order (was A4.7). test:
+    `crates/gclient/tests/loop_liveness.rs::held_orphan_fetch_and_kill_fanout_are_nonblocking_and_complete`.'
+  labels:
+  - covers:gclient-daemon-resilience:A4c:A4c.1
+  tdd: true
+  source_section: A4c
+  implementation_domain: backend
+- title: Launch and reconnect audit and WARN bracket
+  category: code
+  task_type: bug
+  depends_on:
+  - A4c
+  validation_criteria: 'A5.2: A reconcile from a stale generation is dropped. test:
+    `crates/gclient/tests/loop_liveness.rs::a_reconcile_from_a_stale_generation_is_dropped`.
+
+    A5.4: A bounded final audit enumerates launch/reconcile, control, input, daemon-event,
+    frame-recovery, sidebar, resize/tick attach, focus-hint, geometry, attention,
+    unresolved-open, roster/orphan, lifecycle-action and shell-adoption paths; every
+    daemon-touching `run_live_loop` branch or post-select helper maps to a held-request
+    case that advances frames, ticks and unaffected direct input. test: `crates/gclient/tests/loop_liveness.rs::every_run_live_loop_daemon_path_is_issued_without_awaiting`.
+
+    A5.5: Each reconnect/reconcile attempt emits exactly one start and one finish
+    WARN with reason, generations, outcome and `elapsed_ms`, including success, timeout
+    and transport-loss cases. test: `crates/gclient/tests/loop_liveness.rs::reconnect_attempts_warn_once_at_start_and_finish_with_reason`.
+
+    A5.6: With `GET /api/agents/runs` held, a prefix chord toggles the sidebar immediately
+    and applies once. test: `crates/gclient/tests/loop_liveness.rs::a_chrome_chord_applies_while_a_rest_request_is_held`.'
+  labels:
+  - covers:gclient-daemon-resilience:A5:A5.2
+  - covers:gclient-daemon-resilience:A5:A5.4
+  - covers:gclient-daemon-resilience:A5:A5.5
+  - covers:gclient-daemon-resilience:A5:A5.6
+  tdd: true
+  source_section: A5
+  implementation_domain: backend
+- title: Daemon health from in-flight age
+  category: code
+  task_type: feature
+  depends_on:
+  - A5
+  validation_criteria: 'B1.1: Every waiter records `issued_at` and `oldest_inflight_age`
+    reports the oldest. symbol: `LiveState`.
+
+    B1.2: `DaemonHealth` derives `Slow` past the threshold and `Unreachable` on disconnect.
+    test: `crates/gclient/src/app/live_loop/health/tests.rs::health_is_slow_once_the_oldest_in_flight_request_passes_the_threshold`.
+
+    B1.3: The status line shows `Daemon slow` after 1 s of a held `workspace_op` and
+    clears when the reply lands. test: `crates/gclient/tests/loop_liveness.rs::a_slow_workspace_op_reply_shows_daemon_slow_until_it_lands`.
+
+    B1.4: The guide''s status-line section describes the slow state. behavior: "Daemon
+    slow" in `docs/guides/gclient-user-guide.md`.'
+  labels:
+  - covers:gclient-daemon-resilience:B1:B1.1
+  - covers:gclient-daemon-resilience:B1:B1.2
+  - covers:gclient-daemon-resilience:B1:B1.3
+  - covers:gclient-daemon-resilience:B1:B1.4
+  tdd: true
+  source_section: B1
+  implementation_domain: backend
+- title: Shed load while slow
+  category: code
+  task_type: bug
+  depends_on:
+  - B1
+  validation_criteria: 'B3.1: No sidebar `/api/source-control/status` or roster refresh
+    request is recorded while the daemon is slow, and polling resumes on `Ready`.
+    test: `crates/gclient/tests/loop_liveness.rs::sidebar_polls_pause_while_the_daemon_is_slow_and_resume_on_ready`.
+
+    B3.2: The guide''s status-line section says polling pauses while slow. behavior:
+    "pauses" in `docs/guides/gclient-user-guide.md`.'
+  labels:
+  - covers:gclient-daemon-resilience:B3:B3.1
+  - covers:gclient-daemon-resilience:B3:B3.2
+  tdd: true
+  source_section: B3
+  implementation_domain: backend
+- title: Native inventory and fallback input authority in gterm
+  category: code
+  task_type: feature
+  depends_on:
+  - B3
+  - A5
+  validation_criteria: 'C0.1: An authenticated frame client lists only committed live
+    native terminals with stable terminal/host ids and host epoch; unauthenticated
+    and tmux inventory is unavailable. test: `crates/gterminal/tests/frame_protocol.rs::daemonless_native_inventory_is_authenticated_and_excludes_tmux`.
+
+    C0.2: With no control owner or grant, the first bound local attachment can type
+    and paste; a second attachment cannot replace it and receives `input_not_granted`.
+    test: `crates/gterminal/tests/frame_protocol.rs::first_local_attachment_holds_fallback_input_until_detach`.
+
+    C0.3: Detaching clears its local fallback, while detaching another frame stream
+    cannot clear either the fallback or a daemon grant. test: `crates/gterminal/tests/frame_protocol.rs::frame_detach_clears_only_its_local_fallback_grant`.
+
+    C0.4: A control owner disables new fallback authority; its `grant_input` replaces
+    an existing fallback, and matching/unconditional revoke clears the resulting holder.
+    test: `crates/gterminal/tests/control_protocol.rs::daemon_grant_replaces_local_fallback_and_restores_arbitration`.
+
+    C0.5: The protocol contract and wire goldens describe the authenticated native
+    inventory and local-fallback/daemon-takeover rules. behavior: "local fallback
+    holder" in `docs/contracts/gterm-protocols.md`.
+
+    C0.6: Last-control-owner disconnect transfers a bound daemon grant to that same
+    frame connection; rebinding it to the fresh reconnect attachment id preserves
+    input until the next daemon grant replaces the fallback. test: `crates/gterminal/tests/control_protocol.rs::disconnect_and_rebind_transfer_the_daemon_grant_without_an_input_gap`.
+
+    C0.7: Over two real control connections, a `grant_input` sent on the older connection
+    after the newer one revoked or granted the same terminal is refused `stale_grant_connection`
+    and leaves the newer holder in place. The same late request before any newer authority
+    change applies and is then replaced. test: `crates/gterminal/tests/control_protocol.rs::a_late_grant_from_a_retired_connection_cannot_overwrite_newer_authority`.'
+  labels:
+  - covers:gclient-daemon-resilience:C0:C0.1
+  - covers:gclient-daemon-resilience:C0:C0.2
+  - covers:gclient-daemon-resilience:C0:C0.3
+  - covers:gclient-daemon-resilience:C0:C0.4
+  - covers:gclient-daemon-resilience:C0:C0.5
+  - covers:gclient-daemon-resilience:C0:C0.6
+  - covers:gclient-daemon-resilience:C0:C0.7
+  tdd: true
+  source_section: C0
+  implementation_domain: backend
+- title: Read native inventory through the existing frame socket
+  category: code
+  task_type: feature
+  depends_on:
+  - C0
+  validation_criteria: 'C0b.1: `NativeHost` uses the existing authenticated frame
+    codec and returns typed native inventory without any daemon request. file: `crates/gclient/src/frame_source/native_host.rs`.
+
+    C0b.2: Against a real gterm with no lasting control connection, gclient lists
+    a native terminal, attaches it and receives frames within one 2 s aggregate local
+    deadline. test: `crates/gclient/tests/frame_source_live.rs::native_inventory_and_attach_work_without_a_daemon`.
+
+    C0b.3: Missing, refused and timed-out local-host probes return typed outcomes
+    and leave no reader/writer task or socket alive. test: `crates/gclient/tests/frame_source_live.rs::native_inventory_failure_cleans_up_the_frame_connection`.'
+  labels:
+  - covers:gclient-daemon-resilience:C0b:C0b.1
+  - covers:gclient-daemon-resilience:C0b:C0b.2
+  - covers:gclient-daemon-resilience:C0b:C0b.3
+  tdd: true
+  source_section: C0b
+  implementation_domain: backend
+- title: Launch, render and type native panes with no daemon
+  category: code
+  task_type: feature
+  depends_on:
+  - C0b
+  - A5
+  validation_criteria: 'C0c.1: A missing default daemon token produces an empty degraded
+    Ready window, an unreachable daemon with a valid local token can use the native
+    host, and an explicitly requested bad token file remains a startup error. test:
+    `crates/gclient/tests/startup.rs::missing_default_daemon_token_starts_in_native_degraded_mode`.
+
+    C0c.2: With the daemon absent and a real gterm present, gclient launches, lists
+    native panes only, attaches, renders advancing frames and delivers typed bytes
+    to the PTY. test: `crates/gclient/tests/loop_liveness.rs::daemonless_launch_attaches_renders_and_types_native_panes`.
+
+    C0c.3: A competing local gclient that receives `input_not_granted` becomes read-only
+    without daemon fallback, while the first holder keeps typing. test: `crates/gclient/tests/loop_liveness.rs::daemonless_second_client_cannot_take_over_the_local_holder`.
+
+    C0c.4: When the daemon connects after degraded launch, matching terminal ids preserve
+    one direct source, daemon layout replaces local tabs, the adopted holder stays
+    Held with `lease_unconfirmed` set, and no duplicate pane appears. test: `crates/gclient/tests/loop_liveness.rs::daemon_reconcile_adopts_daemonless_native_panes_without_duplication`.
+
+    C0c.5: Without the daemon, the UI states the unavailable enhancements and never
+    lists tmux, web or proxied panes. behavior: "Native degraded mode" in `docs/guides/gclient-user-guide.md`.
+
+    C0c.6: With two native terminals and no daemon, gclient opens one independently
+    attached direct pane per inventory row; frames advance and typed bytes reach the
+    correct PTY on both streams. test: `crates/gclient/tests/loop_liveness.rs::daemonless_launch_attaches_and_types_multiple_native_panes_independently`.
+
+    C0c.7: With the daemon absent, focus moves A to B to A by keyboard and by mouse
+    without any daemon release or take, both panes stay Held, and typed bytes reach
+    both PTYs. An explicit take-back answers the reconnect status. test: `crates/gclient/tests/loop_liveness.rs::daemonless_focus_moves_between_direct_panes_and_types_into_both_ptys`.
+
+    C0c.8: A native inventory result, or a native attach result, held until after
+    the daemon workspace installs is disposed: every frame connection it holds is
+    closed and no duplicate pane appears. The same holds when the terminal was removed
+    first, and when the loop exits while the job holds sources. test: `crates/gclient/tests/loop_liveness.rs::a_late_native_result_after_the_daemon_workspace_is_disposed_and_closes_its_sources`.'
+  labels:
+  - covers:gclient-daemon-resilience:C0c:C0c.1
+  - covers:gclient-daemon-resilience:C0c:C0c.2
+  - covers:gclient-daemon-resilience:C0c:C0c.3
+  - covers:gclient-daemon-resilience:C0c:C0c.4
+  - covers:gclient-daemon-resilience:C0c:C0c.5
+  - covers:gclient-daemon-resilience:C0c:C0c.6
+  - covers:gclient-daemon-resilience:C0c:C0c.7
+  - covers:gclient-daemon-resilience:C0c:C0c.8
+  tdd: true
+  source_section: C0c
+  implementation_domain: backend
+- title: Keep control on disconnect for direct-granted panes
+  category: code
+  task_type: bug
+  depends_on:
+  - C0c
+  validation_criteria: 'C1.1: A daemon-granted or local-fallback direct pane stays
+    Held with `lease_unconfirmed` when the mock daemon closes the socket, and the
+    mock frame host still receives `Input`. test: `crates/gclient/tests/loop_liveness.rs::a_direct_granted_pane_keeps_typing_through_a_daemon_disconnect`.
+
+    C1.2: A proxied pane drops to Observe on the same disconnect. test: `crates/gclient/tests/loop_liveness.rs::a_proxied_pane_drops_to_observe_on_daemon_disconnect`.
+
+    C1.3: The protocol contract states the new outage contract. behavior: "keeps typing"
+    in `docs/contracts/gterm-protocols.md`.
+
+    C1.4: The guide''s status-string table carries the unconfirmed-lease text. behavior:
+    "typing continues on the host" in `docs/guides/gclient-user-guide.md`.'
+  labels:
+  - covers:gclient-daemon-resilience:C1:C1.1
+  - covers:gclient-daemon-resilience:C1:C1.2
+  - covers:gclient-daemon-resilience:C1:C1.3
+  - covers:gclient-daemon-resilience:C1:C1.4
+  tdd: true
+  source_section: C1
+  implementation_domain: backend
+- title: Reconfirm the lease on reconnect
+  category: code
+  task_type: bug
+  depends_on:
+  - C1
+  validation_criteria: 'C2.1: On reconnect every unconfirmed direct pane rebinds its
+    preserved frame stream before `terminal_take_control`; bytes typed before the
+    reply continue to reach the host, and `granted` clears the unconfirmed state without
+    duplicating the source. test: `crates/gclient/tests/loop_liveness.rs::an_unconfirmed_direct_stream_rebinds_and_keeps_typing_until_retake_grants`.
+
+    C2.2: `lease_unconfirmed` clears on grant and a `held` reply drops the pane to
+    Observe with take-back. symbol: `Pane`.
+
+    C2.3: After a daemonless launch (C0c), the daemon''s arrival retakes every adopted
+    unconfirmed holder: each rebinds its preserved stream and issues one take, typing
+    continues until the grant, and no duplicate source appears. test: `crates/gclient/tests/loop_liveness.rs::daemon_arrival_after_degraded_launch_retakes_every_adopted_holder`.
+
+    C2.4: Each of three unconfirmed panes issues its own take. One take fails while
+    the daemon socket stays healthy; it is retried at most three times and then drops
+    that pane to Observe with take-back, while the other two confirm. test: `crates/gclient/tests/loop_liveness.rs::every_unconfirmed_pane_retakes_and_one_failed_take_retries_boundedly`.
+
+    C2.5: `granted: true` with `host_input_granted: false` keeps `lease_unconfirmed`
+    set and claims no typing authority until a repeated take confirms the host grant.
+    test: `crates/gclient/tests/loop_liveness.rs::a_lease_grant_without_a_host_grant_does_not_confirm_typing`.'
+  labels:
+  - covers:gclient-daemon-resilience:C2:C2.1
+  - covers:gclient-daemon-resilience:C2:C2.2
+  - covers:gclient-daemon-resilience:C2:C2.3
+  - covers:gclient-daemon-resilience:C2:C2.4
+  - covers:gclient-daemon-resilience:C2:C2.5
+  tdd: true
+  source_section: C2
+  implementation_domain: backend
+- title: Direct re-attach before proxy fallback
+  category: code
+  task_type: bug
+  depends_on:
+  - C2
+  validation_criteria: 'C3.1: A host-local re-attach keeps the pane Held and typing
+    on the new stream, sets `lease_unconfirmed` and shows `Reconnected; input authority
+    unconfirmed.` instead of confirming the grant. test: `crates/gclient/tests/host_upgrade_recovery.rs::a_host_local_reattach_marks_input_authority_unconfirmed`.
+
+    C3.2: The contract and guide state direct-first recovery. behavior: "direct re-attach"
+    in `docs/contracts/gterm-protocols.md`.
+
+    C3.3: With the daemon absent, a fallback holder''s stream fails and the replacement
+    stream reclaims fallback, so typed bytes reach the PTY. If a peer local client
+    claimed first, the replacement is refused and drops to Observe. test: `crates/gclient/tests/loop_liveness.rs::a_lost_fallback_stream_reclaims_only_when_no_peer_holds_input`.
+
+    C3.4: A fallback stream lost after the daemon has returned, but before C2''s retake
+    grants, cannot reclaim fallback. Its input is refused until the retake grants
+    the fresh attachment id; after that, bytes reach the PTY. test: `crates/gclient/tests/loop_liveness.rs::a_fallback_stream_lost_during_daemon_return_types_only_after_the_retake`.
+
+    C3.5: After the daemon returns on a new generation, every unconfirmed host-recovered
+    pane, focused or not, issues its own take once its re-register lands, and each
+    grant clears `lease_unconfirmed`. test: `crates/gclient/tests/host_upgrade_recovery.rs::every_unconfirmed_host_recovered_pane_retakes_after_reregister`.'
+  labels:
+  - covers:gclient-daemon-resilience:C3:C3.1
+  - covers:gclient-daemon-resilience:C3:C3.2
+  - covers:gclient-daemon-resilience:C3:C3.3
+  - covers:gclient-daemon-resilience:C3:C3.4
+  - covers:gclient-daemon-resilience:C3:C3.5
+  tdd: true
+  source_section: C3
+  implementation_domain: backend
+- title: Terminal attach, sizing, scroll, create and kill handlers on the executor
+  category: code
+  task_type: bug
+  depends_on: []
+  validation_criteria: 'D1a.1: Attach resolves its row on the executor. test: `tests/servers/test_terminal_ws_attach_honesty.py::test_attach_resolves_the_row_on_the_db_executor`.
+
+    D1a.2: Sizing runs get and `set_dims` as two executor hops around the async resize.
+    test: `tests/servers/test_terminal_ws_resize.py::test_sizing_runs_get_and_set_dims_on_the_executor`.
+
+    D1a.3: A scroll-offset message makes no storage call. test: `tests/servers/test_terminal_ws_golden.py::test_scroll_offset_makes_no_storage_call`.
+
+    D1a.4: Create and kill run their storage on the executor. test: `tests/servers/test_terminal_ws_create.py::test_create_and_kill_run_storage_on_the_executor`.'
+  labels:
+  - covers:gclient-daemon-resilience:D1a:D1a.1
+  - covers:gclient-daemon-resilience:D1a:D1a.2
+  - covers:gclient-daemon-resilience:D1a:D1a.3
+  - covers:gclient-daemon-resilience:D1a:D1a.4
+  tdd: true
+  source_section: D1a
+  implementation_domain: backend
+- title: Bounded HostClient round trips
+  category: code
+  task_type: bug
+  depends_on:
+  - C0
+  validation_criteria: 'D3.1: A round trip past its deadline raises `HostUnavailableError("timed
+    out")` and drops the pending future. test: `tests/terminals/test_host_client.py::test_roundtrip_times_out_with_host_unavailable`.
+
+    D3.2: Grant and revoke use one absolute 1.5 s budget across ensure, a first attempt
+    ending in EOF, reconnect and the second attempt. With the retry stalled, wall
+    time stays below 2 s, every HostClient pending entry is removed, and a competing
+    acquisition of the same `TerminalLeaseRegistry.lock(terminal_id)` succeeds by
+    that original deadline. test: `tests/terminals/test_native_runtime.py::test_eof_reconnect_and_retry_share_one_deadline_and_release_the_lease_lock`.
+
+    D3.3: `control_timeout_seconds` defaults to 5.0 and is exported to the runtime
+    config contract. test: `tests/config/test_terminal_host_config.py::test_control_timeout_seconds_default`.
+
+    D3.4: Validation treats the regenerated gcore carrier as an input change to the
+    coherent trio and records the batched installed identity/hashes from `~/.gobby/bin/`
+    plus separate gclient promotion. file: `crates/gcore/assets/config/runtime_config_contract.json`.
+
+    D3.5: The host process helpers live in their own module and `host_manager.py`
+    is under 850 lines. file: `src/gobby/terminals/host_process.py`.
+
+    D3.6: A mutating request that times out, including time spent waiting for `_operation_lock`,
+    retires the connection. The next mutation runs on a new connection from `operation_seq`
+    1 with no `operation_conflict`, and the timed-out request is not re-sent. test:
+    `tests/terminals/test_host_client.py::test_mutating_timeout_retires_the_connection_and_never_reuses_its_sequence`.
+
+    D3.7: A grant whose fake-host reply is withheld past its deadline retires the
+    connection, and the following revoke is issued on a new connection. test: `tests/terminals/test_host_client.py::test_grant_timeout_retires_the_connection_before_the_next_authority_change`.
+
+    D3.8: A grant is written and the fake host parks it at a barrier before applying
+    it. The fake host enforces C0''s per-slot connection fence, whose real-host rule
+    C0.7 proves. The caller is cancelled before its deadline. That cancellation retires
+    the connection, and the recovery revoke is issued on a newer connection. Releasing
+    the parked grant afterwards leaves the revoke in force. A request cancelled before
+    it is written leaves the connection in place. test: `tests/terminals/test_host_client.py::test_cancelling_a_written_grant_retires_the_connection_so_newer_authority_survives`.
+
+    D3.9: In this test the old writer''s `wait_closed` never returns and its reader
+    ignores cancellation. Retirement still returns without awaiting either, and the
+    detached cleanup ends at its bound. The grant''s aggregate budget holds, and a
+    reconnect installed while the stale cleanup runs keeps its reader, writer and
+    generation after that cleanup ends. It also covers an old request''s timeout or
+    cancellation handler that runs after another caller has reconnected: its retirement
+    names the old generation and leaves the new connection open. test: `tests/terminals/test_host_client.py::test_retirement_fences_before_cleanup_and_stale_cleanup_leaves_the_new_connection`.
+
+    D3.10: A timed-out grant, revoke, resize, kill or `terminate` is not re-sent after
+    the runtime reconnects. In `_write`, a timed-out host write, or one whose connection
+    is lost after its bytes were written, returns `IndeterminateWrite`. That includes
+    the text+submit path when the loss hits either the text or the `enter` write.
+    A loss before the first write stays `TerminalWriteError(stage="none")`. An EOF
+    inside the budget still gets its one retry. A timed-out `write_batch` reports
+    `IndeterminateWrite` for every target. test: `tests/terminals/test_native_runtime.py::test_abandoned_requests_are_never_replayed_and_timed_out_writes_are_indeterminate`.'
+  labels:
+  - covers:gclient-daemon-resilience:D3:D3.1
+  - covers:gclient-daemon-resilience:D3:D3.2
+  - covers:gclient-daemon-resilience:D3:D3.3
+  - covers:gclient-daemon-resilience:D3:D3.4
+  - covers:gclient-daemon-resilience:D3:D3.5
+  - covers:gclient-daemon-resilience:D3:D3.6
+  - covers:gclient-daemon-resilience:D3:D3.7
+  - covers:gclient-daemon-resilience:D3:D3.8
+  - covers:gclient-daemon-resilience:D3:D3.9
+  - covers:gclient-daemon-resilience:D3:D3.10
+  tdd: true
+  source_section: D3
+  implementation_domain: backend
+- title: Host grant reconciliation never holds the terminal lease lock
+  category: code
+  task_type: bug
+  depends_on:
+  - D1a
+  - D3
+  - C2
+  validation_criteria: 'D3b.1: The transition matrix sees `lock_held(terminal_id)
+    == false`; direct `ws_close` preserves the current host grant, while repeated/first
+    take, takeover, explicit release, detach, terminal removal and non-direct cleanup
+    replace or revoke it. test: `tests/terminals/test_lease_authority.py::test_holder_transition_matrix_applies_preserve_and_revoke_policies_outside_the_lease_lock`.
+
+    D3b.2: A stalled older grant cannot overwrite a newer takeover or final revoke;
+    after the stall releases, the last host notification matches the latest generation.
+    test: `tests/terminals/test_lease_authority.py::test_stalled_holder_sync_converges_to_the_latest_generation`.
+
+    D3b.3: With a real WebSocketServer, HostClient and gterm, restarting the isolated
+    daemon finalizes its websocket state without revoking the direct grant; `Input`
+    typed after cleanup starts and while the reconnect take is paused still reaches
+    the PTY, then C2 replaces the grant and an explicit detach refuses later input.
+    test: `tests/e2e/test_terminal_client_stack.py::test_direct_native_input_survives_daemon_restart_until_lease_retake`.
+
+    D3b.4: A test barrier holds an actual `HostClient` grant after request registration;
+    while it is pending, `lock_held(terminal_id) == false`, another connection lane
+    and same-terminal lease-state acquisition complete, and D3''s deadline clears
+    the pending request without any production watchdog. test: `tests/servers/test_terminal_ws_lease.py::test_unanswered_host_grant_is_bounded_and_lock_free`.
+
+    D3b.5: In the barrier race where the newer normal sync wins the holder-sync lock
+    before recovery, recovery snapshots only after acquiring that lock and the final
+    host state still matches the newest generation. test: `tests/terminals/test_lease_authority.py::test_reconcile_latest_holder_snapshots_under_the_sync_lock_after_newer_sync_wins`.
+
+    D3b.6: An older take''s observer is held while a newer takeover or finalize commits.
+    The older reply carries its own captured generation and sizing with `host_input_granted=False`,
+    sizing is never recomputed outside the lease lock, and the final host state matches
+    the newer generation. test: `tests/terminals/test_lease_authority.py::test_a_superseded_take_reply_keeps_its_captured_generation_and_claims_no_host_grant`.'
+  labels:
+  - covers:gclient-daemon-resilience:D3b:D3b.1
+  - covers:gclient-daemon-resilience:D3b:D3b.2
+  - covers:gclient-daemon-resilience:D3b:D3b.3
+  - covers:gclient-daemon-resilience:D3b:D3b.4
+  - covers:gclient-daemon-resilience:D3b:D3b.5
+  - covers:gclient-daemon-resilience:D3b:D3b.6
+  tdd: true
+  source_section: D3b
+  implementation_domain: backend
+- title: Pool exhaustion diagnosis
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: 'D4.1: The final acquire failure logs a `pg_stat_activity`
+    census, and concurrent failures within a minute run at most one census. test:
+    `tests/storage/hub/test_postgres_pool_backoff.py::test_final_acquire_failure_logs_a_rate_limited_activity_census`.
+
+    D4.3: A census refused with SQLSTATE `53300` logs capacity exhaustion; an auth,
+    network or server-down refusal logs its class and SQLSTATE with no capacity claim,
+    and no log line carries the exception text or DSN. test: `tests/storage/hub/test_postgres_pool_backoff.py::test_census_failure_reason_is_typed_and_claims_capacity_only_for_53300`.
+
+    D4.4: The caller receives the original `PoolTimeout` object at once, whether the
+    census succeeds, fails or stalls. While a stalled census is in flight, a later
+    failure starts no second census, and the census connection carries `connect_timeout`,
+    `statement_timeout` and the keepalive parameters. test: `tests/storage/hub/test_postgres_pool_backoff.py::test_census_is_bounded_and_preserves_the_original_acquisition_error`.
+
+    D4.2: `psycopg.pool` warnings reach the daemon log as sanitized records. A warning
+    whose exception text carries a sentinel credential and DSN writes the pool name,
+    exception class and SQLSTATE to `daemon.log`, and the sentinel never appears.
+    test: `tests/telemetry/test_logging.py::test_psycopg_pool_warnings_reach_the_daemon_log`.'
+  labels:
+  - covers:gclient-daemon-resilience:D4:D4.1
+  - covers:gclient-daemon-resilience:D4:D4.3
+  - covers:gclient-daemon-resilience:D4:D4.4
+  - covers:gclient-daemon-resilience:D4:D4.2
+  tdd: true
+  source_section: D4
+  implementation_domain: backend
+- title: Drop the undrained host event subscription
+  category: code
+  task_type: bug
+  depends_on:
+  - D3
+  validation_criteria: 'E1.1: `reserve_observer` sends no `subscribe_events`. test:
+    `tests/terminals/test_native_runtime.py::test_reserve_observer_sends_no_subscribe_events`.
+
+    E1.2: The spawn-failure helpers live in their own module and are re-exported.
+    file: `src/gobby/terminals/native_spawn_failure.py`.'
+  labels:
+  - covers:gclient-daemon-resilience:E1:E1.1
+  - covers:gclient-daemon-resilience:E1:E1.2
+  tdd: true
+  source_section: E1
+  implementation_domain: backend
+```
