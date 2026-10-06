@@ -225,15 +225,23 @@ def _apply_change_projection(
         projection.projected_count = _line_count(content)
         return
 
+    # MultiEdit carries its edits as a list, applied in order to one file.
+    edits = change.get("edits")
+    for edit in edits if isinstance(edits, list) else [change]:
+        if isinstance(edit, Mapping):
+            _apply_edit_pair(projection, edit)
+
+
+def _apply_edit_pair(projection: _FileProjection, edit: Mapping[str, Any]) -> None:
     for old_key, new_key in _TARGETED_EDIT_KEYS:
-        old_text = change.get(old_key)
-        new_text = change.get(new_key)
+        old_text = edit.get(old_key)
+        new_text = edit.get(new_key)
         if isinstance(old_text, str) and isinstance(new_text, str):
             _apply_targeted_edit(
                 projection,
                 old_text,
                 new_text,
-                replace_all=bool(change.get("replace_all")),
+                replace_all=bool(edit.get("replace_all")),
             )
             return
 
