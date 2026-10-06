@@ -1134,7 +1134,7 @@ field lands.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/install/shared/workflows/agents/plan-writer.yaml`
+- `src/gobby/install/shared/workflows/agents/plan-writer.yaml::*` — scope-reason: #23339 created the file at 3b7df025f5; this section writes the seat body over it
 - `src/gobby/install/shared/workflows/agents/plan-adversary.yaml::*` — scope-reason: replace the planning-stage reviewer body with the seat body
 - `tests/agents/test_plan_adversary_loads_plan_review.py::*` — scope-reason: run against the seat body; retarget claim and terminate assertions
 - `tests/agents/test_plan_adversary_manifest.py::*` — scope-reason: run against the seat body; retarget staged-verdict assertions
@@ -1582,9 +1582,14 @@ sync-managed bundled rows. Once that field exists, `researcher.yaml` gains
 6 guard), and the seat contract test asserts it. Until then the key would be
 silently ignored and would fail the 3.5 "no key outside the model" check.
 
+Amended 2026-10-06 (#23671): the Orchestrator's dedupe folded #23003 into
+#22998, "Review and observation seats: code-reviewer, archivist, log-monitor,
+researcher", which carries the D2 provenance label and 3.3.4. The field shipped
+as `network: trusted` (#23003's 2026-10-05 spec correction).
+
 ```yaml
 deferral:
-  task_ref: "#23003"
+  task_ref: "#22998"
   reason: "External prerequisite: the sandbox_profile field and guards are delivered by the #22899 plan's leaves."
   owner: "program-director"
   original_acceptance_items:
