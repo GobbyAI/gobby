@@ -7,7 +7,7 @@ use crate::ui::status::Toast;
 use crate::ui::Chrome;
 
 use super::super::attention::apply_response;
-use super::super::Workspace;
+use super::super::{PaneId, Workspace};
 use super::control::{apply_write_abandoned, apply_write_result, apply_write_unconfirmed};
 use super::daemon_ops::{apply_kills, apply_ops};
 use super::jobs::{JobOutcome, JobResult, LoopJobs, OpIntent};
@@ -23,14 +23,19 @@ pub(super) fn apply_job_outcome(
     // Lost input is reported whichever connection it was typed on, and a
     // kill's pane bookkeeping is local.
     let result = match outcome.result {
-        JobResult::WriteUnconfirmed { pane } => {
+        JobResult::WriteUnconfirmed { pane, attachment } => {
+            let current = current && on_attachment(workspace, pane, &attachment);
             return apply_write_unconfirmed(workspace, chrome, pane, current);
         }
         JobResult::WriteAbandoned {
             pane,
+            attachment,
             messages,
             bytes,
-        } => return apply_write_abandoned(workspace, chrome, pane, messages, bytes, current),
+        } => {
+            let current = current && on_attachment(workspace, pane, &attachment);
+            return apply_write_abandoned(workspace, chrome, pane, messages, bytes, current);
+        }
         JobResult::Killed {
             killed,
             kept,
@@ -81,4 +86,14 @@ pub(super) fn apply_job_outcome(
         JobResult::Ops { unplaced, result } => apply_ops(workspace, chrome, unplaced, result),
     }
     jobs.start(workspace, chrome, follow_up);
+}
+
+/// Whether `pane` is still on the attachment a write was typed for. A
+/// re-attach keeps the connection, so a late outcome for the attachment it
+/// replaced must not undo the reset the new one got (R6 F2).
+fn on_attachment(workspace: &Workspace<LiveDaemon>, pane: PaneId, attachment: &str) -> bool {
+    workspace
+        .panes
+        .get(&pane)
+        .is_some_and(|pane| pane.attachment_id() == attachment)
 }
