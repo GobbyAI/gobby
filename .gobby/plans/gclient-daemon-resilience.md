@@ -331,7 +331,7 @@ uses the shared clean-cutover gate above after merge; none promotes independentl
 
 Targets:
 - `crates/gclient/src/app/live_loop.rs::*` — scope-reason: the exit, resize and suspend signal helpers move out and three `mod` lines come in
-- `crates/gclient/src/app/live_loop/signals.rs`
+- `crates/gclient/src/app/live_loop/signals.rs::*` — scope-reason: the exit, resize and suspend signal helpers move in from `live_loop.rs`
 - `crates/gclient/src/app/live_loop/workspace_actions.rs::*` — scope-reason: the local-tab adoption group moves out
 - `crates/gclient/src/app/live_loop/local_adoption.rs`
 - `crates/gclient/src/app/live_loop/actions.rs::*` — scope-reason: the terminal lifecycle actions move out
