@@ -69,6 +69,9 @@ _SECOND_REVIEW_RUN_ID = "00000000-0000-4000-8000-000000002611"
 _REQUIRED_EVIDENCE = "Run the real close adapter and capture its MCP response receipt."
 _OVERSIZED_TRANSCRIPT_BYTES = 10 * 1024 * 1024
 _SUBMIT_DEADLINE_SECONDS = 10.0
+# A hang guard, not a latency claim: the child's cold start is the MCP SDK import, about
+# 1.3s of CPU that a loaded agent shell stretched to 21s of wall time (#23680).
+_STDIO_COLD_START_SECONDS = 60.0
 _STDIO_DEFAULT_PREFLIGHT_PATH = "/api/health"
 
 
@@ -1382,6 +1385,8 @@ async def test_authenticated_valid_submission_closes_and_persists_payload(
 @pytest.mark.parametrize("reviewer_ended", [False, True], ids=["running", "late-success"])
 async def test_submit_close_review_claims_before_heavy_work(
     temp_db: HubDatabase,
+    postgres_database_url: str,
+    postgres_schema: str,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1470,6 +1475,10 @@ async def test_submit_close_review_claims_before_heavy_work(
         assert abandoned.error == REVIEWER_RUN_ENDED_SUCCESS_ERROR
         initial_status = "error"
     transcript_reader = TranscriptReader(session_manager)
+    # Index the oversized transcript before the timed submit. The build is this test's
+    # own CPU work, which load stretched past the submit deadline (#23680); the
+    # ordering checks in evaluate_close do not depend on it being cold.
+    assert await transcript_reader.get_messages(caller.id, limit=1)
     default_preflight_observations: list[tuple[str, TaskCloseReviewStatus]] = []
     observed_finalizing: list[str] = []
 
@@ -1528,7 +1537,13 @@ async def test_submit_close_review_claims_before_heavy_work(
         health_observer=observe_default_preflight,
     ) as port:
         gobby_home = tmp_path / "gobby-home"
-        _write_test_bootstrap(gobby_home, temp_db.conninfo, port)
+        # The child's bootstrap takes a postgresql:// URL; temp_db.conninfo is the
+        # key=value form, which failed the child's config read.
+        _write_test_bootstrap(
+            gobby_home,
+            f"{postgres_database_url}?options=-csearch_path%3D{postgres_schema}",
+            port,
+        )
         environment = os.environ.copy()
         for variable in (
             "GOBBY_CONFIG_FILE",
@@ -1566,7 +1581,9 @@ async def test_submit_close_review_claims_before_heavy_work(
         os.close(slave_fd)
         try:
             _write_pty_json(master_fd, _initialize_request())
-            initialize = await asyncio.to_thread(_read_pty_response, master_fd, 1, 20.0)
+            initialize = await asyncio.to_thread(
+                _read_pty_response, master_fd, 1, _STDIO_COLD_START_SECONDS
+            )
             assert "result" in initialize
             _write_pty_json(
                 master_fd,
@@ -2387,6 +2404,9 @@ async def _live_mcp_http_server(
         lifespan="off",
         log_config=None,
         ws="none",
+        # Cancel a request still running at exit inside the 5s stop wait below, so a
+        # failed body reports its own error instead of a shutdown TimeoutError (#23680).
+        timeout_graceful_shutdown=1,
     )
     http = uvicorn.Server(config)
     task = asyncio.create_task(http.serve())
