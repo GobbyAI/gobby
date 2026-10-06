@@ -525,6 +525,12 @@ def test_render_transcript_image():
 
 def test_classify_tool():
     assert classify_tool("Bash") == ("bash", None)
+    assert classify_tool("run_terminal_command") == ("bash", None)
+    assert classify_tool("use_tool") == ("tool", None)
+    assert classify_tool("functions.exec") == ("code_execution", None)
+    assert classify_tool("functions.wait") == ("code_execution_wait", None)
+    assert classify_tool("exec") == ("unknown", None)
+    assert classify_tool("wait") == ("unknown", None)
     assert classify_tool("exec_command") == ("bash", None)
     assert classify_tool("Read") == ("read", None)
     assert classify_tool("read") == ("read", None)
