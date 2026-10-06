@@ -72,6 +72,10 @@ def test_delayed_skill_search_names_readiness_blocker(
             assert initializer_entered, "Genuine registry init never reached the injected delay"
             assert error.last_status_code == 503
             assert error.process_status == "running"
+            assert error.backend_state in ("down", "starting")
+            assert "delayed_skill_search" in error.thread_stack_tail
+            assert "run_gobby" in error.task_stack_tail
+            assert '"stage": "HTTP MCP setup"' in error.startup_timing_tail
             assert "Startup step skills search started" in error.mcp_log_tail
             assert "Startup step skills search completed" not in error.mcp_log_tail
             assert "Startup step skills search started" in str(error)
