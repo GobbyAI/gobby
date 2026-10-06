@@ -515,7 +515,7 @@ class CloneGitManager:
                 refuse_occupied_worktree, services.database, str(clone_path)
             )
             if occupied is not None:
-                return GitOperationResult(success=False, message=occupied, error="clone_in_use")
+                return GitOperationResult(success=False, message=occupied, error=occupied)
 
         try:
             # Check for uncommitted changes unless force

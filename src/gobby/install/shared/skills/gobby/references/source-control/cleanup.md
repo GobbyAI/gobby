@@ -17,8 +17,8 @@ Age and metadata status alone are not proof that files or commits are disposable
    tracked changes; the agent's exceptional force path is limited to verified
    disposable untracked-only dirt. `merged_into` cannot combine with forced
    branch deletion. A live session working inside a worktree or clone, or bound
-   to the worktree, refuses every managed delete and is named in the error;
-   `force` does not override it.
+   to the worktree, makes delete and cleanup tools refuse it and is named in the
+   error; `force` does not override it.
 4. Use `release_worktree`/`release_clone` for an explicit ownership handoff.
    Abandoning metadata does not delete content. Never manually remove a managed
    Git worktree/branch and leave its database record behind.

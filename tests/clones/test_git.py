@@ -507,11 +507,8 @@ class TestCloneGitManagerDeleteClone:
         result = await manager.delete_clone(clone_path, force=True)
 
         resolved = str(clone_path.resolve())
-        assert result.success is False
-        assert result.error == "clone_in_use"
-        assert (
-            result.message == f"Live session gobby#15411 working in {resolved}; it was not deleted"
-        )
+        refusal = f"Live session gobby#15411 working in {resolved}; it was not deleted"
+        assert (result.success, result.error, result.message) == (False, refusal, refusal)
         assert asked == [(database, resolved)]
         assert clone_path.exists()
 
