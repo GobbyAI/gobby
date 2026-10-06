@@ -336,6 +336,26 @@ def test_npx_options_with_values_are_stripped_before_the_runner(options: str) ->
     assert match.wrapper_chain == ("npx",)
 
 
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "npm exec",
+        "npm exec --",
+        "npm exec --package vitest --",
+        "npm exec -w web --",
+        "npm --workspace web exec --",
+    ],
+)
+def test_npm_exec_launches_are_classified_by_the_runner_they_start(launcher: str) -> None:
+    match = classify_validation_command(f"{launcher} vitest related src/a.tsx --run")
+
+    assert match is not None
+    assert match.matcher_id == "js-ts-tests"
+    assert match.categories == ("test",)
+    assert match.normalized_argv == ("vitest", "related", "src/a.tsx", "--run")
+    assert match.wrapper_chain == ("npm-exec",)
+
+
 def test_path_qualified_local_binary_is_detected() -> None:
     match = classify_validation_command("./node_modules/.bin/vitest run src/hooks")
 

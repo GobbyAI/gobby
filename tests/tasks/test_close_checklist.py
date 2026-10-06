@@ -28,7 +28,11 @@ from gobby.tasks.close_checklist import (
     evaluate_validation_commands,
 )
 from gobby.tasks.close_test_coverage import related_python_source_tests
-from gobby.tasks.command_equivalence import pytest_targets, scope_difference
+from gobby.tasks.command_equivalence import (
+    pytest_targets,
+    scope_difference,
+    vitest_related_targets,
+)
 from gobby.tasks.transcript_evidence import merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
@@ -1041,6 +1045,180 @@ def test_no_cov_before_paths_credits_every_path() -> None:
     )
     assert gate.status == "passed", gate.message
     assert gate.details["pytest_uncovered_paths"] == []
+
+
+_MARKDOWN_BODY = "web/src/components/shared/MarkdownBody.tsx"
+_MARKDOWN_BODY_RELATED = "cd web && npx vitest related src/components/shared/MarkdownBody.tsx --run"
+
+
+def _changed_web_gate(
+    *runs: TranscriptValidationRun, edits: tuple[TranscriptEdit, ...] = ()
+) -> CloseGateResult:
+    return evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=runs, edits=edits),
+        has_attributed_edits=True,
+        changed_paths=(_MARKDOWN_BODY,),
+        close_root="/repo",
+    )
+
+
+def test_changed_web_source_requires_vitest_related_coverage() -> None:
+    # #23362 closed on this focused test while MessageItem's transcript snapshots broke.
+    focused = _changed_web_gate(
+        _run(
+            1,
+            command=(
+                "cd web && npx vitest run src/components/shared/__tests__/MarkdownBody.test.tsx"
+            ),
+        )
+    )
+    related = _changed_web_gate(_run(1, command=_MARKDOWN_BODY_RELATED))
+
+    assert focused.status == "failed"
+    assert focused.details["vitest_related_uncovered_paths"] == [_MARKDOWN_BODY]
+    assert _MARKDOWN_BODY in focused.message
+    assert "vitest related" in focused.message
+    assert "--passWithNoTests" in focused.message
+    assert related.status == "passed", related.message
+    assert related.details["vitest_related_uncovered_paths"] == []
+
+
+@pytest.mark.parametrize("category", ["docs", "planning", "research", "manual"])
+@pytest.mark.parametrize("has_attributed_edits", [True, False])
+def test_exempt_categories_still_require_changed_web_coverage(
+    category: str, has_attributed_edits: bool
+) -> None:
+    def evaluate(*runs: TranscriptValidationRun) -> CloseGateResult:
+        return evaluate_validation_commands(
+            task_category=category,
+            evidence=TranscriptEvidence(validation_runs=runs),
+            has_attributed_edits=has_attributed_edits,
+            changed_paths=(_MARKDOWN_BODY,),
+            close_root="/repo",
+        )
+
+    missing = evaluate()
+    covered = evaluate(_run(1, command=_MARKDOWN_BODY_RELATED))
+
+    assert missing.status == "failed", missing.message
+    assert missing.details["vitest_related_uncovered_paths"] == [_MARKDOWN_BODY]
+    assert covered.status == "passed", covered.message
+    assert covered.details["vitest_related_uncovered_paths"] == []
+
+
+def test_type_only_and_test_paths_close_on_one_related_run() -> None:
+    # A type-only module has no runtime importer, so plain `related` selects nothing and
+    # exits 1; --passWithNoTests makes that empty answer green. vitest's own source filter
+    # matches a named test file itself, so the same run covers changed tests too.
+    types = "web/src/types/session.ts"
+    test = "web/src/components/activity/__tests__/SessionsTab.test.tsx"
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _run(
+                    1,
+                    command=(
+                        "cd web && node_modules/.bin/vitest related src/types/session.ts "
+                        "src/components/activity/__tests__/SessionsTab.test.tsx "
+                        "--run --passWithNoTests"
+                    ),
+                ),
+            ),
+        ),
+        has_attributed_edits=True,
+        changed_paths=(types, test),
+        close_root="/repo",
+    )
+
+    assert gate.status == "passed", gate.message
+    assert gate.details["vitest_related_uncovered_paths"] == []
+
+
+@pytest.mark.parametrize(
+    ("run", "edits"),
+    [
+        pytest.param(_run(1, command=_MARKDOWN_BODY_RELATED), (_edit(2),), id="stale"),
+        pytest.param(_run(1, outcome="failure", command=_MARKDOWN_BODY_RELATED), (), id="failing"),
+        pytest.param(
+            _run(1, command="npx vitest related src/components/shared/MarkdownBody.tsx --run"),
+            (),
+            id="no-location",
+        ),
+        pytest.param(
+            _run(
+                1,
+                command=(
+                    "cd /other/web && npx vitest related "
+                    "src/components/shared/MarkdownBody.tsx --run"
+                ),
+            ),
+            (),
+            id="other-checkout",
+        ),
+        pytest.param(
+            _run(
+                1, command="cd web && npx vitest related src/components/chat/MessageItem.tsx --run"
+            ),
+            (),
+            id="omits-path",
+        ),
+    ],
+)
+def test_vitest_related_run_that_omits_a_changed_web_path_does_not_cover_it(
+    run: TranscriptValidationRun, edits: tuple[TranscriptEdit, ...]
+) -> None:
+    gate = _changed_web_gate(run, edits=edits)
+
+    assert gate.status == "failed"
+    assert gate.details["vitest_related_uncovered_paths"] == [_MARKDOWN_BODY]
+
+
+def test_tasks_without_web_source_changes_need_no_vitest_related_run() -> None:
+    gate = _changed_test_gate("uv run pytest tests/tasks/test_close_checklist.py -q")
+
+    assert gate.status == "passed", gate.message
+    assert gate.details["vitest_related_uncovered_paths"] == []
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        (_MARKDOWN_BODY_RELATED, ("web/src/components/shared/MarkdownBody.tsx",)),
+        ("cd web && npx --no-install vitest related src/a.tsx --run", ("web/src/a.tsx",)),
+        ("cd web && npm exec -- vitest related src/a.tsx --run", ("web/src/a.tsx",)),
+        ("cd web && pnpm exec vitest related src/a.tsx --run", ("web/src/a.tsx",)),
+        ("cd web && ./node_modules/.bin/vitest related src/a.tsx --run", ("web/src/a.tsx",)),
+        ("cd web && /other/project/node_modules/.bin/vitest related src/a.tsx --run", None),
+        ("cd web && evilnode_modules/.bin/vitest related src/a.tsx --run", None),
+        (
+            "cd web && node_modules/.bin/vitest related src/a.tsx src/b.ts --run",
+            ("web/src/a.tsx", "web/src/b.ts"),
+        ),
+        (
+            "cd /repo/web && npx vitest related src/a.tsx --run --reporter=dot",
+            ("web/src/a.tsx",),
+        ),
+        ("cd /repo && cd web && npx vitest related --run src/a.tsx", ("web/src/a.tsx",)),
+        ("cd web && npx vitest related", None),
+        ("cd web && npx vitest related --run", None),
+        ("cd web && npx vitest related src/a.tsx", None),
+        ("cd web && npx vitest related 'src/**/*.tsx' --run", None),
+        ("cd web && npx vitest related src/a.tsx --run --passWithNoTests", ("web/src/a.tsx",)),
+        ("cd web && npx vitest related src/a.tsx --run -t sidebar", None),
+        ("cd web && npx vitest run src/a.test.tsx", None),
+        ("cd web && npx jest related src/a.tsx --run", None),
+        ("npx vitest related src/a.tsx --run", None),
+        ("cd src && npx vitest related a.tsx --run", None),
+        ("cd /other/web && npx vitest related src/a.tsx --run", None),
+        ("cd web && npx vitest related ../src/a.tsx --run", None),
+    ],
+)
+def test_vitest_related_targets_resolve_against_web(
+    command: str, expected: tuple[str, ...] | None
+) -> None:
+    assert vitest_related_targets(command, close_root="/repo") == expected
 
 
 @pytest.mark.parametrize(

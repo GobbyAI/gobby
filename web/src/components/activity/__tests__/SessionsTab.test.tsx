@@ -483,6 +483,11 @@ const PIPELINE_SESSION = makeSession({
   updated_at: "2026-04-08T12:20:00Z",
 });
 
+// Session titles are matched inside list rows only: once the deferred initial
+// selection lands, the detail header repeats the selected row's label, and an
+// unscoped single-element query then matches twice.
+const IN_ROW = { selector: ".session-entry *" };
+
 describe("SessionsTab", () => {
   beforeEach(() => {
     // SessionsTab persists the watched session id in localStorage. Without
@@ -783,7 +788,7 @@ describe("SessionsTab", () => {
       target: { value: "paused-ext-1" },
     });
     await waitFor(() => {
-      expect(screen.queryByText(/(?:^|: )Live Terminal$/)).toBeNull();
+      expect(screen.queryByText(/(?:^|: )Live Terminal$/, IN_ROW)).toBeNull();
     });
     expect(localStorage.getItem("gobby-watching-session-id")).toBe("live-1");
 
@@ -841,21 +846,29 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )Paused Terminal$/)).toBeInTheDocument();
-      expect(screen.getByText(/(?:^|: )Live Terminal$/)).toBeInTheDocument();
-      expect(screen.getByText(/(?:^|: )Handoff Terminal$/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/(?:^|: )Paused Terminal$/, IN_ROW),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/(?:^|: )Live Terminal$/, IN_ROW),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/(?:^|: )Handoff Terminal$/, IN_ROW),
+      ).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/(?:^|: )Expired Terminal$/)).toBeNull();
-    expect(screen.queryByText(/(?:^|: )Pipeline Session$/)).toBeNull();
+    expect(screen.queryByText(/(?:^|: )Expired Terminal$/, IN_ROW)).toBeNull();
+    expect(screen.queryByText(/(?:^|: )Pipeline Session$/, IN_ROW)).toBeNull();
 
     openSearch();
     fireEvent.change(screen.getByPlaceholderText("Search"), {
       target: { value: "paused-ext-1" },
     });
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )Paused Terminal$/)).toBeInTheDocument();
-      expect(screen.queryByText(/(?:^|: )Live Terminal$/)).toBeNull();
+      expect(
+        screen.getByText(/(?:^|: )Paused Terminal$/, IN_ROW),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/(?:^|: )Live Terminal$/, IN_ROW)).toBeNull();
     });
 
     fireEvent.change(screen.getByPlaceholderText("Search"), {
@@ -864,13 +877,15 @@ describe("SessionsTab", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )Expired Terminal$/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/(?:^|: )Expired Terminal$/, IN_ROW),
+      ).toBeInTheDocument();
     });
     expect(
       screen.getByRole("button", { name: "Session actions" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/(?:^|: )Paused Terminal$/)).toBeNull();
-    expect(screen.queryByText(/(?:^|: )Handoff Terminal$/)).toBeNull();
+    expect(screen.queryByText(/(?:^|: )Paused Terminal$/, IN_ROW)).toBeNull();
+    expect(screen.queryByText(/(?:^|: )Handoff Terminal$/, IN_ROW)).toBeNull();
   });
 
   it("renders provisional titles without their parenthesised prefix", async () => {
@@ -888,7 +903,7 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )S#9829$/)).toBeInTheDocument();
+      expect(screen.getByText(/(?:^|: )S#9829$/, IN_ROW)).toBeInTheDocument();
     });
     expect(screen.queryByText("(gobby#9829): S#9829")).toBeNull();
   });
@@ -919,7 +934,9 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )Older Higher Seq$/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/(?:^|: )Older Higher Seq$/, IN_ROW),
+      ).toBeInTheDocument();
     });
 
     const rows = Array.from(document.querySelectorAll(".session-entry"));
@@ -937,10 +954,12 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )Parked Web Chat$/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/(?:^|: )Parked Web Chat$/, IN_ROW),
+      ).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/(?:^|: )Main Web Chat$/)).toBeNull();
+    expect(screen.queryByText(/(?:^|: )Main Web Chat$/, IN_ROW)).toBeNull();
   });
 
   it("returns a parked main web chat to the list after the main chat is cleared", async () => {
@@ -981,7 +1000,7 @@ describe("SessionsTab", () => {
         screen.getByText("Transcript output for parked-web-1"),
       ).toBeInTheDocument();
     });
-    expect(screen.queryByText(/(?:^|: )Main Web Chat$/)).toBeNull();
+    expect(screen.queryByText(/(?:^|: )Main Web Chat$/, IN_ROW)).toBeNull();
 
     rerender(
       <SessionsTab
@@ -1009,7 +1028,9 @@ describe("SessionsTab", () => {
     render(<SessionsTab sessions={[LIVE_SESSION]} focusSessionId="live-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )Live Terminal$/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/(?:^|: )Live Terminal$/, IN_ROW),
+      ).toBeInTheDocument();
     });
 
     const liveRadio = screen.getByRole("radio", { name: "Live" });
@@ -1210,26 +1231,42 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/(?:^|: )Running Agent Terminal$/),
+        screen.getByText(/(?:^|: )Running Agent Terminal$/, IN_ROW),
       ).toBeInTheDocument();
       expect(
-        screen.getByText(/(?:^|: )Pending Agent Terminal$/),
+        screen.getByText(/(?:^|: )Pending Agent Terminal$/, IN_ROW),
       ).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/(?:^|: )Completed Agent Terminal$/)).toBeNull();
-    expect(screen.queryByText(/(?:^|: )Errored Agent Terminal$/)).toBeNull();
-    expect(screen.queryByText(/(?:^|: )Cancelled Agent Terminal$/)).toBeNull();
+    expect(
+      screen.queryByText(/(?:^|: )Completed Agent Terminal$/, IN_ROW),
+    ).toBeNull();
+    expect(
+      screen.queryByText(/(?:^|: )Errored Agent Terminal$/, IN_ROW),
+    ).toBeNull();
+    expect(
+      screen.queryByText(/(?:^|: )Cancelled Agent Terminal$/, IN_ROW),
+    ).toBeNull();
 
     fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
-      expect(screen.queryByText(/(?:^|: )Running Agent Terminal$/)).toBeNull();
-      expect(screen.queryByText(/(?:^|: )Pending Agent Terminal$/)).toBeNull();
+      expect(
+        screen.queryByText(/(?:^|: )Running Agent Terminal$/, IN_ROW),
+      ).toBeNull();
+      expect(
+        screen.queryByText(/(?:^|: )Pending Agent Terminal$/, IN_ROW),
+      ).toBeNull();
     });
-    expect(screen.queryByText(/(?:^|: )Completed Agent Terminal$/)).toBeNull();
-    expect(screen.queryByText(/(?:^|: )Errored Agent Terminal$/)).toBeNull();
-    expect(screen.queryByText(/(?:^|: )Cancelled Agent Terminal$/)).toBeNull();
+    expect(
+      screen.queryByText(/(?:^|: )Completed Agent Terminal$/, IN_ROW),
+    ).toBeNull();
+    expect(
+      screen.queryByText(/(?:^|: )Errored Agent Terminal$/, IN_ROW),
+    ).toBeNull();
+    expect(
+      screen.queryByText(/(?:^|: )Cancelled Agent Terminal$/, IN_ROW),
+    ).toBeNull();
   });
 
   it("defaults to transcript mode, toggles to summary via handoff fallback, and keeps action order", async () => {
@@ -1378,7 +1415,7 @@ describe("SessionsTab", () => {
       ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText(/(?:^|: )Live Terminal$/));
+    fireEvent.click(screen.getByText(/(?:^|: )Live Terminal$/, IN_ROW));
 
     await waitFor(() => {
       expect(
@@ -1580,7 +1617,7 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/(?:^|: )High Usage Session$/),
+        screen.getByText(/(?:^|: )High Usage Session$/, IN_ROW),
       ).toBeInTheDocument();
     });
 
@@ -1690,7 +1727,9 @@ describe("SessionsTab", () => {
     render(<SessionsTab sessions={[PAUSED_SESSION]} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )Paused Terminal$/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/(?:^|: )Paused Terminal$/, IN_ROW),
+      ).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
@@ -1712,7 +1751,9 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )Paused Terminal$/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/(?:^|: )Paused Terminal$/, IN_ROW),
+      ).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
@@ -1726,7 +1767,9 @@ describe("SessionsTab", () => {
     render(<TerminalFocusHarness />);
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )Paused Terminal$/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/(?:^|: )Paused Terminal$/, IN_ROW),
+      ).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
@@ -1768,9 +1811,11 @@ describe("SessionsTab", () => {
         onExpireSession={onExpireSession}
       />,
     );
+    const rowTitle = () =>
+      screen.queryByText(/(?:^|: )Paused Terminal$/, IN_ROW);
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )Paused Terminal$/)).toBeInTheDocument();
+      expect(rowTitle()).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
@@ -1781,14 +1826,14 @@ describe("SessionsTab", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Expire Session" }));
 
     expect(onExpireSession).toHaveBeenCalledWith("paused-1");
-    expect(screen.queryByText(/(?:^|: )Paused Terminal$/)).toBeNull();
+    expect(rowTitle()).toBeNull();
 
     await act(async () => {
       resolveExpire?.(false);
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )Paused Terminal$/)).toBeInTheDocument();
+      expect(rowTitle()).toBeInTheDocument();
     });
   });
 
@@ -1796,7 +1841,9 @@ describe("SessionsTab", () => {
     render(<SessionsTab sessions={[PAUSED_SESSION]} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/(?:^|: )Paused Terminal$/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/(?:^|: )Paused Terminal$/, IN_ROW),
+      ).toBeInTheDocument();
     });
 
     const trigger = screen.getByRole("button", { name: "Session actions" });
@@ -1879,7 +1926,9 @@ describe("SessionsTab", () => {
 
     const openRowMenu = async () => {
       await waitFor(() => {
-        expect(screen.getByText(/(?:^|: )ACP Session$/)).toBeInTheDocument();
+        expect(
+          screen.getByText(/(?:^|: )ACP Session$/, IN_ROW),
+        ).toBeInTheDocument();
       });
       fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
     };
@@ -1954,13 +2003,15 @@ describe("SessionsTab", () => {
 
       fireEvent.click(screen.getByRole("menuitem", { name: "Close Session" }));
       expect(onAcpCloseSession).toHaveBeenCalledWith("acp-1");
-      expect(screen.queryByText(/(?:^|: )ACP Session$/)).toBeNull();
+      expect(screen.queryByText(/(?:^|: )ACP Session$/, IN_ROW)).toBeNull();
 
       await act(async () => {
         resolveClose?.(false);
       });
       await waitFor(() => {
-        expect(screen.getByText(/(?:^|: )ACP Session$/)).toBeInTheDocument();
+        expect(
+          screen.getByText(/(?:^|: )ACP Session$/, IN_ROW),
+        ).toBeInTheDocument();
       });
     });
 
@@ -1986,13 +2037,15 @@ describe("SessionsTab", () => {
 
       fireEvent.click(screen.getByRole("menuitem", { name: "Delete Session" }));
       expect(onAcpDeleteSession).toHaveBeenCalledWith("acp-1");
-      expect(screen.queryByText(/(?:^|: )ACP Session$/)).toBeNull();
+      expect(screen.queryByText(/(?:^|: )ACP Session$/, IN_ROW)).toBeNull();
 
       await act(async () => {
         resolveDelete?.(false);
       });
       await waitFor(() => {
-        expect(screen.getByText(/(?:^|: )ACP Session$/)).toBeInTheDocument();
+        expect(
+          screen.getByText(/(?:^|: )ACP Session$/, IN_ROW),
+        ).toBeInTheDocument();
       });
     });
 
@@ -2065,7 +2118,7 @@ describe("SessionsTab", () => {
       );
       await waitFor(() => {
         expect(
-          screen.getByText(/(?:^|: )Paused Terminal$/),
+          screen.getByText(/(?:^|: )Paused Terminal$/, IN_ROW),
         ).toBeInTheDocument();
       });
       fireEvent.click(screen.getByRole("button", { name: "Session actions" }));

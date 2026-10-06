@@ -142,6 +142,7 @@ def default_validation_wrappers() -> list[str]:
         "rye run",
         "bundle exec",
         "npx",
+        "npm exec",
         "pnpm exec",
         "yarn exec",
         "bunx",
@@ -166,6 +167,14 @@ def default_validation_wrapper_rules() -> list[ValidationCommandWrapper]:
         _wrapper_rule("pnpm-exec", "pnpm exec", "prefix", ["pnpm exec"]),
         _wrapper_rule(
             "npx", "npx", "prefix", ["npx"], strip_options_with_values=_NPX_OPTIONS_WITH_VALUES
+        ),
+        # npx is npm exec's alias, so the two take the same options.
+        _wrapper_rule(
+            "npm-exec",
+            "npm exec",
+            "prefix",
+            ["npm exec"],
+            strip_options_with_values=_NPX_OPTIONS_WITH_VALUES,
         ),
         _wrapper_rule("bunx", "bunx", "prefix", ["bunx"]),
         _wrapper_rule("timeout", "timeout", "delimiter", ["timeout"]),

@@ -7,6 +7,7 @@ import posixpath
 import re
 import shlex
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 
 from gobby.config.shell_lexing import ParsedShellCommand
@@ -451,3 +452,95 @@ def pytest_targets(command: str) -> tuple[str, ...] | None:
         if file_path and file_path not in normalized:
             normalized.append(file_path)
     return tuple(normalized)
+
+
+_VITEST_LAUNCHERS = (
+    ("npm", "exec", "--"),
+    ("npm", "exec"),
+    ("pnpm", "exec"),
+    ("npx", "--no-install"),
+    ("npx", "--no"),
+    ("npx",),
+)
+# Options that change only how vitest reports, plus ``--passWithNoTests``: a changed
+# type-only module, declaration or asset has no runtime importer, and the close gate
+# credits only changed paths that still exist, so an empty selection is a true answer.
+# Anything else -- a name filter, another project or root -- declines.
+_VITEST_RELATED_OPTIONS = frozenset(
+    {"--reporter", "--no-coverage", "--silent", "--passWithNoTests"}
+)
+_ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def vitest_related_paths(arguments: Iterable[str]) -> tuple[str, ...] | None:
+    """Parse literal related targets, consuming option values before finding paths."""
+    targets: list[str] = []
+    remaining = iter(arguments)
+    for argument in remaining:
+        name = argument.split("=", 1)[0]
+        if argument == "--run":
+            continue
+        if name in _VITEST_RELATED_OPTIONS:
+            if name == "--reporter" and "=" not in argument:
+                value = next(remaining, None)
+                if value is None or value.startswith("-"):
+                    return None
+        elif argument.startswith("-") or any(char in argument for char in "*?[]{}"):
+            return None
+        else:
+            path = posixpath.normpath(argument)
+            if posixpath.isabs(path) or path == ".." or path.startswith("../"):
+                return None
+            if path not in targets:
+                targets.append(path)
+    return tuple(targets) if targets else None
+
+
+def vitest_related_targets(
+    command: str, *, close_root: str | None = None
+) -> tuple[str, ...] | None:
+    """Return repo-relative targets of a ``vitest related --run`` run from ``web/``.
+
+    Transcripts record no working directory, so the location is the command's leading
+    ``cd`` chain: a relative step resolves from the checkout root, an absolute one must
+    fall inside ``close_root``. ``None`` declines credit: another runner, no target, no
+    ``--run``, any other option, a glob target, or a location other than ``web/``.
+    """
+    parsed = parse_validation_shell(command)
+    if not parsed.segments or any(operator != "&&" for operator in parsed.operators):
+        return None
+    *steps, segment = parsed.segments
+    location = "."
+    for step in steps:
+        if len(step) != 2 or step[0] != "cd":
+            return None
+        if not posixpath.isabs(step[1]):
+            location = posixpath.normpath(posixpath.join(location, step[1]))
+            continue
+        if close_root is None:
+            return None
+        root, resolved = Path(close_root).resolve(), Path(step[1]).resolve()
+        if not resolved.is_relative_to(root):
+            return None
+        location = resolved.relative_to(root).as_posix()
+    if location != "web":
+        return None
+    words = list(segment)
+    while words and _ENV_ASSIGNMENT.match(words[0]):
+        words.pop(0)
+    for launcher in _VITEST_LAUNCHERS:
+        if tuple(words[: len(launcher)]) == launcher:
+            words = words[len(launcher) :]
+            break
+    if not words or words[0] not in {
+        "vitest",
+        "node_modules/.bin/vitest",
+        "./node_modules/.bin/vitest",
+    }:
+        return None
+    if words[1:2] != ["related"]:
+        return None
+    if "--run" not in words[2:]:
+        return None
+    targets = vitest_related_paths(words[2:])
+    return tuple(f"web/{path}" for path in targets) if targets else None

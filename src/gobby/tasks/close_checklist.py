@@ -12,8 +12,11 @@ from typing import Any, Literal
 from gobby.config.shell_lexing import parse_shell_command
 from gobby.tasks.close_test_coverage import (
     changed_python_source_paths,
+    changed_web_source_paths,
+    coverage_failure_message,
     related_python_source_tests,
     uncovered_pytest_paths,
+    uncovered_vitest_related_paths,
 )
 from gobby.tasks.close_test_coverage import (
     changed_python_test_paths as _changed_python_test_paths,
@@ -220,8 +223,10 @@ def evaluate_validation_commands(
             for record in records
             if set(record["categories"]).intersection(gate.details["unresolved_failure_categories"])
         ]
-    elif gate.details.get("pytest_uncovered_paths") or gate.details.get(
-        "python_source_uncovered_tests"
+    elif (
+        gate.details.get("pytest_uncovered_paths")
+        or gate.details.get("python_source_uncovered_tests")
+        or gate.details.get("vitest_related_uncovered_paths")
     ):
         relevant = []
     elif task_category in _TEST_REQUIRED_CATEGORIES:
@@ -285,10 +290,16 @@ def _evaluate_validation_commands(
     definitive run for each distinct core command so the criteria reviewer can treat
     them as the authoritative account of what ran. ``deleted_paths`` are tests that a
     linked commit deleted and HEAD no longer tracks: pytest cannot target them, so only
-    the test type audit still has to cover them.
+    the test type audit still has to cover them. Changed ``web/src`` files need a fresh
+    passing ``vitest related`` run from ``web/`` naming each one; ``close_root`` resolves
+    an absolute ``cd`` location.
     """
     category = (task_category or "").strip().casefold()
     changed_paths = tuple(changed_paths)
+    deleted = frozenset(deleted_paths)
+    changed_web_paths = changed_web_source_paths(
+        path for path in changed_paths if path not in deleted
+    )
     changed_python_test_paths = _changed_python_test_paths(changed_paths)
     source_tests = (
         related_python_source_tests(changed_paths, base_dir=close_root) if close_root else {}
@@ -373,6 +384,11 @@ def _evaluate_validation_commands(
     ]
     criterion_commands = criterion_command_records(validation_criteria, evidence)
     criterion_command_gaps = [record for record in criterion_commands if not record["satisfied"]]
+    uncovered_web = uncovered_vitest_related_paths(
+        (run.command for run in credited if run.outcome == "success"),
+        changed_web_paths,
+        close_root=close_root,
+    )
     details = {
         **details,
         "fresh_run_count": len(fresh_runs),
@@ -396,6 +412,7 @@ def _evaluate_validation_commands(
         ],
         "unresolved_failure_categories": sorted(unresolved),
         "unresolved_failures": unresolved_failures,
+        "vitest_related_uncovered_paths": list(uncovered_web),
         "test_types_audit_required": test_types_audit_required,
         "changed_python_test_paths": list(changed_python_test_paths),
         "test_types_audit_targets": list(audit_targets),
@@ -436,7 +453,12 @@ def _evaluate_validation_commands(
         )
 
     # Exempt tasks still need the command record for their explicit criteria review.
-    if not has_attributed_edits and not test_types_audit_required and not related_tests_required:
+    if (
+        not has_attributed_edits
+        and not test_types_audit_required
+        and not related_tests_required
+        and not changed_web_paths
+    ):
         return CloseGateResult(
             item=9,
             name="validation_commands",
@@ -449,6 +471,7 @@ def _evaluate_validation_commands(
         category in _AUTO_PASS_CATEGORIES
         and not test_types_audit_required
         and not related_tests_required
+        and not changed_web_paths
     ):
         return CloseGateResult(
             item=9,
@@ -512,13 +535,13 @@ def _evaluate_validation_commands(
             details=details,
         )
 
-    deleted = frozenset(deleted_paths)
     pytest_required_paths = _pytest_module_paths(
         path for path in changed_python_test_paths if path not in deleted
     )
     details["pytest_exempt_deleted_paths"] = [
         path for path in changed_python_test_paths if path in deleted
     ]
+    uncovered_pytest: tuple[str, ...] = ()
     if pytest_required_paths:
         uncovered_pytest = uncovered_pytest_paths(
             (
@@ -529,32 +552,13 @@ def _evaluate_validation_commands(
             pytest_required_paths,
         )
         details["pytest_uncovered_paths"] = list(uncovered_pytest)
-        if uncovered_pytest:
-            uncovered_display = ", ".join(f"`{path}`" for path in uncovered_pytest)
-            return CloseGateResult(
-                item=9,
-                name="validation_commands",
-                status="failed",
-                message=(
-                    "Changed Python tests have no credited fresh passing pytest target. "
-                    f"Uncovered paths: {uncovered_display}."
-                ),
-                details=details,
-            )
-
-    if uncovered_sources:
-        uncovered_display = "; ".join(
-            f"`{source}`: " + ", ".join(f"`{test}`" for test in tests)
-            for source, tests in uncovered_sources.items()
-        )
+    coverage_failure = coverage_failure_message(uncovered_pytest, uncovered_sources, uncovered_web)
+    if coverage_failure:
         return CloseGateResult(
             item=9,
             name="validation_commands",
             status="failed",
-            message=(
-                "Changed Python sources have related tests with no credited fresh passing pytest target. "
-                f"Uncovered sources and tests: {uncovered_display}."
-            ),
+            message=coverage_failure,
             details=details,
         )
 

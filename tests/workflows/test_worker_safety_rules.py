@@ -753,8 +753,13 @@ class TestNoFullVitestSuiteRule:
     @pytest.mark.parametrize(
         "command",
         [
+            "npx vitest",
             "npx vitest run",
             "cd web && npx vitest run --no-coverage",
+            "npx vitest related",
+            "cd web && npx vitest related --run",
+            "cd web && npx vitest related --reporter dot --run",
+            "cd web && npx vitest related --reporter custom.test.ts --run",
             "jest --runInBand",
         ],
     )
@@ -778,6 +783,10 @@ class TestNoFullVitestSuiteRule:
                 "src/hooks/__tests__/useMemory.test.ts"
             ),
             "npx vitest run src/hooks/useMemory.spec.ts",
+            "cd web && npx vitest related src/components/shared/MarkdownBody.tsx --run",
+            "cd web && npx vitest related --run src/a.tsx src/b.ts",
+            "cd web && npx vitest related --reporter dot src/a.tsx --run",
+            "cd web && node_modules/.bin/vitest related src/vite-env.d.ts --run --passWithNoTests",
             "jest --runInBand --testPathPattern=SystemHealthCard",
             "jest -t 'renders FalkorDB status'",
         ],
