@@ -756,6 +756,7 @@ async def test_real_entrypoints_label_original_shared_lock(first_writer: str) ->
 @pytest.mark.parametrize("transport", ["direct", "socket", "quiesce"])
 async def test_control_cancels_actual_caller_after_binding_and_waits_owned_work(
     transport: str,
+    managed_composer_tmpdir: Path,
 ) -> None:
     module = importlib.import_module("tests.e2e.composer_proof_race_observer")
     terminal = replace(
@@ -804,7 +805,9 @@ async def test_control_cancels_actual_caller_after_binding_and_waits_owned_work(
         quiescing.set()
         await observer.quiesce(surfaces)
 
-    temporary = tempfile.TemporaryDirectory(prefix="r2proof-", dir="/tmp")
+    temporary = tempfile.TemporaryDirectory(prefix="r")
+    assert Path(temporary.name).parent == managed_composer_tmpdir
+    assert len(bytes(Path(temporary.name) / "control.sock")) < 104
     mocks = ExitStack()
     if transport in {"socket", "quiesce"}:
         control = cleanup_module.CleanupControl(
