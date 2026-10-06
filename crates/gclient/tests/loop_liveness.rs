@@ -2423,8 +2423,10 @@ async fn a_stalled_direct_release_is_bounded_and_never_blocks_the_next_take() {
         })
         .await
         .expect("a's take goes out within the bound");
-        probe.key_reaches("terminal-a", 'y').await;
+        // b's barrier reports before its release, so the toast is up by the
+        // time a's take is on the wire; the next keypress clears it (D3).
         probe.shows(UNCONFIRMED_INPUT).await;
+        probe.key_reaches("terminal-a", 'y').await;
         drop(input_tx);
     };
 
