@@ -1050,20 +1050,33 @@ follows that one in `CloseEvaluationFingerprint`.
   when it keeps both the proof lines and the normalized declared Targets
   paths and the other gates pass. The fix is wording only; the tests are
   unchanged.
+- 2026-10-06 04:16 CDT: The #22727 close review (ba2d8e7f) passed all five
+  criteria. It returned invalid on one low documentation finding: V2's
+  present tense read as a claim that implementation checks had already
+  passed. V2 now states its checks as post-implementation completion gates,
+  with plan validation the only one run at planning time. No acceptance
+  item, target or deliverable changed. The stale M1 is withdrawn for
+  re-derivation. Consensus is renewed between the Lane 7 Plan Writer
+  gobby#15429 and the Plan Adversary gobby#15414.
 
 ## V2: Verification
 `kind: verification`
 
-- All three leaves' focused pytest, ruff and mypy commands pass, as listed
-  in each deliverable.
-- A rerun of the As-Is reproduction with a valid proof deleting line 1
-  returns no issue. The proof-free entry still returns the 927-line
+These are completion gates for the implementation. Except for plan
+validation, none has run yet. Each runs after 1.1, 2.1 and 2.2 land and the
+daemon restarts, and each must hold before the epic closes.
+
+- Each leaf's focused pytest, ruff and mypy commands, as listed in its
+  deliverable, must pass.
+- A rerun of the As-Is reproduction with a valid proof deleting line 1 must
+  return no issue, and the proof-free entry must still return the 927-line
   diagnostic.
-- `uv run gobby plans validate .gobby/plans/production-size-partial-deletion-proof.md -p /Users/josh/Projects/gobby`
-  exits 0 before handoff.
 - After the restart, a preview close on a scratch proof-bearing task in an
-  isolated test repository reports `size_proof_mismatch` for a padded
+  isolated test repository must report `size_proof_mismatch` for a padded
   candidate.
+- `uv run gobby plans validate .gobby/plans/production-size-partial-deletion-proof.md -p /Users/josh/Projects/gobby`
+  must exit 0 before handoff. This is the one check that runs at planning
+  time.
 
 ## M1 Task Manifest
 `kind: manifest`

@@ -207,31 +207,6 @@ async def _set_attached_session_agent(
     if not await _validate_persona_agent(mixin, websocket, session_manager, agent_name, session):
         return
 
-    from gobby.mcp_proxy.tools.apply_agent_definition import is_role_change
-    from gobby.workflows.state_manager import SessionVariableManager
-
-    variables = await run_db(
-        mixin, SessionVariableManager(session_manager.db).get_variables, target_session_id
-    )
-    if await run_db(mixin, is_role_change, session_manager.db, variables, agent_name):
-        current = variables["_agent_type"]
-        await mixin._send_error(
-            websocket,
-            f"This terminal runs agent '{current}'. Switching to '{agent_name}' needs a relaunch: "
-            f"start a new terminal session and select agent '{agent_name}' there.",
-            code="ROLE_CHANGE_REQUIRES_RELAUNCH",
-        )
-        await websocket.send(
-            json_dumps(
-                {
-                    "type": "agent_changed",
-                    "target_session_id": target_session_id,
-                    "agent_name": current,
-                }
-            )
-        )
-        return
-
     terminal_manager = getattr(mixin, "terminal_manager", None)
     coordinator = getattr(mixin, "write_coordinator", None)
     try:

@@ -69,6 +69,7 @@ TASK_MUTATION_TOOLS_BY_SERVER = {
         {
             "approve_review",
             "reject_review",
+            "set_landing_freeze",
             "submit_for_review",
         }
     ),

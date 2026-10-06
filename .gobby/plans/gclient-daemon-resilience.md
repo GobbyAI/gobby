@@ -421,7 +421,7 @@ then `wc -l` of the four source files, each under 850; screen goldens unchanged.
 
 Targets:
 - `crates/gclient/tests/mock_daemon/mod.rs::*` — scope-reason: the hold threads through `MockState`, `MockDaemon`, `serve_websocket` and `websocket_reply`
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: A0 creates the loop-liveness suite on the held mock daemon
 
 Add to the mock daemon a `hold_ws(kind, filter) -> Arc<Notify>` that records the
 request, computes the reply and the events-before-reply exactly as
@@ -467,14 +467,14 @@ Approach: a `Notify` per hold, stored on `MockState`, consulted by
 
 Targets:
 - `crates/gclient/src/app/live_loop.rs::*` — scope-reason: `run_live_loop` gains the outcome branch and loses its post-select awaits; `resize_live_workspace` becomes a sync stage
-- `crates/gclient/src/app/live_loop/jobs.rs`
-- `crates/gclient/src/app/live_loop/jobs/tests.rs`
-- `crates/gclient/src/app/live_loop/jobs_apply.rs`
+- `crates/gclient/src/app/live_loop/jobs.rs::*` — scope-reason: A1 creates the job module: `JobKey`, `JobResult`, the job ledger and its issuers
+- `crates/gclient/src/app/live_loop/jobs/tests.rs::*` — scope-reason: A1 creates the job ledger unit tests
+- `crates/gclient/src/app/live_loop/jobs_apply.rs::*` — scope-reason: A1 creates `apply_job_outcome`
 - `crates/gclient/src/app/live_loop/workspace_actions.rs::*` — scope-reason: the focus-hint group moves out to the focus-hints module
-- `crates/gclient/src/app/live_loop/focus_hints.rs`
+- `crates/gclient/src/app/live_loop/focus_hints.rs::*` — scope-reason: A1 creates this module from the focus-hint group of workspace_actions.rs
 - `crates/gclient/src/app/run_loop.rs::propagate_geometry`
 - `crates/gclient/src/frame_source.rs::*` — scope-reason: keep direct SetViewport/input delivery nonblocking while the same file is decomposed and extended by P3
-- `crates/gclient/tests/loop_liveness.rs`
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the A1 job-outcome liveness cases
 
 Consumers unchanged:
 - `crates/gclient/tests/client_loop.rs` — no-edit-reason: drives `propagate_geometry` and `run_live_loop` through the scripted loop API; both keep their signatures.
@@ -2127,7 +2127,7 @@ is at 962 lines and gains nothing here.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/servers/websocket/terminal_ws_write.py`
+- `src/gobby/servers/websocket/terminal_ws_write.py::*` — scope-reason: D1a creates `TerminalWriteMixin` here from the input, paste and operator-write path of terminal_ws.py
 - `src/gobby/servers/websocket/terminal_ws.py::*` — scope-reason: move the input, paste and operator-write path into terminal_ws_write.py, then route the attach row lookup to the executor and drop the scroll-offset lookup
 - `src/gobby/servers/websocket/terminal_sizing.py::TerminalSizingMixin._apply_terminal_sizing`
 - `src/gobby/servers/websocket/terminal_ws_create.py::TerminalCreateMixin._handle_terminal_create`
@@ -3056,6 +3056,15 @@ F02 resolution direction: keep direct typing uninterrupted across a daemon resta
   inventory. Acceptance items are unchanged; the Adversary re-derives M1 from these
   bytes. The Orchestrator (gobby#14972) folded this delta into criterion 8 and ruled
   the exact symbol Target.
+- 2026-10-05: Target-scope repair (Plan Writer gobby#15544, Adversary gobby#15470,
+  task #23618 criterion 3) on 0.5.0 `fa2c9a2c65`. Close review 72573487 failed both
+  validation modes, because the reviewer could not resolve leaf completion: seven
+  bare-path Targets name files that now carry indexed symbols (A0 and A1
+  `loop_liveness.rs`; A1 `jobs.rs`, `jobs/tests.rs`, `jobs_apply.rs` and
+  `focus_hints.rs`; D1a `terminal_ws_write.py`). On the main checkout their closed
+  leaves exempted those sections. Each Target becomes `::*` with a scope-reason
+  naming what its section creates or adds, so validation no longer depends on
+  completion lookup. Acceptance items are unchanged.
 
 ## M1 Task Manifest
 `kind: manifest`

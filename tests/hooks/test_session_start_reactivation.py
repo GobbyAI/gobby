@@ -96,7 +96,7 @@ def activation_handler(db: HubDatabase) -> Any:
     return handler
 
 
-def compact(db: HubDatabase, sid: str) -> None:
+def compact(db: HubDatabase, sid: str, source: str = "compact") -> None:
     handler = activation_handler(db)
     session = SessionManager(db).get(sid)
     assert session is not None
@@ -105,7 +105,7 @@ def compact(db: HubDatabase, sid: str) -> None:
         session_id=sid,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
-        data={"source": "compact"},
+        data={"source": source},
         machine_id=session.machine_id,
     )
     with ExitStack() as stack:
@@ -148,6 +148,84 @@ async def test_compact_sessionstart_keeps_seat_skills_and_rules(
     for key in ("_agent_type", "_active_skill_names", "_active_rule_names"):
         assert after[key] == before[key]
     assert after["_agent_type"] == "x"
+
+
+@pytest.mark.parametrize("base", ["default", "x"])
+@pytest.mark.parametrize("source", ["compact", "resume"])
+@pytest.mark.parametrize("persona", ["y", "overlay"])
+async def test_persona_overlay_survives_sessionstart_and_default_restores_seat(
+    temp_db: HubDatabase,
+    session_id: str,
+    seats: dict[str, AgentDefinitionBody],
+    base: str,
+    source: str,
+    persona: str,
+) -> None:
+    from gobby.hooks.event_handlers._agent import AgentEventHandlerMixin
+    from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+
+    LocalSkillManager(temp_db).create_skill(
+        name="persona-skill", description="Persona", content="Persona", enabled=True
+    )
+    overlay = make_agent_definition(
+        name="overlay",
+        surfaces=["persona"],
+        prompts={"persona": "overlay"},
+        workflows=make_agent_workflows(
+            skill_selectors=AgentSelector(include=["name:persona-skill"]), skill_format="compact"
+        ),
+    )
+    AgentDefinitionManager(temp_db).create(
+        name="overlay", definition_json=overlay.model_dump_json()
+    )
+    result = await apply_agent_definition_impl(base, temp_db, session_id)
+    assert result["success"]
+    manager = SessionVariableManager(temp_db)
+    before = manager.get_variables(session_id)
+    assert (await apply_persona_impl(persona, temp_db, session_id))["success"]
+    compact(temp_db, session_id, source)
+    after = manager.get_variables(session_id)
+    assert after["_persona_name"] == persona
+    assert after["_active_skill_names"] == (["persona-skill"] if persona == "overlay" else None)
+    assert after["_skill_format"] == ("compact" if persona == "overlay" else None)
+
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id=session_id,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={},
+    )
+    response = HookResponse(decision="allow")
+    AgentEventHandlerMixin._inject_agent_instructions_if_needed(
+        activation_handler(temp_db), event, session_id, response
+    )
+    assert response.context == persona
+    for key in ("_agent_type", "_active_rule_names", "_agent_blocked_tools", "x_only"):
+        assert after.get(key) == before.get(key)
+    assert (await apply_persona_impl("default", temp_db, session_id))["success"]
+    restored = manager.get_variables(session_id)
+    assert restored["_persona_name"] is None
+    assert restored["_active_skill_names"] == before["_active_skill_names"]
+    assert restored["_skill_format"] == before["_skill_format"]
+    assert restored["_agent_type"] == base
+    response = HookResponse(decision="allow")
+    AgentEventHandlerMixin._inject_agent_instructions_if_needed(
+        activation_handler(temp_db), event, session_id, response
+    )
+    assert response.context == base
+
+
+async def test_writing_definition_activation_clears_persona_overlay(
+    temp_db: HubDatabase, session_id: str, seats: dict[str, AgentDefinitionBody]
+) -> None:
+    from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+
+    assert (await apply_persona_impl("y", temp_db, session_id))["success"]
+    assert (await apply_agent_definition_impl("x", temp_db, session_id))["success"]
+    variables = SessionVariableManager(temp_db).get_variables(session_id)
+    assert variables["_persona_name"] is None
+    assert variables["_active_skill_names"] == ["seat-skill"]
 
 
 @pytest.mark.asyncio

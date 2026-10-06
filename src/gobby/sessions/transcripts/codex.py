@@ -563,6 +563,11 @@ class CodexTranscriptParser(BaseTranscriptParser):
             name = str(payload.get("name") or "unknown")
             tool_input = _parse_tool_payload(_tool_call_arguments(payload))
 
+        # These bare names belong to Codex's code-cell contract, not the
+        # shared shell classifier. Preserve the original envelope in raw_json.
+        if name in {"exec", "wait"}:
+            name = f"functions.{name}"
+
         return ParsedMessage(
             index=index,
             role="assistant",

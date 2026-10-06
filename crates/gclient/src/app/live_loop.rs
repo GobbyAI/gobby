@@ -42,6 +42,8 @@ mod focus_hints;
 pub(super) mod host_recovery;
 pub(super) mod jobs;
 mod jobs_apply;
+mod lifecycle;
+mod local_adoption;
 pub(super) mod menu;
 mod menu_bar;
 pub(super) mod menu_dispatch;

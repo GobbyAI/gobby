@@ -1,7 +1,9 @@
-use super::Coalescer;
-use crate::app::{Backend, Pane, PaneId, Workspace};
+use super::super::jobs_apply::apply_job_outcome;
+use super::{Coalescer, JobKey, JobOutcome, JobResult, JobTag, LoopJobs};
+use crate::app::{Backend, ControlState, Pane, PaneId, Workspace};
 use crate::daemon::{Daemon, LiveDaemon};
 use crate::frame_source::{PaneFrameSource, ProxyFrameSource, ScriptedFrameSource, Transport};
+use crate::ui::Chrome;
 
 #[test]
 fn coalescer_keeps_one_in_flight_and_latest_pending() {
@@ -129,5 +131,75 @@ fn proxy_geometry_clears_deferred_viewport() {
     assert!(
         !workspace.pane(PaneId(1)).viewport_deferred(),
         "proxy geometry cannot wait on a discarded direct writer"
+    );
+}
+
+/// R6 F2: a re-attach without a reconnect keeps the connection, so a write
+/// outcome for the attachment it replaced still arrives as current. It is
+/// reported, but leaves the new attachment's control and in-flight write
+/// alone; the same outcome for the pane's own attachment still lands.
+#[test]
+fn a_late_write_outcome_for_a_replaced_attachment_leaves_the_new_one_alone() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let mut workspace = Workspace::live(daemon.clone());
+    let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+    let attachment = pane.attachment_id().to_owned();
+    pane.control = ControlState::Observe;
+    pane.in_flight_write = Some(7);
+    workspace.panes.insert(pane.id, pane);
+    let mut jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+    let outcome = |result| JobOutcome {
+        tag: JobTag {
+            id: 7,
+            generation: daemon.generation(),
+            key: JobKey::Write(PaneId(1)),
+        },
+        result,
+    };
+
+    let replaced = "attachment-replaced".to_owned();
+    let abandoned = JobResult::WriteAbandoned {
+        pane: PaneId(1),
+        attachment: replaced.clone(),
+        messages: 2,
+        bytes: 2,
+    };
+    apply_job_outcome(&mut workspace, &mut chrome, &mut jobs, outcome(abandoned));
+    let unconfirmed = JobResult::WriteUnconfirmed {
+        pane: PaneId(1),
+        attachment: replaced,
+    };
+    apply_job_outcome(&mut workspace, &mut chrome, &mut jobs, outcome(unconfirmed));
+    let pane = workspace.pane(PaneId(1));
+    assert_eq!(
+        pane.control,
+        ControlState::Observe,
+        "the replaced attachment's uncertainty is not the new one's"
+    );
+    assert_eq!(pane.in_flight_write(), Some(7));
+
+    let unconfirmed = JobResult::WriteUnconfirmed {
+        pane: PaneId(1),
+        attachment,
+    };
+    apply_job_outcome(&mut workspace, &mut chrome, &mut jobs, outcome(unconfirmed));
+    let pane = workspace.pane(PaneId(1));
+    assert_eq!(pane.control, ControlState::UncertainReadOnly);
+    assert_eq!(pane.in_flight_write(), None);
+    let titles: Vec<&str> = chrome
+        .alert_log
+        .iter()
+        .map(|toast| toast.title.as_str())
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            "Input not sent: 2 bytes.",
+            "Input delivery unconfirmed.",
+            "Input delivery unconfirmed."
+        ],
+        "every outcome is still reported"
     );
 }

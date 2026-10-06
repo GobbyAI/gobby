@@ -1088,6 +1088,22 @@
       "audience": "agent; role and ownership checks apply"
     },
     {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "set_landing_freeze",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_landing.py",
+        "symbol": "set_landing_freeze"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "landing-freeze"
+      ],
+      "audience": "agent; calling session required"
+    },
+    {
       "surface": "cli",
       "command": "gobby tasks compact analyze",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
@@ -1618,7 +1634,7 @@
       "id": "registered-inventory",
       "kind": "live-read-only",
       "command": "list_tools(gobby-tasks); list_tools(gobby-tasks-ops)",
-      "result": "43 and 43 registered public tools inventoried (2026-10-01 recount, #23297, which mapped transfer_task_authority). 62 task-owned tools mapped here: 40 gobby-tasks and 22 gobby-tasks-ops. The remaining 24 are assigned to build (8), plan (14) and source-control (2); review.json also maps the 5 stage-review tools.",
+      "result": "43 and 43 registered public tools inventoried (2026-10-01 recount, #23297, which mapped transfer_task_authority). 62 task-owned tools mapped here: 40 gobby-tasks and 22 gobby-tasks-ops. The remaining 24 are assigned to build (8), plan (14) and source-control (2); review.json also maps the 5 stage-review tools. #23546 added and mapped set_landing_freeze, a 23rd gobby-tasks-ops tool here.",
       "schemas_read": [
         "create_task",
         "claim_task",
@@ -1642,6 +1658,12 @@
       "kind": "isolated-tests",
       "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/tasks/test_transfer_task_authority.py tests/tasks/test_close_receipts.py -q",
       "result": "34 passed. Source reads (gcode symbol-at and grep) of the transfer_task_authority tool, storage/tasks/_delegation.py and tasks/close_receipts.py verified that activation receipts come only from the creator or delegator. They also verified that a live session in the task project takes the delegator slot only once both have ended, keeping the receiver and appending the reason. Closed tasks, the claimant and task-close reviewers are refused, and a re-run by the holder is a no-op."
+    },
+    {
+      "id": "landing-freeze",
+      "kind": "isolated-tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_landing_policy.py tests/mcp_proxy/tools/tasks/test_landing_tools.py tests/workflows/test_task_enforcement_rules.py tests/mcp_proxy/tools/test_read_only_classification.py -q",
+      "result": "352 passed (#23546). set_landing_freeze needs a calling session and a reason to set the freeze. It stores the state with the setting or clearing session at <git-common-dir>/gobby/landing-freeze.json and is gated as a task mutation. A missing freeze file reads as off; an unreadable one reads as on."
     },
     {
       "id": "source-contract",

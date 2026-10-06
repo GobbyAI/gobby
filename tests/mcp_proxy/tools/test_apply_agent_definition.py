@@ -488,7 +488,7 @@ async def test_activated_seat_refuses_worktree_tools(
     assert_worktree_tools_blocked(temp_db, session_id)
 
 
-def test_registry_exposes_apply_agent_definition_only() -> None:
+def test_registry_exposes_definition_and_persona() -> None:
     registry = InternalToolRegistry("gobby-agents")
     context = cast(AgentsRegistryContext, MagicMock())
     with patch(
@@ -496,11 +496,11 @@ def test_registry_exposes_apply_agent_definition_only() -> None:
         return_value=InternalToolRegistry("spawn"),
     ):
         register_agent_spawn_tools(registry, context)
-    retired = "apply_persona"
+    persona = "apply_persona"
     names = {tool["name"] for tool in registry.list_tools()}
     assert "apply_agent_definition" in names
-    assert retired not in names
-    assert importlib.util.find_spec(f"gobby.mcp_proxy.tools.{retired}") is None
+    assert persona in names
+    assert importlib.util.find_spec(f"gobby.mcp_proxy.tools.{persona}") is not None
 
 
 class TestBuildDefinitionChanges:
@@ -611,7 +611,7 @@ class TestBuildDefinitionChanges:
 
         assert changes["_skill_format"] == "compact"
 
-    def test_step_workflow_not_created_for_caller_persona(self, db: HubDatabase) -> None:
+    def test_step_completion_seeded_for_caller_persona(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_agent_definition import build_definition_changes
         from gobby.workflows.definitions import WorkflowStep
 
@@ -651,7 +651,7 @@ class TestBuildDefinitionChanges:
         )
 
         assert "_step_workflow_name" not in changes
-        assert "step_workflow_complete" not in changes
+        assert changes["step_workflow_complete"] is False
 
         from gobby.workflows.step_instances import AgentStepInstanceManager
 
@@ -663,7 +663,7 @@ class TestBuildDefinitionChanges:
         [{}, {"assigned_task_id": None, "active_task_id": None}],
         ids=["missing", "json-null"],
     )
-    def test_step_workflow_not_created_for_taskless_spawn(
+    def test_step_completion_seeded_for_taskless_spawn(
         self,
         db: HubDatabase,
         task_variables: dict[str, object],
@@ -707,7 +707,7 @@ class TestBuildDefinitionChanges:
         )
 
         assert "_step_workflow_name" not in changes
-        assert "step_workflow_complete" not in changes
+        assert changes["step_workflow_complete"] is False
         instance = AgentStepInstanceManager(db).get_for_session(session_id)
         assert instance is None
 

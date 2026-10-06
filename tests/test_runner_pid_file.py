@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -224,6 +225,58 @@ def test_generation_contract_matches_gdaemon(
 def test_canonical_generation_string_has_unbounded_magnitude() -> None:
     result = next_generation({"generation": "1" + "0" * 5000})
     assert result == 10**5000 + 1, "canonical generation lost magnitude at the runtime digit cap"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Rust flock capability is Unix-only")
+@pytest.mark.parametrize("string_generation", [False, True], ids=["integer", "string"])
+def test_digit_cap_generation_roundtrip_matches_gdaemon(
+    tmp_path: Path, string_generation: bool
+) -> None:
+    """Both readers increment a 5000-digit prior through a full decimal carry."""
+    digit_limit = sys.get_int_max_str_digits()
+    digits = "9" * 5000
+    token = json.dumps(digits) if string_generation else digits
+    body = '{"generation":' + token + ',"role":"maintenance","state":"maintenance","version":1}'
+    checksum = hashlib.sha256(body.encode()).hexdigest()
+    raw = ('{"checksum":"' + checksum + '",' + body[1:]).encode()
+    prior = decode_record(raw)
+    assert prior is not None
+    assert encode_record(prior) == raw
+    expected = 10**5000
+    assert next_generation(prior) == expected
+    python_record = {**prior, "generation": expected}
+    python_raw = encode_record(python_record)
+    decoded = decode_record(python_raw)
+    assert decoded is not None
+    assert decoded["generation"] == expected
+    assert b'"generation":1' + b"0" * 5000 + b"," in python_raw
+
+    peer = _rust_pid_claim_peer()
+    assert peer.is_file(), "build the Rust pid_claim_fixture example first"
+    pid_file = tmp_path / "gobby.pid"
+    lock = pid_file.with_name("gobby.pid.lock")
+    lock.write_bytes(raw)
+    child = spawn.popen(
+        [str(peer), str(pid_file), "maintenance"],
+        text=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        output, errors = child.communicate("release\n", timeout=10)
+        assert child.returncode == 0, (output, errors)
+        assert output.startswith("ready ")
+        rust_raw = lock.read_bytes()
+        rust_record = decode_record(rust_raw)
+        assert rust_record is not None
+        assert rust_record["generation"] == expected
+        assert encode_record(rust_record) == rust_raw
+        assert sys.get_int_max_str_digits() == digit_limit
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=10)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Rust fixture peer is Unix-only")

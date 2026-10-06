@@ -34,11 +34,13 @@ enum QueuedWrite {
     /// A point every write accepted before it has passed, carrying the daemon
     /// request (if any) that must follow them, when `after` is set the take
     /// it undoes, and when `flushed` is set the pane's last direct frame
-    /// write. `done` resolves once it was reached and sent.
+    /// write, typed for `attachment`. `done` resolves once it was reached and
+    /// sent.
     Barrier {
         message: Option<Value>,
         after: Option<watch::Receiver<bool>>,
         flushed: Option<WriteReceipt>,
+        attachment: String,
         done: watch::Sender<bool>,
     },
 }
@@ -52,17 +54,24 @@ struct Backlog {
     stopped: AtomicBool,
 }
 
-/// Writes skipped since the last report, tagged with the newest of them.
+/// Writes skipped since the last report, tagged with the newest of them and
+/// the attachment it was typed for.
 #[derive(Debug, Default)]
 struct Abandoned {
-    tag: Option<(Generation, u64)>,
+    tag: Option<(Generation, u64, String)>,
     messages: usize,
     bytes: usize,
 }
 
 impl Abandoned {
-    fn add(&mut self, generation: Generation, client_write_seq: u64, bytes: usize) {
-        self.tag = Some((generation, client_write_seq));
+    fn add(
+        &mut self,
+        generation: Generation,
+        client_write_seq: u64,
+        attachment: String,
+        bytes: usize,
+    ) {
+        self.tag = Some((generation, client_write_seq, attachment));
         self.messages += 1;
         self.bytes += bytes;
     }
@@ -70,7 +79,7 @@ impl Abandoned {
     /// Post one report for everything skipped so far; `false` once the loop
     /// is gone.
     fn report(&mut self, outcomes: &UnboundedSender<JobOutcome>, pane: PaneId) -> bool {
-        let Some((generation, id)) = self.tag.take() else {
+        let Some((generation, id, attachment)) = self.tag.take() else {
             return true;
         };
         let outcome = JobOutcome {
@@ -81,6 +90,7 @@ impl Abandoned {
             },
             result: JobResult::WriteAbandoned {
                 pane,
+                attachment,
                 messages: std::mem::take(&mut self.messages),
                 bytes: std::mem::take(&mut self.bytes),
             },
@@ -123,6 +133,12 @@ impl PaneWriter {
                     } => {
                         drained.messages.fetch_sub(1, Ordering::AcqRel);
                         drained.bytes.fetch_sub(bytes, Ordering::AcqRel);
+                        // The body names the attachment the write was typed
+                        // for; its outcome speaks only for that attachment.
+                        let attachment = body["attachment_id"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_owned();
                         // An unconfirmed write leaves the pane read-only, so
                         // nothing queued behind it may go out under that
                         // uncertainty; nor may a write typed for a connection
@@ -130,7 +146,7 @@ impl PaneWriter {
                         if drained.stopped.load(Ordering::Acquire)
                             || generation != daemon.generation()
                         {
-                            abandoned.add(generation, client_write_seq, bytes);
+                            abandoned.add(generation, client_write_seq, attachment, bytes);
                             if rx.is_empty() && !abandoned.report(&outcomes, pane) {
                                 return;
                             }
@@ -140,7 +156,7 @@ impl PaneWriter {
                             Ok(reply) => JobResult::Write { pane, bytes, reply },
                             Err(_) => {
                                 drained.stopped.store(true, Ordering::Release);
-                                JobResult::WriteUnconfirmed { pane }
+                                JobResult::WriteUnconfirmed { pane, attachment }
                             }
                         };
                         let outcome = JobOutcome {
@@ -159,6 +175,7 @@ impl PaneWriter {
                         message,
                         after,
                         flushed,
+                        attachment,
                         done,
                     } => {
                         if !abandoned.report(&outcomes, pane) {
@@ -180,7 +197,7 @@ impl PaneWriter {
                                         generation: writer_generation,
                                         key: JobKey::Write(pane),
                                     },
-                                    result: JobResult::WriteUnconfirmed { pane },
+                                    result: JobResult::WriteUnconfirmed { pane, attachment },
                                 };
                                 if outcomes.send(outcome).is_err() {
                                     return;
@@ -219,15 +236,16 @@ impl PaneWriter {
     }
 
     /// Queue `message` behind every write accepted so far, and behind
-    /// `after` and `flushed` when set. The returned receiver resolves once it
-    /// was sent. `None` means the writer task is gone, which only happens
-    /// once the loop that reads its outcomes has exited; the caller must not
-    /// read that as sent.
+    /// `after` and `flushed` when set; `flushed` holds bytes typed for
+    /// `attachment`. The returned receiver resolves once it was sent. `None`
+    /// means the writer task is gone, which only happens once the loop that
+    /// reads its outcomes has exited; the caller must not read that as sent.
     pub(super) fn enqueue_barrier(
         &self,
         message: Option<Value>,
         after: Option<watch::Receiver<bool>>,
         flushed: Option<WriteReceipt>,
+        attachment: String,
     ) -> Option<watch::Receiver<bool>> {
         let (done, sent) = watch::channel(false);
         self.tx
@@ -235,6 +253,7 @@ impl PaneWriter {
                 message,
                 after,
                 flushed,
+                attachment,
                 done,
             })
             .ok()

@@ -294,13 +294,6 @@ def _bool_variable(value: Any) -> bool:
     return False
 
 
-def _has_assigned_or_active_task(variables: dict[str, Any]) -> bool:
-    return any(
-        isinstance(value, str) and bool(value.strip())
-        for value in (variables.get("assigned_task_id"), variables.get("active_task_id"))
-    )
-
-
 def _fallback_agent_updates(
     variables: dict[str, Any],
     session: Any,
@@ -601,10 +594,6 @@ def _missing_step_state(
     session: Any,
     agent_run: _AgentRunRecovery | None,
 ) -> list[str]:
-    spawned = _bool_variable(variables.get("is_spawned_agent")) or _session_is_spawned(session)
-    if not spawned or not _has_assigned_or_active_task(variables):
-        return []
-
     from gobby.workflows.step_instances import AgentStepInstanceManager
 
     if AgentStepInstanceManager(db).get_for_session(session_id) is None:
@@ -630,7 +619,7 @@ def _agent_has_step_workflow(
     from gobby.workflows.agent_resolver import resolve_agent
 
     agent = resolve_agent(agent_name, db, project_id=getattr(session, "project_id", None))
-    return agent is not None and agent.step_workflow is not None
+    return bool(agent is not None and agent.step_workflow and agent.step_workflow.steps)
 
 
 def _ensure_step_instance(
@@ -639,24 +628,24 @@ def _ensure_step_instance(
     variables: dict[str, Any],
     session: Any,
 ) -> bool:
-    # Step workflows belong to spawned agent runs. A persona-bound interactive
-    # session carries ``_agent_type`` too, and must never have one materialized.
-    # Same predicate as ``_missing_step_state`` so the two cannot drift.
-    spawned = _bool_variable(variables.get("is_spawned_agent")) or _session_is_spawned(session)
-    if not spawned or not _has_assigned_or_active_task(variables):
-        return False
-
+    # Every agent whose definition declares steps gets a session instance.
     agent_name = _resolved_agent_name(variables, None)
     if not isinstance(agent_name, str) or not agent_name:
         return False
 
     from gobby.workflows.agent_resolver import resolve_agent_with_row
+    from gobby.workflows.state_manager import SessionVariableManager
     from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
     manager = AgentStepInstanceManager(db)
     lock = AgentStepInstanceMutation(session_id=session_id)
     recovered_ids: tuple[str, str | None] | None = None
     with db.transaction_immediate(lock):
+        # A caller can be holding a snapshot from before an identity transition.
+        current = SessionVariableManager(db).get_variables(session_id)
+        agent_name = _resolved_agent_name(current, None)
+        if not agent_name:
+            return False
         if manager.get_for_session(session_id) is not None:
             return False
         found = resolve_agent_with_row(

@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.storage import unmodeled_observations as observation_storage
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.unmodeled_observations import (
     UnmodeledObservationInput,
@@ -33,14 +34,21 @@ def test_large_event_table_batch_refresh_uses_occurrence_key_index(
         """
         INSERT INTO unmodeled_observation_events
             (id, session_id, source, kind, name, source_ref, sample_hash)
-        SELECT md5(i::text)::uuid, %s::uuid, 'codex', 'block_type', 'scale_tool',
-               i::text, 'seed'
-        FROM generate_series(1, 300000) AS i
+        SELECT md5(i::text)::uuid,
+               CASE WHEN i <= 120 THEN %s::uuid WHEN i <= 240 THEN NULL
+                    ELSE md5((i / 120)::text)::uuid END,
+               'codex', 'block_type', 'scale_tool', ((i - 1) %% 120)::text, %s
+        FROM generate_series(1, 450000) AS i
         """,
-        (SESSION_STORAGE,),
+        (SESSION_STORAGE, stable_sample_hash(_observation("scale_tool").sample)),
+    )
+    temp_db.execute("ALTER TABLE unmodeled_observation_events SET (autovacuum_enabled = false)")
+    temp_db.execute(
+        "UPDATE unmodeled_observation_events SET last_seen_at = NOW() - INTERVAL '1 day'"
     )
     temp_db.execute("ANALYZE unmodeled_observation_events")
     observations = [_observation("scale_tool", source_ref=str(i)) for i in range(120)]
+    observations += [replace(observation, session_id=None) for observation in observations]
     store = UnmodeledObservationStore(temp_db)
     real_transaction = temp_db.transaction
     statements: list[tuple[str, Any]] = []
@@ -63,7 +71,7 @@ def test_large_event_table_batch_refresh_uses_occurrence_key_index(
             yield cast(Transaction, spy)
 
     with patch.object(temp_db, "transaction", side_effect=measured_transaction):
-        assert store.record_many(observations) == 120
+        assert store.record_many(observations) == 0
     refresh_sql, parameters = statements[1]
     row = temp_db.fetchone("EXPLAIN (FORMAT JSON) " + refresh_sql, parameters)
     assert row is not None
@@ -71,19 +79,126 @@ def test_large_event_table_batch_refresh_uses_occurrence_key_index(
     print(f"BATCH_PHASE_SECONDS {timings}")
     print(f"REFRESH_PLAN {plan}")
     assert "unmodeled_observation_events_dedup_key" in plan
+    assert "session_id = " in plan
+    assert "session_id IS NULL" in plan
+    refreshed = temp_db.fetchone(
+        "SELECT count(*) AS n FROM unmodeled_observation_events "
+        "WHERE last_seen_at > NOW() - INTERVAL '1 hour'"
+    )
+    assert refreshed is not None and refreshed["n"] == 240
 
 
 def test_batch_records_content_free_statement_phases(
     temp_db: HubDatabase, caplog: pytest.LogCaptureFixture
 ) -> None:
-    caplog.set_level(logging.INFO, logger="gobby.storage.unmodeled_observations")
+    caplog.set_level(logging.DEBUG, logger="gobby.storage.unmodeled_observations")
     observation = _observation("private-tool-name")
-    assert UnmodeledObservationStore(temp_db).record_many([observation]) == 1
-    for phase in ("connection", "insert_events", "refresh_events", "refresh_aggregates", "commit"):
+    store = UnmodeledObservationStore(temp_db)
+    assert store.record_many([observation]) == 1
+    assert "unmodeled_batch" not in caplog.text
+    assert store.record_many([observation], search_trace="synthetic-search-trace") == 0
+    for phase in (
+        "connection",
+        "insert_events",
+        "refresh_events",
+        "refresh_aggregates",
+        "transaction_exit",
+    ):
         assert f"phase={phase} event=started" in caplog.text
         assert f"phase={phase} event=finished" in caplog.text
+    records = [record for record in caplog.records if "unmodeled_batch" in record.message]
+    assert records
+    assert all(record.levelno == logging.DEBUG for record in records)
+    assert all("trace=synthetic-search-trace" in record.message for record in records)
+    assert "outcome=commit" in caplog.text
     for private_value in (observation.name, SESSION_STORAGE, "secret-value", "payload"):
         assert private_value not in caplog.text
+
+
+@pytest.mark.parametrize("outcome", ["rollback", "error"])
+def test_batch_exit_logs_the_actual_failure_outcome(
+    temp_db: HubDatabase, caplog: pytest.LogCaptureFixture, outcome: str
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="gobby.storage.unmodeled_observations")
+    real_transaction = temp_db.transaction
+
+    @contextmanager
+    def transaction() -> Iterator[Transaction]:
+        with real_transaction() as txn:
+            yield txn
+            if outcome == "error":
+                raise RuntimeError("synthetic exit failure")
+
+    with patch.object(temp_db, "transaction", side_effect=transaction):
+        with pytest.raises(RuntimeError):
+            with observation_storage._batch_transaction(temp_db, "batch", "trace"):
+                if outcome == "rollback":
+                    raise RuntimeError("synthetic body failure")
+    assert f"phase=transaction_exit event=finished outcome={outcome}" in caplog.text
+    assert "phase=commit" not in caplog.text
+    assert "synthetic body failure" not in caplog.text
+    assert "synthetic exit failure" not in caplog.text
+
+
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("session_id", [SESSION_STORAGE, None])
+def test_recent_replay_does_not_rewrite_events_or_aggregates(
+    temp_db: HubDatabase, batched: bool, session_id: str | None
+) -> None:
+    store = UnmodeledObservationStore(temp_db)
+    observation = replace(_observation("replay_tool"), session_id=session_id)
+
+    def record() -> int:
+        return store.record_many([observation]) if batched else int(store.record(observation))
+
+    assert record() == 1
+    event_before = temp_db.fetchone(
+        "SELECT ctid::text, last_seen_at FROM unmodeled_observation_events"
+    )
+    aggregate_before = temp_db.fetchone(
+        "SELECT ctid::text, last_seen_at, count FROM unmodeled_observations"
+    )
+    assert event_before is not None and aggregate_before is not None
+    assert record() == 0
+    assert (
+        temp_db.fetchone("SELECT ctid::text, last_seen_at FROM unmodeled_observation_events")
+        == event_before
+    )
+    assert (
+        temp_db.fetchone("SELECT ctid::text, last_seen_at, count FROM unmodeled_observations")
+        == aggregate_before
+    )
+    temp_db.execute(
+        "UPDATE unmodeled_observation_events SET last_seen_at = NOW() - INTERVAL '61 minutes'"
+    )
+    temp_db.execute(
+        "UPDATE unmodeled_observations SET last_seen_at = NOW() - INTERVAL '61 minutes'"
+    )
+    assert record() == 0
+    assert temp_db.fetchone(
+        "SELECT count(*) AS n FROM unmodeled_observation_events "
+        "WHERE last_seen_at > NOW() - INTERVAL '1 minute'"
+    ) == {"n": 1}
+    assert store.list_observations()[0].count == 1
+    assert temp_db.fetchone(
+        "SELECT count(*) AS n FROM unmodeled_observations "
+        "WHERE last_seen_at > NOW() - INTERVAL '1 minute'"
+    ) == {"n": 1}
+
+
+def test_pruning_preserves_the_hourly_refresh_grace(temp_db: HubDatabase) -> None:
+    store = UnmodeledObservationStore(temp_db)
+    assert store.record_many([_observation("grace_tool", source_ref=str(i)) for i in (1, 2)]) == 2
+    temp_db.execute(
+        "UPDATE unmodeled_observation_events SET last_seen_at = "
+        "NOW() - INTERVAL '1 day' - CASE source_ref "
+        "WHEN '1' THEN INTERVAL '59 minutes' ELSE INTERVAL '61 minutes' END"
+    )
+    assert store.prune_events_older_than(retention_days=1) == 1
+    assert temp_db.fetchall("SELECT source_ref FROM unmodeled_observation_events") == [
+        {"source_ref": "1"}
+    ]
+    assert store.list_observations()[0].count == 1
 
 
 @pytest.mark.parametrize("session_id", [SESSION_STORAGE, None])
@@ -276,7 +391,7 @@ def test_novel_occurrence_inserts_event_and_aggregate(temp_db: HubDatabase) -> N
     assert matching[0].sample_hash == stable_sample_hash(observation.sample)
 
 
-def test_duplicate_reprocess_keeps_count_one_and_moves_last_seen(
+def test_duplicate_reprocess_refreshes_stale_aggregate_without_rewriting_fresh_event(
     temp_db: HubDatabase,
 ) -> None:
     store = UnmodeledObservationStore(temp_db)
@@ -318,7 +433,7 @@ def test_duplicate_reprocess_keeps_count_one_and_moves_last_seen(
     assert len(event_rows) == 1
     assert rows[0].count == 1
     assert rows[0].last_seen_at != before
-    assert event_rows[0]["last_seen_at"] != before_event
+    assert event_rows[0]["last_seen_at"] == before_event
 
 
 def test_parallel_writers_of_same_occurrence_count_once(temp_db: HubDatabase) -> None:

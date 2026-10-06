@@ -9,6 +9,8 @@ from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.transcript_renderer import RenderState, render_incremental, render_transcript
 from gobby.sessions.transcripts.base import UNMODELED_RECORD_CONTENT_TYPE, ParsedMessage
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+from gobby.sessions.transcripts.codex import CodexTranscriptParser
+from gobby.sessions.transcripts.grok import GrokTranscriptParser
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.unmodeled_observations import UnmodeledObservationStore
 
@@ -206,6 +208,68 @@ def test_known_transcript_tools_do_not_record_unmodeled_observations(
         if getattr(r, "observed_name", None) in names
         and r.getMessage() == "Unmodeled transcript block observed"
     ] == []
+
+
+@pytest.mark.parametrize(
+    ("source", "name", "expected_type"),
+    [
+        ("codex", "exec", "code_execution"),
+        ("codex", "wait", "code_execution_wait"),
+        ("grok", "run_terminal_command", "bash"),
+        ("grok", "use_tool", "tool"),
+    ],
+)
+def test_provider_known_tools_create_no_unmodeled_occurrences(
+    temp_db: HubDatabase, source: str, name: str, expected_type: str
+) -> None:
+    session_id = "aeaeaeae-0000-4000-8000-00000000ab05"
+    parser: CodexTranscriptParser | GrokTranscriptParser
+    if source == "codex":
+        parser = CodexTranscriptParser(session_id=session_id)
+        line = json.dumps(
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "name": name,
+                    "call_id": "known-call",
+                    "input": "text(1);" if name == "exec" else '{"cell_id":"cell-1"}',
+                },
+            }
+        )
+    else:
+        parser = GrokTranscriptParser(session_id=session_id)
+        line = json.dumps(
+            {
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "title": name,
+                    "toolCallId": "known-call",
+                    "rawInput": {"command": "true"},
+                }
+            }
+        )
+    msg = parser.parse_line(line, 0)
+    assert isinstance(msg, ParsedMessage)
+    store = UnmodeledObservationStore(temp_db)
+    rendered = render_transcript(
+        [msg], session_id=session_id, source=source, observation_tracker=ObservationTracker(store)
+    )
+    calls = [
+        call
+        for item in rendered
+        for block in item.content_blocks
+        for call in block.tool_calls or []
+    ]
+    assert len(calls) == 1
+    assert calls[0].tool_type == expected_type
+    with temp_db.transaction() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS count FROM unmodeled_observation_events WHERE session_id = %s",
+            (session_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["count"] == 0
 
 
 def test_synthetic_unknown_tool_name_is_excluded(temp_db: HubDatabase) -> None:

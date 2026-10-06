@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.events.wake import CONTINUE_WAKE_MESSAGE
 from gobby.storage.terminals import Terminal
 from gobby.terminals.runtime import Delivered, WriteOutcome
 from gobby.terminals.write_coordinator import WriteRequest
@@ -124,6 +125,22 @@ def registered_trace(tmp_path: Path) -> tuple[ProofTrace, dict[str, object]]:
         "outcome": "Delivered",
     }
     return trace, event
+
+
+@pytest.mark.parametrize("arm_gate", [False, True])
+async def test_trace_accepts_the_current_daemon_wake(tmp_path: Path, arm_gate: bool) -> None:
+    trace, event = registered_trace(tmp_path)
+    event["payload_sha256"] = hashlib.sha256(CONTINUE_WAKE_MESSAGE.encode()).hexdigest()
+    if arm_gate:
+        trace.arm(trace.surfaces[str(event["terminal_id"])], CONTINUE_WAKE_MESSAGE)
+        trace.release.set()
+
+    await trace.accept(event)
+
+    assert len(trace.events) == 1
+    assert trace.events[0]["payload_sha256"] == event["payload_sha256"]
+    if arm_gate:
+        assert trace.staged.is_set()
 
 
 @pytest.mark.asyncio
