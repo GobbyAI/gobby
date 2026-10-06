@@ -128,10 +128,12 @@ terminal's own background and foreground and only picks the palette from the
 OS appearance.
 
 **Themes.** A theme sets two fills and a model colour. The header fill takes
-the sidebar's section headings, the tab row, and the menu bar. The selection
-fill takes the selected and active sidebar rows, the active tab, and the open
-menu's title. The model colour takes the model line of the Agents rows. In
-Dark and Light a theme also sets its own ground. Restored is the default.
+the sidebar's section headings and the tab row. The menu bar sits on its own
+bar fill, a lightness step off the header fill toward the selection. The
+selection fill takes the selected and active sidebar rows, the active tab,
+and the open menu's title. The model colour takes the model line of the
+Agents rows. In Dark and Light a theme also sets its own ground. Restored is
+the default.
 Each appearance offers its own list under **View › Theme** and the `Theme`
 setting:
 

@@ -289,8 +289,8 @@ fn near(drawn: Color, hex: &str) -> bool {
 
 /// Criteria 2-5 and 14: each theme draws the board's ground, header fill,
 /// selection, unfocused pane and model line, in every appearance it ships
-/// in. The tab row and the menu bar take the header fill, and the open
-/// menu title the selection, so one value drives each.
+/// in. The tab row takes the header fill, and the open menu title the
+/// selection, so one value drives each.
 #[test]
 fn every_theme_draws_the_boards_fills_in_each_appearance() {
     let mut failures = Vec::new();
@@ -458,7 +458,7 @@ fn draw_menu_bar(chrome: &Chrome, width: u16) -> (MenuBarHits, Buffer) {
 }
 
 /// Criteria 14 and 15: per theme and appearance, the menu bar sits on the
-/// header fill and the open title on the selection; both titles read at AA
+/// bar fill and the open title on the selection; both titles read at AA
 /// and the bar stands at least 1.15:1 off the ground.
 #[test]
 fn menu_bar_takes_the_bar_fill_and_opens_on_the_selection() {
