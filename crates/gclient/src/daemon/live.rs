@@ -313,6 +313,18 @@ impl LiveDaemon {
             .await
     }
 
+    /// `send` under `deadline` in place of its kind's, so a test can hold a
+    /// control request open past `CONTROL_REQUEST_DEADLINE`.
+    #[doc(hidden)]
+    pub async fn send_with_deadline(
+        &self,
+        message: Value,
+        deadline: Duration,
+    ) -> Result<Value, DaemonError> {
+        self.request_with_deadline(message, Some(deadline), None)
+            .await
+    }
+
     pub(super) async fn request_with_deadline(
         &self,
         message: Value,

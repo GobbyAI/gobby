@@ -79,11 +79,13 @@ pub enum JobResult {
         reply: Value,
     },
     /// A write whose send failed, so the daemon may or may not have it.
-    WriteUnconfirmed { pane: PaneId },
+    /// `attachment` is the one it was typed for.
+    WriteUnconfirmed { pane: PaneId, attachment: String },
     /// Writes the writer dropped unsent after an unconfirmed write or a
-    /// connection change.
+    /// connection change, with the attachment the newest was typed for.
     WriteAbandoned {
         pane: PaneId,
+        attachment: String,
         messages: usize,
         bytes: usize,
     },
