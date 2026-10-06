@@ -16,16 +16,6 @@ from gobby.workflows.variable_defaults import (
 logger = logging.getLogger(__name__)
 
 
-def _session_has_assigned_or_active_task(db: HubDatabase, session_id: str) -> bool:
-    from gobby.workflows.state_manager import SessionVariableManager
-
-    variables = SessionVariableManager(db).get_variables(session_id)
-    return any(
-        isinstance(value, str) and bool(value.strip())
-        for value in (variables.get("assigned_task_id"), variables.get("active_task_id"))
-    )
-
-
 def build_definition_changes(
     agent_body: AgentDefinitionBody,
     session_id: str,
@@ -97,10 +87,9 @@ def build_definition_changes(
     changes["_agent_blocked_tools"] = agent_body.blocked_tools or []
     changes["_agent_blocked_mcp_tools"] = agent_body.blocked_mcp_tools or []
 
-    if agent_body.step_workflow and is_spawned:
-        if _session_has_assigned_or_active_task(db, session_id):
-            changes["step_workflow_complete"] = False
-            definition_keys.add("step_workflow_complete")
+    if agent_body.step_workflow and agent_body.step_workflow.steps:
+        changes["step_workflow_complete"] = False
+        definition_keys.add("step_workflow_complete")
 
     changes["_agent_definition_hash"] = definition_pin(agent_body)
     changes["_agent_definition_keys"] = sorted(definition_keys)
@@ -263,12 +252,18 @@ def commit_definition_changes(
             and not is_spawned_session(current, SessionManager(db).get(session_id))
         )
         if identity_change:
+            from gobby.workflows.step_instances import AgentStepInstanceManager
+
+            AgentStepInstanceManager(db).delete_for_session(session_id)
             delta.update(dict.fromkeys(previous_keys - new_keys))
+            if "step_workflow_complete" in changes:
+                delta["step_workflow_complete"] = changes["step_workflow_complete"]
         else:
             new_keys |= previous_keys
         delta["_agent_definition_keys"] = sorted(new_keys)
         delta.update(overlays or {})
-        merged = manager.merge_variables(session_id, delta)
+        manager.merge_variables(session_id, delta)
+        merged = manager.get_variables(session_id)
         return {"status": "applied", "agent": agent, "variables": merged}
 
 
@@ -373,6 +368,22 @@ async def apply_agent_definition_impl(
     )
     if committed["status"] != "applied":
         return _activation_receipt(committed["status"], committed["agent"], agent)
+    from gobby.hooks.session_activation import _ensure_step_instance
+    from gobby.workflows.step_instances import AgentStepInstanceManager
+
+    step_workflow = None
+    step_workflow_pending = False
+    try:
+        _ensure_step_instance(db, session_id, committed["variables"], session)
+        instance = AgentStepInstanceManager(db).get_for_session(session_id)
+        if instance is not None:
+            step_workflow = {
+                "agent_name": instance.agent_name,
+                "current_step": instance.current_step,
+            }
+    except Exception as exc:
+        logger.warning("Step workflow pending for session %s agent %s: %s", session_id, agent, exc)
+        step_workflow_pending = True
     return {
         "success": True,
         "status": "applied",
@@ -381,5 +392,6 @@ async def apply_agent_definition_impl(
         "rules_count": len(rules),
         "skills_count": len(skills) if skills is not None else len(all_skills),
         "blocked_tools_count": len(body.blocked_tools or []) + len(body.blocked_mcp_tools or []),
-        "step_workflow": None,
+        "step_workflow": step_workflow,
+        **({"step_workflow_pending": True} if step_workflow_pending else {}),
     }
