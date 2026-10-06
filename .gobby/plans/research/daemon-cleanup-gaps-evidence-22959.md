@@ -41,7 +41,7 @@ path, the line range and the `excerpt_hash`.
 | Miss | Verdict | Fix class |
 |---|---|---|
 | (a) Project removal leaves state | Confirmed. The purge has no filesystem step, so it never removes worktree or clone dirs, Cargo targets or backups. Three tables with no FK hold orphan rows today. | A small guard for registered worktrees and clones. The FK delete action per table is a Josh decision. Backups and main-checkout Cargo targets stay an explicit gap. |
-| (b) Orphan worktrees | Confirmed as relics: 1.0 GB plus empty dirs. None has a registry row. Creator attribution is an evidence gap. | Josh-approved operator removal. The guard in (a) prevents new orphans from purge. |
+| (b) Orphan worktrees | Confirmed as relics: 1.0 GB plus empty dirs. None has a registry row. Creator attribution is an evidence gap. | Josh-approved operator removal. The in-transaction guard in (a) prevents purge from orphaning registered worktrees; clones need the caller-cleanup trace first. |
 | (c) Old 21 GB `cargo-target` | Confirmed stale. Transcripts show agent sessions setting `CARGO_TARGET_DIR` to all five `wt-*` dirs. Gobby's own legacy entries are empty. | Josh-approved operator removal. No code change. |
 | (d) `unmodeled_observation_events` size | The prune keeps up. Size comes from volume plus index churn: 84% of rows are one unmodeled Codex tool. | A product decision, then a data-only modeling fix. |
 | (e) `token_events` retention | The policy exists (180 days, #19655) and was never implemented. No row is eligible until 2027-01-27. | Schema index plus a delete contract that keeps session lifetime totals intact, landing before 2027-01-27. |
@@ -125,22 +125,70 @@ were removed by today's purge or by an older delete path cannot be proven.
 
 ### Minimal current-daemon fix
 
-1. **Purge guard.** `_purge_project` returns `PurgeOutcome.failed` while the
-   project still has `worktrees` or `clones` rows, with a message naming the
-   count. The check sits beside the active-terminal refusal (step 2), before
-   any destructive phase. Existing cron retries then pick the project up
-   again once an operator has deleted those checkouts through the existing
-   worktree and clone delete tools. Those tools already remove Cargo targets
-   (see the citation under (b)) and keep dirty checkouts.
-   - This is a guard of about five lines. It adds no deletion mechanism to
-     purge, so nothing is lost when the purge moves to Rust; the contract
-     ports unchanged.
+1. **Purge guard, in two places.** An early count alone does not prevent
+   orphans. Checkout creation clones or adds the worktree on disk first and
+   registers the row afterwards, outside the purge fence, so a row can commit
+   after an early count and before the cascade. The guard therefore has two
+   parts:
+   - **Authoritative check, atomic with the cascade.** The final purge
+     transaction already locks the project row `FOR UPDATE` and re-checks
+     terminals before deleting anything:
+     `src/gobby/projects/purge.py:334-343`
+     `excerpt_hash=637f91d9c891c36caead1ea3b80c9edb5279dc5f53ecdcfffedd90ae39b0d558`.
+     Add a count of `worktrees` and `clones` rows right after that lock,
+     raising `ProjectPurgeError` when either is nonzero. A `worktrees` or
+     `clones` INSERT checks its FK by taking `FOR KEY SHARE` on the same
+     project row, which conflicts with `FOR UPDATE`. The purge transaction
+     runs at the hub default, READ COMMITTED (`default_transaction_isolation`
+     on the live hub), so each statement takes a fresh snapshot. A creator
+     whose row committed first is counted. A creator whose insert is in
+     flight holds `FOR KEY SHARE`, so purge's lock waits for its commit and
+     the count that follows sees the row. A creator that inserts after the
+     lock blocks until purge commits, then fails the FK.
+   - **Early fail-fast check.** The same count beside the active-terminal
+     refusal (step 2), so a project with checkouts does not reach the
+     destructive phases. This one is advisory; the in-transaction check is
+     the correctness boundary.
+   - Existing cron retries pick the project up again once an operator has
+     deleted those checkouts through the existing worktree and clone delete
+     tools. Those tools already remove Cargo targets (see the citation under
+     (b)) and keep dirty checkouts.
+   - The guard adds about ten lines and no deletion mechanism, so nothing is
+     lost when the purge moves to Rust; the contract ports unchanged.
    - Scope: the guard prevents registry-cascade loss for registered
      worktrees and clones only.
-   - Isolated tests in `tests/projects/`: a purge of a project with one
-     active `worktrees` row, and separately with one `clones` row, returns
-     `failed` and leaves the project row, its cron jobs, vectors and hub rows
-     untouched. Once the row is gone, the same purge returns `purged`.
+
+   **Creator side of the race.** A creator that loses the race fails its
+   INSERT after its directory exists. Worktree creation already removes the
+   git worktree when the insert raises:
+   `src/gobby/worktrees/creation.py:169-191`
+   `excerpt_hash=8f4ca0dbd270695b0e0078ebdb5d80cf7f6b7ecdb2f7b5155a7f51d3df2ae8d3`.
+   Clone isolation records the on-disk path in `partial_state` before the
+   insert (`src/gobby/agents/isolation_clone.py:171-185`
+   `excerpt_hash=3adebc08fcf85ac1837b8a53937dba03ef08eb5decdfec1ba1fff799e1764472`),
+   and `cleanup_environment` deletes a partial clone on prepare failure
+   (`src/gobby/agents/isolation_clone.py:218-219`
+   `excerpt_hash=9333c23254b32c0da96ab886a5ec0fa7f2d30441b5d0dc95793473c6914e97ff`).
+   Two gaps remain, and both are prerequisites:
+   - Whether every clone spawn caller invokes `cleanup_environment` after a
+     failed insert was not traced. Until it is, the guarantee holds for
+     worktrees only.
+   - Neither creation path refuses a soft-deleted project (no `deleted_at`
+     check in either). A creator could keep registering checkouts for a
+     soft-deleted project and hold its purge off indefinitely. Creation
+     admission should refuse soft-deleted projects.
+
+   Isolated tests in `tests/projects/`, on the isolated test hub:
+   - a purge of a project with one active `worktrees` row, and separately
+     with one `clones` row, returns `failed` and leaves the project row, its
+     cron jobs, vectors and hub rows untouched. Once the row is gone, the
+     same purge returns `purged`;
+   - controlled interleaving: pause a worktree creator after its git
+     worktree exists and before registration, let purge pass the early
+     count, then resume registration. Either the final check fails the
+     purge with the row kept, or the insert fails and the creator removes
+     its directory. No registry row or directory is orphaned. Repeat for a
+     clone once the caller cleanup is traced.
 2. **Explicit gap: backups and main-checkout Cargo targets.** Purge cannot
    infer these from surviving rows, because soft delete has already released
    `project_checkouts`. Before specifying any retirement, trace the backup
@@ -235,7 +283,9 @@ directories against registry rows.
 
 ### Minimal fix
 
-No new code. The purge guard in (a) stops purge from creating new orphans.
+No new code beyond (a). The in-transaction purge guard there stops purge from
+orphaning registered worktrees. The same guarantee for clones waits on the
+caller-cleanup trace and the soft-deleted admission check listed in (a).
 
 The relics need a one-time operator removal, approved by Josh. Immediately
 before removing anything, check:
@@ -504,7 +554,10 @@ after the fix.
   index, and cannot run inside a transaction block. A failure leaves an
   invalid index behind, in one of two states
   (https://www.postgresql.org/docs/18/sql-reindex.html#SQL-REINDEX-CONCURRENTLY).
-  Under #22956, approve the exact index list and run it as an
+  Ownership is pending. #22956 does not cover this: its criteria cover only
+  the clean-window VACUUM FULL of the tables holding dropped-column TOAST.
+  The Orchestrator assigns explicit ownership and scope, and Josh approves
+  the exact index list before execution. It then runs as an
   operator-controlled bounded maintenance step:
   - check free disk against the index size, and check for blockers in
     `pg_stat_activity`;
@@ -528,9 +581,12 @@ after the fix.
     review.
 
   Concurrent mode alone does not prove that no maintenance window is needed.
-- `VACUUM FULL` of the heap belongs in the #22956 (Decide retention and
-  cleanup for token_events, unmodeled_observation_events, dropped-column TOAST
-  and the old cargo target) clean window.
+- A `VACUUM FULL` of the `unmodeled_observation_events` heap needs the same
+  routing: explicit ownership from the Orchestrator, Josh's exact approval,
+  and an announced clean window. #22956 (Decide retention and cleanup for
+  token_events, unmodeled_observation_events, dropped-column TOAST and the
+  old cargo target) is the clean-window precedent for its own dropped-column
+  TOAST work. It does not own this.
 - Rollback for the data fix: revert the commit. New occurrences then resume
   being recorded.
 
@@ -657,12 +713,19 @@ test pins the boundary.
      and covers vectors and content GC. It does not cover this sweep.
 2. Observation only, nothing broken: `cargo-target-v2` has grown 3× in 9 days
    inside live targets. See (c).
+3. Ownership needed: future `unmodeled_observation_events` REINDEX and heap
+   `VACUUM FULL`, if measured bloat justifies them after the volume fix. No
+   current task covers them; #22956 owns only the dropped-column TOAST
+   VACUUM FULL. See (d), Maintenance and rollback conditions.
 
 ## Related work
 
 - #22956 (Decide retention and cleanup for token_events,
   unmodeled_observation_events, dropped-column TOAST and the old cargo target)
-  owns the clean-window VACUUM FULL. Its items 1, 2 and 4 are answered here.
+  owns only the clean-window VACUUM FULL of the tables holding dropped-column
+  TOAST. Its items 1, 2 and 4 are answered here. Future
+  `unmodeled_observation_events` index and heap maintenance has no owner; it
+  is routed to the Orchestrator as found work.
 - #22958 (Plan code-index symbol-vector reconciliation and path-aware content
   retention) owns Qdrant and content-GC semantics.
 - #19655 (Define retention policy for high-volume operational tables) owns the
