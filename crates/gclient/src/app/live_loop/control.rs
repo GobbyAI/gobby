@@ -332,10 +332,14 @@ pub(super) fn send_live_input(
     }
     let acquiring = workspace.awaiting_control(pane_id);
     let pane = workspace.pane(pane_id);
-    // A key typed while the pane re-attaches is its ask for control, as it
-    // would be a moment later on the live attachment; the take waits until
-    // the new attachment is live, and a failed attach clears the queue.
-    if !pane.is_live() && !matches!(pane.attach_state(), AttachState::Attaching { .. }) {
+    // A key typed while the pane re-attaches, or while a recovery detaches it
+    // to attach again, is its ask for control, as it would be a moment later
+    // on the live attachment; the take waits until the new attachment is
+    // live, and a failed attach clears the queue.
+    if !pane.is_live()
+        && !pane.fallback_in_flight
+        && !matches!(pane.attach_state(), AttachState::Attaching { .. })
+    {
         return Ok(());
     }
     // A lost lease and an unknown write outcome both wait on a person, so
