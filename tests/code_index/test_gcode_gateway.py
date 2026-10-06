@@ -884,6 +884,31 @@ async def test_gateway_classifies_daemon_config_transport_without_forwarding_std
     assert capsys.readouterr().err == ""
 
 
+async def test_incremental_index_filters_phases_from_daemon_config_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    error = b"Error: daemon effective config request failed: daemon could not be reached (timeout)"
+    phases = (
+        b"gcode_index_phase pid=12 phase=dispatch.context event=start elapsed_ms=0 total_ms=0\n"
+    )
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(returncode=1, stderr=phases * 2_000 + error),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeDaemonConfigUnavailableError) as caught:
+        await gateway.incremental_index(tmp_path, ["src/foo.py"])
+
+    assert caught.value.stderr == error.decode()
+    assert "gcode_index_phase" not in str(caught.value)
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.asyncio
 async def test_maintenance_command_classifies_daemon_config_transport(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

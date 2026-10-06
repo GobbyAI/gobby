@@ -371,7 +371,12 @@ class CodeIndexTrigger:
                 )
                 self._requeue_for_retry(root_key, project_id, busy_files)
             else:
-                detail = result.stderr.strip() or result.stdout.strip() or "(no output)"
+                error_stderr = "\n".join(
+                    line
+                    for line in result.stderr.splitlines()
+                    if not line.startswith("gcode_index_phase ")
+                ).strip()
+                detail = error_stderr or result.stdout.strip() or "(no output)"
                 if result.timed_out:
                     phases = "\n".join(
                         line

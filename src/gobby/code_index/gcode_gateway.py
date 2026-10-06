@@ -922,7 +922,11 @@ class GcodeGateway:
             raise GcodeDaemonConfigUnavailableError(
                 command,
                 returncode,
-                stderr_text,
+                "\n".join(
+                    line
+                    for line in stderr_text.splitlines()
+                    if not line.startswith("gcode_index_phase ")
+                ).strip(),
                 stdout=stdout.decode(errors="replace").strip(),
             )
         completed_at = datetime.now(UTC).isoformat()
