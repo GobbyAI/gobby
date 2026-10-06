@@ -1,6 +1,7 @@
-"""Resolve literal shell programs without reading script files."""
+"""Resolve shell programs and bounded executable signatures without reading script bodies."""
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import _SHELLS, _unwrap
@@ -14,13 +15,37 @@ class ShellExecution:
     script_file: bool = False
 
 
-def shell_execution(words: list[str]) -> ShellExecution | None:
+def path_invokes_script(words: list[str], cwd: str | None) -> bool:
+    """Gate path-invoked shebang scripts; unreadable paths fail closed.
+
+    Only the two-byte executable signature is read, never the program body.
+    """
+    words = _unwrap(words)
+    if not words or "/" not in words[0]:
+        return False
+    path = Path(words[0])
+    if not path.is_absolute():
+        if cwd is None:
+            return True
+        path = Path(cwd) / path
+    try:
+        if not path.is_file():
+            return True
+        with path.open("rb") as executable:
+            return executable.read(2) == b"#!"
+    except OSError:
+        return True
+
+
+def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution | None:
     """Decode a shell's ``-c`` argument or identify opaque script execution.
 
     A script path is only an execution marker, never a content-authoring path.
     Option values and the positional parameters after ``-c`` are not programs.
     """
     words = _unwrap(words)
+    if words and shell_command_name(words[0]) in {"source", "."}:
+        return ShellExecution(script_file=len(words) > 1)
     if not words or shell_command_name(words[0]) not in _SHELLS:
         return None
     index = 1
@@ -31,10 +56,15 @@ def shell_execution(words: list[str]) -> ShellExecution | None:
             index += 1
             break
         if arg == "-":
-            return ShellExecution()
+            return ShellExecution(script_file=True)
         if not arg.startswith(("-", "+")):
             break
         if arg in {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}:
+            index += 2
+            continue
+        if arg.startswith("-") and not arg.startswith("--"):
+            stdin_program = stdin_program or "s" in arg
+        if not arg.startswith(("--", "++")) and ("o" in arg or "O" in arg):
             index += 2
             continue
         if arg.startswith("-") and not arg.startswith("--"):
@@ -43,6 +73,5 @@ def shell_execution(words: list[str]) -> ShellExecution | None:
                 if program[:1] == ["--"]:
                     program = program[1:]
                 return ShellExecution(command=program[0]) if program else ShellExecution()
-            stdin_program = stdin_program or "s" in arg
         index += 1
-    return ShellExecution(script_file=not stdin_program and index < len(words))
+    return ShellExecution(script_file=stdin_program or index < len(words) or stdin)

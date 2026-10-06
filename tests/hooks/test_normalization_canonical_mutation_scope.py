@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -25,16 +26,71 @@ pytestmark = pytest.mark.unit
         "zsh -f probe.sh",
         "env MODE=test bash -e probe.sh",
         "bash /tmp/scratchpad/probe.sh",
+        "source /tmp/scratchpad/probe.sh",
+        ". /tmp/scratchpad/probe.sh",
+        "bash -c 'source /tmp/scratchpad/probe.sh'",
+        "bash < /tmp/scratchpad/probe.sh",
+        "bash -s < /tmp/scratchpad/probe.sh",
+        "bash <<'EOF'\ntouch /project/x.py\nEOF",
+        "cat /tmp/scratchpad/probe.sh | bash",
+        "echo 'touch /project/x.py' | sh",
+        "bash -s",
+        "bash -so pipefail",
+        "bash -",
     ],
 )
 def test_script_file_execution_requires_only_a_claim(tmp_path: Path, command: str) -> None:
     data = _shell_write_metadata(command, tmp_path)
 
     assert data.get("canonical_script_execution") is True
-    assert data["canonical_tool_kind"] == "execute"
+    assert data["canonical_tool_kind"] in {"execute", "read"}
     assert not data.get("canonical_repo_mutation")
     assert not data.get("canonical_write_file_paths")
     assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize(
+    "options", ["-euo pipefail", "-eo pipefail", "-euO extglob", "+euo pipefail"]
+)
+def test_clustered_shell_option_value_preserves_inline_writes(tmp_path: Path, options: str) -> None:
+    target = tmp_path / "changed.py"
+    data = _shell_write_metadata(f"bash {options} -c 'touch {target}'", tmp_path)
+
+    assert data.get("canonical_repo_mutation") is True
+    assert data["canonical_write_file_paths"] == [str(tmp_path / "changed.py")]
+    assert not data.get("canonical_script_execution")
+
+
+@pytest.mark.parametrize("prefix", [b"#!/bin/sh\ntouch x", b"\x7fELF", b"\xcf\xfa\xed\xfe"])
+@pytest.mark.parametrize("relative", [False, True])
+def test_direct_path_execution_checks_only_the_shebang(
+    tmp_path: Path, prefix: bytes, relative: bool
+) -> None:
+    executable = tmp_path / "scratchpad" / "bash"
+    executable.parent.mkdir()
+    executable.write_bytes(prefix)
+    command = f"cd {tmp_path} && ./scratchpad/bash" if relative else str(executable)
+    data = _shell_write_metadata(command, tmp_path)
+
+    assert bool(data.get("canonical_script_execution")) is prefix.startswith(b"#!")
+    assert not data.get("canonical_repo_mutation")
+
+
+def test_missing_direct_execution_path_requires_a_claim(tmp_path: Path) -> None:
+    data = _shell_write_metadata(str(tmp_path / "missing-script"), tmp_path)
+
+    assert data.get("canonical_script_execution") is True
+    assert not data.get("canonical_repo_mutation")
+
+
+def test_unreadable_direct_execution_path_requires_a_claim(tmp_path: Path) -> None:
+    executable = tmp_path / "unreadable"
+    executable.write_bytes(b"#!/bin/sh")
+    with patch.object(Path, "open", side_effect=PermissionError("unreadable executable")):
+        data = _shell_write_metadata(str(executable), tmp_path)
+
+    assert data.get("canonical_script_execution") is True
+    assert not data.get("canonical_repo_mutation")
 
 
 @pytest.mark.parametrize("shell", ["sh", "bash", "zsh"])

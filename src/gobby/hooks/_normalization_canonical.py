@@ -94,7 +94,7 @@ from gobby.hooks.code_navigation_recovery import (
     gcode_targets,
 )
 from gobby.hooks.provider_launch_guard import _unwrap
-from gobby.hooks.shell_execution import SHELL_WRAPPER_DEPTH, shell_execution
+from gobby.hooks.shell_execution import SHELL_WRAPPER_DEPTH, path_invokes_script, shell_execution
 
 _CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
 _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
@@ -231,7 +231,13 @@ def _normalize_shell_tool_metadata(
 
         metadata.append(
             replace(
-                _classify_shell_segment(segment.tokens, parts, persistent_cwd, depth=depth),
+                _classify_shell_segment(
+                    segment.tokens,
+                    parts,
+                    persistent_cwd,
+                    depth=depth,
+                    piped_stdin=segment.separator_before == "|",
+                ),
                 shell_words=tuple(raw_parts),
                 shell_raw_words=source_parts,
             )
@@ -285,6 +291,7 @@ def _classify_shell_segment(
     cwd: str | None,
     *,
     depth: int = 0,
+    piped_stdin: bool = False,
 ) -> _ShellSegmentMetadata:
     redirection_paths = _rebase_shell_paths(extract_redirection_paths(tokens), cwd)
     input_paths = _rebase_navigation_shell_paths(_input_redirection_paths(tokens), cwd)
@@ -305,6 +312,7 @@ def _classify_shell_segment(
         if not has_shell_input_redirection(tokens)
         else _strip_shell_wrappers(shell_token_values(strip_input_redirections(plain_tokens)))
     )
+    shell_stdin = piped_stdin or has_shell_input_redirection(tokens)
 
     gcode_metadata = gcode_navigation_metadata(plain_parts)
     if gcode_metadata and not (
@@ -328,7 +336,9 @@ def _classify_shell_segment(
         )
 
     if redirection_paths:
-        base_metadata = _classify_shell_segment_without_redirection(plain_parts, cwd, depth=depth)
+        base_metadata = _classify_shell_segment_without_redirection(
+            stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin
+        )
         extra = _without_code_index_navigation(base_metadata.extra)
         if extra.get("canonical_code_navigation_action") == "read" and redirects_stdout_to_file(
             tokens
@@ -353,7 +363,9 @@ def _classify_shell_segment(
 
     if input_paths:
         # Input redirection operands are stdin, never positional arguments.
-        base_metadata = _classify_shell_segment_without_redirection(stdin_parts, cwd, depth=depth)
+        base_metadata = _classify_shell_segment_without_redirection(
+            stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin
+        )
         if _interpreter_reads_program_from_stdin(stdin_parts):
             base_metadata = _ShellSegmentMetadata(
                 "write",
@@ -386,12 +398,16 @@ def _classify_shell_segment(
                 cwd=cwd,
             )
         # A heredoc only feeds stdin; the command still writes what it names.
-        return _classify_shell_segment_without_redirection(stdin_parts, cwd, depth=depth)
+        return _classify_shell_segment_without_redirection(
+            stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin
+        )
 
     if _is_neutral_echo_segment(tokens, plain_parts):
         return _ShellSegmentMetadata("execute", neutral_setup=True)
 
-    return _classify_shell_segment_without_redirection(plain_parts, cwd, depth=depth)
+    return _classify_shell_segment_without_redirection(
+        plain_parts, cwd, depth=depth, shell_stdin=shell_stdin
+    )
 
 
 def _classify_for_loop_header(parts: list[str], cwd: str | None) -> _ShellSegmentMetadata:
@@ -426,6 +442,7 @@ def _classify_shell_segment_without_redirection(
     cwd: str | None,
     *,
     depth: int = 0,
+    shell_stdin: bool = False,
 ) -> _ShellSegmentMetadata:
     if not parts:
         return _ShellSegmentMetadata("execute")
@@ -439,7 +456,10 @@ def _classify_shell_segment_without_redirection(
                 "execute", confidence="low", extra={"canonical_script_execution": True}
             )
 
-    execution = shell_execution(parts)
+    if path_invokes_script(parts, cwd):
+        return _ShellSegmentMetadata("execute", extra={"canonical_script_execution": True})
+
+    execution = shell_execution(parts, stdin=shell_stdin)
     if execution is not None:
         if execution.script_file or (
             execution.command is not None and depth >= SHELL_WRAPPER_DEPTH
