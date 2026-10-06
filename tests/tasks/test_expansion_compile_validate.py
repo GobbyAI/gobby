@@ -242,12 +242,12 @@ def test_validate_plan_file_rejects_deliverables_without_phases(
 
 
 def test_validate_plan_file_accepts_canonical_phase_form(
-    service: ExpansionService, tmp_path: Path
+    service: ExpansionService, tmp_path: Path, sample_project: dict[str, Any]
 ) -> None:
     """Accept canonical P-numbered phase headings."""
     plan_path = _write_plan_with_canonical_phase_form(tmp_path / "canonical.md")
 
-    result = service.validate_plan_file(plan_path)
+    result = service.validate_plan_file(plan_path, project_context={"id": sample_project["id"]})
 
     assert result["valid"] is True
     assert result["phase_count"] >= 1
@@ -284,14 +284,14 @@ def test_validate_plan_file_rejects_missing_or_unknown_plan_id(
 
 
 def test_validate_plan_file_returns_semantic_lint_errors(
-    service: ExpansionService, tmp_path: Path
+    service: ExpansionService, tmp_path: Path, sample_project: dict[str, Any]
 ) -> None:
     """Return semantic lint failures in validate_plan_file output."""
     plan_path = _write_plan_with_canonical_phase_form(tmp_path / "canonical.md")
     text = plan_path.read_text(encoding="utf-8")
     plan_path.write_text(text.replace("Target: `src/foundation.py`\n\n", ""), encoding="utf-8")
 
-    result = service.validate_plan_file(plan_path)
+    result = service.validate_plan_file(plan_path, project_context={"id": sample_project["id"]})
 
     assert result["valid"] is False
     assert any("target-coverage" in error for error in result["errors"])
@@ -413,14 +413,14 @@ def test_validate_plan_file_rejects_bare_test_acceptance_artifact(
 
 
 def test_validate_plan_file_accepts_symbol_qualified_test_artifact(
-    service: ExpansionService, tmp_path: Path
+    service: ExpansionService, tmp_path: Path, sample_project: dict[str, Any]
 ) -> None:
     """Accept a test acceptance artifact in the compiler's path::test_symbol form."""
     plan_path = _write_plan_with_test_artifact(
         tmp_path / "symbol-test.md", "tests/test_behavior.py::test_behavior"
     )
 
-    result = service.validate_plan_file(plan_path)
+    result = service.validate_plan_file(plan_path, project_context={"id": sample_project["id"]})
 
     assert result["valid"] is True
     assert result["deliverable_count"] == 1
