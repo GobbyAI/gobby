@@ -622,7 +622,6 @@ SessionStart re-activation keeps it.
 
 Targets:
 - `src/gobby/mcp_proxy/tools/apply_agent_definition.py::*` — scope-reason: 1.1 creates the module: the shared activation core (build_definition_changes, activation_decision, commit_definition_changes) and apply_agent_definition_impl
-- `src/gobby/mcp_proxy/tools/apply_persona.py` — operation: delete
 - `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::*` — scope-reason: 1.1 replaced the nested apply_persona registration with apply_agent_definition; #23647 registers apply_persona again beside it
 - `src/gobby/hooks/event_handlers/_session_start/agents.py::build_agent_changes`
 - `src/gobby/hooks/event_handlers/_session_start/agents.py::activate_default_agent`
@@ -634,7 +633,6 @@ Targets:
 - `tests/mcp_proxy/tools/test_apply_agent_definition.py::*` — scope-reason: 1.1 creates the tool's activation, refusal, seat, relaunch and concurrency tests
 - `tests/hooks/test_session_start_reactivation.py::*` — scope-reason: 1.1 creates the SessionStart compact, provider-pin, dropped-skill and drift-relaunch reactivation tests
 - `tests/servers/websocket/test_attached_session_agent.py::*` — scope-reason: the fixture seeds the target's variables at the base agent, plus the role-change refusal and current-agent echo case
-- `tests/mcp_proxy/tools/test_apply_persona.py` — operation: delete
 - `tests/workflows/test_step_snapshot_semantics.py::*` — scope-reason: retarget module paths; persona switch tests become refusal and no-op tests
 - `tests/mcp_proxy/tools/skills/test_list_skills.py::*` — scope-reason: import the renamed delta builder
 - `tests/workflows/test_session_defaults.py::*` — scope-reason: import the renamed delta builder
@@ -659,17 +657,19 @@ CT, "Keep both.") reverses part of what #23503 delivered at e8f43fb8ab.
 #23647 also removes the registry test's assertion that `apply_persona` is
 absent (1.1.7). 1.1.7 and 1.1.15 leave the acceptance items, and the item ids
 of the rest stay. The zero-persona `rg` sweep that 1.1 ran is withdrawn as a
-standing check. The rest of this section records 1.1 as delivered. Where it
+standing check. 1.1's Targets no longer list `apply_persona.py` or
+`test_apply_persona.py`: #23503 removed both at e8f43fb8ab, and #23647
+restores them. The rest of this section records 1.1 as delivered. Where it
 deletes or retires a persona symbol, or refuses the attached-terminal switch,
 this amendment governs.
 
 **Granularity:** ten production files, one behavior. The tool, its shared
 core, the two web-chat callers, the attached-terminal handler and the two
 `_persona_name` readers change together.
-Deleting `apply_persona.py` breaks every importer in the same commit, so they
-cannot be split without a red tree. The switch paths change in the same commit
-as the role-change refusal, because the refusal alone would break today's
-web-chat switch.
+At e8f43fb8ab, removing `apply_persona.py` broke every importer in the same
+commit, so they could not be split without a red tree. The switch paths
+change in the same commit as the role-change refusal, because the refusal
+alone would break today's web-chat switch.
 
 **Research context:** the current code:
 - `apply_persona.py` (305 lines) holds:
@@ -2133,6 +2133,14 @@ deferral:
   paths while `apply_persona.py` and `test_apply_persona.py` are absent; the
   sandbox failure they meet once #23647 restores the files belongs to
   #23620's root fix.
+- 2026-10-06: Second close-review repair under #23648 (review 20f093de). The
+  reviewer read 1.1's `apply_persona.py — operation: delete` Target as a live
+  deletion clause, against the task's no-deletion criterion. 1.1 drops both
+  delete Targets (`apply_persona.py`, `test_apply_persona.py`), its amendment
+  records that #23503 removed them at e8f43fb8ab and #23647 restores them,
+  and the granularity note moves to the past tense. This supersedes the
+  previous entry's last sentence: no delete Target remains, so none can fail
+  once #23647 restores the files.
 
 ## V2: Verification
 `kind: verification`
