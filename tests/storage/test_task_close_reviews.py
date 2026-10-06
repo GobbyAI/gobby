@@ -64,6 +64,17 @@ def _task_row(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
         )
 
 
+@pytest.mark.parametrize("review_id", ["", "not-a-uuid", "00000000-0000-4000-8000-00000000080g"])
+def test_malformed_review_lookup_preserves_active_review(
+    temp_db: HubDatabase, review_id: str
+) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    review, _ = store.create_or_get_active(**_intent())
+
+    assert store.get(review_id) is None
+    assert store.get(review.id) == review
+
+
 def test_one_active_review_per_task_and_terminal_unlock(temp_db: HubDatabase) -> None:
     store = TaskCloseReviewStore(temp_db)
     runs = LocalAgentRunManager(temp_db)

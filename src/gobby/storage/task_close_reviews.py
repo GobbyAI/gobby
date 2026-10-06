@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
+from uuid import UUID
 
 from psycopg.errors import UniqueViolation
 
@@ -472,7 +473,11 @@ class TaskCloseReviewStore:
         return bool(getattr(cursor, "rowcount", 0))
 
     def get(self, review_id: str) -> TaskCloseReview | None:
-        return self._get("id = %s", (review_id,))
+        try:
+            canonical_id = str(UUID(review_id))
+        except ValueError:
+            return None
+        return self._get("id = %s", (canonical_id,))
 
     def get_by_run(self, run_id: str) -> TaskCloseReview | None:
         return self._get("agent_run_id = %s", (run_id,))
