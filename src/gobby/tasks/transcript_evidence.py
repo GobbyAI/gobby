@@ -83,6 +83,7 @@ from gobby.tasks.transcript_tool_arguments import (
     python_added_source,
     python_edit_tokens,
     python_keyword_stub,
+    tool_workdir,
 )
 from gobby.tasks.transcript_tool_arguments import (
     extract_command as _extract_command,
@@ -171,7 +172,7 @@ def _derivation_fingerprint(
     """Fingerprint every input the derived records are a function of."""
     payload = json.dumps(
         {
-            "derivation_version": 13,
+            "derivation_version": 14,
             "session": session.id,
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,
@@ -708,6 +709,7 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             unknown_reason=unknown_reason,
             output=output,
             output_truncated=output_truncated,
+            workdir=outcome.workdir,
             validation_segments=segments,
         )
     )
@@ -828,6 +830,7 @@ def _record_validation_run(
             unknown_reason=unknown_reason,
             output=output,
             output_truncated=output_truncated,
+            workdir=tool_workdir(pending.arguments),
             validation_segments=segments,
         )
     )

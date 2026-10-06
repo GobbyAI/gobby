@@ -72,6 +72,7 @@ class CodexNestedExecOutcome:
     result: dict[str, Any]
     timestamp: datetime
     raw_json: dict[str, Any]
+    workdir: str | None = None
 
     @property
     def identity(self) -> str:
@@ -106,6 +107,7 @@ def _command_execution_outcomes(
             },
             timestamp=timestamp,
             raw_json=data,
+            workdir=normalized.cwd,
         )
     ]
 
@@ -496,6 +498,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
                     result=dict(result),
                     timestamp=timestamp,
                     raw_json=data,
+                    workdir=pending.workdir,
                 )
             )
         return derived

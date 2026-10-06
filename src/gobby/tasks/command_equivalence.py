@@ -298,7 +298,7 @@ _EXECUTED_SCOPE_WIDENING_OPTIONS: dict[tuple[str, ...], frozenset[str]] = {
 
 
 def _path_scope(
-    command: str, *, allow_scope_widening: bool = False
+    command: str, *, allow_scope_widening: bool = False, allow_outside: bool = False
 ) -> tuple[list[str], list[str]] | None:
     parsed = parse_validation_shell(command)
     if len(parsed.segments) != 1:
@@ -331,7 +331,7 @@ def _path_scope(
             takes_value = not attached and "=" not in token and token not in _VALUELESS_OPTIONS
         elif not any(char in token for char in "*?[]$"):
             path = posixpath.normpath(token)
-            if path.startswith(("/", "../")) or path == "..":
+            if not allow_outside and (path.startswith(("/", "../")) or path == ".."):
                 return None
             paths.append(path)
         else:
@@ -436,9 +436,10 @@ def pytest_targets(command: str) -> tuple[str, ...] | None:
     """Return path targets for a pytest command.
 
     ``None`` means the command is not pytest. No path arguments cover the
-    whole tree. A node id covers its file.
+    whole tree. A node id covers its file. Absolute and ``../`` targets stay as
+    written, for the caller to resolve from the run's location.
     """
-    scoped = _path_scope(command)
+    scoped = _path_scope(command, allow_outside=True)
     if scoped is None:
         return None
     prefix, paths = scoped
@@ -496,36 +497,44 @@ def vitest_related_paths(arguments: Iterable[str]) -> tuple[str, ...] | None:
     return tuple(targets) if targets else None
 
 
-def vitest_related_targets(
-    command: str, *, close_root: str | None = None
-) -> tuple[str, ...] | None:
-    """Return repo-relative targets of a ``vitest related --run`` run from ``web/``.
+def run_location(command: str, *, workdir: str | None = None) -> str | None:
+    """Return the directory the last segment of ``command`` runs in.
 
-    Transcripts record no working directory, so the location is the command's leading
-    ``cd`` chain: a relative step resolves from the checkout root, an absolute one must
-    fall inside ``close_root``. ``None`` declines credit: another runner, no target, no
-    ``--run``, any other option, a glob target, or a location other than ``web/``.
+    It starts at the tool call's absolute ``workdir``, or the checkout root (``.``) when
+    none was recorded, and follows the leading ``cd <dir> &&`` chain; ``export`` steps
+    keep it. ``None`` means another operator or leading step.
     """
     parsed = parse_validation_shell(command)
     if not parsed.segments or any(operator != "&&" for operator in parsed.operators):
         return None
-    *steps, segment = parsed.segments
-    location = "."
-    for step in steps:
+    location = workdir if workdir is not None and posixpath.isabs(workdir) else "."
+    for step in parsed.segments[:-1]:
+        if step[:1] == ("export",):
+            continue
         if len(step) != 2 or step[0] != "cd":
             return None
-        if not posixpath.isabs(step[1]):
-            location = posixpath.normpath(posixpath.join(location, step[1]))
-            continue
+        location = posixpath.normpath(posixpath.join(location, step[1]))
+    return location
+
+
+def vitest_related_targets(
+    command: str, *, close_root: str | None = None, workdir: str | None = None
+) -> tuple[str, ...] | None:
+    """Return repo-relative targets of a ``vitest related --run`` run from ``web/``.
+
+    The location is :func:`run_location`; an absolute one must fall inside
+    ``close_root``. ``None`` declines credit: another runner, no target, no ``--run``,
+    any other option, a glob target, or a location other than ``web/``.
+    """
+    location = run_location(command, workdir=workdir)
+    if location is not None and posixpath.isabs(location):
         if close_root is None:
             return None
-        root, resolved = Path(close_root).resolve(), Path(step[1]).resolve()
-        if not resolved.is_relative_to(root):
-            return None
-        location = resolved.relative_to(root).as_posix()
+        root, resolved = Path(close_root).resolve(), Path(location).resolve()
+        location = resolved.relative_to(root).as_posix() if resolved.is_relative_to(root) else None
     if location != "web":
         return None
-    words = list(segment)
+    words = list(parse_validation_shell(command).segments[-1])
     while words and _ENV_ASSIGNMENT.match(words[0]):
         words.pop(0)
     for launcher in _VITEST_LAUNCHERS:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -38,6 +39,10 @@ _FUNCTIONS_EXEC_TERMINAL_RE = re.compile(
 _EXEC_COMMAND_CALL_RE = re.compile(r"\btools\.exec_command\s*\(")
 _EXEC_COMMAND_LITERAL_RE = re.compile(
     r'(?:^|[{,])\s*(?:cmd|"cmd")\s*:\s*("(?:\\.|[^"\\])*")',
+    re.DOTALL,
+)
+_EXEC_WORKDIR_LITERAL_RE = re.compile(
+    r'(?:^|[{,])\s*(?:workdir|"workdir")\s*:\s*("(?:\\.|[^"\\])*")',
     re.DOTALL,
 )
 _EXEC_RESULT_BINDING_RE = re.compile(
@@ -128,6 +133,36 @@ def extract_direct_exec_command(arguments: Any) -> str | None:
         return None
     command = decoded.get("cmd")
     return command if isinstance(command, str) and command else None
+
+
+def extract_direct_exec_workdir(arguments: Any) -> str | None:
+    """Extract the absolute ``workdir`` of one direct Codex ``exec_command`` call."""
+    decoded = arguments
+    if isinstance(arguments, str):
+        try:
+            decoded = json.loads(arguments)
+        except (TypeError, ValueError):
+            return None
+    return _absolute_path(decoded.get("workdir")) if isinstance(decoded, dict) else None
+
+
+def extract_functions_exec_workdir(arguments: Any) -> str | None:
+    """Extract the literal absolute ``workdir`` of the one nested ``exec_command``."""
+    if isinstance(arguments, dict):
+        return _absolute_path(arguments.get("workdir"))
+    if extract_functions_exec_command(arguments) is None:
+        return None
+    matches = _EXEC_WORKDIR_LITERAL_RE.findall(arguments)
+    if len(matches) != 1:
+        return None
+    try:
+        return _absolute_path(json.loads(matches[0]))
+    except (TypeError, ValueError):
+        return None
+
+
+def _absolute_path(value: Any) -> str | None:
+    return value if isinstance(value, str) and os.path.isabs(value) else None
 
 
 def _normalize_session_id(value: Any) -> str | None:
@@ -409,6 +444,7 @@ class PendingExecution:
     session_id: str | None = None
     direct: bool = False
     expects_serialized_result: bool = False
+    workdir: str | None = None
 
     def to_state(self) -> dict[str, Any]:
         return {
@@ -418,6 +454,7 @@ class PendingExecution:
             "session_id": self.session_id,
             "direct": self.direct,
             "expects_serialized_result": self.expects_serialized_result,
+            "workdir": self.workdir,
         }
 
     @classmethod
@@ -427,7 +464,9 @@ class PendingExecution:
         outer_call_id = value.get("outer_call_id")
         if not isinstance(outer_call_id, str) or not outer_call_id:
             return None
-        optional = {key: value.get(key) for key in ("literal_command", "cell_id", "session_id")}
+        optional = {
+            key: value.get(key) for key in ("literal_command", "cell_id", "session_id", "workdir")
+        }
         if any(item is not None and not isinstance(item, str) for item in optional.values()):
             return None
         direct = value.get("direct", False)
@@ -476,7 +515,9 @@ class ExecutionChainCorrelator:
         if name in DIRECT_EXEC_NAMES:
             command = extract_direct_exec_command(arguments)
             if command is not None:
-                execution = PendingExecution(call_id, command, direct=True)
+                execution = PendingExecution(
+                    call_id, command, direct=True, workdir=extract_direct_exec_workdir(arguments)
+                )
         elif name in FUNCTIONS_EXEC_NAMES:
             command = extract_functions_exec_command(arguments)
             session_id = extract_functions_write_stdin_session_id(arguments)
@@ -485,6 +526,7 @@ class ExecutionChainCorrelator:
                     call_id,
                     command,
                     expects_serialized_result=_expects_serialized_exec_result(arguments),
+                    workdir=extract_functions_exec_workdir(arguments),
                 )
             elif session_id is not None:
                 execution = self._sessions.get(session_id)

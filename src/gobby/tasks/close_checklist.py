@@ -14,6 +14,7 @@ from gobby.tasks.close_test_coverage import (
     changed_python_source_paths,
     changed_web_source_paths,
     coverage_failure_message,
+    identical_copy_run,
     related_python_source_tests,
     uncovered_pytest_paths,
     uncovered_vitest_related_paths,
@@ -143,15 +144,20 @@ def evaluate_validation_commands(
     """Keep credit decisions separate from observed-run explanations.
 
     A run whose ``uv`` location points outside ``close_root`` validated another
-    checkout, so it neither credits nor fails this task.
+    checkout, so it neither credits nor fails this task, unless it ran identical
+    copies of the changed tests.
     """
     from gobby.tasks.validation_diagnostics import excluded_validation_records, observed_message
 
+    paths = tuple(changed_paths)
+    changed_tests = _changed_python_test_paths(paths)
     foreign: list[str] = []
     if close_root is not None:
 
         def in_scope(run: TranscriptValidationRun) -> bool:
-            if runs_outside_root(run.core_command or run.command, close_root):
+            if runs_outside_root(
+                run.core_command or run.command, close_root
+            ) and not identical_copy_run(run, changed_tests, close_root):
                 foreign.append(run.command)
                 return False
             return True
@@ -161,7 +167,6 @@ def evaluate_validation_commands(
             validation_runs=tuple(filter(in_scope, evidence.validation_runs)),
             command_runs=tuple(filter(in_scope, evidence.command_runs)),
         )
-    paths = tuple(changed_paths)
     gate = _evaluate_validation_commands(
         task_category=task_category,
         evidence=evidence,
@@ -171,7 +176,6 @@ def evaluate_validation_commands(
         deleted_paths=deleted_paths,
         close_root=close_root,
     )
-    changed_tests = _changed_python_test_paths(paths)
 
     def uncovered(run: TranscriptValidationRun) -> tuple[str, ...] | None:
         targets = _test_types_audit_targets(run)
@@ -316,13 +320,11 @@ def _evaluate_validation_commands(
     fresh_runs = _fresh_runs(evidence)
     definitive = [run for run in fresh_runs if run.outcome != "unknown"]
     credited = [run for run in definitive if not run.wrapped and run.core_command is not None]
-    passing_commands = tuple(
-        run.core_command or run.command for run in credited if run.outcome == "success"
-    )
+    passing_runs = [run for run in credited if run.outcome == "success"]
     uncovered_sources = {
         source: list(uncovered)
         for source, tests in source_tests.items()
-        if (uncovered := uncovered_pytest_paths(passing_commands, tests))
+        if (uncovered := uncovered_pytest_paths(passing_runs, tests, close_root=close_root))
     }
     details.update(
         python_source_related_tests={source: list(tests) for source, tests in source_tests.items()},
@@ -385,9 +387,7 @@ def _evaluate_validation_commands(
     criterion_commands = criterion_command_records(validation_criteria, evidence)
     criterion_command_gaps = [record for record in criterion_commands if not record["satisfied"]]
     uncovered_web = uncovered_vitest_related_paths(
-        (run.command for run in credited if run.outcome == "success"),
-        changed_web_paths,
-        close_root=close_root,
+        passing_runs, changed_web_paths, close_root=close_root
     )
     details = {
         **details,
@@ -544,12 +544,7 @@ def _evaluate_validation_commands(
     uncovered_pytest: tuple[str, ...] = ()
     if pytest_required_paths:
         uncovered_pytest = uncovered_pytest_paths(
-            (
-                run.core_command if run.core_command is not None else run.command
-                for run in credited
-                if run.outcome == "success"
-            ),
-            pytest_required_paths,
+            passing_runs, pytest_required_paths, close_root=close_root
         )
         details["pytest_uncovered_paths"] = list(uncovered_pytest)
     coverage_failure = coverage_failure_message(uncovered_pytest, uncovered_sources, uncovered_web)

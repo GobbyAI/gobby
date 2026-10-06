@@ -2029,6 +2029,60 @@ async def test_codex_ingests_unified_exec_failure_event(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["direct", "direct-native", "nested", "command-execution"])
+async def test_codex_shell_runs_record_the_tool_workdir(tmp_path: Path, shape: str) -> None:
+    # Close coverage resolves pytest and vitest targets from where the run executed (#23653).
+    command = "uv run pytest tests/tasks -q"
+    workdir = "/repo dir/web"
+    arguments = {"cmd": command, "workdir": workdir, "yield_time_ms": 10000}
+    records: list[dict[str, Any]]
+    if shape == "direct":
+        records = _codex_direct_exec_pair(command=command, result={"exit_code": 0, "output": "ok"})
+        records[0]["payload"]["arguments"] = json.dumps(arguments)
+    elif shape == "direct-native":
+        native = "Chunk ID: c1\nWall time: 0.1 seconds\nProcess exited with code 0\nOutput:\nok\n"
+        records = _codex_direct_exec_pair(command=command, result=native)
+        records[0]["payload"]["arguments"] = json.dumps(arguments)
+    elif shape == "nested":
+        records = _codex_nested_exec_pair(command=command, result={"exit_code": 0, "output": "ok"})
+        records[0]["payload"]["input"] = (
+            f"const r = await tools.exec_command({json.dumps(arguments)}); text(r);"
+        )
+    else:
+        records = [
+            {
+                "type": "event_msg",
+                "timestamp": BASE_TIME.isoformat(),
+                "payload": {
+                    "type": "item_completed",
+                    "item": {
+                        "type": "CommandExecution",
+                        "id": "exec-1",
+                        "command": ["/bin/zsh", "-lc", command],
+                        "cwd": "file:///repo%20dir/web",
+                        "exit_code": 0,
+                        "aggregated_output": "ok",
+                    },
+                },
+            }
+        ]
+    transcript = tmp_path / "codex.jsonl"
+    _write_jsonl(transcript, records)
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.outcome, run.workdir) for run in evidence.validation_runs] == [
+        (command, "success", workdir)
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "command,rewritten",
     [

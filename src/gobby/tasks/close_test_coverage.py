@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ast
+import filecmp
 import logging
+import os
 import posixpath
 import re
 from collections.abc import Iterable, Mapping, Sequence
@@ -11,7 +13,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
-from gobby.tasks.command_equivalence import pytest_targets, vitest_related_targets
+from gobby.tasks.command_equivalence import pytest_targets, run_location, vitest_related_targets
 from gobby.tasks.related_tests import RELATED_TEST_MAX_FILES
 from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 
@@ -261,16 +263,85 @@ def uncovered_test_paths(
 
 
 def uncovered_pytest_paths(
-    commands: Iterable[str],
+    runs: Iterable[TranscriptValidationRun],
     changed_python_tests: tuple[str, ...],
+    *,
+    close_root: str | None = None,
 ) -> tuple[str, ...]:
-    """Return changed tests no successful pytest command targets."""
-    covered: list[str] = []
-    for command in commands:
-        targets = pytest_targets(command)
-        if targets:
-            covered.extend(targets)
-    return uncovered_test_paths(changed_python_tests, tuple(covered))
+    """Return changed tests no successful pytest run targets.
+
+    Without ``close_root`` targets match lexically. With it, each target resolves from
+    the run's location: a target in ``close_root`` covers as before, and one in another
+    tree covers a test whose copy there is byte-identical to the root's (#23653).
+    """
+    if close_root is None:
+        covered: list[str] = []
+        for run in runs:
+            covered.extend(pytest_targets(run.core_command or run.command) or ())
+        return uncovered_test_paths(changed_python_tests, tuple(covered))
+    root = os.path.realpath(close_root)
+    resolved = [target for run in runs for target in _resolved_pytest_targets(run, root)]
+    return tuple(
+        test
+        for test in changed_python_tests
+        if not any(_runs_test(target, test, root) for target in resolved)
+    )
+
+
+def identical_copy_run(
+    run: TranscriptValidationRun, changed_python_tests: tuple[str, ...], close_root: str
+) -> bool:
+    """Whether a passing pytest run targets only identical copies of changed tests.
+
+    Such a run proved this task's test bytes from another tree, so a ``uv`` location
+    outside ``close_root`` does not make it foreign (#23653).
+    """
+    root = os.path.realpath(close_root)
+    targets = _resolved_pytest_targets(run, root) if run.outcome == "success" else ()
+    return bool(targets) and all(
+        any(_runs_test(target, test, root, copy_only=True) for test in changed_python_tests)
+        for target in targets
+    )
+
+
+def _resolved_pytest_targets(run: TranscriptValidationRun, root: str) -> tuple[str, ...]:
+    """Return the run's pytest targets as absolute paths, resolved from where it ran."""
+    targets = pytest_targets(run.core_command or run.command)
+    location = run_location(run.command, workdir=run.workdir)
+    if not targets or location is None:
+        return ()
+    paths = (os.path.normpath(os.path.join(root, location, target)) for target in targets)
+    # A canonical parent keeps a symlinked path into the root from posing as a copy.
+    return tuple(
+        os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+        for path in paths
+    )
+
+
+def _runs_test(target: str, test: str, root: str, *, copy_only: bool = False) -> bool:
+    """Whether absolute ``target`` runs ``test`` at ``root`` or as an identical copy.
+
+    ``target`` runs ``test`` from tree ``R`` when it is ``R/q`` for ``test`` or one of its
+    parent directories ``q``. A tree other than ``root`` must hold the same bytes, which
+    is git blob identity for an unfiltered file.
+    """
+    for prefix in (test, *(parent.as_posix() for parent in PurePosixPath(test).parents)):
+        if prefix == ".":
+            tree = target
+        elif target.endswith(f"/{prefix}"):
+            tree = target.removesuffix(f"/{prefix}")
+        else:
+            continue
+        if tree == root:
+            if not copy_only:
+                return True
+            continue
+        try:
+            if filecmp.cmp(os.path.join(tree, test), os.path.join(root, test), shallow=False):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def coverage_failure_message(
@@ -319,18 +390,20 @@ def changed_web_source_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:
 
 
 def uncovered_vitest_related_paths(
-    commands: Iterable[str],
+    runs: Iterable[TranscriptValidationRun],
     changed_web_paths: tuple[str, ...],
     *,
     close_root: str | None,
 ) -> tuple[str, ...]:
-    """Return changed web paths no successful ``vitest related`` command names.
+    """Return changed web paths no successful ``vitest related`` run names.
 
-    ``vitest related`` takes files, so coverage is an exact path match.
+    ``vitest related`` takes files, so coverage is an exact path match. The run's
+    tool workdir and leading ``cd`` chain must place it in ``web/``.
     """
     covered: set[str] = set()
-    for command in commands:
-        covered.update(vitest_related_targets(command, close_root=close_root) or ())
+    for run in runs:
+        targets = vitest_related_targets(run.command, close_root=close_root, workdir=run.workdir)
+        covered.update(targets or ())
     return tuple(path for path in changed_web_paths if path not in covered)
 
 

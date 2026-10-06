@@ -56,6 +56,8 @@ class TranscriptValidationRun:
     provider_call_id: str | None = None
     background_job_id: str | None = None
     background_output_path: str | None = None
+    #: The shell tool call's absolute working directory, when the provider recorded one.
+    workdir: str | None = None
     #: Every validation segment of ``command`` in order, each with its own
     #: categories; ``categories`` above is their union. Empty only for runs
     #: built without classification.
