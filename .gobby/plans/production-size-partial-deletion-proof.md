@@ -1003,6 +1003,42 @@ follows that one in `CloseEvaluationFingerprint`.
   checks.
 - No data migration. No existing plan uses the grammar.
 
+## V1 Plan Changelog
+`kind: verification`
+
+- 2026-10-05 19:07 CDT: First draft by the Lane 7 Plan Writer gobby#15429 on
+  #22727, built on Josh's option B (2026-10-03): a preflight typed deletion
+  proof plus a committed-result proof.
+- 2026-10-05 19:20 CDT: Enhancer pass applied. plan-enhancer-taskless-old ran
+  once (run c6cd3457). The Orchestrator gobby#14972 dispositioned its five
+  suggestions:
+  - E1, modified: there is no separate base-ceiling guard. A base at or above
+    1,000 lines passes only when the projection drops below 1,000 (1.1.3).
+  - E2, accepted: gate 8 reads the base blob through `stream_bytes`'s
+    callback, and Git failures and timeouts fail the proof (2.1).
+  - E3, accepted: gate 8 records exactly one result when the proof and the
+    scope check both fail (2.1).
+  - E4, accepted: malformed or misplaced `delete-lines` candidates fail, and
+    the path must be a clean repository-relative path (1.1).
+  - E5, tests only: the close gate does not re-check target exclusivity,
+    because the byte-for-byte check pins the whole file.
+- 2026-10-05 20:04 CDT: Consensus between the Lane 7 Plan Writer gobby#15429
+  and the Plan Adversary gobby#15414 at `c89cb20b14`. All four blocking
+  findings are resolved:
+  - F-PROOF-FRESHNESS: the fingerprint binds the proof lines (2.1), and 2.2
+    repeats the fingerprint comparison on the linked row that the close
+    compare-and-set uses.
+  - F-CANDIDATE-NAME-COLLISION: candidates are detected by segment, through
+    `is_delete_lines_entry` in `semantic_lint.py`, so a path such as
+    `src/delete-lines.py` is not a candidate (1.1).
+  - F-LEAF-GRAMMAR-CONTEXT: the Proof contract lives in 1.1, and the
+    base-drift recovery steps are inline in 2.1.
+  - F-LINKED-SCOPE-FRESHNESS: the fingerprint binds the description's
+    normalized declared Targets paths (2.2).
+  - The Orchestrator placed the generic linked-row race in this plan as 2.2
+    (19:44 CT), and the Targets variant with it (20:02 CT). No disagreement
+    went unresolved.
+
 ## V2: Verification
 `kind: verification`
 
