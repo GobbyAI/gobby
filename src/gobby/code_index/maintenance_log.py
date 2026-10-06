@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -58,11 +59,30 @@ def log_gcode_maintenance_event(
     }
     if detail:
         payload["detail"] = detail
+    _write_record(log_file, payload, logging.INFO)
+
+
+def log_gcode_maintenance_exception(
+    *, log_file: str, event: str, project_id: str, error: Exception
+) -> None:
+    """Keep failure diagnostics in the dedicated log's JSONL record."""
+    payload = {
+        "event": event,
+        "project_id": project_id,
+        "status": "failed",
+        "exception_type": type(error).__name__,
+        "exception_message": str(error),
+        "exception": "".join(traceback.format_exception(error)),
+    }
+    _write_record(log_file, payload, logging.WARNING)
+
+
+def _write_record(log_file: str, payload: dict[str, Any], level: int) -> None:
     serialized = json.dumps(payload, sort_keys=True)
     record_size = len(f"{serialized}{_RECORD_TERMINATOR}".encode())
     if record_size > _MAX_LOG_FILE_BYTES:
         raise MaintenanceLogRecordTooLargeError(record_size, _MAX_LOG_FILE_BYTES)
-    _logger(log_file).info(serialized)
+    _logger(log_file).log(level, serialized)
 
 
 def _logger(log_file: str) -> logging.Logger:
