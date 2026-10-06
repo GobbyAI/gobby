@@ -43,6 +43,7 @@ _SCALAR_FIELD_PRIORITY = (
     "task_id",
     "status",
     "error_code",
+    "id",
     "state",
 )
 type _Scalar = str | int | float | bool | None

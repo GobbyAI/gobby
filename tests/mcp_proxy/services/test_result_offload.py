@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any, NamedTuple, cast
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +18,7 @@ from gobby.mcp_proxy.services.result_offload import (
     ToolResultOffloader,
 )
 from gobby.mcp_proxy.services.tool_execution import _execute_tool_dispatch
+from gobby.mcp_proxy.tools.tasks._formatters import task_summary_payload
 from gobby.search.keyword import MAX_PG_SEARCH_QUERY_CHARS, SearchHit, SearchQuerySyntaxError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tool_results import ToolResultStore
@@ -456,24 +459,45 @@ async def test_oversized_result_preserves_bounded_scalar_outcome_fields() -> Non
     )
 
 
-async def test_oversized_task_card_preserves_its_flat_state_outcome() -> None:
-    """Step handlers read state.is_closed from get_task after a reviewed close."""
-    harness = _harness()
-    state = {
-        "current_stage": None,
-        "is_closed": True,
-        "closed_at": "2026-10-06T22:00:00+00:00",
-        "is_claimed": False,
-        "is_blocked": False,
-        "is_escalated": False,
-    }
-    # Sixteen scalar card fields precede state, filling the scalar budget on their own.
-    card: dict[str, object] = {f"field_{index}": index for index in range(16)}
+def _late_identity_card() -> dict[str, Any]:
+    # Sixteen scalar fields precede id and state, filling the scalar budget on their own.
+    card: dict[str, Any] = {f"field_{index}": index for index in range(16)}
     card.update(
+        id="task-uuid",
         description="x" * 4_000,
-        state=state,
+        state={
+            "current_stage": None,
+            "is_closed": True,
+            "closed_at": "2026-10-06T22:00:00+00:00",
+            "is_claimed": False,
+            "is_blocked": False,
+            "is_escalated": False,
+        },
         dependencies={"blocked_by": [{"is_closed": True}]},
     )
+    return card
+
+
+def _summary_card() -> dict[str, Any]:
+    task = SimpleNamespace(
+        id="task-uuid",
+        seq_num=22997,
+        title="One developer definition",
+        task_type="feature",
+        category="code",
+        priority=2,
+        description="x" * 4_000,
+    )
+    return task_summary_payload(task, {"blocked_by": [], "blocking": []})
+
+
+@pytest.mark.parametrize("card_factory", [_late_identity_card, _summary_card])
+async def test_oversized_task_card_preserves_its_identity_and_flat_state(
+    card_factory: Callable[[], dict[str, Any]],
+) -> None:
+    """Step handlers match id and read state.is_closed from get_task after a reviewed close."""
+    harness = _harness()
+    card = card_factory()
 
     actual = await harness.offloader.maybe_offload(
         server_name="gobby-tasks",
@@ -484,7 +508,8 @@ async def test_oversized_task_card_preserves_its_flat_state_outcome() -> None:
     )
 
     assert actual["offloaded"] is True
-    assert actual["state"] == state
+    assert actual["id"] == "task-uuid"
+    assert actual["state"] == card["state"]
     assert "dependencies" not in actual
     assert "description" not in actual
     assert _serialized_size(actual) <= (
