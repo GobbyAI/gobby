@@ -23,11 +23,11 @@ def transcript_search_timing(phase: str = "search") -> Iterator[None]:
     search_id = _search_id.get() or uuid4().hex
     token = _search_id.set(search_id)
     started = perf_counter()
-    logger.info("transcript_search trace=%s phase=%s event=started", search_id, phase)
+    logger.debug("transcript_search trace=%s phase=%s event=started", search_id, phase)
     try:
         yield
     finally:
-        logger.info(
+        logger.debug(
             "transcript_search trace=%s phase=%s event=finished elapsed_s=%.6f",
             search_id,
             phase,
@@ -43,10 +43,10 @@ async def transcript_to_thread[**P, T](
     search_id = _search_id.get()
     if search_id is None:
         return await asyncio.to_thread(func, *args, **kwargs)
-    phase = func.__name__
+    phase = getattr(func, "__name__", type(func).__name__)
     submitted = perf_counter()
     finished: float | None = None
-    logger.info("transcript_search trace=%s phase=%s event=queued", search_id, phase)
+    logger.debug("transcript_search trace=%s phase=%s event=queued", search_id, phase)
 
     def work() -> T:
         nonlocal finished
@@ -55,22 +55,23 @@ async def transcript_to_thread[**P, T](
         try:
             return func(*args, **kwargs)
         finally:
-            finished = perf_counter()
-            logger.info(
+            work_finished = perf_counter()
+            logger.debug(
                 "transcript_search trace=%s phase=%s event=worker_finished "
                 "queue_s=%.6f work_s=%.6f cpu_s=%.6f",
                 search_id,
                 phase,
                 started - submitted,
-                finished - started,
+                work_finished - started,
                 thread_time() - cpu_started,
             )
+            finished = perf_counter()
 
     try:
         return await asyncio.to_thread(work)
     finally:
         if finished is not None:
-            logger.info(
+            logger.debug(
                 "transcript_search trace=%s phase=%s event=resumed resume_s=%.6f",
                 search_id,
                 phase,
