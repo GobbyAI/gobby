@@ -1,0 +1,300 @@
+header:
+  plan_id: production-size-partial-deletion-proof
+  plan_hash: 6201951547e258c11dd070c80c27869f29f22cf7892c98ae11f37baea83b4f0a
+  root_task_ref: '23640'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-06T05:10:02Z'
+  task_tree_source: db
+  task_tree_source_hash: 72764f00c100136d2872c93b51c90b76da20524a74c7426edade050facf26722
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 9a07c6daaab0d6d85720309f60d4df9de16e738770e926cda4c3264ac36c3331
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23643'
+    validation_criteria_snippet: '1.1.1: The canonical proof entry parses into path,
+      base blob and ranges, both as a bullet and in the header form without a bullet
+      marker. Each non-canonical va...'
+    matched_artifact_ref: tests/plans/test_production_size.py::test_parse_delete_lines_proof_grammar
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: de2a9847cb093e66e56663f8a78a28d1aa9ad7e2edb63961aefc492b16f92b11
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23643'
+    validation_criteria_snippet: '1.1.1: The canonical proof entry parses into path,
+      base blob and ranges, both as a bullet and in the header form without a bullet
+      marker. Each non-canonical va...'
+    matched_artifact_ref: tests/plans/test_production_size.py::test_project_delete_lines_binds_base_bytes
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 78ba4a1b09de22b618ed49f0ba62c633a7022bd3768da0451967b35f47fa585e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23643'
+    validation_criteria_snippet: '1.1.1: The canonical proof entry parses into path,
+      base blob and ranges, both as a bullet and in the header form without a bullet
+      marker. Each non-canonical va...'
+    matched_artifact_ref: tests/plans/test_production_size.py::test_project_delete_lines_recounts_production_lines
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 80b36e1a993a6676b92a464f19f0cf4b70e7d748163efd1f06e0253c9f4e2fa8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23643'
+    validation_criteria_snippet: '1.1.1: The canonical proof entry parses into path,
+      base blob and ranges, both as a bullet and in the header form without a bullet
+      marker. Each non-canonical va...'
+    matched_artifact_ref: tests/plans/test_semantic_lint.py::test_production_size_growth_accepts_delete_lines_proof
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: 9ea753c1261bf9221ea80f5c0f15f80213eec33df2da7164c2427b6d9521707b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23643'
+    validation_criteria_snippet: '1.1.1: The canonical proof entry parses into path,
+      base blob and ranges, both as a bullet and in the header form without a bullet
+      marker. Each non-canonical va...'
+    matched_artifact_ref: an ordinary entry whose scope-reason only mentions `delete-lines`,
+      and an ordinary `src/delete-lines.py::*` target
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.6
+  plan_node_hash: deac9437e05ed0776837740b710b85bf6e487fc16bdeb818f5ea8ecd9c6694cc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23643'
+    validation_criteria_snippet: '1.1.1: The canonical proof entry parses into path,
+      base blob and ranges, both as a bullet and in the header form without a bullet
+      marker. Each non-canonical va...'
+    matched_artifact_ref: tests/plans/test_semantic_lint.py::test_production_size_growth_stale_proof_has_no_fallback
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.7
+  plan_node_hash: ebe7849a7a83d3f1ad6f00f994bf741f6b44da4003afe9577c5baa510d3e7cf3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23643'
+    validation_criteria_snippet: '1.1.1: The canonical proof entry parses into path,
+      base blob and ranges, both as a bullet and in the header form without a bullet
+      marker. Each non-canonical va...'
+    matched_artifact_ref: tests/plans/test_semantic_lint.py::test_shared_target_ordering_requires_proof_owner_first
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.8
+  plan_node_hash: 508cd870b27829ca38d645d6887f55aa5e2b83960c8a246f8692723294a0676a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23643'
+    validation_criteria_snippet: '1.1.1: The canonical proof entry parses into path,
+      base blob and ranges, both as a bullet and in the header form without a bullet
+      marker. Each non-canonical va...'
+    matched_artifact_ref: tests/plans/test_semantic_lint.py::test_delete_lines_proof_entry_is_one_target
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.9
+  plan_node_hash: bf41b904d7c8298c0c6fbeb67c289c2a3e1315d9135cb434ca8358175ef60233
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23643'
+    validation_criteria_snippet: '1.1.1: The canonical proof entry parses into path,
+      base blob and ranges, both as a bullet and in the header form without a bullet
+      marker. Each non-canonical va...'
+    matched_artifact_ref: tests/plans/test_semantic_lint.py::test_iter_description_target_lines_skips_fenced_blocks
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.10
+  plan_node_hash: 7b7bcea1cba769937abfab47bd0db55d71ed1755ce981ed370d3104756a9b980
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23643'
+    validation_criteria_snippet: '1.1.1: The canonical proof entry parses into path,
+      base blob and ranges, both as a bullet and in the header form without a bullet
+      marker. Each non-canonical va...'
+    matched_artifact_ref: Partial deletion proof
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.11
+  plan_node_hash: af0ef309e3e934cb02a44dba6e17f85d3959f264910dcc2214b397a7ccdfeb51
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23643'
+    validation_criteria_snippet: '1.1.1: The canonical proof entry parses into path,
+      base blob and ranges, both as a bullet and in the header form without a bullet
+      marker. Each non-canonical va...'
+    matched_artifact_ref: delete-lines
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 66e1be344557546eba4d5a9fb5648363cf240fd82689bce0d49e9abd4b6ce4bc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23644'
+    validation_criteria_snippet: '2.1.1: With a candidate whose file equals base minus
+      the declared lines, the gate passes. With a candidate that also adds a line,
+      it fails. Across two linked c...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_candidate_must_equal_projected_deletion
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 59a2baaa6b2d23b7883f52c5bdedeb56edab8b7dacf2dd13f904c8e20bed628b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23644'
+    validation_criteria_snippet: '2.1.1: With a candidate whose file equals base minus
+      the declared lines, the gate passes. With a candidate that also adds a line,
+      it fails. Across two linked c...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_candidate_entry_must_be_regular_file
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: ec2bdf25b61f963f0c672ff68d45da70015ea26a496cbf276ca8ad7d3514a34a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23644'
+    validation_criteria_snippet: '2.1.1: With a candidate whose file equals base minus
+      the declared lines, the gate passes. With a candidate that also adds a line,
+      it fails. Across two linked c...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_unbindable_proof_fails_closed
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 37a32001b48af9584118557455823095892b9ca5745243a058d24d24306e0b86
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23644'
+    validation_criteria_snippet: '2.1.1: With a candidate whose file equals base minus
+      the declared lines, the gate passes. With a candidate that also adds a line,
+      it fails. Across two linked c...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_size_proofs_skip_without_obligation
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: 8be3de9174a90307b77285f8b8b98cae9c12702e227f6170edd97c0c98875b3b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23644'
+    validation_criteria_snippet: '2.1.1: With a candidate whose file equals base minus
+      the declared lines, the gate passes. With a candidate that also adds a line,
+      it fails. Across two linked c...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_size_proof_gate.py::test_compiled_leaf_description_retains_proof
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.6
+  plan_node_hash: 4127cd015f209594b37ea1ec0cce1ab3610b925e60362909f1d1461f83638b4a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23644'
+    validation_criteria_snippet: '2.1.1: With a candidate whose file equals base minus
+      the declared lines, the gate passes. With a candidate that also adds a line,
+      it fails. Across two linked c...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_close_candidate.py::test_size_proof_mismatch_fails_task_scope_gate
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.7
+  plan_node_hash: 72e8c9531c09858c24923489617cfd7d0a93a0632cc7e43203e8a6be3665b11b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23644'
+    validation_criteria_snippet: '2.1.1: With a candidate whose file equals base minus
+      the declared lines, the gate passes. With a candidate that also adds a line,
+      it fails. Across two linked c...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_size_proof_edit_after_evaluation_stales_close
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.8
+  plan_node_hash: bff84ad716230cc7324e24207db8a6b2d08cb2cb8f7d73924a0402a78afd4b36
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23644'
+    validation_criteria_snippet: '2.1.1: With a candidate whose file equals base minus
+      the declared lines, the gate passes. With a candidate that also adds a line,
+      it fails. Across two linked c...'
+    matched_artifact_ref: Committed result
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.9
+  plan_node_hash: b8ef22d495b59414b94e9ebe5ecd95870cc59220d84aecab944e49f685c016b5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23644'
+    validation_criteria_snippet: '2.1.1: With a candidate whose file equals base minus
+      the declared lines, the gate passes. With a candidate that also adds a line,
+      it fails. Across two linked c...'
+    matched_artifact_ref: size_proof_mismatch
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: fa09c37cf7853ec1aa939ff32f4d51fc35b03668c58f948625090b19b1a6d403
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23645'
+    validation_criteria_snippet: '2.2.1: The close is refused when `validation_criteria`
+      changes between the first fingerprint comparison and the linker''s fetch. `_commit_close`
+      returns the sta...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_linked_row_gate_input_change_stales_close
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 7d88d82f8acc4e9037d86a53dc702b2e0bafce126c691a1b56e1edcdc7ac73df
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23645'
+    validation_criteria_snippet: '2.2.1: The close is refused when `validation_criteria`
+      changes between the first fingerprint comparison and the linker''s fetch. `_commit_close`
+      returns the sta...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_linked_row_proof_edit_stales_close
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: 9d1e42c4119129268f0f36da096c31638a6a9d395fbd3caf52c81a94064e4d33
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23645'
+    validation_criteria_snippet: '2.2.1: The close is refused when `validation_criteria`
+      changes between the first fingerprint comparison and the linker''s fetch. `_commit_close`
+      returns the sta...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_linked_row_recheck_keeps_benign_closes
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: fff374f664435edce6d9580c2e5e5c81779ca2a310b4dbb9c5c0125bc12d33b6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23645'
+    validation_criteria_snippet: '2.2.1: The close is refused when `validation_criteria`
+      changes between the first fingerprint comparison and the linker''s fetch. `_commit_close`
+      returns the sta...'
+    matched_artifact_ref: tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_linked_row_targets_edit_stales_close
+  deferral_target: null
+  detail: ''
