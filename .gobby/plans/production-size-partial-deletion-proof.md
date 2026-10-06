@@ -153,6 +153,11 @@ them to developer seats.
      row, so the transition adopts only a row whose gate inputs match the
      evaluation. A later change fails the compare-and-set with
      `TaskStaleStateError`.
+   - Finalization's scope recheck also runs before that fetch, and scope
+     reads the row's declared Targets. 2.2 therefore adds the description's
+     normalized declared Targets paths to the fingerprint. An edit to a
+     Targets entry's symbol or scope-reason that keeps its path still
+     closes.
 9. **Base drift.** The base binding is exact by design. When another change
    moves the file after the plan is validated, the close fails closed. To
    recover:
@@ -172,11 +177,14 @@ them to developer seats.
       needed. The candidate and object store are immutable, and the
       fingerprint already binds the proof lines (item 8).
     - Fingerprinting the whole description would stale a close on any
-      unrelated description edit. Today finalization rechecks scope instead
-      of fingerprinting the description.
+      unrelated description edit. The fingerprint holds only the parts the
+      gates read: the proof lines (2.1) and the declared Targets paths (2.2).
     - A proof-only recheck on the linked row would leave the same window
       open for every other gate input, such as `validation_criteria`. 2.2
       reuses the full fingerprint comparison.
+    - Re-running scope evaluation on the linked row repeats its Git work.
+      The declared Targets are the only row-held scope input the
+      fingerprint lacks; `validation_criteria` is already in it.
 
 ## As-Is Facts
 `kind: framing`
@@ -831,9 +839,11 @@ before the close. The docs describe only this check.
 
 Targets:
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py::commit_close`
+- `src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py::CloseEvaluationFingerprint`
 - `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::*` — scope-reason: add the linked-row fingerprint recheck tests beside the existing commit-close tests
 
 Consumers unchanged:
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_preview.py` — no-edit-reason: it only stores the captured `CloseEvaluationFingerprint` on `CloseEvaluation`.
 - `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py` — no-edit-reason: it runs `_evaluate_close` then `commit_close` on a real harness with no concurrent row edit, so the linked row's fingerprint equals the evaluated one and the close proceeds as today.
 
 **Research context:**
@@ -872,13 +882,55 @@ Consumers unchanged:
 - Linking changes no fingerprint field. `link_commit` adds to
   `task.commits`, which the fingerprint does not hold. Child state and
   attribution are inputs to `capture`, not read from the row.
-- `_lifecycle_close_finalization.py` has 539 lines. The 850 heuristic does
-  not apply.
+- Adv2's F-LINKED-SCOPE-FRESHNESS (the Orchestrator placed it in 2.2 at
+  20:02 CT under the same ruling): the window also adopts a declared-Targets
+  edit. Adv2's excerpts are each complete with no warnings:
+  - `src/gobby/mcp_proxy/tools/tasks/_task_scope.py:148-193`
+    (`65fbd945274ac4d7aa2d2c85761831e15ae9c637ea26ad720b3ce5a69dfafb6d`):
+    `_collect_task_scopes` adds `collect_declared_task_targets(task.description)`
+    (`:161`), which normalizes each `collect_description_target_inventory`
+    entry to its path (`:185`).
+  - `src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py:70-103`
+    (`05c7036aba6ae4323521784d40e1973afde2e9ea4d146ad616f42f297cbee3dd`): the
+    fingerprint fields (`:74-82`) hold no description-derived value.
+  - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py:305-430`
+    (`c73ac41926dd9d5644258ec813051ac9318394e394b04d9ddf891f0c520d7522`): the
+    scope recheck (`:349`) runs before the linked-row adoption (`:377-383`)
+    and the compare-and-set (`:423`).
+  - Adv2's read-only probe built two rows whose descriptions differ only in
+    Targets (`src/a.py`, then `src/b.py`). `collect_declared_task_targets`
+    returned `['src/a.py']` and `['src/b.py']`, while
+    `CloseEvaluationFingerprint.capture` returned equal fingerprints. Neither
+    row has a proof, so 2.1's `size_proof_lines` is `()` in both.
+- `_close_evaluation_support.py` already imports `collect_commit_paths_async`
+  from `_task_scope` (`:22`), and `_task_scope` imports nothing from it, so
+  the new import adds no cycle. Every fingerprint is built through `capture`
+  (`_lifecycle_close.py:282,449`, `_lifecycle_close_finalization.py:280`,
+  and the tests), so a new field needs no other constructor change.
+- Affected-file annotations, the other declared-scope source (`:152-159`),
+  live in their own table. The row compare-and-set never adopted them, and
+  Adv2 bounded this finding to the row; this deliverable leaves them alone.
+- `_lifecycle_close_finalization.py` has 539 lines and
+  `_close_evaluation_support.py` has 763. The 850 heuristic applies to
+  neither.
 - Rejected:
   - a proof-only recheck, which leaves the window open for every other gate
     input;
   - a second fetch or a row lock. The fingerprint comparison on the row the
-    compare-and-set uses is enough.
+    compare-and-set uses is enough;
+  - a new lock framework or a linked-row scope re-evaluation (Decision
+    Record item 10).
+
+Implementation in `CloseEvaluationFingerprint`
+(`src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py`):
+- Add the field `declared_targets: tuple[str, ...]` after 2.1's
+  `size_proof_lines`. `capture` sets it to
+  `tuple(sorted(collect_declared_task_targets(task.description)))`, imported
+  beside `collect_commit_paths_async` at `:22`.
+- The values are the normalized paths scope already uses. A Targets entry's
+  symbol, bullet or scope-reason can change without changing them.
+- `fingerprint_differences` names `declared_targets` with no change of its
+  own, because it iterates the dataclass fields.
 
 Implementation in `commit_close`
 (`src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py`):
@@ -887,13 +939,18 @@ Implementation in `commit_close`
   None`. It records `evaluation.extra["changed_gate_inputs"]` and returns
   today's `stale_close_response(...)` with the same message ("Task gate
   inputs changed after evaluation (...); retry close_task."), or `None`.
-- Call it at `:285` with `fresh_fingerprint`. Behavior there is unchanged.
+- Call it at `:285` with `fresh_fingerprint`. The new field means a
+  declared-Targets path edit made before the first fetch (`:248`) now stales
+  there and names `declared_targets`. Before this change, only the scope
+  recheck at `:349` caught it, and only when the scope result changed.
+  Every other behavior at `:285` is unchanged.
 - Call it again right after the `link_error` check, before
   `determine_close_outcome`, with `CloseEvaluationFingerprint.capture(linked,
   children_state=fresh_children_state, attribution=fresh_attribution)`.
   This reuses the child and attribution state captured for the first
   comparison, and a non-`None` result is returned at once.
-- The module grows by about 10 lines.
+- The finalization module grows by about 10 lines and the support module
+  by about 3.
 
 **Verification:**
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/tasks/test_close_task_flow.py tests/mcp_proxy/tools/tasks/test_close_candidate.py tests/mcp_proxy/tools/tasks/test_lifecycle_close_orchestration.py -q`,
@@ -901,10 +958,11 @@ then `uv run ruff check src/gobby/mcp_proxy/tools/tasks`,
 `uv run ruff format --check src/gobby/mcp_proxy/tools/tasks` and
 `uv run mypy src/gobby/mcp_proxy/tools/tasks`.
 
-**Granularity:** three acceptance items, one production file, one outcome:
+**Granularity:** four acceptance items, two production files, one outcome:
 the close transition adopts only a row whose gate inputs match the
 evaluation. The guard is independent of 2.1's Git check. It depends on 2.1
-only so that its test can exercise the `size_proof_lines` field.
+because its test exercises the `size_proof_lines` field and its new field
+follows that one in `CloseEvaluationFingerprint`.
 
 **Acceptance:**
 
@@ -921,8 +979,17 @@ only so that its test can exercise the `size_proof_lines` field.
 - 2.2.3 - With no concurrent edit, both of these close: a close that links
   a new candidate, and one whose candidate is already linked. A benign
   bookkeeping change on the linked row (`updated_at`, `path_cache`) also
-  still closes. test:
+  still closes, as does a linked-row description edit that changes only
+  prose and a Targets entry's scope-reason while keeping its path. test:
   `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_linked_row_recheck_keeps_benign_closes`.
+- 2.2.4 - With no proof in either description, the close is refused when,
+  between the first fingerprint comparison and the linker's fetch, only the
+  declared Targets change from `src/a.py` to `src/b.py`. `_commit_close`
+  returns the stale-close response, `changed_gate_inputs` is exactly
+  `["declared_targets"]`, and `close_task` is not called. The same edit made
+  before the first fetch stales at the first comparison with the same
+  `changed_gate_inputs`. test:
+  `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_linked_row_targets_edit_stales_close`.
 
 ## Rollout
 `kind: framing`
