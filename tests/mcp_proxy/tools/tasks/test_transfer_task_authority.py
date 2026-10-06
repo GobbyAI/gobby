@@ -99,6 +99,8 @@ def test_transfer_refused_while_creator_still_live(
     temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
 ) -> None:
     manager, task, fixtures = authority_task
+    # No delegator, so only the live creator, which is not the claimant, holds authority.
+    _set_authority(temp_db, task, fixtures.filer.id, None)
     with pytest.raises(ValueError, match="still live"):
         _transfer(manager, task, fixtures.successor)
 
