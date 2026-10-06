@@ -17,7 +17,6 @@ import httpx
 
 from gobby.cli.utils import get_gobby_home
 from gobby.hooks import grok_pending_context
-from gobby.hooks.background_tasks import create_background_task
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     DirectoryPruneResult,
@@ -34,6 +33,7 @@ from gobby.hooks.envelope_dedupe import (
     release_envelope_processing_claim,
     remove_envelope_marker,
 )
+from gobby.hooks.inbox_lifecycle import replay_stopping, start_replay
 from gobby.hooks.receipt_effects import apply_acknowledged_receipt
 from gobby.hooks.runtime_compat import (
     SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
@@ -514,6 +514,8 @@ async def _drain_hook_inbox_once_locked(
 
     processed_dir = get_processed_envelope_dir(pending_dir)
     for path in pending_files:
+        if replay_stopping(app):
+            break
         envelope_id = envelope_id_from_inbox_path(path)
         # Reading, parsing and any quarantine move are disk work; keep them off
         # the event loop.
@@ -786,24 +788,26 @@ async def drain_hook_inbox_barrier(
             try:
                 while True:
                     await lock.acquire()
-                    replay = create_background_task(
+                    replay = start_replay(
+                        app,
                         _replay_inbox_holding_lock(
                             app,
                             lock,
                             pending_dir,
                             restart_horizon_ms=restart_horizon_ms,
                             on_hook_settled=hook_settled,
-                        )
+                        ),
                     )
                     # wait() leaves the replay running when this barrier is cancelled.
                     await asyncio.wait((replay,))
                     replay.result()
-                    pending_files = _iter_inbox_files(pending_dir) if pending_dir.exists() else []
-                    residue, _live_hooks, _receipts = _classify_inbox_files(
-                        pending_files, restart_horizon_ms
+                    pending_files = await asyncio.to_thread(_iter_inbox_files, pending_dir)
+                    residue, _live_hooks, _receipts = await asyncio.to_thread(
+                        _classify_inbox_files, pending_files, restart_horizon_ms
                     )
                     if not residue:
-                        return _barrier_result(
+                        return await asyncio.to_thread(
+                            _barrier_result,
                             replayed,
                             timed_out=False,
                             pending_files=pending_files,
@@ -821,8 +825,9 @@ async def drain_hook_inbox_barrier(
     # A replay still running keeps its envelope until it finishes; a separate
     # drain's lock owner remains untouched. Report pending identities so
     # startup can fence runs until a later barrier sees them settle.
-    pending_files = _iter_inbox_files(pending_dir) if pending_dir.exists() else []
-    return _barrier_result(
+    pending_files = await asyncio.to_thread(_iter_inbox_files, pending_dir)
+    return await asyncio.to_thread(
+        _barrier_result,
         replayed,
         timed_out=True,
         pending_files=pending_files,

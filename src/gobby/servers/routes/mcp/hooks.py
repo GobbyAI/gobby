@@ -20,6 +20,7 @@ from gobby.adapters.agy_contract import (
 from gobby.config.hooks import HookTimeoutConfig
 from gobby.hooks.adapter_execution import HOOK_ADAPTER_MAX_WORKERS as _HOOK_ADAPTER_MAX_WORKERS
 from gobby.hooks.adapter_execution import (
+    AdapterHookCancelled,
     AdapterHookTimeout,
     register_adapter_timeout_finalization,
     start_envelope_lease_renewal,
@@ -736,6 +737,16 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     )
                 )
 
+        except AdapterHookCancelled as exc:
+            if exc.executor_future is not None and envelope_id and owner_token:
+                lease_outlives_request = True
+                await register_adapter_timeout_finalization(
+                    exc.executor_future,
+                    envelope_id=envelope_id,
+                    owner_token=owner_token,
+                    hook_type=hook_type,
+                )
+            raise
         except HTTPException:
             # Re-raise 400 errors (bad request) - these are client errors
             raise
@@ -759,9 +770,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             # Fallback: return basic success to prevent CLI hook failure
             return {"continue": True, "decision": "approve"}
         finally:
-            # The lease dies with this execution, including a client
-            # disconnect or a cancelled replay. Releasing is a CAS on the live
-            # lease this request owns, so a finalized marker is untouched.
+            # A live adapter keeps the lease until its worker finalizes; other
+            # cancelled requests release only their own unfinalized claim.
             if not lease_outlives_request:
                 if lease_renewal is not None:
                     lease_renewal.cancel()
