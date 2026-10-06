@@ -23,6 +23,123 @@ SESSION = "abababab-0000-4000-8000-000000000001"
 
 
 @pytest.mark.parametrize(
+    "command,blocked",
+    [
+        pytest.param(
+            "uv run python - <<'MM23659_CLOSE_REPORT'\n"
+            "from pathlib import Path\n"
+            "Path('/tmp/provider-report.json').write_text("
+            + repr("codex exec --sandbox danger-full-access " + "x" * 131_072)
+            + ")\nMM23659_CLOSE_REPORT\n",
+            False,
+            id="large-report-data",
+        ),
+        pytest.param(
+            "uv run python -c 'from pathlib import Path; "
+            'Path("/tmp/provider-report.txt").write_text("codex exec ' + "x" * 131_072 + '")'
+            "'",
+            False,
+            id="large-inline-report-data",
+        ),
+        ("uv run python report.py -c 'import subprocess; subprocess.run([\"codex\"])'", False),
+        *[
+            pytest.param(
+                f"uv run python {option} <<'PY'\n"
+                "import subprocess\nsubprocess.run(['codex'])\nPY\n",
+                False,
+                id=f"query-{option}",
+            )
+            for option in ("-V", "-h", "--version", "--help", "-IV")
+        ],
+        pytest.param(
+            "uv run python -Ic 'import subprocess; subprocess.run([\"codex\"])'",
+            True,
+            id="clustered-inline-code",
+        ),
+        ("uv run python -c 'from subprocess import run as launch; launch([\"claude\"])'", True),
+        ("uv run python -c 'import subprocess; subprocess.run(args=[\"codex\"])'", True),
+        (
+            'uv run python -c \'import subprocess; subprocess.run(["data"], executable="codex")\'',
+            True,
+        ),
+        ("uv run python -c 'import subprocess; subprocess.run(\"true; codex\", shell=True)'", True),
+        pytest.param(
+            "uv run python -c 'import subprocess; "
+            'subprocess.run("codex", shell=True, executable="/bin/bash")\'',
+            True,
+            id="shell-executable-override",
+        ),
+        pytest.param(
+            "uv run python -c 'import subprocess; "
+            'subprocess.run(["codex exec", "unused"], shell=True)\'',
+            True,
+            id="shell-list-command",
+        ),
+        pytest.param(
+            "uv run python -c 'import subprocess; "
+            'subprocess.run(["printf", "codex"], shell=True)\'',
+            False,
+            id="shell-list-data",
+        ),
+        ('uv run python -c \'import subprocess; subprocess.run(["printf", "codex exec"])\'', False),
+        ('uv run python -c \'import subprocess; subprocess.run(["codex", "--help"])\'', False),
+        (
+            'uv run python -c \'import asyncio; asyncio.create_subprocess_exec("codex", "--help")\'',
+            False,
+        ),
+        (
+            "uv run python <<'PY'\n"
+            "from pathlib import Path\n"
+            "Path('/tmp/provider-report.json').write_text("
+            '\'{"command": "codex exec --sandbox danger-full-access"}\')\n'
+            "PY\n",
+            False,
+        ),
+        (
+            "uv run python -c 'from pathlib import Path; "
+            'Path("/tmp/provider-report.txt").write_text("claude -p hi")'
+            "'",
+            False,
+        ),
+        ("codex exec hi", True),
+        ("true && claude -p hi", True),
+        ("true; codex exec hi", True),
+        (
+            "uv run python <<'PY'\n"
+            "import subprocess\n"
+            "subprocess.run(['codex', 'exec', 'hi'])\n"
+            "PY\n",
+            True,
+        ),
+        ("uv run python -c 'import subprocess; subprocess.run([\"codex\"])'", True),
+    ],
+)
+@pytest.mark.asyncio
+async def test_interpreter_provider_launch_rule(
+    hub_db: HubDatabase, command: str, blocked: bool
+) -> None:
+    synced = sync_rule_file(hub_db, RULE, tag="gobby")
+    assert synced["success"]
+    row = RuleDefinitionManager(hub_db).get_by_name("block-direct-provider-launch")
+    assert row is not None and row.enabled
+    template = yaml.safe_load(RULE.read_text())["rules"]["block-direct-provider-launch"]
+    assert row.description == template["description"]
+    for field in ("event", "when", "effects"):
+        assert row.definition_json[field] == template[field]
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=SESSION,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={"tool_name": "exec_command", "tool_input": {"cmd": command}},
+    )
+    result = await RuleEngine(hub_db).evaluate(event, session_id=SESSION, variables={})
+    assert (result.decision == "block") is blocked
+    if blocked:
+        assert result.reason is not None and "block-direct-provider-launch" in result.reason
+
+
+@pytest.mark.parametrize(
     ("command", "blocked"),
     [("codex exec smoke", True), ("codex --help", False), ("git status --short", False)],
 )
@@ -123,7 +240,6 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "cat <<EOF\ncodex exec\nEOF\n",
         "cat <<EOF\n<(codex)\nEOF\n",
         "bash script.sh <<'EOF'\ncodex exec\nEOF\n",
-        "uv run python -c 'import subprocess; subprocess.run([\"codex\"])'",
         "cat <<'EOF' |\n tee docs\n$(codex exec)\nEOF\n",
         "echo hello | sh",
         "bash -c 'printf hello' <<'EOF'\ncodex\nEOF\n",
@@ -227,6 +343,7 @@ def test_help_does_not_exempt_launch_operands(command: str) -> None:
         "cat <<'EOF' | sh\ncodex exec\nEOF\n",
         "cat <<'EOF' |\n sh\ncodex\nEOF\n",
         "sh <<< 'codex exec'",
+        "uv run python -c 'import subprocess; subprocess.run([\"codex\"])'",
         "printf '%s' 'codex exec' | sh",
         "codex --help; codex exec hi",
         "codex login status --unknown",

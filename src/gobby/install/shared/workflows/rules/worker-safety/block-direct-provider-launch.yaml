@@ -2,7 +2,7 @@ tags: [default, worker-safety, enforcement, gobby]
 
 rules:
   block-direct-provider-launch:
-    description: Block direct provider launches in all observed shell calls.
+    description: Block executed provider commands, including Python process calls; ignore report data.
     event: before_tool
     enabled: true
     priority: 10

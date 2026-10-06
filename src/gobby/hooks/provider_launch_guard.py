@@ -6,7 +6,9 @@ Keep quote provenance until executable contexts have been identified.
 
 from __future__ import annotations
 
+import ast
 import re
+import shlex
 from collections.abc import Collection
 from typing import Any
 
@@ -21,6 +23,12 @@ from gobby.hooks._normalization_shell import (
     is_shell_output_redirection_token,
     is_shell_tool,
     scan_shell_command,
+)
+from gobby.hooks._python_pipeline_classifier import (
+    _PYTHON_PROCESS_CALLS,
+    _call_name,
+    _imported_bindings,
+    _inline_interpreter_parts,
 )
 
 _PROVIDERS = frozenset({"codex", "claude", "droid", "grok", "qwen", "agy"})
@@ -539,14 +547,101 @@ def _piped_to_shell(tokens: list[ShellToken], end: int) -> bool:
     return False
 
 
+def _python_program(words: list[str]) -> tuple[str | None, bool]:
+    """The Python code operand or whether stdin is code, stopping at a file operand."""
+    parts = _inline_interpreter_parts(words)
+    if not parts or parts[0].rsplit("/", 1)[-1] not in {"python", "python3"}:
+        return None, False
+    args = parts[1:]
+    while args:
+        option = args[0]
+        if option == "-":
+            return None, True
+        if option == "--":
+            return None, len(args) == 1 or args[1] == "-"
+        if option.startswith("--") or not option.startswith("-"):
+            return None, False
+        consumed = 1
+        for index, flag in enumerate(option[1:], 2):
+            if flag in "hV?m":
+                return None, False
+            if flag == "c":
+                code = option[index:] or (args[1] if len(args) > 1 else None)
+                return code, False
+            if flag in "WX":
+                consumed = 1 if option[index:] else 2
+                break
+            if flag not in "bBdEiIOPqRsSuvx":
+                return None, False
+        args = args[consumed:]
+    return None, True
+
+
+def _python_launch(script: str, depth: int, dialect: ShellDialect) -> bool:
+    """Inspect process-call operands, never arbitrary Python string literals."""
+    try:
+        tree = ast.parse(script)
+    except SyntaxError:
+        return False
+    bindings = _imported_bindings(tree) or {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _call_name(node, bindings)
+        if name not in _PYTHON_PROCESS_CALLS:
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+        operand = node.args[0] if node.args else keywords.get("args", keywords.get("cmd"))
+        shell_operand = keywords.get("shell")
+        shell = name in {"os.system", "asyncio.create_subprocess_shell"} or (
+            isinstance(shell_operand, ast.Constant) and shell_operand.value is True
+        )
+        if (
+            name != "asyncio.create_subprocess_exec"
+            and isinstance(operand, ast.Constant)
+            and isinstance(operand.value, str)
+        ):
+            command = operand.value if shell else shlex.join([operand.value])
+        else:
+            operands = (
+                node.args
+                if name == "asyncio.create_subprocess_exec"
+                else operand.elts
+                if isinstance(operand, ast.List | ast.Tuple)
+                else []
+            )
+            argv: list[str] = []
+            for arg in operands:
+                if not isinstance(arg, ast.Constant) or not isinstance(arg.value, str):
+                    break
+                argv.append(arg.value)
+            if not argv or len(argv) != len(operands):
+                continue
+            command = argv[0] if shell else shlex.join(argv)
+        executable = keywords.get("executable")
+        executable_name = (
+            executable.value
+            if isinstance(executable, ast.Constant) and isinstance(executable.value, str)
+            else None
+        )
+        if shell:
+            command = shlex.join([executable_name or "/bin/sh", "-c", command])
+        elif executable_name is not None:
+            command = shlex.join([executable_name, *shlex.split(command)[1:]])
+        if _blocked(command, depth + 1, dialect):
+            return True
+    return False
+
+
 def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
-    if depth > _MAX_DEPTH or len(command) > _MAX_LENGTH:
+    if depth > _MAX_DEPTH:
         return True
     try:
         prepared, expansions = _prepare(command, depth)
         if any(_blocked(body, depth + 1, dialect) for body in expansions):
             return True
         scan = scan_shell_command(prepared, dialect=dialect)
+        inspected_length = 0
         start = 0
         for end in range(len(scan.tokens) + 1):
             if end < len(scan.tokens) and not _separator(scan.tokens[end]):
@@ -562,6 +657,15 @@ def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
             inner: ShellDialect = "zsh" if name == "zsh" else "bash"
             if name in _PROVIDERS and not _administration(words[1:], name):
                 return True
+            # Budget executable words; code operands and heredoc payloads belong
+            # to their consumers, whose process operands are checked recursively.
+            python_script, python_stdin = _python_program(words)
+            inspected_length += sum(len(word) for word in words) - len(python_script or "")
+            if python_script is not None and _python_launch(python_script, depth + 1, dialect):
+                return True
+            if python_stdin:
+                if any(_python_launch(body.text, depth + 1, dialect) for body in bodies):
+                    return True
             piped = _piped_to_shell(scan.tokens, end)
             if piped and name in {"echo", "printf"}:
                 if any(_blocked(value, depth + 1, dialect) for value in words[1:]):
@@ -590,7 +694,7 @@ def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
                     _, substitutions = _prepare(body.text, depth, data=True)
                     if any(_blocked(value, depth + 1, dialect) for value in substitutions):
                         return True
-        return False
+        return inspected_length > _MAX_LENGTH
     except ValueError:
         # A malformed or over-deep command cannot earn an administrative exemption.
         return True
