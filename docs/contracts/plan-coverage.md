@@ -694,7 +694,9 @@ Optional flags: `--root-task`, `--project-id`, `--matrix-file`, `--evidence`,
 Task-tree modes:
 
 - `db` reads the live task database. It requires `--root-task <ref>` and
-  `--project-id <uuid>` and evaluates tasks in that root's scoped tree.
+  `--project-id <uuid>` and evaluates tasks in that root's scoped tree plus
+  every project task carrying a `covers:<plan-id>:...` label, so leaves
+  re-parented under another epic still count.
 - `matrix-file` reads `--matrix-file <path>`. The file is a YAML or JSON
   coverage matrix with a `header` (including the current `plan_hash`) and
   `rows`; do not pass DB-only root or project scope flags in this mode.
