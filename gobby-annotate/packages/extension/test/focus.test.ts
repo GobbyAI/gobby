@@ -110,6 +110,21 @@ it("keeps native input usable while shielding page gesture and bubbling input ha
   expect(pageGesture).toHaveBeenCalledOnce();
 });
 
+it("releases toolbar dragging through the window listener while an editor is open", () => {
+  const { host } = pageWithFocusTrap();
+  const handle = document.createElement("button");
+  host.shadowRoot!.append(handle);
+  vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  cleanups.push(isolateEditor(host));
+  const done = vi.fn();
+  window.addEventListener("pointerup", done, { once: true });
+  cleanups.push(() => window.removeEventListener("pointerup", done));
+  handle.dispatchEvent(
+    new Event("pointerup", { bubbles: true, composed: true }),
+  );
+  expect(done).toHaveBeenCalledOnce();
+});
+
 it("preserves existing page restrictions and unrelated changes when editing ends", () => {
   const { host } = pageWithFocusTrap();
   vi.spyOn(window, "scrollTo").mockImplementation(() => {});

@@ -100,6 +100,7 @@ export function isolateEditor(host: HTMLElement): () => void {
       passive: false,
     });
   const shadow = host.shadowRoot;
+  // Let pointerup reach window so toolbar drag cleanup can run.
   const inputs = [
     "keydown",
     "keyup",
@@ -108,7 +109,6 @@ export function isolateEditor(host: HTMLElement): () => void {
     "beforeinput",
     "click",
     "pointerdown",
-    "pointerup",
   ];
   const stopInput = (event: Event) => event.stopPropagation();
   for (const type of inputs) shadow?.addEventListener(type, stopInput);
