@@ -133,6 +133,8 @@ async def _overlaps(
             if receipt.kind == INDEPENDENT_REVIEW_APPROVAL
         }
         for other in sorted(candidates):
+            if await _resolve(main, other) is None:
+                continue
             if (
                 await _ancestor(main, other, tip)
                 or await _ancestor(main, other, sha)

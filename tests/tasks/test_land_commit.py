@@ -249,6 +249,23 @@ async def test_stacked_and_landed_candidates_never_overlap(case: LandingCase) ->
     assert case.git("rev-parse", "trunk") == sha
 
 
+async def test_unavailable_foreign_candidate_does_not_block_landing(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "candidate"})
+    task = case.task()
+    case.link(task, sha)
+    case.approve(task, sha)
+    foreign_task = case.task("Reviewed in another object store")
+    unavailable = "1" * 40
+    case.link(foreign_task, unavailable)
+    case.approve(foreign_task, unavailable)
+    result = await case.land(task, sha)
+    assert result["landed"] is True
+    assert result["mode"] == "ff"
+    assert case.git("rev-parse", "trunk") == sha
+    [foreign_receipt] = list_close_receipts(case.db, foreign_task.id)
+    assert foreign_receipt.commit_sha == unavailable
+
+
 async def test_refuses_unlinked_candidate(case: LandingCase) -> None:
     sha = case.candidate("lane", {"docs/change.md": "linked later"})
     task = case.task()
