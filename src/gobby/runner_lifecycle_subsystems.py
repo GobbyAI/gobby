@@ -764,6 +764,17 @@ async def init_subsystems(
     await hub_only_phase(
         "system_automation_start", lambda: _start_system_automation_loop(runner, tracker)
     )
+    # Both HTTP and WebSocket must serve while the CPU workers import.
+    # Recheck shutdown below: it can begin while this barrier is pending.
+    if services is None or not bool(getattr(services, "shutdown_in_progress", False)):
+        from gobby.tasks.transcript_evidence_pool import prewarm_transcript_evidence_pool
+
+        try:
+            await timed_startup_phase("transcript_pool_prewarm", prewarm_transcript_evidence_pool())
+        except Exception as exc:
+            logger.exception("Transcript evidence pool prewarm failed during startup")
+            if tracker:
+                tracker.error("Transcript evidence pool", str(exc))
     if services is not None and bool(getattr(services, "shutdown_in_progress", False)):
         logger.info("Subsystem initialization stopped because daemon shutdown is in progress")
         return
