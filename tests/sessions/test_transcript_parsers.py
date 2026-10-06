@@ -2926,7 +2926,7 @@ def test_codex_mixed_window_and_split_tail_precedence() -> None:
     assert first_ledger.count(tail_command) == 1
     assert f"- Bash {tail_command} (no result recorded)" in first_ledger
     assert "- Bash pwd (no result recorded)" in first_ledger
-    assert "- exec (no result recorded)" in first_ledger
+    assert "- functions.exec (no result recorded)" in first_ledger
     assert first_ledger.count(f"- Bash {covered_command}") == 1
     assert first_ledger.count(f"- Bash {wrapper_only_command}") == 1
     assert first_ledger.count(f"- Bash {duplicate_command}") == 2
