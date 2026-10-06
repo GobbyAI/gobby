@@ -1094,7 +1094,7 @@ fn dirty_indexed_files_and_documentation_are_citable() -> anyhow::Result<()> {
         symbol_count: 0,
         content_hash: gobby_core::indexing::content_hash(docs.as_bytes()),
     });
-    let library = EvidenceLibrary::new(root, binding.clone(), Arc::new(facts))?;
+    let library = EvidenceLibrary::new(root, binding.clone(), Arc::new(facts))?.with_working_tree();
     for (path, expected) in [("src/lib.rs", dirty), ("docs/guides/cli-commands.md", docs)] {
         let response = library.query(request(
             &binding,
@@ -1162,6 +1162,146 @@ fn range_read(start_line: usize, end_line: usize) -> EvidenceOperation {
             end_line,
         },
     }
+}
+
+#[test]
+fn bound_range_reads_commit_blob_after_head_moves() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let root = temporary.path();
+    let original = EvidenceLibrary::new(
+        root,
+        binding.clone(),
+        Arc::new(FakeFacts::for_source(&binding)),
+    )?
+    .query(request(&binding, range_read(1, 9)))?;
+    let changed = "pub fn replacement() {}\n";
+    std::fs::write(root.join("src/lib.rs"), changed)?;
+    git(root, &["add", "src/lib.rs"])?;
+    let head_b = commit(root, "replace source")?;
+    assert_ne!(head_b, binding.commit_oid);
+    let mut current_facts = FakeFacts::for_source(&binding);
+    current_facts.files[0].content_hash = gobby_core::indexing::content_hash(changed.as_bytes());
+    let library = EvidenceLibrary::new(root, binding.clone(), Arc::new(current_facts))?;
+    let after_move = library.query(request(&binding, range_read(1, 9)))?;
+    assert_eq!(after_move, original);
+    let EvidenceItem::Source(source) = &after_move.items[0] else {
+        anyhow::bail!("expected source");
+    };
+    assert_eq!(source.excerpt, SOURCE);
+    assert_eq!(
+        source.content_hash,
+        gobby_core::indexing::content_hash(SOURCE.as_bytes())
+    );
+    assert_ne!(
+        source.content_hash,
+        gobby_core::indexing::content_hash(changed.as_bytes())
+    );
+    // Historical range reads remain possible when the refreshed index and checkout lack the path.
+    std::fs::remove_file(root.join("src/lib.rs"))?;
+    let mut empty = FakeFacts::for_source(&binding);
+    empty.files.clear();
+    let library = EvidenceLibrary::new(root, binding.clone(), Arc::new(empty))?;
+    assert_eq!(
+        library.query(request(&binding, range_read(1, 9)))?,
+        original
+    );
+    Ok(())
+}
+
+#[test]
+fn bound_reads_refuse_missing_commit_path_and_mismatched_tree() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let root = temporary.path();
+    std::fs::write(
+        root.join("untracked.rs"),
+        "working-tree fallback must not escape\n",
+    )?;
+    let mut absent_commit = binding.clone();
+    absent_commit.commit_oid = "f".repeat(40);
+    let mut wrong_tree = binding.clone();
+    wrong_tree.tree_oid = "f".repeat(40);
+    for (selected, path) in [
+        (absent_commit, "src/lib.rs"),
+        (binding.clone(), "untracked.rs"),
+        (wrong_tree, "src/lib.rs"),
+        (binding.clone(), "source-link"),
+        (binding.clone(), "vendor/dependency"),
+    ] {
+        let library = EvidenceLibrary::new(
+            root,
+            selected.clone(),
+            Arc::new(FakeFacts::for_source(&selected)),
+        )?;
+        let operation = EvidenceOperation::Read {
+            read: ReadSelector::Range {
+                path: path.into(),
+                start_line: 1,
+                end_line: 1,
+            },
+        };
+        let error = library
+            .query(request(&selected, operation))
+            .expect_err("no working-tree fallback");
+        assert_eq!(error.code(), "repository_binding_mismatch");
+        let detail = error.to_string();
+        assert!(detail.contains(&selected.commit_oid), "{detail}");
+        assert!(detail.contains(&selected.tree_oid), "{detail}");
+        assert!(detail.contains(path), "{detail}");
+        assert!(
+            !detail.contains("working-tree fallback must not escape"),
+            "{detail}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn bound_index_offsets_refuse_a_different_blob() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let mut facts = FakeFacts::for_source(&binding);
+    let changed = SOURCE.replace("use std::fmt", "use std::io;");
+    let changed_hash = gobby_core::indexing::content_hash(changed.as_bytes());
+    facts.files[0].content_hash = changed_hash.clone();
+    for symbol in &mut facts.symbols {
+        symbol.file_content_hash = changed_hash.clone();
+    }
+    let library = EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts))?;
+    let operations = [
+        EvidenceOperation::Read {
+            read: ReadSelector::Symbol {
+                path: "src/lib.rs".into(),
+                qualified_name: "crate::alpha".into(),
+            },
+        },
+        EvidenceOperation::Search {
+            search: search_selector(SearchLane::Symbol, "alpha"),
+        },
+        EvidenceOperation::Search {
+            search: search_selector(SearchLane::Literal, "beta"),
+        },
+    ];
+    for operation in operations {
+        let error = library
+            .query(request(&binding, operation))
+            .expect_err("current offsets cannot label historical source");
+        assert_eq!(error.code(), "stale_range");
+        assert!(error.to_string().contains(&binding.commit_oid));
+    }
+    Ok(())
+}
+
+#[test]
+fn source_mode_changes_the_request_fingerprint() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let facts = Arc::new(FakeFacts::for_source(&binding));
+    let bound = EvidenceLibrary::new(temporary.path(), binding.clone(), facts.clone())?
+        .query(request(&binding, range_read(1, 9)))?;
+    let unbound = EvidenceLibrary::new(temporary.path(), binding.clone(), facts)?
+        .with_working_tree()
+        .query(request(&binding, range_read(1, 9)))?;
+    assert_eq!(bound.items, unbound.items);
+    assert_ne!(bound.request_fingerprint, unbound.request_fingerprint);
+    Ok(())
 }
 
 #[test]

@@ -626,6 +626,7 @@ fn owner_source(library: &EvidenceLibrary, edge: &GraphEdge) -> Result<super::So
         return source_for_symbol(library, &symbol);
     }
     let bytes = library.read_file(&edge.owner_path)?;
+    library.verify_source_hash(&edge.owner_path, &edge.owner_hash, &bytes)?;
     let text = std::str::from_utf8(&bytes).map_err(|_| EvidenceError::FactMismatch {
         path: edge.owner_path.clone(),
         expected: "UTF-8 owner blob".to_string(),
