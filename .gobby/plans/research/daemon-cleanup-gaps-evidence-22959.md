@@ -90,10 +90,17 @@ run, which is the only retry.
 
 - `src/gobby/projects/purge.py:256-263`
   `excerpt_hash=3b9e9ceca490b52fee13d3efe547e03f79477a8fb72ef4c33b2467fe717ebec4`
-- `src/gobby/projects/purge.py:352-357`
-  `excerpt_hash=d6e18fb8c9a4e7d75f16eefab740ae8afdf53331a36d388074c94273d2cbe621`
-  `_delete_hub_rows` names only `tasks`, `plans`, `sessions` and `projects`.
-  Everything else relies on FK actions.
+- `_delete_hub_rows` works in two stages. First it tombstones and deletes
+  `memories` and project `tools` in bounded batches, each in its own
+  committed transaction:
+  `src/gobby/projects/purge.py:298-332`
+  `excerpt_hash=129e77971c29a472d6369be037fabf9eae0a91e7a1b6a0eeb802f668f015ffd6`.
+  Then one final transaction locks the project row, re-checks terminals,
+  detaches foreign references, and deletes `terminals`, `tasks`, `plans`,
+  `sessions` and `projects` directly. Every other project-owned table goes
+  through FK actions on that final delete:
+  `src/gobby/projects/purge.py:352-357`
+  `excerpt_hash=d6e18fb8c9a4e7d75f16eefab740ae8afdf53331a36d388074c94273d2cbe621`.
 
 FK actions on every `project_id` column, read from `pg_constraint`:
 
@@ -148,7 +155,7 @@ were removed by today's purge or by an older delete path cannot be proven.
    parts:
    - **Authoritative check, atomic with the cascade.** The final purge
      transaction already locks the project row `FOR UPDATE` and re-checks
-     terminals before deleting anything:
+     terminals before any of its own deletes:
      `src/gobby/projects/purge.py:334-343`
      `excerpt_hash=637f91d9c891c36caead1ea3b80c9edb5279dc5f53ecdcfffedd90ae39b0d558`.
      Add a count of `worktrees` and `clones` rows right after that lock,
@@ -165,6 +172,17 @@ were removed by today's purge or by an older delete path cannot be proven.
      refusal (step 2), so a project with checkouts does not reach the
      destructive phases. This one is advisory; the in-transaction check is
      the correctness boundary.
+   - **What each check protects.** The early check leaves all project state
+     untouched for checkout rows that exist when it runs. The final check
+     protects only the registry cascade. A checkout registered between the
+     two makes the final check refuse after the earlier phases have already
+     run: cron jobs are drained and deleted, code is invalidated, vectors
+     and the graph are cleared, and memory and tool batches are committed.
+     The refusal rolls back only the final transaction. The project stays
+     soft-deleted and partially purged, its registry rows and the remaining
+     hub rows intact, and the next daily run retries it. The terminal
+     re-check that already sits in that transaction has the same
+     partial-purge outcome today.
    - Existing cron retries pick the project up again once an operator has
      deleted those checkouts through the existing worktree and clone delete
      tools. Those tools already remove Cargo targets (see the citation under
@@ -209,16 +227,18 @@ were removed by today's purge or by an older delete path cannot be proven.
      admission should refuse soft-deleted projects.
 
    Isolated tests in `tests/projects/`, on the isolated test hub:
-   - a purge of a project with one active `worktrees` row, and separately
-     with one `clones` row, returns `failed` and leaves the project row, its
-     cron jobs, vectors and hub rows untouched. Once the row is gone, the
-     same purge returns `purged`;
+   - early check: a purge of a project that already has one active
+     `worktrees` row, and separately one `clones` row, returns `failed` and
+     leaves the project row, its cron jobs, vectors, memories, tools and hub
+     rows untouched. Once the row is gone, the same purge returns `purged`;
    - controlled interleaving: pause a worktree creator after its git
      worktree exists and before registration, let purge pass the early
      count, then resume registration. Either the final check fails the
-     purge with the row kept, or the insert fails and the creator removes
-     its directory. No registry row or directory is orphaned. Repeat for a
-     clone once the caller cleanup is traced;
+     purge, leaving the project soft-deleted with its registry row and
+     final-transaction rows intact (earlier phases may already have run),
+     or the insert fails and the creator removes its directory. No registry
+     row or directory is orphaned. Repeat for a clone once the caller
+     cleanup is traced;
    - failed compensation: with `delete_worktree` stubbed to return
      `success=False` after a failed insert, worktree creation reports the
      exact unreclaimed path and the cleanup error in its failure result and
