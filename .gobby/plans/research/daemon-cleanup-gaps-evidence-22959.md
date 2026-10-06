@@ -501,17 +501,31 @@ after the fix.
   indexes. Concurrent mode lets ordinary writes continue through most of the
   rebuild, but it still takes a `SHARE UPDATE EXCLUSIVE` lock, waits for
   transactions that could use the index, needs disk for a second copy of the
-  index, and leaves an invalid `_ccnew` index behind if it fails
-  (https://www.postgresql.org/docs/18/sql-reindex.html). Under #22956,
-  approve the exact index list and run it as an operator-controlled bounded
-  maintenance step:
+  index, and cannot run inside a transaction block. A failure leaves an
+  invalid index behind, in one of two states
+  (https://www.postgresql.org/docs/18/sql-reindex.html#SQL-REINDEX-CONCURRENTLY).
+  Under #22956, approve the exact index list and run it as an
+  operator-controlled bounded maintenance step:
   - check free disk against the index size, and check for blockers in
     `pg_stat_activity`;
   - set reviewed `lock_timeout` and `statement_timeout` values;
-  - rebuild one index at a time;
-  - after any cancellation or failure, check `pg_index.indisvalid` and drop
-    only the invalid `_ccnew` copy. The original index stays valid until the
-    swap succeeds.
+  - run each `REINDEX INDEX CONCURRENTLY` as its own statement outside any
+    transaction block, one index at a time;
+  - after any cancellation or failure, list the table's indexes with
+    `pg_index.indisvalid` and handle the invalid leftover by its suffix,
+    which may carry a numeric disambiguator (`_ccnew1`, `_ccold2`):
+    - `_ccnew[N]` failed before the swap. It is the transient replacement,
+      and the original index is still valid and in use. Confirm that, drop
+      only that exact `_ccnew[N]` index, and retry the reindex if still
+      approved.
+    - `_ccold[N]` failed after the swap. The rebuild itself succeeded and
+      only the old index could not be dropped. Confirm the index under the
+      original name is valid and still backs the same constraint (for the
+      `pkey` and `dedup_key` indexes, check `pg_constraint.conindid`), then
+      drop only that exact `_ccold[N]` index. Do not retry the reindex.
+  - The approval for each index states explicitly that it covers dropping
+    that index's exact leftover. Any other invalid index stops the run for
+    review.
 
   Concurrent mode alone does not prove that no maintenance window is needed.
 - `VACUUM FULL` of the heap belongs in the #22956 (Decide retention and
