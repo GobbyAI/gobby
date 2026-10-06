@@ -13,10 +13,125 @@ from mcp.types import CallToolResult, TextContent
 from pydantic import ValidationError
 
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
+from gobby.mcp_proxy.tools.spawn_agent import _factory
+from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.workflows.definitions import MCPStepConfig, PipelineStep
 from gobby.workflows.pipeline.handlers import execute_mcp_step
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["spawn_agent", "dispatch_batch"])
+@pytest.mark.parametrize("has_manager", [False, True])
+async def test_pipeline_spawn_refuses_unresolved_supplied_caller(
+    tool: str,
+    has_manager: bool,
+) -> None:
+    sessions = MagicMock(spec=SessionManager)
+    sessions.db = None
+    sessions.resolve_session_reference.side_effect = ValueError("unknown caller")
+    proxy = MagicMock()
+    proxy.get_tool_schema = AsyncMock()
+    proxy.call_tool = AsyncMock(return_value={"success": True})
+    step = PipelineStep(id="spawn", mcp=MCPStepConfig(server="gobby-agents", tool=tool))
+    with pytest.raises(RuntimeError, match="spawnable_agents") as refused:
+        await execute_mcp_step(
+            step,
+            {"session_id": "unknown-caller"},
+            lambda: proxy,
+            session_manager=sessions if has_manager else None,
+        )
+    assert "caller session cannot be resolved" in str(refused.value)
+    proxy.get_tool_schema.assert_not_awaited()
+    proxy.call_tool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed", [False, True], ids=["forbidden", "allowed"])
+async def test_pipeline_spawn_obeys_spawnable_agents(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    allowed: bool,
+) -> None:
+    """Use the real spawn closure even when the pipeline skips before_tool rules."""
+    project_id = str(sample_project["id"])
+    sessions = SessionManager(temp_db)
+    root = sessions.register("pipeline-root", None, "test", project_id=project_id)
+    child = sessions.register(
+        "pipeline-child",
+        None,
+        "test",
+        project_id=project_id,
+        parent_session_id=root.id,
+        agent_depth=1,
+    )
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=root.id,
+        provider="claude",
+        prompt="work",
+        agent_name="pipeline-caller",
+        child_session_id=child.id,
+    )
+    sessions.update_terminal_pickup_metadata(child.id, agent_run_id=run.id)
+    definitions = AgentDefinitionManager(temp_db)
+    for name, spawnable in [
+        ("pipeline-caller", ["pipeline-target"] if allowed else []),
+        ("pipeline-target", []),
+    ]:
+        definitions.create(
+            name,
+            {
+                "name": name,
+                "provider": "claude",
+                "prompts": {"agent": "Work."},
+                "workflows": {"rule_selectors": {"include": []}},
+                "spawnable_agents": spawnable,
+            },
+            project_id=project_id,
+        )
+    monkeypatch.setattr(
+        _factory,
+        "_resolve_spawn_project_context_with_provenance",
+        lambda **kwargs: ({"id": project_id}, "/test", True),
+    )
+    launch = AsyncMock(return_value={"success": True, "run_id": "mock-launch"})
+    monkeypatch.setattr(_factory, "spawn_agent_impl", launch)
+    registry = _factory.create_spawn_agent_registry(
+        MagicMock(),
+        session_manager=sessions,
+        db=temp_db,
+    )
+    proxy = MagicMock()
+    proxy.get_tool_schema = AsyncMock()
+
+    async def call_tool(server: str, tool: str, arguments: dict[str, Any], **kwargs: Any) -> Any:
+        assert server == "gobby-agents"
+        assert kwargs["enforce_workflow"] is False
+        return await registry.call(tool, arguments)
+
+    proxy.call_tool = AsyncMock(side_effect=call_tool)
+    step = PipelineStep(
+        id="spawn",
+        mcp=MCPStepConfig(
+            server="gobby-agents",
+            tool="spawn_agent",
+            arguments={"prompt": "work", "agent": "pipeline-target", "parent_session_id": root.id},
+        ),
+    )
+    context: dict[str, Any] = {"session_id": child.id, "project_id": project_id}
+    if allowed:
+        result = await execute_mcp_step(step, context, lambda: proxy, session_manager=sessions)
+        assert result["run_id"] == "mock-launch"
+        launch.assert_awaited_once()
+    else:
+        with pytest.raises(RuntimeError, match="spawnable_agents"):
+            await execute_mcp_step(step, context, lambda: proxy, session_manager=sessions)
+        launch.assert_not_awaited()
 
 
 # =============================================================================
