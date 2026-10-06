@@ -36,7 +36,8 @@ receipt for it and none of its attributed files is uncommitted. It stays claimed
 while it waits on landing or close, and a new claim becomes the active one that
 receives your edits. Reclaiming a handed-off task makes it active again only when
 no other active claim exists. Closing it judges only runs made while it was
-active. Cross-project claims are rejected. `TASK_CLAIM_CONFLICT` covers two
+active, but every edit you make to its files counts and stales its earlier
+green. Cross-project claims are rejected. `TASK_CLAIM_CONFLICT` covers two
 different claim failures:
 
 - `TaskAlreadyClaimedError` / foreign ownership (`claimed_by`): coordinate with

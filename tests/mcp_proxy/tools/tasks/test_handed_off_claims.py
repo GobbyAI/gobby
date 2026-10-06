@@ -263,6 +263,40 @@ async def test_edits_after_the_new_claim_attribute_only_to_it(
 
 
 @pytest.mark.asyncio
+async def test_releasing_the_newer_claim_makes_the_sole_survivor_the_edit_target(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    canonical_task_session: Session,
+    reviewer: Session,
+    tmp_path: Path,
+) -> None:
+    """No claim call marks this return, so close evidence keeps the owner's edits."""
+    manager = LocalTaskManager(temp_db)
+    registry = create_task_registry(manager)
+    variables = SessionVariableManager(temp_db)
+    landed = _task(manager, sample_project, "Landed")
+    nxt = _task(manager, sample_project, "Next")
+    await _claim(registry, canonical_task_session, landed)
+    _approve(temp_db, landed, reviewer)
+    await _claim(registry, canonical_task_session, nxt)
+
+    escalated = await _call(
+        registry,
+        canonical_task_session,
+        "escalate_task",
+        task_id=nxt.id,
+        reason="Blocked on an external decision",
+    )
+    checkout = _repo_with_committed_file(tmp_path / "repo")
+    variables.record_edited_files(canonical_task_session.id, ["a.py"], checkout_root=str(checkout))
+
+    assert escalated == {}
+    assert manager.get_task(nxt.id).claimed_by_session_id is None
+    assert _variables(temp_db, canonical_task_session)["active_task_id"] == landed.id
+    assert _variables(temp_db, canonical_task_session)["task_edited_files"] == {landed.id: ["a.py"]}
+
+
+@pytest.mark.asyncio
 async def test_a_handed_off_claim_returns_to_active_only_without_another_active_claim(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

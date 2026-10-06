@@ -386,8 +386,9 @@ or current diff. Validation commands come from the transcripts of the claiming a
 closing sessions and of every earlier session that claimed or worked the task,
 each within its own link window (a session that no longer exists or has no
 readable transcript is skipped). Runs a session made while it worked another
-claimed task, including the owner's after a hand-off, are excluded. A task-attributed edit after a clean run makes that run stale; a
-commit does not. Code, refactor, and test tasks require a clean test-category
+claimed task, including the owner's after a hand-off, are excluded. The owner's
+edits to the task's files are never excluded. A task-attributed edit after a
+clean run makes that run stale; a commit does not. Code, refactor, and test tasks require a clean test-category
 run, config tasks accept any clean validation command, and documentation,
 planning, research, manual, and no-edit tasks skip that checklist item. Parent
 tasks that own no work can close when all children are closed. Closing the last
