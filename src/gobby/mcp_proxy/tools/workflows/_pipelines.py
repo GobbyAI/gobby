@@ -37,8 +37,13 @@ from gobby.storage.definitions.pipelines import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.project_context import get_project_context
-from gobby.utils.session_context import get_current_session_id
+from gobby.utils.session_context import (
+    get_current_session_id,
+    get_request_principal,
+    get_session_context,
+)
 from gobby.workflows.definitions import normalize_workflow_definition_enabled
+from gobby.workflows.pipeline.gatekeeper import approval_decider
 from gobby.workflows.pipeline_models import PipelineDefinition
 
 if TYPE_CHECKING:
@@ -542,14 +547,33 @@ def register_pipeline_tools(
 
         return result
 
+    async def _decider() -> str | None:
+        """Name who decides an approval gate from the authenticated caller; None refuses."""
+        context = get_session_context()
+        session_id = None if context is None else context.session_id
+        try:
+            principal = await get_request_principal()
+        except LookupError:
+            # In-process dispatch seeds no principal; only a calling session can decide.
+            return None if session_id is None else approval_decider(None, session_id)
+        if principal is False:
+            return None
+        return approval_decider(principal, session_id)
+
+    forbidden_decision = {
+        "success": False,
+        "error_code": "forbidden",
+        "error": "Approval decisions need an authenticated caller",
+    }
+
     @registry.tool(
         name="approve_pipeline",
-        description="Approve a pipeline execution that is waiting for approval.",
+        description=(
+            "Approve a pipeline execution that is waiting for approval. The approver "
+            "recorded is the authenticated caller."
+        ),
     )
-    async def _approve_pipeline(
-        token: str,
-        approved_by: str | None = None,
-    ) -> dict[str, Any]:
+    async def _approve_pipeline(token: str) -> dict[str, Any]:
         project_id, executor = _project_executor()
         if project_id is None:
             return {"success": False, "error": "No project context available"}
@@ -558,6 +582,9 @@ def register_pipeline_tools(
                 "success": False,
                 "error": f"Pipeline executor not available for project '{project_id}'",
             }
+        approved_by = await _decider()
+        if approved_by is None:
+            return dict(forbidden_decision)
         return await approve_pipeline(
             executor=executor,
             token=token,
@@ -566,12 +593,12 @@ def register_pipeline_tools(
 
     @registry.tool(
         name="reject_pipeline",
-        description="Reject a pipeline execution that is waiting for approval.",
+        description=(
+            "Reject a pipeline execution that is waiting for approval. The rejecter "
+            "recorded is the authenticated caller."
+        ),
     )
-    async def _reject_pipeline(
-        token: str,
-        rejected_by: str | None = None,
-    ) -> dict[str, Any]:
+    async def _reject_pipeline(token: str) -> dict[str, Any]:
         project_id, executor = _project_executor()
         if project_id is None:
             return {"success": False, "error": "No project context available"}
@@ -580,6 +607,9 @@ def register_pipeline_tools(
                 "success": False,
                 "error": f"Pipeline executor not available for project '{project_id}'",
             }
+        rejected_by = await _decider()
+        if rejected_by is None:
+            return dict(forbidden_decision)
         return await reject_pipeline(
             executor=executor,
             token=token,

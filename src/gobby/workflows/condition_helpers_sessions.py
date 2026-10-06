@@ -18,13 +18,16 @@ if TYPE_CHECKING:
 def send_keys_target_in_scope(
     session_manager: SessionManager | None, caller_ref: Any, target_ref: Any
 ) -> bool:
-    """False only when a resolvable caller provably cannot reach the send_keys target.
+    """False only when a resolvable caller provably cannot reach a terminal tool's target.
 
-    The caller and target resolve exactly as ``send_keys`` resolves them, and the
-    decision is ``ActorScope.admits``: the caller's own session, its project, and
-    its agent tree in either direction. A caller or target the tool refuses on its
-    own (missing, unresolvable, autonomous agent) passes here so the tool keeps
-    reporting that specific error. Any other failure raises, and a raising block
+    It scopes ``send_keys`` and ``capture_output``. The caller and target resolve
+    exactly as ``send_keys`` resolves them, and the decision is ``ActorScope.admits``:
+    the caller's own session, its project, and its agent tree in either direction.
+    A missing, unresolvable or autonomous caller, and an unresolvable target, pass
+    here. ``send_keys`` refuses each with its own error. For ``capture_output``, a
+    request with no caller is the operator's, agent enforcement refuses autonomous
+    callers before rules run, and the target lookup takes a session UUID, which
+    resolves here by primary key. Any other failure raises, and a raising block
     condition fails closed.
     """
     if session_manager is None:

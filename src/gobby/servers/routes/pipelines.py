@@ -7,10 +7,11 @@ Provides endpoints for running, approving, and monitoring pipelines.
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from gobby.servers.responses import JSONResponse
+from gobby.workflows.pipeline.gatekeeper import approval_decider
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 
 if TYPE_CHECKING:
@@ -417,8 +418,15 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
 
         return result
 
+    async def _decider(request: Request) -> str:
+        """Name who decides an approval gate from the request's authenticated caller."""
+        principal = await server.run_db(server.auth_service.request_principal, request)
+        if principal is False:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return approval_decider(principal, None)
+
     @router.post("/approve/{token}", response_model=None)
-    async def approve_execution(token: str) -> dict[str, Any] | JSONResponse:
+    async def approve_execution(token: str, request: Request) -> dict[str, Any] | JSONResponse:
         """
         Approve a pipeline execution waiting for approval.
 
@@ -446,8 +454,9 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         if executor is None:
             raise HTTPException(status_code=500, detail="Internal server error")
 
+        approved_by = await _decider(request)
         try:
-            execution = await executor.approve(token, approved_by=None)
+            execution = await executor.approve(token, approved_by=approved_by)
 
             if execution.status == ExecutionStatus.FAILED:
                 logger.error(
@@ -487,7 +496,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=409, detail="Approval is no longer waiting") from None
 
     @router.post("/reject/{token}")
-    async def reject_execution(token: str) -> dict[str, Any]:
+    async def reject_execution(token: str, request: Request) -> dict[str, Any]:
         """
         Reject a pipeline execution waiting for approval.
 
@@ -513,8 +522,9 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         if executor is None:
             raise HTTPException(status_code=500, detail="Internal server error")
 
+        rejected_by = await _decider(request)
         try:
-            execution = await executor.reject(token, rejected_by=None)
+            execution = await executor.reject(token, rejected_by=rejected_by)
 
             return {
                 "status": execution.status.value,

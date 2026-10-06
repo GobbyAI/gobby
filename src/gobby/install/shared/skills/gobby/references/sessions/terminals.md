@@ -12,8 +12,9 @@ transcript tail is not proof of a live terminal screen. Missing pane/transcript
 errors require restoring the actual runtime or using transcript diagnostics.
 
 `send_keys` requires current caller context. Autonomous agent-run sessions cannot
-use it. Targets must be the caller, in its project, or in its ancestor/descendant
-tree. These checks do not grant permission to answer a user's approval dialog.
+use it. `send_keys` and `capture_output` targets must be the caller, in its
+project, or in its ancestor/descendant tree, and web-chat sessions can use neither
+tool. These checks do not grant permission to answer a user's approval dialog.
 Use the session target intentionally; do not use raw tmux to evade a refusal.
 
 Literal input defaults to true. Trailing newlines request one Enter after paste;
@@ -45,4 +46,4 @@ until it lapses.
 
 Guide: [Terminal tools](../../../../../../../../docs/guides/sessions.md#terminal-tools).
 
-_Last verified: 2026-09-21_
+_Last verified: 2026-10-06_
