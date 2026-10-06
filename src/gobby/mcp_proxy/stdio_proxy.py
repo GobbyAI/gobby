@@ -11,7 +11,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from urllib.parse import quote
 
 import httpx
@@ -584,12 +584,13 @@ class DaemonProxy:
         name: str,
         value: str | int | float | bool | list[Any] | dict[str, Any] | None,
         session_id: str,
+        scope: Literal["session", "step"] = "session",
     ) -> dict[str, Any]:
-        """Set a session-scoped variable."""
+        """Set a session or step variable."""
         return await self._request(
             "POST",
             f"/api/sessions/{quote(session_id, safe='')}/variables/set",
-            json={"name": name, "value": value, "scope": "session"},
+            json={"name": name, "value": value, "scope": scope},
             session_id=session_id,
         )
 

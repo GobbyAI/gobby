@@ -525,10 +525,9 @@ apply runs without backfilling existing task trees.
 
 The single category policy is:
 
-- `code` entries must include `implementation_domain`. Expansion maps
-  `backend` to `backend-developer`, `frontend` to `frontend-developer`, and
-  `fullstack` to `fullstack-developer` unless a privileged/manual override is
-  present.
+- `code` entries must include `implementation_domain`. Expansion maps every
+  domain to `developer` unless a privileged/manual override is present; the
+  developer reads the domain to pick its skills.
 - `code` and `config` are TDD-eligible. Manifest entries for these categories
   may set `tdd: true`, which makes expansion emit one implementation leaf with
   `additional_skills: ["test-driven-development"]`, label `tdd:required`, and

@@ -761,7 +761,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "assigned_agent": {
                     "type": "string",
-                    "description": "Agent name to assign this task to (e.g. 'backend-developer'). Routes leaf work in dispatch.",
+                    "description": "Agent name to assign this task to (e.g. 'developer'). Routes leaf work in dispatch.",
                     "default": None,
                 },
                 "implementation_domain": {

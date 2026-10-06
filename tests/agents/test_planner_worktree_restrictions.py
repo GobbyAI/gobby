@@ -62,7 +62,7 @@ def test_installed_planners_block_worktrees(
     assert "gobby-worktrees:create_worktree" in (body.blocked_mcp_tools or [])
 
 
-@pytest.mark.parametrize("name", (*PLANNERS, "backend-developer"))
+@pytest.mark.parametrize("name", (*PLANNERS, "developer"))
 @pytest.mark.parametrize("tool", ("EnterWorktree", "create_worktree"))
 def test_spawn_activated_session_worktree_enforcement(
     temp_db: HubDatabase,
@@ -110,7 +110,7 @@ def test_spawn_activated_session_worktree_enforcement(
     response = RuleEngine(temp_db)._check_agent_tool_enforcement(
         event, session.id, variables.get_variables(session.id)
     )
-    if name == "backend-developer":
+    if name == "developer":
         assert response is None
     else:
         assert response is not None, (name, tool)
