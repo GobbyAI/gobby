@@ -91,7 +91,7 @@ async def finalize_executed_spawn(
     spawn_result: Any,
     spawn_request: Any,
     isolation_ctx: Any,
-    effective_isolation: str,
+    effective_checkout_mode: str,
     base_commit_sha: Any,
     handler: Any,
     spawn_config: Any,
@@ -363,7 +363,7 @@ async def finalize_executed_spawn(
     response = build_spawn_response(
         run_id=run_id,
         spawn_result=spawn_result,
-        effective_isolation=effective_isolation,
+        effective_checkout_mode=effective_checkout_mode,
         isolation_ctx=isolation_ctx,
         base_commit_sha=base_commit_sha,
         code_index_preflight_warning=(

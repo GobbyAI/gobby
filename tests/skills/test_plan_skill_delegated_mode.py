@@ -106,7 +106,7 @@ def test_taskless_launch_checkpoints_before_waiting(topic: str, agent: str) -> N
     body = _body(f"plan/{topic}.md")
     assert agent in body
     assert "without task_id" in body
-    assert "isolation none" in body
+    assert "checkout_mode none" in body
     assert "Immediately save a structured" in body
     assert "clear_session=false" in body
     assert "event-driven" in body

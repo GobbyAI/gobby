@@ -155,6 +155,7 @@ def _has_python_module_stub(
     if node is None or original_module is None:
         return False
     reachable = _reachable_python_nodes(original_module, node)
+    statements = (*original_module.body, *node.body)
     latest_by_path: dict[str, TranscriptEdit] = {}
     for edit in sorted(evidence.edits, key=lambda item: item.order):
         if (
@@ -172,7 +173,7 @@ def _has_python_module_stub(
         bridge_name = bridge.path.removeprefix("src/").removesuffix(".py").replace("/", ".")
         imported = {
             alias.asname or alias.name: alias.name
-            for statement in original_module.body
+            for statement in statements
             if isinstance(statement, ast.ImportFrom) and statement.module == bridge_name
             for alias in statement.names
         }
@@ -209,7 +210,7 @@ def _has_python_module_stub(
         module_name = edit.path.removeprefix("src/").removesuffix(".py").replace("/", ".")
         aliases = {
             alias.asname or alias.name: classes[alias.name]
-            for statement in original_module.body
+            for statement in statements
             if isinstance(statement, ast.ImportFrom) and statement.module == module_name
             for alias in statement.names
             if alias.name in classes

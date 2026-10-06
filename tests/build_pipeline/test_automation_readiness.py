@@ -13,7 +13,7 @@ def _options(**overrides: object) -> BuildOptions:
     values = {
         "quick": False,
         "skip_stages": [],
-        "isolation": "none",
+        "checkout_mode": "none",
         "no_merge": False,
         "pr": None,
         "target_branch": "main",
@@ -79,7 +79,7 @@ async def test_build_readiness_cascades_manifests_and_current_stage_projection(
     for task in subtree:
         assert task.allow_automation is True
         assert task.unattended is False
-        assert getattr(task.isolation, "value", task.isolation) == "worktree"
+        assert getattr(task.checkout_mode, "value", task.checkout_mode) == "worktree"
         artifacts = task_manager.artifacts.get_artifacts(task.id)
         expected_target = "main" if task.id == epic.id else epic_artifacts.integration_branch
         assert artifacts.target_branch == expected_target

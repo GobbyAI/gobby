@@ -48,6 +48,13 @@ def test_production_daemon_gcode_runtime_grant_is_external_write_exempt() -> Non
     assert _is_production_daemon_artifact("config.yaml") is False
 
 
+def test_production_hook_failure_is_external_write_exempt() -> None:
+    assert _is_production_daemon_artifact("hooks/failures/1791271712707-n-http.json")
+    assert _is_production_daemon_artifact("hooks/failures") is False
+    assert _is_production_daemon_artifact("hooks/failures-other/state.json") is False
+    assert _is_production_daemon_artifact("hooks/config.json") is False
+
+
 def test_production_daemon_comms_attachment_is_external_write_exempt() -> None:
     # The live daemon saves each inbound chat photo under comms_attachments/
     # (src/gobby/communications/attachments.py); one arriving during an e2e

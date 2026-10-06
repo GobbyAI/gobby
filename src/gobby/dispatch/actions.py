@@ -50,7 +50,7 @@ class CreateIsolationAction:
 
     task_id: str
     task_ref: str
-    isolation: str
+    checkout_mode: str
     base_branch: str | None = None
 
 

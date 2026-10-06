@@ -34,6 +34,7 @@ pub fn run(
     skip_if_locked: bool,
     format: Format,
 ) -> anyhow::Result<()> {
+    let mut timings = crate::index::indexer::IndexTimings::new("command.context");
     let (target_ctx, path_filter) = resolve_index_context(ctx, path.as_deref())?;
     let explicit_files: Vec<std::path::PathBuf> = files
         .unwrap_or_default()
@@ -66,6 +67,7 @@ pub fn run(
         IndexLockPolicy::wait()
     };
     let explicit_request = !request.explicit_files.is_empty();
+    timings.phase("command.locks");
     let (run_output, completed_files, busy_files) = if explicit_request {
         let locks =
             index_lock::lock_project_files(&target_ctx, &request.explicit_files, lock_policy)?;
@@ -76,6 +78,7 @@ pub fn run(
         }
         let mut acquired_request = request;
         acquired_request.explicit_files = locks.acquired_files.clone();
+        timings.phase("command.index");
         let run_output = run_index_locked(&target_ctx, acquired_request)?;
         (
             run_output,
@@ -84,6 +87,7 @@ pub fn run(
         )
     } else {
         let run_output = index_lock::with_project_lock(&target_ctx, lock_policy, || {
+            timings.phase("command.index");
             run_index_locked(&target_ctx, request)
         })?;
         let run_output = match run_output {
@@ -111,6 +115,7 @@ pub fn run(
         (run_output, Vec::new(), Vec::new())
     };
 
+    timings.phase("command.output");
     match run_output {
         RunIndexLockedOutput::Projections(payload) => {
             match format {

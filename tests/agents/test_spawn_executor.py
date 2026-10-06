@@ -14,6 +14,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.utils.local_token import derive_managed_signing_key
+
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
 
@@ -2733,7 +2735,7 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
         parent_session_id=parent_session_id,
         agent_run_id=run_id,
         project_id="project-uuid",
-        operator_token="operator-token",
+        signing_key=derive_managed_signing_key("operator-token"),
     )
     parent_env["GOBBY_HOME"] = str(tmp_path)
     parent_env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] = str(tmp_path / "grant.json")
@@ -3744,7 +3746,7 @@ async def test_refused_retry_cleanup_leaves_the_live_attempt(read_fails: bool) -
         spawn_result=refused,
         spawn_request=stale,
         isolation_ctx=SimpleNamespace(worktree_id=None, clone_id=None, branch_name=None),
-        effective_isolation="none",
+        effective_checkout_mode="none",
         base_commit_sha=None,
         handler=None,
         spawn_config=None,
@@ -3854,7 +3856,7 @@ async def test_failed_attempt_on_a_run_bound_elsewhere_still_kills_its_own_termi
         spawn_result=failed,
         spawn_request=second,
         isolation_ctx=SimpleNamespace(worktree_id="wt", clone_id=None, branch_name="b"),
-        effective_isolation="worktree",
+        effective_checkout_mode="worktree",
         base_commit_sha=None,
         handler=handler,
         spawn_config=None,

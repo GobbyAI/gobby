@@ -129,7 +129,7 @@ steps:
         prompt: "Review task ${{ inputs.task_id }}"
         agent: "${{ inputs.reviewer_agent }}"
         task_id: "${{ inputs.task_id }}"
-        isolation: "none"
+        checkout_mode: "none"
         parent_session_id: "${{ session_id }}"
 
   - id: wait_for_reviewer

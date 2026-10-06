@@ -8,7 +8,7 @@ from typing import Any, cast
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.hub.protocol import HubDatabase, TaskSubtreeCascade
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
-from gobby.storage.tasks._models import Isolation
+from gobby.storage.tasks._models import CheckoutMode
 from gobby.storage.tasks._runtime_mutex import DispatchMutexUnavailableError, RuntimeDispatchMutex
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 from gobby.storage.tasks._stage_states import StageStatesManager
@@ -39,7 +39,7 @@ class CascadeBuildResult:
 def cascade_build_state_to_subtree(
     db: HubDatabase,
     epic_id: str,
-    isolation: Isolation | str,
+    checkout_mode: CheckoutMode | str,
     unattended: bool | None,
     allow_automation: bool,
     *,
@@ -58,7 +58,7 @@ def cascade_build_state_to_subtree(
     """
     if unattended is None:
         unattended = bool(yolo)
-    normalized_isolation = Isolation(isolation).value
+    normalized_checkout_mode = CheckoutMode(checkout_mode).value
     skipped_stages = set(skip_stages)
     now = utc_now()
 
@@ -184,7 +184,7 @@ def cascade_build_state_to_subtree(
         (
             bool(allow_automation),
             bool(unattended),
-            normalized_isolation,
+            normalized_checkout_mode,
             now,
             task_id,
         )
@@ -196,7 +196,7 @@ def cascade_build_state_to_subtree(
             UPDATE tasks
             SET allow_automation = %s,
                 unattended = %s,
-                isolation = %s,
+                checkout_mode = %s,
                 updated_at = %s
             WHERE id = %s
             """,

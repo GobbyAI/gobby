@@ -70,7 +70,7 @@ rules:
       and not (
         tool_input.get('tool_name') == 'spawn_agent'
         and tool_input.get('agent') == 'plan-enhancer-taskless-old'
-        and tool_input.get('isolation') == 'none'
+        and tool_input.get('checkout_mode') == 'none'
         and len(variables.get('claimed_tasks') or {}) == 1
         and not all_tasks_have_label(list(variables.get('claimed_tasks')), 'enhancer-pass-spent')
       )
@@ -79,7 +79,7 @@ rules:
         mcp_tools: ["gobby-agents:spawn_agent", "gobby-agents:dispatch_batch"]
         reason: >-
           The Plan Writer's only permitted spawn is
-          spawn_agent(agent="plan-enhancer-taskless-old", isolation="none") while holding
+          spawn_agent(agent="plan-enhancer-taskless-old", checkout_mode="none") while holding
           the planning task as its only claim. One pass per planning task is permitted; the task's
           `enhancer-pass-spent` label means this task's pass is spent, and only the
           Orchestrator can re-grant it.
@@ -97,7 +97,7 @@ rules:
       and tool_input.get('server_name') == 'gobby-agents'
       and tool_input.get('tool_name') == 'spawn_agent'
       and tool_input.get('agent') == 'plan-enhancer-taskless-old'
-      and tool_input.get('isolation') == 'none'
+      and tool_input.get('checkout_mode') == 'none'
       and len(variables.get('claimed_tasks') or {}) == 1
       and not all_tasks_have_label(list(variables.get('claimed_tasks')), 'enhancer-pass-spent')
     effects:

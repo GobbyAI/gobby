@@ -1,6 +1,6 @@
 export type StageSegment = "stages" | "profiles";
 export type ProfileSource = "installed" | "project";
-export type Isolation = "none" | "worktree" | "clone";
+export type CheckoutMode = "none" | "worktree" | "clone";
 
 export interface StageEntry {
   name: string;
@@ -29,7 +29,7 @@ export interface BuildProfile {
   display_label: string;
   description: string;
   skip_stages: string[];
-  isolation: Isolation;
+  checkout_mode: CheckoutMode;
   unattended: boolean;
   enabled: boolean;
   source: ProfileSource;
@@ -57,7 +57,7 @@ export const STAGE_CATEGORY_OPTIONS = [
   "delivery",
 ].map((category) => ({ value: category, label: category }));
 
-export const ISOLATION_OPTIONS = [
+export const CHECKOUT_MODE_OPTIONS = [
   { value: "none", label: "none" },
   { value: "worktree", label: "worktree" },
   { value: "clone", label: "clone" },
@@ -83,7 +83,7 @@ export function createProfileDraft(projectId?: string | null): BuildProfile {
     display_label: "",
     description: "",
     skip_stages: [],
-    isolation: "worktree",
+    checkout_mode: "worktree",
     unattended: false,
     enabled: true,
     source: "project",
@@ -180,7 +180,7 @@ export function filterProfiles(
         profile.display_label,
         profile.description,
         profile.source,
-        profile.isolation,
+        profile.checkout_mode,
         ...(profile.tags ?? []),
       ]
         .filter(Boolean)

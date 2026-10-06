@@ -72,8 +72,8 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
             <span>{definition.fallback_agent}</span>
           </MetaRow>
         )}
-        <MetaRow label="Isolation">
-          <span>{definition.isolation || "none"}</span>
+        <MetaRow label="Checkout mode">
+          <span>{definition.checkout_mode || "none"}</span>
         </MetaRow>
         <MetaRow label="Base branch">
           <span>{definition.base_branch}</span>

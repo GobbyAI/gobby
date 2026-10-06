@@ -130,7 +130,7 @@ def _task(
         allow_automation=fields.pop("allow_automation", True),
         task_type=fields.pop("task_type", "task"),
         assigned_agent=fields.pop("assigned_agent", "backend-developer"),
-        isolation=fields.pop("isolation", "none"),
+        checkout_mode=fields.pop("checkout_mode", "none"),
         claimed_by_session_id=fields.pop("claimed_by_session_id", None),
         **fields,
     )
@@ -167,7 +167,7 @@ def _parent_with_stage_order(
         parent.id,
         allow_automation=False,
         task_type="epic",
-        isolation="none",
+        checkout_mode="none",
     )
     initialize_manifest(
         temp_db,
@@ -1192,7 +1192,7 @@ async def test_heartbeat_records_gated_epic_root_before_reopened_descendant(
         task_type="epic",
         validation_criteria="Test task completion is observable.",
     )
-    update_task(temp_db, root.id, allow_automation=True, isolation="none", task_type="epic")
+    update_task(temp_db, root.id, allow_automation=True, checkout_mode="none", task_type="epic")
     initialize_manifest(
         temp_db,
         root.id,
@@ -1250,7 +1250,7 @@ async def test_heartbeat_dispatches_reopened_review_under_gated_epic_root(
         task_type="epic",
         validation_criteria="Test task completion is observable.",
     )
-    update_task(temp_db, root.id, allow_automation=True, isolation="none", task_type="epic")
+    update_task(temp_db, root.id, allow_automation=True, checkout_mode="none", task_type="epic")
     initialize_manifest(
         temp_db,
         root.id,
@@ -2204,7 +2204,7 @@ async def test_spawn_action_uses_services_and_records_agent_run(
             task_id=task.id,
             run_id="2d6f8387-ee3f-5abb-98f4-70ace5661263",
         )
-        return {"success": True, "run_id": run.id, "isolation": "none"}
+        return {"success": True, "run_id": run.id, "checkout_mode": "none"}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -2257,7 +2257,7 @@ async def test_planning_agents_force_main_context(
         sample_project,
         stage_name="planning",
         stage_state="in_progress",
-        isolation="worktree",
+        checkout_mode="worktree",
         assigned_agent=agent_slug,
     )
     stale_worktree_id = stable_test_uuid(f"wt-{agent_slug}")
@@ -2290,7 +2290,7 @@ async def test_planning_agents_force_main_context(
             task_id=task.id,
             run_id=stable_test_uuid(f"run-{agent_slug}"),
         )
-        return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
+        return {"success": True, "run_id": run.id, "checkout_mode": kwargs["checkout_mode"]}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -2321,7 +2321,7 @@ async def test_planning_agents_force_main_context(
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
 
     assert result.executed == 1
-    assert spawn_kwargs["isolation"] == "none"
+    assert spawn_kwargs["checkout_mode"] == "none"
     assert spawn_kwargs["worktree_id"] is None
     assert spawn_kwargs["clone_id"] is None
     assert artifacts.worktree_id == stale_worktree_id
@@ -2350,7 +2350,7 @@ async def test_expansion_review_forces_main_context(
         sample_project,
         stage_name="expansion",
         stage_state="needs_review",
-        isolation="worktree",
+        checkout_mode="worktree",
     )
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
@@ -2378,7 +2378,7 @@ async def test_expansion_review_forces_main_context(
             task_id=task.id,
             run_id="27317c40-a771-5aa5-aff8-1ebe5a326f84",
         )
-        return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
+        return {"success": True, "run_id": run.id, "checkout_mode": kwargs["checkout_mode"]}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -2400,7 +2400,7 @@ async def test_expansion_review_forces_main_context(
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
 
     assert result.executed == 1
-    assert spawn_kwargs["isolation"] == "none"
+    assert spawn_kwargs["checkout_mode"] == "none"
     assert spawn_kwargs["worktree_id"] is None
     assert spawn_kwargs["clone_id"] is None
     assert artifacts.worktree_id == "9792b29b-aa8c-5633-a8cb-3cfe44f7de3d"
@@ -2426,7 +2426,7 @@ async def test_backend_developer_inherits_task_worktree_isolation(
         temp_db,
         sample_project,
         stage_state="in_progress",
-        isolation="worktree",
+        checkout_mode="worktree",
         assigned_agent="backend-developer",
     )
     action = SpawnAgentAction(
@@ -2447,7 +2447,7 @@ async def test_backend_developer_inherits_task_worktree_isolation(
             task_id=task.id,
             run_id="2960b641-7fd2-51ec-9201-4dbf382eb21b",
         )
-        return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
+        return {"success": True, "run_id": run.id, "checkout_mode": kwargs["checkout_mode"]}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -2468,7 +2468,7 @@ async def test_backend_developer_inherits_task_worktree_isolation(
     )
 
     assert result.executed == 1
-    assert spawn_kwargs["isolation"] == "worktree"
+    assert spawn_kwargs["checkout_mode"] == "worktree"
 
 
 @pytest.mark.asyncio
@@ -2517,7 +2517,7 @@ async def test_spawn_action_subscribes_build_coordinator_completion(
             task_id=task.id,
             run_id="f24030bc-390b-56fd-8e34-a11e20175c22",
         )
-        return {"success": True, "run_id": run.id, "isolation": "none"}
+        return {"success": True, "run_id": run.id, "checkout_mode": "none"}
 
     completion_registry = MagicMock()
     monkeypatch.setattr(
@@ -2686,7 +2686,7 @@ async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
             task_id=task.id,
             run_id="d3b630c8-9101-5a38-bd1a-2a2da5416055",
         )
-        return {"success": True, "run_id": run.id, "isolation": "none"}
+        return {"success": True, "run_id": run.id, "checkout_mode": "none"}
 
     completion_registry = MagicMock()
     monkeypatch.setattr(
@@ -2733,7 +2733,7 @@ async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
         temp_db,
         sample_project,
         stage_state="in_progress",
-        isolation="worktree",
+        checkout_mode="worktree",
     )
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
@@ -2760,7 +2760,7 @@ async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
             task_id=task.id,
             run_id="d734fd14-a12a-5465-bcca-6d3c8f03c4f6",
         )
-        return {"success": True, "run_id": run.id, "isolation": "worktree"}
+        return {"success": True, "run_id": run.id, "checkout_mode": "worktree"}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -2816,7 +2816,7 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
         title="Leaf implementation",
         parent_task_id=parent.id,
         stage_state="in_progress",
-        isolation="worktree",
+        checkout_mode="worktree",
     )
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         parent.id,
@@ -2849,7 +2849,7 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
             task_id=leaf.id,
             run_id="d0dce129-9dd1-505a-8bab-30728f041b21",
         )
-        return {"success": True, "run_id": run.id, "isolation": "worktree"}
+        return {"success": True, "run_id": run.id, "checkout_mode": "worktree"}
 
     monkeypatch.setattr(
         "gobby.dispatch.spawn_artifacts.ensure_epic_integration_workspaces",
@@ -2917,7 +2917,7 @@ async def test_leaf_spawn_skips_stale_parent_integration_branch(
         title="Reopened leaf",
         parent_task_id=parent.id,
         stage_state="in_progress",
-        isolation="worktree",
+        checkout_mode="worktree",
     )
     # A closed parent rejects new children, so the leaf exists before its epic closes.
     _mark_closed(temp_db, parent.id)
@@ -2954,7 +2954,7 @@ async def test_leaf_spawn_skips_stale_parent_integration_branch(
             task_id=leaf.id,
             run_id="4a504cc0-f680-5db4-ae37-50e10b3d062e",
         )
-        return {"success": True, "run_id": run.id, "isolation": "worktree"}
+        return {"success": True, "run_id": run.id, "checkout_mode": "worktree"}
 
     monkeypatch.setattr("gobby.dispatch.spawn_artifacts._artifact_ref_resolves", fake_ref_resolves)
     monkeypatch.setattr(
@@ -3018,7 +3018,7 @@ async def test_merge_ready_leaf_spawn_blocks_contaminated_task_branch(
         title="Leaf implementation",
         parent_task_id=parent.id,
         stage_state="review_approved",
-        isolation="worktree",
+        checkout_mode="worktree",
     )
     task_artifacts = TaskArtifactManager(temp_db)
     task_artifacts.set_artifacts_atomic(
@@ -3089,7 +3089,7 @@ async def test_epic_qa_spawn_refreshes_and_reuses_integration_workspace(
         stage_name="epic_qa",
         stage_state="in_progress",
         task_type="epic",
-        isolation="worktree",
+        checkout_mode="worktree",
         assigned_agent="epic-reviewer",
     )
     TaskArtifactManager(temp_db).set_artifacts_atomic(
@@ -3127,7 +3127,7 @@ async def test_epic_qa_spawn_refreshes_and_reuses_integration_workspace(
         return {
             "success": True,
             "run_id": run.id,
-            "isolation": "worktree",
+            "checkout_mode": "worktree",
             "worktree_id": kwargs["worktree_id"],
             "worktree_path": "/tmp/integration-parent",
         }
@@ -3183,7 +3183,7 @@ async def test_epic_qa_spawn_rejects_unprovisioned_epic(
         stage_name="epic_qa",
         stage_state="in_progress",
         task_type="epic",
-        isolation="worktree",
+        checkout_mode="worktree",
         assigned_agent="epic-reviewer",
     )
     TaskArtifactManager(temp_db).set_artifacts_atomic(
@@ -3209,7 +3209,7 @@ async def test_epic_qa_spawn_rejects_unprovisioned_epic(
             task_manager=task_manager,
             project_id=sample_project["id"],
             services=None,
-            isolation="worktree",
+            checkout_mode="worktree",
         )
 
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
@@ -3239,7 +3239,7 @@ async def test_leaf_spawn_translates_missing_root_target(
         title="Leaf implementation",
         parent_task_id=root.id,
         stage_state="in_progress",
-        isolation="worktree",
+        checkout_mode="worktree",
     )
     action = SpawnAgentAction(
         task_id=leaf.id,
@@ -3259,7 +3259,7 @@ async def test_leaf_spawn_translates_missing_root_target(
             task_manager=task_manager,
             project_id=sample_project["id"],
             services=None,
-            isolation="worktree",
+            checkout_mode="worktree",
         )
 
 
@@ -3279,7 +3279,7 @@ async def test_epic_qa_spawn_rejects_missing_root_target(
         stage_name="epic_qa",
         stage_state="in_progress",
         task_type="epic",
-        isolation="worktree",
+        checkout_mode="worktree",
         assigned_agent="epic-reviewer",
     )
     TaskArtifactManager(temp_db).set_artifacts_atomic(
@@ -3305,7 +3305,7 @@ async def test_epic_qa_spawn_rejects_missing_root_target(
             task_manager=task_manager,
             project_id=sample_project["id"],
             services=None,
-            isolation="worktree",
+            checkout_mode="worktree",
         )
 
 
@@ -3330,7 +3330,7 @@ async def test_epic_qa_workspace_conflict_rolls_back_without_heartbeat_error(
         stage_name="epic_qa",
         stage_state="in_progress",
         task_type="epic",
-        isolation="worktree",
+        checkout_mode="worktree",
         assigned_agent="epic-reviewer",
         dispatch_failure_count=2,
     )
@@ -3342,7 +3342,7 @@ async def test_epic_qa_workspace_conflict_rolls_back_without_heartbeat_error(
         stage_name="development",
         stage_state="done",
         task_type="feature",
-        isolation="worktree",
+        checkout_mode="worktree",
         assigned_agent="backend-developer",
         status="closed",
     )
@@ -4059,7 +4059,7 @@ async def test_spawn_prefers_project_scoped_git_manager(
 
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
-    task = _task(temp_db, sample_project, isolation="worktree")
+    task = _task(temp_db, sample_project, checkout_mode="worktree")
     TaskArtifactManager(temp_db).set_artifacts_atomic(task.id, target_branch="dev")
 
     default_repo = tmp_path / "default-repo"
@@ -4135,7 +4135,7 @@ async def test_dispatch_spawn_uses_task_project_context_for_cross_project_build(
         task_type="task",
         category="code",
         allow_automation=True,
-        isolation="none",
+        checkout_mode="none",
         validation_criteria="Test task completion is observable.",
     )
     captured: dict[str, object] = {}
@@ -4196,7 +4196,7 @@ async def test_dispatch_spawn_uses_machine_checkout(  # tdd-red window
         task_type="task",
         category="code",
         allow_automation=True,
-        isolation="none",
+        checkout_mode="none",
         validation_criteria="Test task completion is observable.",
     )
     captured: dict[str, object] = {}
@@ -4255,7 +4255,7 @@ async def test_dispatch_spawn_uses_registered_overlay_cwd(  # tdd-red window
         task_type="task",
         category="code",
         allow_automation=True,
-        isolation="worktree",
+        checkout_mode="worktree",
         validation_criteria="Test task completion is observable.",
     )
     worktree = LocalWorktreeManager(temp_db).create(
@@ -4322,7 +4322,7 @@ async def test_dispatch_spawn_fails_closed_without_checkout(  # tdd-red window
         task_type="task",
         category="code",
         allow_automation=True,
-        isolation="none",
+        checkout_mode="none",
         validation_criteria="Test task completion is observable.",
     )
     sessions = SessionManager(temp_db)
@@ -4370,7 +4370,7 @@ async def test_dispatch_spawn_resolves_checkout_root_once_off_the_event_loop(
         task_type="task",
         category="code",
         allow_automation=True,
-        isolation="none",
+        checkout_mode="none",
         validation_criteria="Test task completion is observable.",
     )
     loop_thread = threading.get_ident()
@@ -4562,7 +4562,7 @@ async def test_merge_workspace_action_releases_lease_before_stage_transition(
         sample_project,
         stage_name="merge",
         stage_state="in_progress",
-        isolation="worktree",
+        checkout_mode="worktree",
     )
     storage = _mutex_storage(temp_db)
     action = MergeWorkspaceAction(
@@ -4768,7 +4768,7 @@ async def test_real_heartbeat_merge_ready_starts_then_spawns_merge_orchestrator(
         category="code",
         validation_criteria="Test task completion is observable.",
     )
-    update_task(temp_db, task.id, allow_automation=True, isolation="none")
+    update_task(temp_db, task.id, allow_automation=True, checkout_mode="none")
     initialize_manifest(temp_db, task.id, [spec("pr", 0), spec("merge", 1)])
     set_stage_state(temp_db, task.id, "pr", "done")
     set_stage_state(temp_db, task.id, "merge", "ready")
@@ -4942,7 +4942,7 @@ async def test_stage_pipeline_runtime_mutex_failure_is_retry_neutral(
         sample_project,
         lifecycle="expanding",
         stage_state="in_progress",
-        isolation="worktree",
+        checkout_mode="worktree",
     )
     set_stage_state(temp_db, task.id, "expansion", "in_progress", work_attempt_count=1)
     storage = _mutex_storage(temp_db)
@@ -4988,7 +4988,7 @@ async def test_create_isolation_action_writes_artifact_pair_and_base_commit_sha_
     """Create isolation action writes artifact pair and base commit sha atomically."""
     from gobby.dispatch import dispatcher
 
-    task = _task(temp_db, sample_project, isolation="worktree")
+    task = _task(temp_db, sample_project, checkout_mode="worktree")
     TaskArtifactManager(temp_db).set_artifacts_atomic(task.id, target_branch="main")
     monkeypatch.setattr(dispatcher, "resolve_branch_sha", lambda branch: "abc123")
     monkeypatch.setattr(
@@ -4997,7 +4997,7 @@ async def test_create_isolation_action_writes_artifact_pair_and_base_commit_sha_
         lambda *args, **kwargs: CreateIsolationAction(
             task_id=task.id,
             task_ref="#1",
-            isolation="worktree",
+            checkout_mode="worktree",
         ),
     )
 
@@ -5018,7 +5018,7 @@ async def test_create_isolation_action_resolves_base_commit_sha_from_target_bran
     """Create isolation action resolves base commit sha from target branch."""
     from gobby.dispatch import dispatcher
 
-    task = _task(temp_db, sample_project, isolation="worktree")
+    task = _task(temp_db, sample_project, checkout_mode="worktree")
     TaskArtifactManager(temp_db).set_artifacts_atomic(task.id, target_branch="main")
     resolved: list[str] = []
 
@@ -5045,7 +5045,7 @@ def test_persist_spawn_artifacts_writes_base_commit_sha(
     """Persist spawn artifacts writes base commit sha."""
     from gobby.dispatch.spawn import _persist_spawn_artifacts
 
-    task = _task(temp_db, sample_project, isolation="worktree")
+    task = _task(temp_db, sample_project, checkout_mode="worktree")
 
     _persist_spawn_artifacts(
         temp_db,
@@ -5062,7 +5062,7 @@ def test_persist_spawn_artifacts_writes_base_commit_sha(
     assert artifacts.worktree_path == "/tmp/worktree"
     assert artifacts.base_commit_sha == "base-sha"
 
-    clone_task = _task(temp_db, sample_project, isolation="clone", title="Clone dispatch task")
+    clone_task = _task(temp_db, sample_project, checkout_mode="clone", title="Clone dispatch task")
     _persist_spawn_artifacts(
         temp_db,
         clone_task.id,
@@ -5089,7 +5089,7 @@ def test_persist_spawn_artifacts_reraises_persistence_errors(
     from gobby.dispatch import spawn_artifacts
     from gobby.dispatch.spawn import DispatchSpawnFailed
 
-    task = _task(temp_db, sample_project, isolation="worktree")
+    task = _task(temp_db, sample_project, checkout_mode="worktree")
 
     def fail_set_artifacts_atomic(*_args: object, **_kwargs: object) -> None:
         raise ValueError("bad artifact")
@@ -5117,7 +5117,7 @@ def test_persist_spawn_artifacts_updates_standalone_base_commit_sha(
     """A spawn result may only refresh the base SHA for an existing workspace."""
     from gobby.dispatch.spawn import _persist_spawn_artifacts
 
-    task = _task(temp_db, sample_project, isolation="worktree")
+    task = _task(temp_db, sample_project, checkout_mode="worktree")
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
         worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
@@ -5147,7 +5147,7 @@ async def test_dispatch_spawn_tolerates_build_coordinator_subscription_failure(
 
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
-    task = _task(temp_db, sample_project, isolation="none")
+    task = _task(temp_db, sample_project, checkout_mode="none")
     sessions = SessionManager(temp_db)
     coordinator = sessions.register(
         external_id="coordinator-subscribe-failure",
@@ -5199,7 +5199,7 @@ async def test_create_isolation_action_missing_target_branch_escalates(
     """Create isolation action missing target branch escalates."""
     from gobby.dispatch import dispatcher
 
-    task = _task(temp_db, sample_project, isolation="worktree")
+    task = _task(temp_db, sample_project, checkout_mode="worktree")
     escalations: list[dict[str, object]] = []
 
     def record_escalation(**kwargs: object) -> None:
@@ -5228,7 +5228,7 @@ async def test_dev_rule_fires_after_isolation_and_stage_start(
     from gobby.dispatch import dispatcher
 
     sync_bundled_agents(temp_db)
-    task = _task(temp_db, sample_project, isolation="worktree")
+    task = _task(temp_db, sample_project, checkout_mode="worktree")
     TaskArtifactManager(temp_db).set_artifacts_atomic(task.id, target_branch="main")
     spawned: list[str] = []
     monkeypatch.setattr(dispatcher, "resolve_branch_sha", lambda branch: "abc123")

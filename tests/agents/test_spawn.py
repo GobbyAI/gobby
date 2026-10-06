@@ -24,6 +24,7 @@ from gobby.agents.spawn import (
 )
 from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, managed_tool_bin_dir
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
+from gobby.utils.local_token import derive_managed_signing_key
 
 pytestmark = pytest.mark.unit
 
@@ -185,7 +186,10 @@ class TestPrepareTerminalSpawnMetadata:
 
         with (
             patch("gobby.agents.spawn.datetime") as mock_datetime,
-            patch("gobby.agents.spawn.read_local_api_token", return_value="op-token"),
+            patch(
+                "gobby.agents.spawn.read_managed_signing_key",
+                return_value=derive_managed_signing_key("op-token"),
+            ),
             patch("gobby.agents.code_index._active_deployment_grant_context"),
             patch("gobby.agents.code_index._signed_grant_from_credential"),
             patch(
@@ -249,7 +253,10 @@ class TestPrepareTerminalSpawnMetadata:
         launch.grant_path = Path("/private/runtime/grant.json")
 
         with (
-            patch("gobby.agents.spawn.read_local_api_token", return_value="op-token"),
+            patch(
+                "gobby.agents.spawn.read_managed_signing_key",
+                return_value=derive_managed_signing_key("op-token"),
+            ),
             patch("gobby.agents.code_index._active_deployment_grant_context"),
             patch("gobby.agents.code_index._signed_grant_from_credential"),
             patch(
@@ -533,7 +540,10 @@ class TestIssuePrelaunchCredential:
         launch.grant_path = tmp_path / "run" / "grant.json"
 
         with (
-            patch("gobby.agents.spawn.read_local_api_token", return_value="op-token"),
+            patch(
+                "gobby.agents.spawn.read_managed_signing_key",
+                return_value=derive_managed_signing_key("op-token"),
+            ),
             patch("gobby.agents.code_index._active_deployment_grant_context") as mock_context,
             patch("gobby.agents.code_index._signed_grant_from_credential") as mock_signer,
             patch(
@@ -560,15 +570,15 @@ class TestIssuePrelaunchCredential:
         )
         materialize_kwargs = mock_materialize.call_args.kwargs
         assert materialize_kwargs["dest_dir"] == tmp_path / "run"
-        assert materialize_kwargs["operator_token"] == "op-token"
+        assert materialize_kwargs["signing_key"] == derive_managed_signing_key("op-token")
         assert materialize_kwargs["deadline_seconds"] > 0
 
-    def test_missing_operator_token_fails_closed_before_issuing(self, tmp_path: Path) -> None:
+    def test_missing_signing_key_fails_closed_before_issuing(self, tmp_path: Path) -> None:
         sm, manager = self._session_manager_with_credential(tmp_path)
 
         with (
-            patch("gobby.agents.spawn.read_local_api_token", return_value=None),
-            pytest.raises(RuntimeError, match="operator token"),
+            patch("gobby.agents.spawn.read_managed_signing_key", return_value=None),
+            pytest.raises(RuntimeError, match="signing_key_unavailable"),
         ):
             _issue_prelaunch_credential(
                 sm,
@@ -598,7 +608,10 @@ class TestIssuePrelaunchCredential:
         sm, manager = self._session_manager_with_credential(tmp_path)
 
         with (
-            patch("gobby.agents.spawn.read_local_api_token", return_value="op-token"),
+            patch(
+                "gobby.agents.spawn.read_managed_signing_key",
+                return_value=derive_managed_signing_key("op-token"),
+            ),
             patch(
                 "gobby.agents.code_index._active_deployment_grant_context",
                 side_effect=RuntimeError("lease_unavailable"),
@@ -668,7 +681,10 @@ class TestPrepareTerminalResumeCredential:
 
         with (
             patch("gobby.agents.spawn._prepare_run_for_session", return_value=prepared),
-            patch("gobby.agents.spawn.read_local_api_token", return_value="op-token"),
+            patch(
+                "gobby.agents.spawn.read_managed_signing_key",
+                return_value=derive_managed_signing_key("op-token"),
+            ),
             patch("gobby.agents.code_index._active_deployment_grant_context"),
             patch("gobby.agents.code_index._signed_grant_from_credential"),
             patch(

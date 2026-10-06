@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn bare_url_follows_herdr_trimming() {
+    fn bare_url_trims_trailing_punctuation() {
         let cases = [
             (
                 "see https://example.com/a-b_c?q=x@y.",

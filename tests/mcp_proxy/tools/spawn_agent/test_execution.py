@@ -143,7 +143,7 @@ async def test_parent_claim_transfer_failure_cleans_up_spawn(
             spawn_result=spawn_result,
             spawn_request=None,
             isolation_ctx=isolation_context,
-            effective_isolation="none",
+            effective_checkout_mode="none",
             base_commit_sha=None,
             handler=SimpleNamespace(commit_environment=None),
             spawn_config=MagicMock(),
@@ -239,7 +239,7 @@ async def test_auto_claimed_task_titles_child_session(
             spawn_result=spawn_result,
             spawn_request=None,
             isolation_ctx=isolation_context,
-            effective_isolation="none",
+            effective_checkout_mode="none",
             base_commit_sha=None,
             handler=SimpleNamespace(commit_environment=None),
             spawn_config=MagicMock(),
@@ -282,7 +282,7 @@ async def test_auto_claimed_task_titles_child_session(
             spawn_result=spawn_result,
             spawn_request=None,
             isolation_ctx=isolation_context,
-            effective_isolation="none",
+            effective_checkout_mode="none",
             base_commit_sha=None,
             handler=SimpleNamespace(commit_environment=None),
             spawn_config=MagicMock(),
@@ -373,7 +373,7 @@ async def test_auto_claim_survives_runner_without_session_manager(
             spawn_result=spawn_result,
             spawn_request=None,
             isolation_ctx=isolation_context,
-            effective_isolation="worktree",
+            effective_checkout_mode="worktree",
             base_commit_sha=None,
             handler=SimpleNamespace(commit_environment=None),
             spawn_config=MagicMock(),
@@ -446,7 +446,7 @@ class TestSpawnAgentIsolation:
                 {
                     "prompt": "Test prompt",
                     "parent_session_id": "parent-789",
-                    "isolation": "none",
+                    "checkout_mode": "none",
                 },
             )
             await _drain_spawn_background_tasks()
@@ -522,7 +522,7 @@ class TestSpawnAgentIsolation:
                 {
                     "prompt": "Test prompt",
                     "parent_session_id": "parent-789",
-                    "isolation": "worktree",
+                    "checkout_mode": "worktree",
                 },
             )
             await _drain_spawn_background_tasks()
@@ -619,7 +619,7 @@ class TestSpawnAgentIsolation:
                 {
                     "prompt": "Test prompt",
                     "parent_session_id": "parent-789",
-                    "isolation": "worktree",
+                    "checkout_mode": "worktree",
                 },
             )
             await _drain_spawn_background_tasks()
@@ -699,7 +699,7 @@ class TestSpawnAgentIsolation:
                 {
                     "prompt": "Test prompt",
                     "parent_session_id": "parent-789",
-                    "isolation": "clone",
+                    "checkout_mode": "clone",
                 },
             )
             await _drain_spawn_background_tasks()
@@ -800,7 +800,7 @@ class TestSpawnAgentConcurrencyGuards:
                         "prompt": "Test prompt",
                         "parent_session_id": parent_session_id,
                         "task_id": task.id,
-                        "isolation": "none",
+                        "checkout_mode": "none",
                     },
                 ),
                 registry.call(
@@ -809,7 +809,7 @@ class TestSpawnAgentConcurrencyGuards:
                         "prompt": "Test prompt",
                         "parent_session_id": parent_session_id,
                         "task_id": task.id,
-                        "isolation": "none",
+                        "checkout_mode": "none",
                     },
                 ),
             )
@@ -894,7 +894,7 @@ class TestSpawnAgentConcurrencyGuards:
                     "prompt": "Test prompt",
                     "parent_session_id": parent_session_id,
                     "task_id": task.id,
-                    "isolation": "none",
+                    "checkout_mode": "none",
                 },
             )
 
@@ -1268,7 +1268,7 @@ class TestSpawnAgentPreRegistration:
                 {
                     "prompt": "Test prompt",
                     "parent_session_id": parent_session_id,
-                    "isolation": "worktree",
+                    "checkout_mode": "worktree",
                     "cleanup_isolation_on_failure": True,
                 },
             )
@@ -1357,7 +1357,7 @@ class TestSpawnAgentPreRegistration:
                     "prompt": "Test prompt",
                     "parent_session_id": parent_session_id,
                     "task_id": task.id,
-                    "isolation": "none",
+                    "checkout_mode": "none",
                 },
             )
 
@@ -1822,7 +1822,7 @@ async def test_spawn_failure_provenance_is_persisted_before_cleanup(
             spawn_result=result,
             spawn_request=None,
             isolation_ctx=isolation_context,
-            effective_isolation="none",
+            effective_checkout_mode="none",
             base_commit_sha=None,
             handler=MagicMock(),
             spawn_config=MagicMock(),

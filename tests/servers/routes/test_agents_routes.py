@@ -41,6 +41,7 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
     classify_agent_api_token,
+    derive_managed_signing_key,
     issue_agent_api_token,
 )
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -490,7 +491,9 @@ def test_signed_spawned_agent_bearer_cannot_read_definition_credentials(
     token_file = tmp_path / "operator-token"
     token_file.write_text(operator_token)
     AuthStore(temp_db).set_local_api_token_hash(hash_token(operator_token))
-    server.auth_service = AuthService(lambda: temp_db, token_file=token_file)
+    server.auth_service = AuthService(
+        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
+    )
     session = session_manager.register(
         external_id="definition-read-spawned-agent",
         machine_id="21000000-0000-4000-8000-000000000001",
@@ -501,12 +504,12 @@ def test_signed_spawned_agent_bearer_cannot_read_definition_credentials(
         parent_session_id=session.id, provider="claude", prompt="definition boundary"
     )
     token = issue_agent_api_token(
-        operator_token,
+        derive_managed_signing_key(operator_token),
         agent_run_id=run.id,
         session_id=session.id,
         project_id=sample_project["id"],
     )
-    claims = classify_agent_api_token(token, operator_token)
+    claims = classify_agent_api_token(token, derive_managed_signing_key(operator_token))
     assert isinstance(claims, AgentApiTokenClaims)
     assert claims.agent_run_id == run.id
     assert claims.session_id == session.id
@@ -814,7 +817,7 @@ class TestCreateDefinition:
                 "provider": "codex",
                 "model": "gpt-5.4",
                 "version": "1.2.0",
-                "isolation": "worktree",
+                "checkout_mode": "worktree",
                 "base_branch": "develop",
                 "timeout": 300.0,
             },
@@ -1628,7 +1631,14 @@ class TestUpdateDefinitionNestedFields:
     # Endpoint credentials, spawn/message authority and the sync-owned sandbox
     # network are not editable through PUT.
     IMMUTABLE_BODY_FIELDS = frozenset(
-        {"api_base", "api_token", "network", "send_message_targets", "spawnable_agents"}
+        {
+            "api_base",
+            "api_token",
+            "execution_mode",
+            "network",
+            "send_message_targets",
+            "spawnable_agents",
+        }
     )
     # Row columns the requests carry that the body does not store.
     ROW_ONLY_FIELDS = frozenset({"tags", "project_id"})
@@ -1992,3 +2002,10 @@ def test_create_rejects_missing_rule_selectors(
     )
     assert response.status_code == 400
     assert "rule_selectors" in response.json()["detail"]
+
+
+def _managed_bootstrap(token_file: Path) -> Path:
+    bootstrap = token_file.with_name(token_file.name + ".bootstrap.yaml")
+    api_key = token_file.read_text().strip() if token_file.exists() else None
+    bootstrap.write_text(json.dumps({"api_key": api_key}))
+    return bootstrap

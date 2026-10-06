@@ -15,7 +15,7 @@ match, coordinate if another active session owns it, or create one when no match
 exists. Use a scope-specific title, `category="code"`,
 `implementation_domain="fullstack"`, `labels=["live-session"]`, `claim=true`,
 and concrete criteria covering the touched behavior and verification commands.
-Set `allow_automation=false` and `isolation="none"` through `update_task`; confirm
+Set `allow_automation=false` and `checkout_mode="none"` through `update_task`; confirm
 `unattended=false` and the returned settings before editing. Preserve the exact
 `gobby:references/tasks/live-work.md` requirement in session `additional_skills`
 so context resets reload the operating guidance.

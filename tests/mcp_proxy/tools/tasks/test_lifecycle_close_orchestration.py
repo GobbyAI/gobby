@@ -328,7 +328,7 @@ async def test_close_persists_and_launches_one_taskless_reviewer(
     launch_args = registry.call.call_args.args[1]
     assert launch_args["agent"] == "task-close-reviewer"
     assert launch_args["task_id"] is None
-    assert launch_args["isolation"] == "none"
+    assert launch_args["checkout_mode"] == "none"
     from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
     # Validate the real public tool boundary, not just the mocked launch result.

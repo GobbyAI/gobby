@@ -13,7 +13,7 @@ from gobby.build.stage_manifest import (
     resolve_stage_manifest_specs,
 )
 from gobby.build.validation import _validate_no_merge, _validate_planning_seed, _validate_retry_caps
-from gobby.config.build import Isolation
+from gobby.config.build import CheckoutMode
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
@@ -71,20 +71,20 @@ def _is_build_owned_escalation(reason: str | None) -> bool:
 def _effective_restart_options(root: Task, opts: BuildOptions | None) -> BuildOptions | None:
     if opts is None:
         return BuildOptions(
-            isolation=_task_isolation(root),
-            isolation_explicit=False,
+            checkout_mode=_task_checkout_mode(root),
+            checkout_mode_explicit=False,
             skip_stages=["pr"],
             skip_stages_explicit=False,
         )
-    if opts.isolation_explicit:
+    if opts.checkout_mode_explicit:
         return opts
-    return replace(opts, isolation=_task_isolation(root))
+    return replace(opts, checkout_mode=_task_checkout_mode(root))
 
 
-def _task_isolation(task: Task) -> Isolation:
-    isolation = getattr(task.isolation, "value", task.isolation)
-    if isolation in {"none", "worktree", "clone"}:
-        return cast(Isolation, isolation)
+def _task_checkout_mode(task: Task) -> CheckoutMode:
+    checkout_mode = getattr(task.checkout_mode, "value", task.checkout_mode)
+    if checkout_mode in {"none", "worktree", "clone"}:
+        return cast(CheckoutMode, checkout_mode)
     return "worktree"
 
 
@@ -120,7 +120,7 @@ def _apply_restart_task_controls(
                 task.id,
                 allow_automation=allow_automation,
                 unattended=opts.unattended,
-                isolation=opts.isolation,
+                checkout_mode=opts.checkout_mode,
                 assigned_agent=opts.assigned_agent,
             )
         else:
@@ -128,7 +128,7 @@ def _apply_restart_task_controls(
                 task.id,
                 allow_automation=allow_automation,
                 unattended=opts.unattended,
-                isolation=opts.isolation,
+                checkout_mode=opts.checkout_mode,
             )
 
 
@@ -163,7 +163,8 @@ def _reset_restart_stage_manifests_from_options(
             else derive_child_manifest_specs(
                 root_specs,
                 include_epic_qa=task.task_type == "epic",
-                include_merge_stage=opts.isolation in {"worktree", "clone"} and not opts.no_merge,
+                include_merge_stage=opts.checkout_mode in {"worktree", "clone"}
+                and not opts.no_merge,
             )
         )
         if not specs:

@@ -12,7 +12,7 @@ surfaces: [spawn, persona]
 provider: codex
 model: gpt-6.1-sol
 reasoning_effort: medium
-isolation: none
+checkout_mode: none
 # Agent-level tool restrictions (applied regardless of step workflow): the
 # enhancer is advisory-only and must never edit the plan artifact.
 blocked_tools:
@@ -50,7 +50,7 @@ prompts:
 
     After the workflow has advanced to `enhance`, read the plan artifact at
     artifact_path off the local filesystem with your native file-read or shell
-    tools. This run is `isolation: none`, so you are already in the caller's
+    tools. This run is `checkout_mode: none`, so you are already in the caller's
     checkout and artifact_path is a real file there. The MCP proxy exposes no
     file-reading tool and the `enhance` step whitelists only a few MCP tools by
     design — that is never a reason to ask the parent session to paste the plan

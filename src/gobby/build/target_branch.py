@@ -22,7 +22,7 @@ async def _resolve_target_branch(
     if opts.target_branch:
         await _validate_target_branch(db, project_id, opts.target_branch)
         return opts.target_branch
-    if input_kind == "leaf" and opts.isolation == "none":
+    if input_kind == "leaf" and opts.checkout_mode == "none":
         return None
     return await _current_target_branch(db, project_id)
 

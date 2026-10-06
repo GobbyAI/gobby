@@ -44,7 +44,7 @@ prompts:
     - Run Python through `uv run`; the system Python lacks the project deps.
     - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
 provider: claude
-isolation: clone
+checkout_mode: clone
 
 workflows:
   rule_selectors:

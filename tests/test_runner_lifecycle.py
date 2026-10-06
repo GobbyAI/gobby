@@ -42,7 +42,8 @@ pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_wi
 
 
 @pytest.fixture(autouse=True)
-def _clear_app_context_between_tests() -> Iterator[None]:
+def _clear_app_context_between_tests(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setattr("gobby.utils.local_token._daemon_bootstrap", None)
     clear_app_context()
     yield
     clear_app_context()
@@ -2703,7 +2704,7 @@ class TestRunGobbyFunction:
     """Tests for run_gobby async function."""
 
     @pytest.mark.asyncio
-    async def test_run_gobby_creates_runner(self) -> None:
+    async def test_run_gobby_creates_runner(self, tmp_path: Path) -> None:
         """Test that run_gobby creates and runs GobbyRunner."""
         bootstrap = BootstrapConfig(
             database_url="postgresql://test",
@@ -2750,7 +2751,7 @@ class TestRunGobbyFunction:
 
             ownership = FailOpenPidOwnership("test")
             await run_gobby(
-                config_path=Path("/tmp/config.yaml"),
+                config_path=tmp_path / "config.yaml",
                 verbose=True,
                 ownership_resolution=ownership,
             )
@@ -2758,12 +2759,12 @@ class TestRunGobbyFunction:
             mock_probe.assert_awaited_once()
 
             mock_runner_cls.create.assert_awaited_once_with(
-                config_path=Path("/tmp/config.yaml"), verbose=True
+                config_path=tmp_path / "config.yaml", verbose=True
             )
             mock_runner.run.assert_called_once_with(ownership_resolution=ownership)
             assert mock_runner.run.await_count == 1
             mock_load_bootstrap.assert_called_once_with(
-                "/tmp/config.yaml", resolve_database_url=True
+                str(tmp_path / "config.yaml"), resolve_database_url=True
             )
             mock_require_machine_id.assert_called_once_with()
             mock_lease_cls.assert_called_once_with(

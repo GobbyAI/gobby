@@ -184,7 +184,7 @@ def spawn_agent(
     arguments: dict[str, str | bool] = {
         "prompt": prompt,
         "parent_session_id": parent_session_id,
-        "isolation": "clone",
+        "checkout_mode": "clone",
         "clone_id": clone_id,
     }
 

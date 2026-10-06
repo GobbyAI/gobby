@@ -592,7 +592,7 @@ class TaskBackupManager:
                             # Preserve automation and routing policy packed into state on export.
                             "allow_automation": state.get("allow_automation", False),
                             "unattended": state.get("unattended", False),
-                            "isolation": state.get("isolation", "worktree"),
+                            "checkout_mode": state.get("checkout_mode", "worktree"),
                             "assigned_agent": state.get("assigned_agent"),
                             "implementation_domain": state.get("implementation_domain"),
                             "additional_skills": (

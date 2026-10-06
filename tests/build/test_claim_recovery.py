@@ -45,7 +45,7 @@ def _claimed_review_task(
         task_type="task",
         validation_criteria="Test task completion is observable.",
     )
-    task_manager.update_task(task.id, allow_automation=True, isolation=family)
+    task_manager.update_task(task.id, allow_automation=True, checkout_mode=family)
     initialize_manifest(temp_db, task.id, [spec("development", 0)])
     set_stage_state(temp_db, task.id, "development", stage_state)
 

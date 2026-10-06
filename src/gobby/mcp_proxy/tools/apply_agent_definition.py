@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -101,6 +102,17 @@ def definition_pin(agent_body: AgentDefinitionBody) -> str:
     from gobby.storage.definitions import compute_definition_hash
 
     return compute_definition_hash(agent_body.model_dump_json())
+
+
+def definition_drift_line(existing: Mapping[str, Any], agent: str, new_pin: str) -> str | None:
+    """Describe a changed pin for the same seat, excluding first activation."""
+    old_pin = existing.get("_agent_definition_hash")
+    if existing.get("_agent_type") != agent or old_pin is None or old_pin == new_pin:
+        return None
+    return (
+        f"Definition `{agent}` changed since this session activated it (`{old_pin[:12]}` → "
+        f"`{new_pin[:12]}`); the current definition now applies."
+    )
 
 
 def build_persona_prompt_context(
@@ -266,6 +278,12 @@ def commit_definition_changes(
             # SessionStart refreshes seat enforcement while keeping the live persona.
             delta.pop("_active_skill_names", None)
             delta.pop("_skill_format", None)
+        drift = definition_drift_line(current, agent, changes["_agent_definition_hash"])
+        if drift:
+            delta["_agent_definition_drift"] = drift
+            delta["_agent_identity_reinject"] = True
+        elif identity_change:
+            delta["_agent_definition_drift"] = None
         manager.merge_variables(session_id, delta)
         merged = manager.get_variables(session_id)
         return {"status": "applied", "agent": agent, "variables": merged}

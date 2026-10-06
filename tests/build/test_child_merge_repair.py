@@ -149,7 +149,7 @@ async def test_child_build_resume_leaves_parent_integration_unprovisioned(
 
     await build(
         str(leaf.seq_num),
-        BuildOptions(isolation="worktree", target_branch="main"),
+        BuildOptions(checkout_mode="worktree", target_branch="main"),
         db=temp_db,
         project_id=project.id,
     )
@@ -241,7 +241,7 @@ async def test_child_build_resume_preserves_workspaces_without_parent_refresh(
 
     await build(
         str(leaf.seq_num),
-        BuildOptions(isolation="worktree"),
+        BuildOptions(checkout_mode="worktree"),
         db=temp_db,
         project_id=project.id,
     )
@@ -291,7 +291,7 @@ async def test_epic_build_does_not_provision_integration_workspaces(
 
     await build(
         str(root.seq_num),
-        BuildOptions(isolation=backend, target_branch="main"),
+        BuildOptions(checkout_mode=backend, target_branch="main"),
         db=temp_db,
         project_id=project.id,
     )

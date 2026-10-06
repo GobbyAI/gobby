@@ -234,6 +234,21 @@ class TestSpawnAgent:
             )
         assert response.status_code == 400
 
+    @pytest.mark.parametrize("checkout_mode", ["clone", "worktree"])
+    @pytest.mark.parametrize("include_current_key", [False, True])
+    def test_removed_isolation_key_rejected(
+        self, client: TestClient, checkout_mode: str, include_current_key: bool
+    ) -> None:
+        payload = {"task_id": "unused-task", "isolation": checkout_mode}
+        if include_current_key:
+            payload["checkout_mode"] = "none"
+        response = client.post("/api/agents/spawn", json=payload)
+        assert response.status_code == 422
+        assert any(
+            error["loc"] == ["body", "isolation"] and error["type"] == "extra_forbidden"
+            for error in response.json()["detail"]
+        )
+
     def test_spawn_web_chat_mode(
         self,
         client: TestClient,
@@ -432,7 +447,7 @@ class TestSpawnAgent:
                         "success": True,
                         "run_id": "run-123",
                         "child_session_id": child.id,
-                        "isolation": "none",
+                        "checkout_mode": "none",
                     }
                 ),
             ) as mock_spawn,
@@ -526,7 +541,7 @@ class TestSpawnAgent:
                         "success": True,
                         "run_id": "run-123",
                         "child_session_id": child.id,
-                        "isolation": "none",
+                        "checkout_mode": "none",
                     }
                 ),
             ) as mock_spawn,
@@ -643,7 +658,7 @@ class TestLaunchDefaults:
                 "launch_defaults.proj-1": {
                     "code": {
                         "agent_name": "developer",
-                        "isolation": "worktree",
+                        "checkout_mode": "worktree",
                         "model": "sonnet",
                     }
                 }
@@ -656,7 +671,7 @@ class TestLaunchDefaults:
         assert "code" in data["defaults"]
         code_defaults = data["defaults"]["code"]
         assert code_defaults["agent_name"] == "developer"
-        assert code_defaults["isolation"] == "worktree"
+        assert code_defaults["checkout_mode"] == "worktree"
         assert code_defaults["model"] == "sonnet"
 
     def test_specialized_launch_defaults_writer_is_removed(self, client: TestClient) -> None:

@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 from gobby.agents.cargo_target import sandbox_checkout_cargo_target_dir
 from gobby.agents.constants import CARGO_HOME, CARGO_TARGET_DIR, sandbox_agent_cache_dir
 from gobby.agents.credential_inventory import denied_ambient_keys
+from gobby.agents.sandbox_credentials import credential_roots, gcode_runtime_root
 from gobby.agents.sandbox_domains import GIT_DOMAINS, PACKAGE_REGISTRY_DOMAINS
 from gobby.agents.sandbox_run_environment import RUN_CACHE_ENV_VARS, SandboxRunPaths
 from gobby.agents.zig_packages import (
@@ -278,25 +279,9 @@ def deny_paths(paths: list[str], *, base: Path | None = None) -> list[str]:
     return list(dict.fromkeys(variants))
 
 
-def _credential_roots() -> list[Path]:
-    """Return the Gobby files and directories no managed grant may read or write."""
-    gobby_home = get_gobby_home()
-    return [
-        gobby_home / "bootstrap.yaml",
-        gobby_home / ".secret_kek",
-        gobby_home / "local_cli_token",
-        gobby_home / "tools" / "srt",
-    ]
-
-
-def _gcode_runtime_root() -> Path:
-    """Return the parent of every workspace's generated gcode home."""
-    return get_gobby_home() / "gcode-runtime"
-
-
 def sensitive_roots() -> list[str]:
     """Return Gobby roots excluded from every managed allow surface."""
-    return deny_paths([str(path) for path in (*_credential_roots(), _gcode_runtime_root())])
+    return deny_paths([str(path) for path in (*credential_roots(), gcode_runtime_root())])
 
 
 def assert_sensitive_path_contract(*allow_lists: list[str]) -> None:
@@ -327,7 +312,7 @@ def sensitive_write_roots() -> list[str]:
         home / ".gnupg",
         home / ".kube",
         home / ".config" / "gcloud",
-        *_credential_roots(),
+        *credential_roots(),
     ]
     return deny_paths([str(path) for path in roots])
 
@@ -375,7 +360,7 @@ def gcode_runtime_write_exceptions(workspace: Path) -> list[str]:
     except OSError:
         workspace_key = str(workspace)
     digest = hashlib.sha256(workspace_key.encode("utf-8")).hexdigest()[:16]
-    runtime_home = _gcode_runtime_root() / digest
+    runtime_home = gcode_runtime_root() / digest
     return canonical_paths([str(runtime_home)])
 
 

@@ -70,7 +70,7 @@ async def test_backfill_wire_contract(
         "Empty approval lineage",
         task_type="task",
         category="planning",
-        isolation="none",
+        checkout_mode="none",
         validation_criteria="Test task completion is observable.",
     )
     empty_lineage = DurableLineage(
@@ -107,7 +107,7 @@ async def test_backfill_wire_contract(
         "No approval checkpoint",
         task_type="task",
         category="planning",
-        isolation="none",
+        checkout_mode="none",
         validation_criteria="Test task completion is observable.",
     )
     refused = await registry.call(
@@ -166,7 +166,7 @@ async def test_non_plan_approval_unaffected(
             project.id,
             f"Facade approve {surface}",
             category="code",
-            isolation="none",
+            checkout_mode="none",
             validation_criteria="Test task completion is observable.",
         )
         manager.initialize_task_manifest(facade_approve.id, stage_names=[stage])
@@ -180,7 +180,7 @@ async def test_non_plan_approval_unaffected(
             project.id,
             f"Facade reject {surface}",
             category="code",
-            isolation="none",
+            checkout_mode="none",
             validation_criteria="Test task completion is observable.",
         )
         manager.initialize_task_manifest(facade_reject.id, stage_names=[stage])
@@ -194,7 +194,7 @@ async def test_non_plan_approval_unaffected(
             project.id,
             f"Registry approve {surface}",
             category="code",
-            isolation="none",
+            checkout_mode="none",
             validation_criteria="Test task completion is observable.",
         )
         manager.initialize_task_manifest(registry_approve.id, stage_names=[stage])
@@ -214,7 +214,7 @@ async def test_non_plan_approval_unaffected(
             project.id,
             f"Registry reject {surface}",
             category="code",
-            isolation="none",
+            checkout_mode="none",
             validation_criteria="Test task completion is observable.",
         )
         manager.initialize_task_manifest(registry_reject.id, stage_names=[stage])
@@ -235,7 +235,7 @@ async def test_non_plan_approval_unaffected(
         "Planning approval requires evidence",
         task_type="task",
         category="planning",
-        isolation="none",
+        checkout_mode="none",
         validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(planning.id, stage_names=["planning"])

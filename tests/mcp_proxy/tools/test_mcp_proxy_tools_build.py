@@ -51,7 +51,7 @@ def test_build_task_tool_is_registered_with_json_schema(temp_db: Any) -> None:
     assert schema["properties"]["profile"]["type"] == "string"
     assert schema["properties"]["quick"]["type"] == "boolean"
     assert schema["properties"]["dry_run"]["type"] == "boolean"
-    assert set(schema["properties"]["isolation"]["enum"]) == {"none", "worktree", "clone"}
+    assert set(schema["properties"]["checkout_mode"]["enum"]) == {"none", "worktree", "clone"}
     assert set(schema["properties"]["workspace_backend"]["enum"]) == {"worktree", "clone"}
     assert "default" not in schema["properties"]["workspace_backend"]
     assert schema["properties"]["clone"]["type"] == "boolean"
@@ -158,8 +158,8 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(
     assert opts.profile == "submit"
     assert opts.quick is True
     assert opts.skip_stages == ["qa"]
-    assert opts.isolation == "clone"
-    assert opts.isolation_explicit is True
+    assert opts.checkout_mode == "clone"
+    assert opts.checkout_mode_explicit is True
     assert opts.unattended is True
     assert opts.unattended_explicit is True
     assert str(opts.clones_dir) == "/tmp"
@@ -216,13 +216,13 @@ async def test_build_task_tool_omitted_backend_defaults_to_worktree(temp_db: Any
         await build_task(input_ref="#42", quick=True, project_id="project-1")
 
     opts = build.call_args.args[1]
-    assert opts.isolation == "worktree"
-    assert opts.isolation_explicit is False
+    assert opts.checkout_mode == "worktree"
+    assert opts.checkout_mode_explicit is False
 
 
-@pytest.mark.parametrize("isolation", ["none", "worktree", "clone"])
+@pytest.mark.parametrize("checkout_mode", ["none", "worktree", "clone"])
 @pytest.mark.asyncio
-async def test_build_task_tool_accepts_explicit_isolation(temp_db: Any, isolation: str) -> None:
+async def test_build_task_tool_accepts_explicit_isolation(temp_db: Any, checkout_mode: str) -> None:
     registry = _registry(temp_db)
     build_task = registry.get_tool("build_task")
     build_result = _small_build_result()
@@ -230,23 +230,27 @@ async def test_build_task_tool_accepts_explicit_isolation(temp_db: Any, isolatio
     with patch(
         "gobby.mcp_proxy.tools.build.build", new=AsyncMock(return_value=build_result)
     ) as build:
-        await build_task(input_ref="#42", isolation=isolation, project_id="project-1")
+        await build_task(input_ref="#42", checkout_mode=checkout_mode, project_id="project-1")
 
     opts = build.call_args.args[1]
-    assert opts.isolation == isolation
-    assert opts.isolation_explicit is True
+    assert opts.checkout_mode == checkout_mode
+    assert opts.checkout_mode_explicit is True
 
 
-@pytest.mark.parametrize("isolation", ["none", "worktree"])
+@pytest.mark.parametrize("checkout_mode", ["none", "worktree"])
 @pytest.mark.asyncio
 async def test_build_task_tool_rejects_clone_isolation_conflicts(
-    temp_db: Any, isolation: str
+    temp_db: Any, checkout_mode: str
 ) -> None:
     registry = _registry(temp_db)
     build_task = registry.get_tool("build_task")
 
-    with pytest.raises(ValueError, match=f"clone=true conflicts with isolation={isolation}"):
-        await build_task(input_ref="#42", clone=True, isolation=isolation, project_id="project-1")
+    with pytest.raises(
+        ValueError, match=f"clone=true conflicts with checkout_mode={checkout_mode}"
+    ):
+        await build_task(
+            input_ref="#42", clone=True, checkout_mode=checkout_mode, project_id="project-1"
+        )
 
 
 @pytest.mark.asyncio
@@ -266,8 +270,8 @@ async def test_build_task_tool_clone_flag_requires_clone_backend(temp_db: Any) -
         )
 
     opts = build.call_args.args[1]
-    assert opts.isolation == "clone"
-    assert opts.isolation_explicit is True
+    assert opts.checkout_mode == "clone"
+    assert opts.checkout_mode_explicit is True
 
 
 @pytest.mark.asyncio
@@ -277,10 +281,10 @@ async def test_build_task_tool_rejects_workspace_backend_isolation_conflict(
     registry = _registry(temp_db)
     build_task = registry.get_tool("build_task")
 
-    with pytest.raises(ValueError, match="isolation conflicts with workspace_backend"):
+    with pytest.raises(ValueError, match="checkout_mode conflicts with workspace_backend"):
         await build_task(
             input_ref="#42",
-            isolation="worktree",
+            checkout_mode="worktree",
             workspace_backend="clone",
             project_id="project-1",
         )

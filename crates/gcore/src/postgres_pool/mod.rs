@@ -8,9 +8,11 @@
 
 mod config;
 mod row;
+mod session;
 mod transaction;
 
 pub use row::{FromRow, RowError};
+pub use session::DedicatedSession;
 pub use transaction::{LockTarget, Transaction, TransactionError};
 
 use std::sync::Arc;

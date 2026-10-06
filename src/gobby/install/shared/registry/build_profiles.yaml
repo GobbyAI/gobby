@@ -4,7 +4,7 @@ profiles:
     display_label: Default
     description: Full lifecycle automation using the task type's default stage manifest.
     skip_stages: []
-    isolation: worktree
+    checkout_mode: worktree
     unattended: false
     delivery_mode: auto
     delivery_target_repo: null
@@ -15,7 +15,7 @@ profiles:
     display_label: Autopilot
     description: Full lifecycle automation with unattended dispatch enabled.
     skip_stages: []
-    isolation: worktree
+    checkout_mode: worktree
     unattended: true
     delivery_mode: auto
     delivery_target_repo: null
@@ -26,7 +26,7 @@ profiles:
     display_label: Fix
     description: Same-workspace fix loop without PR or merge delivery stages.
     skip_stages: [pr, merge]
-    isolation: none
+    checkout_mode: none
     unattended: false
     delivery_mode: auto
     delivery_target_repo: null
@@ -37,7 +37,7 @@ profiles:
     display_label: Fix + Merge
     description: Isolated fix loop that keeps merge automation enabled.
     skip_stages: [pr]
-    isolation: worktree
+    checkout_mode: worktree
     unattended: false
     delivery_mode: auto
     delivery_target_repo: null
@@ -48,7 +48,7 @@ profiles:
     display_label: Submit
     description: Run through the PR review stage and stop before merge.
     skip_stages: [merge]
-    isolation: worktree
+    checkout_mode: worktree
     unattended: false
     delivery_mode: auto
     delivery_target_repo: null

@@ -53,7 +53,7 @@ def _task(**overrides: object) -> SimpleNamespace:
         "is_escalated": False,
         "allow_automation": True,
         "unattended": False,
-        "isolation": "none",
+        "checkout_mode": "none",
         "stages": [
             _stage("planning", "done", 0),
             _stage("development", "ready", 1),

@@ -12,7 +12,7 @@ def _options(**overrides: object) -> BuildOptions:
     values = {
         "quick": False,
         "skip_stages": [],
-        "isolation": "none",
+        "checkout_mode": "none",
         "no_merge": False,
         "pr": None,
         "target_branch": None,

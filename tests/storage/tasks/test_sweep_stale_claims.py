@@ -37,7 +37,7 @@ from gobby.storage.sessions._contested_expiry import (
 from gobby.storage.task_close_reviews import QueuedAgentRunSpec, TaskCloseReviewStore
 from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
 from gobby.storage.tasks._manager import LocalTaskManager
-from gobby.storage.tasks._models import Isolation, Task
+from gobby.storage.tasks._models import CheckoutMode, Task
 from gobby.storage.terminals import TerminalManager, native_locator_key
 from gobby.terminal_ownership import PaneOwnershipDecision, resolve_pane_ownership
 from gobby.utils.machine_id import require_machine_id
@@ -151,8 +151,8 @@ def _claimed_task(
     initialize_manifest(temp_db, task.id, [spec("planning", 0)])
     set_stage_state(temp_db, task.id, "planning", stage_state)
     temp_db.execute(
-        "UPDATE tasks SET allow_automation = %s, isolation = %s, claimed_by_session_id = %s WHERE id = %s",
-        (allow_automation, Isolation.none.value, claimed_by, task.id),
+        "UPDATE tasks SET allow_automation = %s, checkout_mode = %s, claimed_by_session_id = %s WHERE id = %s",
+        (allow_automation, CheckoutMode.none.value, claimed_by, task.id),
     )
     return task
 

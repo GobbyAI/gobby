@@ -27,9 +27,9 @@ sets `allow_automation=true`, and kicks a bounded dispatcher heartbeat.
 
 ```bash
 uv run gobby build '#14354' --quick --max-active-agents 1
-uv run gobby build '#14354' --isolation worktree --stage development:max_review_rounds=4
+uv run gobby build '#14354' --checkout-mode worktree --stage development:max_review_rounds=4
 uv run gobby build '#14354' --project gobby-cli --coordinator current
-uv run gobby build plan.md --isolation none
+uv run gobby build plan.md --checkout-mode none
 ```
 
 The same build service is exposed through MCP and HTTP:
@@ -41,7 +41,7 @@ The same build service is exposed through MCP and HTTP:
   "arguments": {
     "input_ref": "#14354",
     "quick": true,
-    "isolation": "worktree",
+    "checkout_mode": "worktree",
     "stage": ["development:max_review_rounds=4"],
     "max_active_agents": 1,
     "project_id": "target-project-uuid",
@@ -58,7 +58,7 @@ Content-Type: application/json
   "input_ref": "#14354",
   "profile": "submit",
   "quick": true,
-  "isolation": "worktree",
+  "checkout_mode": "worktree",
   "stage": ["development:max_review_rounds=4"],
   "max_active_agents": 1,
   "project_id": "target-project-uuid",
@@ -105,7 +105,7 @@ Use these surfaces for coordinator diagnosis. They report task-tree state,
 active agents, dispatch mutexes, artifact health, recent lifecycle events, and
 build run history without requiring raw database inspection.
 
-Build profiles are DB-backed presets over `skip_stages`, `isolation`,
+Build profiles are DB-backed presets over `skip_stages`, `checkout_mode`,
 `unattended`, and delivery intent. `delivery_mode` is `auto` or
 `pull_request`; `delivery_target_repo` is an optional PR base repository in
 `owner/repo` form. Bundled `submit` uses `pull_request`; other bundled profiles
@@ -119,12 +119,12 @@ output have a bounded PR-skip/pristine-manifest repair path; arbitrary lifecycle
 reshaping requires restart. Profile enhancement-round defaults also feed the planning sub-loop. Profile rows are editable through `gobby
 profiles`, `gobby-profiles`, `/api/profiles`, and the Workflows Profiles tab.
 
-Explicit build isolation is available at every dispatch boundary. CLI uses
-`--isolation none|worktree|clone`; `--clone` remains shorthand for
-`--isolation clone`. MCP `build_task` accepts `isolation` and keeps
-`workspace_backend` plus `clone` for compatibility. HTTP `POST /api/build`
-accepts `isolation`, `workspace_backend`, and `clone`. Conflicting combinations
-such as `clone=true` with `isolation=none` or `isolation=worktree` are rejected
+Explicit build checkout mode is available at every dispatch boundary. CLI uses
+`--checkout-mode none|worktree|clone`; `--clone` remains shorthand for
+`--checkout-mode clone`. MCP `build_task` accepts `checkout_mode` and keeps
+`workspace_backend` plus the `clone` shortcut. HTTP `POST /api/build`
+accepts `checkout_mode`, `workspace_backend`, and `clone`. Conflicting combinations
+such as `clone=true` with `checkout_mode=none` or `checkout_mode=worktree` are rejected
 instead of silently choosing one value.
 
 ## Stage Registry
@@ -238,7 +238,7 @@ Build state is resolved before dispatch:
 
 - `allow_automation` is the opt-in gate. Backlog tasks stay invisible until
   `gobby build` enables automation.
-- `isolation` is explicit task state: `none`, `worktree`, or `clone`.
+- `checkout_mode` is explicit task state: `none`, `worktree`, or `clone`.
 - `assigned_agent` and `additional_skills` route leaf work.
 - `target_branch` and workspace IDs live in task artifacts.
 - Stage caps come from `--stage`, the MCP `stage` array, or HTTP `stage` array.
@@ -260,7 +260,7 @@ Build runs and heartbeat/control events are recorded in `build_runs` and
 `build_history_events`. History writes are best-effort: they are useful for
 diagnosis and resumption, but they do not block build execution.
 
-## Isolation
+## Checkout Modes
 
 Build/dispatch owns integration workspace setup. Launch writes manifest and
 isolation intent; spawn/merge provision needed ancestor integration workspaces

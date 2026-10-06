@@ -162,7 +162,7 @@ def task_summary_payload(
         "dependencies": dependencies,
         "allow_automation": _task_value(task, "allow_automation", False),
         "unattended": _task_value(task, "unattended", False),
-        "isolation": _plain(_task_value(task, "isolation")),
+        "checkout_mode": _plain(_task_value(task, "checkout_mode")),
         "assigned_agent": _task_value(task, "assigned_agent"),
         "implementation_domain": _task_value(task, "implementation_domain"),
         "additional_skills": _task_list_value(task, "additional_skills"),

@@ -313,7 +313,7 @@ class TestCloneLifecycle:
 
 
 class TestSpawnAgentWithCloneIsolation:
-    """Tests for spawn_agent tool with isolation='clone'."""
+    """Tests for spawn_agent tool with checkout_mode='clone'."""
 
     def test_spawn_without_parent_session_fails(
         self,
@@ -326,7 +326,7 @@ class TestSpawnAgentWithCloneIsolation:
             tool_name="spawn_agent",
             arguments={
                 "prompt": "Test task",
-                "isolation": "clone",
+                "checkout_mode": "clone",
                 # Missing parent_session_id
             },
         )
@@ -374,7 +374,7 @@ class TestSpawnAgentWithCloneIsolation:
             arguments={
                 "prompt": "Test task",
                 "parent_session_id": session_id,
-                "isolation": "clone",
+                "checkout_mode": "clone",
                 "mode": "invalid_mode",  # Invalid mode
             },
         )
@@ -398,17 +398,13 @@ class TestSpawnAgentWithCloneIsolation:
 class TestParallelTaskProcessing:
     """Tests for parallel task processing flow."""
 
-    def test_complete_parallel_tasks_sequentially(
+    def test_parallel_tasks_are_ready_for_close_review(
         self,
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         cli_events: CLIEventSimulator,
     ) -> None:
-        """Test completing multiple parallel tasks sequentially (simulates parallel completion).
-
-        While we can't spawn actual agents in E2E tests, we can verify the task
-        status flow works correctly when tasks are completed in parallel.
-        """
+        """Each worker reaches close review while retaining its own task claim."""
         # Setup
         project_result = cli_events.register_test_project(
             project_id="00000000-0000-0000-0000-000000000e2e",
@@ -459,15 +455,26 @@ class TestParallelTaskProcessing:
             result = unwrap_result(raw_result)
             subtask_ids.append(result["id"])
 
-        # Simulate parallel processing: all tasks claimed by the session.
+        worker_session_ids = []
         for task_id in subtask_ids:
-            mcp_client.call_tool(
-                server_name="gobby-tasks",
-                tool_name="claim_task",
-                arguments={"task_id": task_id},
+            worker = cli_events.register_session(
+                external_id=f"{session_external_id}-{task_id}",
+                machine_id="21000000-0000-4000-8000-000000000002",
+                source="Claude Code",
+                cwd=str(daemon_instance.project_dir),
             )
+            worker_session_ids.append(worker["id"])
+            mcp_client.session_id = worker["id"]
+            claim_result = unwrap_result(
+                mcp_client.call_tool(
+                    server_name="gobby-tasks",
+                    tool_name="claim_task",
+                    arguments={"task_id": task_id},
+                )
+            )
+            assert claim_result.get("task_id") == task_id, claim_result
 
-        # Verify all are claimed by the current session.
+        # Verify all tasks are claimed by their workers.
         for task_id in subtask_ids:
             raw_result = mcp_client.call_tool(
                 server_name="gobby-tasks",
@@ -478,9 +485,9 @@ class TestParallelTaskProcessing:
             state = result.get("state", {})
             assert state.get("is_claimed") is True, f"Task {task_id} should be claimed"
 
-        # Complete all tasks (simulating agents finishing)
-        for task_id in subtask_ids:
-            # Close as already implemented (simulating completed work)
+        # Workers finish independently; preview stops before the external reviewer.
+        for task_id, worker_session_id in zip(subtask_ids, worker_session_ids, strict=True):
+            mcp_client.session_id = worker_session_id
             raw_result = mcp_client.call_tool(
                 server_name="gobby-tasks",
                 tool_name="close_task",
@@ -488,13 +495,21 @@ class TestParallelTaskProcessing:
                     "task_id": task_id,
                     "reason": "already_implemented",
                     "changes_summary": "Task completed - no additional changes needed",
+                    "preview": True,
+                    "response_detail": "diagnostic",
                 },
             )
             result = unwrap_result(raw_result)
-            assert result.get("closed") is True, f"Close task {task_id} failed: {result}"
-            assert result.get("can_close") is True
+            assert result.get("closed") is False, result
+            assert result.get("can_close") is False, result
+            assert result.get("error") == "close_review_required", result
+            assert all(
+                gate["status"] in {"passed", "skipped"} for gate in result["checklist"][:12]
+            ), result
+            assert result["checklist"][12]["status"] == "not_run", result
 
-        # Verify all are closed
+        mcp_client.session_id = session_id
+        # Preview keeps every claim intact while the worker waits for review admission.
         for task_id in subtask_ids:
             raw_result = mcp_client.call_tool(
                 server_name="gobby-tasks",
@@ -502,11 +517,11 @@ class TestParallelTaskProcessing:
                 arguments={"task_id": task_id},
             )
             result = unwrap_result(raw_result)
-            assert result.get("state", {}).get("is_closed") is True, (
-                f"Task {task_id} should be closed"
-            )
+            state = result.get("state", {})
+            assert state.get("is_closed") is False, result
+            assert state.get("is_claimed") is True, result
 
-        # Verify no more ready tasks under epic
+        # Dependency readiness stays visible with each task's independent claim.
         raw_result = mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="list_ready_tasks",
@@ -514,30 +529,18 @@ class TestParallelTaskProcessing:
         )
         result = unwrap_result(raw_result)
         ready_tasks = result.get("tasks", [])
-        assert len(ready_tasks) == 0, f"Should have no ready tasks after completion: {ready_tasks}"
-
-        # Close the epic (all subtasks completed)
-        raw_result = mcp_client.call_tool(
-            server_name="gobby-tasks",
-            tool_name="close_task",
-            arguments={
-                "task_id": epic_id,
-                "reason": "already_implemented",
-                "changes_summary": "All subtasks completed - epic closed",
-            },
+        assert {task["id"]: task["state"]["owner_session_id"] for task in ready_tasks} == dict(
+            zip(subtask_ids, worker_session_ids, strict=True)
         )
-        result = unwrap_result(raw_result)
-        assert result.get("closed") is True, f"Close epic failed: {result}"
-        assert result.get("can_close") is True
 
-        # Verify epic is closed
+        # The epic remains open until its children's reviews finish.
         raw_result = mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="get_task",
             arguments={"task_id": epic_id},
         )
         result = unwrap_result(raw_result)
-        assert result.get("state", {}).get("is_closed") is True, f"Epic should be closed: {result}"
+        assert result.get("state", {}).get("is_closed") is False, result
 
 
 class TestWorkflowActivation:

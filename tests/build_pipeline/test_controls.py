@@ -240,7 +240,7 @@ async def test_stop_prevents_dispatcher_respawn_on_next_heartbeat(
         task.id,
         allow_automation=True,
         assigned_agent="backend-developer",
-        isolation="none",
+        checkout_mode="none",
     )
     initialize_manifest(temp_db, task.id, [spec("development", 0)])
     set_stage_state(temp_db, task.id, "development", "ready")
@@ -1232,7 +1232,7 @@ async def test_restart_reseeds_exhausted_isolated_manifest_with_merge(
         task_type="task",
         validation_criteria="Test task completion is observable.",
     )
-    task_manager.update_task(task.id, allow_automation=True, isolation="worktree")
+    task_manager.update_task(task.id, allow_automation=True, checkout_mode="worktree")
     task_manager.artifacts.set_artifact(task.id, "target_branch", "integration/test")
     initialize_manifest(temp_db, task.id, [spec("development", 0)])
     set_stage_state(temp_db, task.id, "development", "done")
@@ -1286,8 +1286,8 @@ async def test_restart_no_resume_rebuilds_plan_file_root_manifest_from_options(
         parent_task_id=root.id,
         validation_criteria="Test task completion is observable.",
     )
-    task_manager.update_task(root.id, allow_automation=True, isolation="worktree")
-    task_manager.update_task(child.id, allow_automation=True, isolation="worktree")
+    task_manager.update_task(root.id, allow_automation=True, checkout_mode="worktree")
+    task_manager.update_task(child.id, allow_automation=True, checkout_mode="worktree")
     task_manager.artifacts.set_artifacts_atomic(
         root.id,
         plan_file_path=str(plan_file),
@@ -1307,8 +1307,8 @@ async def test_restart_no_resume_rebuilds_plan_file_root_manifest_from_options(
             opts=BuildOptions(
                 skip_stages=["pr"],
                 skip_stages_explicit=True,
-                isolation="worktree",
-                isolation_explicit=True,
+                checkout_mode="worktree",
+                checkout_mode_explicit=True,
                 target_branch="dev",
                 stage_caps=[
                     StageCapOverride(
@@ -1409,11 +1409,11 @@ async def test_restart_no_resume_resets_epic_tree_without_dispatch(
         parent_task_id=epic.id,
         validation_criteria="Test task completion is observable.",
     )
-    task_manager.update_task(epic.id, allow_automation=True, isolation="worktree")
+    task_manager.update_task(epic.id, allow_automation=True, checkout_mode="worktree")
     task_manager.update_task(
         leaf.id,
         allow_automation=True,
-        isolation="worktree",
+        checkout_mode="worktree",
         dispatch_failure_count=2,
     )
     initialize_manifest(temp_db, epic.id, [spec("planning", 0), spec("merge", 1)])

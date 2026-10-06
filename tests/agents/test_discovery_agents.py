@@ -93,7 +93,7 @@ def test_discovery_agent_yaml_validates_and_is_enabled(slug: str, spec: dict[str
     assert agent.provider == "codex"
     assert agent.model == "gpt-5.6-sol"
     assert agent.reasoning_effort == "xhigh"
-    assert agent.isolation == "none"
+    assert agent.checkout_mode == "none"
     assert len(agent.surfaces) == len(set(agent.surfaces))
     assert set(agent.surfaces) == {"spawn", "persona"}
     assert "skills" not in raw
