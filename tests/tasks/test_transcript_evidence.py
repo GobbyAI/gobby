@@ -2083,6 +2083,29 @@ async def test_codex_shell_runs_record_the_tool_workdir(tmp_path: Path, shape: s
 
 
 @pytest.mark.asyncio
+async def test_claude_shell_runs_record_the_calling_entry_cwd(tmp_path: Path) -> None:
+    # A persisted `cd` shows up as the entry cwd, so the run is located there (#23653).
+    command = "uv run pytest tests/tasks -q"
+    records = _claude_tool_pair(command=command, call_id="toolu_1", start=BASE_TIME, result="ok")
+    records[0]["cwd"] = "/repo dir/web"
+    records[1]["cwd"] = "/after the run"
+    transcript = tmp_path / "claude.jsonl"
+    _write_jsonl(transcript, records)
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.outcome, run.workdir) for run in evidence.validation_runs] == [
+        (command, "success", "/repo dir/web")
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "command,rewritten",
     [

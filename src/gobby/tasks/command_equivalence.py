@@ -303,7 +303,7 @@ def _path_scope(
     parsed = parse_validation_shell(command)
     if len(parsed.segments) != 1:
         return None
-    tokens, _location = _drop_neutral_uv_options(list(parsed.segments[0]))
+    tokens, _locations = _drop_neutral_uv_options(list(parsed.segments[0]))
     start = 2 if tokens[:2] == ["uv", "run"] else 0
     if tokens[start : start + 2] in (["python", "-m"], ["python3", "-m"]):
         start += 2
@@ -351,37 +351,38 @@ def _path_scope(
     return tokens[:end] + [shlex.join(option) for option in options], paths
 
 
-def _drop_neutral_uv_options(tokens: list[str]) -> tuple[list[str], str | None]:
+def _drop_neutral_uv_options(tokens: list[str]) -> tuple[list[str], dict[str, str]]:
     """Rewrite ``uv [options] run [options] <rest>`` as ``uv run <rest>``.
 
     Only options that keep the run's test selection are dropped, before or after
     ``run``. Any other option stays in place, so the runner is not recognized and
-    the command earns no path-scope credit. The second value is the last dropped
-    ``--directory``/``--project`` location, if any.
+    the command earns no path-scope credit. The second value maps each dropped
+    ``--directory``/``--project`` option to its last location.
     """
     if tokens[:1] != ["uv"]:
-        return tokens, None
+        return tokens, {}
     index = 1
     seen_run = False
-    location: str | None = None
+    locations: dict[str, str] = {}
     while index < len(tokens):
         token = tokens[index]
+        option, has_value, value = token.partition("=")
         if token == "run" and not seen_run:
             seen_run = True
             index += 1
         elif token in _UV_NEUTRAL_FLAGS:
             index += 1
         elif token in _UV_LOCATION_OPTIONS and index + 1 < len(tokens):
-            location = tokens[index + 1]
+            locations[token] = tokens[index + 1]
             index += 2
-        elif token.split("=", 1)[0] in _UV_LOCATION_OPTIONS and "=" in token:
-            location = token.split("=", 1)[1]
+        elif option in _UV_LOCATION_OPTIONS and has_value:
+            locations[option] = value
             index += 1
         else:
             break
     if not seen_run:
-        return tokens, None
-    return ["uv", "run", *tokens[index:]], location
+        return tokens, {}
+    return ["uv", "run", *tokens[index:]], locations
 
 
 def runs_outside_root(command: str, root: str) -> bool:
@@ -394,10 +395,12 @@ def runs_outside_root(command: str, root: str) -> bool:
     parsed = parse_validation_shell(command)
     if len(parsed.segments) != 1:
         return False
-    _tokens, location = _drop_neutral_uv_options(list(parsed.segments[0]))
-    if location is None or not os.path.isabs(location):
-        return False
-    return not Path(location).resolve().is_relative_to(Path(root).resolve())
+    _tokens, locations = _drop_neutral_uv_options(list(parsed.segments[0]))
+    return any(
+        os.path.isabs(location)
+        and not Path(location).resolve().is_relative_to(Path(root).resolve())
+        for location in locations.values()
+    )
 
 
 def _path_scope_runner(tokens: list[str], start: int) -> tuple[tuple[str, ...], int] | None:
@@ -501,8 +504,9 @@ def run_location(command: str, *, workdir: str | None = None) -> str | None:
     """Return the directory the last segment of ``command`` runs in.
 
     It starts at the tool call's absolute ``workdir``, or the checkout root (``.``) when
-    none was recorded, and follows the leading ``cd <dir> &&`` chain; ``export`` steps
-    keep it. ``None`` means another operator or leading step.
+    none was recorded, and follows the leading ``cd <dir> &&`` chain and a ``uv
+    --directory``; ``export`` steps keep it. ``None`` means another operator or leading
+    step.
     """
     parsed = parse_validation_shell(command)
     if not parsed.segments or any(operator != "&&" for operator in parsed.operators):
@@ -514,7 +518,11 @@ def run_location(command: str, *, workdir: str | None = None) -> str | None:
         if len(step) != 2 or step[0] != "cd":
             return None
         location = posixpath.normpath(posixpath.join(location, step[1]))
-    return location
+    words = list(parsed.segments[-1])
+    while words and _ENV_ASSIGNMENT.match(words[0]):
+        words.pop(0)
+    directory = _drop_neutral_uv_options(words)[1].get("--directory", ".")
+    return posixpath.normpath(posixpath.join(location, directory))
 
 
 def vitest_related_targets(

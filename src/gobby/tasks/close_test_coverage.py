@@ -8,7 +8,7 @@ import logging
 import os
 import posixpath
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 
@@ -267,12 +267,14 @@ def uncovered_pytest_paths(
     changed_python_tests: tuple[str, ...],
     *,
     close_root: str | None = None,
+    changed_paths: Sequence[str] = (),
 ) -> tuple[str, ...]:
     """Return changed tests no successful pytest run targets.
 
     Without ``close_root`` targets match lexically. With it, each target resolves from
     the run's location: a target in ``close_root`` covers as before, and one in another
-    tree covers a test whose copy there is byte-identical to the root's (#23653).
+    tree covers only when that tree holds the root's bytes for the test and every
+    changed path (#23653).
     """
     if close_root is None:
         covered: list[str] = []
@@ -284,12 +286,15 @@ def uncovered_pytest_paths(
     return tuple(
         test
         for test in changed_python_tests
-        if not any(_runs_test(target, test, root) for target in resolved)
+        if not any(_runs_test(target, test, root, changed_paths) for target in resolved)
     )
 
 
 def identical_copy_run(
-    run: TranscriptValidationRun, changed_python_tests: tuple[str, ...], close_root: str
+    run: TranscriptValidationRun,
+    changed_python_tests: tuple[str, ...],
+    close_root: str,
+    changed_paths: Sequence[str],
 ) -> bool:
     """Whether a passing pytest run targets only identical copies of changed tests.
 
@@ -299,9 +304,38 @@ def identical_copy_run(
     root = os.path.realpath(close_root)
     targets = _resolved_pytest_targets(run, root) if run.outcome == "success" else ()
     return bool(targets) and all(
-        any(_runs_test(target, test, root, copy_only=True) for test in changed_python_tests)
+        any(
+            _runs_test(target, test, root, changed_paths, copy_only=True)
+            for test in changed_python_tests
+        )
         for target in targets
     )
+
+
+def copy_differing_paths(
+    runs: Iterable[TranscriptValidationRun],
+    tests: Sequence[str],
+    close_root: str | None,
+    changed_paths: Sequence[str],
+) -> tuple[str, ...]:
+    """Return the paths whose bytes kept another tree's run of ``tests`` from crediting.
+
+    Only a tree holding a copy of the test counts; any other ran none of it.
+    """
+    if close_root is None or not tests:
+        return ()
+    root = os.path.realpath(close_root)
+    targets = [target for run in runs for target in _resolved_pytest_targets(run, root)]
+    differing = {
+        path
+        for target in targets
+        for test in tests
+        for tree in _target_trees(target, test)
+        if tree != root and os.path.isfile(os.path.join(tree, test))
+        for path in (test, *changed_paths)
+        if not _same_bytes(tree, root, path)
+    }
+    return tuple(sorted(differing))
 
 
 def _resolved_pytest_targets(run: TranscriptValidationRun, root: str) -> tuple[str, ...]:
@@ -311,50 +345,79 @@ def _resolved_pytest_targets(run: TranscriptValidationRun, root: str) -> tuple[s
     if not targets or location is None:
         return ()
     paths = (os.path.normpath(os.path.join(root, location, target)) for target in targets)
-    # A canonical parent keeps a symlinked path into the root from posing as a copy.
-    return tuple(
-        os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
-        for path in paths
+    return tuple(_canonical_target(path, root) for path in paths)
+
+
+def _canonical_target(path: str, root: str) -> str:
+    """Canonicalize ``path`` so that no symlink into ``root`` poses as a copy.
+
+    A target that resolves into ``root`` is the root's own file. Any other keeps its file
+    name under a canonical parent, so a copy held as a file symlink compares by its bytes.
+    """
+    resolved = os.path.realpath(path)
+    if resolved == root or resolved.startswith(f"{root}{os.sep}"):
+        return resolved
+    return os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+
+
+def _runs_test(
+    target: str,
+    test: str,
+    root: str,
+    changed_paths: Sequence[str],
+    *,
+    copy_only: bool = False,
+) -> bool:
+    """Whether absolute ``target`` runs ``test`` at ``root`` or as an identical copy.
+
+    A tree other than ``root`` must hold the root's bytes for ``test`` and every changed
+    path, or it tests other code; equal bytes are git blob identity for an unfiltered file.
+    """
+    return any(
+        not copy_only
+        if tree == root
+        else all(_same_bytes(tree, root, path) for path in (test, *changed_paths))
+        for tree in _target_trees(target, test)
     )
 
 
-def _runs_test(target: str, test: str, root: str, *, copy_only: bool = False) -> bool:
-    """Whether absolute ``target`` runs ``test`` at ``root`` or as an identical copy.
-
-    ``target`` runs ``test`` from tree ``R`` when it is ``R/q`` for ``test`` or one of its
-    parent directories ``q``. A tree other than ``root`` must hold the same bytes, which
-    is git blob identity for an unfiltered file.
-    """
+def _target_trees(target: str, test: str) -> Iterator[str]:
+    """Yield each tree ``R`` whose ``R/q`` is ``target``, for ``test`` or a parent ``q``."""
     for prefix in (test, *(parent.as_posix() for parent in PurePosixPath(test).parents)):
         if prefix == ".":
-            tree = target
+            yield target
         elif target.endswith(f"/{prefix}"):
-            tree = target.removesuffix(f"/{prefix}")
-        else:
-            continue
-        if tree == root:
-            if not copy_only:
-                return True
-            continue
-        try:
-            if filecmp.cmp(os.path.join(tree, test), os.path.join(root, test), shallow=False):
-                return True
-        except OSError:
-            continue
-    return False
+            yield target.removesuffix(f"/{prefix}")
+
+
+def _same_bytes(tree: str, root: str, path: str) -> bool:
+    """Whether ``path`` holds the same bytes in both trees, or is absent from both."""
+    copy, original = os.path.join(tree, path), os.path.join(root, path)
+    try:
+        return filecmp.cmp(copy, original, shallow=False)
+    except OSError:
+        return not os.path.exists(copy) and not os.path.exists(original)
 
 
 def coverage_failure_message(
     python_tests: tuple[str, ...],
     python_sources: Mapping[str, Sequence[str]],
     web_paths: tuple[str, ...],
+    *,
+    differing_paths: tuple[str, ...] = (),
 ) -> str | None:
     """Describe the first uncovered test obligation in checklist priority order."""
+    copies = (
+        " A run from another tree is credited only when that tree matches the close "
+        f"checkout; these paths differ: {', '.join(f'`{path}`' for path in differing_paths)}."
+        if differing_paths
+        else ""
+    )
     if python_tests:
         display = ", ".join(f"`{path}`" for path in python_tests)
         return (
             "Changed Python tests have no credited fresh passing pytest target. "
-            f"Uncovered paths: {display}."
+            f"Uncovered paths: {display}.{copies}"
         )
     if python_sources:
         display = "; ".join(
@@ -363,7 +426,7 @@ def coverage_failure_message(
         )
         return (
             "Changed Python sources have related tests with no credited fresh passing pytest target. "
-            f"Uncovered sources and tests: {display}."
+            f"Uncovered sources and tests: {display}.{copies}"
         )
     if web_paths:
         # Direct binary avoids wrappers that rewrite `vitest related` into `vitest run`.

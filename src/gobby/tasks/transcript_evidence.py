@@ -172,7 +172,7 @@ def _derivation_fingerprint(
     """Fingerprint every input the derived records are a function of."""
     payload = json.dumps(
         {
-            "derivation_version": 14,
+            "derivation_version": 15,
             "session": session.id,
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,
@@ -584,7 +584,9 @@ def _consume_message(state: _DerivationState, message: ParsedMessage) -> None:
         name = message.tool_name or ""
         arguments = message.tool_input or {}
         if call_id:
-            state.pending[call_id] = PendingTool(name, arguments, timestamp, order, call_id)
+            state.pending[call_id] = PendingTool(
+                name, arguments, timestamp, order, call_id, workdir=tool_workdir(message.raw_json)
+            )
         _record_edit(state, name, arguments, timestamp, order)
         return
     if message.content_type != "tool_result" or not call_id:
@@ -830,7 +832,7 @@ def _record_validation_run(
             unknown_reason=unknown_reason,
             output=output,
             output_truncated=output_truncated,
-            workdir=tool_workdir(pending.arguments),
+            workdir=tool_workdir(pending.arguments) or pending.workdir,
             validation_segments=segments,
         )
     )
