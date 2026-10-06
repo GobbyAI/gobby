@@ -425,6 +425,8 @@ async def land_candidate(
                     mode = "merge"
                 env = {
                     **(git_subprocess_env() or os.environ),
+                    # The refusal classes below match git's English stderr.
+                    "LC_ALL": "C",
                     "GOBBY_LAND_COMMIT": "1",
                     "GIT_REFLOG_ACTION": (
                         f"gobby-land candidate={sha} mode={mode} class={activation_class}"

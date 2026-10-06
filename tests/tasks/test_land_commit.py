@@ -806,6 +806,36 @@ async def test_dirty_path_and_index_lock_refuse_without_ref_change(case: Landing
     assert after_contention[1:] == before[1:]
 
 
+async def test_fast_forward_runs_git_in_c_locale(
+    case: LandingCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A translated "would be overwritten" would read as git_failed instead of checkout_dirty.
+    monkeypatch.setenv("LC_ALL", "de_DE.UTF-8")
+    monkeypatch.setenv("LANGUAGE", "de")
+    sha = case.candidate("dirty", {"README.md": "lane\n"})
+    (case.repo / "README.md").write_text("dirty\n")
+    locales: list[str | None] = []
+    original_run = daemon_git.run
+
+    async def recording_run(
+        args: Sequence[str],
+        *,
+        cwd: str | Path,
+        timeout: float = 10.0,
+        env: Mapping[str, str] | None = None,
+        input_text: str | None = None,
+    ) -> GitResult:
+        if tuple(args[:2]) == ("merge", "--ff-only"):
+            locales.append(None if env is None else env.get("LC_ALL"))
+        return await original_run(args, cwd=cwd, timeout=timeout, env=env, input_text=input_text)
+
+    with patch.object(daemon_git, "run", side_effect=recording_run):
+        result = await case.land(case.reviewed(sha, "Dirty"), sha)
+
+    assert locales == ["C"]
+    assert result["error"] == "checkout_dirty"
+
+
 async def test_landing_merge_is_not_task_tagged(case: LandingCase) -> None:
     sha = case.candidate("lane", {"tests/test_lane.py": "lane = 1\n"})
     case.direct({"docs/moved.md": "moved\n"})
