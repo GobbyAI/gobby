@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 import re
 import shlex
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import Any
 
 from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect
@@ -587,25 +587,45 @@ def _python_name(word: str) -> bool:
     return re.fullmatch(r"python(?:3(?:\.\d+)?)?", word.rsplit("/", 1)[-1]) is not None
 
 
-def _python_skeleton(node: ast.AST | None) -> str:
+def _python_skeleton(node: ast.AST | None, bindings: Mapping[str, str]) -> str:
     """Keep literal command text while unknown values cannot earn help exemptions."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     if isinstance(node, ast.JoinedStr):
-        return "".join(_python_skeleton(value) for value in node.values)
+        return "".join(_python_skeleton(value, bindings) for value in node.values)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return _python_skeleton(node.left) + _python_skeleton(node.right)
+        return _python_skeleton(node.left, bindings) + _python_skeleton(node.right, bindings)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        if isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):
+            return node.left.value
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        receiver = node.func.value
+        literal_receiver = isinstance(receiver, ast.Constant) and isinstance(receiver.value, str)
+        if node.func.attr == "format" and literal_receiver:
+            return _python_skeleton(receiver, bindings)
+        if node.args and isinstance(node.args[0], ast.List | ast.Tuple):
+            words = [_python_skeleton(element, bindings) for element in node.args[0].elts]
+            if _call_name(node, bindings) == "shlex.join":
+                return shlex.join(words)
+            if node.func.attr == "join" and isinstance(receiver, ast.Constant):
+                if isinstance(receiver.value, str):
+                    return receiver.value.join(words)
     return "__gobby_dynamic__"
 
 
 def _python_launch(script: str, depth: int, dialect: ShellDialect) -> bool:
     """Inspect process-call operands, never arbitrary Python string literals."""
     try:
+        return _analyze_python_launch(script, depth, dialect)
+    except (MemoryError, RecursionError):
+        return True
+
+
+def _analyze_python_launch(script: str, depth: int, dialect: ShellDialect) -> bool:
+    try:
         tree = ast.parse(script)
     except SyntaxError:
         return False
-    except (MemoryError, RecursionError):
-        return True
     bindings = _imported_bindings(tree)
     if bindings is None:
         return True
@@ -627,7 +647,7 @@ def _python_launch(script: str, depth: int, dialect: ShellDialect) -> bool:
         if name != "asyncio.create_subprocess_exec" and not isinstance(
             operand, ast.List | ast.Tuple
         ):
-            value = _python_skeleton(operand)
+            value = _python_skeleton(operand, bindings)
             command = value if shell else shlex.join([value])
         else:
             operands = (
@@ -637,7 +657,7 @@ def _python_launch(script: str, depth: int, dialect: ShellDialect) -> bool:
                 if isinstance(operand, ast.List | ast.Tuple)
                 else []
             )
-            argv = [_python_skeleton(arg) for arg in operands]
+            argv = [_python_skeleton(arg, bindings) for arg in operands]
             if not argv:
                 continue
             command = argv[0] if shell else shlex.join(argv)

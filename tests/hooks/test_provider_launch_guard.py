@@ -23,15 +23,18 @@ SESSION = "abababab-0000-4000-8000-000000000001"
 
 
 @pytest.mark.parametrize("error", [MemoryError, RecursionError])
+@pytest.mark.parametrize("target", ["ast.parse", "_python_skeleton"])
 def test_python_parse_resource_limit_fails_closed(
-    monkeypatch: pytest.MonkeyPatch, error: type[Exception]
+    monkeypatch: pytest.MonkeyPatch, error: type[Exception], target: str
 ) -> None:
-    def fail_parse(source: str) -> None:
+    def fail_parse(source: object, *args: object, **kwargs: object) -> None:
         raise error("parser resource limit")
 
     with monkeypatch.context() as patch:
-        patch.setattr("gobby.hooks.provider_launch_guard.ast.parse", fail_parse)
-        blocked = blocks_direct_provider_launch("exec_command", {"cmd": "python3 -c 'pass'"})
+        patch.setattr(f"gobby.hooks.provider_launch_guard.{target}", fail_parse)
+        blocked = blocks_direct_provider_launch(
+            "exec_command", {"cmd": "python3 -c 'import os; os.system(\"true\")'"}
+        )
     assert blocked
 
 
@@ -55,6 +58,39 @@ def test_python_parse_resource_limit_fails_closed(
             id="large-inline-report-data",
         ),
         ("uv run python report.py -c 'import subprocess; subprocess.run([\"codex\"])'", False),
+        *[
+            pytest.param(
+                "uv run python - <<'PY'\n"
+                f"{imports}\nfrom pathlib import Path\n"
+                "Path('/tmp/report.txt').write_text('codex exec hi')\nPY\n",
+                False,
+                id=f"dotted-report-{index}",
+            )
+            for index, imports in enumerate(
+                (
+                    "import os\nimport os.path",
+                    "import urllib.request\nimport urllib.parse",
+                    "import xml.etree.ElementTree\nimport xml.dom.minidom",
+                )
+            )
+        ],
+        *[
+            pytest.param(
+                f"uv run python - <<'PY'\n{body}\nPY\n",
+                True,
+                id=f"round2-launch-{index}",
+            )
+            for index, body in enumerate(
+                (
+                    "import os.path\nos.system('codex exec hi')",
+                    "import asyncio.subprocess\nasyncio.create_subprocess_shell('codex exec hi')",
+                    "import os\nos.system('codex exec %s' % x)",
+                    "import os\nos.system('codex exec {}'.format(x))",
+                    "import os\nos.system(' '.join(['codex', 'exec', x]))",
+                    "import os, shlex\nos.system(shlex.join(['codex', 'exec', x]))",
+                )
+            )
+        ],
         *[
             pytest.param(
                 f"uv run python {option} <<'PY'\n"
