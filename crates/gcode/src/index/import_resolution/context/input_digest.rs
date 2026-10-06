@@ -60,6 +60,7 @@ pub(crate) fn import_resolution_input_digest<'a>(
                     | "sc"
                     | "php"
                     | "rb"
+                    | "rake"
                     | "ex"
                     | "exs"
                     | "h"
@@ -132,6 +133,20 @@ mod tests {
             r#"{"name":"local-package"}"#,
         )?;
         assert_ne!(digest(), member_changed);
+        Ok(())
+    }
+
+    #[test]
+    fn resolver_digest_tracks_rake_declarations() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("tasks.rake");
+        std::fs::write(&path, "module One\nend\n")?;
+        let before = import_resolution_input_digest(root.path(), ["tasks.rake"]);
+        std::fs::write(&path, "module Two\nend\n")?;
+        assert_ne!(
+            import_resolution_input_digest(root.path(), ["tasks.rake"]),
+            before
+        );
         Ok(())
     }
 

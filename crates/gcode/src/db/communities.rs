@@ -299,7 +299,7 @@ impl ReplaceTxn<'_> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, gcode_postgres_tests))]
 pub fn begin_replace<'a>(
     conn: &'a mut Client,
     machine_id: &str,
@@ -310,7 +310,7 @@ pub fn begin_replace<'a>(
     Ok(replace)
 }
 
-#[cfg(test)]
+#[cfg(all(test, gcode_postgres_tests))]
 impl ReplaceTxn<'_> {
     pub fn commit(
         self,
