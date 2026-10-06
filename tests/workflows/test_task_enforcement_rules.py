@@ -75,6 +75,7 @@ TASK_REVIEW_OPERATIONS = (
     "reject_review",
     "submit_for_review",
 )
+LANDING_OPERATIONS = ("set_landing_freeze",)
 READ_ONLY_TASK_TOOLS = (
     "check_dependency_cycles",
     "explain_dispatch",
@@ -139,7 +140,7 @@ NON_INTERACTIVE_TASK_OPS = (
 )
 TASK_MUTATION_CASES = tuple(
     [("gobby-tasks", name) for name in INTERACTIVE_TASK_MUTATIONS]
-    + [("gobby-tasks-ops", name) for name in TASK_REVIEW_OPERATIONS]
+    + [("gobby-tasks-ops", name) for name in TASK_REVIEW_OPERATIONS + LANDING_OPERATIONS]
 )
 
 
@@ -1569,8 +1570,8 @@ class TestRequireTasksSkillForMutations:
         assert registered["gobby-tasks"] == set(INTERACTIVE_TASK_MUTATIONS) | set(
             READ_ONLY_TASK_TOOLS
         )
-        assert registered["gobby-tasks-ops"] == set(TASK_REVIEW_OPERATIONS) | set(
-            NON_INTERACTIVE_TASK_OPS
+        assert registered["gobby-tasks-ops"] == (
+            set(TASK_REVIEW_OPERATIONS) | set(LANDING_OPERATIONS) | set(NON_INTERACTIVE_TASK_OPS)
         )
 
     @staticmethod
