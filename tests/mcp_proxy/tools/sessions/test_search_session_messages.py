@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -22,6 +23,111 @@ from gobby.sessions.transcript_window import render_window
 from gobby.storage.unmodeled_observations import UnmodeledObservationStore
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("limit,full_content", [(5, False), (30, True)])
+async def test_search_records_content_free_worker_phase_timings(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, limit: int, full_content: bool
+) -> None:
+    private_text = "private-transcript-content"
+    path = _transcript(tmp_path / "private-path.jsonl", [private_text] * 250)
+    registry = _registry([_session("private-session-id", path)])
+    caplog.set_level(logging.INFO, logger="gobby.sessions.transcript_search_timing")
+
+    result = await _search(
+        registry,
+        query=private_text,
+        session_id="private-session-id",
+        limit=limit,
+        full_content=full_content,
+    )
+
+    assert result["success"] is True
+    assert len(result["results"]) == limit
+    records = [r for r in caplog.records if r.name == "gobby.sessions.transcript_search_timing"]
+    assert records, "search must expose server-side worker phases before optimizing them"
+    assert "phase=render" in caplog.text
+    assert "queue_s=" in caplog.text
+    assert "work_s=" in caplog.text
+    assert "cpu_s=" in caplog.text
+    assert "resume_s=" in caplog.text
+    assert "phase=detect_source_bounded" in caplog.text
+    for private_value in (private_text, str(path), "private-session-id"):
+        assert private_value not in caplog.text
+
+
+@pytest.mark.parametrize("limit,full_content", [(5, False), (30, True)])
+async def test_large_codex_search_phase_logs_preserve_results_and_continuation(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, limit: int, full_content: bool
+) -> None:
+    """Exercise the observed 32,072-line / 82.6 MB scale without private data."""
+    path = tmp_path / "large-codex.jsonl"
+    padding = "x" * 2600
+    with path.open("w", encoding="utf-8") as stream:
+        for group in range(2000):
+            payloads: list[dict[str, Any]] = [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": f"needle {group}"}],
+                }
+            ]
+            for tool in range(7):
+                call_id = f"call-{group}-{tool}"
+                payloads.extend(
+                    [
+                        {
+                            "type": "function_call",
+                            "call_id": call_id,
+                            "name": "exec_command",
+                            "arguments": json.dumps({"cmd": "true"}),
+                        },
+                        {"type": "function_call_output", "call_id": call_id, "output": "done"},
+                    ]
+                )
+            payloads.append(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "done"}],
+                }
+            )
+            for payload in payloads:
+                stream.write(
+                    json.dumps({"type": "response_item", "payload": payload, "padding": padding})
+                    + "\n"
+                )
+        for _ in range(72):
+            stream.write(
+                json.dumps({"type": "turn_context", "payload": {}, "padding": padding}) + "\n"
+            )
+    assert path.stat().st_size >= 82_600_000
+    session = _session("large-codex", path)
+    session.source = "codex"
+    registry = _registry([session])
+    caplog.set_level(logging.INFO, logger="gobby.sessions.transcript_search_timing")
+
+    first = await _search(
+        registry, query="needle", session_id=session.id, limit=limit, full_content=full_content
+    )
+    assert first["success"] is True
+    assert _contents(first) == [f"needle {i}" for i in range(limit)]
+    assert first["next_cursor"]
+    following = await _search(
+        registry,
+        query="needle",
+        session_id=session.id,
+        limit=limit,
+        full_content=full_content,
+        cursor=first["next_cursor"],
+    )
+    assert following["success"] is True
+    assert _contents(following) == [f"needle {i}" for i in range(limit, 2 * limit)]
+    assert "phase=render" in caplog.text
+    assert "phase=build_index_from_file" in caplog.text
+    assert "phase=_resident_matches" in caplog.text
+    assert str(path) not in caplog.text
+
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 

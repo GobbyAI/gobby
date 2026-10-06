@@ -20,6 +20,7 @@ from weakref import WeakValueDictionary
 
 from gobby.paths import get_gobby_home
 from gobby.sessions.message_stats import MessageStats
+from gobby.sessions.transcript_search_timing import transcript_to_thread
 from gobby.sessions.transcripts.base import TokenUsage
 
 if TYPE_CHECKING:
@@ -858,13 +859,13 @@ async def _get_or_build_index(
                     ),
                     None,
                 )
-            if prior is not None and await asyncio.to_thread(
+            if prior is not None and await transcript_to_thread(
                 _resident_matches, path, prior, mtime_ns=mtime_ns, size=size
             ):
                 if prior.mtime_ns == mtime_ns and prior.size == size:
                     return prior
                 if seek_mode == "byte" and raw_lines is None and lines is None:
-                    extended = await asyncio.to_thread(
+                    extended = await transcript_to_thread(
                         extend_index_from_file,
                         path,
                         source,
@@ -874,7 +875,7 @@ async def _get_or_build_index(
                         prior=prior,
                     )
                     if extended is not None:
-                        await asyncio.to_thread(persist_index_sidecar, path, extended)
+                        await transcript_to_thread(persist_index_sidecar, path, extended)
                         async with _CACHE_LOCK:
                             for old_key in list(_INDEX_CACHE):
                                 if old_key[:4] == key[:4]:
@@ -889,7 +890,7 @@ async def _get_or_build_index(
                 # Non-file/lazy-line callers cannot attach source verification.
                 return cached
 
-            sidecar_index = await asyncio.to_thread(
+            sidecar_index = await transcript_to_thread(
                 load_index_sidecar,
                 path,
                 source,
@@ -901,7 +902,7 @@ async def _get_or_build_index(
             )
             if sidecar_index is not None:
                 if sidecar_index.mtime_ns != mtime_ns or sidecar_index.size != size:
-                    sidecar_index = await asyncio.to_thread(
+                    sidecar_index = await transcript_to_thread(
                         extend_index_from_file,
                         path,
                         source,
@@ -911,7 +912,7 @@ async def _get_or_build_index(
                         prior=sidecar_index,
                     )
                     if sidecar_index is not None:
-                        await asyncio.to_thread(persist_index_sidecar, path, sidecar_index)
+                        await transcript_to_thread(persist_index_sidecar, path, sidecar_index)
             if sidecar_index is not None:
                 async with _CACHE_LOCK:
                     _INDEX_CACHE[key] = sidecar_index
@@ -921,7 +922,7 @@ async def _get_or_build_index(
                 return sidecar_index
 
             if raw_lines is not None:
-                index = await asyncio.to_thread(
+                index = await transcript_to_thread(
                     build_index_from_raw_lines,
                     raw_lines,
                     source,
@@ -933,7 +934,7 @@ async def _get_or_build_index(
                     logical_size=logical_size,
                 )
             elif lines is not None:
-                index = await asyncio.to_thread(
+                index = await transcript_to_thread(
                     lambda: build_index_from_lines(
                         list(lines),
                         source,
@@ -944,10 +945,10 @@ async def _get_or_build_index(
                     )
                 )
             else:
-                index = await asyncio.to_thread(
+                index = await transcript_to_thread(
                     build_index_from_file, path, source, session_id, mtime_ns=mtime_ns, size=size
                 )
-            await asyncio.to_thread(persist_index_sidecar, path, index)
+            await transcript_to_thread(persist_index_sidecar, path, index)
 
             async with _CACHE_LOCK:
                 _INDEX_CACHE[key] = index
