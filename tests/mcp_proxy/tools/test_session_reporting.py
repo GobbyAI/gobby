@@ -97,7 +97,7 @@ async def test_session_task_history_uses_json_native_brief_cards(
 
     encoded = json.dumps(result)
     assert "Task(" not in encoded
-    assert len(result["tasks"]) == 12
+    assert sorted(row["action"] for row in result["tasks"]) == ["claimed"] + ["created"] * 12
     cards: dict[str, dict[str, Any]] = {}
     for row in result["tasks"]:
         card = row["task"]
