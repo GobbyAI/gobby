@@ -677,10 +677,7 @@ class TestInitHubDatabase:
         from gobby.runner_init import helpers
 
         with (
-            patch(
-                "gobby.runner_init.helpers.admitted_database_url",
-                side_effect=lambda database_url: database_url,
-            ),
+            patch("gobby.runner_init.helpers.psycopg.connect"),
             patch("gobby.storage.hub.postgres.PostgresHubDatabase") as postgres_database,
         ):
             migration_db = MagicMock()
@@ -752,10 +749,7 @@ class TestInitHubDatabase:
             "gobby.storage.hub.postgres.PostgresHubDatabase",
             FakePostgresDatabase,
         )
-        monkeypatch.setattr(
-            "gobby.runner_init.helpers.admitted_database_url",
-            lambda database_url: database_url,
-        )
+        monkeypatch.setattr("gobby.runner_init.helpers.psycopg.connect", MagicMock())
         monkeypatch.setattr("gobby.runner_init.helpers.time.sleep", sleeps.append)
         config = SimpleNamespace(
             hub_backend="postgres",

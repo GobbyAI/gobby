@@ -713,66 +713,6 @@
     },
     {
       "surface": "cli",
-      "command": "gobby hub-maintenance run",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
-      "implementation": {
-        "path": "src/gobby/cli/hub_maintenance.py",
-        "symbol": "run_campaign"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-install-recovery"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby hub-maintenance resume",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
-      "implementation": {
-        "path": "src/gobby/cli/hub_maintenance.py",
-        "symbol": "resume_campaign"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-install-recovery"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby hub-maintenance status",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
-      "implementation": {
-        "path": "src/gobby/cli/hub_maintenance.py",
-        "symbol": "maintenance_status"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-install-recovery"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby hub-maintenance abort",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
-      "implementation": {
-        "path": "src/gobby/cli/hub_maintenance.py",
-        "symbol": "abort_campaign"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-install-recovery"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
       "command": "gobby schema apply",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
       "implementation": {

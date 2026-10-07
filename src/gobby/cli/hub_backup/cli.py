@@ -23,7 +23,6 @@ from urllib.parse import urlparse
 
 import click
 
-from gobby.cli._daemon_services import ServiceStartResult
 from gobby.cli.daemon import _services_start, _services_stop
 from gobby.cli.hub_backup._integrity import (
     create_staging_directory,
@@ -81,13 +80,6 @@ from gobby.cli.hub_backup.rehearsal import (
     control_rehearsal_services,
     load_rehearsal_profile,
 )
-from gobby.cli.installers.compose_env import (
-    MANAGED_SERVICE_PROFILES,
-    ComposeEnvironmentError,
-    ComposeRuntime,
-    resolve_compose_runtime,
-    resolve_predecessor_service_runtime,
-)
 from gobby.cli.installers.container_restart import (
     FALKORDB_CONTAINER,
     POSTGRES_CONTAINER,
@@ -104,18 +96,9 @@ from gobby.cli.postgres_backup import (
 )
 from gobby.cli.runtime import get_cli_runtime
 from gobby.cli.utils_shutdown import stop_daemon
-from gobby.config import expand_env_vars
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
-from gobby.config.logging import LoggingSettings, resolved_logs_dir
-from gobby.config.registry import CONFIG_REGISTRY, UnknownConfigKeyError
+from gobby.config.logging import resolved_logs_dir
 from gobby.paths import get_gobby_home
-from gobby.storage.config_repository import UnknownStoredConfigKeyError, decode_config_value
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.maintenance_epoch import (
-    MAINTENANCE_EPOCH_ENV,
-    require_orchestrator_epoch,
-)
-from gobby.storage.secrets import SecretStore
 from gobby.utils.durable_file import durable_replace, exclusive_file_lock
 from gobby.utils.version import get_version
 
@@ -135,14 +118,6 @@ SCRATCH_HUB_VOLUMES: tuple[str, ...] = (
 MIN_FREE_BYTES = 5 * 1024**3
 DOCKER_INSPECT_TIMEOUT_SECONDS = 30
 TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
-COMPOSE_START_TIMEOUT_SECONDS = 120
-
-_EPOCH_COMPOSE_OVERRIDE = """\
-services:
-  postgres:
-    environment:
-      PGOPTIONS: "${PGOPTIONS:?PGOPTIONS must carry the maintenance epoch}"
-"""
 
 POSTGRES_ARCHIVE_METHOD = "pg-restore-list+sha256"
 QDRANT_ARCHIVE_METHOD = "snapshot-download+sha256"
@@ -214,13 +189,6 @@ def _hub_backup_target(database_url: str) -> HubBackupTarget:
     help="Backup directory (default: ~/.gobby/backups/hub/<UTC timestamp>).",
 )
 @click.option(
-    "--epoch",
-    "epoch",
-    type=str,
-    default=None,
-    help="Maintenance epoch id to record; also leaves the daemon stopped afterwards.",
-)
-@click.option(
     "--json",
     "json_output",
     is_flag=True,
@@ -230,20 +198,11 @@ def _hub_backup_target(database_url: str) -> HubBackupTarget:
 def hub_backup(
     ctx: click.Context,
     output: Path | None,
-    epoch: str | None,
     json_output: bool,
 ) -> None:
     """Back up every hub datastore and prove each artifact restores."""
     if ctx.invoked_subcommand is not None:
         return
-
-    if epoch is not None:
-        child_epoch = os.environ.get(MAINTENANCE_EPOCH_ENV)
-        if child_epoch != epoch:
-            raise click.ClickException(
-                "`hub-backup --epoch` may only run as a child of "
-                "`gobby hub-maintenance` for the same epoch"
-            )
 
     gobby_home = get_gobby_home()
     backup_root = _resolve_output_dir(output)
@@ -251,24 +210,21 @@ def hub_backup(
     database_url = _resolve_database_url(gobby_home)
     target = _hub_backup_target(database_url)
     _preflight(backup_root, containers=target.containers)
-    if epoch is not None:
-        require_orchestrator_epoch(database_url, epoch)
     _require_managed_docker_postgres(database_url=database_url)
     qdrant_url, qdrant_api_key = (
         (target.rehearsal.qdrant_url, None)
         if target.rehearsal is not None
-        else _qdrant_settings(ctx, apply_migrations=epoch is None)
+        else _qdrant_settings(ctx)
     )
     _require_safe_qdrant_target(target, qdrant_url)
     files_home = _configured_files_home(gobby_home)
     rehearsal_logs = None
     if target.rehearsal is not None:
         target.rehearsal.require_private_path(files_home, "files_home")
-        rehearsal_logs = _backup_logs_dir(ctx, predecessor=epoch is not None)
+        rehearsal_logs = _backup_logs_dir(ctx)
         target.rehearsal.require_private_path(rehearsal_logs, "logs_dir")
 
-    # An open epoch owns the daemon lifecycle, so `--epoch` leaves it stopped.
-    restart_daemon = _daemon_is_running() and epoch is None
+    restart_daemon = _daemon_is_running()
     staging_root = create_staging_directory(backup_root)
     manifest_path = backup_root / MANIFEST_NAME
     try:
@@ -283,15 +239,10 @@ def hub_backup(
             manifest = _run_backup(
                 backup_root=staging_root,
                 gobby_home=gobby_home,
-                logs_dir=(
-                    rehearsal_logs
-                    if rehearsal_logs is not None
-                    else _backup_logs_dir(ctx, predecessor=epoch is not None)
-                ),
+                logs_dir=rehearsal_logs if rehearsal_logs is not None else _backup_logs_dir(ctx),
                 database_url=database_url,
                 qdrant_url=qdrant_url,
                 qdrant_api_key=qdrant_api_key,
-                epoch=epoch,
                 target=target,
                 files_home=files_home,
             )
@@ -469,7 +420,6 @@ def _run_backup(
     database_url: str,
     qdrant_url: str | None,
     qdrant_api_key: str | None,
-    epoch: str | None,
     target: HubBackupTarget,
     files_home: Path | None = None,
 ) -> HubBackupManifest:
@@ -520,7 +470,6 @@ def _run_backup(
     return HubBackupManifest(
         created_at=datetime.now(UTC).isoformat(),
         gobby_version=get_version(),
-        epoch_id=epoch,
         source_identity=identity,
         backup_starting_head=starting_head,
         row_count_probes=probes,
@@ -570,82 +519,12 @@ def _archive_volumes(
     try:
         artifacts, details = tar_volumes(backup_root, volumes)
     finally:
-        restart = (
-            _start_epoch_services(gobby_home)
-            if os.environ.get(MAINTENANCE_EPOCH_ENV)
-            else _services_start(gobby_home)
-        )
+        restart = _services_start(gobby_home)
     if restart.outcome != "success":
         raise click.ClickException(
             f"Docker services did not restart after archiving volumes: {restart.detail}"
         )
     return artifacts, details
-
-
-def _start_epoch_services(gobby_home: Path) -> ServiceStartResult:
-    """Start managed services with the epoch token available to Postgres healthchecks."""
-    services_dir = gobby_home / "services"
-    compose_file = services_dir / "docker-compose.yml"
-    if not compose_file.exists():
-        return ServiceStartResult("failed", f"Compose file is missing: {compose_file}")
-
-    try:
-        postgres_runtime = resolve_compose_runtime(gobby_home, profiles=("postgres",))
-    except ComposeEnvironmentError as exc:
-        return ServiceStartResult("failed", f"Could not resolve Docker service config: {exc}")
-    postgres_result = _run_epoch_compose_up(compose_file, services_dir, postgres_runtime)
-    if postgres_result.outcome != "success":
-        return postgres_result
-
-    try:
-        runtime = resolve_predecessor_service_runtime(gobby_home, postgres_runtime)
-    except ComposeEnvironmentError as exc:
-        return ServiceStartResult("failed", f"Could not resolve Docker service config: {exc}")
-    if runtime.profiles != MANAGED_SERVICE_PROFILES:
-        return ServiceStartResult(
-            "failed",
-            "Docker service config must enable postgres, qdrant, and falkordb profiles",
-        )
-    return _run_epoch_compose_up(compose_file, services_dir, runtime)
-
-
-def _run_epoch_compose_up(
-    compose_file: Path,
-    services_dir: Path,
-    runtime: ComposeRuntime,
-) -> ServiceStartResult:
-    epoch = os.environ.get(MAINTENANCE_EPOCH_ENV, "")
-    if epoch not in runtime.environment.get("PGOPTIONS", ""):
-        return ServiceStartResult("failed", "PGOPTIONS does not carry the maintenance epoch")
-
-    command = ["docker", "compose", "-f", str(compose_file), "-f", "-"]
-    for profile in runtime.profiles:
-        command.extend(["--profile", profile])
-    command.extend(["up", "-d", "--remove-orphans", "--wait"])
-    ensure_docker_allowed("hub backup epoch compose up", runner=subprocess.run)
-    try:
-        result = subprocess.run(  # nosec B603 # fixed Docker Compose arguments
-            command,
-            input=_EPOCH_COMPOSE_OVERRIDE,
-            capture_output=True,
-            text=True,
-            timeout=COMPOSE_START_TIMEOUT_SECONDS,
-            env=runtime.environment,
-            cwd=str(services_dir),
-        )
-    except subprocess.TimeoutExpired:
-        return ServiceStartResult(
-            "failed",
-            f"Docker compose up timed out after {COMPOSE_START_TIMEOUT_SECONDS}s",
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return ServiceStartResult("failed", f"Docker compose execution failed: {exc}")
-    if result.returncode != 0:
-        return ServiceStartResult(
-            "failed",
-            f"Docker compose up failed: {result.stderr or result.stdout}",
-        )
-    return ServiceStartResult("success", "Docker services started")
 
 
 # ---------------------------------------------------------------------------
@@ -842,68 +721,13 @@ def _start_daemon() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _qdrant_settings(
-    ctx: click.Context,
-    *,
-    apply_migrations: bool = True,
-) -> tuple[str | None, str | None]:
-    runtime = get_cli_runtime(ctx)
-    if not apply_migrations:
-        return _predecessor_qdrant_settings(runtime.require_database(apply_migrations=False))
-    qdrant = runtime.require_config(apply_migrations=True).databases.qdrant
+def _qdrant_settings(ctx: click.Context) -> tuple[str | None, str | None]:
+    qdrant = get_cli_runtime(ctx).require_config(apply_migrations=True).databases.qdrant
     return qdrant.url, qdrant.api_key
 
 
-def _predecessor_qdrant_settings(database: HubDatabase) -> tuple[str | None, str | None]:
-    """Read backup settings while the identity predecessor still has retired auth rows."""
-    all_keys = [
-        str(row["key"]) for row in database.fetchall("SELECT key FROM config_store ORDER BY key")
-    ]
-    deprecated = {"auth.password_hash", "auth.username"}
-    for key in all_keys:
-        if key in deprecated:
-            continue
-        try:
-            CONFIG_REGISTRY.resolve(key)
-        except UnknownConfigKeyError:
-            raise UnknownStoredConfigKeyError(key) from None
-
-    rows = database.fetchall(
-        """
-        SELECT key, value
-        FROM config_store
-        WHERE key IN ('databases.qdrant.api_key', 'databases.qdrant.url')
-        ORDER BY key
-        """
-    )
-    values = {
-        str(row["key"]): decode_config_value(str(row["key"]), str(row["value"])) for row in rows
-    }
-    url = values.get("databases.qdrant.url")
-    if url is not None and not isinstance(url, str):
-        raise click.ClickException("databases.qdrant.url must be a string")
-    api_key = values.get("databases.qdrant.api_key")
-    if api_key is not None and not isinstance(api_key, str):
-        raise click.ClickException("databases.qdrant.api_key must be a string")
-    if isinstance(api_key, str):
-        secret_store = SecretStore(database, gobby_home=get_gobby_home())
-        api_key = expand_env_vars(api_key, secret_resolver=secret_store.get)
-    return url, api_key
-
-
-def _backup_logs_dir(ctx: click.Context, *, predecessor: bool) -> Path:
-    """Resolve only the logging directory before predecessor config retirement."""
-    runtime = get_cli_runtime(ctx)
-    if not predecessor:
-        return resolved_logs_dir(runtime.require_config().logging)
-    database = runtime.require_database(apply_migrations=False)
-    row = database.fetchone("SELECT value FROM config_store WHERE key = 'logging.dir'")
-    if row is None:
-        return resolved_logs_dir(LoggingSettings())
-    value = decode_config_value("logging.dir", str(row["value"]))
-    if not isinstance(value, str):
-        raise click.ClickException("logging.dir must be a string")
-    return resolved_logs_dir(LoggingSettings(dir=value))
+def _backup_logs_dir(ctx: click.Context) -> Path:
+    return resolved_logs_dir(get_cli_runtime(ctx).require_config().logging)
 
 
 def _emit_result(
@@ -918,7 +742,6 @@ def _emit_result(
             "manifest": str(manifest_path),
             "backup_root": str(manifest_path.parent),
             "created_at": manifest.created_at,
-            "epoch_id": manifest.epoch_id,
             "artifacts": len(manifest.artifacts),
             "stores": {
                 key: {

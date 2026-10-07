@@ -23,10 +23,6 @@ from gobby.cli.installers.docker_guard import ensure_docker_allowed
 from gobby.config.bootstrap import DEFAULT_DAEMON_PORT, DEFAULT_WEBSOCKET_PORT, backend_ports
 from gobby.paths import get_gobby_home
 from gobby.runner_pid_file import held_singleton_claim
-from gobby.storage.maintenance_epoch import (
-    bind_maintenance_epoch,
-    discover_active_maintenance_epoch,
-)
 from gobby.utils.env import is_test_protect_enabled
 
 PROFILE_ENV = "GOBBY_HUB_REHEARSAL_PROFILE"
@@ -229,9 +225,7 @@ def _database_target(profile: RehearsalProfile, database_url: str) -> None:
     ):
         raise click.ClickException("Rehearsal requires its exact loopback gobby_test database")
     try:
-        epoch = discover_active_maintenance_epoch(database_url)
-        identity_url = bind_maintenance_epoch(database_url, epoch.id) if epoch else database_url
-        with psycopg.connect(identity_url, connect_timeout=5, autocommit=True) as connection:
+        with psycopg.connect(database_url, connect_timeout=5, autocommit=True) as connection:
             row = connection.execute("SELECT system_identifier FROM pg_control_system()").fetchone()
     except psycopg.Error as exc:
         raise click.ClickException("Could not verify rehearsal PostgreSQL identity") from exc
