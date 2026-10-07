@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
+from gobby.memory.push_exclusion import PUSH_EXCLUDED_TAGS
 from gobby.storage.memories_base import MemoryStoreBase
 from gobby.storage.memories_models import Memory, validate_memory_type
 from gobby.storage.memories_scope import MemoryScope, memory_scope_predicate
@@ -209,13 +210,13 @@ class MemoryDreamMixin(MemoryStoreBase):
         if cutoff is None:
             raise ValueError("redream_cutoff is required")
         params: list[Any] = [cutoff]
-        review_lesson_condition, review_lesson_params = json_array_contains_condition(
-            self.db,
-            json_empty_array_coalesce_expr(self.db, "tags"),
-            "review-lesson",
-        )
-        clauses.append(f"NOT ({review_lesson_condition})")
-        params.extend(review_lesson_params)
+        tags_expr = json_empty_array_coalesce_expr(self.db, "tags")
+        for tag in PUSH_EXCLUDED_TAGS:
+            excluded_condition, excluded_params = json_array_contains_condition(
+                self.db, tags_expr, tag
+            )
+            clauses.append(f"NOT ({excluded_condition})")
+            params.extend(excluded_params)
         scope_predicate, scope_params = memory_scope_predicate(scope)
         if scope_predicate:
             clauses.append(scope_predicate)
@@ -237,8 +238,9 @@ class MemoryDreamMixin(MemoryStoreBase):
 
         Selects visible rows (``deleted_at IS NULL``) that have either never been
         dreamed or were last dreamed before ``redream_cutoff`` (the cooldown
-        boundary, ``run_started_at - redream_after_hours``). Review-lesson
-        memories are protected from dream mutations and excluded before paging.
+        boundary, ``run_started_at - redream_after_hours``). Memories carrying a
+        ``PUSH_EXCLUDED_TAGS`` tag are protected from dream mutations and
+        excluded before paging.
         Ownership/visibility and memory-type scoping is applied in SQL. Ordered
         oldest-dreamed first so the sweep drains deterministically.
         """

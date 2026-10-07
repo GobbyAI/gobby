@@ -55,15 +55,15 @@ reparenting is called out explicitly.
 | Stage 0 · #21334 | Complete: 42/42 direct children closed; Windows cross-toolchain #22447 moved to post-1.0 |
 | Stage 1 · #21543 | 16/18 direct children closed; S1.3 #21554 lifecycle and S1.4 #21555 keys/node registration remain open |
 | Stage 2 · #21544 | In progress: S2.1 #21557 async Postgres and S2.8 #21565 gterm adoption began early under Lane 5; all 13 family epics remain open, including those two reparented lane epics (11 direct children remain under Stage 2) |
-| Stage 3 · #21545 | 0/4 direct children closed; S3.1 #21571 operator verbs waits on S1.3 #21554 for the lifecycle verbs |
+| Stage 3 · #21545 | 0/4 direct children closed; S3.1 #21571 operator verbs waits on Stage 2 (#21544) plus S1.1 and S1.3 #21554 for the lifecycle verbs |
 | Stage 4 · #21546 | 1/8 direct children closed (#21577 node gcode configuration); hub and node work remain open |
 
 ## Naming
 
 Today, `gobby` is the Python daemon and the CLI that operates it. That is the
 one name that changes hands, and it changes hands once, at S3.2 — well into
-Stage 3, after the front door has landed and while Stage 2 absorption is still
-in flight. Until that moment `gobby` means what it means today.
+Stage 3, after the front door has landed and Stage 2 absorption is complete.
+Until that moment `gobby` means what it means today.
 
 At S3.2 the Rust client takes the name. `gclient` — the herdr-derived terminal
 client, package `gobby-client`, built through Stage 0 under #21334 — ships as
@@ -295,9 +295,9 @@ The former Stage 0 hardening prerequisite is complete.
 | **S3.4** · #21574 | Retire `gobby-backend` | One commit; all golden corpora green against `gdaemon` alone |
 
 Edges: `S3.1` ← #21334 terminal client, `S1.1`, `S1.3` (the four lifecycle
-verbs); `S3.2` ← `S3.1`; `S3.4` ← `S3.3`, `S2`.
-Stage 3 carries no stage-level edge. S3.1 waits on S1.3's lifecycle ownership;
-S3.2 follows once the client carries the operator verbs.
+verbs), `S2`; `S3.2` ← `S3.1`; `S3.4` ← `S3.3`, `S2`.
+S3.1 starts after Stage 2 (#21544) completes and lands before S3.2 to S3.4
+begin. The naming switch and the Python retirement follow it.
 
 ### Stage 4 — hub and node live, story B (#21546)
 
@@ -511,6 +511,11 @@ separate planning effort before implementation.
     Two-machine end-to-end acceptance runs after #21575 Hub mode and #17436 Node mode. PRE remains
     open until that smoke passes. #19600 Two-machine acceptance no longer gates #21546 Stage 4 hub
     and node live (story B).
+
+24. Operator verbs follow Stage 2 and precede the rest of Stage 3 (2026-10-06). Josh, on
+    #21571 Operator verbs on the client: "Ok, it needs to be after stage 2 but before stage 3."
+    This supersedes his earlier Stage 4 idea. S3.1 starts after #21544 Stage 2 completes and
+    lands before S3.2 to S3.4 begin.
 
 ## References
 

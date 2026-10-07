@@ -1,4 +1,4 @@
-//! Live indexed file reads with content-hash and checkout containment checks.
+//! Commit-bound blobs and indexed working-tree reads.
 use super::{EvidenceError, EvidenceLibrary, Result};
 use crate::codewiki_facts::FileFact;
 use std::io::Read as _;
@@ -27,6 +27,10 @@ impl EvidenceLibrary {
     }
 
     pub(super) fn read_file(&self, path: &str) -> Result<Vec<u8>> {
+        validate_repo_path(path)?;
+        if !self.working_tree {
+            return super::provenance::read_bound_blob(&self.repository_root, &self.binding, path);
+        }
         let entry = self.entry(path)?;
         let stale = |error: std::io::Error| EvidenceError::StaleRange {
             path: path.to_string(),
@@ -64,6 +68,25 @@ impl EvidenceLibrary {
             });
         }
         Ok(bytes)
+    }
+
+    pub(super) fn verify_source_hash(
+        &self,
+        path: &str,
+        expected: &str,
+        bytes: &[u8],
+    ) -> Result<()> {
+        let found = gobby_core::indexing::content_hash(bytes);
+        if found != expected {
+            return Err(EvidenceError::StaleRange {
+                path: path.to_string(),
+                detail: format!(
+                    "source hash {found} at binding {} differs from indexed {expected}",
+                    self.binding.commit_oid
+                ),
+            });
+        }
+        Ok(())
     }
 }
 

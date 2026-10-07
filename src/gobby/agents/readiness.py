@@ -11,4 +11,6 @@ def spawn_readiness_blocker(services: object | None) -> str | None:
         return "daemon_shutdown_in_progress"
     if getattr(services, "startup_ready", True) is False:
         return "daemon_startup_not_ready"
+    if getattr(services, "restart_recovery_ready", True) is False:
+        return "daemon_restart_recovery_pending"
     return None

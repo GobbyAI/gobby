@@ -199,6 +199,13 @@ class TerminalLeaseRegistry:
         self._lifecycle_closed = False
         self._lifecycle_error: LifecyclePublicationError | None = None
         self._holder_observer: HolderObserver | None = None
+        self._attachment_admission_closed = False
+
+    async def finalize_shutdown_attachments(self) -> None:
+        """Fence new attachments and settle holders while storage is available."""
+        self._attachment_admission_closed = True
+        for attachment_id in tuple(self._attachments):
+            await self.finalize(attachment_id, "daemon_shutdown")
 
     @property
     def lifecycle_worker(self) -> asyncio.Task[None] | None:
@@ -378,6 +385,8 @@ class TerminalLeaseRegistry:
         # No terminal lock: this body never awaits and changes no holder, generation
         # or sizing owner, and no lock holder iterates attachments across an await,
         # so waiting behind a write sequence or holder grant only stalls the attach.
+        if self._attachment_admission_closed:
+            raise RuntimeError("terminal attachment admission closed for shutdown")
         delivery = "direct" if frame_delivery == "direct" else "proxy"
         minted = attachment_id or secrets.token_hex(16)
         record = _Attachment(
@@ -533,12 +542,18 @@ class TerminalLeaseRegistry:
                         try:
                             await self._notify_holder(terminal_id, record.terminal, None)
                         finally:
+                            # Keep unfinished cleanup discoverable by the shutdown
+                            # barrier if persistence or revocation was interrupted.
+                            lease.holder = attachment_id
                             raise
                     except Exception:
                         preserve_native_grant = False
                 if not preserve_native_grant:
                     try:
                         await self._notify_holder(terminal_id, record.terminal, None)
+                    except asyncio.CancelledError:
+                        lease.holder = attachment_id
+                        raise
                     except Exception:
                         # Finalize is cleanup after socket loss; the lease is already
                         # released and the next take re-syncs the host grant.

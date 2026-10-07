@@ -317,6 +317,9 @@ def test_mask_quoted_unwraps_literal_execution_wrappers() -> None:
     for command in (
         "bash -c 'git commit'",
         'bash -c "git commit"',
+        "bash -euo pipefail -c 'git commit'",
+        "bash -eo pipefail -c 'git commit'",
+        "bash -euO extglob -c 'git commit'",
         "eval 'git commit'",
         "echo 1 | xargs -I{} git commit",
         "timeout 5 git commit",

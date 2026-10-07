@@ -45,7 +45,7 @@ from gobby.sessions.transcripts.base import (
     _unknown_block_message,
     annotate_record_source,
 )
-from gobby.sessions.transcripts.codex_items import normalize_command_execution
+from gobby.sessions.transcripts.codex_items import mcp_item_failure, normalize_command_execution
 from gobby.sessions.transcripts.tool_activity import event_activity_by_user_index
 
 logger = logging.getLogger(__name__)
@@ -108,6 +108,33 @@ def _command_execution_outcomes(
             timestamp=timestamp,
             raw_json=data,
             workdir=normalized.cwd,
+        )
+    ]
+
+
+def _mcp_tool_call_items(
+    data: dict[str, Any],
+    payload: dict[str, Any],
+    timestamp: datetime,
+) -> list[ParsedToolEvent]:
+    """Completed MCP items: a call made inside functions.exec leaves no other record."""
+    if payload.get("type") != "item_completed":
+        return []
+    item = payload.get("item")
+    if not isinstance(item, dict) or item.get("type") != "McpToolCall":
+        return []
+    item_id, arguments = item.get("id"), item.get("arguments")
+    return [
+        ParsedToolEvent(
+            phase="end",
+            call_id=item_id if isinstance(item_id, str) else None,
+            server=item.get("server"),
+            tool=item.get("tool"),
+            arguments=arguments if isinstance(arguments, dict) else {},
+            timestamp=timestamp,
+            raw_json=data,
+            result=item.get("result"),
+            error=mcp_item_failure(item),
         )
     ]
 
@@ -340,14 +367,18 @@ class CodexTranscriptParser(BaseTranscriptParser):
         return turn.get("type") == "session_meta"
 
     def parse_line(self, line: str, index: int) -> ParsedMessage | ParsedToolEvent | None:
-        record, _ = self._parse_line_with_outcomes(line, index)
+        record, _, _ = self._parse_line_with_outcomes(line, index)
         return record
 
     def _parse_line_with_outcomes(
         self, line: str, index: int
-    ) -> tuple[ParsedMessage | ParsedToolEvent | None, list[CodexNestedExecOutcome]]:
+    ) -> tuple[
+        ParsedMessage | ParsedToolEvent | None,
+        list[CodexNestedExecOutcome],
+        list[ParsedToolEvent],
+    ]:
         if not line.strip():
-            return None, []
+            return None, [], []
 
         try:
             data = json.loads(line)
@@ -358,7 +389,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
                 raw_text=line,
                 error=e,
             )
-            return None, []
+            return None, [], []
 
         if not isinstance(data, dict):
             self.error_log.log_decode_failure(
@@ -367,15 +398,16 @@ class CodexTranscriptParser(BaseTranscriptParser):
                 raw_text=line,
                 error=None,
             )
-            return None, []
+            return None, [], []
 
         line_type = data.get("type")
         payload = data.get("payload")
         if not isinstance(payload, dict):
-            return None, []
+            return None, [], []
 
         timestamp = _parse_timestamp(data)
         outcomes: list[CodexNestedExecOutcome] = []
+        mcp_calls: list[ParsedToolEvent] = []
         if line_type == "response_item":
             payload_type = payload.get("type")
             envelope = _classify_tool_envelope(payload_type)
@@ -385,8 +417,10 @@ class CodexTranscriptParser(BaseTranscriptParser):
                 outcomes = self._resolve_nested_exec_output(data, payload, timestamp)
         elif line_type == "event_msg":
             outcomes = _command_execution_outcomes(data, payload, timestamp)
+            mcp_calls = _mcp_tool_call_items(data, payload, timestamp)
 
-        return self._parse_decoded_line(data, payload, index, timestamp), outcomes
+        record = self._parse_decoded_line(data, payload, index, timestamp)
+        return record, outcomes, mcp_calls
 
     def _parse_decoded_line(
         self,
@@ -718,8 +752,8 @@ class CodexTranscriptParser(BaseTranscriptParser):
         """
         current_index = start_index
         for raw in raw_lines:
-            record, outcomes = self._parse_line_with_outcomes(raw.text, current_index)
-            if record is None and not outcomes:
+            record, outcomes, mcp_calls = self._parse_line_with_outcomes(raw.text, current_index)
+            if record is None and not outcomes and not mcp_calls:
                 continue
             records = annotate_record_source(
                 [record] if record is not None else [],
@@ -733,6 +767,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
                 records=records,
                 parser_safe=True,
                 codex_exec_outcomes=outcomes,
+                codex_mcp_calls=mcp_calls,
             )
             if isinstance(record, ParsedMessage):
                 current_index += 1

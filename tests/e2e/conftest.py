@@ -10,7 +10,6 @@ Provides fixtures for:
 - MCP client connections
 """
 
-import errno
 import json
 import math
 import os
@@ -82,6 +81,10 @@ class DaemonHealthTimeoutError(AssertionError):
         log_tail: str,
         error_log_tail: str,
         mcp_log_tail: str,
+        backend_state: str | None,
+        thread_stack_tail: str,
+        task_stack_tail: str,
+        startup_timing_tail: str,
     ) -> None:
         self.port = port
         self.elapsed_seconds = elapsed_seconds
@@ -94,6 +97,10 @@ class DaemonHealthTimeoutError(AssertionError):
         self.log_tail = log_tail
         self.error_log_tail = error_log_tail
         self.mcp_log_tail = mcp_log_tail
+        self.backend_state = backend_state
+        self.thread_stack_tail = thread_stack_tail
+        self.task_stack_tail = task_stack_tail
+        self.startup_timing_tail = startup_timing_tail
         super().__init__(
             f"Isolated daemon on port {port} did not serve /api/auth/status after "
             f"{elapsed_seconds:.3f}s: attempts={attempts}, connect_refused={connect_refused}, "
@@ -101,7 +108,11 @@ class DaemonHealthTimeoutError(AssertionError):
             f"last_status_code={last_status_code}, process={process_status}\n"
             f"--- daemon log tail ---\n{log_tail}\n"
             f"--- daemon error log tail ---\n{error_log_tail}\n"
-            f"--- mcp log tail ---\n{mcp_log_tail}"
+            f"--- mcp log tail ---\n{mcp_log_tail}\n"
+            f"--- sanitized backend state ---\n{backend_state}\n"
+            f"--- failed-process thread stacks ---\n{thread_stack_tail}\n"
+            f"--- failed-process task stacks ---\n{task_stack_tail}\n"
+            f"--- startup stage timings ---\n{startup_timing_tail}"
         )
 
 
@@ -342,42 +353,24 @@ class DaemonInstance:
             )
 
 
-def _checkout_gdaemon_bin_dir(
-    checkout_gdaemon: Path, pinned_bin_dir: Path, home_dir: str | Path | None
+def _isolated_native_bin_dir(
+    checkout_gdaemon: Path | None, pinned_bin_dir: Path, home_dir: str | Path | None
 ) -> Path:
-    """Link the pinned dir's binaries beside the checkout gdaemon in a fresh dir.
+    """Copy the native set so test provisioning and locks cannot mutate its source.
 
-    The runner resolves every native binary from one dir, so a test pinning its
-    gterm dir would otherwise run that dir's gdaemon. The pinned identity stamp
-    stays out: it describes the gdaemon this dir replaces.
-
-    Pinned files are hard links, never symlinks: gterm pins its own executable
-    and refuses to host when that executable is a symlink. A sandbox that cannot
-    write the pinned dir refuses the link with EPERM, so those files are copied
-    into this temp dir; the installed set itself is never touched. The checkout
-    gdaemon stays a symlink so a rebuild that replaces its inode is still followed.
+    gterm refuses a symlinked executable. Copies also isolate in-place writes,
+    unlike hard links. A checkout gdaemon stays a symlink to follow rebuilds;
+    only that replacement invalidates the pinned set's identity stamp.
     """
     from gobby.utils.native_bin import IDENTITY_STAMP_NAME, native_bin_name
 
     composite = Path(tempfile.mkdtemp(prefix="native-bin-", dir=home_dir))
-    skipped = {native_bin_name("gdaemon"), IDENTITY_STAMP_NAME}
+    skipped = {native_bin_name("gdaemon"), IDENTITY_STAMP_NAME} if checkout_gdaemon else set()
     for entry in pinned_bin_dir.iterdir():
         if entry.is_file() and entry.name not in skipped:
-            try:
-                os.link(entry.resolve(), composite / entry.name)
-            except OSError as exc:
-                if exc.errno == errno.EPERM:
-                    # A sandbox without write access to the pinned dir refuses every link.
-                    shutil.copy2(entry, composite / entry.name)
-                    continue
-                if exc.errno != errno.EXDEV:
-                    raise
-                # No symlink fallback: a symlinked gterm refuses to host.
-                raise RuntimeError(
-                    f"cannot hard-link {entry} into {composite}: {exc}. The pinned native "
-                    "bin dir and the e2e home must share a filesystem."
-                ) from exc
-    (composite / checkout_gdaemon.name).symlink_to(checkout_gdaemon.resolve())
+            shutil.copy2(entry, composite / entry.name)
+    if checkout_gdaemon is not None:
+        (composite / checkout_gdaemon.name).symlink_to(checkout_gdaemon.resolve())
     return composite
 
 
@@ -450,18 +443,17 @@ def prepare_daemon_env(
     from tests.fixtures.gdaemon_binary import select_test_gdaemon
 
     checkout_gdaemon = select_test_gdaemon(root_dir, env, native_bin_name("gdaemon"))
-    pinned_bin_dir = env.get(NATIVE_BIN_DIR_ENV)
-    if (
+    pinned_bin_dir = Path(env.get(NATIVE_BIN_DIR_ENV) or native_bin_dir())
+    if home_dir is not None or (
         checkout_gdaemon is not None
-        and pinned_bin_dir is not None
-        and Path(pinned_bin_dir).resolve() != checkout_gdaemon.parent.resolve()
+        and pinned_bin_dir.resolve() != checkout_gdaemon.parent.resolve()
     ):
         env[NATIVE_BIN_DIR_ENV] = str(
-            _checkout_gdaemon_bin_dir(checkout_gdaemon, Path(pinned_bin_dir), home_dir)
+            _isolated_native_bin_dir(checkout_gdaemon, pinned_bin_dir, home_dir)
         )
     env.setdefault(
         NATIVE_BIN_DIR_ENV,
-        str(checkout_gdaemon.parent if checkout_gdaemon is not None else native_bin_dir()),
+        str(checkout_gdaemon.parent if checkout_gdaemon is not None else pinned_bin_dir),
     )
 
     # Override HOME so that ~/.gobby resolves to <temp>/.gobby instead of
@@ -625,6 +617,8 @@ def wait_for_daemon_health(
     min_attempts: int = DAEMON_HEALTH_MIN_PROBE_ATTEMPTS,
 ) -> None:
     """Wait for isolated daemon health or raise with bounded startup diagnostics."""
+    from tests.e2e.readiness_capture import capture_readiness_timeout, safe_backend_state
+
     start = time.monotonic()
     deadline = start + timeout
     attempts = 0
@@ -632,6 +626,7 @@ def wait_for_daemon_health(
     timed_out = 0
     transport_errors = 0
     last_status_code: int | None = None
+    backend_state: str | None = None
 
     while attempts < min_attempts or time.monotonic() < deadline:
         remaining = max(deadline - time.monotonic(), 0.0)
@@ -643,6 +638,7 @@ def wait_for_daemon_health(
                 timeout=probe_timeout,
             )
             last_status_code = response.status_code
+            backend_state = safe_backend_state(response)
             if response.status_code == 200:
                 return
         except httpx.ConnectError:
@@ -657,6 +653,7 @@ def wait_for_daemon_health(
             time.sleep(min(DAEMON_HEALTH_POLL_INTERVAL_SECONDS, remaining))
 
     elapsed_seconds = time.monotonic() - start
+    capture = capture_readiness_timeout(log_file.parent if log_file is not None else None, process)
 
     def read_tail(path: Path | None, label: str) -> str:
         if path is None:
@@ -696,6 +693,10 @@ def wait_for_daemon_health(
         log_tail=log_tail,
         error_log_tail=error_log_tail,
         mcp_log_tail=mcp_log_tail,
+        backend_state=backend_state,
+        thread_stack_tail=capture.thread_stack_tail,
+        task_stack_tail=capture.task_stack_tail,
+        startup_timing_tail=capture.startup_timing_tail,
     )
 
 
@@ -1137,7 +1138,13 @@ def spawn_daemon_instance(
     env["GOBBY_CONFIG"] = str(config_path)
     env["GOBBY_HOME"] = str(gobby_home)
 
-    command = [sys.executable, "-m", runner_module, "--config", str(config_path)]
+    command = [
+        sys.executable,
+        str(Path(__file__).with_name("readiness_bootstrap.py")),
+        runner_module,
+        "--config",
+        str(config_path),
+    ]
 
     # Start daemon process
     with open(log_file, "w") as log_f, open(error_log_file, "w") as err_f:

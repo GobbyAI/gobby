@@ -777,7 +777,8 @@ def test_load_envelope_skips_quarantine_failure_without_raising(
             envelope = _load_envelope(envelope_path)
 
     assert envelope is None
-    assert not envelope_path.exists()
+    assert envelope_path.exists()
+    assert envelope_path.read_text(encoding="utf-8") == "{invalid"
     assert (inbox_dir / "quarantine" / envelope_path.name).exists()
     assert "Skipping hook inbox file" in caplog.text
 

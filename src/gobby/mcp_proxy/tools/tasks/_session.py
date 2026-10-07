@@ -4,6 +4,7 @@ Provides tools for linking tasks to sessions and querying task-session
 relationships.
 """
 
+from datetime import datetime
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -13,6 +14,7 @@ from gobby.mcp_proxy.tools.tasks._authorization import (
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
+from gobby.mcp_proxy.tools.tasks._formatters import brief_task_card
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
 
@@ -77,7 +79,7 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
     )
 
     def transfer_task_authority(task_id: str, reason: str) -> dict[str, Any]:
-        """Take over activation-receipt authority when the recorded authority expired."""
+        """Take over activation-receipt authority that no live session can use."""
         from gobby.utils.session_context import get_current_session_id
 
         caller_session_id = get_current_session_id()
@@ -103,8 +105,9 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="transfer_task_authority",
         description=(
             "Take over activation-receipt authority for a task whose creator and "
-            "delegator have both expired. Refused while either is live, and for the "
-            "task's claimant or a task-close reviewer."
+            "delegator have both expired, or whose live creator is its claimant with "
+            "no live delegator. Refused while a creator that is not the claimant, or "
+            "a delegator, is live, and for the task's claimant or a task-close reviewer."
         ),
         input_schema={
             "type": "object",
@@ -224,7 +227,19 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return {"error": f"Invalid session_id '{effective_session_id}': {e}"}
 
         tasks = ctx.session_task_manager.get_session_tasks(resolved_session_id)
-        return {"session_id": resolved_session_id, "tasks": tasks}
+        rows = [
+            {
+                **row,
+                "task": brief_task_card(ctx, row["task"]),
+                "link_created_at": (
+                    row["link_created_at"].isoformat()
+                    if isinstance(row["link_created_at"], datetime)
+                    else row["link_created_at"]
+                ),
+            }
+            for row in tasks
+        ]
+        return {"session_id": resolved_session_id, "tasks": rows}
 
     registry.register(
         name="get_session_tasks",

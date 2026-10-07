@@ -69,6 +69,9 @@ _SECOND_REVIEW_RUN_ID = "00000000-0000-4000-8000-000000002611"
 _REQUIRED_EVIDENCE = "Run the real close adapter and capture its MCP response receipt."
 _OVERSIZED_TRANSCRIPT_BYTES = 10 * 1024 * 1024
 _SUBMIT_DEADLINE_SECONDS = 10.0
+# A hang guard, not a latency claim: the child's cold start is the MCP SDK import, about
+# 1.3s of CPU that a loaded agent shell stretched to 21s of wall time (#23680).
+_STDIO_COLD_START_SECONDS = 60.0
 _STDIO_DEFAULT_PREFLIGHT_PATH = "/api/health"
 
 
@@ -1360,7 +1363,7 @@ async def test_authenticated_valid_submission_closes_and_persists_payload(
 
     result = await submit_close_review(
         _ctx(),
-        review_id="review",
+        review_id=store.review.id,
         verdict=_verdict("valid"),
         evaluate_close=evaluate,
         commit_close=commit,
@@ -1379,7 +1382,7 @@ async def test_authenticated_valid_submission_closes_and_persists_payload(
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-@pytest.mark.parametrize("reviewer_ended", [False, True], ids=["running", "late-success"])
+@pytest.mark.parametrize("reviewer_ended", [False, True], ids=["running", "late-no-verdict"])
 async def test_submit_close_review_claims_before_heavy_work(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -1460,16 +1463,22 @@ async def test_submit_close_review_claims_before_heavy_work(
     if reviewer_ended:
         completed_run = run_manager.complete(run.id)
         assert completed_run is not None
-        assert completed_run.status == "success"
+        assert completed_run.status == "error"
+        assert completed_run.error is not None and review.id in completed_run.error
         delivery = terminal_review_delivery(temp_db, run.id)
-        assert delivery is not None
-        assert delivery[1] == REVIEWER_RUN_ENDED_SUCCESS_ERROR
+        assert isinstance(delivery, tuple)
+        assert delivery[0]["status"] == "error"
+        assert delivery[0]["review_id"] == review.id
         abandoned = store.get(review.id)
         assert abandoned is not None
         assert abandoned.status == "error"
-        assert abandoned.error == REVIEWER_RUN_ENDED_SUCCESS_ERROR
+        assert abandoned.error == delivery[1]
         initial_status = "error"
     transcript_reader = TranscriptReader(session_manager)
+    # Index the oversized transcript before the timed submit. The build is this test's
+    # own CPU work, which load stretched past the submit deadline (#23680); the
+    # ordering checks in evaluate_close do not depend on it being cold.
+    assert await transcript_reader.get_messages(caller.id, limit=1)
     default_preflight_observations: list[tuple[str, TaskCloseReviewStatus]] = []
     observed_finalizing: list[str] = []
 
@@ -1520,7 +1529,9 @@ async def test_submit_close_review_claims_before_heavy_work(
         mcp_manager=None,
         session_manager=session_manager,
         services=SimpleNamespace(database=temp_db),
-        config=SimpleNamespace(mcp_client_proxy=SimpleNamespace(tool_timeout=10.0)),
+        config=SimpleNamespace(
+            mcp_client_proxy=SimpleNamespace(tool_timeout=10.0, tool_timeouts={})
+        ),
         run_db=run_db,
     )
     async with _live_mcp_http_server(
@@ -1566,7 +1577,9 @@ async def test_submit_close_review_claims_before_heavy_work(
         os.close(slave_fd)
         try:
             _write_pty_json(master_fd, _initialize_request())
-            initialize = await asyncio.to_thread(_read_pty_response, master_fd, 1, 20.0)
+            initialize = await asyncio.to_thread(
+                _read_pty_response, master_fd, 1, _STDIO_COLD_START_SECONDS
+            )
             assert "result" in initialize
             _write_pty_json(
                 master_fd,
@@ -1591,7 +1604,7 @@ async def test_submit_close_review_claims_before_heavy_work(
 
     assert "result" in response
     structured = response["result"]["structuredContent"]
-    assert structured["success"] is True
+    assert structured["success"] is True, structured
     assert elapsed < _SUBMIT_DEADLINE_SECONDS
     assert len(default_preflight_observations) == startup_health_count + 1
     assert default_preflight_observations[-1] == (
@@ -1632,7 +1645,7 @@ async def test_late_verdict_after_run_end_is_applied(
 
     result = await submit_close_review(
         _ctx(),
-        review_id="review",
+        review_id=store.review.id,
         verdict=_verdict("valid"),
         evaluate_close=AsyncMock(return_value=_evaluation(ready=True)),
         commit_close=commit,
@@ -1904,7 +1917,7 @@ async def test_invalid_and_stale_submissions_clear_active_lock(
 
         result = await submit_close_review(
             _ctx(),
-            review_id="review",
+            review_id=store.review.id,
             verdict=_verdict("invalid"),
             evaluate_close=AsyncMock(return_value=evaluation),
             commit_close=AsyncMock(),
@@ -1939,7 +1952,7 @@ async def test_external_pending_submission_stays_open_and_names_live_criteria(
 
     result = await submit_close_review(
         _ctx(),
-        review_id="review",
+        review_id=store.review.id,
         verdict=_verdict("valid"),
         evaluate_close=AsyncMock(return_value=evaluation),
         commit_close=commit,
@@ -1967,7 +1980,7 @@ async def test_malformed_submission_returns_review_to_running(
 
     result = await submit_close_review(
         _ctx(),
-        review_id="review",
+        review_id=store.review.id,
         verdict={},
         evaluate_close=AsyncMock(return_value=evaluation),
         commit_close=AsyncMock(),
@@ -1990,7 +2003,7 @@ async def test_wrong_reviewer_run_is_rejected_without_transition(
 
     result = await submit_close_review(
         _ctx(),
-        review_id="review",
+        review_id=store.review.id,
         verdict=_verdict("valid"),
         evaluate_close=AsyncMock(),
         commit_close=AsyncMock(),
@@ -2174,7 +2187,7 @@ def _ctx(
 def _review(*, status: str, run_id: str | None) -> TaskCloseReview:
     now = datetime(2026, 8, 22, tzinfo=UTC)
     return TaskCloseReview(
-        id="review",
+        id=str(uuid4()),
         task_id="task",
         task_ref="#42",
         caller_session_id="parent",
@@ -2242,6 +2255,150 @@ def _arguments() -> dict[str, Any]:
         "preview": False,
         "response_detail": "concise",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wrong_review_id", ["not-a-uuid", str(uuid4())])
+async def test_corrected_submission_preserves_review_after_wrong_id_and_malformed_verdict(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    wrong_review_id: str,
+) -> None:
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Correct a review submission",
+        validation_criteria="A rejected submission leaves the reviewer able to submit its verdict.",
+    )
+    sessions = SessionManager(temp_db)
+    caller = sessions.register(
+        external_id=f"correction-caller-{uuid4()}",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    child = sessions.register(
+        external_id=f"correction-reviewer-{uuid4()}",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    store = TaskCloseReviewStore(temp_db)
+    review, created = store.create_or_get_active(
+        **_persisted_review_intent(task, caller_session_id=caller.id)
+    )
+    assert created
+    review = _promote_persisted(store, task, review)
+    assert review.agent_run_id is not None
+    runs = LocalAgentRunManager(temp_db)
+    assert (
+        runs.activate_queued(
+            review.agent_run_id,
+            child_session_id=child.id,
+            provider="codex",
+            prompt="Review",
+            workflow_name="task-close-reviewer",
+            agent_name="task-close-reviewer",
+            model="gpt-test",
+            is_local=False,
+            requested_reasoning_effort=None,
+            effective_reasoning_effort=None,
+            reasoning_required=False,
+            reasoning_status="not_requested",
+            reasoning_message=None,
+            timeout_seconds=1200,
+            resume_metadata_json=None,
+            worktree_id=None,
+            clone_id=None,
+        )
+        is not None
+    )
+    assert runs.start(review.agent_run_id) is not None
+    running = store.bind_run(review.id, review.agent_run_id)
+    assert running is not None
+    monkeypatch.setattr(orchestration, "get_current_agent_run_id", lambda: review.agent_run_id)
+    monkeypatch.setattr(orchestration, "get_current_session_id", lambda: child.id)
+    ctx = cast(
+        RegistryContext,
+        SimpleNamespace(
+            task_manager=tasks,
+            agent_registry=None,
+            validation_config=TaskValidationConfig(),
+        ),
+    )
+    malformed = _evaluation()
+    malformed.error = "agentic_review_malformed"
+    corrected = _evaluation()
+    corrected.task = task
+    corrected.task_id = task.id
+    corrected.error = "validation_failed"
+    corrected.message = "The review found a missing criterion."
+    corrected.validation_status = "invalid"
+    corrected.verdict = _verdict("invalid")
+    evaluate = AsyncMock(side_effect=[malformed, corrected])
+    commit = AsyncMock()
+
+    rejected_id = await submit_close_review(
+        ctx,
+        review_id=wrong_review_id,
+        verdict=_verdict("invalid"),
+        evaluate_close=evaluate,
+        commit_close=commit,
+    )
+    assert rejected_id["error"] == "agentic_review_not_found"
+    assert store.get(review.id) == running
+    evaluate.assert_not_awaited()
+    assert rejected_id["review_id"] == review.id
+
+    monkeypatch.setattr(orchestration, "get_current_session_id", lambda: caller.id)
+    foreign = await submit_close_review(
+        ctx,
+        review_id=wrong_review_id,
+        verdict=_verdict("invalid"),
+        evaluate_close=evaluate,
+        commit_close=commit,
+    )
+    assert foreign["error"] == "agentic_review_not_found"
+    assert "review_id" not in foreign
+    assert store.get(review.id) == running
+    evaluate.assert_not_awaited()
+    monkeypatch.setattr(orchestration, "get_current_session_id", lambda: child.id)
+
+    rejected_verdict = await submit_close_review(
+        ctx,
+        review_id=review.id,
+        verdict={"status": "invalid"},
+        evaluate_close=evaluate,
+        commit_close=commit,
+    )
+    assert rejected_verdict["error"] == "agentic_review_malformed"
+    still_running = store.get(review.id)
+    assert still_running is not None and still_running.status == "running"
+    assert still_running.result_payload == {
+        "kind": "submitted_close_verdict",
+        "verdict": {"status": "invalid"},
+    }
+
+    accepted = await submit_close_review(
+        ctx,
+        review_id=review.id,
+        verdict=_verdict("invalid"),
+        evaluate_close=evaluate,
+        commit_close=commit,
+    )
+    assert accepted["review_status"] == "invalid"
+    persisted = store.get(review.id)
+    assert persisted is not None and persisted.result_payload is not None
+    assert persisted.result_payload["validation_status"] == "invalid"
+    completed = runs.complete(review.agent_run_id)
+    assert completed is not None and completed.status == "success"
+    delivery = terminal_review_delivery(temp_db, review.agent_run_id)
+    assert isinstance(delivery, tuple)
+    assert delivery[0]["review_id"] == review.id
+    assert delivery[0]["validation_status"] == "invalid"
+    assert evaluate.await_count == 2
+    commit.assert_not_awaited()
 
 
 def _persisted_review_intent(
@@ -2387,6 +2544,9 @@ async def _live_mcp_http_server(
         lifespan="off",
         log_config=None,
         ws="none",
+        # Cancel a request still running at exit inside the 5s stop wait below, so a
+        # failed body reports its own error instead of a shutdown TimeoutError (#23680).
+        timeout_graceful_shutdown=1,
     )
     http = uvicorn.Server(config)
     task = asyncio.create_task(http.serve())

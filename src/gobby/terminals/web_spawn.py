@@ -15,6 +15,7 @@ from gobby.agents.spawn_executor import (
 )
 from gobby.storage.terminals import TerminalManager, mint_terminal_id
 from gobby.terminals.dimensions import validate_dimensions
+from gobby.terminals.lifetime import TerminalLifetime
 from gobby.terminals.native_runtime import classify_native_spawn_failure
 from gobby.terminals.runtime import (
     CommitSpawnRefusedError,
@@ -79,13 +80,15 @@ async def spawn_web_terminal(
     timeout_seconds: float | None = None,
     cancel_event: asyncio.Event | None = None,
     terminal_theme: dict[str, object] | None = None,
+    lifetime: TerminalLifetime = "run",
 ) -> WebSpawnResult:
     """Create a pending row, prepare, and promote — same CAS matrix as execute_spawn.
 
     ``env`` sits under the runtime's own variables, so it never shadows
     ``GOBBY_TERMINAL_ID``. ``terminal_theme`` is the requesting client's
     colours, forwarded to a native host so the child's first OSC 10/11
-    queries answer with them.
+    queries answer with them. ``lifetime`` is internal: it never changes
+    native-first selection and only decides whether a fallback is legal.
     """
     validated = validate_dimensions(rows, cols)
     terminal_id = mint_terminal_id()

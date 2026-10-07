@@ -3,9 +3,12 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use postgres::Client;
+use sha2::{Digest, Sha256};
 
 use crate::config::Context;
-use crate::index::import_resolution::{ImportResolutionContext, build_import_resolution_context};
+use crate::index::import_resolution::{
+    ImportResolutionContext, build_import_resolution_context, import_resolution_input_digest,
+};
 use crate::visibility;
 
 /// Module-name ↔ file identity for the import graph.
@@ -130,18 +133,70 @@ pub(crate) fn load_project_imports(
     conn: &mut Client,
     ctx: &Context,
 ) -> anyhow::Result<ProjectImports> {
+    Ok(load_project_inputs(conn, ctx)?.resolve(ctx))
+}
+
+pub(crate) struct ProjectInputs {
+    visible: HashSet<String>,
+    pub rows: Vec<(String, String)>,
+}
+
+impl ProjectInputs {
+    pub fn digest(&self, ctx: &Context) -> String {
+        let mut digest = Sha256::new();
+        digest.update(b"community-input-v1\0");
+        // A released resolver/partition change must invalidate prior input caches.
+        digest.update(env!("CARGO_PKG_VERSION").as_bytes());
+        digest.update(b"\0");
+        digest.update(super::labels::LABEL_ALGORITHM_VERSION.to_le_bytes());
+        digest.update(b"\0");
+        for path in self.visible.iter().collect::<BTreeSet<_>>() {
+            digest.update((path.len() as u64).to_le_bytes());
+            digest.update(path.as_bytes());
+        }
+        digest.update(b"\0imports\0");
+        for (source, module) in self.rows.iter().collect::<BTreeSet<_>>() {
+            for field in [source, module] {
+                digest.update((field.len() as u64).to_le_bytes());
+                digest.update(field.as_bytes());
+            }
+        }
+        digest.update(import_resolution_input_digest(
+            &ctx.project_root,
+            self.visible.iter().map(String::as_str),
+        ));
+        digest
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    pub fn resolve(self, ctx: &Context) -> ProjectImports {
+        let candidates = self
+            .visible
+            .iter()
+            .map(|path| ctx.project_root.join(path))
+            .collect::<Vec<_>>();
+        let resolver = build_import_resolution_context(&ctx.project_root, &candidates);
+        let identity = ImportIdentity::from_resolution(&self.visible, &resolver, &self.rows);
+        ProjectImports {
+            identity,
+            rows: self.rows,
+        }
+    }
+}
+
+pub(crate) fn load_project_inputs(
+    conn: &mut Client,
+    ctx: &Context,
+) -> anyhow::Result<ProjectInputs> {
     let visible = visibility::visible_tree(conn, ctx)?
         .into_iter()
         .map(|file| file.file_path)
         .collect::<HashSet<_>>();
     let rows = visible_import_rows(conn, ctx)?;
-    let candidates = visible
-        .iter()
-        .map(|path| ctx.project_root.join(path))
-        .collect::<Vec<_>>();
-    let resolver = build_import_resolution_context(&ctx.project_root, &candidates);
-    let identity = ImportIdentity::from_resolution(&visible, &resolver, &rows);
-    Ok(ProjectImports { identity, rows })
+    Ok(ProjectInputs { visible, rows })
 }
 
 /// Import rows covering every file `visibility::visible_tree` reports.

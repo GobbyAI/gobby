@@ -118,3 +118,36 @@ def test_require_uv_blocks_bare_pip_behind_a_prefix(db: HubDatabase, command: st
 )
 def test_require_uv_allows_pip_under_uv_run(db: HubDatabase, command: str) -> None:
     assert RuleEngine(db)._should_block(_effect(db, "require-uv"), _bash_event(command)) is False
+
+
+# A full-suite exemption reads every command subject joined by newlines, so a
+# later command's path must not lend a bare run its target (#23587).
+@pytest.mark.parametrize(
+    ("rule_name", "command"),
+    [
+        ("no-full-pytest-suite", "uv run pytest; ./x.py"),
+        ("no-full-pytest-suite", "uv run pytest; tests/run.sh"),
+        ("no-full-vitest-suite", "npx vitest; ls a.test.ts"),
+        ("no-full-vitest-suite", "npx vitest related; ls"),
+        ("no-full-cargo-test", "cargo test; ls"),
+    ],
+)
+def test_full_suite_run_takes_no_target_from_a_later_command(
+    db: HubDatabase, rule_name: str, command: str
+) -> None:
+    assert RuleEngine(db)._should_block(_effect(db, rule_name), _bash_event(command)) is True
+
+
+@pytest.mark.parametrize(
+    ("rule_name", "command"),
+    [
+        ("no-full-pytest-suite", "uv run pytest tests/x.py; ls"),
+        ("no-full-vitest-suite", "npx vitest related src/a.ts; ls"),
+        ("no-full-vitest-suite", "(npx vitest related src/a.ts)"),
+        ("no-full-cargo-test", "cargo test -p gobby-core; ls"),
+    ],
+)
+def test_targeted_run_stays_exempt_beside_another_command(
+    db: HubDatabase, rule_name: str, command: str
+) -> None:
+    assert RuleEngine(db)._should_block(_effect(db, rule_name), _bash_event(command)) is False

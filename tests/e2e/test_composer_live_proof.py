@@ -121,7 +121,6 @@ async def composer_fixture(
         expected_revision=mutations.repository.current_revision(),
         patch=ConfigPatch(
             values={
-                "terminals.default_backend": "native",
                 "terminal_host.socket_dir": str(host),
                 "terminal_host.max_attachments_total": 8,
                 "terminal_host.max_attachments_per_terminal": 4,

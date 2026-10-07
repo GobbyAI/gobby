@@ -306,9 +306,12 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         search: str | None = Query(None, description="Search by title"),
         limit: int = Query(50, ge=1, le=1000, description="Maximum results"),
         offset: int = Query(0, ge=0, description="Pagination offset"),
-        sort_by: str = Query(
-            "hierarchy",
-            description="Sort order: hierarchy, updated_at, created_at, or priority",
+        sort_by: str | None = Query(
+            None,
+            description=(
+                "Sort order: hierarchy, updated_at, created_at, closed_at, or priority."
+                " Omitted lists closed=true newest closure first, otherwise hierarchy"
+            ),
         ),
         sort_order: str = Query("asc", description="Sort direction: asc or desc"),
         stage: list[str] | None = Query(None, description="Filter by stage name"),

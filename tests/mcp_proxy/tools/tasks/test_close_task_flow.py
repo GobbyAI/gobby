@@ -2920,7 +2920,7 @@ async def test_validator_close_queues_memory_review(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
     result = await orchestration.submit_close_review(
         ctx,
-        review_id="review",
+        review_id=review.id,
         verdict=_verdict("valid"),
         evaluate_close=AsyncMock(return_value=evaluation),
         commit_close=_commit_close,

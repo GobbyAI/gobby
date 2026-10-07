@@ -34,6 +34,10 @@ from gobby.tasks.expansion._common import (
 from gobby.tasks.task_types import VALID_TASK_TYPES
 
 
+class CompletedSectionExemptionsUnavailable(ValueError):
+    """Task completion could not be resolved; dependent lint cannot run safely."""
+
+
 def _task_has_landed_commit(task: Task, project_root: Path) -> bool:
     """Require Git evidence in both the shared checkout and the validated checkout."""
     try:
@@ -100,8 +104,10 @@ def _completed_plan_sections(
 ) -> frozenset[str]:
     """Resolve completion from unique, complete project-scoped coverage identity."""
     project_id = project_context.get("id") if project_context is not None else None
-    if task_manager is None or not isinstance(project_id, str) or not plan_doc.plan_id:
-        return frozenset()
+    if task_manager is None:
+        raise CompletedSectionExemptionsUnavailable("no task manager")
+    if not isinstance(project_id, str) or not project_id or not plan_doc.plan_id:
+        raise CompletedSectionExemptionsUnavailable("no project or plan identity")
     completed: set[str] = set()
     for section in plan_doc.sections:
         if section.kind is not Kind.deliverable or not section.acceptance_items:
@@ -117,8 +123,10 @@ def _completed_plan_sections(
                 )
                 for label in labels
             ]
-        except psycopg.Error:
-            continue
+        except psycopg.Error as exc:
+            raise CompletedSectionExemptionsUnavailable(
+                f"task lookup failed for section {section.section_id}: {exc}"
+            ) from exc
         if any(len(tasks) != 1 for tasks in owners):
             continue
         task = owners[0][0]
@@ -147,7 +155,13 @@ def validate_plan_file(
     plan_document: PlanDocument | None = None,
     parse_mode: ParseMode = "draft",
 ) -> dict[str, Any]:
-    """Validate a plan file against the Plan-Coverage Contract."""
+    """Validate a plan file against the Plan-Coverage Contract.
+
+    Semantic and symbol checks require project-scoped completion lookup, even
+    offline: guessing that no sections are complete can produce false findings.
+    Missing lookup returns ``completed_section_exemptions_unavailable`` after
+    structural validation, before any completion-dependent checks.
+    """
     project_path = project_context.get("project_path") if project_context is not None else None
     project_root = Path(project_path) if isinstance(project_path, str) and project_path else None
     skipped_symbols = skipped_symbol_validation().to_dict()
@@ -215,12 +229,21 @@ def validate_plan_file(
             "warnings": warnings,
             "symbol_validation": skipped_symbols,
         }
-    completed_section_ids = _completed_plan_sections(
-        plan_doc,
-        task_manager if task_manager is not None else getattr(self, "task_manager", None),
-        project_context,
-        project_root,
-    )
+    try:
+        completed_section_ids = _completed_plan_sections(
+            plan_doc,
+            task_manager if task_manager is not None else getattr(self, "task_manager", None),
+            project_context,
+            project_root,
+        )
+    except CompletedSectionExemptionsUnavailable as exc:
+        return {
+            "valid": False,
+            "condition": "completed_section_exemptions_unavailable",
+            "errors": [f"completed-section exemptions unavailable: {exc}"],
+            "warnings": warnings,
+            "symbol_validation": skipped_symbols,
+        }
     semantic_lint = lint_plan_document(
         plan_doc, project_root=project_root, completed_section_ids=completed_section_ids
     )

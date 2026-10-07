@@ -324,12 +324,15 @@ two operations:
 ```bash
 sudo sh scripts/install-py-spy-sudo.sh            # uses ~/.local/bin/py-spy
 sudo -n /usr/local/sbin/py-spy dump --pid <daemon-pid>
-sudo -n /usr/local/sbin/py-spy-record <daemon-pid> 60   # prints the SVG path
+sudo -n /usr/local/sbin/py-spy-record <daemon-pid> 60   # prints the profile.txt path
 ```
 
 The script installs a root-owned copy of py-spy, a `dump`-only sudoers rule,
 and a `py-spy-record` wrapper. The wrapper accepts only a PID and 1-300
-seconds, and writes GIL-sampled flame graphs under `/var/tmp/py-spy/`. Bare
+seconds, and writes GIL-sampled raw collapsed stacks to a `profile.txt` under
+`/var/tmp/py-spy/`. Each line is a `;`-joined stack followed by its sample count;
+rank stacks as text, for example
+`awk '{print $NF "\t" $0}' profile.txt | sort -nr | head`. Bare
 `py-spy record` stays unprivileged, because as root `record -- <cmd>` would run
 any command and `-o` would write any path. `/usr/bin/sample <pid> 30` needs no
 root and captures native frames, including fork and GIL waits, that py-spy's

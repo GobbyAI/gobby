@@ -61,7 +61,7 @@ class TestSessionToBrief:
         session = _make_session()
 
         brief = session.to_brief()
-        assert brief["ref"] == "#42"
+        assert brief["ref"] == "proj-xyz#42"
         assert brief["external_id"] == "ext-123"
         assert brief["source"] == "claude"
         assert brief["project_id"] == "proj-xyz"
@@ -123,8 +123,8 @@ class TestSessionToBrief:
         assert "summary_revision_id" not in brief
 
     def test_to_brief_ref_fallback_without_seq_num(self) -> None:
-        """to_brief ref falls back to truncated UUID when seq_num is None."""
+        """to_brief preserves the full session ID when seq_num is None."""
         session = _make_session(seq_num=None)
 
         brief = session.to_brief()
-        assert brief["ref"] == "sess-abc"  # first 8 chars of id
+        assert brief["ref"] == "sess-abc123"
