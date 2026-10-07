@@ -24,7 +24,7 @@ from tests.agents._yaml_helpers import flat
 
 pytestmark = pytest.mark.unit
 
-SEATS = ("assistant", "orchestrator", "lane-manager")
+SEATS = ("assistant", "orchestrator", "lane-manager", "merge-manager", "inbox-manager")
 # Decision 8: the write tools a read-only seat may not call.
 READ_ONLY_BLOCKED_TOOLS = frozenset(
     {
@@ -48,6 +48,8 @@ SEND_MESSAGE_TARGETS = {
     "assistant": {"parent", "session", "project"},
     "orchestrator": {"parent", "session", "project", "global"},
     "lane-manager": {"parent", "session", "project"},
+    "merge-manager": {"parent", "session", "project"},
+    "inbox-manager": {"parent", "session"},
 }
 # Worker-safety rules a spawned orchestrator drops to keep restart, cutover and
 # worktree-cleanup authority.
@@ -222,3 +224,41 @@ def test_coordination_seats_sync_as_installed_rows(definition_db: PostgresHubDat
         assert row is not None, name
         assert row.enabled is True, name
         assert AgentDefinitionBody.model_validate(row.definition_json) == _load(name), name
+
+
+def test_merge_manager_carries_landing_authority_and_preserves_foreign_work() -> None:
+    body = _load("merge-manager")
+    prompt = _prompt("merge-manager")
+
+    assert body.blocked_tools == []
+    assert body.network == "none"
+    assert body.spawnable_agents == []
+    assert "# Merge Manager" in prompt
+    assert "Confirm the LAND before editing" in prompt
+    assert "Create or claim a manual landing task" in prompt
+    assert "Merge approved candidates into `0.5.0`" in prompt
+    assert "Return semantic changes to an independent source reviewer" in prompt
+    assert "Do not remove dirty worktrees or branches" in prompt
+    assert "perform it only when explicitly assigned" in prompt
+    assert "This seat never restarts, cuts over or promotes live binaries" in prompt
+    assert "Never push or merge into `main`" in prompt
+
+
+def test_inbox_manager_is_read_only_and_routes_urgent_messages() -> None:
+    body = _load("inbox-manager")
+    prompt = _prompt("inbox-manager")
+
+    assert set(body.blocked_tools) == READ_ONLY_BLOCKED_TOOLS
+    assert body.network == "none"
+    assert body.spawnable_agents == []
+    assert body.prewarm_pre_commit_store is False
+    assert "# Inbox Manager" in prompt
+    assert "Work read-only in the main checkout" in prompt
+    assert "Every five minutes, send the Orchestrator ONE digest with wake=false" in prompt
+    assert "Forward at once" in prompt
+    assert "with wake=true" in prompt
+    assert 'single word "steady"' in prompt
+    assert "close backlog above 5" in prompt
+    assert "Never spawn agents, create or update tasks, edit files, restart the daemon" in prompt
+    assert "~/.gobby/local_cli_token" in prompt
+    assert "~/.gobby/bootstrap.yaml" in prompt
