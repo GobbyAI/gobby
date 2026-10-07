@@ -534,9 +534,12 @@ def _effective_deny_write(allow_write: list[str], deny_write: list[str]) -> list
     cost grows faster than the deny count: 1978 entries, most of them under
     unwritable ancestors, cost 13.7 s of CPU per launch.
     """
+    defaults = [os.path.expanduser(path) for path in _SRT_DEFAULT_WRITE_PATHS]
+    # SRT grants each default by its realpath (normalizePathForSandbox); allow_write
+    # is already canonical.
     grants = [
-        _subtree_prefix(os.path.expanduser(path))
-        for path in (*_SRT_DEFAULT_WRITE_PATHS, *allow_write)
+        _subtree_prefix(path)
+        for path in {*defaults, *map(os.path.realpath, defaults), *allow_write}
     ]
     kept = []
     for deny in deny_write:

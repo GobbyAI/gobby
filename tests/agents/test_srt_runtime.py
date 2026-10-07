@@ -262,6 +262,29 @@ async def test_rendered_write_denies_are_the_ones_a_grant_can_reach(
     assert len(deny_write) < 100 < len(paths.deny_write_paths)
 
 
+def test_write_deny_under_a_symlinked_srt_default_is_rendered(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    dotfiles = tmp_path / "dotfiles"
+    home.mkdir()
+    dotfiles.mkdir()
+    (home / ".claude").symlink_to(dotfiles, target_is_directory=True)
+    monkeypatch.setenv("HOME", str(home))
+    # SRT grants ~/.claude/debug by its realpath, so a deny spelled through the target counts.
+    deny = str(dotfiles.resolve() / "debug" / "synthetic")
+    paths = ResolvedSandboxPaths(
+        workspace_path=str(tmp_path),
+        read_paths=[],
+        write_paths=[],
+        allow_external_network=False,
+        deny_write_paths=[deny],
+    )
+
+    assert render_srt_settings(paths)["filesystem"]["denyWrite"] == [deny]
+
+
 async def test_claude_account_auth_files_are_read_only_sandbox_exceptions(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
