@@ -490,11 +490,11 @@ def _task_presence(
         # after close/release. Provider result order can differ from commit order.
         selected: str | None = None
         changes: list[tuple[float, bool]] = []
-        for epoch, current in history:
-            if epoch <= start:
+        for selection_epoch, current in history:
+            if selection_epoch <= start:
                 selected = current
             else:
-                changes.append((epoch, current == task_id))
+                changes.append((selection_epoch, current == task_id))
         return [(start, selected == task_id), *changes]
     events = [
         (epoch, getattr(row.get("task"), "id", None) == task_id)
