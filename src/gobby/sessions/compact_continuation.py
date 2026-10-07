@@ -30,7 +30,7 @@ from gobby.sessions.compact_markers import (
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
 )
 from gobby.sessions.continuation_retry import (
-    continuation_write_allowed,
+    continuation_write_refusal,
     resubmit_until_before_agent,
     turn_lifecycle_generation,
 )
@@ -530,6 +530,12 @@ def _take_same_terminal_handoff_compact_continuation_pending(
             target_context,
         )
     ]
+    if len(matching) > 1:
+        logger.warning(
+            "Skipping set_handoff continuation for %s: %d same-terminal markers are ambiguous",
+            pending_session_id,
+            len(matching),
+        )
     if len(matching) != 1:
         return None
     taken = _take_handoff_compact_continuation_pending(db, matching[0].id)
@@ -611,10 +617,29 @@ async def _send_handoff_compact_continuation(
         # An unreadable lifecycle can neither confirm nor refute BEFORE_AGENT, so
         # the composer read is not delivery. Report unconfirmed and let the
         # caller queue the durable pull prompt instead of trusting the screen.
+        logger.warning(
+            "Unconfirmed set_handoff continuation for %s: turn lifecycle is unreadable",
+            session_id,
+        )
         sent = False
     if not sent and on_send_failure is not None:
         on_send_failure()
     return sent
+
+
+#: Composer reads before an unclassifiable frame refuses the pull prompt, one
+#: verify interval apart: enough for Claude's post-compact redraw to settle.
+CONTINUATION_COMPOSER_PROBES = 3
+
+
+def _refuse_continuation(session_id: str, reason: str) -> SubmitResult:
+    logger.warning(
+        "Skipping set_handoff continuation for %s: %s",
+        session_id,
+        reason,
+        extra={"event": "handoff_continuation_refused", "session_id": session_id},
+    )
+    return SubmitResult(False, reason)
 
 
 async def _type_handoff_compact_continuation(
@@ -640,22 +665,30 @@ async def _type_handoff_compact_continuation(
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)
     try:
-        if db is not None and not await asyncio.to_thread(
-            continuation_write_allowed, db, session_id
+        if db is not None and (
+            refusal := await asyncio.to_thread(continuation_write_refusal, db, session_id)
         ):
-            return SubmitResult(False, "session is unavailable or waiting for operator interaction")
+            return _refuse_continuation(session_id, refusal)
         # An operator draft in the composer would be submitted with the pull
         # prompt, so require a positively empty composer before typing anything.
         # Only an unprobed composer keeps the blind drain: after a confirmed-empty
         # read it could only delete keystrokes the operator typed since.
-        writable, _, composer_state = await composer_gate_for_write(
-            pane,
-            cli_source,
-            composer_read,
-            action="the set_handoff continuation",
-        )
+        # SessionStart(compact) can arrive before Claude redraws its composer, so an
+        # unclassifiable frame is re-read after it settles; a draft is never retried.
+        for probe in range(1, CONTINUATION_COMPOSER_PROBES + 1):
+            writable, refuse_reason, composer_state = await composer_gate_for_write(
+                pane,
+                cli_source,
+                composer_read,
+                action="the set_handoff continuation",
+            )
+            if writable or composer_state != "unknown" or probe == CONTINUATION_COMPOSER_PROBES:
+                break
+            await asyncio.sleep(verify_seconds)
         if not writable:
-            return SubmitResult(False, "composer is not confirmed writable")
+            return _refuse_continuation(
+                session_id, f"{refuse_reason} (composer {composer_state} after {probe} probe(s))"
+            )
         ok, reason = (
             (True, None) if composer_state == "empty" else await clear_composer(pane, cli_source)
         )
@@ -666,10 +699,10 @@ async def _type_handoff_compact_continuation(
                 reason,
             )
             return SubmitResult(False, reason)
-        if db is not None and not await asyncio.to_thread(
-            continuation_write_allowed, db, session_id
+        if db is not None and (
+            refusal := await asyncio.to_thread(continuation_write_refusal, db, session_id)
         ):
-            return SubmitResult(False, "session is unavailable or waiting for operator interaction")
+            return _refuse_continuation(session_id, refusal)
         result = await submit_text(
             pane,
             prompt,
