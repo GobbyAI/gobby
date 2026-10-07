@@ -84,19 +84,29 @@ def continuation_write_allowed(
     db: HubDatabase, session_id: str, *, baseline_generation: int | None = None
 ) -> bool:
     """Permit the compact's handoff wait, but protect other live interaction waits."""
+    return (
+        continuation_write_refusal(db, session_id, baseline_generation=baseline_generation) is None
+    )
+
+
+def continuation_write_refusal(
+    db: HubDatabase, session_id: str, *, baseline_generation: int | None = None
+) -> str | None:
+    """Return why a continuation write must not type now, or None when it may."""
     try:
         session = SessionManager(db).get(session_id)
         if session is None or session.status not in LIVE_SESSION_STATUSES:
-            return False
+            return f"session is not live (status={session.status if session else None})"
         if session.status in PROTECTED_SESSION_STATUSES and session.status != "awaiting_handoff":
-            return False
+            return f"session is {session.status}"
         attention = AttentionStateManager(db).get(session_attention_entry_id(session_id))
         state = TurnLifecycleState.from_payload(attention.payload if attention else None)
         if baseline_generation is not None and state.generation > baseline_generation:
-            return False
-        return not any(wait.kind in {"input", "approval"} for wait in state.waits)
-    except Exception:
-        return False
+            return "a newer turn started"
+        waits = sorted({wait.kind for wait in state.waits if wait.kind in {"input", "approval"}})
+        return f"session has an open {'/'.join(waits)} wait" if waits else None
+    except Exception as exc:
+        return f"session state is unreadable ({type(exc).__name__})"
 
 
 async def resubmit_continuation(
