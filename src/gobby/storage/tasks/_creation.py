@@ -217,6 +217,10 @@ def _create_task_in_transaction(
                     next_seq_num,
                 ),
             )
+            if claimed_by_session_id is not None:
+                from gobby.storage.session_tasks import record_claim
+
+                record_claim(conn, claimed_by_session_id, task_id)
 
             logger.debug("Created task %s in project %s", task_id, project_id)
 

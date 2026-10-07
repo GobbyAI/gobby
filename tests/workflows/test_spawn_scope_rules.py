@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
 from gobby.agents.sync import sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.sessions.clear_continuation import stage_clear_attempt, take_clear_handoff_marker
+from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
@@ -131,6 +134,53 @@ def _spawned(
 
 
 class TestLimitSpawnableAgents:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("cleared", ["root", "coordinator", "caller"])
+    @pytest.mark.parametrize("allowed", [False, True], ids=["forbidden-target", "allowed-target"])
+    async def test_rule_spawn_scope_survives_clear(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        callers: dict[str, Session],
+        cleared: str,
+        allowed: bool,
+    ) -> None:
+        _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS)
+        predecessor = callers["lister"] if cleared == "caller" else callers["root"]
+        successor = session_manager.register(
+            "clear-successor",
+            predecessor.machine_id,
+            predecessor.source,
+            project_id=predecessor.project_id,
+            agent_depth=predecessor.agent_depth,
+        )
+        session_manager.update_terminal_pickup_metadata(
+            successor.id,
+            agent_run_id=predecessor.agent_run_id,
+        )
+        attempt = uuid4().hex
+        stage_clear_attempt(
+            temp_db,
+            predecessor.id,
+            attempt_id=attempt,
+            handoff=build_handoff_payload(current_state="Continue.", next_steps=["Continue."]),
+            terminal_context=None,
+            chat_context=None,
+        )
+        assert take_clear_handoff_marker(
+            temp_db, predecessor.id, attempt_id=attempt, successor_id=successor.id
+        )
+        caller_id = callers["lister"].id if cleared == "coordinator" else successor.id
+        target = "spawn-scope-worker" if allowed else "spawn-scope-other"
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            _spawn_event(caller_id, "spawn_agent", target),
+            session_id=caller_id,
+            variables={},
+        )
+        assert response.decision == ("allow" if allowed or cleared == "root" else "block")
+        if response.decision == "block":
+            assert response.reason is not None and "spawnable_agents" in response.reason
+
     @pytest.fixture
     def callers(
         self,
@@ -233,20 +283,20 @@ class TestLimitSpawnableAgents:
             ),
             ("lister", "dispatch_batch", "spawn-scope-worker", "#1", "block"),
             ("lister", "dispatch_batch", "spawn-scope-worker", ["#1"], "block"),
-            # Every agent in a target's fallback_agent chain is a target too.
-            ("chain-lister", "spawn_agent", "spawn-scope-chained", None, "block"),
+            # Rules check requested names; admission checks the resolved project's chain.
+            ("chain-lister", "spawn_agent", "spawn-scope-chained", None, "allow"),
             ("chain-both", "spawn_agent", "spawn-scope-chained", None, "allow"),
             (
                 "chain-lister",
                 "dispatch_batch",
                 None,
                 [{"agent": "spawn-scope-chained"}],
-                "block",
+                "allow",
             ),
             ("chain-both", "dispatch_batch", "spawn-scope-chained", [{}], "allow"),
         ],
     )
-    async def test_every_effective_spawn_target_must_be_listed(
+    async def test_every_requested_spawn_target_must_be_listed(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,

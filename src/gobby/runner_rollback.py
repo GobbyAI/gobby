@@ -21,6 +21,9 @@ async def _await_named(name: str, callback: Callable[[], Any]) -> None:
 
 async def rollback_runner_resources_async(runner: Any) -> None:
     """Ordered async rollback: host producers, drain, clients, then the inventory."""
+    from gobby.runner_lifecycle_shutdown import stop_restart_recovery
+
+    await _await_named("restart recovery", lambda: stop_restart_recovery(runner))
     host = getattr(runner, "terminal_host_manager", None)
     if host is not None:
         await _await_named("host producers", getattr(host, "stop_producers", lambda: None))
@@ -45,6 +48,7 @@ async def _rollback_inventory_async(runner: Any) -> None:
     from gobby.agents.terminal_delivery import reset_terminal_delivery_offload
     from gobby.app_context import clear_app_context
     from gobby.runner_broadcasting import reset_agent_event_broadcasting
+    from gobby.runner_lifecycle_shutdown import finalizer_expiry_backstop_required
     from gobby.telemetry import shutdown_telemetry
     from gobby.utils.tool_summarizer import reset_summarizer_config
 
@@ -85,8 +89,10 @@ async def _rollback_inventory_async(runner: Any) -> None:
         await _await_named("database executor revocation", db_executor.shutdown)
         await _await_named("database executor join", db_executor.join)
     database = getattr(runner, "database", None)
-    if database is not None:
+    if database is not None and not finalizer_expiry_backstop_required():
         await _await_named("database", database.close)
+    elif database is not None:
+        logger.warning("Leaving database open for unsettled recovery work until process exit")
     await _await_named("telemetry", shutdown_telemetry)
 
 
