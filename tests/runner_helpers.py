@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -249,7 +250,13 @@ def create_base_patches(
 
         notification_connection.notifies.side_effect = no_notifications
         database.open_runtime_async_connection = AsyncMock(return_value=notification_connection)
-        database.fetchone.return_value = None
+
+        def fetchone(query: str, *_args: Any, **_kwargs: Any) -> dict[str, datetime] | None:
+            if query == "SELECT clock_timestamp() AS started_at":
+                return {"started_at": datetime(2026, 1, 1, tzinfo=UTC)}
+            return None
+
+        database.fetchone.side_effect = fetchone
         database.fetchall.return_value = []
         cursor = MagicMock(rowcount=0, lastrowid=None)
         cursor.fetchone.return_value = None
