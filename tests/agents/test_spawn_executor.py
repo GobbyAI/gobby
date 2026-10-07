@@ -51,6 +51,7 @@ from gobby.agents.spawn_timing import SPAWN_PHASES
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.lifetime import NATIVE_FIRST_BACKEND
 from gobby.terminals.runtime import Delivered
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.agents.prepared_spawn import prepared_spawn
@@ -66,7 +67,7 @@ pytestmark = pytest.mark.unit
 def _runtime_of(request: SpawnRequest) -> FakeRuntime:
     registry = request.terminal_runtime_registry
     assert registry is not None
-    runtime = registry.resolve(request.terminal_backend)
+    runtime = registry.resolve(NATIVE_FIRST_BACKEND)
     assert isinstance(runtime, FakeRuntime)
     return runtime
 
@@ -153,7 +154,6 @@ async def test_managed_code_index_preflight_uses_issued_credential(
         code_index_preflight_mode="required",
         code_index_api_token="probe-token",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
 
     async def preflight(
@@ -216,7 +216,6 @@ async def test_required_managed_code_index_preflight_fails_closed(
         project_id="project",
         code_index_preflight_mode="required",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
 
     async def fail_preflight(*_args: object, **_kwargs: object) -> None:
@@ -263,7 +262,6 @@ async def test_best_effort_preflight_records_warning_without_operator_credential
         },
         code_index_preflight_mode="best_effort",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
 
     async def fail_preflight(*_args: object, **kwargs: object) -> None:
@@ -325,7 +323,6 @@ def test_record_resume_launch_details_uses_resolved_agent_run_id(
             "env": {CARGO_HOME: "/persisted/cargo", "PERSISTED": "old"},
         },
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
     calls: list[tuple[object, str, dict[str, object]]] = []
 
@@ -381,7 +378,6 @@ class TestSpawnRequest:
             parent_session_id="parent-789",
             project_id="proj-abc",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         assert request.prompt == "Test prompt"
@@ -403,7 +399,6 @@ class TestSpawnRequest:
             parent_session_id="parent",
             project_id="proj",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         assert request.workflow is None
@@ -423,7 +418,6 @@ class TestSpawnRequest:
             parent_session_id="parent",
             project_id="proj",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         assert request.sandbox_config is None
@@ -445,7 +439,6 @@ class TestSpawnRequest:
             sandbox_args=["--settings", '{"sandbox":{"enabled":true}}'],
             sandbox_env={"SEATBELT_PROFILE": "restrictive-closed"},
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         assert request.sandbox_config is not None
@@ -465,7 +458,6 @@ class TestSpawnRequest:
             parent_session_id="parent",
             project_id="proj",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         assert request.api_base is None
@@ -484,7 +476,6 @@ class TestSpawnRequest:
             api_base="http://localhost:1234/v1",
             api_token="sk-local",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         assert request.api_base == "http://localhost:1234/v1"
@@ -575,7 +566,6 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         # Mock prepare_terminal_spawn
@@ -636,7 +626,6 @@ class TestExecuteSpawn:
             parent_session_id="parent",
             project_id="proj",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
         clock = iter((0.0, 1.0))
         monkeypatch.setattr(
@@ -688,7 +677,6 @@ class TestExecuteSpawn:
             session_manager=session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(session_id="child-session-id"),
-            terminal_backend="native",
         )
         request.prepared_spawn = context
 
@@ -715,7 +703,6 @@ class TestExecuteSpawn:
             run_manager=run_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
         context = MagicMock()
         context.session_id = "child-session-id"
@@ -748,7 +735,6 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -796,7 +782,6 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -841,7 +826,6 @@ class TestExecuteSpawn:
             project_id="proj",
             session_manager=mock_session_manager,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_prepare = MagicMock(
@@ -895,7 +879,6 @@ class TestExecuteSpawn:
             project_id="proj",
             session_manager=MagicMock(),
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
         request.prepared_spawn = prepared_spawn(
             session_id="gobby-sess-123",
@@ -934,7 +917,6 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             run_manager=run_manager,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         call_order: list[str] = []
@@ -1057,7 +1039,6 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             run_manager=MagicMock(),
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
         spawn_context = MagicMock(
             session_id="gobby-sess-123",
@@ -1117,7 +1098,6 @@ class TestExecuteSpawn:
             is_local=True,
             codex_oss_provider="ollama",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
         spawn_context = MagicMock(
             session_id="gobby-sess-local",
@@ -1169,7 +1149,6 @@ class TestExecuteSpawn:
             session_manager=MagicMock(),
             run_manager=MagicMock(),
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
         call_order: list[str] = []
         spawn_context = MagicMock(
@@ -1236,7 +1215,6 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             sandbox_config=sandbox_config,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_prepare = MagicMock(
@@ -1286,7 +1264,6 @@ class TestExecuteSpawn:
             project_id="proj",
             # No session_manager provided,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         result = await execute_spawn(request)
@@ -1307,7 +1284,6 @@ class TestExecuteSpawn:
             project_id="proj",
             # No session_manager provided,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         result = await execute_spawn(request)
@@ -1329,7 +1305,6 @@ class TestExecuteSpawn:
             project_id="proj",
             session_manager=mock_session_manager,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_prepare = MagicMock(
@@ -1384,7 +1359,6 @@ class TestExecuteSpawn:
             model="grok-build",
             effective_reasoning_effort="high",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_prepare = MagicMock(
@@ -1448,7 +1422,6 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             sandbox_config=SandboxConfig(enabled=True, mode="restrictive"),
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
         mock_prepare = MagicMock(
             return_value=MagicMock(
@@ -1484,7 +1457,6 @@ class TestExecuteSpawn:
             project_id="proj",
             session_manager=MagicMock(),
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
         record = SimpleNamespace(
             supported=False,
@@ -1535,7 +1507,6 @@ class TestExecuteSpawn:
             project_id="proj",
             session_manager=MagicMock(),
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
         record = SimpleNamespace(supported=False, reason=reason)
         with patch(
@@ -1573,7 +1544,6 @@ class TestExecuteSpawn:
                 parent_session_id="parent",
                 env_vars={"GOBBY_SESSION_ID": "gobby-sess-agy"},
             ),
-            terminal_backend="native",
         )
         record = SimpleNamespace(
             supported=True,
@@ -1633,7 +1603,6 @@ class TestExecuteSpawn:
                 agent_run_id="run-agy123",
                 env_vars={"GOBBY_SESSION_ID": "gobby-sess-agy"},
             ),
-            terminal_backend="native",
         )
         record = SimpleNamespace(
             supported=True,
@@ -1692,7 +1661,6 @@ class TestExecuteSpawn:
                 agent_run_id="run-agy123",
                 env_vars={"GOBBY_SESSION_ID": "gobby-sess-agy"},
             ),
-            terminal_backend="native",
         )
         record = SimpleNamespace(
             supported=True,
@@ -1795,7 +1763,6 @@ class TestExecuteSpawnSandbox:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -1918,7 +1885,6 @@ class TestExecuteSpawnSandbox:
             prepared_spawn=prepared_spawn(
                 env_vars={"GOBBY_SESSION_ID": "project-preflight-session"}
             ),
-            terminal_backend="native",
         )
 
         result = await execute_spawn(request)
@@ -1973,7 +1939,6 @@ class TestExecuteSpawnSandbox:
             machine_id="21000000-0000-4000-8000-000000000002",
             # No sandbox_config specified,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -2024,7 +1989,6 @@ class TestExecuteSpawnSandbox:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -2090,7 +2054,6 @@ class TestExecuteSpawnSandbox:
             session_manager=mock_session_manager,
             sandbox_config=sandbox_config,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_prepare = MagicMock(
@@ -2139,7 +2102,6 @@ class TestExecuteSpawnSandbox:
             session_manager=mock_session_manager,
             sandbox_config=sandbox_config,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_prepare = MagicMock(
@@ -2190,7 +2152,6 @@ class TestExecuteSpawnErrorPaths:
             project_id="proj",
             # No session_manager,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         result = await execute_spawn(request)
@@ -2212,7 +2173,6 @@ class TestExecuteSpawnErrorPaths:
             project_id="proj",
             session_manager=mock_session_manager,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_prepare = MagicMock(
@@ -2261,7 +2221,6 @@ class TestExecuteSpawnErrorPaths:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-00000000000e",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -2307,7 +2266,6 @@ class TestExecuteSpawnErrorPaths:
             session_manager=MagicMock(),
             machine_id="21000000-0000-4000-8000-000000000022",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -2370,7 +2328,6 @@ class TestExecuteSpawnErrorPaths:
             session_manager=MagicMock(),
             machine_id="21000000-0000-4000-8000-000000000023",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
         mock_spawn_context = MagicMock()
         mock_spawn_context.session_id = "child"
@@ -2409,7 +2366,6 @@ class TestExecuteSpawnErrorPaths:
             session_manager=MagicMock(),
             machine_id="21000000-0000-4000-8000-000000000024",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
         mock_spawn_context = MagicMock()
         mock_spawn_context.session_id = "child"
@@ -2441,7 +2397,6 @@ class TestExecuteSpawnErrorPaths:
             session_manager=MagicMock(),
             machine_id="21000000-0000-4000-8000-000000000022",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -2489,7 +2444,6 @@ class TestExecuteSpawnErrorPaths:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000022",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -2530,7 +2484,6 @@ class TestApplyExtraEnv:
             project_id="proj",
             extra_env={PATH_ENV_VAR: os.pathsep.join(("/work/.gobby/bin", "/usr/bin"))},
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
         env = {PATH_ENV_VAR: "/bin"}
 
@@ -2559,7 +2512,6 @@ class TestApplyExtraEnv:
                 "CUSTOM_FLAG": "1",
             },
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
         env = {
             "GOBBY_SESSION_ID": "gobby-sess-123",
@@ -2665,7 +2617,6 @@ def test_capability_token_never_in_argv_or_metadata(
         session_manager=cast("ChildSessionManager", session_manager),
         resume_metadata_json={"provider": "codex"},
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
     persisted: list[dict[str, object]] = []
 
@@ -3379,7 +3330,6 @@ async def test_one_terminal_row_per_attempt_all_outcomes() -> None:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
         )
         runtime = _runtime_of(request)
         runtime.fail_spawn = fail
@@ -3423,7 +3373,6 @@ async def test_timed_out_attempt_is_settled_after_delayed_cleanup() -> None:
         machine_id="21000000-0000-4000-8000-000000000002",
         timeout_seconds=0.01,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
     runtime = _runtime_of(request)
     runtime.spawn_hold = asyncio.Event()
@@ -3458,7 +3407,6 @@ async def test_timed_out_attempt_is_settled_after_delayed_cleanup() -> None:
         machine_id="21000000-0000-4000-8000-000000000002",
         retry_terminal_id=row.id,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
         terminal_manager=cast(TerminalManager, manager),
         terminal_runtime_registry=request.terminal_runtime_registry,
     )
@@ -3492,7 +3440,6 @@ async def test_srt_wrap_single_chokepoint(monkeypatch: pytest.MonkeyPatch) -> No
         session_manager=MagicMock(),
         machine_id="21000000-0000-4000-8000-000000000002",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
     result = await execute_spawn(request)
     assert result.success is True
@@ -3514,7 +3461,6 @@ async def test_lost_cas_converges_when_reconciler_already_promoted(
         session_manager=MagicMock(),
         machine_id="21000000-0000-4000-8000-000000000002",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
     manager = _manager_of(request)
     runtime = _runtime_of(request)
@@ -3554,7 +3500,6 @@ async def test_cancel_windows_pre_and_post_dispatch() -> None:
         session_manager=MagicMock(),
         machine_id="21000000-0000-4000-8000-000000000002",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
         cancel_event=cancel,
     )
     result = await execute_spawn(request)
@@ -3574,7 +3519,6 @@ async def test_cancel_windows_pre_and_post_dispatch() -> None:
         session_manager=MagicMock(),
         machine_id="21000000-0000-4000-8000-000000000002",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
     runtime = _runtime_of(request2)
     runtime.spawn_hold = hold
@@ -3605,7 +3549,6 @@ async def test_retry_generation_fences_the_reaper() -> None:
         session_manager=MagicMock(),
         machine_id="21000000-0000-4000-8000-000000000002",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
     runtime = _runtime_of(request)
     runtime.typed_fail = True
@@ -3627,7 +3570,6 @@ async def test_retry_generation_fences_the_reaper() -> None:
         machine_id="21000000-0000-4000-8000-000000000002",
         retry_terminal_id=row.id,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
         terminal_manager=cast(TerminalManager, manager),
         terminal_runtime_registry=request.terminal_runtime_registry,
     )
@@ -3656,7 +3598,6 @@ async def test_retry_generation_fences_the_reaper() -> None:
         machine_id="21000000-0000-4000-8000-000000000002",
         retry_terminal_id=row.id,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
         terminal_manager=cast(TerminalManager, manager),
         terminal_runtime_registry=request.terminal_runtime_registry,
     )
@@ -3695,7 +3636,6 @@ async def test_refused_retry_cleanup_leaves_the_live_attempt(read_fails: bool) -
         session_manager=MagicMock(),
         machine_id="21000000-0000-4000-8000-000000000002",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
     first = await execute_spawn(request)
     assert first.success is True
@@ -3715,7 +3655,6 @@ async def test_refused_retry_cleanup_leaves_the_live_attempt(read_fails: bool) -
         machine_id="21000000-0000-4000-8000-000000000002",
         retry_terminal_id=live.id,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
         terminal_manager=cast(TerminalManager, manager),
         terminal_runtime_registry=request.terminal_runtime_registry,
     )
@@ -3801,7 +3740,6 @@ async def test_failed_attempt_on_a_run_bound_elsewhere_still_kills_its_own_termi
             session_manager=MagicMock(),
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="native",
             **extra,
         )
 
@@ -3908,7 +3846,6 @@ async def test_attempt_started_at_survives_unrelated_updates_and_restart() -> No
         machine_id="21000000-0000-4000-8000-000000000002",
         timeout_seconds=0.01,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
     runtime = _runtime_of(request)
     runtime.delay = 1.0
@@ -4031,7 +3968,6 @@ async def test_delayed_kill_refuses_reused_host_id_after_respawn() -> None:
         machine_id="21000000-0000-4000-8000-000000000002",
         timeout_seconds=0.001,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
         terminal_runtime_registry=runtime_registry(agent_runtime),
         terminal_manager=cast(TerminalManager, MemoryTerminalStore()),
     )
@@ -4111,7 +4047,6 @@ async def test_timeout_callback_is_owned_by_attempt_generation() -> None:
         machine_id="21000000-0000-4000-8000-000000000002",
         timeout_seconds=0.001,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
     runtime = _runtime_of(request)
     runtime.spawn_hold = asyncio.Event()
@@ -4179,7 +4114,6 @@ async def test_spawn_failure_keeps_typed_infrastructure_provenance(
         session_manager=MagicMock(),
         machine_id="21000000-0000-4000-8000-000000000002",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
     runtime = _runtime_of(request)
     error: Exception

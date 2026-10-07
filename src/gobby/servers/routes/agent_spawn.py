@@ -76,7 +76,6 @@ class AgentSpawnRequest(ReasoningEffortMixin):
     branch_name: str | None = None
     base_branch: str | None = None
     timeout: float | None = None
-    terminal_backend: Literal["native"] | None = None
     extra_write_paths: list[str] | None = None
     write_paths_reason: str | None = None
 
@@ -391,7 +390,6 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             db=server.services.database,
             completion_registry=server.services.completion_registry,
             daemon_config=config_snapshot.active,
-            terminal_backend=req.terminal_backend,
             extra_write_paths=req.extra_write_paths,
             write_paths_reason=req.write_paths_reason,
         )

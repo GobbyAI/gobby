@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from gobby.agents.detection.registry import DetectionManifestRegistry
     from gobby.config.runtime import ConfigRuntime
     from gobby.config.terminal_host import TerminalHostConfig
-    from gobby.config.terminals import TerminalConfig
     from gobby.events.wake import WakeDispatcher
     from gobby.feedback.service import FeedbackReviewService
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -107,7 +106,6 @@ class ServiceContainer:
     detection_registry: DetectionManifestRegistry | None = None
     terminal_manager: TerminalManager | None = None
     terminal_runtime_registry: TerminalRuntimeRegistry | None = None
-    terminal_config: TerminalConfig | None = None
     terminal_services: TerminalServices | None = None
     terminal_host_config: TerminalHostConfig | None = None
     terminal_host_manager: TerminalHostManager | None = None
