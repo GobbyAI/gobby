@@ -141,6 +141,19 @@ async def _paths(main: Path, base: str, sha: str) -> set[str]:
     return {path for path in result.stdout.split("\0") if path}
 
 
+async def _merge_tree(main: Path, tip: str, sha: str) -> GitOk | GitFailed:
+    """Use Git's virtual merge base, retaining conflicted trees for path policy checks."""
+    result = await daemon_git.run(("merge-tree", "--write-tree", tip, sha), cwd=main)
+    if isinstance(result, GitOk) or (isinstance(result, GitFailed) and result.returncode == 1):
+        return result
+    raise LandingGitError(f"could not compute candidate merge tree: {result.stderr}")
+
+
+async def _candidate_paths(main: Path, tip: str, sha: str, tree: str) -> set[str]:
+    # Conflicted trees can relocate files to synthesized names absent from both tips.
+    return await _paths(main, tip, tree) & await _paths(main, tip, sha)
+
+
 async def _overlaps(
     db: HubDatabase, task: Task, main: Path, tip: str, sha: str, paths: set[str]
 ) -> list[Overlap]:
@@ -170,8 +183,9 @@ async def _overlaps(
                 or await _ancestor(main, sha, other)
             ):
                 continue
-            base = await _git(main, "merge-base", tip, other)
-            shared = sorted(paths & await _paths(main, base, other))
+            merged = await _merge_tree(main, tip, other)
+            tree = merged.stdout.split("\n", 1)[0]
+            shared = sorted(paths & await _candidate_paths(main, tip, other, tree))
             if shared:
                 overlaps.append(
                     {"task_ref": f"#{row['seq_num']}", "commit_sha": other, "shared_paths": shared}
@@ -230,8 +244,11 @@ async def _recover_landing(
                 continue
             activation_class = action["class"]
             if action["candidate"] != sha:
-                base = await _git(main, "merge-base", entry.old, sha)
-                activation_class = classify_paths(await _paths(main, base, sha))
+                merged = await _merge_tree(main, entry.old, sha)
+                tree = merged.stdout.split("\n", 1)[0]
+                activation_class = classify_paths(
+                    await _candidate_paths(main, entry.old, sha, tree)
+                )
             facts: dict[str, str | int | bool] = {
                 **unknown,
                 "landed_tip": entry.new,
@@ -382,9 +399,10 @@ async def land_candidate(
                             return _receipt_result(receipt)
                     facts = await _recover_landing(main, common, branch, tip, sha)
                     return await _record_and_notify(db, current_task, caller_session_id, sha, facts)
-                base = await _git(main, "merge-base", tip, sha)
-                paths = await _paths(main, base, sha)
-                shared = sorted(paths & await _paths(main, base, tip))
+                merged = await _merge_tree(main, tip, sha)
+                tree = merged.stdout.split("\n", 1)[0]
+                paths = await _candidate_paths(main, tip, sha, tree)
+                shared = sorted(paths & await _paths(main, sha, tree))
                 activation_class = classify_paths(paths)
                 freeze = await asyncio.to_thread(read_freeze, common)
                 overlaps = await _overlaps(db, current_task, main, tip, sha, paths)
@@ -424,14 +442,8 @@ async def land_candidate(
                 # fast-forward below.
                 target, mode = sha, "ff"
                 if not await _ancestor(main, tip, sha):
-                    merged = await daemon_git.run(
-                        ("merge-tree", "--write-tree", tip, sha), cwd=main
-                    )
-                    if isinstance(merged, GitFailed) and merged.returncode == 1:
+                    if isinstance(merged, GitFailed):
                         return _refused(refusal, "merge_conflict", merged.stdout)
-                    if not isinstance(merged, GitOk):
-                        return _refused(refusal, "git_failed", merged.stderr)
-                    tree = merged.stdout.split("\n", 1)[0]
                     subject = f"chore: land reviewed {sha[:10]} for #{current_task.seq_num}"
                     target = await _git(
                         main, "commit-tree", tree, "-p", tip, "-p", sha, "-m", subject

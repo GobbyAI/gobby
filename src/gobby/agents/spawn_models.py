@@ -10,8 +10,8 @@ from subprocess import SubprocessError
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.agents.sandbox import SandboxConfig
-from gobby.config.terminals import TerminalConfig
 from gobby.terminals.host_client import HostUnavailableError
+from gobby.terminals.lifetime import TerminalLifetime
 from gobby.terminals.runtime import TerminalSpawnFailed
 
 if TYPE_CHECKING:
@@ -22,21 +22,6 @@ if TYPE_CHECKING:
     from gobby.storage.terminals import AttachLocator, TerminalManager
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.write_coordinator import WriteCoordinator
-
-
-def resolve_terminal_backend(
-    requested: str | None,
-    daemon_config: Any | None,
-) -> Literal["native"]:
-    """Validate an explicit backend or fall back to TerminalConfig.default_backend."""
-    if requested is None:
-        config = getattr(daemon_config, "terminals", None)
-        if isinstance(config, TerminalConfig):
-            return config.default_backend
-        return TerminalConfig().default_backend
-    if requested == "native":
-        return "native"
-    raise ValueError(f"invalid terminal_backend: {requested}")
 
 
 @dataclass
@@ -96,7 +81,7 @@ class SpawnRequest:
     terminal_manager: TerminalManager | None = None
     terminal_runtime_registry: TerminalRuntimeRegistry | None = None
     write_coordinator: WriteCoordinator | None = None
-    terminal_backend: Literal["native"] = "native"
+    terminal_lifetime: TerminalLifetime = "run"
     droid_mode: Literal["exec", "interactive"] = "exec"
     retry_terminal_id: str | None = None
     cancel_event: asyncio.Event | None = None

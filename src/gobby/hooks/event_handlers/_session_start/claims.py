@@ -6,7 +6,6 @@ import logging
 from typing import Any
 
 from gobby.storage.tasks import TaskAlreadyClaimedError, TaskClosedError
-from gobby.storage.tasks._transitions import release_task_claim_if_owned
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.workflows.found_work_gate import (
     FOUND_WORK_GATE_ARMED_AT_VARIABLE,
@@ -169,7 +168,6 @@ def _transfer_claimed_task(
         )
         return False
 
-    transferred_ownership = current_owner != successor_id
     try:
         handler._task_manager.claim_task(
             claimed_id,
@@ -193,53 +191,8 @@ def _transfer_claimed_task(
         )
         return False
 
-    try:
-        handler._session_task_manager.link_task(successor_id, claimed_id, "claimed")
-    except Exception as e:
-        log.debug(
-            "Session-task link failed for session=%s task=%s: %s",
-            successor_id,
-            claimed_id,
-            e,
-        )
-        if transferred_ownership:
-            _compensate_claim(handler, claimed_id, predecessor_id, successor_id)
-        return False
+    # claim_task records the successor's 'claimed' session_tasks link in its own transaction.
     return True
-
-
-def _compensate_claim(
-    handler: Any,
-    claimed_id: str,
-    predecessor_id: str,
-    successor_id: str,
-) -> None:
-    log = _log(handler)
-    try:
-        handler._task_manager.claim_task(
-            claimed_id,
-            session_id=predecessor_id,
-            expected_owner=successor_id,
-        )
-        return
-    except Exception as e:
-        log.debug(
-            "Failed to restore predecessor claim for session=%s task=%s: %s",
-            predecessor_id,
-            claimed_id,
-            e,
-        )
-    db = getattr(handler._task_manager, "db", None)
-    if db is None:
-        return
-    try:
-        release_task_claim_if_owned(db, claimed_id, expected_owner=successor_id)
-    except Exception as e:
-        log.debug(
-            "Failed to drop successor claim after link failure for task=%s: %s",
-            claimed_id,
-            e,
-        )
 
 
 def _log(handler: Any) -> logging.Logger:

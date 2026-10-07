@@ -163,9 +163,13 @@ version is unpublished or yanked. Do not invent a combined workflow.
 
 ## Backend status
 
-`native` is the only spawn backend: `terminals.default_backend: native` in the bundled
-`config.yaml` and `TerminalConfig.default_backend`, which accepts no other value.
-`tmux` remains only as a spawn-less adapter for externally discovered sessions
+`native` is the only spawn backend, and no setting or request selects one:
+native gterm is always attempted first (#23212). `TerminalConfig` has no backend key and rejects unknown keys;
+the MCP `spawn_agent` tool, the HTTP spawn body, the CLI, dispatch actions, and cron spawns
+carry no backend selector; and an agent definition naming `terminal_backend` is refused on
+store and on resolution. Each spawn instead carries an internal lifetime: a workspace pane with
+a durable role spawns as `persistent_role`, every other spawn as `run`. The lifetime never
+changes selection; it only decides whether a fallback is legal. `tmux` remains only as a spawn-less adapter for externally discovered sessions
 (`ownership: external`), which are always tmux: send_keys, wake, and capture reach
 them, and a spawn request for tmux is refused (#22856). A native spawn requires an installed
 `gterm`. When the host is unavailable it fails before fork with the typed refusal

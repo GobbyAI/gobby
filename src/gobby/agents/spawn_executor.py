@@ -44,6 +44,7 @@ from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.host_client import HostUnavailableError
 from gobby.terminals.host_reap import reap_recorded_group_proven_dead
 from gobby.terminals.in_doubt import in_doubt_spawns
+from gobby.terminals.lifetime import NATIVE_FIRST_BACKEND
 from gobby.terminals.native_runtime import HostEpochMismatch, classify_native_spawn_failure
 from gobby.terminals.runtime import (
     PreparedSpawn as RuntimePreparedSpawn,
@@ -91,8 +92,8 @@ def wrap_provider_command(launch: SandboxLaunch, command: list[str]) -> list[str
 def resolve_terminal_services(
     request: SpawnRequest,
 ) -> tuple[TerminalManager, TerminalRuntimeRegistry, TerminalRuntime, str]:
-    """Resolve the composition-root services for the requested backend."""
-    backend = request.terminal_backend
+    """Resolve the composition-root services; native gterm is always attempted first."""
+    backend = NATIVE_FIRST_BACKEND
     manager = request.terminal_manager
     registry = request.terminal_runtime_registry
     if manager is None:

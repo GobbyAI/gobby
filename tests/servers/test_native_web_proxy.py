@@ -347,7 +347,6 @@ def _harness(temp_db: HubDatabase, sample_project: dict[str, Any]) -> _Harness:
     server.configure_terminals(
         manager,
         registry,
-        MagicMock(),
         lease_registry=leases,
         write_coordinator=WriteCoordinator(manager, registry, lease_registry=leases),
     )

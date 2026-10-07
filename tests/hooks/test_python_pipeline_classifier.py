@@ -602,6 +602,22 @@ def test_repeated_identical_constructor_import_keeps_literal_write_scope(
 
 
 @pytest.mark.parametrize(
+    "imports",
+    [
+        "import os\nimport os.path",
+        "import urllib.request\nimport urllib.parse",
+        "import xml.etree.ElementTree\nimport xml.dom.minidom",
+    ],
+)
+def test_dotted_imports_preserve_unknown_write_scope(imports: str) -> None:
+    source = f"{imports}\nfrom pathlib import Path\nPath('/tmp/report.txt').write_text('data')\n"
+    assert _classify_python_source_with_targets(source) == (
+        _PythonExecutionClassification.MUTATION,
+        (),
+    )
+
+
+@pytest.mark.parametrize(
     "state_change",
     [
         "p._raw_paths = ['src/a.py']",

@@ -26,6 +26,7 @@ from gobby.storage.sessions._title_defaults import format_provisional_session_ti
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.state_semantics import current_stage_state
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.agent_resolver import AgentResolutionError
 from tests.fixtures.agent_definitions import make_agent_definition
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.servers.conftest import StubConfigRuntime, create_http_server
@@ -502,6 +503,38 @@ class TestSpawnAgent:
         assert response.status_code == 400
         assert "checkout_unresolved" in response.json()["detail"]
         assert "no checkout for machine" in response.json()["detail"]
+        mock_spawn.assert_not_awaited()
+
+    def test_refused_default_definition_does_not_spawn(
+        self,
+        client: TestClient,
+        server: HTTPServer,
+        task_manager: LocalTaskManager,
+        test_project: Any,
+    ) -> None:
+        """A stored default row the resolver refuses must not spawn with no definition."""
+        task = _create_task(task_manager, test_project.id, "Refused default definition")
+        server.services.agent_runner = MagicMock()
+        refusal = "terminal_backend is no longer agent-authored"
+
+        with (
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": test_project.id},
+            ),
+            patch(
+                "gobby.workflows.agent_resolver.resolve_agent",
+                side_effect=AgentResolutionError(refusal),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+                new=AsyncMock(),
+            ) as mock_spawn,
+        ):
+            response = client.post("/api/agents/spawn", json={"task_id": task.id})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == refusal
         mock_spawn.assert_not_awaited()
 
     def test_spawn_route_supplies_owning_completion_registry(
