@@ -23,11 +23,6 @@ DISCOVERY_AGENTS = {
         "skill": "ideate",
         "section": "Discovery Brief",
     },
-    "researcher": {
-        "stage": "research",
-        "skill": "research",
-        "section": "Research Findings",
-    },
     "architect": {
         "stage": "architecture",
         "skill": "architecture",
