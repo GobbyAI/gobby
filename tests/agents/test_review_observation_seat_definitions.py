@@ -257,6 +257,9 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
         "ACTIVATION= PROVENANCE= RETEST=PASS|FAIL|UNAVAILABLE|NOT_REQUIRED NOTE="
     ) in prompt
     assert "EVENT=LAND_BLOCKED TASK=#NNNNN" in prompt
+    # land_commit refuses a new SHA with review_receipt_missing until it has its own receipt.
+    new_sha = prompt.index("Review a new SHA for the same task")
+    assert "record a fresh `independent_review_approval`" in prompt[new_sha:]
     assert "Merge Manager" not in prompt
 
 
