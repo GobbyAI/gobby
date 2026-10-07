@@ -216,6 +216,32 @@ non-goals.
     `finalize_plan_review_evidence`, `apply_plan_review_manifest`) belong
     to the `-old` stage reviewers. `plan-adversary` blocks all ten of them
     definition-wide (3.4).
+15. **Reviewers land and notify their Lane Manager; developers do not
+    land.** Josh (Telegram, about 18:02 CT on 2026-10-06), verbatim: "Keep
+    reviewers landing, but they should notify lane managers since lane
+    managers communicate with the orchestrator". Also verbatim: "Developers
+    do not land". The Orchestrator (gobby#14972) filed #23708 at 18:08 CT to
+    carry the ruling into the seat definitions. The `code-reviewer` seat
+    lands each LAND verdict with `gobby-tasks-ops:land_commit`, runs the
+    retest in `.gobby/plans/reviewer-landing.md` 1.4 when the response
+    carries `retest_required`, and reports the landing to its Lane Manager.
+    The `lane-manager` seat relays each landing to the Orchestrator, and it
+    checks the landing facts and any required retest before a close
+    release. The `developer` seat never calls `land_commit`. That is seat
+    policy from Josh's ruling, and the daemon covers only part of it:
+    `land_commit` refuses `caller_is_claimant`, it refuses
+    `caller_was_claimant` for any session that ever claimed the task
+    (#23703), and it refuses `review_receipt_missing` unless the caller
+    recorded its own `independent_review_approval` receipt for that commit
+    (reviewer-landing 1.3 step 3). `record_close_receipt` refuses that
+    receipt from any session that ever claimed the task. Neither checks the
+    seat role, so they do not stop a developer seat that never claimed the
+    task. The developer definition (3.2, #22997's candidate) gives the
+    seat no landing step and names no landing tool, and 3.2 stays unedited.
+    Leaves:
+    #22998 (3.3) delivers the `code-reviewer.yaml` landing and the
+    `lane-manager.yaml` relay delta. #22996 (3.1), whose candidate is
+    already reviewer-LANDed, is not reopened.
 
 ## As-Is Facts
 `kind: framing`
@@ -1075,8 +1101,28 @@ Targets:
 - `src/gobby/install/shared/workflows/agents/archivist.yaml`
 - `src/gobby/install/shared/workflows/agents/log-monitor.yaml`
 - `src/gobby/install/shared/workflows/agents/researcher.yaml::*` — scope-reason: replace the research-stage one-shot body with the seat body
+- `src/gobby/install/shared/workflows/agents/lane-manager.yaml::*` — scope-reason: rewrite the prompt's Code Reviewer LAND route as the reviewer-landing relay and release check
 - `tests/agents/test_discovery_agents.py::*` — scope-reason: remove researcher from the discovery-agent spec
 - `tests/workflows/test_workflows_agent_definitions.py::*` — scope-reason: the researcher row asserts the seat's inherited provider and no claim step
+
+Amended 2026-10-06 (#23708, filed by the Orchestrator gobby#14972 at 18:08
+CT; Decision 15): the `code-reviewer` seat lands its LAND verdicts with
+`land_commit` and reports each landing to its Lane Manager, and this section
+also carries the `lane-manager` relay delta. The delta lives here, not in
+3.1, because #22996's candidate is already reviewer-LANDed and completed
+sections stay unedited. 3.3 already runs after 3.1 (through 3.2), so both
+halves of the one landing-notice protocol ship in one leaf, #22998, with no
+leaf added by hand after expansion. Found work, fixed here: the `verdict`
+step never allowed `gobby-tasks:record_close_receipt`, so the seat could not
+record the `independent_review_approval` receipt that `land_commit`
+requires.
+
+**Granularity:** seven acceptance items, five seat files and one leaf.
+3.3.1 to 3.3.5 predate #23708 and were reviewed as one leaf: each seat file is
+one config edit checked by its own item. 3.3.6 and 3.3.7 are the sender and
+the relay of one landing-notice protocol and must ship together: a reviewer
+that sends `EVENT=LANDED` to a Lane Manager prompt that still routes LAND to
+the Merge Manager leaves the landing unrelayed.
 
 **Research context:** `code-reviewer`: read-only `blocked_tools`; selectors
 `tag:default` and `tag:roles` only, never `tag:review-learning` (Josh's hold,
@@ -1091,16 +1137,103 @@ records the PD's CANDIDATE line by setting `candidate_task` to its `TASK=`
 value and `candidate_received` at step scope; transition to `review` when
 `vars.candidate_received`) → `review` (read-only tools plus `gcode` and `git
 diff`, `mcp__gobby__set_variable`; transition to `verdict` when
-`vars.verdict_ready`) → `verdict` (allowed MCP: `send_message`; allowed tools:
-`mcp__gobby__set_variable`; the message carries `EVENT=CANDIDATE_VERDICT
-TASK=#NNNNN ... VERDICT=LAND|BOUNCE` with HIGH/MEDIUM/LOW findings to PD and
-author lane; `on_mcp_success` for `gobby-agents:send_message` with `when:
-'EVENT=CANDIDATE_VERDICT' in str(tool_input.get('content')) and
-str(vars.candidate_task) in str(tool_input.get('content'))` resets
-`candidate_received`, `verdict_ready`, and `candidate_task`; transition to
-`await` when `not vars.candidate_received`). The prompt carries the
-role file's check of each merge against the current `0.5.0` head.
-Continuity: clear between verdicts.
+`vars.verdict_ready`) → `verdict` (allowed MCP: `send_message`,
+`gobby-tasks:record_close_receipt`, `gobby-tasks-ops:land_commit` and
+`gobby-agents:wait_for_coordination`; allowed tools:
+`mcp__gobby__set_variable` and `Bash`, for the retest; the verdict message
+carries `EVENT=CANDIDATE_VERDICT TASK=#NNNNN ... VERDICT=LAND|BOUNCE` with
+HIGH/MEDIUM/LOW findings to PD and author lane; `on_mcp_success` for
+`gobby-agents:send_message` with `when: ('VERDICT=BOUNCE' in
+str(tool_input.get('content')) or 'EVENT=LANDED' in
+str(tool_input.get('content'))) and str(vars.candidate_task) in
+str(tool_input.get('content'))` resets `candidate_received`,
+`verdict_ready`, and `candidate_task`; transition to `await` when `not
+vars.candidate_received`). The prompt carries the role file's check of
+each merge against the current `0.5.0` head.
+
+Landing (Decision 15; `.gobby/plans/reviewer-landing.md` 1.3 and 1.4): on
+LAND the seat first calls `gobby-tasks:record_close_receipt(task_id,
+kind="independent_review_approval", commit_sha=<full candidate SHA>)`, then
+sends the LAND verdict, then calls `gobby-tasks-ops:land_commit(task_id,
+commit_sha)` on the same SHA. A `landed: true` response means the branch
+moved:
+- With `retest_required: true`, the seat runs the 1.4 retest: it takes the
+  focused verification commands from the task's validation evidence, runs
+  them in the main checkout, and notes each command and result, the
+  `landed_tip`, the HEAD it tested and any unrelated checkout changes.
+  `RETEST=UNAVAILABLE` means the validation evidence names no focused
+  command the seat can run in the main checkout.
+- With `receipt_pending: true`, the `landing` receipt write failed after the
+  ref moved (`land_commit.py::_record_and_notify`). The seat sends its Lane
+  Manager `EVENT=LAND_PENDING TASK=#NNNNN TASK_TITLE= SHA= LANDED_TIP=
+  NOTE=receipt_pending`, keeps the unit open, and calls `land_commit` again
+  on the same SHA. The retry replays or records the receipt and returns its
+  `receipt_id` (reviewer-landing 1.4). There is no rollback and no second
+  candidate. The name `LAND_PENDING` keeps the reset's `EVENT=LANDED`
+  substring test from matching.
+- With `notification_pending`, the daemon's `Landed #N ...` message missed
+  the listed sessions, and a replayed receipt does not resend it. The seat
+  sends each listed session that line itself.
+
+Once a response carries a `receipt_id`, the seat sends its Lane Manager and
+the author lane `EVENT=LANDED TASK=#NNNNN TASK_TITLE= SHA= BRANCH= RECEIPT=
+MODE= LANDED_TIP= ACTIVATION= PROVENANCE=
+RETEST=PASS|FAIL|UNAVAILABLE|NOT_REQUIRED NOTE=`. `SHA` is the full
+`commit_sha`. `BRANCH`, `RECEIPT`, `MODE`, `LANDED_TIP`, `ACTIVATION` and
+`PROVENANCE` are copied from that response's `branch`, `receipt_id`, `mode`,
+`landed_tip`, `activation_class` and `provenance`. `RETEST=NOT_REQUIRED`
+means `retest_required` was false. `NOTE` carries each retest command and
+result, the HEAD tested and any unrelated checkout changes. 1.4 names the
+developer and the Orchestrator as the retest's recipients: the author lane
+gets the report directly, as it gets the verdict, and the Lane Manager relays
+it to the Orchestrator (Decision 15). The first of the two sends fires the
+reset, and `await` also allows `send_message`, so the second still goes. That
+notice ends the unit. When the response is `landed: false`, the seat sends its Lane
+Manager `EVENT=LAND_BLOCKED TASK=#NNNNN TASK_TITLE= SHA= NOTE=`, with the
+refusal, `missing_approvals` and `overlaps` in `NOTE`. It also sends the
+author lane a refusal that needs an author action (`base_update_required`,
+`merge_conflict`, `candidate_not_linked`). Then it waits with
+`gobby-agents:wait_for_coordination` on the Lane Manager, or on the author
+lane for an author-action refusal, and calls `land_commit` again once the
+blocker clears. A refusal leaves the unit open. A new SHA for the same task
+is reviewed in `verdict` with `gcode` and `git diff` through `Bash`: a step's
+`allowed_tools` exempts no native read tool
+(`enforcement_checks.py::_CAPABILITY_NEUTRAL_NATIVE_TOOLS`), while read-only
+MCP reads such as `get_task` need no allowlist entry
+(`_is_read_only_internal_tool`). The read-only `blocked_tools` list blocks
+no `Bash`, so the retest runs under it (Decision 8). The `developer` seat never calls `land_commit`
+(Decision 15). Continuity: clear after each landing or bounce.
+
+`lane-manager` delta (#23708, Decision 15): 3.3 edits the
+`lane-manager.yaml` that 3.1 delivers, in prose only. The seat keeps no
+`step_workflow` (Decision 7), keeps the Decision 8 read-only list, and keeps
+its boundary of no review, land, restart, or code. In #22996's
+`lane-manager.yaml` prompt, the clause "A Code Reviewer's LAND goes straight
+to the Merge Manager, which lands on `0.5.0`" becomes the reviewer-landing
+route: the lane's Code Reviewer lands with `land_commit` and reports
+`EVENT=LANDED`, `EVENT=LAND_PENDING` or `EVENT=LAND_BLOCKED` to the Lane
+Manager. The rest of that line, including "your release alone admits a
+close", stays. The Lane Manager relays each of those lines to the
+Orchestrator, which records any missing `landing_approval` (reviewer-landing
+Rollout step 4). A close release needs an `EVENT=LANDED` line that carries a
+`RECEIPT` value. `EVENT=LAND_PENDING` or `EVENT=LAND_BLOCKED` alone holds
+the release. The Lane Manager checks the relayed landing facts, together
+with `land_commit`'s `Landed #N ...` message when it is the task's creator
+or delegator. `git merge-base --is-ancestor <LANDED_TIP> <BRANCH>` must
+succeed in the main checkout, and a `MODE=merge` landing must carry
+`RETEST=PASS`. `RETEST=FAIL` or `RETEST=UNAVAILABLE` withholds the release
+and goes to the Orchestrator as found work, never a rollback; the author
+lane already has the report from the reviewer.
+`ACTIVATION=unknown` withholds the release until the repair path completes:
+the reviewer has run the retest, the Orchestrator classifies the
+candidate's paths with `classify_paths` and messages the class, and the
+Lane Manager releases once that activation is live and the retest passed.
+This keeps the Orchestrator's close-order rule (memory 283e9a81): every
+close takes a Lane Manager release, and code closes only after it lands and
+after any activation its criteria need. No MCP tool lists a task's stored
+receipts (`close_receipts.list_close_receipts` is internal), so the Lane
+Manager relies on the `RECEIPT` id the reviewer copies from `land_commit`'s
+receipt-bearing response and checks the landed tip against git.
 
 `researcher.yaml` is today the discovery one-shot bound to the `research`
 stage (`stages.yaml:16`) with a claim → load_skill → draft workflow that ends
@@ -1161,7 +1294,8 @@ str(tool_input.get('content')) or 'EVENT=ALARM' in
 str(tool_input.get('content'))` resets `tick_done` and `tick_window`;
 transition to `tick` when `not vars.tick_done`), no exit; a status reply to
 the PD that is neither line leaves the step where it is. Continuity: archivist and log-monitor compact,
-never clear; researcher and code-reviewer clear after each report or verdict.
+never clear; researcher clears after each report, and code-reviewer after each
+landing or bounce.
 `sandbox_profile: research` on `researcher` is deferred (D2) until #22899's
 field lands.
 
@@ -1188,6 +1322,27 @@ field lands.
   that `gobby agents show backend-developer` reports no definition. behavior:
   "cutover verified" in the 3.3 close summary, naming
   `src/gobby/install/shared/workflows/agents/code-reviewer.yaml`.
+- 3.3.6 - `code-reviewer`'s `verdict` step allows `send_message`,
+  `gobby-tasks:record_close_receipt`, `gobby-tasks-ops:land_commit` and
+  `gobby-agents:wait_for_coordination`, plus the tools
+  `mcp__gobby__set_variable` and `Bash`. On LAND the prompt records the
+  `independent_review_approval` receipt before `land_commit` and runs the
+  1.4 retest when `retest_required` is true. On `receipt_pending` it sends
+  `EVENT=LAND_PENDING` and retries `land_commit` on the same SHA until a
+  `receipt_id` returns. It sends each `notification_pending` session the
+  `Landed` line. Its final `EVENT=LANDED` line carries `RECEIPT` and the
+  retest report and goes to its Lane Manager and the author lane. A refusal
+  sends `EVENT=LAND_BLOCKED`. The reset fires only on a `VERDICT=BOUNCE` or
+  `EVENT=LANDED` message naming `candidate_task`. behavior: "EVENT=LANDED"
+  in `src/gobby/install/shared/workflows/agents/code-reviewer.yaml`.
+- 3.3.7 - `lane-manager` relays each `EVENT=LANDED`, `EVENT=LAND_PENDING`
+  and `EVENT=LAND_BLOCKED` line to the Orchestrator. A close release needs
+  an `EVENT=LANDED` line with a `RECEIPT` value, `LANDED_TIP` ancestry, and
+  `RETEST=PASS` for a merge landing. It withholds the release on a failed or
+  unavailable retest or on `ACTIVATION=unknown`, routes no LAND to the
+  Merge Manager, and still declares no `step_workflow`. behavior:
+  "EVENT=LANDED" in
+  `src/gobby/install/shared/workflows/agents/lane-manager.yaml`.
 
 ### 3.4 Plan Adversary stamp gating and evidence-round blocklist [category: config] (depends: 2.2, 3.3)
 `kind: deliverable`
@@ -1356,6 +1511,10 @@ implementing leaf, #23000, changes only its two test Targets and never edits
 this plan. The coordination-seat invariants below carry the Orchestrator's
 13:39 CT rulings (b) and (c) on #22996, as stated in 3.1.
 
+Amended 2026-10-06 (#23708): the code-reviewer loop test and the
+`wait_for_coordination` invariant follow 3.3's landing step. Item IDs 3.5.1
+to 3.5.5 are unchanged.
+
 **Research context:** `tests/workflows/test_workflows_agent_definitions.py`
 already loads every bundled YAML (`AGENTS_DIR = get_bundled_agents_path()`,
 `SKILLS_DIR = get_bundled_skills_path()`, `_load_yaml`, `_agent`, `_step`) and
@@ -1397,8 +1556,8 @@ Seat invariants to pin:
   `mcp__gobby__set_variable` in its `allowed_tools`.
 - Every step that waits on another session lists
   `gobby-agents:wait_for_coordination`: developer `claim` and `submit`,
-  code-reviewer `await`, log-monitor `tick` and `report`, and researcher
-  `serve`.
+  code-reviewer `await` and `verdict`, log-monitor `tick` and `report`, and
+  researcher `serve`.
 - Every seat prompt contains the `## Platform Context` and `## Skills` baseline
   sections and mentions `gobby-agents:send_message`.
 - No seat selects `tag:review-learning` or names a `review-learning` rule, and
@@ -1420,7 +1579,9 @@ two consecutive units of work:
   claims two tasks in turn, and `assigned_task_id` and `assigned_task_ref`
   rebind to the second after the first `close_task`.
 - `code-reviewer` receives two candidates, and the verdict reset fires only on
-  the message naming `candidate_task`.
+  the `VERDICT=BOUNCE` or `EVENT=LANDED` message naming `candidate_task`. A
+  LAND verdict or an `EVENT=LAND_PENDING` or `EVENT=LAND_BLOCKED` message
+  leaves it in `verdict` (3.3, #23708).
 - `log-monitor` reports two windows, and a non-report message leaves
   `tick_done` set.
 
@@ -1769,6 +1930,42 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
 
   M1 is unchanged. Base and expansion-mode validation pass. No
   implementation tests were run.
+- 2026-10-06: Amendment under #23708 (Lane Manager gobby#15389), filed by
+  the Orchestrator (gobby#14972) at 18:08 CT to carry Josh's 18:02 ruling
+  into the seat definitions (Decision 15).
+  - Decision 15 quotes Josh verbatim: reviewers land and notify their Lane
+    Manager, and developers do not land. The developer prohibition is seat
+    policy: the daemon refuses any session that ever claimed the task and
+    a caller without its own approval receipt, with no role check. 3.2 is
+    unedited.
+  - 3.3's `verdict` step records the `independent_review_approval` receipt,
+    lands with `land_commit` and runs the 1.4 retest when `retest_required`
+    is true. On `receipt_pending` it reports `EVENT=LAND_PENDING` and retries
+    the same SHA until a `receipt_id` returns, and it messages any
+    `notification_pending` sessions itself. Its final `EVENT=LANDED` carries
+    the receipt id and the retest report to its Lane Manager and the author
+    lane; a refusal sends `EVENT=LAND_BLOCKED`. It newly allows `gobby-tasks:record_close_receipt` (found work: the step
+    never allowed it), `gobby-tasks-ops:land_commit`,
+    `gobby-agents:wait_for_coordination` and `Bash`. The reset fires on
+    `VERDICT=BOUNCE` or `EVENT=LANDED`.
+  - 3.3 gains a `lane-manager.yaml::*` Target (#22996 shipped the file, so
+    the index reports its symbols) and the relay and release-check
+    delta: a close release needs an `EVENT=LANDED` line with a receipt id.
+    #22998 delivers both halves; #22996 (3.1, reviewer-LANDed) is
+    not reopened.
+  - New acceptance 3.3.6 and 3.3.7 with a Granularity note. 3.5's research
+    follows the new reset and wait steps, with item IDs unchanged.
+
+  Consensus 2026-10-06: the Plan Adversary (gobby#15401) passed draft
+  `fd0a2d58` after three accepted repairs: `receipt_pending` recovery on
+  the same SHA, the author's direct copy of the retest report, and Decision
+  15's split between seat policy and the claimant and receipt guards.
+  After #23703 (`69ac0f561b`) added `caller_was_claimant`, the guard text
+  in Decision 15 and this entry was refreshed and re-reviewed.
+
+  M1 is re-derived through the handoff-manifest tools for 3.3.6 and 3.3.7.
+  Base and expansion-mode validation pass. No implementation tests were
+  run.
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -1965,13 +2162,32 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
     3.3.5: Before its first edit, the 3.3 session records from the restarted daemon\
     \ that `gobby agents show developer` prints the installed row and that `gobby\
     \ agents show backend-developer` reports no definition. behavior: \"cutover verified\"\
-    \ in the 3.3 close summary, naming `src/gobby/install/shared/workflows/agents/code-reviewer.yaml`."
+    \ in the 3.3 close summary, naming `src/gobby/install/shared/workflows/agents/code-reviewer.yaml`.\n\
+    3.3.6: `code-reviewer`'s `verdict` step allows `send_message`, `gobby-tasks:record_close_receipt`,\
+    \ `gobby-tasks-ops:land_commit` and `gobby-agents:wait_for_coordination`, plus\
+    \ the tools `mcp__gobby__set_variable` and `Bash`. On LAND the prompt records\
+    \ the `independent_review_approval` receipt before `land_commit` and runs the\
+    \ 1.4 retest when `retest_required` is true. On `receipt_pending` it sends `EVENT=LAND_PENDING`\
+    \ and retries `land_commit` on the same SHA until a `receipt_id` returns. It sends\
+    \ each `notification_pending` session the `Landed` line. Its final `EVENT=LANDED`\
+    \ line carries `RECEIPT` and the retest report and goes to its Lane Manager and\
+    \ the author lane. A refusal sends `EVENT=LAND_BLOCKED`. The reset fires only\
+    \ on a `VERDICT=BOUNCE` or `EVENT=LANDED` message naming `candidate_task`. behavior:\
+    \ \"EVENT=LANDED\" in `src/gobby/install/shared/workflows/agents/code-reviewer.yaml`.\n\
+    3.3.7: `lane-manager` relays each `EVENT=LANDED`, `EVENT=LAND_PENDING` and `EVENT=LAND_BLOCKED`\
+    \ line to the Orchestrator. A close release needs an `EVENT=LANDED` line with\
+    \ a `RECEIPT` value, `LANDED_TIP` ancestry, and `RETEST=PASS` for a merge landing.\
+    \ It withholds the release on a failed or unavailable retest or on `ACTIVATION=unknown`,\
+    \ routes no LAND to the Merge Manager, and still declares no `step_workflow`.\
+    \ behavior: \"EVENT=LANDED\" in `src/gobby/install/shared/workflows/agents/lane-manager.yaml`."
   labels:
   - covers:agent-definition-profiles:3.3:3.3.1
   - covers:agent-definition-profiles:3.3:3.3.2
   - covers:agent-definition-profiles:3.3:3.3.3
   - covers:agent-definition-profiles:3.3:3.3.4
   - covers:agent-definition-profiles:3.3:3.3.5
+  - covers:agent-definition-profiles:3.3:3.3.6
+  - covers:agent-definition-profiles:3.3:3.3.7
   tdd: true
   source_section: '3.3'
   assigned_agent: developer

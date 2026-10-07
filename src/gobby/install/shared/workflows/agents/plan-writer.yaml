@@ -78,6 +78,7 @@ step_workflow:
     required_skills:
       - restraint
       - gobby:references/plan/drafting.md
+      - gobby:references/plan/coverage.md
     restraint_loaded: false
     skill_loaded: false
     seat_complete: false
@@ -86,11 +87,12 @@ step_workflow:
   steps:
     - name: load_skill
       mcp_error_policy: stay
-      description: "Load the restraint and gobby:references/plan/drafting.md methodology skills"
+      description: "Load restraint, plan drafting, and coverage"
       status_message: |
-        Load both skills through mcp__gobby__call_tool before drafting:
-        call_tool("gobby-skills", "get_skill", {"name": "restraint"}) and
-        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/drafting.md"}).
+        Load all three skills through mcp__gobby__call_tool before drafting:
+        call_tool("gobby-skills", "get_skill", {"name": "restraint"}),
+        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/drafting.md"}), and
+        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/coverage.md"}) for gobby:references/plan/coverage.md.
         Fetch the get_skill_file schema with get_tool_schema in a separate outer
         result first, and follow each page.next_cursor with only cursor until null.
         Use only these proxy calls; native Skill, GitHub/app connector, and

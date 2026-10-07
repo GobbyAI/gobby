@@ -1673,6 +1673,51 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout
 
 
+@pytest.mark.parametrize("location", ["workdir", "absolute-cd", "nested-cd", "main"])
+@pytest.mark.parametrize("different", [False, True])
+def test_vitest_lane_credit_requires_all_changed_candidate_bytes(
+    tmp_path: Path, location: str, different: bool
+) -> None:
+    repo, lane = tmp_path / "repo", tmp_path / "lane"
+    web_path = "web/src/widget.ts"
+    for tree in (repo, lane):
+        (tree / "web/src").mkdir(parents=True)
+        (tree / web_path).write_text("export const widget = 1;\n")
+        (tree / "config.json").write_text('{"enabled": true}\n')
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "c")
+    candidate = _git(repo, "rev-parse", "HEAD").strip()
+    # The candidate, rather than foreign edits in the main checkout, is authoritative.
+    (repo / "config.json").write_text('{"enabled": false}\n')
+    if different:
+        (lane / "config.json").write_text('{"enabled": false}\n')
+    command = "node_modules/.bin/vitest related src/widget.ts --run"
+    workdir: str | None = str(lane / "web")
+    if location == "absolute-cd":
+        command = f"cd {lane}/web && {command}"
+        workdir = None
+    elif location == "nested-cd":
+        command = f"cd {lane} && cd web && {command}"
+        workdir = str(repo)
+    elif location == "main":
+        workdir = str(repo / "web")
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1, command=command, workdir=workdir),)),
+        has_attributed_edits=True,
+        changed_paths=(web_path, "config.json"),
+        close_root=str(repo),
+        candidate_commit_sha=candidate,
+    )
+
+    rejected = different and location != "main"
+    assert gate.status == ("failed" if rejected else "passed"), gate.message
+    assert gate.details["vitest_related_uncovered_paths"] == ([web_path] if rejected else [])
+    if rejected:
+        assert f"cd {repo}/web && node_modules/.bin/vitest" in gate.message
+
+
 @pytest.mark.parametrize(
     ("export_log", "candidate", "differing"),
     [
@@ -1717,6 +1762,34 @@ def test_copy_credit_compares_against_the_close_candidate_commit(
 
     assert gate.status == ("failed" if differing else "passed"), gate.message
     assert gate.details.get("pytest_copy_differing_paths", []) == differing
+
+
+def test_copy_credit_never_matches_a_candidate_symlink(tmp_path: Path) -> None:
+    # A symlink's blob is its target text, so a regular file holding that text is not it.
+    repo, export = tmp_path / "repo", tmp_path / "export"
+    for tree in (repo, export):
+        (tree / "tests").mkdir(parents=True)
+        (tree / "tests/test_widget.py").write_text("def test_widget(): pass\n")
+    (repo / "link").symlink_to("tests/test_widget.py")
+    (export / "link").write_text("tests/test_widget.py")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "c")
+    run = _run(2, command="uv run pytest tests/test_widget.py -q", workdir=str(export))
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_scoped_audit_run(1, "tests/test_widget.py"), run)
+        ),
+        has_attributed_edits=True,
+        changed_paths=("link", "tests/test_widget.py"),
+        close_root=str(repo),
+        candidate_commit_sha=_git(repo, "rev-parse", "HEAD").strip(),
+    )
+
+    assert gate.status == "failed", gate.message
+    assert gate.details.get("pytest_copy_differing_paths", []) == ["link"]
 
 
 @pytest.mark.parametrize(
@@ -1785,14 +1858,19 @@ def _scoped_pytest_gate(tmp_path: Path, failing_command: str) -> CloseGateResult
     )
 
 
+@pytest.mark.parametrize(
+    "foreign",
+    [
+        "rtk uv run --directory {tmp}/task-b --no-sync pytest tests/tasks/test_close_checklist.py",
+        "uv run --project {tmp}/task-b pytest tests/tasks/test_close_checklist.py",
+    ],
+    ids=["other-directory", "other-project"],
+)
 def test_failing_pytest_scoped_to_another_worktree_does_not_fail_the_close(
-    tmp_path: Path,
+    tmp_path: Path, foreign: str
 ) -> None:
     # The #23010/#23188 shape: a RED run for task B lands after task A's clean run.
     (tmp_path / "task-b").mkdir()
-    foreign = (
-        "rtk uv run --directory {tmp}/task-b --no-sync pytest tests/tasks/test_close_checklist.py"
-    )
 
     gate = _scoped_pytest_gate(tmp_path, foreign)
 
@@ -1807,8 +1885,10 @@ def test_failing_pytest_scoped_to_another_worktree_does_not_fail_the_close(
         "uv run --project={own}/tests pytest tests/tasks/test_close_checklist.py",
         "uv run --directory ../task-b pytest tests/tasks/test_close_checklist.py",
         "uv run pytest tests/tasks/test_close_checklist.py",
+        # --directory sets the run's working directory; --project only picks the environment.
+        "uv run --directory {own} --project {tmp}/task-b pytest tests/tasks/test_close_checklist.py",
     ],
-    ids=["own-worktree", "own-subdirectory", "relative-scope", "no-scope"],
+    ids=["own-worktree", "own-subdirectory", "relative-scope", "no-scope", "own-dir-other-project"],
 )
 def test_failing_pytest_in_own_or_unresolvable_scope_still_fails(
     tmp_path: Path, failing_command: str

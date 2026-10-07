@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import uuid
 from collections.abc import Callable, Iterator
@@ -10,11 +11,15 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
+import psutil
 import pytest
 
+from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     expire_stale_terminal_sessions_for_context,
 )
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.compact_continuation import mark_handoff_compact_continuation_pending
 from gobby.sessions.compact_markers import (
     HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
@@ -235,6 +240,54 @@ def test_sweep_keeps_task_claimed_by_live_session(
         t.id for t in list_automation_candidates(temp_db, project_id=sample_project["id"])
     }
     assert task.id not in candidate_ids
+
+
+@pytest.mark.parametrize("replayed", [False, True], ids=["live", "restart-replay"])
+def test_shared_host_session_end_keeps_the_live_seats_claim(
+    temp_db: HubDatabase, sample_project: dict[str, Any], replayed: bool
+) -> None:
+    """A backend thread end must leave its living terminal seat and claim intact."""
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "active")
+    context = {
+        "parent_pid": os.getpid(),
+        "parent_create_time": psutil.Process(os.getpid()).create_time(),
+    }
+    temp_db.execute(
+        "UPDATE sessions SET source = 'codex', terminal_context = %s::jsonb WHERE id = %s",
+        (json.dumps(context), session_id),
+    )
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+    manager = SessionManager(temp_db)
+    handlers = EventHandlers(
+        session_manager=cast(HookSessionManager, manager), get_machine_id=lambda: MACHINE_ID
+    )
+    metadata: dict[str, Any] = {"_platform_session_id": session_id}
+    if replayed:
+        metadata["_enqueued_at"] = "2026-10-07T17:25:45Z"
+    event = HookEvent(
+        event_type=HookEventType.SESSION_END,
+        source=SessionSource.CODEX,
+        session_id=f"ext-{session_id[:8]}",
+        timestamp=datetime.now(UTC),
+        machine_id=MACHINE_ID,
+        data={"reason": "exit", "terminal_context": {"parent_pid": 99999999}},
+        metadata=metadata,
+    )
+
+    response = handlers.handle_session_end(event)
+    sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert response.decision == "allow"
+    session = manager.get(session_id)
+    assert session is not None
+    assert session.status == "active"
+    assert session.terminal_context == context
+    assert _claim(temp_db, task.id) == session_id
+    assert task.id not in {
+        candidate.id
+        for candidate in list_automation_candidates(temp_db, project_id=sample_project["id"])
+    }
 
 
 def _backdate_compact_marker(temp_db: HubDatabase, session_id: str, seconds: int) -> None:

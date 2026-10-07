@@ -130,7 +130,9 @@ async def test_shutdown_drains_code_index_before_config_becomes_unavailable(
     try:
         await asyncio.wait_for(asyncio.gather(*(event.wait() for event in cancelling.values())), 1)
         assert services.startup_ready is True
-        assert services.shutdown_in_progress is False
+        # Recovery/mutation producers are revoked immediately; configuration
+        # stays available until readiness and HTTP admission close below.
+        assert services.shutdown_in_progress is True
         assert services.http_admission_closed is False
         assert runner._code_index_shutdown.is_set()
         assert runner._sync_worker_shutdown.is_set()
@@ -139,8 +141,8 @@ async def test_shutdown_drains_code_index_before_config_becomes_unavailable(
         await asyncio.wait_for(shutdown, 3)
 
     assert sorted(cleanup_states) == [
-        ("maintenance", True, False, False),
-        ("projection", True, False, False),
+        ("maintenance", True, True, False),
+        ("projection", True, True, False),
     ]
     assert runner._code_index_task.cancelled()
     assert runner._sync_worker_task.cancelled()

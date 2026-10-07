@@ -18,6 +18,7 @@ import logging
 import os
 import sys
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
@@ -312,6 +313,7 @@ class GobbyRunner:
         return self
 
     def _prepare_base_state(self) -> None:
+        self.started_at: datetime
         self.degraded_services = set()
         self.code_index_bm25_verification = None
         # Captured by run_daemon once the daemon's long-lived loop is running;

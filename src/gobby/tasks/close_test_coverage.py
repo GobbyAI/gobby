@@ -9,6 +9,7 @@ import logging
 import os
 import posixpath
 import re
+import shlex
 import threading
 from collections import OrderedDict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -498,10 +499,15 @@ class _UnlistedCommitError(Exception):
     """Git could not list the close candidate commit's tree."""
 
 
+_REGULAR_FILE_MODES = frozenset({"100644", "100755"})
+
+
 @lru_cache(maxsize=4)
 def _candidate_blobs(root: str, commit: str) -> Mapping[str, str]:
     """Return blob ids by repo path in ``commit``'s tree.
 
+    A symlink's blob is its target text and a submodule's id names a commit, so any
+    entry that is not a regular file maps to ``""``, which no file digest equals.
     A failure raises, which ``lru_cache`` never stores.
     """
     listing = run_git_command(
@@ -513,7 +519,8 @@ def _candidate_blobs(root: str, commit: str) -> Mapping[str, str]:
     for entry in listing.split("\0"):
         meta, tab, path = entry.partition("\t")
         if tab:
-            blobs[path] = meta.rsplit(" ", 1)[-1]
+            mode, _kind, object_id = meta.split(" ")
+            blobs[path] = object_id if mode in _REGULAR_FILE_MODES else ""
     return blobs
 
 
@@ -523,6 +530,7 @@ def coverage_failure_message(
     web_paths: tuple[str, ...],
     *,
     differing_paths: tuple[str, ...] = (),
+    close_root: str | None = None,
 ) -> str | None:
     """Describe the first uncovered test obligation in checklist priority order."""
     copies = (
@@ -550,9 +558,10 @@ def coverage_failure_message(
     if web_paths:
         # Direct binary avoids wrappers that rewrite `vitest related` into `vitest run`.
         display = ", ".join(f"`{path}`" for path in web_paths)
+        workdir = shlex.quote(os.path.join(close_root, "web")) if close_root else "web"
         return (
             "Changed web/src files have no credited fresh passing `vitest related` run. "
-            f"Uncovered paths: {display}. Run `cd web && node_modules/.bin/vitest "
+            f"Uncovered paths: {display}. Run `cd {workdir} && node_modules/.bin/vitest "
             "related <each path relative to web/> --run` clean after the final task edit; "
             "add `--passWithNoTests` when a path has no runtime importer (type-only "
             "modules, declarations, assets)."
@@ -576,15 +585,35 @@ def uncovered_vitest_related_paths(
     changed_web_paths: tuple[str, ...],
     *,
     close_root: str | None,
+    changed_paths: Sequence[str] = (),
+    candidate: CloseCandidate | None = None,
 ) -> tuple[str, ...]:
     """Return changed web paths no successful ``vitest related`` run names.
 
     ``vitest related`` takes files, so coverage is an exact path match. The run's
-    tool workdir and leading ``cd`` chain must place it in ``web/``.
+    tool workdir and leading ``cd`` chain must place it in ``web/``. Another
+    checkout credits only when its targets and every changed path match the
+    candidate, using the same byte comparison as pytest copies.
     """
     covered: set[str] = set()
     for run in runs:
         targets = vitest_related_targets(run.command, close_root=close_root, workdir=run.workdir)
+        if targets is None and close_root is not None:
+            location = run_location(run.command, workdir=run.workdir)
+            if location is None or not os.path.isabs(location):
+                continue
+            web = Path(location).resolve()
+            if web.name != "web":
+                continue
+            tree = str(web.parent)
+            targets = vitest_related_targets(run.command, close_root=tree, workdir=run.workdir)
+            if targets and not all(os.path.isfile(os.path.join(tree, path)) for path in targets):
+                continue
+            if targets and not all(
+                _same_bytes(tree, close_root, path, candidate)
+                for path in (*targets, *changed_paths)
+            ):
+                continue
         covered.update(targets or ())
     return tuple(path for path in changed_web_paths if path not in covered)
 

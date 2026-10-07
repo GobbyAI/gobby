@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import threading
 import uuid
 from collections.abc import Callable
@@ -12,6 +13,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import psutil
 import pytest
 
 from gobby.hooks.dispatchers.mcp import run_coro_blocking
@@ -1669,6 +1671,99 @@ class TestTerminalIngressGate:
     _PLATFORM_SESSION_ID = "d92fc5be-6638-415d-8143-c349293fb35c"
     _RUN_ID = "3fbc517c-9e1c-4ea3-9a2f-f21b2035c764"
     _STALE_RUN_ID = "8292b975-f848-42c4-a8a9-6b6e8b30ddc6"
+
+    def test_replayed_session_end_cannot_mutate_a_live_seat(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable[..., HookEvent],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Reject stale thread ends before backfill, lifecycle rules and cleanup."""
+        manager = manager_with_mocks
+        mocks = cast(Any, manager)
+        handler = self._prime_managed_session(manager)
+        event = make_event(
+            event_type=HookEventType.SESSION_END,
+            source=SessionSource.CODEX,
+            data={
+                "project_id": "proj-1",
+                "reason": "exit",
+                "terminal_context": {"parent_pid": 99999999},
+            },
+        )
+        event.metadata["_enqueued_at"] = "2026-10-07T17:25:45Z"
+        session = SimpleNamespace(
+            id=self._PLATFORM_SESSION_ID,
+            agent_run_id=None,
+            source=SessionSource.CODEX,
+            status="active",
+            session_type="terminal",
+            machine_id=event.machine_id,
+            terminal_context={
+                "parent_pid": os.getpid(),
+                "parent_create_time": psutil.Process(os.getpid()).create_time(),
+            },
+        )
+        mocks._session_manager.get.return_value = session
+        monkeypatch.setattr(manager, "get_machine_id", lambda: event.machine_id)
+
+        response = manager._handle_internal(event)
+
+        assert response.decision == "allow"
+        mocks._session_lookup.apply_session_mutations.assert_not_called()
+        mocks._workflow_handler.handle.assert_not_called()
+        handler.assert_not_called()
+        mocks._enricher.enrich.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("source", "reason"),
+        [
+            (SessionSource.CLAUDE, "exit"),
+            (SessionSource.CLAUDE, "clear"),
+            (SessionSource.CODEX, "exit"),
+        ],
+    )
+    def test_session_end_from_live_seat_reaches_rules_and_cleanup(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable[..., HookEvent],
+        monkeypatch: pytest.MonkeyPatch,
+        source: SessionSource,
+        reason: str,
+    ) -> None:
+        """The ingress guard must admit an exiting CLI's own live-process hook."""
+        manager = manager_with_mocks
+        mocks = cast(Any, manager)
+        handler = self._prime_managed_session(manager)
+        event = make_event(
+            event_type=HookEventType.SESSION_END,
+            source=source,
+            data={
+                "project_id": "proj-1",
+                "reason": reason,
+                "terminal_context": {"parent_pid": os.getpid()},
+            },
+        )
+        mocks._session_manager.get.return_value = SimpleNamespace(
+            id=self._PLATFORM_SESSION_ID,
+            agent_run_id=None,
+            session_type="terminal",
+            machine_id=event.machine_id,
+            terminal_context={
+                "parent_pid": os.getpid(),
+                "parent_create_time": psutil.Process(os.getpid()).create_time(),
+            },
+        )
+        monkeypatch.setattr(manager, "get_machine_id", lambda: event.machine_id)
+
+        response = manager._handle_internal(event)
+
+        assert response.decision == "allow"
+        mocks._session_lookup.apply_session_mutations.assert_called_once_with(
+            event, self._PLATFORM_SESSION_ID
+        )
+        mocks._workflow_handler.handle.assert_called_once()
+        handler.assert_called_once_with(event)
 
     def _prime_managed_session(self, manager: HookManager) -> MagicMock:
         """Wire mocks so the durable session owns _RUN_ID and lookups resolve."""

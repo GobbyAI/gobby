@@ -444,20 +444,21 @@ class SubmitResult:
 
 async def composer_verdict(
     pane: PaneIO,
-    text: str,
+    held_text: str,
     composer_read: ComposerReader,
     *,
     window_seconds: float,
     poll_seconds: float = _SUBMIT_VERIFY_POLL_SECONDS,
 ) -> ComposerVerdict:
-    """Poll the composer for a positive read of whether it still holds ``text``.
+    """Poll the composer for a positive read of whether it still holds ``held_text``.
 
     Read through the full window: an initially empty frame can be stale before
     the CLI paints a held draft. At the deadline, ``left`` means the composer is
-    empty or has a different draft, ``held`` means it still starts with our text,
-    and ``unreadable`` means there was no classifiable final frame.
+    empty or has a different draft, ``held`` means it still starts with
+    ``held_text``, and ``unreadable`` means there was no classifiable final frame.
+    The read trims its line, so the match trims ``held_text`` too.
     """
-    prefix = text[:COMPOSER_MATCH_CHARS]
+    prefix = held_text.strip()[:COMPOSER_MATCH_CHARS]
     elapsed = 0.0
     while True:
         read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
@@ -482,7 +483,7 @@ async def submit_text(
     composer_read: ComposerReader | None,
     verify_seconds: float = SUBMIT_VERIFY_SECONDS,
 ) -> SubmitResult:
-    """Submit ``text`` into the drained composer, and prove it left or report it.
+    """Submit ``text`` into the composer, and prove it left or report it.
 
     The text and its newline go in as one write, and a bare Enter follows as its own
     stdin read after ``SUBMIT_ENTER_GAP_SECONDS``. Both are needed. A short text such
@@ -504,7 +505,20 @@ async def submit_text(
     does a provider without a ``composer_read``: both return
     ``SUBMIT_UNVERIFIED_ERROR_CODE`` without another Enter, so a caller never records
     an unproven submit as delivered and never types the text a second time.
+
+    The composer is read once before the write, because an operator's
+    ``gclient send-keys REF TEXT --enter`` reaches a composer nobody drained. A
+    draft already there -- a wake that was typed and never submitted -- keeps its
+    place at the head of the composer and the text lands behind it, so an ignored
+    Enter leaves that draft, not the text, at the head. Held is matched against
+    the draft then; matching the text alone read the stuck draft as ``left``
+    (#23730).
     """
+    held_text = text
+    if composer_read is not None:
+        before = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
+        if before.state == "draft":
+            held_text = before.line or ""
     ok, reason = await pane.type_text(f"{text}\n")
     if not ok:
         log_pane_failure(pane, session_id, f"typing {label}", reason)
@@ -531,7 +545,7 @@ async def submit_text(
             )
         verdict = await composer_verdict(
             pane,
-            text,
+            held_text,
             composer_read,
             window_seconds=verify_window,
         )

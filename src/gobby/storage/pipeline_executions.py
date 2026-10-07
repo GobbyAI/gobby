@@ -713,6 +713,8 @@ class PipelineExecutionStorageMixin:
         self,
         exclude_ids: set[str] | None = None,
         pending_stall_threshold_seconds: int = 120,
+        *,
+        created_before: datetime | None = None,
     ) -> int:
         """Mark running and stale pending executions as interrupted.
 
@@ -724,6 +726,7 @@ class PipelineExecutionStorageMixin:
         Args:
             exclude_ids: Execution IDs to skip (e.g. resumable pipelines).
             pending_stall_threshold_seconds: Pending inactivity required before recovery.
+            created_before: Recover only executions admitted before this startup cutoff.
 
         Returns:
             Number of executions marked as interrupted.
@@ -732,6 +735,7 @@ class PipelineExecutionStorageMixin:
             exclude_ids=exclude_ids,
             status=ExecutionStatus.INTERRUPTED,
             pending_stall_threshold_seconds=pending_stall_threshold_seconds,
+            created_before=created_before,
         )
 
     def fail_stale_running_executions(
@@ -767,6 +771,7 @@ class PipelineExecutionStorageMixin:
         *,
         status: ExecutionStatus,
         pending_stall_threshold_seconds: int,
+        created_before: datetime | None = None,
     ) -> int:
         """Move RUNNING and stale PENDING executions to *status*."""
         now = utc_now()
@@ -785,6 +790,8 @@ class PipelineExecutionStorageMixin:
         exclude_clause, exclude_params = build_not_in_clause(exclude_ids, "execution_id")
         exec_exclude_clause, exec_exclude_params = build_not_in_clause(exclude_ids, "id")
         project_clause, project_params = self._project_predicate()
+        cutoff_clause = " AND created_at < %s" if created_before is not None else ""
+        cutoff_params = (created_before,) if created_before is not None else ()
 
         with self.db.transaction() as conn:
             # Fail running step executions that belong to running pipeline executions.
@@ -796,7 +803,7 @@ class PipelineExecutionStorageMixin:
                 WHERE status = %s
                   AND execution_id IN (
                       SELECT id FROM pipeline_executions
-                      WHERE status = %s AND {project_clause}
+                      WHERE status = %s AND {project_clause}{cutoff_clause}
                   ){exclude_clause}
                 """,  # nosec
                 (
@@ -805,6 +812,7 @@ class PipelineExecutionStorageMixin:
                     StepStatus.RUNNING.value,
                     ExecutionStatus.RUNNING.value,
                     *project_params,
+                    *cutoff_params,
                     *exclude_params,
                 ),
             )
@@ -819,7 +827,7 @@ class PipelineExecutionStorageMixin:
                     status = %s
                     OR (status = %s AND updated_at < %s)
                 )
-                  AND {project_clause}{exec_exclude_clause}
+                  AND {project_clause}{cutoff_clause}{exec_exclude_clause}
                 RETURNING id
                 """,  # nosec
                 (
@@ -830,6 +838,7 @@ class PipelineExecutionStorageMixin:
                     ExecutionStatus.PENDING.value,
                     pending_cutoff,
                     *project_params,
+                    *cutoff_params,
                     *exec_exclude_params,
                 ),
             )

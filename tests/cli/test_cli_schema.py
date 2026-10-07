@@ -28,12 +28,9 @@ def test_apply_schema_plain(monkeypatch: pytest.MonkeyPatch) -> None:
 
     applied = CliRunner().invoke(root_cli, ["schema", "apply"])
     rejected = CliRunner().invoke(root_cli, ["schema", "apply", "--destructive"])
-    campaign = CliRunner().invoke(root_cli, ["hub-maintenance", "run", "schema-apply"])
 
     assert applied.exit_code == 0, applied.output
     assert required == ["database"]
     assert "Schema is at version 456" in applied.output
     assert rejected.exit_code == 2
     assert "No such option '--destructive'" in rejected.output
-    assert campaign.exit_code == 2
-    assert "'schema-apply' is not one of" in campaign.output

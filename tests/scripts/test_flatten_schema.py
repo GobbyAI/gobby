@@ -80,6 +80,8 @@ GRANT ALL ON FUNCTION public.gobby_maintenance_epoch_login_guard() TO gobby_daem
         'GRANT EXECUTE ON FUNCTION "public".digest(BYTEA, TEXT) TO gobby_agent_issuer;' in baseline
     )
     assert baseline.index("CREATE TABLE sample") < baseline.index("CREATE EXTENSION")
+    # Migration 462 retired the maintenance LOGIN guard; flattening must not reinstall it.
+    assert "gobby_maintenance_epoch_login_guard" not in baseline
 
 
 def test_write_generated_pins_canonical_inputs(tmp_path: Path) -> None:

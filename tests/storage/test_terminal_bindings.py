@@ -287,10 +287,12 @@ async def test_revival_rebinds_the_native_pane_that_expiry_released(
     session = _session(session_manager, project_id, {**_live_cli(), "gobby_terminal_id": pane.id})
     assert terminals.bind_session(pane.id, session.id, project_id) is not None
 
-    # A daemon restarted under the surviving CLI expires it on a liveness guess,
-    # which releases the pane; the CLI sends no new SessionStart afterwards.
+    # Expiry uses the observed session snapshot and releases the pane; the
+    # surviving CLI sends no new SessionStart afterwards.
     monitor = SessionLivenessMonitor(session_manager, terminal_manager=terminals)
-    assert await monitor._expire_session(session.id)
+    assert await monitor._expire_session(
+        session.id, active_expiry=(session.machine_id, session.updated_at)
+    )
     assert _bound_session_id(terminals, pane.id) is None
 
     revived = session_manager.revive_expired_terminal_session(session.id)

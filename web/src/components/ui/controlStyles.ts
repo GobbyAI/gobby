@@ -27,9 +27,12 @@ export const controlWrapperCls = cn("inline-flex w-full", coarseHitAreaCls);
 
 // Shared visual contract for form controls: 36px-ladder bordered box, token
 // colors, brand focus ring, disabled dimming. Border color is applied by each
-// primitive from its error state.
+// primitive from its error state. `relative` stacks the control above its
+// wrapper label's absolute coarse-pointer ::before, so touches on the control
+// reach it natively (caret placement, inner scrolling, selection); only the
+// perimeter expansion is forwarded by the label.
 export const controlSurfaceCls = cn(
-  "w-full rounded-md border bg-transparent px-3 text-sm transition-colors",
+  "relative w-full rounded-md border bg-transparent px-3 text-sm transition-colors",
   "placeholder:text-muted-foreground",
   "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
   "focus-visible:ring-offset-2 focus-visible:ring-offset-background",

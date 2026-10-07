@@ -10,6 +10,7 @@ Provides fixtures for:
 - MCP client connections
 """
 
+import asyncio
 import json
 import math
 import os
@@ -23,6 +24,7 @@ import tempfile
 import threading
 import time
 from collections.abc import AsyncGenerator, Callable, Generator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -38,7 +40,10 @@ from websockets.sync.client import connect as connect_websocket
 
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
 from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
-from gobby.guard_set_g import finalize_pidfile_host, socket_dir_from_cmdline
+from gobby.config.terminal_host import TerminalHostConfig
+from gobby.config.terminals import TerminalConfig
+from gobby.guard_set_g import socket_dir_from_cmdline
+from gobby.terminals.host_manager import TerminalHostManager
 from gobby.terminals.host_protocol import read_pidfile, write_pidfile
 from gobby.utils.dependency_requirements import SRT_RELEASE
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
@@ -793,6 +798,7 @@ def terminate_process_tree(pid: int, timeout: float = 5.0) -> None:
 # Records the pytest process that created a host socket directory, so a later
 # session can stop hosts orphaned when that process died before teardown.
 E2E_HOST_OWNER_FILE = "e2e-owner.pid"
+E2E_HOST_SETTLE_SECONDS = 1.0
 
 
 def create_host_socket_dir(root: Path | None = None, prefix: str = "gh-") -> Path:
@@ -802,29 +808,50 @@ def create_host_socket_dir(root: Path | None = None, prefix: str = "gh-") -> Pat
     return socket_dir
 
 
+def _hosts_serving(socket_dir: Path) -> list[int]:
+    return [
+        process.pid
+        for process in psutil.process_iter(["cmdline"])
+        if socket_dir_from_cmdline(process.info["cmdline"]) == socket_dir
+    ]
+
+
+def _drain_terminal_host(socket_dir: Path) -> None:
+    """Drain through the host's own control socket, escalating to TERM and KILL."""
+    manager = TerminalHostManager(
+        config=TerminalHostConfig(socket_dir=str(socket_dir)),
+        terminal_config=TerminalConfig(),
+    )
+    # Fixture teardown can run inside a test's event loop; drain on a fresh one.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(asyncio.run, manager.stop(drain_host=True)).result()
+
+
 def stop_terminal_host(socket_dir: Path) -> None:
-    """Stop the detached gterm host serving ``socket_dir``.
+    """Stop every detached gterm host serving ``socket_dir``.
 
     The host outlives its daemon by design, so stopping the daemon leaves it
     running. Only a process whose command line is ``gterm host`` with this
-    exact ``--socket-dir`` is signalled.
+    exact ``--socket-dir`` is stopped. A daemon torn down mid-spawn can exec
+    its host after the first look, so the directory must stay quiet for
+    ``E2E_HOST_SETTLE_SECONDS`` before teardown may delete it: deleting it
+    under a live host drops the owner marker and no later reap finds the host.
     """
     resolved = socket_dir.resolve()
-    pid = read_pidfile(resolved)
-    if pid is None:
-        # The spawner can die between starting the host and recording its pid.
-        pid = next(
-            (
-                process.pid
-                for process in psutil.process_iter(["cmdline"])
-                if socket_dir_from_cmdline(process.info["cmdline"]) == resolved
-            ),
-            None,
-        )
-        if pid is None:
+    quiet_until = time.monotonic() + E2E_HOST_SETTLE_SECONDS
+    while True:
+        hosts = _hosts_serving(resolved)
+        if hosts:
+            # The spawner can die between starting the host and recording its pid.
+            if read_pidfile(resolved) not in hosts:
+                write_pidfile(resolved, hosts[0])
+            _drain_terminal_host(resolved)
+            if survivors := set(_hosts_serving(resolved)) & set(hosts):
+                raise RuntimeError(f"gterm host {sorted(survivors)} survived drain of {resolved}")
+            quiet_until = time.monotonic() + E2E_HOST_SETTLE_SECONDS
+        elif time.monotonic() >= quiet_until:
             return
-        write_pidfile(resolved, pid)
-    finalize_pidfile_host(pid, resolved, (resolved.parent,))
+        time.sleep(0.05)
 
 
 def reap_orphaned_terminal_hosts(root: Path) -> None:

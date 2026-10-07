@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -249,7 +250,13 @@ def create_base_patches(
 
         notification_connection.notifies.side_effect = no_notifications
         database.open_runtime_async_connection = AsyncMock(return_value=notification_connection)
-        database.fetchone.return_value = None
+
+        def fetchone(query: str, *_args: Any, **_kwargs: Any) -> dict[str, datetime] | None:
+            if query == "SELECT clock_timestamp() AS started_at":
+                return {"started_at": datetime(2026, 1, 1, tzinfo=UTC)}
+            return None
+
+        database.fetchone.side_effect = fetchone
         database.fetchall.return_value = []
         cursor = MagicMock(rowcount=0, lastrowid=None)
         cursor.fetchone.return_value = None
@@ -287,10 +294,7 @@ def create_base_patches(
         # Startup otherwise shells out to gdaemon to drop test schemas on config.database_url.
         patch("gobby.runner_maintenance.storage_hygiene.sweep_orphaned_test_schemas"),
         patch("gobby.storage.hub.postgres.PostgresHubDatabase", side_effect=make_postgres_db),
-        patch(
-            "gobby.runner_init.helpers.admitted_database_url",
-            side_effect=lambda database_url: database_url,
-        ),
+        patch("gobby.runner_init.helpers.psycopg.connect"),
         patch(RUNNER_INIT_SESSION_MANAGER_PATCH),
         patch("gobby.runner_init.storage.LocalTaskManager"),
         patch("gobby.runner_init.storage.SessionTaskManager"),

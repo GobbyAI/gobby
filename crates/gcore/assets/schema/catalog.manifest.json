@@ -1765,62 +1765,6 @@
       "definition": "text|text|NO||NEVER"
     },
     {
-      "name": "destructive_batches.abort_disposition",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "destructive_batches.aborted_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "destructive_batches.backup_manifest_path",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "destructive_batches.backup_manifest_sha256",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "destructive_batches.campaign",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "destructive_batches.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "destructive_batches.id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "destructive_batches.intent",
-      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
-    },
-    {
-      "name": "destructive_batches.maintenance_epoch_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "destructive_batches.migration_plan",
-      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
-    },
-    {
-      "name": "destructive_batches.status",
-      "definition": "text|text|NO|'pending'::text|NEVER"
-    },
-    {
-      "name": "destructive_batches.target_receipts",
-      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
-    },
-    {
-      "name": "destructive_batches.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "destructive_batches.verified_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
       "name": "detection_manifests.content",
       "definition": "text|text|NO||NEVER"
     },
@@ -2203,34 +2147,6 @@
     {
       "name": "machines.tailscale_name",
       "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "maintenance_epochs.campaign",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "maintenance_epochs.id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "maintenance_epochs.opened_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "maintenance_epochs.opened_by",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "maintenance_epochs.released_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "maintenance_epochs.released_by_command",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "maintenance_epochs.scope_note",
-      "definition": "text|text|NO||NEVER"
     },
     {
       "name": "mcp_server_templates.created_at",
@@ -3293,6 +3209,10 @@
       "definition": "text|text|NO|'pending'::text|NEVER"
     },
     {
+      "name": "provider_capacity_snapshots.details",
+      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
+    },
+    {
       "name": "provider_capacity_snapshots.machine_id",
       "definition": "uuid|uuid|NO||NEVER"
     },
@@ -3663,6 +3583,50 @@
     {
       "name": "session_handoffs.what_was_accomplished_json",
       "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
+    },
+    {
+      "name": "session_reported_usage.api_duration_ms",
+      "definition": "bigint|int8|YES||NEVER"
+    },
+    {
+      "name": "session_reported_usage.cost_amount",
+      "definition": "numeric|numeric|YES||NEVER"
+    },
+    {
+      "name": "session_reported_usage.cost_complete",
+      "definition": "boolean|bool|NO|true|NEVER"
+    },
+    {
+      "name": "session_reported_usage.cost_unit",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "session_reported_usage.model_usage",
+      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
+    },
+    {
+      "name": "session_reported_usage.observed_at",
+      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+    },
+    {
+      "name": "session_reported_usage.run_key",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_reported_usage.session_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "session_reported_usage.source",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_reported_usage.started_at",
+      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+    },
+    {
+      "name": "session_reported_usage.wall_duration_ms",
+      "definition": "bigint|int8|YES||NEVER"
     },
     {
       "name": "session_skills.created_at",
@@ -4465,6 +4429,26 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "task_claim_intervals.claimed_at",
+      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+    },
+    {
+      "name": "task_claim_intervals.id",
+      "definition": "uuid|uuid|NO|gen_random_uuid()|NEVER"
+    },
+    {
+      "name": "task_claim_intervals.released_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "task_claim_intervals.session_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "task_claim_intervals.task_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
       "name": "task_close_reviews.agent_run_id",
       "definition": "uuid|uuid|YES||NEVER"
     },
@@ -5187,6 +5171,10 @@
     {
       "name": "terminals.window_id",
       "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "token_events.api_calls",
+      "definition": "integer|int4|YES||NEVER"
     },
     {
       "name": "token_events.cache_creation_tokens",
@@ -6375,50 +6363,6 @@
       "definition": "PRIMARY KEY (deployment_token)"
     },
     {
-      "name": "destructive_batches.destructive_batches_backup_manifest_sha256_check",
-      "definition": "CHECK (backup_manifest_sha256 IS NULL OR backup_manifest_sha256 ~ '^[0-9a-f]{64}$'::text)"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_campaign_check",
-      "definition": "CHECK (campaign = ANY (ARRAY['account-identity-cutover'::text, 'project-checkout-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_check",
-      "definition": "CHECK (status = 'verified'::text AND verified_at IS NOT NULL OR status <> 'verified'::text AND verified_at IS NULL)"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_check1",
-      "definition": "CHECK (status = 'aborted'::text AND aborted_at IS NOT NULL AND abort_disposition IS NOT NULL OR status <> 'aborted'::text AND aborted_at IS NULL AND abort_disposition IS NULL)"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_intent_check",
-      "definition": "CHECK (jsonb_typeof(intent) = 'object'::text)"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_maintenance_epoch_id_fkey",
-      "definition": "FOREIGN KEY (maintenance_epoch_id) REFERENCES maintenance_epochs(id) DEFERRABLE INITIALLY DEFERRED"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_maintenance_epoch_id_key",
-      "definition": "UNIQUE (maintenance_epoch_id)"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_migration_plan_check",
-      "definition": "CHECK (jsonb_typeof(migration_plan) = 'array'::text)"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_status_check",
-      "definition": "CHECK (status = ANY (ARRAY['pending'::text, 'applied'::text, 'verified'::text, 'aborted'::text]))"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_target_receipts_check",
-      "definition": "CHECK (jsonb_typeof(target_receipts) = 'object'::text)"
-    },
-    {
       "name": "detection_manifests.detection_manifests_engine_check",
       "definition": "CHECK (engine > 0)"
     },
@@ -6532,18 +6476,6 @@
     },
     {
       "name": "machines.machines_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "maintenance_epochs.maintenance_epochs_campaign_check",
-      "definition": "CHECK (campaign = ANY (ARRAY['account-identity-cutover'::text, 'project-checkout-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))"
-    },
-    {
-      "name": "maintenance_epochs.maintenance_epochs_check",
-      "definition": "CHECK (released_at IS NULL AND released_by_command IS NULL OR released_at IS NOT NULL AND released_by_command IS NOT NULL)"
-    },
-    {
-      "name": "maintenance_epochs.maintenance_epochs_pkey",
       "definition": "PRIMARY KEY (id)"
     },
     {
@@ -7047,6 +6979,26 @@
       "definition": "CHECK (jsonb_typeof(what_was_accomplished_json) = 'array'::text)"
     },
     {
+      "name": "session_reported_usage.session_reported_usage_check",
+      "definition": "CHECK ((cost_unit IS NULL) = (cost_amount IS NULL))"
+    },
+    {
+      "name": "session_reported_usage.session_reported_usage_check1",
+      "definition": "CHECK (observed_at >= started_at)"
+    },
+    {
+      "name": "session_reported_usage.session_reported_usage_cost_unit_check",
+      "definition": "CHECK (cost_unit = ANY (ARRAY['usd'::text, 'factory_credits'::text]))"
+    },
+    {
+      "name": "session_reported_usage.session_reported_usage_pkey",
+      "definition": "PRIMARY KEY (session_id, run_key)"
+    },
+    {
+      "name": "session_reported_usage.session_reported_usage_session_id_fkey",
+      "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE"
+    },
+    {
       "name": "session_skills.session_skills_pkey",
       "definition": "PRIMARY KEY (id)"
     },
@@ -7273,6 +7225,22 @@
     {
       "name": "task_artifacts.task_artifacts_task_id_fkey",
       "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "task_claim_intervals.task_claim_intervals_check",
+      "definition": "CHECK (released_at >= claimed_at)"
+    },
+    {
+      "name": "task_claim_intervals.task_claim_intervals_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "task_claim_intervals.task_claim_intervals_session_id_fkey",
+      "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE"
+    },
+    {
+      "name": "task_claim_intervals.task_claim_intervals_task_id_fkey",
+      "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE"
     },
     {
       "name": "task_close_reviews.task_close_reviews_close_arguments_check",
@@ -7569,6 +7537,10 @@
     {
       "name": "terminals.terminals_title_byte_limit",
       "definition": "CHECK (title IS NULL OR octet_length(title) <= 1024)"
+    },
+    {
+      "name": "token_events.token_events_api_calls_check",
+      "definition": "CHECK (api_calls >= 0)"
     },
     {
       "name": "token_events.token_events_pkey",
@@ -7901,10 +7873,6 @@
       "definition": "CREATE OR REPLACE FUNCTION $schema.enforce_chat_attachments_bound_at_write_once()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\nIF OLD.bound_at IS NOT NULL AND NEW.bound_at IS DISTINCT FROM OLD.bound_at THEN\nRAISE EXCEPTION 'chat_attachments.bound_at is write-once';\nEND IF;\nRETURN NEW;\nEND;\n$function$"
     },
     {
-      "name": "$schema.gobby_maintenance_epoch_login_guard()",
-      "definition": "CREATE OR REPLACE FUNCTION $schema.gobby_maintenance_epoch_login_guard()\n RETURNS event_trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog'\nAS $function$\nDECLARE\nactive_epoch UUID;\nsupplied_epoch TEXT;\nBEGIN\nIF pg_catalog.pg_is_in_recovery() THEN\nRETURN;\nEND IF;\n\nBEGIN\nSELECT id\nINTO active_epoch\nFROM $schema.maintenance_epochs\nWHERE released_at IS NULL;\nEXCEPTION\nWHEN undefined_table OR invalid_schema_name THEN\nRETURN;\nEND;\n\nIF active_epoch IS NULL THEN\nRETURN;\nEND IF;\n\nsupplied_epoch :=\npg_catalog.current_setting('gobby.maintenance_epoch', TRUE);\nIF supplied_epoch IS DISTINCT FROM active_epoch::TEXT THEN\nRAISE EXCEPTION USING\nERRCODE = '55000',\nMESSAGE =\n'Gobby hub maintenance is active; use '\n'`gobby hub-maintenance status` to inspect it or '\n'`gobby hub-maintenance resume` from the operator shell.';\nEND IF;\nEND;\n$function$"
-    },
-    {
       "name": "$schema.memories_tags_to_text(tags jsonb)",
       "definition": "CREATE OR REPLACE FUNCTION $schema.memories_tags_to_text(tags jsonb)\n RETURNS text\n LANGUAGE sql\n IMMUTABLE PARALLEL SAFE STRICT\nAS $function$\nSELECT COALESCE(string_agg(value, ' ' ORDER BY ord), '')\nFROM jsonb_array_elements_text(tags) WITH ORDINALITY AS t(value, ord);\n$function$"
     },
@@ -7927,6 +7895,14 @@
     {
       "name": "$schema.resolve_coordination_wait(wait_id text, reply_message_id text)",
       "definition": "CREATE OR REPLACE FUNCTION $schema.resolve_coordination_wait(wait_id text, reply_message_id text DEFAULT NULL::text)\n RETURNS void\n LANGUAGE plpgsql\nAS $function$\nDECLARE\nw coordination_waits%ROWTYPE;\nowner_status text;\nrelease_id text;\nterminal_outcome text;\nBEGIN\nSELECT * INTO w FROM coordination_waits WHERE id = wait_id FOR UPDATE;\nIF NOT FOUND OR w.outcome <> 'waiting' THEN RETURN; END IF;\nSELECT status INTO owner_status FROM sessions WHERE id = w.owner_session_id;\nIF NOT w.reply THEN\nSELECT id INTO release_id FROM inter_session_messages AS message\nWHERE message.from_session = w.owner_session_id\nAND message.to_session = w.waiter_session_id\nAND message.message_type = 'coordination_release'\nAND message.metadata_json::jsonb ->> 'coordination_key' = w.coordination_key\nAND message.sent_at <= w.expires_at\nAND NOT EXISTS (\nSELECT 1 FROM coordination_waits AS previous\nWHERE previous.message_id = message.id::text\nAND previous.id <> w.id\nAND previous.outcome = 'released'\n)\nORDER BY message.sent_at, message.id\nLIMIT 1;\nEND IF;\nterminal_outcome := CASE\nWHEN clock_timestamp() >= w.expires_at THEN 'timeout'\nWHEN w.reply AND reply_message_id IS NOT NULL THEN 'replied'\nWHEN release_id IS NOT NULL THEN 'released'\nWHEN owner_status = ANY(w.statuses) THEN 'status_matched'\nWHEN owner_status IS NULL OR owner_status IN\n('completed', 'cancelled', 'closed', 'expired', 'deleted') THEN 'owner_ended'\nELSE NULL END;\nIF terminal_outcome IS NOT NULL THEN\nUPDATE coordination_waits SET outcome = terminal_outcome,\nmatched_status = CASE WHEN terminal_outcome = 'status_matched' THEN owner_status END,\nmessage_id = CASE WHEN terminal_outcome = 'released' THEN release_id\nWHEN terminal_outcome = 'replied' THEN reply_message_id END,\ncompleted_at = clock_timestamp() WHERE id = wait_id;\nEND IF;\nEND;\n$function$"
+    },
+    {
+      "name": "$schema.sync_task_claim_interval(p_task_id uuid)",
+      "definition": "CREATE OR REPLACE FUNCTION $schema.sync_task_claim_interval(p_task_id uuid)\n RETURNS void\n LANGUAGE plpgsql\nAS $function$\nDECLARE\nv_holder uuid;\nBEGIN\nSELECT CASE WHEN closed_at IS NULL THEN claimed_by_session_id END\nINTO v_holder\nFROM tasks\nWHERE id = p_task_id;\n\nIF v_holder IS NOT NULL AND EXISTS (\nSELECT 1\nFROM task_claim_intervals\nWHERE task_id = p_task_id AND session_id = v_holder AND released_at IS NULL\n) THEN\nRETURN;\nEND IF;\n\nUPDATE task_claim_intervals\nSET released_at = greatest(clock_timestamp(), claimed_at)\nWHERE task_id = p_task_id AND released_at IS NULL;\n\nIF v_holder IS NOT NULL THEN\nINSERT INTO task_claim_intervals (task_id, session_id, claimed_at)\nVALUES (p_task_id, v_holder, clock_timestamp());\nEND IF;\nEND;\n$function$"
+    },
+    {
+      "name": "$schema.sync_task_claim_interval_from_task()",
+      "definition": "CREATE OR REPLACE FUNCTION $schema.sync_task_claim_interval_from_task()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\nPERFORM sync_task_claim_interval(NEW.id);\nRETURN NEW;\nEND;\n$function$"
     },
     {
       "name": "$schema.touch_chat_attachments_updated_at()",
@@ -8165,18 +8141,6 @@
     {
       "name": "deployment_runtime_pkey",
       "definition": "CREATE UNIQUE INDEX deployment_runtime_pkey ON $schema.deployment_runtime USING btree (deployment_token)"
-    },
-    {
-      "name": "destructive_batches_epoch_lookup",
-      "definition": "CREATE INDEX destructive_batches_epoch_lookup ON $schema.destructive_batches USING btree (maintenance_epoch_id, created_at)"
-    },
-    {
-      "name": "destructive_batches_maintenance_epoch_id_key",
-      "definition": "CREATE UNIQUE INDEX destructive_batches_maintenance_epoch_id_key ON $schema.destructive_batches USING btree (maintenance_epoch_id)"
-    },
-    {
-      "name": "destructive_batches_pkey",
-      "definition": "CREATE UNIQUE INDEX destructive_batches_pkey ON $schema.destructive_batches USING btree (id)"
     },
     {
       "name": "detection_manifests_pkey",
@@ -9071,6 +9035,18 @@
       "definition": "CREATE INDEX idx_taf_task_id ON $schema.task_affected_files USING btree (task_id)"
     },
     {
+      "name": "idx_task_claim_intervals_open",
+      "definition": "CREATE UNIQUE INDEX idx_task_claim_intervals_open ON $schema.task_claim_intervals USING btree (task_id) WHERE (released_at IS NULL)"
+    },
+    {
+      "name": "idx_task_claim_intervals_session",
+      "definition": "CREATE INDEX idx_task_claim_intervals_session ON $schema.task_claim_intervals USING btree (session_id, claimed_at)"
+    },
+    {
+      "name": "idx_task_claim_intervals_task",
+      "definition": "CREATE INDEX idx_task_claim_intervals_task ON $schema.task_claim_intervals USING btree (task_id, claimed_at)"
+    },
+    {
       "name": "idx_task_close_reviews_recovery",
       "definition": "CREATE INDEX idx_task_close_reviews_recovery ON $schema.task_close_reviews USING btree (status, delivered_at, updated_at)"
     },
@@ -9291,18 +9267,6 @@
       "definition": "CREATE UNIQUE INDEX machines_pkey ON $schema.machines USING btree (id)"
     },
     {
-      "name": "maintenance_epochs_one_open",
-      "definition": "CREATE UNIQUE INDEX maintenance_epochs_one_open ON $schema.maintenance_epochs USING btree ((true)) WHERE (released_at IS NULL)"
-    },
-    {
-      "name": "maintenance_epochs_open_lookup",
-      "definition": "CREATE INDEX maintenance_epochs_open_lookup ON $schema.maintenance_epochs USING btree (opened_at, id) WHERE (released_at IS NULL)"
-    },
-    {
-      "name": "maintenance_epochs_pkey",
-      "definition": "CREATE UNIQUE INDEX maintenance_epochs_pkey ON $schema.maintenance_epochs USING btree (id)"
-    },
-    {
       "name": "mcp_server_templates_pkey",
       "definition": "CREATE UNIQUE INDEX mcp_server_templates_pkey ON $schema.mcp_server_templates USING btree (id)"
     },
@@ -9463,6 +9427,10 @@
       "definition": "CREATE UNIQUE INDEX session_handoffs_pkey ON $schema.session_handoffs USING btree (id)"
     },
     {
+      "name": "session_reported_usage_pkey",
+      "definition": "CREATE UNIQUE INDEX session_reported_usage_pkey ON $schema.session_reported_usage USING btree (session_id, run_key)"
+    },
+    {
       "name": "session_skills_pkey",
       "definition": "CREATE UNIQUE INDEX session_skills_pkey ON $schema.session_skills USING btree (id)"
     },
@@ -9545,6 +9513,10 @@
     {
       "name": "task_artifacts_pkey",
       "definition": "CREATE UNIQUE INDEX task_artifacts_pkey ON $schema.task_artifacts USING btree (task_id)"
+    },
+    {
+      "name": "task_claim_intervals_pkey",
+      "definition": "CREATE UNIQUE INDEX task_claim_intervals_pkey ON $schema.task_claim_intervals USING btree (id)"
     },
     {
       "name": "task_close_reviews_pkey",
@@ -9775,6 +9747,10 @@
     {
       "name": "task_stage_states.task_stage_states_state_bucket_au",
       "definition": "CREATE TRIGGER task_stage_states_state_bucket_au AFTER UPDATE OF state, \"position\" ON task_stage_states FOR EACH ROW EXECUTE FUNCTION refresh_task_state_bucket_from_stage()"
+    },
+    {
+      "name": "tasks.tasks_claim_interval",
+      "definition": "CREATE TRIGGER tasks_claim_interval AFTER INSERT OR UPDATE OF claimed_by_session_id, closed_at ON tasks FOR EACH ROW EXECUTE FUNCTION sync_task_claim_interval_from_task()"
     },
     {
       "name": "tasks.tasks_state_bucket_ai",

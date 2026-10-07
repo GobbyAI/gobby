@@ -1,7 +1,7 @@
 # Recovery
 
-Load for failed startup, native/schema disagreement, interrupted maintenance,
-or restoring an installation. These are operator procedures. Begin with
+Load for failed startup, native/schema disagreement, or restoring an
+installation. These are operator procedures. Begin with
 `gobby health`, `gobby status`, and the original failure; establish the target
 hub and machine before choosing a repair.
 
@@ -11,18 +11,12 @@ hub and machine before choosing a repair.
 2. For native schema disagreement, use the coherent cutover procedure from the
    release guide. Startup and restart guards protect the running state; do not
    hand-edit identity pins or run a mismatched binary against the hub.
-3. For destructive schema maintenance, discover `gobby hub-maintenance` and
-   `gobby schema` options. A campaign obtains a verified epoch-bound backup,
-   applies its guarded change, verifies the postcondition, and releases the
-   fence. A failed campaign retains state for diagnosis and resumption.
-4. Use `hub-maintenance status` before `resume`. Resume consumes the recorded
-   hub state. `abort` records an explicit partial-state disposition and releases
-   the fence; it is not an automatic rollback or a way to claim verification.
-5. For restore, inspect the backup manifest and stop the daemon. The
+3. For restore, inspect the backup manifest and stop the daemon. The
    `hub-backup restore` command requires `--database-url` naming the intended
    target. `--clean` drops database objects; `--yes` suppresses confirmation.
    Neither is an ordinary diagnostic option. Verify artifacts, files, schema,
    principals, datastore health, and client access before reopening work.
+   Restore releases any open maintenance epoch the backup carries.
 
 Keep an interrupted restore stopped until its partial state is understood.
 For a standalone PostgreSQL archive, `gobby postgres restore DUMP_OR_DIRECTORY`

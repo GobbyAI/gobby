@@ -33,8 +33,9 @@ from gobby.hooks.runtime_compat import (
     SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
     envelope_has_hook_response_capability,
 )
+from gobby.utils import daemon_url as daemon_address
 from gobby.utils.datetime import utc_now
-from gobby.utils.local_token import read_local_api_token
+from gobby.utils.local_token import daemon_bootstrap_path, read_local_api_token
 
 logger = logging.getLogger(__name__)
 _DRAIN_LOCK_STATE_KEY = "_gobby_hook_inbox_drain_lock"
@@ -376,7 +377,6 @@ def _load_envelope(path: Path) -> dict[str, Any] | None:
 
 
 async def _post_envelope(
-    app: Any,
     envelope: dict[str, Any],
     *,
     envelope_id: str | None = None,
@@ -397,22 +397,39 @@ async def _post_envelope(
     # GOBBY_AGENT_API_TOKEN (daemon_auth_headers prefers it) would scope the
     # replay to one run's capability and 401 other sessions' envelopes.
     operator_token = read_local_api_token()
-    if operator_token is not None:
-        request_headers["Authorization"] = f"Bearer {operator_token}"
+    if not operator_token:
+        return httpx.Response(503)
+    request_headers["Authorization"] = f"Bearer {operator_token}"
     if envelope_id:
         request_headers[ENVELOPE_ID_HEADER] = envelope_id
 
-    transport = httpx.ASGITransport(app=app)
+    # Shared operator keys are verified by gdaemon, not the Python backend.
+    # Use this daemon's bound bootstrap, never an inherited client URL override.
+    base_url = await asyncio.to_thread(
+        daemon_address.resolve_daemon_url, daemon_bootstrap_path(), env={}
+    )
     async with httpx.AsyncClient(
-        transport=transport,
-        base_url="http://gobby.internal",
+        base_url=base_url,
         timeout=30.0,
     ) as client:
-        return await client.post(
+        response = await client.post(
             "/api/hooks/execute",
             json=envelope,
             headers=request_headers,
         )
+        if response.status_code == 401:
+            # Rotation can race the first post. Retry once only for a changed
+            # key; a disappearing key is a retryable startup state.
+            refreshed_token = read_local_api_token()
+            if not refreshed_token:
+                return httpx.Response(503)
+            if refreshed_token != operator_token:
+                response = await client.post(
+                    "/api/hooks/execute",
+                    json=envelope,
+                    headers={**request_headers, "Authorization": f"Bearer {refreshed_token}"},
+                )
+        return response
 
 
 @dataclass(frozen=True)
@@ -574,7 +591,7 @@ async def _drain_hook_inbox_once_locked(
             logger.warning("Cleared stale processing marker for hook inbox envelope %s", path.name)
 
         try:
-            response = await _post_envelope(app, envelope, envelope_id=envelope_id)
+            response = await _post_envelope(envelope, envelope_id=envelope_id)
         except Exception as exc:
             logger.warning("Hook inbox replay failed for %s: %s", path.name, exc)
             continue
@@ -614,6 +631,27 @@ async def _drain_hook_inbox_once_locked(
                 "Hook inbox replay found active processing marker for %s; retaining file",
                 path.name,
             )
+            continue
+
+        if response.status_code == 401:
+            quarantined = await asyncio.to_thread(
+                _quarantine_file,
+                path,
+                reason="replay_auth_rejected",
+                detail="Hook replay returned HTTP 401",
+            )
+            if quarantined:
+                if envelope_id:
+                    await asyncio.to_thread(
+                        release_envelope_processing_claim,
+                        envelope_id,
+                        processed_dir=processed_dir,
+                    )
+                logger.warning(
+                    "Hook inbox replay returned 401 for %s; quarantined",
+                    path.name,
+                )
+                hook_settled()
             continue
 
         logger.warning(

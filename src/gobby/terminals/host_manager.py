@@ -258,6 +258,10 @@ class TerminalHostManager:
         except Exception as exc:
             self.last_error = str(exc)
 
+    def begin_shutdown(self) -> None:
+        """Fence new hosts immediately, keeping existing connections until stop()."""
+        self._stop_requested = True
+
     async def stop(self, *, drain_host: bool = False) -> None:
         """Detach from the host; drain it only on explicit opt-in.
 
@@ -265,8 +269,8 @@ class TerminalHostManager:
         the next daemon adopts them. ``drain_host`` (or the
         ``terminals.stop_host_on_shutdown`` config) takes the host down too.
         """
+        self.begin_shutdown()
         async with self._restart_lock:
-            self._stop_requested = True
             self._restart_generation += 1
             restart_task = self._restart_task
             self._restart_task = None
@@ -619,6 +623,8 @@ class TerminalHostManager:
         self._publish_spawned_client(client, hello, ping)
 
     async def _spawn_candidate(self) -> tuple[Any, Any, Any]:
+        if self._stop_requested or self.host_drained:
+            raise HostManagerStopped("gterm host manager stopped")
         # Only reached when nothing answered the control socket, so a fresh
         # token cannot lock out a live host.
         self.rotate_control_token() if control_token_path(self.socket_dir).exists() else (
@@ -744,7 +750,7 @@ class TerminalHostManager:
         if client is None:
             try:
                 client = await self._connect()
-            except (OSError, ConnectionError) as exc:
+            except (OSError, ConnectionError, HostUnavailableError) as exc:
                 logger.info("no gterm host answered the control socket: %s", exc)
                 client = None
             if client is not None:
@@ -894,6 +900,8 @@ class TerminalHostManager:
                 until_expiry = min(self._input_handoff_deadlines.values()) - self._monotonic()
                 delay = min(delay, max(1.0, until_expiry))
             await self._sleep(delay)
+            if self._stop_requested:
+                return
             client = self._client
             if client is None:
                 if self.host_mismatch is not None:

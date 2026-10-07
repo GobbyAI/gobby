@@ -36,7 +36,6 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `health` | Check daemon health. | `src/gobby/cli/daemon.py` |
 | `hooks` | Manage hook endpoints and configuration. | `src/gobby/cli/extensions.py` |
 | `hub-backup` | Back up and verify every hub datastore. | `src/gobby/cli/hub_backup/` |
-| `hub-maintenance` | Run fenced, verified hub maintenance. | `src/gobby/cli/hub_maintenance.py` |
 | `init` | Initialize `.gobby/project.json`. | `src/gobby/cli/init.py` |
 | `install` | Install required infrastructure, configuration, integrations, and hooks. | `src/gobby/cli/install.py` |
 | `lease` | Inspect and control single-active-daemon ownership. | `src/gobby/cli/daemon_lease.py` |

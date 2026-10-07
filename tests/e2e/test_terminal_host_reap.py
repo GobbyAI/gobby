@@ -7,12 +7,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
+import psutil
 import pytest
 
+from gobby.guard_set_g import socket_dir_from_cmdline
 from gobby.terminals.host_protocol import (
     control_socket_path,
     control_token_path,
@@ -175,3 +178,26 @@ def test_stop_terminal_host_stops_the_dirs_host(host_root: Path, spawn: Spawn) -
 
     _wait_for_exit(host)
     assert host.returncode is not None
+
+
+def test_stop_terminal_host_stops_a_host_that_starts_during_teardown(
+    host_root: Path, spawn: Spawn
+) -> None:
+    # A daemon torn down mid-spawn can exec its host after teardown first looks.
+    # Missing it lets the rmtree drop the owner marker, so no reap ever finds it.
+    socket_dir = create_host_socket_dir(host_root)
+    token_path = control_token_path(socket_dir)
+    token_path.write_text(uuid.uuid4().hex)
+    token_path.chmod(0o600)
+    argv = [str(_gterm_bin_dir() / "gterm"), "host", "--socket-dir", str(socket_dir)]
+    late = threading.Timer(0.3, lambda: spawn(argv))
+    late.start()
+
+    stop_terminal_host(socket_dir)
+    late.join()
+
+    assert not [
+        process.pid
+        for process in psutil.process_iter(["cmdline"])
+        if socket_dir_from_cmdline(process.info["cmdline"]) == socket_dir
+    ]

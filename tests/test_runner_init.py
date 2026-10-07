@@ -5,6 +5,7 @@ import json
 import os
 import threading
 from contextlib import ExitStack
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -282,6 +283,7 @@ class TestGobbyRunnerInit:
 
     def test_secret_envelope_initialization_failure_aborts_startup(self) -> None:
         mock_db = MagicMock()
+        mock_db.fetchone.return_value = {"started_at": datetime(2026, 1, 1, tzinfo=UTC)}
         mock_store = MagicMock()
         mock_store.ensure_ready.side_effect = RuntimeError("secret envelope initialization failed")
         mock_config_store = MagicMock()
@@ -679,10 +681,7 @@ class TestInitHubDatabase:
         from gobby.runner_init import helpers
 
         with (
-            patch(
-                "gobby.runner_init.helpers.admitted_database_url",
-                side_effect=lambda database_url: database_url,
-            ),
+            patch("gobby.runner_init.helpers.psycopg.connect"),
             patch("gobby.storage.hub.postgres.PostgresHubDatabase") as postgres_database,
         ):
             migration_db = MagicMock()
@@ -754,10 +753,7 @@ class TestInitHubDatabase:
             "gobby.storage.hub.postgres.PostgresHubDatabase",
             FakePostgresDatabase,
         )
-        monkeypatch.setattr(
-            "gobby.runner_init.helpers.admitted_database_url",
-            lambda database_url: database_url,
-        )
+        monkeypatch.setattr("gobby.runner_init.helpers.psycopg.connect", MagicMock())
         monkeypatch.setattr("gobby.runner_init.helpers.time.sleep", sleeps.append)
         config = SimpleNamespace(
             hub_backend="postgres",
