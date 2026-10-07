@@ -11,6 +11,7 @@ from uuid import UUID
 from gobby.agents.resume_finalization import finalize_resume_handoff_threadsafe
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.hook_types import SessionEndReason
+from gobby.hooks.terminal_context import hook_sender_belongs_to_seat
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.terminal_ownership import recorded_process_is_alive
 
@@ -45,6 +46,9 @@ def session_end_targets_live_cli(
         and isinstance(local_machine_id, str)
         and getattr(session, "machine_id", None) == local_machine_id
         and recorded_process_is_alive(session)
+        and not hook_sender_belongs_to_seat(
+            event.data.get("terminal_context"), getattr(session, "terminal_context", None)
+        )
     )
 
 

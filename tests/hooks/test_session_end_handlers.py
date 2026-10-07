@@ -23,8 +23,9 @@ class TestSessionEndHandling:
     """Test SESSION_END handler edge cases and error paths."""
 
     @pytest.mark.parametrize("replayed", [False, True], ids=["live", "restart-replay"])
+    @pytest.mark.parametrize("sender_identity", ["unrelated", "missing", "reused"])
     def test_session_end_preserves_live_recorded_cli(
-        self, mock_dependencies: dict[str, Any], replayed: bool
+        self, mock_dependencies: dict[str, Any], replayed: bool, sender_identity: str
     ) -> None:
         """A SessionEnd cannot retire a seat while its recorded CLI still runs."""
         session = MagicMock()
@@ -52,11 +53,19 @@ class TestSessionEndHandling:
         metadata: dict[str, Any] = {"_platform_session_id": session.id}
         if replayed:
             metadata["_enqueued_at"] = "2026-10-07T17:25:45Z"
+        sender_context: dict[str, Any] = {}
+        if sender_identity == "unrelated":
+            sender_context = {"parent_pid": 99999999}
+        elif sender_identity == "reused":
+            sender_context = {
+                "parent_pid": os.getpid(),
+                "parent_create_time": session.terminal_context["parent_create_time"] - 60.0,
+            }
         event = make_event(
             HookEventType.SESSION_END,
             session_id="codex-thread-123",
             source="codex",
-            data={"reason": "exit"},
+            data={"reason": "exit", "terminal_context": sender_context},
             metadata=metadata,
         )
 
@@ -71,6 +80,146 @@ class TestSessionEndHandling:
         mock_dependencies["task_manager"].remove_label.assert_not_called()
         terminal_manager.release_session.assert_not_called()
         terminal_manager.mark_exited.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("source", "reason"),
+        [("claude", "exit"), ("claude", "clear"), ("codex", "exit")],
+    )
+    def test_session_end_from_live_seat_performs_real_exit_cleanup(
+        self, mock_dependencies: dict[str, Any], source: str, reason: str
+    ) -> None:
+        """The CLI remains alive while its own genuine exit hook runs."""
+        session = MagicMock()
+        session.id = "sess-123"
+        session.status = "active"
+        session.session_type = "terminal"
+        session.agent_run_id = "run-123"
+        session.machine_id = "local-machine"
+        session.terminal_context = {
+            "parent_pid": os.getpid(),
+            "parent_create_time": psutil.Process(os.getpid()).create_time(),
+        }
+        storage = mock_dependencies["session_storage"]
+        storage.get.return_value = session
+        terminal_manager = MagicMock()
+        handlers = EventHandlers(
+            **mock_dependencies,
+            terminal_manager=terminal_manager,
+            get_machine_id=lambda: "local-machine",
+        )
+        event = make_event(
+            HookEventType.SESSION_END,
+            source=source,
+            data={"reason": reason, "terminal_context": dict(session.terminal_context)},
+            metadata={"_platform_session_id": session.id},
+        )
+
+        response = handlers.handle_session_end(event)
+
+        assert response.decision == "allow"
+        storage.update_status_if_non_terminal.assert_called_once_with(session.id, "expired")
+        mock_dependencies["session_coordinator"].complete_agent_run.assert_called_once_with(session)
+        terminal_manager.mark_exited.assert_called_once()
+
+    def test_session_end_from_seat_descendant_performs_real_exit_cleanup(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
+        """A hook shell descended from the recorded CLI is a genuine sender."""
+        session = MagicMock()
+        session.id = "sess-123"
+        session.status = "active"
+        session.session_type = "terminal"
+        session.agent_run_id = None
+        session.machine_id = "local-machine"
+        session.terminal_context = {
+            "parent_pid": os.getppid(),
+            "parent_create_time": psutil.Process(os.getppid()).create_time(),
+        }
+        storage = mock_dependencies["session_storage"]
+        storage.get.return_value = session
+        handlers = EventHandlers(**mock_dependencies, get_machine_id=lambda: "local-machine")
+        event = make_event(
+            HookEventType.SESSION_END,
+            data={"reason": "exit", "terminal_context": {"parent_pid": os.getpid()}},
+            metadata={"_platform_session_id": session.id},
+        )
+
+        assert handlers.handle_session_end(event).decision == "allow"
+        storage.update_status_if_non_terminal.assert_called_once_with(session.id, "expired")
+
+    @pytest.mark.parametrize("seat_alive", [True, False], ids=["live-seat", "dead-seat"])
+    @pytest.mark.parametrize("nested_sender", [False, True], ids=["host", "host-child"])
+    def test_shared_host_end_only_expires_a_dead_seat(
+        self, mock_dependencies: dict[str, Any], seat_alive: bool, nested_sender: bool
+    ) -> None:
+        """Even a shared host descended from this seat cannot end it while alive."""
+        seat = MagicMock(spec=psutil.Process)
+        seat.pid = 4312
+        seat.create_time.return_value = 100.0
+        seat.name.return_value = "codex"
+        seat.cmdline.return_value = ["codex", "resume", "thread-123"]
+        host = MagicMock(spec=psutil.Process)
+        host.pid = 4313
+        host.create_time.return_value = 101.0
+        host.name.return_value = "codex"
+        host.cmdline.return_value = ["codex", "app-server", "--managed-daemon"]
+        host.parent.return_value = seat
+        child = MagicMock(spec=psutil.Process)
+        child.pid = 4314
+        child.name.return_value = "sh"
+        child.parent.return_value = host
+        session = MagicMock()
+        session.id = "sess-123"
+        session.status = "active"
+        session.session_type = "terminal"
+        session.agent_run_id = "run-123"
+        session.machine_id = "local-machine"
+        session.terminal_context = {"parent_pid": seat.pid, "parent_create_time": 100.0}
+        storage = mock_dependencies["session_storage"]
+        storage.get.return_value = session
+        terminal_manager = MagicMock()
+        handlers = EventHandlers(
+            **mock_dependencies,
+            terminal_manager=terminal_manager,
+            get_machine_id=lambda: "local-machine",
+        )
+        monitor = MagicMock()
+        handlers.set_liveness_monitor(monitor)
+        event = make_event(
+            HookEventType.SESSION_END,
+            source="codex",
+            data={
+                "reason": "exit",
+                "terminal_context": {"parent_pid": child.pid if nested_sender else host.pid},
+            },
+            metadata={"_platform_session_id": session.id, "_enqueued_at": "2026-10-07T17:20:25Z"},
+        )
+
+        def process(pid: int) -> psutil.Process:
+            if pid == seat.pid:
+                if not seat_alive:
+                    raise psutil.NoSuchProcess(pid)
+                return seat
+            if pid == child.pid:
+                return child
+            assert pid == host.pid
+            return host
+
+        with patch("gobby.hooks.terminal_context.psutil.Process", side_effect=process):
+            assert handlers.handle_session_end(event).decision == "allow"
+
+        if seat_alive:
+            monitor.mark_recently_handled.assert_not_called()
+            storage.update_status_if_non_terminal.assert_not_called()
+            mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
+            terminal_manager.mark_exited.assert_not_called()
+        else:
+            monitor.mark_recently_handled.assert_called_once_with(session.id)
+            storage.update_status_if_non_terminal.assert_called_once_with(session.id, "expired")
+            mock_dependencies["session_coordinator"].complete_agent_run.assert_called_once_with(
+                session
+            )
+            terminal_manager.mark_exited.assert_called_once()
 
     @pytest.mark.parametrize(
         ("identity", "reason", "expected_status"),
