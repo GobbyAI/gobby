@@ -511,6 +511,23 @@ class TestCodexTrust:
         assert all(projects[path]["trust_level"] == "trusted" for path in kept)
         assert projects[str(workspace)]["trust_level"] == "trusted"
 
+    def test_missing_generated_root_does_not_mark_children_stale(self, tmp_path: Path) -> None:
+        """An absent or unmounted root proves nothing about its children; never prune them."""
+        with (
+            patch("gobby.agents.trust.Path.home", return_value=tmp_path),
+            patch(
+                "gobby.agents.trust.tempfile.gettempdir",
+                return_value=str(tmp_path / "unrelated-tempdir"),
+            ),
+        ):
+            assert not trust.is_stale_generated_path(
+                str(tmp_path / ".gobby" / "worktrees" / "gobby" / "x")
+            )
+            (tmp_path / ".gobby" / "worktrees").mkdir(parents=True)
+            assert trust.is_stale_generated_path(
+                str(tmp_path / ".gobby" / "worktrees" / "gobby" / "x")
+            )
+
 
 class TestDroidNoop:
     def test_droid_is_noop_with_debug_log(self, tmp_path: Path, caplog) -> None:

@@ -514,7 +514,8 @@ def is_stale_generated_path(path: str) -> bool:
     """Return whether ``path`` is a deleted Gobby-generated workspace path.
 
     Generated paths live under ``~/.gobby/worktrees``, ``~/.gobby/clones``, the
-    process temp dir, or a ``gobby-*`` directory directly under ``/tmp``.
+    process temp dir, or a ``gobby-*`` directory directly under ``/tmp``. A root
+    that is itself missing (unmounted or not yet created) marks nothing stale.
     """
     if _is_windows_absolute_path(path) or Path(path).exists():
         return False
@@ -525,7 +526,7 @@ def is_stale_generated_path(path: str) -> bool:
         _realpath(str(gobby_home / "clones")),
         _realpath(tempfile.gettempdir()),
     )
-    if any(_path_is_within(resolved, root) for root in roots):
+    if any(_path_is_within(resolved, root) and os.path.isdir(root) for root in roots):
         return True
     for tmp_root in {_realpath("/tmp"), "/private/tmp"}:
         if _path_is_within(resolved, tmp_root) and resolved != tmp_root:
