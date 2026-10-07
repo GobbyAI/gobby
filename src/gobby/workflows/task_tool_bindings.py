@@ -134,7 +134,7 @@ def cleanup_task_tool_bindings(
     variables: dict[str, Any],
 ) -> None:
     """Clear abandoned calls before a turn/session boundary's rule evaluation."""
-    if manager is None or event.metadata.get("_native_subagent_binding"):
+    if not session_id or manager is None or event.metadata.get("_native_subagent_binding"):
         return
     boundaries = {
         HookEventType.STOP: "turn_end",
