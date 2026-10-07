@@ -3,7 +3,7 @@ type: pipeline
 version: "1.0"
 description: |
   Relaunch selected seats into an existing workspace and worktree.
-  Step 1 approved by Josh: developer only. Add further roles after pilot approval.
+  Approved seats: developer, code-reviewer and lane-manager. Add further roles after pilot approval.
   Launches fresh sessions; rerunning duplicates live seats. The operator runs this pipeline.
 tags: [runbook]
 resume_on_restart: true
@@ -24,7 +24,7 @@ inputs:
   seats:
     type: string
     default: developer
-    description: "Comma-separated missing seat kinds; currently developer only"
+    description: "Comma-separated missing seat kinds: developer, code-reviewer, lane-manager"
   developer_provider:
     type: string
     default: codex
@@ -37,6 +37,32 @@ inputs:
   developer_role_file:
     type: string
     default: lane-4-runbooks.md
+    description: "Role filename under the shared checkout .gobby/roles/"
+  reviewer_provider:
+    type: string
+    default: claude
+  reviewer_model:
+    type: string
+    default: claude-opus-5-5
+  reviewer_reasoning_effort:
+    type: string
+    default: xhigh
+  reviewer_role_file:
+    type: string
+    default: code-reviewer.md
+    description: "Role filename under the shared checkout .gobby/roles/"
+  manager_provider:
+    type: string
+    default: claude
+  manager_model:
+    type: string
+    default: claude-sonnet-5-5
+  manager_reasoning_effort:
+    type: string
+    default: medium
+  manager_role_file:
+    type: string
+    default: lane-manager.md
     description: "Role filename under the shared checkout .gobby/roles/"
 
 steps:
@@ -51,6 +77,12 @@ steps:
           - name: developer
             title: "${{ 'Lane ' + inputs.lane + ' developer' }}"
             agent: developer
+          - name: code-reviewer
+            title: "${{ 'Lane ' + inputs.lane + ' code reviewer' }}"
+            agent: code-reviewer
+          - name: lane-manager
+            title: "${{ 'Lane ' + inputs.lane + ' manager' }}"
+            agent: lane-manager
 
   - id: developer
     condition: "${{ 'developer' in inputs.seats.split(',') }}"
@@ -68,3 +100,37 @@ steps:
         reserved_run_id: "${{ invocation_id }}"
         prompt: "You are Lane ${{ inputs.lane }} developer. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/${{ inputs.developer_role_file }} and follow that role. Explicit lane assignment: Lane ${{ inputs.lane }}; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
         placement: "${{ {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane + ' developer'}} }}"
+
+  - id: code-reviewer
+    condition: "${{ 'code-reviewer' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: code-reviewer
+        provider: "${{ inputs.reviewer_provider }}"
+        model: "${{ inputs.reviewer_model }}"
+        reasoning_effort: "${{ inputs.reviewer_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        worktree_id: "${{ inputs.worktree_id }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Lane ${{ inputs.lane }} code reviewer. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/${{ inputs.reviewer_role_file }} and follow that role. Explicit lane assignment: Lane ${{ inputs.lane }}; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane + ' code reviewer'}} }}"
+
+  - id: lane-manager
+    condition: "${{ 'lane-manager' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: lane-manager
+        provider: "${{ inputs.manager_provider }}"
+        model: "${{ inputs.manager_model }}"
+        reasoning_effort: "${{ inputs.manager_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        worktree_id: "${{ inputs.worktree_id }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Lane ${{ inputs.lane }} manager. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/${{ inputs.manager_role_file }} and follow that role. Explicit lane assignment: Lane ${{ inputs.lane }}; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane + ' manager'}} }}"
