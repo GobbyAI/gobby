@@ -3,27 +3,28 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from gobby.hooks.envelope_dedupe import is_envelope_processing_active, is_inbox_envelope_fresh
+from gobby.sessions.turn_lifecycle import TurnLifecycleReducer
 from gobby.storage.sessions import TERMINAL_SESSION_STATUSES, SessionManager
+from gobby.utils.datetime import parse_stored_datetime
 
 logger = logging.getLogger(__name__)
 
 
+def defer_live_hook(
+    path: Path, envelope_id: str | None, processed_dir: Path, include_fresh: bool
+) -> bool:
+    """The live transport keeps its file until its response or lease settles."""
+    return (not include_fresh and is_inbox_envelope_fresh(path)) or bool(
+        envelope_id and is_envelope_processing_active(envelope_id, processed_dir=processed_dir)
+    )
+
+
 class ArchiveHook(Protocol):
     def __call__(self, path: Path, *, reason: str, detail: str) -> bool: ...
-
-
-def _event_time(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
 def archive_superseded_hook(
@@ -71,19 +72,22 @@ def archive_superseded_hook(
         return False
     if session is None:
         return None
-    enqueued_at = _event_time(envelope.get("enqueued_at"))
+    try:
+        enqueued_at = parse_stored_datetime(envelope.get("enqueued_at"))
+        started_at = TurnLifecycleReducer(sessions).get(session.id).started_at
+    except ValueError:
+        enqueued_at, started_at = None, None
+    except Exception:
+        logger.exception("Cannot establish turn replay freshness for %s", path.name)
+        return False
     if session.status in TERMINAL_SESSION_STATUSES:
         detail = "session is terminal; delayed replay cannot revive it"
     elif enqueued_at is None:
         detail = "known session but no valid envelope event time to establish freshness"
-    elif isinstance(session.last_activity, datetime):
-        activity = session.last_activity
-        activity = (
-            activity.replace(tzinfo=UTC) if activity.tzinfo is None else activity.astimezone(UTC)
-        )
-        if activity <= enqueued_at:
+    elif started_at is not None:
+        if started_at <= enqueued_at:
             return None
-        detail = "envelope predates confirmed session activity"
+        detail = "envelope predates the latest turn-start event"
     else:
         return None
     return archive(path, reason="superseded_hook", detail=detail)

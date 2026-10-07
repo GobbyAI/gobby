@@ -25,8 +25,6 @@ from gobby.hooks.envelope_dedupe import (
     envelope_timestamp_ms_from_inbox_path,
     get_processed_envelope_dir,
     is_envelope_processed,
-    is_envelope_processing_active,
-    is_inbox_envelope_fresh,
     mark_envelope_processed,
     prune_directory_by_age,
     prune_processed_envelope_markers,
@@ -35,7 +33,7 @@ from gobby.hooks.envelope_dedupe import (
 )
 from gobby.hooks.inbox_lifecycle import replay_stopping, start_replay
 from gobby.hooks.receipt_effects import apply_acknowledged_receipt
-from gobby.hooks.replay_fence import archive_superseded_hook
+from gobby.hooks.replay_fence import archive_superseded_hook, defer_live_hook
 from gobby.hooks.runtime_compat import (
     SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
     envelope_has_hook_response_capability,
@@ -544,33 +542,10 @@ async def _drain_hook_inbox_once_locked(
             logger.debug("Skipping live hook inbox envelope %s", path.name)
             continue
 
-        archived = await asyncio.to_thread(
-            archive_superseded_hook, app, envelope, path, _quarantine_file
-        )
-        if archived is not None:
-            if archived:
-                hook_settled()
-            continue
-
-        if not envelope_has_hook_response_capability(envelope.get("response_capability")):
-            if envelope_id and is_envelope_processed(envelope_id, processed_dir=processed_dir):
-                logger.debug("Skipping already-processed hook inbox envelope %s", path.name)
-                path.unlink(missing_ok=True)
-                continue
-            if envelope_id:
-                release_envelope_processing_claim(envelope_id, processed_dir=processed_dir)
-                _terminalize_below_floor_receipts(app, envelope_id)
-            _quarantine_or_warn(
-                path,
-                reason="below_floor_response_capability",
-                detail="request-carried response_capability is below hook-response.v1",
-            )
-            hook_settled()
-            continue
-
         hook_manager = getattr(getattr(app, "state", None), "hook_manager", None)
         if (
-            envelope_id
+            envelope_has_hook_response_capability(envelope.get("response_capability"))
+            and envelope_id
             and hook_manager is not None
             and grok_pending_context.handle_ack_pending_inbox_envelope(
                 hook_manager,
@@ -588,13 +563,28 @@ async def _drain_hook_inbox_once_locked(
             logger.debug("Skipping already-processed hook inbox envelope %s", path.name)
             path.unlink(missing_ok=True)
             continue
-
-        if not include_fresh and is_inbox_envelope_fresh(path):
-            logger.debug("Skipping fresh hook inbox envelope %s", path.name)
+        if envelope_has_hook_response_capability(
+            envelope.get("response_capability")
+        ) and defer_live_hook(path, envelope_id, processed_dir, include_fresh):
+            continue
+        archived = await asyncio.to_thread(
+            archive_superseded_hook, app, envelope, path, _quarantine_file
+        )
+        if archived is not None:
+            if archived:
+                hook_settled()
             continue
 
-        if envelope_id and is_envelope_processing_active(envelope_id, processed_dir=processed_dir):
-            logger.debug("Skipping active hook inbox envelope %s", path.name)
+        if not envelope_has_hook_response_capability(envelope.get("response_capability")):
+            if envelope_id:
+                release_envelope_processing_claim(envelope_id, processed_dir=processed_dir)
+                _terminalize_below_floor_receipts(app, envelope_id)
+            _quarantine_or_warn(
+                path,
+                reason="below_floor_response_capability",
+                detail="request-carried response_capability is below hook-response.v1",
+            )
+            hook_settled()
             continue
 
         if envelope_id and clear_stale_envelope_processing_marker(

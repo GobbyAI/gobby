@@ -48,6 +48,7 @@ HUB_ONLY_STARTUP_PHASES = frozenset(
         "expansion_cleanup",
         "vector_store",
         "core_services",
+        "communications_start",
         "cron_scheduler",
         "pipeline_recovery",
         "system_automation_start",
@@ -260,11 +261,6 @@ async def _run_tracked_start_async(
 
 
 async def _start_core_services(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
-    await _start_tracked_service(
-        runner.communications_manager,
-        "Communications manager",
-        tracker,
-    )
     services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None and services.shutdown_in_progress:
         return
@@ -655,6 +651,16 @@ async def _recover_after_restart(
             return None
         return await timed_startup_phase(name, start())
 
+    # Live rule/MCP sends can wait on channel startup. Initialize channels
+    # before replay can call them; expiry/transcript jobs still wait for recovery.
+    await hub_only_phase(
+        "communications_start",
+        lambda: _start_tracked_service(
+            getattr(runner, "communications_manager", None), "Communications manager", tracker
+        ),
+    )
+    if services is not None and services.shutdown_in_progress:
+        return
     barrier_outcome = await timed_startup_phase(
         "hook_replay_barrier", _run_agent_hook_replay_barrier(runner)
     )

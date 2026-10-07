@@ -45,6 +45,7 @@ def _runner(monkeypatch: pytest.MonkeyPatch, app: FastAPI) -> SimpleNamespace:
             reconcile_restart_active_sessions=AsyncMock(return_value=())
         ),
         wake_replay_coordinator=SimpleNamespace(open=AsyncMock()),
+        communications_manager=SimpleNamespace(start=AsyncMock()),
     )
     for name in (
         "_start_terminal_host",
@@ -77,6 +78,7 @@ async def test_recovery_phase_does_not_hold_core_startup(
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def blocked(*args: Any, **kwargs: Any) -> Any:
+        runner.communications_manager.start.assert_awaited_once()
         entered.set()
         await release.wait()
         return (

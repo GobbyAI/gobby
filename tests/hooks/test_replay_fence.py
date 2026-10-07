@@ -12,12 +12,14 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from fastapi import FastAPI
 
-from gobby.hooks import inbox
+from gobby.hooks import envelope_dedupe, inbox, replay_fence
 from gobby.hooks.replay_fence import archive_superseded_hook
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
+from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
 from gobby.storage.hook_receipts import prepare_receipt, release_receipt
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.utils.datetime import utc_now
 
 pytestmark = pytest.mark.integration
 
@@ -37,8 +39,12 @@ async def test_old_stop_preserves_new_turn_effects(
     registered = session_manager.register(
         external_id="new-turn", source="codex", machine_id=None, project_id=sample_project["id"]
     )
-    session = session_manager.update_status_from_activity(registered.id, "active")
-    assert session is not None and session.last_activity is not None
+    started_at = utc_now()
+    TurnLifecycleReducer(session_manager).begin_turn(
+        registered.id, TurnEvidence(source="codex", event_time=started_at)
+    )
+    session = session_manager.get(registered.id)
+    assert session is not None
     prepared = prepare_receipt(
         temp_db, session_id=session.id, envelope_id="new-prepared", force_continue_execution_num=7
     )
@@ -63,7 +69,7 @@ async def test_old_stop_preserves_new_turn_effects(
     assert len(budgets_before) == 2
     envelope: dict[str, Any] = {
         "schema_version": 1,
-        "enqueued_at": (session.last_activity - timedelta(minutes=1)).isoformat(),
+        "enqueued_at": (started_at - timedelta(minutes=1)).isoformat(),
         "hook_type": "Stop",
         "source": "codex",
         "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
@@ -119,14 +125,28 @@ async def test_old_stop_preserves_new_turn_effects(
     ],
 )
 def test_replay_clock_and_terminal_policy(
-    tmp_path: Path, status: str, activity: datetime | None, event_time: str, expected: bool | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    activity: datetime | None,
+    event_time: str,
+    expected: bool | None,
 ) -> None:
     manager = Mock()
-    manager.get.return_value = SimpleNamespace(status=status, last_activity=activity)
+    manager.get.return_value = SimpleNamespace(id="known", status=status)
     app = SimpleNamespace(
         state=SimpleNamespace(hook_manager=SimpleNamespace(session_manager=manager))
     )
     archive = Mock(return_value=True)
+    monkeypatch.setattr(
+        replay_fence,
+        "TurnLifecycleReducer",
+        lambda _: SimpleNamespace(
+            get=lambda _: SimpleNamespace(
+                started_at=activity.replace(tzinfo=UTC) if activity else None
+            )
+        ),
+    )
     result = archive_superseded_hook(
         app,
         {"headers": {"X-Gobby-Session-Id": "known"}, "enqueued_at": event_time},
@@ -178,9 +198,7 @@ async def test_failed_archive_retains_stale_hook_for_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = Mock()
-    manager.get.return_value = SimpleNamespace(
-        status="active", last_activity=datetime(2026, 1, 2, tzinfo=UTC)
-    )
+    manager.get.return_value = SimpleNamespace(id="known", status="active")
     app = FastAPI()
     app.state.hook_manager = SimpleNamespace(session_manager=manager)
     path = tmp_path / "old-stop.json"
@@ -200,6 +218,13 @@ async def test_failed_archive_retains_stale_hook_for_retry(
     monkeypatch.setattr(inbox, "_quarantine_file", archive)
     monkeypatch.setattr(inbox, "_post_envelope", post)
     monkeypatch.setattr(inbox, "read_local_api_token", lambda: "isolated-test-token")
+    monkeypatch.setattr(
+        replay_fence,
+        "TurnLifecycleReducer",
+        lambda _: SimpleNamespace(
+            get=lambda _: SimpleNamespace(started_at=datetime(2026, 1, 2, tzinfo=UTC))
+        ),
+    )
     assert await inbox.drain_hook_inbox_once(app, tmp_path, include_fresh=True) == 0
     assert path.exists()
     archive.assert_called_once()
@@ -223,3 +248,40 @@ def test_failed_archive_metadata_preserves_pending_file(
     monkeypatch.setattr(Path, "write_text", write_text)
     assert inbox._quarantine_file(path, reason="superseded_hook", detail="test") is False
     assert path.read_text() == "{}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner", ["fresh", "active", "processed"])
+async def test_live_or_processed_envelope_precedes_stale_fence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, owner: str
+) -> None:
+    now = utc_now()
+    envelope_id = f"n-{int(now.timestamp() * 1000):013d}-owner"
+    path = tmp_path / f"{envelope_id}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "source": "claude",
+                "hook_type": "Stop",
+                "enqueued_at": (now - timedelta(minutes=5)).isoformat(),
+                "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
+            }
+        )
+    )
+    processed_dir = envelope_dedupe.get_processed_envelope_dir(tmp_path)
+    if owner == "active":
+        assert envelope_dedupe.claim_envelope_processing(envelope_id, processed_dir=processed_dir)
+    elif owner == "processed":
+        envelope_dedupe.mark_envelope_processed(envelope_id, processed_dir=processed_dir)
+    fence = Mock(side_effect=AssertionError("live ownership must precede the stale fence"))
+    post = AsyncMock()
+    monkeypatch.setattr(inbox, "archive_superseded_hook", fence)
+    monkeypatch.setattr(inbox, "_post_envelope", post)
+    monkeypatch.setattr(inbox, "read_local_api_token", lambda: "isolated-test-token")
+    assert (
+        await inbox.drain_hook_inbox_once(FastAPI(), tmp_path, include_fresh=owner != "fresh") == 0
+    )
+    fence.assert_not_called()
+    post.assert_not_awaited()
+    assert path.exists() is (owner != "processed")
