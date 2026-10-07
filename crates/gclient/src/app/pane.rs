@@ -235,6 +235,14 @@ pub struct Pane {
     /// The wait before the next retry; doubles per failure and resets when
     /// an attachment installs.
     pub(super) attach_retry_delay: Duration,
+    /// When a proxy pane under auto delivery tries direct again (#23714):
+    /// armed on its first eligible tick, cleared when a direct source installs.
+    pub(super) promote_at: Option<Instant>,
+    /// The wait before the next direct try; doubles per failure. Kept apart
+    /// from `attach_retry_delay`, which every installed attachment resets.
+    pub(super) promote_delay: Duration,
+    /// A direct try is in flight beside the live proxy.
+    pub(super) promoting: bool,
     pub(super) tombstones: HashSet<String>,
     pub(super) status_message: Option<String>,
     /// The direct writer refused the latest `SetViewport`; the resize
@@ -314,6 +322,9 @@ impl Pane {
             attach_retry_at: None,
             reattach_after_indeterminate: false,
             attach_retry_delay: ATTACH_RETRY_BASE,
+            promote_at: None,
+            promote_delay: ATTACH_RETRY_BASE,
+            promoting: false,
             tombstones: HashSet::new(),
             status_message: None,
             viewport_deferred: false,

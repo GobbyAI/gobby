@@ -40,6 +40,7 @@ class WakeReplayCoordinator:
         self._run_db = run_db
         self._owner_loop: asyncio.AbstractEventLoop | None = None
         self._ready = False
+        self._closed = False
         self._pending_recipients: set[str] = set()
         self._state_lock = threading.Lock()
         self._tasks: dict[str, asyncio.Task[dict[str, Any] | None]] = {}
@@ -53,6 +54,8 @@ class WakeReplayCoordinator:
         if transition.status != "paused":
             return
         with self._state_lock:
+            if self._closed:
+                return
             loop = self._owner_loop
             if not self._ready or loop is None or not loop.is_running() or loop.is_closed():
                 self._pending_recipients.add(transition.session_id)
@@ -75,6 +78,8 @@ class WakeReplayCoordinator:
             raise RuntimeError("Wake replay coordinator is not bound to the owner loop")
         stored = await self._run_db(self._message_manager.get_undelivered_wake_recipients)
         with self._state_lock:
+            if self._closed:
+                return
             self._ready = True
             recipients = set(self._pending_recipients)
             self._pending_recipients.clear()
@@ -95,6 +100,19 @@ class WakeReplayCoordinator:
         task = self._start_task(session_id)
         return await asyncio.shield(task)
 
+    async def close(self, timeout_seconds: float = 2.0) -> None:
+        """Revoke wake admission and settle recipient tasks before storage closes."""
+        with self._state_lock:
+            self._closed = True
+            self._ready = False
+        tasks = tuple(self._tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            _, pending = await asyncio.wait(tasks, timeout=timeout_seconds)
+            if pending:
+                raise TimeoutError(f"{len(pending)} wake replay tasks did not stop")
+
     def _start_task(self, session_id: str) -> asyncio.Task[dict[str, Any] | None]:
         existing = self._tasks.get(session_id)
         if existing is not None and not existing.done():
@@ -108,12 +126,18 @@ class WakeReplayCoordinator:
         return task
 
     async def _run_replay(self, session_id: str) -> dict[str, Any] | None:
+        with self._state_lock:
+            if self._closed:
+                return None
         messages = await self._run_db(
             self._message_manager.get_undelivered_wake_messages,
             session_id,
         )
         if not messages:
             return None
+        with self._state_lock:
+            if self._closed:
+                return None
         priority = (
             "urgent" if any(message.priority == "urgent" for message in messages) else "normal"
         )

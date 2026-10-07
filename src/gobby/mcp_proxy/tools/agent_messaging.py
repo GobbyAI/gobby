@@ -30,13 +30,19 @@ BroadcastFn = Callable[..., Coroutine[Any, Any, None]]
 logger = logging.getLogger(__name__)
 
 
-def get_context_project_id() -> str | None:
-    """Return the current project context UUID when available."""
+def get_context_project_id(session_manager: SessionManager) -> str | None:
+    """Use explicit project context or the caller session's project UUID."""
     from gobby.utils.project_context import get_project_context
 
     ctx = get_project_context()
     project_id = ctx.get("id") if ctx else None
-    return project_id if isinstance(project_id, str) else None
+    if isinstance(project_id, str):
+        return project_id
+    from gobby.utils.session_context import get_current_session_id
+
+    caller_id = get_current_session_id()
+    caller = session_manager.get(caller_id) if caller_id else None
+    return caller.project_id if caller else None
 
 
 def _message_metadata(msg: Any) -> dict[str, Any]:
@@ -89,7 +95,9 @@ def add_messaging_tools(
 
     def _resolve(ref: str) -> str:
         """Resolve session reference to UUID."""
-        return session_manager.resolve_session_reference(ref, get_context_project_id())
+        return session_manager.resolve_session_reference(
+            ref, get_context_project_id(session_manager)
+        )
 
     from gobby.sessions.mailbox import MailboxService
 
@@ -211,7 +219,7 @@ def add_messaging_tools(
 
             from_id = _resolve(from_session)
             if project_id is None and normalized_target in {"agent", "build"}:
-                project_id = get_context_project_id()
+                project_id = get_context_project_id(session_manager)
 
             from_sess = session_manager.get(from_id)
             if normalized_target == "global" and project_id is not None:

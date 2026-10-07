@@ -168,6 +168,8 @@ class _ProcessControl:
     phase: _ProcessPhase = "queued"
     lock: threading.Lock = field(default_factory=threading.Lock)
     started_at: float = field(default_factory=time.monotonic)
+    deadline_at: float = float("inf")
+    timeout_diagnostic: str | None = None
     spawn_started_at: float | None = None
     spawn_finished_at: float | None = None
     kill_started_at: float | None = None
@@ -210,6 +212,20 @@ class _ProcessControl:
         with self.lock:
             return time.monotonic() - self.kill_started_at if self.kill_started_at else 0.0
 
+    def expire(self) -> None:
+        """Enforce the process deadline even while the caller's event loop is blocked."""
+        diagnostic = self.diagnostic(include_cleanup=False)
+        with self.lock:
+            if self.phase == "finished":
+                return
+            if self.timeout_diagnostic is None:
+                self.timeout_diagnostic = diagnostic
+        self.kill()
+
+    def expired_diagnostic(self) -> str | None:
+        with self.lock:
+            return self.timeout_diagnostic
+
     def attach(self, process: _GitProcess) -> None:
         with self.lock:
             self.process = process
@@ -245,6 +261,8 @@ class _ProcessControl:
         return phase
 
     def mark_finished(self) -> None:
+        if time.monotonic() >= self.deadline_at:
+            self.expire()
         with self.lock:
             self.phase = "finished"
             self.process = None
@@ -427,6 +445,9 @@ class DaemonGitService:
         loop = asyncio.get_running_loop()
         completion: asyncio.Future[GitOk | GitFailed] = loop.create_future()
         control = _ProcessControl()
+        control.deadline_at = control.started_at + timeout
+        deadline_timer = threading.Timer(timeout, control.expire)
+        deadline_timer.daemon = True
         worker_thread = threading.Thread(
             target=worker,
             args=(loop, completion, control),
@@ -434,18 +455,26 @@ class DaemonGitService:
             daemon=True,
         )
         try:
+            deadline_timer.start()
             worker_thread.start()
         except RuntimeError as exc:
+            deadline_timer.cancel()
             return GitFailed("failed", argv, None, "", str(exc))
 
         try:
-            return await asyncio.wait_for(asyncio.shield(completion), timeout)
+            remaining = max(0.0, control.deadline_at - time.monotonic())
+            result = await asyncio.wait_for(asyncio.shield(completion), remaining)
+            if control.expired_diagnostic() is not None:
+                raise TimeoutError
+            return result
         except TimeoutError:
-            diagnostic = control.diagnostic(include_cleanup=False)
+            control.expire()
+            diagnostic = control.expired_diagnostic() or control.diagnostic(include_cleanup=False)
             logger.warning(
-                "Git command timed out: cwd=%s timeout_seconds=%.3f %s",
+                "Git command timed out: cwd=%s timeout_seconds=%.3f overrun_seconds=%.3f %s",
                 cwd,
                 timeout,
+                time.monotonic() - control.deadline_at,
                 diagnostic,
             )
             control.kill()
@@ -465,6 +494,8 @@ class DaemonGitService:
             await _await_worker_cleanup(completion)
             completion.cancel()
             raise
+        finally:
+            deadline_timer.cancel()
 
 
 def _run_git_worker(

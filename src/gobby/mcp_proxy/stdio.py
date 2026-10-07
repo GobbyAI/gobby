@@ -14,7 +14,6 @@ import time
 import httpx
 from mcp.server.mcpserver import MCPServer
 
-from gobby.cli.runtime import CliRuntime
 from gobby.config.bootstrap import load_bootstrap
 from gobby.mcp_proxy._call_tool_wrapper import (
     CallToolWrapperInputError,
@@ -111,7 +110,6 @@ __all__ = [
 
 def _proxy_dependencies() -> DaemonProxyDependencies:
     return DaemonProxyDependencies(
-        runtime_factory=lambda: CliRuntime(None),
         check_daemon_http_health=check_daemon_http_health,
         read_project_id=_read_project_id,
         http_client_factory=httpx.AsyncClient,

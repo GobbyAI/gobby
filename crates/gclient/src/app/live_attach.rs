@@ -8,6 +8,8 @@ use std::pin::Pin;
 use super::*;
 use crate::frame_source::{ProxyFrameSource, UnixSocketFrameSource};
 
+mod promotion;
+
 enum ProxyAttachOutcome {
     Attached(Value, String, ProxyFrameSource),
     Refused { code: String, reason: String },
@@ -42,6 +44,12 @@ enum RecoveryStep {
     /// its host stream stays (#23419).
     Reregistered {
         outcome: Result<(Value, String), FrameError>,
+    },
+    /// A proxy pane's direct try beside its live proxy attachment (#23714).
+    Promoted {
+        terminal_id: String,
+        proxy_attachment: String,
+        outcome: Result<DirectAttach, FrameError>,
     },
 }
 
@@ -124,7 +132,10 @@ impl Workspace<LiveDaemon> {
                 self.install_direct_source(pane_id, &reply, attachment, &locator, source);
             }
             Err(FrameError::Finalized { .. }) => self.retire_pane_attachment(pane_id),
-            Err(_) => return false,
+            Err(error) => {
+                promotion::log_direct_fallback(&self.panes[&pane_id], &error.to_string());
+                return false;
+            }
         }
         self.attached_generation.insert(pane_id, generation);
         true
@@ -145,6 +156,8 @@ impl Workspace<LiveDaemon> {
         }
         pane.expected_host_epoch = locator.frame_host_epoch.clone();
         pane.remember_host_locator(locator);
+        pane.promote_at = None;
+        pane.promote_delay = super::attach::ATTACH_RETRY_BASE;
         let lease_generation = reply
             .get("lease_generation")
             .and_then(Value::as_u64)
@@ -206,7 +219,7 @@ impl Workspace<LiveDaemon> {
             | FrameError::Io(_)
             | FrameError::Protocol(_)
             | FrameError::Daemon(_)
-            | FrameError::AttachRefused { .. } => self.begin_proxy_recovery(pane_id),
+            | FrameError::AttachRefused { .. } => self.begin_proxy_recovery(pane_id, error),
             // A refused control request never reaches a frame source; nothing
             // to recover. A full host-input queue is the same: the stream is
             // healthy and one keystroke was dropped, which `send_host_input`
@@ -229,22 +242,28 @@ impl Workspace<LiveDaemon> {
     fn begin_proxy_recovery(
         &mut self,
         pane_id: PaneId,
+        error: &FrameError,
     ) -> Result<Option<RecoveryFuture>, FrameError> {
         if !self.panes.contains_key(&pane_id) {
             return Err(FrameError::Protocol("unknown pane".into()));
         }
-        Ok(self.begin_daemon_recovery(pane_id))
+        Ok(self.begin_daemon_recovery(pane_id, &error.to_string()))
     }
 
-    /// The daemon re-attach path, with no error attached: a failed or
-    /// cancelled host-local reconnect lands here unchanged (#23076).
-    pub(super) fn begin_daemon_recovery(&mut self, pane_id: PaneId) -> Option<RecoveryFuture> {
+    /// The daemon re-attach path: a failed or cancelled host-local reconnect
+    /// lands here unchanged (#23076). `reason` is why the source was given up.
+    pub(super) fn begin_daemon_recovery(
+        &mut self,
+        pane_id: PaneId,
+        reason: &str,
+    ) -> Option<RecoveryFuture> {
         self.host_recovering.remove(&pane_id);
         self.host_recovered.remove(&pane_id);
         let pane = self.panes.get_mut(&pane_id)?;
         if pane.fallback_in_flight {
             return None;
         }
+        promotion::log_direct_fallback(pane, reason);
         pane.fallback_in_flight = true;
         let terminal_id = pane.terminal_id.clone();
         let detaching = pane
@@ -312,8 +331,10 @@ impl Workspace<LiveDaemon> {
             step,
         } = recovery;
         // A closed pane has nothing to recover, and after a reconnect the
-        // reconcile re-attaches every pane.
-        if !self.panes.contains_key(&pane_id) || self.daemon.generation() != generation {
+        // reconcile re-attaches every pane. A promotion releases what it won.
+        if !matches!(step, RecoveryStep::Promoted { .. })
+            && (!self.panes.contains_key(&pane_id) || self.daemon.generation() != generation)
+        {
             self.clear_fallback_flight(pane_id);
             return Ok(None);
         }
@@ -364,10 +385,13 @@ impl Workspace<LiveDaemon> {
             }
             RecoveryStep::Reregistered { outcome } => {
                 self.clear_fallback_flight(pane_id);
-                let Ok((reply, attachment)) = outcome else {
+                let (reply, attachment) = match outcome {
+                    Ok(attached) => attached,
                     // No fresh attachment to adopt: the full daemon re-attach
                     // replaces the host stream as well.
-                    return Ok(self.begin_daemon_recovery(pane_id));
+                    Err(error) => {
+                        return Ok(self.begin_daemon_recovery(pane_id, &error.to_string()))
+                    }
                 };
                 self.host_recovered.remove(&pane_id);
                 let lease_generation = reply
@@ -388,6 +412,20 @@ impl Workspace<LiveDaemon> {
                 if self.focus == Some(pane_id) {
                     self.request_control(pane_id, false);
                 }
+                Ok(None)
+            }
+            RecoveryStep::Promoted {
+                terminal_id,
+                proxy_attachment,
+                outcome,
+            } => {
+                self.apply_promotion(
+                    pane_id,
+                    generation,
+                    &terminal_id,
+                    &proxy_attachment,
+                    outcome,
+                );
                 Ok(None)
             }
         }
@@ -658,6 +696,7 @@ impl Workspace<LiveDaemon> {
     /// Hands the panes of recoveries a reconnect dropped to its reconcile.
     pub(super) fn abandon_frame_recoveries(&mut self) {
         for (pane_id, pane) in self.panes.iter_mut() {
+            pane.promoting = false;
             // A host-local reconnect is not a daemon recovery: a daemon
             // generation change must not clear its flight flag or detach the
             // attachment it is keeping (#23076).

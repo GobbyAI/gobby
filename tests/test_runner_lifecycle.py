@@ -216,19 +216,36 @@ class TestGobbyRunnerRun:
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
             runner = _runner_with_static_runtime()
+            runner.http_server.services.shutdown_in_progress = False
+            runner.http_server.services.startup_ready = False
+            runner.http_server.services.restart_recovery_ready = False
+            runner.http_server._hook_manager = None
 
             list_servers = mock_mcp_manager.mcp_db_manager.list_all_servers
             credential_manager = cast(MagicMock, runner.managed_credential_manager)
 
             async def stop_after_background_passes() -> None:
                 # The OAuth keep-alive and credential reconcile each run one pass first.
-                await wait_for_async_condition(
-                    lambda: list_servers.called and credential_manager.reconcile.called,
-                    description="startup background passes",
-                )
-                runner._shutdown_requested = True
+                try:
+                    async with asyncio.timeout(20):
+                        assert runner._subsystem_init_task is not None
+                        await asyncio.shield(runner._subsystem_init_task)
+                        assert runner._startup_recovery_task is not None
+                        await asyncio.shield(runner._startup_recovery_task)
+                        await wait_for_async_condition(
+                            lambda: list_servers.called and credential_manager.reconcile.called,
+                            description="startup background passes",
+                        )
+                finally:
+                    runner._shutdown_requested = True
 
-            mock_mcp_manager.connect_all.side_effect = stop_after_background_passes
+            stop_watcher: asyncio.Task[None] | None = None
+
+            async def connect_and_watch_background_passes() -> None:
+                nonlocal stop_watcher
+                stop_watcher = asyncio.create_task(stop_after_background_passes())
+
+            mock_mcp_manager.connect_all.side_effect = connect_and_watch_background_passes
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
@@ -240,6 +257,8 @@ class TestGobbyRunnerRun:
                     caplog.at_level(logging.ERROR),
                 ):
                     await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
+                assert stop_watcher is not None
+                await stop_watcher
 
         errors = [
             record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR
@@ -826,6 +845,7 @@ class TestInitSubsystems:
             ),
         ):
             await runner_lifecycle._init_subsystems(cast(GobbyRunner, runner), AsyncMock())
+            await runner._startup_recovery_task
 
         mock_ready.assert_awaited_once_with(
             model="nomic-embed-text",
@@ -895,6 +915,7 @@ class TestInitSubsystems:
 
         with patch("gobby.cli.services.is_qdrant_healthy", new=AsyncMock(return_value=False)):
             await runner_lifecycle._init_subsystems(cast(GobbyRunner, runner), AsyncMock())
+            await runner._startup_recovery_task
 
         assert runner.vector_store is vector_store
         assert runner.lifecycle_manager.start.await_count == 1
@@ -1085,27 +1106,31 @@ class TestInitSubsystems:
             await runner_lifecycle_subsystems.init_subsystems(
                 cast(GobbyRunner, runner), AsyncMock(), tracker
             )
+            if not shutdown_during_prewarm:
+                await runner._startup_recovery_task
 
         expected_events = [
-            "communications-start",
-            "lifecycle-start",
-            "cron-start",
             "code-index",
-            "recover-pipelines",
             "websocket",
             "ui",
-            "automation-start",
             "prewarm",
         ]
         if not shutdown_during_prewarm:
-            expected_events.extend(["tracker-finish", "ready:True"])
+            expected_events.extend(
+                [
+                    "tracker-finish",
+                    "ready:True",
+                    "communications-start",
+                    "lifecycle-start",
+                    "cron-start",
+                    "recover-pipelines",
+                    "automation-start",
+                ]
+            )
         assert events == expected_events
         prewarm.assert_awaited_once_with()
         runner.message_processor.start.assert_not_awaited()
-        expected_errors = [
-            {"subsystem": "Session lifecycle manager", "error": "lifecycle failed"},
-            {"subsystem": "Cron scheduler", "error": "cron failed"},
-        ]
+        expected_errors = []
         if prewarm_failure:
             expected_errors.append(
                 {
@@ -1114,11 +1139,19 @@ class TestInitSubsystems:
                 }
             )
             assert "Transcript evidence pool prewarm failed during startup" in caplog.text
+        if not shutdown_during_prewarm:
+            expected_errors.extend(
+                [
+                    {"subsystem": "Session lifecycle manager", "error": "lifecycle failed"},
+                    {"subsystem": "Cron scheduler", "error": "cron failed"},
+                ]
+            )
         assert tracker.errors == expected_errors
-        assert tracker.steps_completed == [
-            "Communications manager",
-            "System automation loop",
-        ]
+        assert tracker.steps_completed == (
+            ["Communications manager", "System automation loop"]
+            if not shutdown_during_prewarm
+            else []
+        )
         assert tracker.done is (not shutdown_during_prewarm)
         assert services.startup_ready is (not shutdown_during_prewarm)
 
@@ -1225,7 +1258,7 @@ class TestShutdownDaemonServices:
             agent_runner=None,
         )
 
-        async def begin_shutdown_during_pipeline_recovery(
+        async def begin_shutdown_during_connection(
             _runner: object,
             _tracker: object,
         ) -> None:
@@ -1237,11 +1270,19 @@ class TestShutdownDaemonServices:
         async_noop = AsyncMock()
 
         with (
-            patch.object(runner_lifecycle_subsystems, "_connect_mcp_servers", async_noop),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_connect_mcp_servers",
+                side_effect=begin_shutdown_during_connection,
+            ),
             patch.object(runner_lifecycle_subsystems, "_check_embedding_service", async_noop),
             patch.object(runner_lifecycle_subsystems, "_cleanup_metrics_on_startup"),
             patch.object(runner_lifecycle_subsystems, "_initialize_vector_store", async_noop),
-            patch.object(runner_lifecycle_subsystems, "_start_core_services", async_noop),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_core_services",
+                async_noop,
+            ),
             patch.object(
                 runner_lifecycle_subsystems,
                 "_start_agent_lifecycle_monitor",
@@ -1252,7 +1293,7 @@ class TestShutdownDaemonServices:
             patch.object(
                 runner_lifecycle_subsystems,
                 "_recover_pipelines",
-                side_effect=begin_shutdown_during_pipeline_recovery,
+                async_noop,
             ),
             patch.object(
                 runner_lifecycle_subsystems,
@@ -4648,7 +4689,7 @@ class TestMainFunctionExtended:
 
 
 @pytest.mark.asyncio
-async def test_startup_barrier_precedes_subscriber_recovery_and_optional_failure() -> None:
+async def test_core_startup_failure_prevents_restart_recovery() -> None:
     from gobby.runner_hook_replay import HookReplayBarrierOutcome
 
     events: list[str] = []
@@ -4715,7 +4756,7 @@ async def test_startup_barrier_precedes_subscriber_recovery_and_optional_failure
             recover_agent_completion_subscribers=recover,
         )
 
-    assert events == ["barrier", "sessions", "classify", "reap", "recover", "connect"]
+    assert events == ["connect"]
 
 
 @pytest.mark.asyncio

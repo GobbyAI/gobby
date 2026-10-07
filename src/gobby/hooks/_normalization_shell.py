@@ -654,10 +654,8 @@ def _strip_shell_wrappers(parts: list[str]) -> list[str]:
     while stripped:
         while stripped and _is_env_assignment(stripped[0]):
             stripped = stripped[1:]
-        if stripped[:1] == ["command"]:
-            stripped = stripped[1:]
-            continue
-        if stripped[:1] == ["env"]:
+        # A wrapper with options stays whole, or an option would read as the command.
+        if stripped[:1] in (["command"], ["env"]) and not "".join(stripped[1:2]).startswith("-"):
             stripped = stripped[1:]
             continue
         # Loop/conditional body keywords prefix the real command after a

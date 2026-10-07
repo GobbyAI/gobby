@@ -36,7 +36,6 @@ def build_spawn_request(
     code_index_api_token: str | None,
     phase_timings_ms: dict[str, float],
     prewarm_pre_commit_store: bool,
-    terminal_backend: Literal["native"],
     droid_mode: Literal["exec", "interactive"],
 ) -> SpawnRequest:
     """Keep request construction separate from allocation and launch scheduling."""
@@ -95,6 +94,5 @@ def build_spawn_request(
         terminal_manager=getattr(runner, "terminal_manager", None),
         terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
         write_coordinator=getattr(runner, "write_coordinator", None),
-        terminal_backend=terminal_backend,
         droid_mode=droid_mode,
     )

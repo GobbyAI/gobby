@@ -7,11 +7,16 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.routing import APIRoute
 
+from gobby.config.app import DaemonConfig
+from gobby.servers.auth_service import _agent_capability_allows
 from gobby.servers.routes.mcp.endpoints import request_context
-from gobby.servers.routes.mcp.endpoints.bridge import report_bridge_ready
+from gobby.servers.routes.mcp.endpoints.bridge import (
+    get_bridge_tool_timeouts,
+    report_bridge_ready,
+)
 from gobby.servers.routes.mcp.tools import create_mcp_router
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -32,7 +37,7 @@ def _server(db: HubDatabase) -> Any:
     return SimpleNamespace(session_manager=SimpleNamespace(db=db), run_db=_run_inline)
 
 
-def test_router_registers_bridge_ready_post() -> None:
+def test_router_registers_bridge_routes() -> None:
     routes = {
         (route.path, method)
         for route in create_mcp_router().routes
@@ -41,6 +46,43 @@ def test_router_registers_bridge_ready_post() -> None:
     }
 
     assert ("/api/mcp/bridge/ready", "POST") in routes
+    assert ("/api/mcp/bridge/tool-timeouts", "GET") in routes
+
+
+@pytest.mark.asyncio
+async def test_bridge_tool_timeouts_serve_the_active_config() -> None:
+    config = DaemonConfig.model_validate(
+        {"mcp_client_proxy": {"tool_timeouts": {"close_task": 600.0}}}
+    )
+
+    result = await get_bridge_tool_timeouts(cast(Any, SimpleNamespace(config=config)))
+
+    assert result == {"success": True, "tool_timeouts": {"close_task": 600.0}}
+
+
+@pytest.mark.asyncio
+async def test_bridge_tool_timeouts_wait_for_daemon_config() -> None:
+    with pytest.raises(HTTPException) as raised:
+        await get_bridge_tool_timeouts(cast(Any, SimpleNamespace(config=None)))
+
+    assert raised.value.status_code == 503
+
+
+def test_agent_tokens_may_read_bridge_tool_timeouts() -> None:
+    """A spawned agent's bridge reads its timeouts with the run-scoped token."""
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/mcp/bridge/tool-timeouts",
+            "headers": [],
+        }
+    )
+
+    entry = _agent_capability_allows(request)
+
+    assert entry is not None
+    assert entry.bind_identity is False
 
 
 @pytest.mark.asyncio

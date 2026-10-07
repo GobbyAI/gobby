@@ -16,7 +16,6 @@ from urllib.parse import quote
 
 import httpx
 
-from gobby.cli.runtime import CliRuntime
 from gobby.mcp_proxy.daemon_control import check_daemon_http_health as _check_daemon_http_health
 from gobby.mcp_proxy.models import ToolProxyErrorCode
 from gobby.mcp_proxy.server_list import compact_mcp_server_list
@@ -58,7 +57,6 @@ class CheckDaemonHealth(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class DaemonProxyDependencies:
-    runtime_factory: Callable[[], CliRuntime]
     check_daemon_http_health: CheckDaemonHealth
     read_project_id: Callable[[], str | None]
     http_client_factory: Callable[[], httpx.AsyncClient]
@@ -99,7 +97,6 @@ def read_project_id() -> str | None:
 
 def default_daemon_proxy_dependencies() -> DaemonProxyDependencies:
     return DaemonProxyDependencies(
-        runtime_factory=lambda: CliRuntime(None),
         check_daemon_http_health=_check_daemon_http_health,
         read_project_id=read_project_id,
         http_client_factory=httpx.AsyncClient,
@@ -136,29 +133,29 @@ class DaemonProxy:
         self._startup_task = startup_task
 
     async def _get_tool_timeouts(self) -> dict[str, float]:
-        """Cache the configured tool-timeout map after the first read attempt."""
+        """Cache the daemon's tool-timeout map after the first successful read."""
         if self._tool_timeouts is not None:
             return self._tool_timeouts
         async with self._tool_timeouts_lock:
             if self._tool_timeouts is not None:
                 return self._tool_timeouts
 
-            def read() -> dict[str, float]:
-                deps = self._deps_factory()
-                runtime = deps.runtime_factory()
-                try:
-                    config = runtime.require_config(apply_migrations=False)
-                    return dict(config.mcp_client_proxy.tool_timeouts)
-                finally:
-                    runtime.close()
-
-            try:
-                self._tool_timeouts = await asyncio.to_thread(read)
-            except Exception as exc:
+            # The daemon serves its active map, so this read imports no storage stack
+            # and opens no hub connection (#23680). It skips the preflight so the
+            # tool call itself still checks daemon health first.
+            result = await self._request(
+                "GET",
+                "/api/mcp/bridge/tool-timeouts",
+                timeout=DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
+            )
+            timeouts = result.get("tool_timeouts")
+            if result.get("success") is not True or not isinstance(timeouts, dict):
                 self._deps_factory().logger.warning(
-                    "Failed to capture MCP tool timeout configuration: %s", exc
+                    "Failed to capture MCP tool timeout configuration: %s",
+                    result.get("error", result),
                 )
                 return {}
+            self._tool_timeouts = {str(name): float(value) for name, value in timeouts.items()}
         return self._tool_timeouts
 
     def _get_client(self) -> httpx.AsyncClient:

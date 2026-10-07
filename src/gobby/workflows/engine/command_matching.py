@@ -55,6 +55,7 @@ from gobby.hooks.provider_launch_guard import (
     _unwrap,
     option_word_count,
 )
+from gobby.hooks.shell_execution import SHELL_WRAPPER_DEPTH, shell_execution
 
 # Commands whose standard input is never interpreted as code. Every other
 # consumer — shells, language interpreters, ``ssh``, ``xargs``, ``eval``,
@@ -96,7 +97,7 @@ def mask_quoted_spans(command: str) -> str:
 
 # Wrapper scripts nest (``bash -c "bash -c '…'"``); resolve them to a bounded
 # depth, matching the substitution-recursion guard used by the shell scanner.
-_WRAPPER_DEPTH = 8
+_WRAPPER_DEPTH = SHELL_WRAPPER_DEPTH
 # Value-taking options for wrapper tools whose executed command follows them.
 # procps watch: only these take a separate operand; -d/-p/-x and the rest are flags.
 _WATCH_VALUE_OPTIONS = frozenset({"-n", "--interval", "-q", "--equexit"})
@@ -314,14 +315,9 @@ def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) ->
             continue
         name = shell_command_name(unwrapped[0])
         if name in _SHELLS:
-            for index, arg in enumerate(unwrapped[1:], 1):
-                if arg.startswith("-") and not arg.startswith("--") and "c" in arg:
-                    # `--` ends the options; the script is the word after it.
-                    script = unwrapped[index + 1 : index + 3]
-                    if script[:1] == ["--"]:
-                        script = script[1:]
-                    scripts.extend(script[:1])
-                    break
+            execution = shell_execution(unwrapped)
+            if execution and execution.command is not None:
+                scripts.append(execution.command)
             continue
         # watch and ssh join every remaining word into the command they run.
         if name == "watch":

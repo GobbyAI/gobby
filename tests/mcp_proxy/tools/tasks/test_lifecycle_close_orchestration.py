@@ -69,6 +69,9 @@ _SECOND_REVIEW_RUN_ID = "00000000-0000-4000-8000-000000002611"
 _REQUIRED_EVIDENCE = "Run the real close adapter and capture its MCP response receipt."
 _OVERSIZED_TRANSCRIPT_BYTES = 10 * 1024 * 1024
 _SUBMIT_DEADLINE_SECONDS = 10.0
+# A hang guard, not a latency claim: the child's cold start is the MCP SDK import, about
+# 1.3s of CPU that a loaded agent shell stretched to 21s of wall time (#23680).
+_STDIO_COLD_START_SECONDS = 60.0
 _STDIO_DEFAULT_PREFLIGHT_PATH = "/api/health"
 
 
@@ -1472,6 +1475,10 @@ async def test_submit_close_review_claims_before_heavy_work(
         assert abandoned.error == delivery[1]
         initial_status = "error"
     transcript_reader = TranscriptReader(session_manager)
+    # Index the oversized transcript before the timed submit. The build is this test's
+    # own CPU work, which load stretched past the submit deadline (#23680); the
+    # ordering checks in evaluate_close do not depend on it being cold.
+    assert await transcript_reader.get_messages(caller.id, limit=1)
     default_preflight_observations: list[tuple[str, TaskCloseReviewStatus]] = []
     observed_finalizing: list[str] = []
 
@@ -1522,7 +1529,9 @@ async def test_submit_close_review_claims_before_heavy_work(
         mcp_manager=None,
         session_manager=session_manager,
         services=SimpleNamespace(database=temp_db),
-        config=SimpleNamespace(mcp_client_proxy=SimpleNamespace(tool_timeout=10.0)),
+        config=SimpleNamespace(
+            mcp_client_proxy=SimpleNamespace(tool_timeout=10.0, tool_timeouts={})
+        ),
         run_db=run_db,
     )
     async with _live_mcp_http_server(
@@ -1568,7 +1577,9 @@ async def test_submit_close_review_claims_before_heavy_work(
         os.close(slave_fd)
         try:
             _write_pty_json(master_fd, _initialize_request())
-            initialize = await asyncio.to_thread(_read_pty_response, master_fd, 1, 20.0)
+            initialize = await asyncio.to_thread(
+                _read_pty_response, master_fd, 1, _STDIO_COLD_START_SECONDS
+            )
             assert "result" in initialize
             _write_pty_json(
                 master_fd,
@@ -2533,6 +2544,9 @@ async def _live_mcp_http_server(
         lifespan="off",
         log_config=None,
         ws="none",
+        # Cancel a request still running at exit inside the 5s stop wait below, so a
+        # failed body reports its own error instead of a shutdown TimeoutError (#23680).
+        timeout_graceful_shutdown=1,
     )
     http = uvicorn.Server(config)
     task = asyncio.create_task(http.serve())
