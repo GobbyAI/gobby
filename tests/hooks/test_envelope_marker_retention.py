@@ -10,9 +10,11 @@ frames into the dominant hot stacks in four separate loop-stall reports.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 import time
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 import pytest
@@ -133,6 +135,58 @@ def test_a_pass_that_reads_the_whole_directory_is_not_reported_as_truncated(
 
     assert result.deleted == 4
     assert result.truncated is False
+
+
+def test_fresh_markers_do_not_count_against_the_pass_bound(tmp_path: Path) -> None:
+    """At ~9.3k markers an hour, the 24h window alone outgrows the bound (#23359).
+
+    When fresh markers counted, every pass re-read the same fresh head of the
+    directory and the expired backlog behind it never drained.
+    """
+    processed_dir = tmp_path / "processed"
+    fresh = [_marker(processed_dir, f"fresh-{index}", age_seconds=60.0) for index in range(6)]
+    for index in range(3):
+        _marker(processed_dir, f"stale-{index}", age_seconds=2 * _DAY)
+
+    # Three stale markers and the lock directory need work; the fresh ones do not.
+    result = prune_processed_envelope_markers(processed_dir, max_entries=4)
+
+    assert result.examined == 10
+    assert result.deleted == 3
+    assert result.truncated is False
+    assert all(path.exists() for path in fresh)
+
+
+def test_a_pass_locks_each_stale_shard_once_and_never_for_a_fresh_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One lock per examined entry was the hourly 1,128-sample GIL spike (#23359)."""
+    processed_dir = tmp_path / "processed"
+    fresh = [_marker(processed_dir, f"fresh-{index:02d}", age_seconds=60.0) for index in range(4)]
+    stale = [
+        _marker(processed_dir, f"stale-{index:02d}", age_seconds=2 * _DAY) for index in range(40)
+    ]
+    locked: list[Path] = []
+    real_lock = envelope_dedupe.exclusive_file_lock
+
+    def recording_lock(
+        path: Path, *, timeout_seconds: float | None = None
+    ) -> AbstractContextManager[None]:
+        locked.append(path)
+        return real_lock(path, timeout_seconds=timeout_seconds)
+
+    monkeypatch.setattr(envelope_dedupe, "exclusive_file_lock", recording_lock)
+
+    result = prune_processed_envelope_markers(processed_dir)
+
+    stale_shards = {
+        processed_dir / ".locks" / hashlib.sha256(path.name.encode("utf-8")).hexdigest()[:2]
+        for path in stale
+    }
+    assert sorted(locked) == sorted(stale_shards)
+    assert result.deleted == 40
+    assert not any(path.exists() for path in stale)
+    assert all(path.exists() for path in fresh)
 
 
 def test_a_missing_marker_directory_is_not_an_error(tmp_path: Path) -> None:

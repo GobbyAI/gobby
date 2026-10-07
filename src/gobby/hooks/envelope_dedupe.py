@@ -38,12 +38,14 @@ _ENVELOPE_FILENAME_RE: Final = re.compile(r"^[nc]-(?P<timestamp_ms>\d+)-.+$")
 # inside the prune, and the directory settles at roughly one day of traffic.
 PROCESSED_MARKER_RETENTION_SECONDS: Final = 24 * 60 * 60.0
 
-# One pass reads at most this many directory entries. Without a bound the
-# first pass after this landed would have walked 1.7M entries -- a 172-second
-# scan -- in one go; with it the backlog drains over successive passes while
-# each pass stays short. Steady state is ~27k entries, so an ordinary pass
-# sees the whole directory and the bound never binds.
+# One pass works on at most this many directory entries; a fresh marker costs
+# one stat and is not counted. Without a bound the first pass after this
+# landed would have walked 1.7M entries -- a 172-second scan -- in one go; with
+# it the backlog drains over successive passes while each pass stays short.
 PROCESSED_MARKER_PRUNE_MAX_ENTRIES: Final = 100_000
+# Marker writers block on a shard lock the prune holds, so one hold deletes at
+# most this many markers (a few milliseconds of unlinks).
+_PRUNE_ENTRIES_PER_LOCK_HOLD: Final = 64
 
 STOP_REPLAY_EPOCH_FILENAME: Final = ".stop_replay_epoch"
 _STOP_REPLAY_HOOK_TYPES: Final = frozenset(
@@ -524,11 +526,15 @@ def _owner_process_is_live(record: Mapping[str, Any]) -> bool:
 
 
 def _marker_lock(marker: Path) -> AbstractContextManager[None]:
+    return exclusive_file_lock(_marker_lock_target(marker))
+
+
+def _marker_lock_target(marker: Path) -> Path:
     # Stable lock inodes survive marker replacement/removal. A separate directory
     # keeps pruning away from them; 256 shards bound disk usage without one
     # global lock serializing unrelated envelopes.
     shard = hashlib.sha256(marker.name.encode("utf-8")).hexdigest()[:2]
-    return exclusive_file_lock(marker.parent / ".locks" / shard)
+    return marker.parent / ".locks" / shard
 
 
 def _cas_mutate_processing_marker(
@@ -603,47 +609,77 @@ def prune_directory_by_age(
     cutoff: float,
     max_entries: int,
     matches: Callable[[str], bool] | None = None,
-    entry_lock: Callable[[Path], AbstractContextManager[None]] | None = None,
+    entry_lock_target: Callable[[Path], Path] | None = None,
 ) -> DirectoryPruneResult:
     """Delete files older than the cutoff, bounded to one pass.
 
     Blocking: the caller must keep this off the event loop thread. `matches`
-    selects entries by name and defaults to every entry; the bound counts every
-    entry read, because reading is the cost the bound exists to limit.
+    selects entries by name and defaults to every entry. A selected regular
+    file newer than the cutoff costs one stat and stays outside the bound;
+    every other entry read counts toward it. Counting fresh files let a
+    retention window holding more live files than the bound hide the expired
+    backlog behind them on every pass (#23359).
+
+    `entry_lock_target` names the lock that guards an entry. Expired entries
+    are grouped by it and each lock is taken once per pass, with every entry's
+    age checked again under the lock; one lock per entry read was the cost of
+    the pass (#23359).
 
     Entries are examined in filesystem directory order. Deleted entries leave
-    the next pass a smaller backlog; unpruned files and directories still count
-    toward the bound.
+    the next pass a smaller backlog.
     """
     examined = 0
-    deleted = 0
+    counted = 0
     truncated = False
+    expired: dict[Path | None, list[str]] = {}
     try:
         with os.scandir(target) as entries:
             for entry in entries:
-                if examined >= max_entries:
-                    truncated = True
-                    break
+                selected = matches is None or matches(entry.name)
+                modified = _regular_file_mtime(entry) if selected else None
+                stale = modified is not None and modified < cutoff
+                if modified is None or stale:
+                    if counted >= max_entries:
+                        truncated = True
+                        break
+                    counted += 1
                 examined += 1
-                if matches is not None and not matches(entry.name):
-                    continue
-                try:
-                    if not entry.is_file(follow_symlinks=False):
-                        continue
-                    guard = (
-                        entry_lock(Path(entry.path)) if entry_lock is not None else nullcontext()
-                    )
-                    with guard:
-                        if _prune_entry(entry, cutoff=cutoff):
-                            deleted += 1
-                except OSError:
-                    # Lock acquisition can fail on an unreadable entry too.
-                    continue
+                if stale:
+                    path = Path(entry.path)
+                    lock = entry_lock_target(path) if entry_lock_target is not None else None
+                    expired.setdefault(lock, []).append(entry.path)
     except OSError:
         # A missing or unreadable directory is not an error worth losing the
         # maintenance loop over; the next pass tries again.
-        return DirectoryPruneResult(examined=examined, deleted=deleted)
-    return DirectoryPruneResult(examined=examined, deleted=deleted, truncated=truncated)
+        return DirectoryPruneResult(examined=examined, deleted=_delete_expired(expired, cutoff))
+    return DirectoryPruneResult(
+        examined=examined, deleted=_delete_expired(expired, cutoff), truncated=truncated
+    )
+
+
+def _regular_file_mtime(entry: os.DirEntry[str]) -> float | None:
+    """The entry's mtime when it is a regular file, else None."""
+    try:
+        metadata = entry.stat(follow_symlinks=False)
+    except OSError:
+        return None
+    return metadata.st_mtime if stat.S_ISREG(metadata.st_mode) else None
+
+
+def _delete_expired(expired: Mapping[Path | None, list[str]], cutoff: float) -> int:
+    """Delete each lock group's expired files in batches under its lock."""
+    deleted = 0
+    for lock, paths in expired.items():
+        # Marker writers wait on this lock, so one hold covers a bounded batch.
+        for start in range(0, len(paths), _PRUNE_ENTRIES_PER_LOCK_HOLD):
+            batch = paths[start : start + _PRUNE_ENTRIES_PER_LOCK_HOLD]
+            try:
+                with exclusive_file_lock(lock) if lock is not None else nullcontext():
+                    deleted += sum(_prune_entry(path, cutoff=cutoff) for path in batch)
+            except OSError:
+                # An unreadable lock skips its group; the other groups still run.
+                break
+    return deleted
 
 
 def prune_processed_envelope_markers(
@@ -665,19 +701,22 @@ def prune_processed_envelope_markers(
     target = processed_dir if processed_dir is not None else get_processed_envelope_dir()
     cutoff = (now if now is not None else time.time()) - retention_seconds
     return prune_directory_by_age(
-        target, cutoff=cutoff, max_entries=max_entries, entry_lock=_marker_lock
+        target,
+        cutoff=cutoff,
+        max_entries=max_entries,
+        entry_lock_target=_marker_lock_target,
     )
 
 
-def _prune_entry(entry: os.DirEntry[str], *, cutoff: float) -> bool:
-    """Delete one directory entry when it is a file older than the cutoff."""
+def _prune_entry(path: str, *, cutoff: float) -> bool:
+    """Delete one path when it is still a regular file older than the cutoff."""
     try:
-        metadata = os.stat(entry.path, follow_symlinks=False)
+        metadata = os.stat(path, follow_symlinks=False)
         if not stat.S_ISREG(metadata.st_mode):
             return False
         if metadata.st_mtime >= cutoff:
             return False
-        os.unlink(entry.path)
+        os.unlink(path)
     except FileNotFoundError:
         # Another pass or a concurrent writer got there first.
         return False
