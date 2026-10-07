@@ -66,11 +66,11 @@ async def test_stdio_daemon_config_boundary(
 ) -> None:
     if runtime_url:
         monkeypatch.setenv("GOBBY_DAEMON_URL", runtime_url)
-    start_calls: list[tuple[int, int]] = []
+    start_calls: list[str] = []
     health_calls: list[tuple[int, float, str | None]] = []
 
-    async def start_daemon(port: int, websocket_port: int) -> dict[str, object]:
-        start_calls.append((port, websocket_port))
+    async def start_daemon() -> dict[str, object]:
+        start_calls.append("start")
         return {"success": True}
 
     async def check_health(
@@ -98,7 +98,7 @@ async def test_stdio_daemon_config_boundary(
 
     await ensure_stdio_daemon_running(deps=deps)
 
-    assert start_calls == ([(expected_port, 61032)] if expected_start else [])
+    assert start_calls == (["start"] if expected_start else [])
     assert health_calls == [
         (
             expected_port,

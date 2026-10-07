@@ -39,7 +39,7 @@ class CheckDaemonHealth(Protocol):
 
 
 class StartDaemonProcess(Protocol):
-    def __call__(self, port: int, websocket_port: int) -> Awaitable[dict[str, Any]]: ...
+    def __call__(self) -> Awaitable[dict[str, Any]]: ...
 
 
 class CreateStdioMcpServer(Protocol):
@@ -137,7 +137,7 @@ async def ensure_daemon_running(
         )
         return
 
-    result = await effective_deps.start_daemon_process(port, ws_port)
+    result = await effective_deps.start_daemon_process()
     if not result.get("success"):
         effective_deps.logger.error(
             "Failed to start daemon: %s (port=%s, ws_port=%s)",

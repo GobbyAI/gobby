@@ -99,6 +99,7 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("POST", "/api/mcp/tools/recommend", True),
     _AgentRoute("POST", "/api/mcp/tools/search", True),
     _AgentRoute("POST", "/api/mcp/*/tools/*", True),
+    _AgentRoute("POST", "/api/mcp/bridge/ready", True),
     _AgentRoute("GET", "/api/mcp/bridge/tool-timeouts", False),
     # Session-scoped variables (stdio proxy get/set_variable).
     _AgentRoute("POST", "/api/sessions/*/variables/get", True),

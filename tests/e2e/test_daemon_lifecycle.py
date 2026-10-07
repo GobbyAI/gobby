@@ -406,6 +406,54 @@ def _stamped_bin_dir(source_dir: Path, gobby_home: Path) -> Path:
     return bin_dir
 
 
+def _real_cli_env(config_path: Path) -> dict[str, str]:
+    """The environment in which the real `gobby start` serves this isolated home."""
+    gobby_home = config_path.parent
+    env = _daemon_env(config_path)
+    # The real CLI may stop this isolated home's pid-file runner and nothing else.
+    env["GOBBY_E2E_ISOLATED_HOME"] = str(gobby_home)
+    env["GOBBY_ALLOW_WORKTREE_DAEMON"] = "1"
+    # Start proves the installed set first, so install the test gdaemon as a
+    # stamped one-member set, the shape promotion leaves behind.
+    env[NATIVE_BIN_DIR_ENV] = str(_stamped_bin_dir(Path(env[NATIVE_BIN_DIR_ENV]), gobby_home))
+    # `gobby start` requires the managed SRT and Impeccable installs under its home.
+    managed_tools = Path.home() / ".gobby" / "tools"
+    if not managed_tools.is_dir():
+        pytest.skip("gobby start needs the managed SRT and Impeccable installs")
+    shutil.copytree(managed_tools, gobby_home / "tools", symlinks=True)
+    # Impeccable's launcher embeds its home, so activate the copy for this one.
+    impeccable = gobby_home / "tools" / "impeccable" / IMPECCABLE_RELEASE.version
+    _publish_launcher(gobby_home, impeccable)
+    _publish_stamp(gobby_home)
+    return env
+
+
+# The stdio bridge's auto-start as `gobby mcp-server` runs it. The launch is
+# recorded, then served by the same CLI with managed services faked (argv[1]).
+_BRIDGE_AUTO_START = """
+import asyncio
+import logging
+import sys
+
+from gobby.mcp_proxy import daemon_control
+from gobby.mcp_proxy.stdio_daemon import ensure_daemon_running
+
+logging.basicConfig(level=logging.INFO)
+spawn = asyncio.create_subprocess_exec
+launched = []
+
+
+async def cli_without_managed_services(*argv, **kwargs):
+    launched.append(list(argv))
+    return await spawn(sys.executable, "-c", sys.argv[1], *argv[3:], **kwargs)
+
+
+daemon_control.asyncio.create_subprocess_exec = cli_without_managed_services
+asyncio.run(ensure_daemon_running())
+assert launched == [[sys.executable, "-m", "gobby.cli", "start"]], launched
+"""
+
+
 def _spawn_runner(e2e_project_dir: Path, config_path: Path) -> subprocess.Popen[bytes]:
     gobby_home = config_path.parent
     env = _daemon_env(config_path)
@@ -479,22 +527,7 @@ class TestFrontDoor:
         config_path, http_port, ws_port = e2e_config
         gobby_home = config_path.parent
         pid_file = gobby_home / "gobby.pid"
-        env = _daemon_env(config_path)
-        # The real CLI may stop this isolated home's pid-file runner and nothing else.
-        env["GOBBY_E2E_ISOLATED_HOME"] = str(gobby_home)
-        env["GOBBY_ALLOW_WORKTREE_DAEMON"] = "1"
-        # Restart proves the installed set first, so install the test gdaemon as a
-        # stamped one-member set, the shape promotion leaves behind.
-        env[NATIVE_BIN_DIR_ENV] = str(_stamped_bin_dir(Path(env[NATIVE_BIN_DIR_ENV]), gobby_home))
-        # `gobby start` requires the managed SRT and Impeccable installs under its home.
-        managed_tools = Path.home() / ".gobby" / "tools"
-        if not managed_tools.is_dir():
-            pytest.skip("gobby start needs the managed SRT and Impeccable installs")
-        shutil.copytree(managed_tools, gobby_home / "tools", symlinks=True)
-        # Impeccable's launcher embeds its home, so activate the copy for this one.
-        impeccable = gobby_home / "tools" / "impeccable" / IMPECCABLE_RELEASE.version
-        _publish_launcher(gobby_home, impeccable)
-        _publish_stamp(gobby_home)
+        env = _real_cli_env(config_path)
 
         def gobby(*args: str) -> subprocess.CompletedProcess[str]:
             return subprocess.run(
@@ -575,6 +608,38 @@ class TestFrontDoor:
                     process.kill()
             if child is not None and not _gone(child):
                 child.kill()
+
+
+class TestBridgeAutoStart:
+    """The stdio bridge starts a stopped daemon through `gobby start`."""
+
+    def test_bridge_starts_a_stopped_daemon(
+        self, e2e_project_dir: Path, e2e_config: tuple[Path, int, int]
+    ) -> None:
+        config_path, http_port, _ws_port = e2e_config
+        pid_file = config_path.parent / "gobby.pid"
+        env = _real_cli_env(config_path)
+        # A managed run never auto-starts, and the bridge dials the bootstrap port.
+        env.pop("GOBBY_AGENT_RUN_ID", None)
+        env.pop("GOBBY_DAEMON_URL", None)
+        assert daemon_health_unavailable(http_port)
+
+        try:
+            bridge = subprocess.run(
+                [sys.executable, "-c", _BRIDGE_AUTO_START, _CLI_WITHOUT_MANAGED_SERVICES],
+                env=env,
+                cwd=str(e2e_project_dir),
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            output = bridge.stdout + bridge.stderr
+            assert bridge.returncode == 0, output
+            health = httpx.get(f"http://localhost:{http_port}/api/health")
+            assert health.status_code == 200, output
+        finally:
+            if pid_file.exists():
+                terminate_process_tree(int(pid_file.read_text().strip()))
 
 
 def _is_terminal_host(process: psutil.Process) -> bool:

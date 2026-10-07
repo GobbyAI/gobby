@@ -137,6 +137,46 @@ def test_targeted_edit_detects_999_to_1000_crossing(tmp_path: Path) -> None:
     assert result == ["src/app.py"]
 
 
+@pytest.mark.parametrize(
+    ("expansion", "expected"),
+    [("MARK\nx\ny", ["src/app.py"]), ("MARK\nx", [])],
+)
+def test_multiedit_edits_project_sequentially(
+    tmp_path: Path, expansion: str, expected: list[str]
+) -> None:
+    """Each edit applies to the text the previous one produced, honoring replace_all."""
+    path = tmp_path / "src" / "app.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "\n".join(["slot"] * 5 + [f"line {index}" for index in range(985)]), encoding="utf-8"
+    )
+
+    result = projected_monolith_paths(
+        {
+            "file_path": "src/app.py",
+            "edits": [
+                {"old_string": "slot", "new_string": "MARK", "replace_all": True},
+                {"old_string": "MARK", "new_string": expansion, "replace_all": True},
+            ],
+        },
+        tmp_path,
+    )
+
+    assert result == expected
+
+
+def test_notebook_targets_are_not_guarded(tmp_path: Path) -> None:
+    _write_lines(tmp_path, "src/analysis.ipynb", 1_000)
+
+    result = projected_monolith_paths(
+        {"notebook_path": "src/analysis.ipynb", "new_source": _lines(1_000)},
+        tmp_path,
+        {"canonical_file_paths": ["src/analysis.ipynb"]},
+    )
+
+    assert result == []
+
+
 def test_existing_thousand_line_file_triggers_even_when_write_shrinks_it(
     tmp_path: Path,
 ) -> None:
