@@ -351,7 +351,11 @@ def _live_native_items(
         response = client.get(f"/api/agents/runs/{run_id}")
         assert response.status_code == 200, response.text
         run = response.json()["run"]
-        assert run["status"] not in {"error", "timeout", "cancelled", "success"}, run
+        assert run["status"] not in {"error", "timeout", "cancelled", "success"}, (
+            f"run={run_id}; status={run['status']}; "
+            f"error={str(run.get('error') or '')[:2000]}; "
+            f"result={str(run.get('result') or '')[:2000]}"
+        )
         terminal_id = run.get("terminal_id")
         if not isinstance(terminal_id, str):
             return None
@@ -412,7 +416,7 @@ def test_native_readiness_reports_failed_run() -> None:
     with httpx.Client(
         base_url="http://stack.test", transport=httpx.MockTransport(respond)
     ) as client:
-        with pytest.raises(AssertionError, match="spawn refused"):
+        with pytest.raises(AssertionError, match="first.*error.*spawn refused"):
             _live_native_items(client, ("first", "second"))
 
 
@@ -600,14 +604,52 @@ async def test_terminal_client_stack_end_to_end(
 
     run_ids = (direct_spawn["run_id"], native_spawn["run_id"])
     assert all(isinstance(run_id, str) for run_id in run_ids), (direct_spawn, native_spawn)
+
+    def write_readiness_evidence(frames: list[dict[str, Any]]) -> Path:
+        runs: list[dict[str, Any]] = []
+        for run_id in run_ids:
+            try:
+                response = client.get(f"/api/agents/runs/{run_id}")
+                response.raise_for_status()
+                run = response.json()["run"]
+                runs.append(
+                    {
+                        "run_id": run_id,
+                        **{
+                            key: str(run.get(key) or "")[:2000]
+                            for key in ("status", "error", "result", "terminal_id", "updated_at")
+                        },
+                    }
+                )
+            except (httpx.HTTPError, ValueError, KeyError) as exc:
+                runs.append({"run_id": run_id, "diagnostic_error": str(exc)[:2000]})
+        logs: dict[str, str] = {}
+        for label, path in (
+            ("stdout", daemon_instance.log_file),
+            ("stderr", daemon_instance.error_log_file),
+            ("daemon", daemon_instance.gobby_home / "logs" / "daemon.log"),
+            ("errors", daemon_instance.gobby_home / "logs" / "errors.log"),
+        ):
+            if path.is_file():
+                with path.open("rb") as stream:
+                    stream.seek(max(0, path.stat().st_size - 8192))
+                    logs[label] = stream.read(8192).decode("utf-8", errors="replace")
+        evidence = tmp_path / "stack-readiness.json"
+        evidence.write_text(json.dumps({"runs": runs, "daemon_logs": logs, "frames": frames}))
+        return evidence
+
     # Spawn acceptance precedes native publication. Bound readiness by the run's
     # terminal_id plus its live roster row, with a two-minute integration deadline.
-    live = wait_for_condition(
-        lambda: _live_native_items(client, run_ids),
-        timeout=120.0,
-        interval=0.2,
-        description=f"live native terminals for runs {run_ids}",
-    )
+    try:
+        live = wait_for_condition(
+            lambda: _live_native_items(client, run_ids),
+            timeout=120.0,
+            interval=0.2,
+            description=f"live native terminals for runs {run_ids}",
+        )
+    except (AssertionError, httpx.HTTPError) as exc:
+        evidence = write_readiness_evidence([])
+        raise AssertionError(f"{exc}; native-readiness evidence={evidence}") from exc
     assert _is_item_pair(live)
     direct_item, native_item = live
     assert direct_item["backend"] == "native"
@@ -653,9 +695,8 @@ async def test_terminal_client_stack_end_to_end(
             description="direct ready frames",
         )
     except AssertionError as exc:
-        evidence = tmp_path / "stack-readiness.json"
+        evidence = write_readiness_evidence(readiness_frames)
         logs = sorted(path.name for path in daemon_instance.project_dir.glob(".gobby-stack-*.log"))
-        evidence.write_text(json.dumps({"frames": readiness_frames}))
         raise AssertionError(
             f"{exc}; cwds={(direct_item.get('cwd'), native_item.get('cwd'))}; "
             f"logs={logs}; first-output evidence={evidence}"
