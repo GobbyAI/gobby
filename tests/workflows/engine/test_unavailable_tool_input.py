@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -81,6 +82,31 @@ async def test_block_rule_that_ignores_tool_input_is_unaffected(temp_db: HubData
     )
 
     assert response.decision == "allow"
+
+
+@pytest.mark.parametrize(
+    ("tools", "decision", "condition_errors"),
+    [(["Write"], "block", 1), (["Bash"], "allow", 0)],
+    ids=["effect-matches-fails-closed", "effect-elsewhere-never-reads-input"],
+)
+async def test_block_rule_reads_unavailable_input_only_when_its_effect_matches(
+    temp_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+    tools: list[str],
+    decision: str,
+    condition_errors: int,
+) -> None:
+    """A rule whose effects can't act on this tool never reads its input (#23587)."""
+    caplog.set_level(logging.ERROR)
+    effect = RuleEffect(type="block", reason="protected path", tools=tools)
+
+    response = await _evaluate(
+        temp_db, "tool_input.get('file_path') == '/repo/src/app.py'", effect, _event(TRUNCATED)
+    )
+
+    assert response.decision == decision
+    errors = [r for r in caplog.records if "Failed to evaluate condition" in r.getMessage()]
+    assert len(errors) == condition_errors
 
 
 @pytest.mark.parametrize(
