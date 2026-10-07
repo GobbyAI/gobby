@@ -251,11 +251,12 @@ def create_base_patches(
         notification_connection.notifies.side_effect = no_notifications
         database.open_runtime_async_connection = AsyncMock(return_value=notification_connection)
 
-        def fetchone(query: str, *_args: Any, **_kwargs: Any) -> dict[str, datetime] | None:
+        def fetchone(query: str, *_args: Any, **_kwargs: Any) -> object:
             if query == "SELECT clock_timestamp() AS started_at":
                 return {"started_at": datetime(2026, 1, 1, tzinfo=UTC)}
-            return None
+            return DEFAULT
 
+        database.fetchone.return_value = None
         database.fetchone.side_effect = fetchone
         database.fetchall.return_value = []
         cursor = MagicMock(rowcount=0, lastrowid=None)
