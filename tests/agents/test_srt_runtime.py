@@ -9,7 +9,7 @@ import os
 import shutil
 import sys
 import threading
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -211,7 +211,7 @@ async def test_provider_state_roots_are_writable(
 
         assert state_path in filesystem["allowWrite"]
         assert state_path in filesystem["allowRead"]
-        assert str((home / ".ssh").resolve()) in filesystem["denyWrite"]
+        assert str((home / ".ssh").resolve()) in paths.deny_write_paths
 
         gobby_home = (home / ".gobby").resolve()
         assert str(gobby_home) not in filesystem["allowRead"]
@@ -221,6 +221,45 @@ async def test_provider_state_roots_are_writable(
         uv_root = str((home / ".local" / "share" / "uv").resolve())
         assert uv_root in filesystem["allowRead"]
         assert uv_root not in filesystem["allowWrite"]
+
+
+async def test_rendered_write_denies_are_the_ones_a_grant_can_reach(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    home.mkdir()
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GOBBY_HOME", str(home / ".gobby"))
+    srt_debug_deny = home / ".claude" / "debug" / "synthetic"
+
+    paths = await compute_sandbox_paths(
+        SandboxConfig(
+            enabled=True,
+            backend="srt",
+            allow_network=False,
+            extra_deny_write_paths=[str(srt_debug_deny)],
+        ),
+        str(workspace),
+        provider="grok",
+        env={"PATH": ""},
+    )
+    deny_write = render_srt_settings(paths)["filesystem"]["denyWrite"]
+
+    root = workspace.resolve()
+    assert str(root / ".codex" / "hooks.json") in deny_write
+    assert str(root / ".grok" / "hooks") in deny_write
+    # SRT always grants its own debug directory, so a deny inside it still counts.
+    assert str(srt_debug_deny) in deny_write
+    # Nothing grants the workspace's parent; default-deny already covers its controls.
+    parent_hooks = str(tmp_path / ".codex" / "hooks.json")
+    assert parent_hooks in paths.deny_write_paths
+    assert parent_hooks not in deny_write
+    # Each deny costs Seatbelt compile time, superlinearly: 1978 took 13.7 s of CPU.
+    # This workspace renders 55.
+    assert len(deny_write) < 100 < len(paths.deny_write_paths)
 
 
 async def test_claude_account_auth_files_are_read_only_sandbox_exceptions(
@@ -839,6 +878,17 @@ def test_verify_srt_installation_wraps_missing_lockfile(
     assert vars(record)["policy_hash"] == "policy-hash"
 
 
+@pytest.fixture
+def srt_root(tmp_path: Path) -> Iterator[Path]:
+    root = tmp_path / "runtime"
+    yield root
+    # Installs end read-only. Restore write access so pytest's shared cleanup of
+    # old temp roots, which can run in concurrent sessions, can remove them.
+    for path in (root, *root.rglob("*")) if root.exists() else ():
+        if not path.is_symlink():
+            path.chmod(0o700 if path.is_dir() else 0o600)
+
+
 def _write_valid_srt_install(root: Path, *, helper_mode: int = 0o755) -> None:
     package_dir = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
     package_dir.mkdir(parents=True)
@@ -885,10 +935,10 @@ def _patch_srt_verification_runtime(
 @pytest.mark.parametrize("helper_mode", [0o644, 0o444])
 def test_srt_hardening_restores_seccomp_execute_bits(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    srt_root: Path,
     helper_mode: int,
 ) -> None:
-    root = tmp_path / "runtime"
+    root = srt_root
     _write_valid_srt_install(root, helper_mode=helper_mode)
     _patch_srt_verification_runtime(monkeypatch, root)
 
@@ -909,9 +959,9 @@ def test_srt_hardening_restores_seccomp_execute_bits(
 
 def test_verify_srt_installation_accepts_release_contract(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    srt_root: Path,
 ) -> None:
-    root = tmp_path / "runtime"
+    root = srt_root
     _write_valid_srt_install(root)
     _patch_srt_verification_runtime(monkeypatch, root)
 
@@ -925,9 +975,9 @@ def test_verify_srt_installation_accepts_release_contract(
 
 def test_verify_srt_installation_rejects_unmanifested_package_content(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    srt_root: Path,
 ) -> None:
-    root = tmp_path / "runtime"
+    root = srt_root
     _write_valid_srt_install(root)
     _patch_srt_verification_runtime(monkeypatch, root)
     (root / "node_modules").chmod(0o755)
@@ -950,11 +1000,11 @@ def test_verify_srt_installation_rejects_unmanifested_package_content(
 )
 def test_verify_srt_installation_rejects_corruption(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    srt_root: Path,
     corruption: str,
     expected_error: str,
 ) -> None:
-    root = tmp_path / "runtime"
+    root = srt_root
     _write_valid_srt_install(root)
     _patch_srt_verification_runtime(monkeypatch, root)
     if corruption == "receipt":

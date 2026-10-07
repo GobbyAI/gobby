@@ -84,7 +84,8 @@ def _run_srt(
         capture_output=True,
         text=True,
         check=False,
-        timeout=20,
+        # A 20 s bound expired at load average ~27 under -n 4; this only catches hangs.
+        timeout=120,
     )
 
 

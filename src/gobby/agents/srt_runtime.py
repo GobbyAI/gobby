@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -501,6 +502,50 @@ def verify_srt_installation(
         return installation
 
 
+# sandbox-runtime's getDefaultWritePaths() (dist/sandbox/sandbox-utils.js) joins
+# every policy's allowWrite, so a deny beneath one still decides a write.
+_SRT_DEFAULT_WRITE_PATHS = (
+    "/dev/stdout",
+    "/dev/stderr",
+    "/dev/null",
+    "/dev/tty",
+    "/dev/dtracehelper",
+    "/dev/autofs_nowait",
+    "/tmp/claude",
+    "/private/tmp/claude",
+    "~/.npm/_logs",
+    "~/.claude/debug",
+)
+_GLOB_START = re.compile(r"[*?\[{]")
+
+
+def _subtree_prefix(entry: str) -> str:
+    """Return the slash-terminated directory a policy path or glob can match within."""
+    match = _GLOB_START.search(entry)
+    if match:
+        entry = entry[: match.start()].rpartition("/")[0]
+    return entry.rstrip("/") + "/"
+
+
+def _effective_deny_write(allow_write: list[str], deny_write: list[str]) -> list[str]:
+    """Keep the write denies that share a subtree with a write grant.
+
+    Writes outside every grant are already denied by default. Seatbelt's compile
+    cost grows faster than the deny count: 1978 entries, most of them under
+    unwritable ancestors, cost 13.7 s of CPU per launch.
+    """
+    grants = [
+        _subtree_prefix(os.path.expanduser(path))
+        for path in (*_SRT_DEFAULT_WRITE_PATHS, *allow_write)
+    ]
+    kept = []
+    for deny in deny_write:
+        prefix = _subtree_prefix(deny)
+        if any(prefix.startswith(grant) or grant.startswith(prefix) for grant in grants):
+            kept.append(deny)
+    return kept
+
+
 def render_srt_settings(paths: ResolvedSandboxPaths) -> dict[str, Any]:
     """Render canonical resolved policy to SRT's validated settings schema."""
     credentials = [
@@ -531,7 +576,7 @@ def render_srt_settings(paths: ResolvedSandboxPaths) -> dict[str, Any]:
             "denyRead": paths.deny_read_paths,
             "allowRead": paths.read_paths,
             "allowWrite": paths.write_paths,
-            "denyWrite": paths.deny_write_paths,
+            "denyWrite": _effective_deny_write(paths.write_paths, paths.deny_write_paths),
             "allowGitConfig": False,
         },
         "allowPty": True,
@@ -655,8 +700,9 @@ async def prepare_sandbox_launch(
             run_paths_started,
         )
     run_environment = run_paths.environment(provider)
-    grok_writes: tuple[str, ...] = ()
-    grok_denies: tuple[str, ...] = ()
+    home_writes: tuple[str, ...] = ()
+    home_denies: tuple[str, ...] = ()
+    qwen_launch_env: dict[str, str] = {}
     if config.backend == "srt" and provider == "grok":
         from gobby.agents.grok_sandbox_home import prepare_grok_sandbox_home
 
@@ -665,8 +711,20 @@ async def prepare_sandbox_launch(
         )
         run_environment["GROK_HOME"] = str(grok_home.home)
         run_environment["GROK_AUTH_PATH"] = str(grok_home.home / "auth.json")
-        grok_writes = grok_home.runtime_write_paths
-        grok_denies = grok_home.protected_write_paths
+        home_writes = grok_home.runtime_write_paths
+        home_denies = grok_home.protected_write_paths
+    if config.backend == "srt" and provider == "qwen":
+        from gobby.agents.qwen_sandbox_home import prepare_qwen_sandbox_home
+
+        qwen_home = await asyncio.to_thread(
+            prepare_qwen_sandbox_home, run_paths.cache, env, assets=run_paths.assets
+        )
+        # The policy protects controls under QWEN_HOME, which would include the run
+        # home's private extension store, so it sees the host home. GROK_HOME is
+        # not a protected config home; the run's QWEN_HOME is applied after policy.
+        run_environment["QWEN_HOME"] = str(qwen_home.source)
+        qwen_launch_env = qwen_home.launch_env
+        home_denies = qwen_home.protected_write_paths
     prompt_file = env.get("GOBBY_PROMPT_FILE")
     if prompt_file and Path(prompt_file).is_file():
         run_prompt = run_paths.assets / "prompt.md"
@@ -687,13 +745,13 @@ async def prepare_sandbox_launch(
         update={
             "extra_write_paths": [
                 *retained_writes,
-                *grok_writes,
+                *home_writes,
                 *(str(path) for path in run_paths.writable),
                 str(run_paths.cargo_home),
                 str(run_paths.cargo_target),
                 *([str(grant_lock)] if grant_lock is not None else []),
             ],
-            "extra_deny_write_paths": [*config.extra_deny_write_paths, *grok_denies],
+            "extra_deny_write_paths": [*config.extra_deny_write_paths, *home_denies],
         }
     )
     effective_env = {**env, **run_environment}
@@ -711,6 +769,7 @@ async def prepare_sandbox_launch(
         )
     finally:
         finish_spawn_phase(phase_timings_ms, "compute_sandbox_paths", compute_paths_started)
+    run_environment.update(qwen_launch_env)
     # Every live sandboxed run holds these grants, so one can swap a link in while
     # this policy renders; refuse unless each grant is still the cache path itself.
     for cache_path in (run_paths.cargo_home, run_paths.cargo_target):
