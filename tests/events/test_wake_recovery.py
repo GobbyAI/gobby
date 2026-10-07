@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -480,6 +481,7 @@ async def test_restart_reconciliation_reaches_delivered_without_manual_input(
 
 @pytest.mark.asyncio
 async def test_replayed_stop_settles_active_session_before_queued_terminal_wake(
+    route_hook_replay_to_app: Callable[[FastAPI], None],
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -511,6 +513,7 @@ async def test_replayed_stop_settles_active_session_before_queued_terminal_wake(
 
     handlers = EventHandlers(session_manager=cast(HookSessionManager, session_manager))
     app = FastAPI()
+    route_hook_replay_to_app(app)
 
     @app.post("/api/hooks/execute")
     async def execute_stop(request: Request) -> dict[str, str]:

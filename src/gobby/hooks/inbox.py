@@ -377,7 +377,6 @@ def _load_envelope(path: Path) -> dict[str, Any] | None:
 
 
 async def _post_envelope(
-    app: Any,
     envelope: dict[str, Any],
     *,
     envelope_id: str | None = None,
@@ -398,8 +397,9 @@ async def _post_envelope(
     # GOBBY_AGENT_API_TOKEN (daemon_auth_headers prefers it) would scope the
     # replay to one run's capability and 401 other sessions' envelopes.
     operator_token = read_local_api_token()
-    if operator_token is not None:
-        request_headers["Authorization"] = f"Bearer {operator_token}"
+    if not operator_token:
+        return httpx.Response(503)
+    request_headers["Authorization"] = f"Bearer {operator_token}"
     if envelope_id:
         request_headers[ENVELOPE_ID_HEADER] = envelope_id
 
@@ -412,11 +412,24 @@ async def _post_envelope(
         base_url=base_url,
         timeout=30.0,
     ) as client:
-        return await client.post(
+        response = await client.post(
             "/api/hooks/execute",
             json=envelope,
             headers=request_headers,
         )
+        if response.status_code == 401:
+            # Rotation can race the first post. Retry once only for a changed
+            # key; a disappearing key is a retryable startup state.
+            refreshed_token = read_local_api_token()
+            if not refreshed_token:
+                return httpx.Response(503)
+            if refreshed_token != operator_token:
+                response = await client.post(
+                    "/api/hooks/execute",
+                    json=envelope,
+                    headers={**request_headers, "Authorization": f"Bearer {refreshed_token}"},
+                )
+        return response
 
 
 @dataclass(frozen=True)
@@ -578,7 +591,7 @@ async def _drain_hook_inbox_once_locked(
             logger.warning("Cleared stale processing marker for hook inbox envelope %s", path.name)
 
         try:
-            response = await _post_envelope(app, envelope, envelope_id=envelope_id)
+            response = await _post_envelope(envelope, envelope_id=envelope_id)
         except Exception as exc:
             logger.warning("Hook inbox replay failed for %s: %s", path.name, exc)
             continue

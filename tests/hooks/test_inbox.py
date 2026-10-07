@@ -421,6 +421,48 @@ async def test_replayed_envelope_without_id_is_quarantined_and_barrier_settles(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("keys", "statuses", "expected_status", "expected_keys"),
+    [
+        (["old-key", "new-key"], [401, 200], 200, ["old-key", "new-key"]),
+        (["old-key", "new-key"], [401, 401], 401, ["old-key", "new-key"]),
+        (["old-key", "old-key"], [401], 401, ["old-key"]),
+        ([None], [], 503, []),
+        (["old-key", None], [401], 503, ["old-key"]),
+    ],
+)
+async def test_replay_key_rotation_is_bounded_and_missing_key_is_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+    keys: list[str | None],
+    statuses: list[int],
+    expected_status: int,
+    expected_keys: list[str],
+) -> None:
+    requests: list[httpx.Request] = []
+    responses = iter(statuses)
+
+    def front_door(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(next(responses, 401))
+
+    real_client = httpx.AsyncClient
+
+    def replay_client(**kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = httpx.MockTransport(front_door)
+        return real_client(**kwargs)
+
+    monkeypatch.setattr("gobby.hooks.inbox.httpx.AsyncClient", replay_client)
+    with patch("gobby.hooks.inbox.read_local_api_token", side_effect=keys) as read_key:
+        response = await _post_envelope(_valid_envelope())
+
+    assert response.status_code == expected_status
+    assert [request.headers["Authorization"] for request in requests] == [
+        f"Bearer {key}" for key in expected_keys
+    ]
+    assert read_key.call_count == len(keys)
+
+
+@pytest.mark.asyncio
 async def test_replay_attaches_operator_token(monkeypatch: pytest.MonkeyPatch) -> None:
     """Inbox replay authenticates as the operator, never a run capability.
 
@@ -446,7 +488,7 @@ async def test_replay_attaches_operator_token(monkeypatch: pytest.MonkeyPatch) -
     ):
         client.__aenter__ = AsyncMock(return_value=client)
         client.__aexit__ = AsyncMock(return_value=False)
-        replay_response = await _post_envelope(FastAPI(), envelope)
+        replay_response = await _post_envelope(envelope)
 
     assert replay_response is response
     assert client.post.await_args.args == ("/api/hooks/execute",)
@@ -459,8 +501,9 @@ async def test_replay_attaches_operator_token(monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("spooled_during_downtime", [False, True])
 async def test_replay_shared_key_passes_through_front_door_auth(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spooled_during_downtime: bool
 ) -> None:
     """Direct ASGI replay bypasses the shared-key verifier and gets a 401."""
     auth_service = AuthService(
@@ -490,9 +533,12 @@ async def test_replay_shared_key_passes_through_front_door_auth(
 
     backend = httpx.ASGITransport(app=app)
     front_door_requests: list[httpx.Request] = []
+    daemon_ready = not spooled_during_downtime
 
     async def front_door(request: httpx.Request) -> httpx.Response:
         front_door_requests.append(request)
+        if not daemon_ready:
+            return httpx.Response(503, json={"status": "retry", "reason": "daemon_not_ready"})
         if request.headers.get("Authorization") != "Bearer test-operator-token":
             return httpx.Response(401, json={"code": "invalid_token"})
         request.headers.update(
@@ -512,14 +558,31 @@ async def test_replay_shared_key_passes_through_front_door_auth(
         return real_client(**kwargs)
 
     monkeypatch.setattr("gobby.hooks.inbox.httpx.AsyncClient", replay_client)
-    response = await _post_envelope(app, _valid_envelope(), envelope_id="replayed-hook")
-
-    assert response.status_code == 200
-    assert response.json() == {"continue": True}
-    assert len(front_door_requests) == 1
-    request = front_door_requests[0]
-    assert request.url.host == "front-door.test"
-    assert request.headers[ENVELOPE_ID_HEADER] == "replayed-hook"
+    if spooled_during_downtime:
+        inbox_dir = tmp_path / "inbox"
+        inbox_dir.mkdir()
+        paths = [inbox_dir / f"n-0000000000001-restart-{index}.json" for index in range(46)]
+        for path in paths:
+            path.write_text(json.dumps(_valid_envelope()))
+        assert await drain_hook_inbox_once(app, inbox_dir, include_fresh=True) == 0
+        assert all(path.exists() for path in paths)
+        assert not (inbox_dir / "quarantine").exists()
+        daemon_ready = True
+        assert await drain_hook_inbox_once(app, inbox_dir, include_fresh=True) == 46
+        assert await drain_hook_inbox_once(app, inbox_dir, include_fresh=True) == 0
+        assert all(not path.exists() for path in paths)
+        assert not (inbox_dir / "quarantine").exists()
+        assert len(front_door_requests) == 92
+        assert {request.headers[ENVELOPE_ID_HEADER] for request in front_door_requests} == {
+            path.stem for path in paths
+        }
+    else:
+        response = await _post_envelope(_valid_envelope(), envelope_id="replayed-hook")
+        assert response.status_code == 200
+        assert response.json() == {"continue": True}
+        assert len(front_door_requests) == 1
+        assert front_door_requests[0].headers[ENVELOPE_ID_HEADER] == "replayed-hook"
+    assert all(request.url.host == "front-door.test" for request in front_door_requests)
 
 
 @pytest.mark.asyncio
