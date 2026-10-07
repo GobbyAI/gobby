@@ -796,6 +796,26 @@ def test_related_source_selector_reuses_unchanged_test_parses(tmp_path: Path) ->
     assert parse.call_args_list == []
 
 
+def test_related_source_selector_parse_cache_is_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Least recently used parses past the cap are evicted, never kept forever."""
+    monkeypatch.setattr("gobby.tasks.close_test_coverage._PARSED_IMPORTS_MAX", 1)
+    (tmp_path / "src/gobby").mkdir(parents=True)
+    (tmp_path / "src/gobby/widget.py").write_text("VALUE = 1\n")
+    (tmp_path / "tests").mkdir()
+    for name in ("test_first.py", "test_second.py"):
+        (tmp_path / "tests" / name).write_text("from gobby.widget import VALUE\n")
+    expected = {"src/gobby/widget.py": ("tests/test_first.py", "tests/test_second.py")}
+    assert related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path) == expected
+
+    with patch("gobby.tasks.close_test_coverage.ast.parse", wraps=ast.parse) as parse:
+        again = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path)
+
+    assert again == expected
+    assert len(parse.call_args_list) == 2
+
+
 def test_related_source_selector_reparses_an_edited_test(tmp_path: Path) -> None:
     (tmp_path / "src/gobby").mkdir(parents=True)
     (tmp_path / "src/gobby/widget.py").write_text("VALUE = 1\n")

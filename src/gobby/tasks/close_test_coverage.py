@@ -7,6 +7,8 @@ import hashlib
 import logging
 import posixpath
 import re
+import threading
+from collections import OrderedDict
 from collections.abc import Iterable, Mapping, Sequence
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
@@ -98,18 +100,27 @@ def _module_imports(path: Path, module: str, text: str) -> set[str]:
     return imports
 
 
-# Parsed imports by path, valid while the file's content digest matches (#23359).
-# Closes evaluate on worker threads; dict get/set is atomic, so a race only parses twice.
-_PARSED_IMPORTS: dict[Path, tuple[bytes, frozenset[str]]] = {}
+# Parsed imports by path, valid while the file's content digest matches (#23359). The
+# least recently used entries past the cap go, so deleted tests and removed worktrees
+# cannot grow it for the daemon's lifetime. Closes evaluate on worker threads.
+_PARSED_IMPORTS_MAX = 8192
+_PARSED_IMPORTS: OrderedDict[Path, tuple[bytes, frozenset[str]]] = OrderedDict()
+_PARSED_IMPORTS_LOCK = threading.Lock()
 
 
 def _parsed_imports(path: Path, module: str, text: str) -> frozenset[str]:
     digest = hashlib.blake2b(text.encode(), digest_size=16).digest()
-    cached = _PARSED_IMPORTS.get(path)
-    if cached is not None and cached[0] == digest:
-        return cached[1]
+    with _PARSED_IMPORTS_LOCK:
+        cached = _PARSED_IMPORTS.get(path)
+        if cached is not None and cached[0] == digest:
+            _PARSED_IMPORTS.move_to_end(path)
+            return cached[1]
     imports = frozenset(_module_imports(path, module, text))
-    _PARSED_IMPORTS[path] = (digest, imports)
+    with _PARSED_IMPORTS_LOCK:
+        _PARSED_IMPORTS[path] = (digest, imports)
+        _PARSED_IMPORTS.move_to_end(path)
+        while len(_PARSED_IMPORTS) > _PARSED_IMPORTS_MAX:
+            _PARSED_IMPORTS.popitem(last=False)
     return imports
 
 
