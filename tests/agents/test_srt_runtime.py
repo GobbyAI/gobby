@@ -1275,7 +1275,11 @@ async def test_prepare_srt_launch_grants_write_on_the_managed_grant_lock_only(
 
     policy = json.loads(Path(launch.policy_path or "").read_text(encoding="utf-8"))
     allowed_writes = policy["filesystem"]["allowWrite"]
-    assert str(run_root.resolve() / "grant.json.lock") in allowed_writes
+    lock = str(run_root.resolve() / "grant.json.lock")
+    assert lock in allowed_writes
+    # SRT blocks creating each ancestor of a write deny, so a deny beneath the lock
+    # would refuse the lock's own create.
+    assert not [deny for deny in policy["filesystem"]["denyWrite"] if deny.startswith(f"{lock}/")]
     # The lock is the whole grant: neither the credential nor the root it sits in
     # becomes writable, which is what separates this from widening the run root.
     assert str(grant_path.resolve()) not in allowed_writes
