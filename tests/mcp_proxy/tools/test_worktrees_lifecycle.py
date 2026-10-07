@@ -5,7 +5,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1544,6 +1544,58 @@ async def test_cleanup_stale_worktrees_skips_dirty_git_worktree(
     assert result["cleaned"][0]["git_deleted"] is False
     assert result["cleaned"][0]["git_skipped"] is True
     assert result["cleaned"][0]["git_skip_reason"] == "Worktree has uncommitted changes"
+    mock_git_manager.delete_worktree.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_stale_worktrees_skips_worktrees_a_live_session_occupies(
+    registry: InternalToolRegistry,
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stale, expired = (
+        Worktree(
+            id=f"eeeeeeee-eeee-4eee-8eee-eeeeeeeeee0{index}",
+            project_id="p1",
+            branch_name=f"b{index}",
+            worktree_path=f"/tmp/p{index}",
+            base_branch="main",
+            status="active",
+            created_at=_VALID_TIMESTAMP,
+            updated_at=_VALID_TIMESTAMP,
+            task_id=None,
+            agent_session_id=None,
+            merged_at=None,
+        )
+        for index in (2, 3)
+    )
+    mock_worktree_storage.cleanup_stale.return_value = [stale]
+    mock_worktree_storage.find_expired.return_value = [expired]
+    asked: list[tuple[str, str | None]] = []
+
+    def occupied(_db: object, path: str, *, worktree_id: str | None = None) -> str:
+        asked.append((path, worktree_id))
+        return f"Live session gobby#15411 working in {path}; it was not deleted"
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.worktrees._cleanup.refuse_occupied_worktree", occupied
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.worktrees._cleanup.is_worktree_git_merged",
+        AsyncMock(return_value=True),
+    )
+
+    result = await registry.call(
+        "cleanup_stale_worktrees",
+        {"hours": 24, "dry_run": False, "delete_git": True},
+    )
+
+    assert [(entry["reason"], entry["git_skip_reason"]) for entry in result["cleaned"]] == [
+        ("stale", "Live session gobby#15411 working in /tmp/p2; it was not deleted"),
+        ("expired", "Live session gobby#15411 working in /tmp/p3; it was not deleted"),
+    ]
+    assert asked == [("/tmp/p2", stale.id), ("/tmp/p3", expired.id)]
     mock_git_manager.delete_worktree.assert_not_called()
 
 
