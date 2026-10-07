@@ -250,7 +250,7 @@ async def spawn_agent(
             project_id=project_id,
         )
     except AgentResolutionError as exc:
-        raise DispatchSpawnFailed(f"agent_definition_missing:{action.agent_slug}") from exc
+        raise DispatchSpawnFailed(f"agent_definition_rejected:{action.agent_slug}: {exc}") from exc
 
     skill_composition = await asyncio.to_thread(
         inspect_skill_composition,

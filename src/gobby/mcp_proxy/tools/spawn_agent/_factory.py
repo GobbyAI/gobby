@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.storage.definitions.agents import reject_terminal_backend
 from gobby.utils.project_context import get_project_context
+from gobby.workflows.agent_resolver import AgentResolutionError
 from gobby.workflows.definitions import AgentDefinitionBody
 
 from ._implementation import spawn_agent_impl
@@ -276,19 +276,14 @@ def _load_agent_body(
         AgentDefinitionBody if found, None otherwise.
 
     Raises:
-        ValueError: A stored legacy body names ``terminal_backend``.
+        AgentResolutionError: The stored definition names ``terminal_backend``.
     """
     if db is None:
         return None
 
-    from gobby.workflows.agent_resolver import resolve_agent, resolve_agent_with_row
+    from gobby.workflows.agent_resolver import resolve_agent
 
-    found = resolve_agent_with_row(name, db, cli_source=cli_source, project_id=project_id)
-    if found is None:
-        return resolve_agent(name, db, cli_source=cli_source, project_id=project_id)
-    body, row = found
-    reject_terminal_backend(row.definition_json)
-    return body
+    return resolve_agent(name, db, cli_source=cli_source, project_id=project_id)
 
 
 def create_spawn_agent_registry(
@@ -461,7 +456,7 @@ def create_spawn_agent_registry(
                 project_id=project_id,
                 cli_source=default_provider,
             )
-        except ValueError as e:
+        except AgentResolutionError as e:
             return {"success": False, "error": str(e)}
         if agent_body is None and agent != "default":
             return {"success": False, "error": f"Agent '{agent}' not found"}
@@ -599,7 +594,7 @@ def create_spawn_agent_registry(
                                 project_id=project_id,
                                 cli_source=default_provider,
                             )
-                        except ValueError as e:
+                        except AgentResolutionError as e:
                             return {"success": False, "error": str(e)}
                         if not candidate:
                             skip_reason = "definition_missing"

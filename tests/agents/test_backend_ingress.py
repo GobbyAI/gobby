@@ -22,6 +22,8 @@ from gobby.config.terminals import TerminalConfig
 from gobby.dispatch._planning_enhancement import _spawn_plan_enhancer
 from gobby.dispatch._rule_actions import _spawn_stage_agent
 from gobby.dispatch.actions import SpawnAgentAction
+from gobby.dispatch.spawn import spawn_agent as dispatch_spawn_agent
+from gobby.dispatch.spawn_errors import DispatchSpawnFailed
 from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.mcp_proxy.tools.spawn_agent._factory import _load_agent_body
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
@@ -29,6 +31,7 @@ from gobby.servers.routes.agent_spawn import AgentSpawnRequest, BatchSpawnReques
 from gobby.storage.definitions._shared import encode_json_value
 from gobby.storage.definitions.agents import AgentDefinitionManager, parent_body
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.fixtures.agent_definitions import make_agent_definition
@@ -102,7 +105,7 @@ def test_every_agent_definition_write_and_read_rejects_backend(temp_db: HubDatab
             (encode_json_value(legacy), row.id),
         )
     assert manager.get(row.id).definition_json["terminal_backend"] == "native"
-    with pytest.raises(ValueError, match=REJECTION):
+    with pytest.raises(AgentResolutionError, match=REJECTION):
         _load_agent_body("legacy-backend", temp_db)
 
 
@@ -136,6 +139,47 @@ async def test_legacy_definition_spawn_returns_typed_refusal(temp_db: HubDatabas
     assert result["success"] is False
     assert REJECTION in result["error"]
     mock_impl.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_legacy_definition_is_refused_by_the_shared_resolver_and_dispatch(
+    temp_db: HubDatabase,
+) -> None:
+    project_id = "11111111-1111-4111-8111-111111110002"
+    manager = AgentDefinitionManager(temp_db)
+    legacy = _legacy_body("legacy-dispatch")
+    clean = {key: value for key, value in legacy.items() if key != "terminal_backend"}
+    row = manager.create(name="legacy-dispatch", definition_json=clean, enabled=True)
+    with temp_db.transaction() as conn:
+        conn.execute(
+            "UPDATE agent_definitions SET definition_json = %s WHERE id = %s",
+            (encode_json_value(legacy), row.id),
+        )
+
+    # Every resolver consumer (dispatch, HTTP, hooks, personas) shares this refusal.
+    with pytest.raises(AgentResolutionError, match=REJECTION):
+        resolve_agent("legacy-dispatch", temp_db, project_id=project_id)
+
+    task_manager = MagicMock()
+    task_manager.get_task.return_value = SimpleNamespace(id=TASK_UUID, project_id=project_id)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=MagicMock(),
+        agent_runner=MagicMock(),
+    )
+    action = SpawnAgentAction(
+        task_id=TASK_UUID, task_ref="#1", agent_slug="legacy-dispatch", prompt="go"
+    )
+    with (
+        patch("gobby.agents.readiness.spawn_readiness_blocker", return_value=None),
+        patch(
+            "gobby.dispatch.spawn.inspect_skill_composition",
+            side_effect=AssertionError("legacy definition passed agent resolution"),
+        ),
+        pytest.raises(DispatchSpawnFailed, match=REJECTION),
+    ):
+        await dispatch_spawn_agent(action, db=temp_db, services=services)
 
 
 @pytest.mark.asyncio

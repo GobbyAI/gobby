@@ -308,7 +308,6 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         # Load agent definition
         from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
 
-        agent_body = None
         try:
             agent_body = await asyncio.to_thread(
                 resolve_agent,
@@ -316,12 +315,8 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 server.services.database,
                 project_id=effective_project_id,
             )
-        except AgentResolutionError:
-            if req.agent_name != "default":
-                return AgentSpawnResponse(
-                    success=False,
-                    error=f"Agent definition '{req.agent_name}' not found",
-                )
+        except AgentResolutionError as exc:
+            return AgentSpawnResponse(success=False, error=str(exc))
 
         # Compose prompt with preamble
         effective_prompt = prompt
