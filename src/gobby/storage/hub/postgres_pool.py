@@ -61,6 +61,7 @@ from gobby.storage.hub.protocol import (
     Transaction,
     WebChatSessionBootstrap,
 )
+from gobby.storage.hub.read_scope import record_closed_writes, written_tables
 from gobby.storage.hub.transaction_deadline import TransactionDeadline
 from gobby.telemetry.instruments import observe_histogram
 from gobby.telemetry.query_timing import record_pool_acquire, record_query
@@ -325,6 +326,10 @@ def transaction_context(
             raise
         finally:
             txn.closed = True
+            # Stamped after COMMIT or ROLLBACK so a concurrent hub_read_scope
+            # never keeps a row loaded before this write became visible.
+            if txn._written != set():
+                record_closed_writes(None if txn._written is None else frozenset(txn._written))
 
     for callback in txn._after_commit_callbacks:
         try:
@@ -347,6 +352,17 @@ class _PostgresTransaction:
         self._locks = [initial_lock] if initial_lock is not None else []
         self._after_commit_callbacks: list[Callable[[], Any]] = []
         self._deadline = TransactionDeadline(conn)
+        # Tables written so far, or None once a statement's targets are unknown.
+        self._written: set[str] | None = set()
+
+    def _note_write(self, sql: str) -> None:
+        if self._written is None:
+            return
+        tables = written_tables(sql)
+        if tables is None:
+            self._written = None
+        else:
+            self._written |= tables
 
     def execute(
         self,
@@ -354,6 +370,7 @@ class _PostgresTransaction:
         params: Sequence[Any] | Mapping[str, Any] = (),
     ) -> Cursor:
         started_at = time.perf_counter()
+        self._note_write(sql)
         try:
             self._deadline.prepare()
             # Extended protocol rejects a batch before executing any statement.
@@ -366,6 +383,7 @@ class _PostgresTransaction:
             record_query(time.perf_counter() - started_at)
 
     def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:
+        self._note_write(sql)
         if self._deadline.active:
             # Driver pipelining gives every row the same stale server bound.
             rowcount = 0
