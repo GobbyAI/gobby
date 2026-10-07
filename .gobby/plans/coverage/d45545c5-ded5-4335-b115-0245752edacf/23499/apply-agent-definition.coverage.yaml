@@ -3,9 +3,9 @@ header:
   plan_hash: c272c7bee64d8d8bb6e972d1d2a5a262c1a1e02f28879748398175093ddeeb7e
   root_task_ref: '23499'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-07T08:09:34Z'
+  generated_at: '2026-10-07T08:12:07Z'
   task_tree_source: db
-  task_tree_source_hash: 8eb51786dc9987803083f023a3d8160d2e0719a5b37b94901ce7ca5fbd47ee5c
+  task_tree_source_hash: a581580bfd20d8283c2cee89a8ec719ee99cc91cbd0d494f0437313625ae0ae6
   evidence_summary: []
   evidence: []
 rows:
@@ -641,23 +641,3 @@ rows:
   leaves: []
   deferral_target: '#23509'
   detail: deferral is valid
-- section_id: '1.1'
-  item_id: 1.1.7
-  plan_node_hash: ''
-  status: invalid
-  leaves:
-  - leaf_task_ref: '#23503'
-    validation_criteria_snippet: item '1.1.7' is not present in section '1.1'
-    matched_artifact_ref: covers:apply-agent-definition:1.1:1.1.7
-  deferral_target: null
-  detail: ''
-- section_id: '1.1'
-  item_id: 1.1.15
-  plan_node_hash: ''
-  status: invalid
-  leaves:
-  - leaf_task_ref: '#23503'
-    validation_criteria_snippet: item '1.1.15' is not present in section '1.1'
-    matched_artifact_ref: covers:apply-agent-definition:1.1:1.1.15
-  deferral_target: null
-  detail: ''
