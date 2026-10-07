@@ -21,6 +21,9 @@ from typing import Any, cast
 
 from gobby.storage.hub._ambient import ambient_transaction
 
+# Readers of the same row share one key, e.g. ("session_variables", session_id).
+SESSION_VARIABLES_TABLES = frozenset({"session_variables"})
+
 _READ_PREFIXES = ("SELECT", "SHOW", "SET ", "SAVEPOINT", "RELEASE")
 _WRITE_TARGET = re.compile(r"\b(?:UPDATE|INSERT\s+INTO)\s+(?:ONLY\s+)?\"?([A-Za-z_][\w.]*)", re.I)
 _UNSCOPED_WRITE = re.compile(r"\b(?:DELETE|TRUNCATE|MERGE|CREATE|DROP|ALTER|COPY)\b", re.I)
