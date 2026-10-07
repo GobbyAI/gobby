@@ -33,12 +33,18 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "mcp step. requested is comma-separated seat names; catalogue is a list of "
             "{name, title, agent}. Refuses when the same runbook is still launching for the "
             "same project in the same workspace on the same machine, or when a seat's agent "
-            "definition is missing or disabled. On success it returns the checked seats."
+            "definition is missing or disabled. If supplied, report_to must be a nonempty "
+            "session ref; require_report_to also rejects omission. On success it returns "
+            "the checked seats."
         ),
         read_only=True,
     )
     def check_runbook_seats_tool(
-        workspace: str, requested: str, catalogue: list[dict[str, Any]]
+        workspace: str,
+        requested: str,
+        catalogue: list[dict[str, Any]],
+        report_to: str | None = None,
+        require_report_to: bool = False,
     ) -> dict[str, Any]:
         caller_ref = ctx.get_current_session_id()
         if ctx.db is None or not caller_ref:
@@ -53,6 +59,8 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 workspace=workspace,
                 requested=requested,
                 catalogue=catalogue,
+                report_to=report_to,
+                require_report_to=require_report_to,
             )
         except (RunbookSeatRefusal, ValueError) as exc:
             return {"success": False, "error": str(exc)}
