@@ -750,21 +750,56 @@ def _strip_wrapper_options(tokens: list[str], options_with_values: set[str]) -> 
 
 
 def _pip_audit_has_nonchecking_option(args: list[str], forbidden: list[str]) -> bool:
-    """Reject abbreviated long options and bundles without inspecting attached values."""
-    for token in args:
+    """Credit only environment audits, consuming option values before finding project paths."""
+    value_options = (
+        "--format",
+        "--vulnerability-service",
+        "--osv-url",
+        "--cache-dir",
+        "--progress-spinner",
+        "--timeout",
+        "--index-url",
+        "--extra-index-url",
+        "--output",
+    )
+    optional_options = ("--desc", "--aliases")
+    flag_options = ("--strict", "--verbose", "--require-hashes")
+    cursor = 0
+    while cursor < len(args):
+        token = args[cursor]
+        cursor += 1
+        if token == "--":
+            return cursor < len(args)
         if token.startswith("--"):
-            option = token.partition("=")[0]
-            if option != "--" and any(arg.startswith(option) for arg in forbidden):
+            option, separator, _value = token.partition("=")
+            if any(arg.startswith(option) for arg in forbidden):
                 return True
-            continue
-        if not token.startswith("-"):
-            continue
-        for option in token[1:]:
-            if option in "dVlh":
+            matches = [
+                arg
+                for arg in (*value_options, *optional_options, *flag_options)
+                if arg.startswith(option)
+            ]
+            if len(matches) != 1:
                 return True
-            if option in "fsor":
-                # These options consume the remaining characters as their value.
+            matched = matches[0]
+            if matched in value_options and not separator:
+                cursor += 1
+            elif matched in optional_options and not separator:
+                if cursor < len(args) and args[cursor] in {"on", "off", "auto"}:
+                    cursor += 1
+            continue
+        if token == "-" or not token.startswith("-"):
+            return True
+        for index, option in enumerate(token[1:], start=1):
+            if option in "dVlhr":
+                return True
+            if option in "fso":
+                # An attached value consumes the rest of a short-option bundle.
+                if index == len(token) - 1:
+                    cursor += 1
                 break
+            if option not in "vS":
+                return True
     return False
 
 
