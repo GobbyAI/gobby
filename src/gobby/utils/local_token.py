@@ -270,7 +270,14 @@ def classify_agent_api_token(
     assert isinstance(machine_id, str)
     assert isinstance(iat, int)
     assert isinstance(exp, int)
-    if time.time() >= exp:
+    now = time.time()
+    if now >= exp:
+        logger.warning(
+            "Managed capability rejected code=capability_expired iat=%d exp=%d now=%d",
+            iat,
+            exp,
+            int(now),
+        )
         return "capability_expired"
     kind = raw.get("kind")
     if kind is not None and (not isinstance(kind, str) or not kind):

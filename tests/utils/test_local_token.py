@@ -23,6 +23,73 @@ from gobby.utils.local_token import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("valid_signature", [True, False])
+def test_expiry_diagnostic_contains_only_verified_timestamps(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    valid_signature: bool,
+) -> None:
+    monkeypatch.setattr("gobby.utils.local_token.time.time", lambda: 2000.0)
+    key = derive_managed_signing_key("expiry-diagnostic-fixture")
+    token = _signed_token(
+        {
+            "agent_run_id": "run-1",
+            "session_id": "session-1",
+            "project_id": "project-1",
+            "machine_id": "machine-1",
+            "iat": 1000,
+            "exp": 1660,
+        },
+        key if valid_signature else b"different-fixture-key",
+    )
+
+    result = classify_agent_api_token(token, key)
+
+    messages = [
+        record.getMessage() for record in caplog.records if record.name == local_token.__name__
+    ]
+    if valid_signature:
+        assert result == "capability_expired"
+        assert messages == [
+            "Managed capability rejected code=capability_expired iat=1000 exp=1660 now=2000"
+        ]
+    else:
+        assert result == "capability_invalid"
+        assert messages == []
+    assert token not in caplog.text
+    assert "expiry-diagnostic-fixture" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("elapsed_seconds", "valid"),
+    [(900, True), (1259, True), (1260, False)],
+    ids=["fifteen-minutes", "last-valid-second", "timeout-plus-grace"],
+)
+def test_managed_run_capability_lifetime_matches_timeout(
+    monkeypatch: pytest.MonkeyPatch, elapsed_seconds: int, valid: bool
+) -> None:
+    from gobby.utils.local_token import derive_managed_signing_key
+
+    monkeypatch.setattr("gobby.utils.local_token.time.time", lambda: 1000.0)
+    key = derive_managed_signing_key("synthetic-lifetime-key")
+    token = issue_agent_api_token(
+        key,
+        agent_run_id="run-lifetime",
+        session_id="session-lifetime",
+        project_id="project-lifetime",
+        machine_id="machine-lifetime",
+        timeout_seconds=1200,
+    )
+    initial_claims = verify_agent_api_token(token, key)
+    assert initial_claims is not None
+    assert initial_claims.iat == 1000
+    assert initial_claims.exp == 2260
+
+    monkeypatch.setattr("gobby.utils.local_token.time.time", lambda: 1000.0 + elapsed_seconds)
+    claims = verify_agent_api_token(token, key)
+    assert (claims is not None) is valid
+
+
 def test_operator_key_reads_bootstrap_fresh(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
