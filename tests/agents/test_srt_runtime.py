@@ -250,6 +250,61 @@ async def test_claude_account_auth_files_are_read_only_sandbox_exceptions(
     assert login_keychain not in filesystem["allowWrite"]
 
 
+async def test_droid_reads_only_the_login_keychain_among_credential_stores(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Droid's login is unreadable without its login keychain item (#23554 A/B/C/D runs).
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    home.mkdir()
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GOBBY_HOME", str(home / ".gobby"))
+
+    paths = await compute_sandbox_paths(
+        SandboxConfig(enabled=True, backend="srt", allow_network=False),
+        str(workspace),
+        provider="droid",
+        env={"PATH": ""},
+    )
+    filesystem = render_srt_settings(paths)["filesystem"]
+    keychains = (home / "Library" / "Keychains").resolve()
+    login_keychain = str(keychains / "login.keychain-db")
+
+    assert login_keychain in filesystem["allowRead"]
+    assert login_keychain not in filesystem["allowWrite"]
+    assert str(keychains / "other.keychain-db") not in filesystem["allowRead"]
+    assert str((home / ".claude.json").resolve()) not in filesystem["allowRead"]
+    for store in (keychains, home / ".ssh", home / ".aws", home / ".config" / "gh"):
+        assert str(store.resolve()) in filesystem["denyRead"]
+        assert str(store.resolve()) not in filesystem["allowRead"]
+
+
+async def test_droid_reaches_its_auth_host_without_receiving_injected_credentials(
+    tmp_path: Path,
+) -> None:
+    # Droid refreshes an expired login through WorkOS; FACTORY_API_KEY stays Factory-only.
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = SandboxConfig(enabled=True, backend="srt", allow_network=False)
+    env = {"FACTORY_API_KEY": "secret", "PATH": os.environ.get("PATH", "")}
+
+    droid = await compute_sandbox_paths(config, str(workspace), provider="droid", env=env)
+    codex = await compute_sandbox_paths(config, str(workspace), provider="codex", env=env)
+
+    assert "api.workos.com" in droid.allowed_domains
+    assert "*.workos.com" not in droid.allowed_domains
+    assert "api.workos.com" not in codex.allowed_domains
+    assert droid.credential_env_vars == [
+        SandboxCredentialEnv(
+            name="FACTORY_API_KEY",
+            mode="mask",
+            inject_hosts=["api.factory.ai", "*.factory.ai"],
+        )
+    ]
+
+
 async def test_compute_paths_masks_credentials_only_at_provider_api_hosts(
     tmp_path: Path,
 ) -> None:
