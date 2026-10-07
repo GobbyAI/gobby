@@ -34,6 +34,7 @@ COMPACT_STATE_KEYS = {
     "is_closed",
     "closed_at",
     "is_claimed",
+    "claimed_by_session_id",
     "is_blocked",
     "is_escalated",
 }

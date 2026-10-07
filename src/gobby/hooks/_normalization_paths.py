@@ -59,6 +59,8 @@ CANONICAL_WRITE_TOOL_NAMES = frozenset(
         "editfile",
         "move_file",
         "movefile",
+        "multi_edit",
+        "multiedit",
         "notebook_edit",
         "notebookedit",
         "patch_file",

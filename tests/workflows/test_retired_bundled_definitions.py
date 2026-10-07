@@ -48,7 +48,9 @@ RETIRED_PIPELINES = (
     "wiki-research",
 )
 RETIRED_AGENTS = (
-    "developer",
+    "backend-developer",
+    "frontend-developer",
+    "fullstack-developer",
     "pipeline-worker",
     "nightly-linter",
     "nightly-test-fixer",

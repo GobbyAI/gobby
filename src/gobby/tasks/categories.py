@@ -9,9 +9,9 @@ TDD_ELIGIBLE_CATEGORIES: frozenset[str] = frozenset({"code", "config"})
 # leaves without overloading the task category field.
 IMPLEMENTATION_DOMAINS: frozenset[str] = frozenset({"backend", "frontend", "fullstack"})
 AGENT_BY_IMPLEMENTATION_DOMAIN: dict[str, str] = {
-    "backend": "backend-developer",
-    "frontend": "frontend-developer",
-    "fullstack": "fullstack-developer",
+    "backend": "developer",
+    "frontend": "developer",
+    "fullstack": "developer",
 }
 
 # Categories that expansion may emit as executable leaves. These all start at

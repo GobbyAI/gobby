@@ -1,4 +1,4 @@
-"""Resolve shell programs and bounded executable signatures without reading script bodies."""
+"""Resolve shell programs, executable signatures and bounded shell-script bodies."""
 
 import re
 from dataclasses import dataclass
@@ -9,6 +9,14 @@ from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import _SHELLS, _unwrap
 
 SHELL_WRAPPER_DEPTH = 8
+# Larger script bodies stay opaque.
+SCRIPT_BODY_LIMIT = 64 * 1024
+# Script bodies one command may read in all, since each body can run more scripts.
+SCRIPT_READ_BUDGET = 8
+# Room for a `#!` line: the kernel reads at most this much of it.
+_HEADER_LIMIT = 512
+# env options that take no value; any other option leaves the interpreter unknown.
+_ENV_FLAGS = frozenset({"-", "-i", "-S", "-0", "-v", "--ignore-environment", "--debug"})
 # ELF, then thin Mach-O (32/64-bit, both byte orders), then universal Mach-O (32/64-bit
 # fat headers, both byte orders). When execve reports ENOEXEC, which a truncated or
 # foreign binary also gets, a shell runs the file as a script unless its first line
@@ -37,6 +45,9 @@ _DIRECTORY_WRAPPERS = frozenset({"env", "sudo"})
 class ShellExecution:
     command: str | None = None
     script_file: bool = False
+    # The word naming the file a shell reads its program from, when that file is
+    # known; a script file without one stays opaque.
+    script_word: str | None = None
 
 
 def preserves_directory(words: list[str]) -> bool:
@@ -59,32 +70,76 @@ def starts_elsewhere(words: list[str]) -> bool:
     return any(shell_command_name(word) in _DIRECTORY_WRAPPERS for word in head)
 
 
-def path_invokes_script(words: list[str], base: Path | None) -> bool:
-    """Gate path-invoked programs other than native executables; fail closed when unsure.
+def path_execution(words: list[str], base: Path | None) -> ShellExecution | None:
+    """Classify a path-invoked program by its header; fail closed when unsure.
 
-    ``base`` resolves a relative command word, and is ``None`` once the command may have
-    changed directory. Only a 16-byte executable header is read, never the body.
+    ``None`` is a native executable or a script for a non-shell interpreter, which runs
+    like ``python script.py``. A shell script (a shell ``#!`` line, or text a shell runs
+    once execve reports ENOEXEC) names its resolved file in ``script_word``. ``base``
+    resolves a relative command word, and is ``None`` once the command may have changed
+    directory.
     """
     words = _unwrap(words)
     if not words or "/" not in words[0]:
-        return False
+        return None
     try:
         path = resolve_tool_path(words[0], base)
         if path is None or not path.is_file():
-            return True
+            return ShellExecution(script_file=True)
         with path.open("rb") as executable:
-            header = executable.read(16)
-        first_line = header.split(b"\n", 1)[0]
-        return header[:4] not in _NATIVE_EXECUTABLE_MAGIC or b"\x00" not in first_line
+            header = executable.read(_HEADER_LIMIT)
     except (OSError, RuntimeError):
-        return True
+        return ShellExecution(script_file=True)
+    first_line = header.split(b"\n", 1)[0]
+    if header[:4] in _NATIVE_EXECUTABLE_MAGIC and b"\x00" in first_line:
+        return None
+    if first_line.startswith(b"#!"):
+        interpreter = _shebang_interpreter(first_line[2:])
+        if interpreter is None:
+            return ShellExecution(script_file=True)
+        if interpreter not in _SHELLS:
+            return None
+    return ShellExecution(script_file=True, script_word=str(path))
+
+
+def _shebang_interpreter(line: bytes) -> str | None:
+    """Name the program a ``#!`` line runs, looking through ``env``; ``None`` when unsure."""
+    try:
+        words = line.decode().split()
+    except UnicodeDecodeError:
+        return None
+    if words and shell_command_name(words[0]) == "env":
+        words = words[1:]
+        while words and (words[0] in _ENV_FLAGS or ("=" in words[0] and words[0][0] != "-")):
+            words = words[1:]
+    if not words or words[0].startswith("-"):
+        return None
+    return shell_command_name(words[0])
+
+
+def read_script_body(word: str, base: Path | None) -> tuple[Path, str] | None:
+    """Read a whole shell script, or ``None`` when it is missing, unreadable, too large
+    or not UTF-8."""
+    try:
+        path = resolve_tool_path(word, base)
+        if path is None or not path.is_file():
+            return None
+        with path.open("rb") as script:
+            body = script.read(SCRIPT_BODY_LIMIT + 1)
+        if len(body) > SCRIPT_BODY_LIMIT:
+            return None
+        return path, body.decode()
+    except (OSError, RuntimeError, UnicodeDecodeError):
+        return None
 
 
 def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution | None:
-    """Decode a shell's ``-c`` argument or identify opaque script execution.
+    """Decode a shell's ``-c`` argument or identify script execution.
 
-    A script path is only an execution marker, never a content-authoring path.
-    Option values and the positional parameters after ``-c`` are not programs.
+    A script operand names the file the shell reads its program from, never a
+    content-authoring path. A program read from stdin, or by ``source`` in the calling
+    shell, stays opaque. Option values and the positional parameters after ``-c`` are
+    not programs.
     """
     words = _unwrap(words)
     if words and shell_command_name(words[0]) in {"source", "."}:
@@ -117,4 +172,8 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
                     program = program[1:]
                 return ShellExecution(command=program[0]) if program else ShellExecution()
         index += 1
-    return ShellExecution(script_file=stdin_program or index < len(words) or stdin)
+    operand = index < len(words) and not stdin_program
+    return ShellExecution(
+        script_file=stdin_program or index < len(words) or stdin,
+        script_word=words[index] if operand else None,
+    )

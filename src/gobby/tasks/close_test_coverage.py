@@ -3,17 +3,30 @@
 from __future__ import annotations
 
 import ast
+import filecmp
+import hashlib
 import logging
+import os
 import posixpath
 import re
-from collections.abc import Iterable, Mapping, Sequence
+import threading
+from collections import OrderedDict
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, replace
 from fnmatch import fnmatchcase
+from functools import cached_property, lru_cache
 from pathlib import Path, PurePosixPath
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
-from gobby.tasks.command_equivalence import pytest_targets, vitest_related_targets
+from gobby.tasks.command_equivalence import (
+    pytest_targets,
+    run_location,
+    runs_outside_root,
+    vitest_related_targets,
+)
 from gobby.tasks.related_tests import RELATED_TEST_MAX_FILES
-from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
+from gobby.tasks.transcript_evidence_models import TranscriptEvidence, TranscriptValidationRun
+from gobby.utils.git import run_git_command
 
 _TEST_TYPES_AUDIT_MATCHER = "gobby-test-types-audit"
 logger = logging.getLogger(__name__)
@@ -62,30 +75,11 @@ def _module_name(path: str) -> str:
     return ".".join(parts)
 
 
-def _module_imports(
-    path: Path,
-    module: str,
-    relevant_prefixes: set[str] | None = None,
-    parent_import: re.Pattern[str] | None = None,
-    *,
-    text: str | None = None,
-) -> set[str]:
+def _module_imports(path: Path, module: str, text: str) -> set[str]:
     """Read imports without importing/executing repository modules."""
     try:
-        if text is None:
-            text = path.read_text(encoding="utf-8")
-        if (
-            relevant_prefixes is not None
-            and not any(prefix in text for prefix in relevant_prefixes)
-            and not (
-                parent_import is not None
-                and parent_import.search(text)
-                and any(prefix.rpartition(".")[2] in text for prefix in relevant_prefixes)
-            )
-        ):
-            return set()
         tree = ast.parse(text)
-    except (OSError, UnicodeError, SyntaxError) as exc:
+    except SyntaxError as exc:
         logger.debug("Cannot select related tests from %s: %s", path, exc)
         return set()
     package = module if path.stem == "__init__" else module.rpartition(".")[0]
@@ -116,6 +110,51 @@ def _module_imports(
     return imports
 
 
+# Parsed imports by path, valid while the file's content digest matches (#23359). The
+# least recently used entries past the cap go, so deleted tests and removed worktrees
+# cannot grow it for the daemon's lifetime. Closes evaluate on worker threads.
+_PARSED_IMPORTS_MAX = 8192
+_PARSED_IMPORTS: OrderedDict[Path, tuple[bytes, frozenset[str]]] = OrderedDict()
+_PARSED_IMPORTS_LOCK = threading.Lock()
+
+
+def _parsed_imports(path: Path, module: str, text: str) -> frozenset[str]:
+    digest = hashlib.blake2b(text.encode(), digest_size=16).digest()
+    with _PARSED_IMPORTS_LOCK:
+        cached = _PARSED_IMPORTS.get(path)
+        if cached is not None and cached[0] == digest:
+            _PARSED_IMPORTS.move_to_end(path)
+            return cached[1]
+    imports = frozenset(_module_imports(path, module, text))
+    with _PARSED_IMPORTS_LOCK:
+        _PARSED_IMPORTS[path] = (digest, imports)
+        _PARSED_IMPORTS.move_to_end(path)
+        while len(_PARSED_IMPORTS) > _PARSED_IMPORTS_MAX:
+            _PARSED_IMPORTS.popitem(last=False)
+    return imports
+
+
+def _test_imports(
+    path: Path,
+    module: str,
+    prefixes: set[str],
+    leaves: set[str],
+    parent_import: re.Pattern[str] | None,
+) -> frozenset[str]:
+    """Imports of a test that may import a prefix; every prefix contains its leaf."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        logger.debug("Cannot select related tests from %s: %s", path, exc)
+        return frozenset()
+    if not any(leaf in text for leaf in leaves) or not (
+        any(prefix in text for prefix in prefixes)
+        or (parent_import is not None and parent_import.search(text) is not None)
+    ):
+        return frozenset()
+    return _parsed_imports(path, module, text)
+
+
 def related_python_source_tests(
     changed_paths: Iterable[str], base_dir: str | Path
 ) -> dict[str, tuple[str, ...]]:
@@ -131,7 +170,7 @@ def related_python_source_tests(
     if not sources or not (base / "tests").is_dir():
         return selected
     packages: dict[Path, dict[str, tuple[Path, str]]] = {}
-    parsed_siblings: dict[Path, set[str]] = {}
+    parsed_siblings: dict[Path, frozenset[str]] = {}
     families: dict[str, dict[str, int]] = {}
     for source in sources:
         source_path = PurePosixPath(source)
@@ -158,7 +197,7 @@ def related_python_source_tests(
                 if sibling in family or not any(leaf in text for leaf in leaves):
                     continue
                 if path not in parsed_siblings:
-                    parsed_siblings[path] = _module_imports(path, sibling, leaves, text=text)
+                    parsed_siblings[path] = _parsed_imports(path, sibling, text)
                 if dependencies := parsed_siblings[path].intersection(family):
                     importers[sibling] = 1 + min(family[dependency] for dependency in dependencies)
             if not importers:
@@ -176,22 +215,16 @@ def related_python_source_tests(
         if parents
         else None
     )
-    candidates = [
-        base / path
-        for path in pytest_module_paths(
-            path.relative_to(base).as_posix()
-            for path in (base / "tests").rglob("*.py")
-            if path.is_file()
-        )
-    ]
+    leaves = {prefix.rpartition(".")[2] for prefix in prefixes}
+    tests_dir = base / "tests"
+    # rglob joins onto tests_dir, so slicing its string skips pathlib's relative_to.
+    offset = len(str(tests_dir)) - len("tests")
+    candidates = pytest_module_paths(
+        str(path)[offset:] for path in tests_dir.rglob("*.py") if path.is_file()
+    )
     tests = [
-        (
-            path.relative_to(base).as_posix(),
-            _module_imports(
-                path, _module_name(path.relative_to(base).as_posix()), prefixes, parent_import
-            ),
-        )
-        for path in candidates
+        (test, _test_imports(base / test, _module_name(test), prefixes, leaves, parent_import))
+        for test in candidates
     ]
     for source, family in families.items():
         source_path = PurePosixPath(source)
@@ -261,29 +294,249 @@ def uncovered_test_paths(
 
 
 def uncovered_pytest_paths(
-    commands: Iterable[str],
+    runs: Iterable[TranscriptValidationRun],
     changed_python_tests: tuple[str, ...],
+    *,
+    close_root: str | None = None,
+    changed_paths: Sequence[str] = (),
+    candidate: CloseCandidate | None = None,
 ) -> tuple[str, ...]:
-    """Return changed tests no successful pytest command targets."""
-    covered: list[str] = []
-    for command in commands:
-        targets = pytest_targets(command)
-        if targets:
-            covered.extend(targets)
-    return uncovered_test_paths(changed_python_tests, tuple(covered))
+    """Return changed tests no successful pytest run targets.
+
+    Without ``close_root`` targets match lexically. With it, each target resolves from
+    the run's location: a target in ``close_root`` covers as before, and one in another
+    tree covers only when that tree holds the close ``candidate`` commit's bytes for the
+    test and every changed path (#23653).
+    """
+    if close_root is None:
+        covered: list[str] = []
+        for run in runs:
+            covered.extend(pytest_targets(run.core_command or run.command) or ())
+        return uncovered_test_paths(changed_python_tests, tuple(covered))
+    root = os.path.realpath(close_root)
+    resolved = [target for run in runs for target in _resolved_pytest_targets(run, root)]
+    return tuple(
+        test
+        for test in changed_python_tests
+        if not any(_runs_test(target, test, root, changed_paths, candidate) for target in resolved)
+    )
+
+
+def drop_foreign_runs(
+    evidence: TranscriptEvidence,
+    changed_python_tests: tuple[str, ...],
+    close_root: str,
+    changed_paths: Sequence[str],
+    candidate: CloseCandidate | None = None,
+) -> tuple[TranscriptEvidence, list[str]]:
+    """Drop runs that validated another checkout and return their commands.
+
+    A run whose ``uv`` location points outside ``close_root`` neither credits nor fails
+    this task, unless it ran identical copies of the changed tests.
+    """
+    foreign: list[str] = []
+
+    def in_scope(run: TranscriptValidationRun) -> bool:
+        if runs_outside_root(run.core_command or run.command, close_root) and not (
+            identical_copy_run(run, changed_python_tests, close_root, changed_paths, candidate)
+        ):
+            foreign.append(run.command)
+            return False
+        return True
+
+    scoped = replace(
+        evidence,
+        validation_runs=tuple(filter(in_scope, evidence.validation_runs)),
+        command_runs=tuple(filter(in_scope, evidence.command_runs)),
+    )
+    return scoped, foreign
+
+
+def identical_copy_run(
+    run: TranscriptValidationRun,
+    changed_python_tests: tuple[str, ...],
+    close_root: str,
+    changed_paths: Sequence[str],
+    candidate: CloseCandidate | None = None,
+) -> bool:
+    """Whether a passing pytest run targets only identical copies of changed tests.
+
+    Such a run proved this task's test bytes from another tree, so a ``uv`` location
+    outside ``close_root`` does not make it foreign (#23653).
+    """
+    root = os.path.realpath(close_root)
+    targets = _resolved_pytest_targets(run, root) if run.outcome == "success" else ()
+    return bool(targets) and all(
+        any(
+            _runs_test(target, test, root, changed_paths, candidate, copy_only=True)
+            for test in changed_python_tests
+        )
+        for target in targets
+    )
+
+
+def copy_differing_paths(
+    runs: Iterable[TranscriptValidationRun],
+    tests: Sequence[str],
+    close_root: str | None,
+    changed_paths: Sequence[str],
+    candidate: CloseCandidate | None = None,
+) -> tuple[str, ...]:
+    """Return the paths whose bytes kept another tree's run of ``tests`` from crediting.
+
+    Only a tree holding a copy of the test counts; any other ran none of it.
+    """
+    if close_root is None or not tests:
+        return ()
+    root = os.path.realpath(close_root)
+    targets = [target for run in runs for target in _resolved_pytest_targets(run, root)]
+    differing = {
+        path
+        for target in targets
+        for test in tests
+        for tree in _target_trees(target, test)
+        if tree != root and os.path.isfile(os.path.join(tree, test))
+        for path in (test, *changed_paths)
+        if not _same_bytes(tree, root, path, candidate)
+    }
+    return tuple(sorted(differing))
+
+
+def _resolved_pytest_targets(run: TranscriptValidationRun, root: str) -> tuple[str, ...]:
+    """Return the run's pytest targets as absolute paths, resolved from where it ran."""
+    targets = pytest_targets(run.core_command or run.command)
+    location = run_location(run.command, workdir=run.workdir)
+    if not targets or location is None:
+        return ()
+    # Symlinks stay unresolved: pytest's rootdir and pythonpath follow the path as written,
+    # so a test symlinked into ``root`` from another tree runs that tree's code.
+    return tuple(os.path.normpath(os.path.join(root, location, target)) for target in targets)
+
+
+def _runs_test(
+    target: str,
+    test: str,
+    root: str,
+    changed_paths: Sequence[str],
+    candidate: CloseCandidate | None,
+    *,
+    copy_only: bool = False,
+) -> bool:
+    """Whether absolute ``target`` runs ``test`` at ``root`` or as an identical copy.
+
+    A tree other than ``root`` must hold the candidate's bytes for ``test`` and every
+    changed path, or it tests other code.
+    """
+    return any(
+        not copy_only
+        if tree == root
+        else all(_same_bytes(tree, root, path, candidate) for path in (test, *changed_paths))
+        for tree in _target_trees(target, test)
+    )
+
+
+def _target_trees(target: str, test: str) -> Iterator[str]:
+    """Yield each tree ``R`` whose ``R/q`` is ``target``, for ``test`` or a parent ``q``."""
+    for prefix in (test, *(parent.as_posix() for parent in PurePosixPath(test).parents)):
+        if prefix == ".":
+            yield target
+        elif target.endswith(f"/{prefix}"):
+            yield target.removesuffix(f"/{prefix}")
+
+
+def _same_bytes(tree: str, root: str, path: str, candidate: CloseCandidate | None) -> bool:
+    """Whether ``tree`` holds ``path`` as the close candidate commit does, or both lack it.
+
+    The candidate is the reference, so another session's uncommitted edit in ``root``
+    does not void a copy, and a candidate git cannot list matches nothing. Without a
+    candidate ``root``'s working tree is the reference. Equal bytes are git blob
+    identity for an unfiltered file; a path committed as a symlink or submodule never
+    matches, which refuses credit and never grants it.
+    """
+    copy = os.path.join(tree, path)
+    if not candidate:
+        original = os.path.join(root, path)
+        try:
+            return filecmp.cmp(copy, original, shallow=False)
+        except OSError:
+            return not os.path.exists(copy) and not os.path.exists(original)
+    blobs = candidate.blobs
+    if blobs is None:
+        return False
+    blob = blobs.get(path)
+    try:
+        data = Path(copy).read_bytes()
+    except OSError:
+        return blob is None and not os.path.exists(copy)
+    algorithm = "sha256" if blob is not None and len(blob) == 64 else "sha1"
+    object_id = hashlib.new(algorithm, b"blob %d\0" % len(data) + data, usedforsecurity=False)
+    return object_id.hexdigest() == blob
+
+
+@dataclass
+class CloseCandidate:
+    """The close candidate commit as one gate evaluation compares copies against it.
+
+    A listed commit is immutable, so its listing is shared across evaluations. A failed
+    listing is remembered only by this evaluation: its paths fail closed after one git
+    timeout, and the next evaluation asks git again.
+    """
+
+    root: str
+    commit: str
+
+    @cached_property
+    def blobs(self) -> Mapping[str, str] | None:
+        """Blob ids by repo path in the commit's tree, or None when git cannot list it."""
+        try:
+            return _candidate_blobs(self.root, self.commit)
+        except _UnlistedCommitError:
+            return None
+
+
+class _UnlistedCommitError(Exception):
+    """Git could not list the close candidate commit's tree."""
+
+
+@lru_cache(maxsize=4)
+def _candidate_blobs(root: str, commit: str) -> Mapping[str, str]:
+    """Return blob ids by repo path in ``commit``'s tree.
+
+    A failure raises, which ``lru_cache`` never stores.
+    """
+    listing = run_git_command(
+        ["git", "ls-tree", "-r", "-z", "--full-tree", commit], cwd=root, timeout=30
+    )
+    if listing is None:
+        raise _UnlistedCommitError(commit)
+    blobs: dict[str, str] = {}
+    for entry in listing.split("\0"):
+        meta, tab, path = entry.partition("\t")
+        if tab:
+            blobs[path] = meta.rsplit(" ", 1)[-1]
+    return blobs
 
 
 def coverage_failure_message(
     python_tests: tuple[str, ...],
     python_sources: Mapping[str, Sequence[str]],
     web_paths: tuple[str, ...],
+    *,
+    differing_paths: tuple[str, ...] = (),
 ) -> str | None:
     """Describe the first uncovered test obligation in checklist priority order."""
+    copies = (
+        " A run from another tree is credited only when that tree matches the close "
+        "candidate commit, or the close checkout without one; these paths differ: "
+        f"{', '.join(f'`{path}`' for path in differing_paths)}."
+        if differing_paths
+        else ""
+    )
     if python_tests:
         display = ", ".join(f"`{path}`" for path in python_tests)
         return (
             "Changed Python tests have no credited fresh passing pytest target. "
-            f"Uncovered paths: {display}."
+            f"Uncovered paths: {display}.{copies}"
         )
     if python_sources:
         display = "; ".join(
@@ -292,7 +545,7 @@ def coverage_failure_message(
         )
         return (
             "Changed Python sources have related tests with no credited fresh passing pytest target. "
-            f"Uncovered sources and tests: {display}."
+            f"Uncovered sources and tests: {display}.{copies}"
         )
     if web_paths:
         # Direct binary avoids wrappers that rewrite `vitest related` into `vitest run`.
@@ -319,18 +572,20 @@ def changed_web_source_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:
 
 
 def uncovered_vitest_related_paths(
-    commands: Iterable[str],
+    runs: Iterable[TranscriptValidationRun],
     changed_web_paths: tuple[str, ...],
     *,
     close_root: str | None,
 ) -> tuple[str, ...]:
-    """Return changed web paths no successful ``vitest related`` command names.
+    """Return changed web paths no successful ``vitest related`` run names.
 
-    ``vitest related`` takes files, so coverage is an exact path match.
+    ``vitest related`` takes files, so coverage is an exact path match. The run's
+    tool workdir and leading ``cd`` chain must place it in ``web/``.
     """
     covered: set[str] = set()
-    for command in commands:
-        covered.update(vitest_related_targets(command, close_root=close_root) or ())
+    for run in runs:
+        targets = vitest_related_targets(run.command, close_root=close_root, workdir=run.workdir)
+        covered.update(targets or ())
     return tuple(path for path in changed_web_paths if path not in covered)
 
 

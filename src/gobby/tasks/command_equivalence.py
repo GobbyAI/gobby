@@ -298,12 +298,12 @@ _EXECUTED_SCOPE_WIDENING_OPTIONS: dict[tuple[str, ...], frozenset[str]] = {
 
 
 def _path_scope(
-    command: str, *, allow_scope_widening: bool = False
+    command: str, *, allow_scope_widening: bool = False, allow_outside: bool = False
 ) -> tuple[list[str], list[str]] | None:
     parsed = parse_validation_shell(command)
     if len(parsed.segments) != 1:
         return None
-    tokens, _location = _drop_neutral_uv_options(list(parsed.segments[0]))
+    tokens, _locations = _drop_neutral_uv_options(list(parsed.segments[0]))
     start = 2 if tokens[:2] == ["uv", "run"] else 0
     if tokens[start : start + 2] in (["python", "-m"], ["python3", "-m"]):
         start += 2
@@ -331,7 +331,7 @@ def _path_scope(
             takes_value = not attached and "=" not in token and token not in _VALUELESS_OPTIONS
         elif not any(char in token for char in "*?[]$"):
             path = posixpath.normpath(token)
-            if path.startswith(("/", "../")) or path == "..":
+            if not allow_outside and (path.startswith(("/", "../")) or path == ".."):
                 return None
             paths.append(path)
         else:
@@ -351,37 +351,38 @@ def _path_scope(
     return tokens[:end] + [shlex.join(option) for option in options], paths
 
 
-def _drop_neutral_uv_options(tokens: list[str]) -> tuple[list[str], str | None]:
+def _drop_neutral_uv_options(tokens: list[str]) -> tuple[list[str], dict[str, str]]:
     """Rewrite ``uv [options] run [options] <rest>`` as ``uv run <rest>``.
 
     Only options that keep the run's test selection are dropped, before or after
     ``run``. Any other option stays in place, so the runner is not recognized and
-    the command earns no path-scope credit. The second value is the last dropped
-    ``--directory``/``--project`` location, if any.
+    the command earns no path-scope credit. The second value maps each dropped
+    ``--directory``/``--project`` option to its last location.
     """
     if tokens[:1] != ["uv"]:
-        return tokens, None
+        return tokens, {}
     index = 1
     seen_run = False
-    location: str | None = None
+    locations: dict[str, str] = {}
     while index < len(tokens):
         token = tokens[index]
+        option, has_value, value = token.partition("=")
         if token == "run" and not seen_run:
             seen_run = True
             index += 1
         elif token in _UV_NEUTRAL_FLAGS:
             index += 1
         elif token in _UV_LOCATION_OPTIONS and index + 1 < len(tokens):
-            location = tokens[index + 1]
+            locations[token] = tokens[index + 1]
             index += 2
-        elif token.split("=", 1)[0] in _UV_LOCATION_OPTIONS and "=" in token:
-            location = token.split("=", 1)[1]
+        elif option in _UV_LOCATION_OPTIONS and has_value:
+            locations[option] = value
             index += 1
         else:
             break
     if not seen_run:
-        return tokens, None
-    return ["uv", "run", *tokens[index:]], location
+        return tokens, {}
+    return ["uv", "run", *tokens[index:]], locations
 
 
 def runs_outside_root(command: str, root: str) -> bool:
@@ -394,10 +395,12 @@ def runs_outside_root(command: str, root: str) -> bool:
     parsed = parse_validation_shell(command)
     if len(parsed.segments) != 1:
         return False
-    _tokens, location = _drop_neutral_uv_options(list(parsed.segments[0]))
-    if location is None or not os.path.isabs(location):
-        return False
-    return not Path(location).resolve().is_relative_to(Path(root).resolve())
+    _tokens, locations = _drop_neutral_uv_options(list(parsed.segments[0]))
+    return any(
+        os.path.isabs(location)
+        and not Path(location).resolve().is_relative_to(Path(root).resolve())
+        for location in locations.values()
+    )
 
 
 def _path_scope_runner(tokens: list[str], start: int) -> tuple[tuple[str, ...], int] | None:
@@ -436,9 +439,10 @@ def pytest_targets(command: str) -> tuple[str, ...] | None:
     """Return path targets for a pytest command.
 
     ``None`` means the command is not pytest. No path arguments cover the
-    whole tree. A node id covers its file.
+    whole tree. A node id covers its file. Absolute and ``../`` targets stay as
+    written, for the caller to resolve from the run's location.
     """
-    scoped = _path_scope(command)
+    scoped = _path_scope(command, allow_outside=True)
     if scoped is None:
         return None
     prefix, paths = scoped
@@ -469,7 +473,6 @@ _VITEST_LAUNCHERS = (
 _VITEST_RELATED_OPTIONS = frozenset(
     {"--reporter", "--no-coverage", "--silent", "--passWithNoTests"}
 )
-_ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 
 
 def vitest_related_paths(arguments: Iterable[str]) -> tuple[str, ...] | None:
@@ -496,38 +499,58 @@ def vitest_related_paths(arguments: Iterable[str]) -> tuple[str, ...] | None:
     return tuple(targets) if targets else None
 
 
-def vitest_related_targets(
-    command: str, *, close_root: str | None = None
-) -> tuple[str, ...] | None:
-    """Return repo-relative targets of a ``vitest related --run`` run from ``web/``.
+def run_location(command: str, *, workdir: str | None = None) -> str | None:
+    """Return the directory the last segment of ``command`` runs in.
 
-    Transcripts record no working directory, so the location is the command's leading
-    ``cd`` chain: a relative step resolves from the checkout root, an absolute one must
-    fall inside ``close_root``. ``None`` declines credit: another runner, no target, no
-    ``--run``, any other option, a glob target, or a location other than ``web/``.
+    It starts at the tool call's absolute ``workdir``, or the checkout root (``.``) when
+    none was recorded, and follows the leading ``cd <dir> &&`` chain and a ``uv
+    --directory``, also behind an exit-preserving prefix; ``export`` steps keep it.
+    ``None`` means another operator or leading step.
     """
     parsed = parse_validation_shell(command)
     if not parsed.segments or any(operator != "&&" for operator in parsed.operators):
         return None
-    *steps, segment = parsed.segments
-    location = "."
-    for step in steps:
+    location = workdir if workdir is not None and posixpath.isabs(workdir) else "."
+    for step in parsed.segments[:-1]:
+        if step[:1] == ("export",):
+            continue
         if len(step) != 2 or step[0] != "cd":
             return None
-        if not posixpath.isabs(step[1]):
-            location = posixpath.normpath(posixpath.join(location, step[1]))
-            continue
+        location = posixpath.normpath(posixpath.join(location, step[1]))
+    directory = _drop_neutral_uv_options(_core_words(parsed.segments[-1]))[1].get(
+        "--directory", "."
+    )
+    return posixpath.normpath(posixpath.join(location, directory))
+
+
+def _core_words(segment: tuple[str, ...]) -> list[str]:
+    """Return ``segment`` without its exit-preserving prefixes (env, ``rtk``, ``nice``).
+
+    These are the prefixes a run's ``core_command`` drops, so its location and runner
+    come from the same words as its targets.
+    """
+    core = parse_validation_shell(normalize_validation_evidence_command(shlex.join(segment)))
+    return list(core.segments[0]) if len(core.segments) == 1 else list(segment)
+
+
+def vitest_related_targets(
+    command: str, *, close_root: str | None = None, workdir: str | None = None
+) -> tuple[str, ...] | None:
+    """Return repo-relative targets of a ``vitest related --run`` run from ``web/``.
+
+    The location is :func:`run_location`; an absolute one must fall inside
+    ``close_root``. ``None`` declines credit: another runner, no target, no ``--run``,
+    any other option, a glob target, or a location other than ``web/``.
+    """
+    location = run_location(command, workdir=workdir)
+    if location is not None and posixpath.isabs(location):
         if close_root is None:
             return None
-        root, resolved = Path(close_root).resolve(), Path(step[1]).resolve()
-        if not resolved.is_relative_to(root):
-            return None
-        location = resolved.relative_to(root).as_posix()
+        root, resolved = Path(close_root).resolve(), Path(location).resolve()
+        location = resolved.relative_to(root).as_posix() if resolved.is_relative_to(root) else None
     if location != "web":
         return None
-    words = list(segment)
-    while words and _ENV_ASSIGNMENT.match(words[0]):
-        words.pop(0)
+    words = _core_words(parse_validation_shell(command).segments[-1])
     for launcher in _VITEST_LAUNCHERS:
         if tuple(words[: len(launcher)]) == launcher:
             words = words[len(launcher) :]

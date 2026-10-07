@@ -506,7 +506,7 @@ async def test_mini_build_reaches_clean_merge_state_without_manual_dispatch_tick
     )
     await harness.complete_agent("expansion-qa", stage_name="expansion", stage_state="needs_review")
     await harness.complete_agent(
-        "backend-developer",
+        "developer",
         stage_name="development",
         stage_state="in_progress",
     )

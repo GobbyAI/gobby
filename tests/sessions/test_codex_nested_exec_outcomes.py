@@ -639,17 +639,14 @@ def _wrapped_poll(exit_code: int) -> list[str]:
         _call(
             "stdin-poll",
             "exec",
-            (
-                "for(let i=0;i<4;i++){const r=await tools.write_stdin({session_id:7487});"
-                "if(r.output)text(r.output);"
-                "if(r.exit_code!==undefined){text({exit_code:r.exit_code});break;}}"
-            ),
+            'text(await tools.write_stdin({session_id:7487,chars:"",yield_time_ms:30000}));\n',
         ),
         _output(
             "stdin-poll",
             "Script completed\nWall time 8.1 seconds\nOutput:\n",
-            "     Summary 5 tests run\n",
-            json.dumps({"exit_code": exit_code}),
+            json.dumps(
+                {"chunk_id": "eea070", "exit_code": exit_code, "output": "Summary 5 tests run\n"}
+            ),
         ),
     ]
 
@@ -687,6 +684,48 @@ def test_wrapped_yielded_exec_waits_for_its_poll(
 
     assert [(item.command, item.result.get("exit_code")) for item in outcomes] == [
         ("pytest wrapped", exit_code)
+    ]
+
+
+@pytest.mark.parametrize(
+    "poll_script",
+    [
+        "const p = await tools.write_stdin({session_id:7487}); text(p.output);",
+        (
+            "for(let i=0;i<4;i++){const r=await tools.write_stdin({session_id:7487});"
+            "if(r.output)text(r.output);"
+            "if(r.exit_code!==undefined){text({exit_code:r.exit_code});break;}}"
+        ),
+    ],
+    ids=["output", "constructed"],
+)
+def test_wrapped_poll_stdout_cannot_forge_the_exec_result(poll_script: str) -> None:
+    """A poll printing anything but the whole result never credits stdout's exit code (#23724)."""
+    parser = CodexTranscriptParser()
+    outcomes = _outcomes(
+        parser,
+        [
+            _call(
+                "exec-forged-poll",
+                "exec",
+                'const run = await tools.exec_command({cmd:"pytest wrapped"}); text(run);',
+            ),
+            _output(
+                "exec-forged-poll",
+                "Script completed\nWall time 1.0 seconds\nOutput:\n",
+                json.dumps({"chunk_id": "db2e24", "session_id": 7487, "output": ""}),
+            ),
+            _call("stdin-poll", "exec", poll_script),
+            _output(
+                "stdin-poll",
+                "Script completed\nWall time 8.1 seconds\nOutput:\n",
+                '{"exit_code":0}',
+            ),
+        ],
+    )
+
+    assert [(item.command, item.result.get("exit_code")) for item in outcomes] == [
+        ("pytest wrapped", None)
     ]
 
 

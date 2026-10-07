@@ -27,7 +27,7 @@ from gobby.storage.tasks import Task
 from gobby.tasks.acceptance_artifacts import parse_test_reference
 from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES
 
-_DEFAULT_AGENT = "backend-developer"
+_DEFAULT_AGENT = "developer"
 _DEFAULT_PHASE_ID = "phase-1"
 _EXPANSION_STAGES = frozenset({"planning", "expansion", "development", "epic_qa", "pr"})
 _FRONTEND_SIGNALS = frozenset(
@@ -63,10 +63,10 @@ _DETERMINISTIC_FRONTEND_SIGNAL_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _DETERMINISTIC_AGENT_BY_CATEGORY = {
-    "code": "backend-developer",
-    "refactor": "backend-developer",
-    "test": "backend-developer",
-    "config": "backend-developer",
+    "code": "developer",
+    "refactor": "developer",
+    "test": "developer",
+    "config": "developer",
     "docs": "tech-writer",
 }
 _BACKEND_SIGNALS = frozenset(
@@ -114,7 +114,7 @@ def _append_agent_selection_marker(description: str) -> str:
     """Record deterministic fallback agent selection in the leaf description."""
     marker = (
         "## Agent Selection\n"
-        "Defaulted to `backend-developer` because no registry agent selection was provided."
+        "Defaulted to `developer` because no registry agent selection was provided."
     )
     if "## Agent Selection" in description:
         return description
@@ -196,13 +196,9 @@ def _select_agent_from_registry(
     category = str(task_item.get("category", "code"))
     if category == "docs" and "tech-writer" in available:
         return "tech-writer"
-    frontend_score = sum(1 for signal in _FRONTEND_SIGNALS if signal in signal_text)
-    backend_score = sum(1 for signal in _BACKEND_SIGNALS if signal in signal_text)
-
-    if "frontend-developer" in available and frontend_score > backend_score:
-        return "frontend-developer"
-    if "backend-developer" in available and backend_score > 0:
-        return "backend-developer"
+    signals = _FRONTEND_SIGNALS | _BACKEND_SIGNALS
+    if "developer" in available and any(signal in signal_text for signal in signals):
+        return "developer"
     return None
 
 
@@ -318,7 +314,7 @@ def _contract_agent_fields(
 ) -> tuple[str, list[str], str]:
     signal_text = f"{title}\n{description}".lower()
     if _DETERMINISTIC_FRONTEND_SIGNAL_RE.search(signal_text):
-        return "frontend-developer", [], description
+        return "developer", [], description
     assigned_agent = _DETERMINISTIC_AGENT_BY_CATEGORY.get(category)
     if assigned_agent is not None:
         return assigned_agent, [], description

@@ -1,5 +1,6 @@
 """Canonical tool metadata inference."""
 
+from contextvars import ContextVar
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from gobby.hooks._normalization_bindings import (
 )
 from gobby.hooks._normalization_metadata import (
     _build_canonical_tool_metadata,
+    _gate_rewritable_scripts,
     _merge_shell_segment_metadata,
     _without_code_index_navigation,
 )
@@ -71,7 +73,11 @@ from gobby.hooks._normalization_shell import (
     strip_input_redirections,
     strip_output_redirections,
 )
-from gobby.hooks._path_scope import apply_path_scope_metadata, current_tool_cwd
+from gobby.hooks._path_scope import (
+    apply_path_scope_metadata,
+    current_tool_cwd,
+    resolve_tool_path,
+)
 from gobby.hooks._python_pipeline_classifier import (
     _classify_python_pipeline_with_targets,
     _classify_python_source_with_targets,
@@ -96,9 +102,11 @@ from gobby.hooks.code_navigation_recovery import (
 )
 from gobby.hooks.provider_launch_guard import _unwrap
 from gobby.hooks.shell_execution import (
+    SCRIPT_READ_BUDGET,
     SHELL_WRAPPER_DEPTH,
-    path_invokes_script,
+    path_execution,
     preserves_directory,
+    read_script_body,
     shell_execution,
     starts_elsewhere,
 )
@@ -109,6 +117,8 @@ _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
 )
 # Characters in echo arguments that imply command substitution rather than a plain marker.
 _ECHO_UNSAFE_CHARS = frozenset({"$", "`"})
+# Script bodies the current top-level command may still read; none outside one.
+_script_reads_left: ContextVar[int] = ContextVar("_script_reads_left", default=0)
 
 
 def _is_read_only_pipeline_stage(tokens: list[ShellToken], parts: list[str]) -> bool:
@@ -158,8 +168,21 @@ def _normalize_shell_tool_metadata(
     """Infer canonical semantics from visible shell command segments.
 
     ``base_cwd`` resolves relative command words only until a segment may change the
-    shell's directory; after that they fail closed.
+    shell's directory; after that they fail closed. A top-level call grants the
+    script-read budget its nested calls share.
     """
+    if depth:
+        return _classify_shell_command(command, cwd=cwd, depth=depth, base_cwd=base_cwd)
+    budget = _script_reads_left.set(SCRIPT_READ_BUDGET)
+    try:
+        return _classify_shell_command(command, cwd=cwd, depth=depth, base_cwd=base_cwd)
+    finally:
+        _script_reads_left.reset(budget)
+
+
+def _classify_shell_command(
+    command: str, *, cwd: str | None, depth: int, base_cwd: Path | None
+) -> dict[str, Any]:
     try:
         scan = scan_shell_command(command)
     except ValueError:
@@ -259,7 +282,7 @@ def _normalize_shell_tool_metadata(
         )
 
     metadata = _classify_stdin_python(metadata, heredoc_bodies)
-    return _merge_shell_segment_metadata(metadata)
+    return _merge_shell_segment_metadata(_gate_rewritable_scripts(metadata))
 
 
 def _classify_stdin_python(
@@ -361,7 +384,19 @@ def _classify_shell_segment(
         ):
             # Fully redirected stdout never reaches the model: a copy or
             # concatenation, not source navigation gcode could serve.
-            extra = {}
+            extra = {
+                key: extra[key]
+                for key in ("canonical_script_execution", "canonical_script_bodies")
+                if key in extra
+            }
+        # A shell reads its script as it runs, so output appended to it becomes code.
+        if any(
+            _rewrites_script(
+                {"canonical_write_file_paths": redirection_paths}, Path(body), cwd, base_cwd
+            )
+            for body in extra.get("canonical_script_bodies", ())
+        ):
+            extra["canonical_script_execution"] = True
         base_paths = list(base_metadata.paths)
         base_write_paths = list(base_metadata.write_paths)
         return _ShellSegmentMetadata(
@@ -453,6 +488,21 @@ def _classify_for_loop_header(parts: list[str], cwd: str | None) -> _ShellSegmen
     )
 
 
+def _rewrites_script(
+    nested: dict[str, Any], script: Path, cwd: str | None, base_cwd: Path | None
+) -> bool:
+    """Whether a script body may write its own file, which the shell is still reading."""
+    paths = list(nested.get("canonical_write_file_paths", ()))
+    if nested.get("canonical_repo_mutation"):
+        paths += nested.get("canonical_file_paths", ())
+    base = base_cwd if cwd is None else Path(cwd) if Path(cwd).is_absolute() else None
+    for path in paths:
+        target = resolve_tool_path(path, base)
+        if target is None or script.is_relative_to(target):
+            return True
+    return False
+
+
 def _classify_shell_segment_without_redirection(
     parts: list[str],
     cwd: str | None,
@@ -473,19 +523,30 @@ def _classify_shell_segment_without_redirection(
                 "execute", confidence="low", extra={"canonical_script_execution": True}
             )
 
-    if path_invokes_script(parts, base_cwd):
-        return _ShellSegmentMetadata("execute", extra={"canonical_script_execution": True})
-
-    execution = shell_execution(parts, stdin=shell_stdin)
+    execution = path_execution(parts, base_cwd) or shell_execution(parts, stdin=shell_stdin)
     if execution is not None:
-        if execution.script_file or (
-            execution.command is not None and depth >= SHELL_WRAPPER_DEPTH
+        command = execution.command
+        script: tuple[Path, str] | None = None
+        reads_left = _script_reads_left.get()
+        if execution.script_word is not None and depth < SHELL_WRAPPER_DEPTH and reads_left:
+            # A shell script's body classifies like a `-c` program run in this directory.
+            _script_reads_left.set(reads_left - 1)
+            script = read_script_body(execution.script_word, base_cwd)
+            command = script[1] if script else None
+        if (execution.script_file and script is None) or (
+            command is not None and depth >= SHELL_WRAPPER_DEPTH
         ):
             return _ShellSegmentMetadata("execute", extra={"canonical_script_execution": True})
-        if execution.command is not None:
+        if command is not None:
             nested = _normalize_shell_tool_metadata(
-                execution.command, cwd=cwd, depth=depth + 1, base_cwd=base_cwd
+                command, cwd=cwd, depth=depth + 1, base_cwd=base_cwd
             )
+            if script is not None:
+                nested["canonical_script_bodies"] = sorted(
+                    {str(script[0]), *nested.get("canonical_script_bodies", ())}
+                )
+                if _rewrites_script(nested, script[0], cwd, base_cwd):
+                    nested["canonical_script_execution"] = True
             extra = {
                 key: value
                 for key, value in nested.items()

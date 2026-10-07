@@ -15,7 +15,7 @@ _STAGE_AGENTS = {
     "architecture": "architect",
     "prd": "product-manager",
     "planning": "planner",
-    "development": "backend-developer",
+    "development": "developer",
     "epic_qa": "epic-reviewer",
     "pr": "merge-orchestrator",
     "merge": "merge-orchestrator",
@@ -78,8 +78,6 @@ def _agents(**overrides):
             *_STAGE_AGENTS.values(),
             *_REVIEW_AGENTS.values(),
             "doc-reviewer",
-            "frontend-developer",
-            "fullstack-developer",
         }
     }
     agents.update(overrides)
@@ -97,7 +95,7 @@ def _task(**overrides):
         "allow_automation": True,
         "unattended": False,
         "checkout_mode": "none",
-        "assigned_agent": "backend-developer",
+        "assigned_agent": "developer",
         "blocked_by": set(),
         "active_blocked_by": set(),
         "stages": [_stage("development", "in_progress")],
@@ -300,7 +298,7 @@ def test_development_work_rule_allows_first_counted_attempt_at_cap() -> None:
     )
 
     assert isinstance(action, SpawnAgentAction)
-    assert action.agent_slug == "backend-developer"
+    assert action.agent_slug == "developer"
 
 
 def test_planning_work_rule_uses_review_budget_for_revisions() -> None:
@@ -369,7 +367,7 @@ def test_development_rule_falls_back_from_missing_assigned_agent() -> None:
     action = _evaluate(_task_at("development", "in_progress", assigned_agent="test-architect"))
 
     assert isinstance(action, SpawnAgentAction)
-    assert action.agent_slug == "backend-developer"
+    assert action.agent_slug == "developer"
     assert "Follow the developer agent contract" in action.prompt
     assert "default.yaml agent" not in action.prompt
 
@@ -398,20 +396,12 @@ def test_development_rule_falls_back_from_agent_without_prompt_builder() -> None
     )
 
     assert isinstance(action, SpawnAgentAction)
-    assert action.agent_slug == "backend-developer"
+    assert action.agent_slug == "developer"
 
 
-@pytest.mark.parametrize(
-    ("implementation_domain", "agent_slug"),
-    [
-        ("backend", "backend-developer"),
-        ("frontend", "frontend-developer"),
-        ("fullstack", "fullstack-developer"),
-    ],
-)
+@pytest.mark.parametrize("implementation_domain", ["backend", "frontend", "fullstack"])
 def test_development_rule_routes_code_by_implementation_domain(
     implementation_domain: str,
-    agent_slug: str,
 ) -> None:
     from gobby.dispatch.actions import SpawnAgentAction
 
@@ -426,40 +416,12 @@ def test_development_rule_routes_code_by_implementation_domain(
     )
 
     assert isinstance(action, SpawnAgentAction)
-    assert action.agent_slug == agent_slug
+    assert action.agent_slug == "developer"
 
 
-def test_development_rule_falls_back_from_disabled_implementation_domain_agent(
+def test_development_rule_escalates_when_domain_and_fallback_agents_unavailable(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    from gobby.dispatch.actions import SpawnAgentAction
-
-    action = _evaluate(
-        _task_at(
-            "development",
-            "in_progress",
-            category="code",
-            assigned_agent=None,
-            implementation_domain="frontend",
-        ),
-        _context(
-            agents=_agents(
-                **{
-                    "frontend-developer": SimpleNamespace(
-                        name="frontend-developer",
-                        enabled=False,
-                    )
-                }
-            )
-        ),
-    )
-
-    assert isinstance(action, SpawnAgentAction)
-    assert action.agent_slug == "backend-developer"
-    assert "Ignoring unavailable implementation-domain development agent" in caplog.text
-
-
-def test_development_rule_escalates_when_domain_and_fallback_agents_unavailable() -> None:
     from gobby.dispatch.actions import EscalateAction
 
     action = _evaluate(
@@ -471,20 +433,13 @@ def test_development_rule_escalates_when_domain_and_fallback_agents_unavailable(
             implementation_domain="frontend",
         ),
         _context(
-            agents=_agents(
-                **{
-                    "backend-developer": None,
-                    "frontend-developer": SimpleNamespace(
-                        name="frontend-developer",
-                        enabled=False,
-                    ),
-                }
-            )
+            agents=_agents(developer=SimpleNamespace(name="developer", enabled=False)),
         ),
     )
 
     assert isinstance(action, EscalateAction)
     assert action.reason == "development_no_agent"
+    assert "Ignoring unavailable implementation-domain development agent" in caplog.text
 
 
 def test_expansion_review_rule_escalates_when_review_cap_reached() -> None:
@@ -555,7 +510,7 @@ def test_dev_rule_fires_after_stage_start() -> None:
     )
 
     assert isinstance(action, SpawnAgentAction)
-    assert action.agent_slug == "backend-developer"
+    assert action.agent_slug == "developer"
 
 
 def test_non_root_leaf_merge_uses_workspace_merge_action() -> None:
@@ -677,7 +632,7 @@ def test_docs_dev_rule_falls_back_when_tech_writer_is_disabled() -> None:
     )
 
     assert isinstance(action, SpawnAgentAction)
-    assert action.agent_slug == "backend-developer"
+    assert action.agent_slug == "developer"
 
 
 def test_qa_rule_fires_with_cap() -> None:

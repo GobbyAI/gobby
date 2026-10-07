@@ -70,6 +70,7 @@ def test_seat_instructions_carry_seat_role() -> None:
 
     assert "You are the Plan Writer seat" in writer
     assert "draft" in writer
+    assert "gobby:references/plan/coverage.md" in writer
     assert "You are the Plan Enhancer seat" in enhancer
     assert "You are the Plan Adversary seat" in adversary
     for text in (enhancer, adversary):

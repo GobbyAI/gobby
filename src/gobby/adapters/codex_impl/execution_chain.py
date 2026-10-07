@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -40,13 +41,17 @@ _EXEC_COMMAND_LITERAL_RE = re.compile(
     r'(?:^|[{,])\s*(?:cmd|"cmd")\s*:\s*("(?:\\.|[^"\\])*")',
     re.DOTALL,
 )
-_EXEC_RESULT_BINDING_RE = re.compile(
-    r"\b(?:const|let|var)\s+(?P<name>[$A-Z_a-z][$\w]*)\s*=\s*"
-    r"await\s+tools\.exec_command\s*\("
+_EXEC_WORKDIR_LITERAL_RE = re.compile(
+    r'(?:^|[{,])\s*(?:workdir|"workdir")\s*:\s*("(?:\\.|[^"\\])*")',
+    re.DOTALL,
 )
-_SERIALIZED_RESULT_RE = re.compile(
-    r"\btext\s*\(\s*JSON\.stringify\s*\(\s*(?P<name>[$A-Z_a-z][$\w]*)\s*\)\s*\)"
+_EXEC_RESULT_CALL_RE = re.compile(r"\btools\.(?:exec_command|write_stdin)\s*\(")
+_AWAITED_TOOL_RESULT_RE = re.compile(r"await\s+tools\.[$\w]+\s*\(")
+_TOOL_RESULT_BINDING_RE = re.compile(
+    r"\b(?:const|let|var)\s+(?P<name>[$A-Z_a-z][$\w]*)\s*=\s*await\s+tools\.[$\w]+\s*\("
 )
+_OUTPUT_CALL_RE = re.compile(r"(?<![$\w.])(?:text|console\.[$\w]+)\s*\(")
+_STRINGIFY_RE = re.compile(r"JSON\.stringify\s*\(")
 _REPEATED_EXEC_SCAFFOLD_RE = re.compile(
     r"\b(?:do|for|while)\b|\.(?:forEach|map|reduce)\s*\(|\bPromise\.all\s*\("
 )
@@ -85,13 +90,65 @@ def extract_functions_exec_command(arguments: Any) -> str | None:
     return command if isinstance(command, str) and command else None
 
 
-def _expects_serialized_exec_result(arguments: Any) -> bool:
-    """Return whether one nested exec result is emitted as structured JSON."""
-    if not isinstance(arguments, str):
+def _call_argument(source: str, open_paren: int) -> tuple[str, int] | None:
+    """Return the text inside the call opened at ``open_paren`` and the index past it."""
+    depth = 0
+    quote: str | None = None
+    index = open_paren
+    while index < len(source):
+        char = source[index]
+        if quote is not None:
+            if char == "\\":
+                index += 1
+            elif char == quote:
+                quote = None
+        elif char in "\"'`":
+            quote = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if depth == 0:
+                return source[open_paren + 1 : index], index + 1
+        index += 1
+    return None
+
+
+def _prints_whole_tool_results(arguments: Any) -> bool:
+    """Return whether a cell running one exec prints only whole tool results.
+
+    ``text()`` serializes a result object as JSON, so the command's stdout stays inside
+    its ``output`` string. Any other print, such as ``r.output``, lets stdout spell a
+    forged exit code or session (#23724).
+    """
+    if not isinstance(arguments, str) or len(_EXEC_RESULT_CALL_RE.findall(arguments)) != 1:
         return False
-    bindings = _EXEC_RESULT_BINDING_RE.findall(arguments)
-    serialized = _SERIALIZED_RESULT_RE.findall(arguments)
-    return len(bindings) == 1 and serialized == bindings
+    names = _TOOL_RESULT_BINDING_RE.findall(arguments)
+    if len(names) != len(set(names)):
+        return False
+    outputs = list(_OUTPUT_CALL_RE.finditer(arguments))
+    return bool(outputs) and all(
+        _prints_tool_result(arguments, output, names) for output in outputs
+    )
+
+
+def _prints_tool_result(arguments: str, output: re.Match[str], names: list[str]) -> bool:
+    """Return whether one output call prints an awaited tool result whole."""
+    if not output.group(0).startswith("text"):
+        return False
+    printed = _call_argument(arguments, output.end() - 1)
+    if printed is None:
+        return False
+    expression = printed[0].strip()
+    if stringify := _STRINGIFY_RE.match(expression):
+        inner = _call_argument(expression, stringify.end() - 1)
+        if inner is None or expression[inner[1] :].strip():
+            return False
+        expression = inner[0].strip()
+    if awaited := _AWAITED_TOOL_RESULT_RE.match(expression):
+        call = _call_argument(expression, awaited.end() - 1)
+        return call is not None and not expression[call[1] :].strip()
+    return expression in names
 
 
 def validate_functions_exec_wrapper(arguments: Any) -> str | None:
@@ -128,6 +185,36 @@ def extract_direct_exec_command(arguments: Any) -> str | None:
         return None
     command = decoded.get("cmd")
     return command if isinstance(command, str) and command else None
+
+
+def extract_direct_exec_workdir(arguments: Any) -> str | None:
+    """Extract the absolute ``workdir`` of one direct Codex ``exec_command`` call."""
+    decoded = arguments
+    if isinstance(arguments, str):
+        try:
+            decoded = json.loads(arguments)
+        except (TypeError, ValueError):
+            return None
+    return _absolute_path(decoded.get("workdir")) if isinstance(decoded, dict) else None
+
+
+def extract_functions_exec_workdir(arguments: Any) -> str | None:
+    """Extract the literal absolute ``workdir`` of the one nested ``exec_command``."""
+    if isinstance(arguments, dict):
+        return _absolute_path(arguments.get("workdir"))
+    if extract_functions_exec_command(arguments) is None:
+        return None
+    matches = _EXEC_WORKDIR_LITERAL_RE.findall(arguments)
+    if len(matches) != 1:
+        return None
+    try:
+        return _absolute_path(json.loads(matches[0]))
+    except (TypeError, ValueError):
+        return None
+
+
+def _absolute_path(value: Any) -> str | None:
+    return value if isinstance(value, str) and os.path.isabs(value) else None
 
 
 def _normalize_session_id(value: Any) -> str | None:
@@ -259,21 +346,26 @@ def decoded_exec_results(
     terminal_result = _functions_exec_terminal_result(value)
     if terminal_result is not None:
         if expects_serialized_result and isinstance(value, list):
+            # A cell completes even when the exec it printed is still running or
+            # exited non-zero. The printed exec result, not the cell's status, is the
+            # command's outcome. Each print is one whole tool result, so only its top
+            # level is read: nested content may be stdout (#23724).
             serialized_results: list[dict[str, Any]] = []
             for item in value[1:]:
-                if isinstance(item, dict) and isinstance(item.get("text"), str):
-                    serialized_results.extend(decoded_exec_results(item["text"]))
+                try:
+                    printed = json.loads(item["text"])
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(printed, dict) and (
+                    exec_session_id(printed) is not None
+                    or definitive_exit_code(printed) is not None
+                ):
+                    serialized_results.append(printed)
             return serialized_results if len(serialized_results) == 1 else []
-        # A cell completes even when the exec it printed is still running or
-        # exited non-zero (#23724). The printed exit code or PTY session, not
-        # the cell's status, is the command's outcome.
-        printed = [
-            result
-            for item in value[1:]
-            for result in decoded_exec_results(item["text"])
-            if exec_session_id(result) is not None or definitive_exit_code(result) is not None
-        ]
-        return printed or [terminal_result]
+        if terminal_result["success"]:
+            # Completion proves the script ran, never that its command passed.
+            terminal_result["success"] = None
+        return [terminal_result]
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -376,16 +468,6 @@ def extract_direct_exec_running_session_id(value: Any) -> str | None:
     return matches[0] if len(matches) == 1 else None
 
 
-def extract_exec_session_id(data: Mapping[str, Any]) -> str | None:
-    """Read one structured PTY session ID from a live wrapper result."""
-    output = data.get("tool_output", data.get("tool_response"))
-    for result in decoded_exec_results(output):
-        session_id = exec_session_id(result)
-        if session_id is not None:
-            return session_id
-    return None
-
-
 def extract_yielded_cell_id(data: Mapping[str, Any]) -> str | None:
     """Read the functions wrapper correlation token without inferring outcome."""
     output = data.get("tool_output", data.get("tool_response"))
@@ -418,6 +500,7 @@ class PendingExecution:
     session_id: str | None = None
     direct: bool = False
     expects_serialized_result: bool = False
+    workdir: str | None = None
 
     def to_state(self) -> dict[str, Any]:
         return {
@@ -427,6 +510,7 @@ class PendingExecution:
             "session_id": self.session_id,
             "direct": self.direct,
             "expects_serialized_result": self.expects_serialized_result,
+            "workdir": self.workdir,
         }
 
     @classmethod
@@ -436,7 +520,9 @@ class PendingExecution:
         outer_call_id = value.get("outer_call_id")
         if not isinstance(outer_call_id, str) or not outer_call_id:
             return None
-        optional = {key: value.get(key) for key in ("literal_command", "cell_id", "session_id")}
+        optional = {
+            key: value.get(key) for key in ("literal_command", "cell_id", "session_id", "workdir")
+        }
         if any(item is not None and not isinstance(item, str) for item in optional.values()):
             return None
         direct = value.get("direct", False)
@@ -485,7 +571,9 @@ class ExecutionChainCorrelator:
         if name in DIRECT_EXEC_NAMES:
             command = extract_direct_exec_command(arguments)
             if command is not None:
-                execution = PendingExecution(call_id, command, direct=True)
+                execution = PendingExecution(
+                    call_id, command, direct=True, workdir=extract_direct_exec_workdir(arguments)
+                )
         elif name in FUNCTIONS_EXEC_NAMES:
             command = extract_functions_exec_command(arguments)
             session_id = extract_functions_write_stdin_session_id(arguments)
@@ -493,10 +581,16 @@ class ExecutionChainCorrelator:
                 execution = PendingExecution(
                     call_id,
                     command,
-                    expects_serialized_result=_expects_serialized_exec_result(arguments),
+                    expects_serialized_result=_prints_whole_tool_results(arguments),
+                    workdir=extract_functions_exec_workdir(arguments),
                 )
             elif session_id is not None:
                 execution = self._sessions.get(session_id)
+                if execution is not None:
+                    # Each poll cell prints its own way, so trust follows this cell.
+                    execution = replace(
+                        execution, expects_serialized_result=_prints_whole_tool_results(arguments)
+                    )
                 typed = extract_functions_write_stdin_command(arguments)
                 if execution is not None and typed:
                     execution = replace(execution, literal_command=typed)
@@ -550,7 +644,14 @@ class ExecutionChainCorrelator:
                 output,
                 expects_serialized_result=execution.expects_serialized_result,
             )
-        terminal_results = tuple(result for result in results if _has_structured_outcome(result))
+        # The cell wrapper stays terminal even when unknown, so evidence can drop it as a
+        # duplicate of the command's own CommandExecution item.
+        terminal_results = tuple(
+            result
+            for result in results
+            if _has_structured_outcome(result)
+            or result.get("outcome_provenance") == "codex.functions_exec.wrapper"
+        )
         if terminal_results:
             self._clear_execution(execution)
             return ExecutionResolution(
