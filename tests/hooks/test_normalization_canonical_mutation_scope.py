@@ -25,6 +25,9 @@ pytestmark = pytest.mark.unit
         "sh -- probe.sh",
         "zsh -f probe.sh",
         "env MODE=test bash -e probe.sh",
+        "env -i bash probe.sh",
+        "env -u HOME bash probe.sh",
+        "command -p bash probe.sh",
         "bash /tmp/scratchpad/probe.sh",
         "source /tmp/scratchpad/probe.sh",
         ". /tmp/scratchpad/probe.sh",
@@ -132,7 +135,8 @@ def _signature_fixture(directory: Path) -> None:
         ("./bin/tool --version", "event", False),
         ("bin/tool", "tool_input", False),
         ("bash -c './bin/tool'", "event", False),
-        ("./bin/tool || true; ./bin/tool", "event", False),
+        ("./bin/tool && bin/tool | ./bin/tool", "event", False),
+        ("nohup ./bin/tool", "event", False),
         ("./bin/script", "event", True),
         ("./bin/tool", None, True),
     ],
@@ -162,6 +166,20 @@ def test_relative_command_paths_resolve_against_the_tool_cwd(
         "eval 'cd sub'; ./bin/tool",
         "bash -c 'cd sub || exit; ./bin/tool'",
         "cd sub && bash -c './bin/tool'",
+        # Only a static path word provably runs another program; any other command
+        # word may be a builtin, function or alias that changes directory.
+        "chdir sub; ./bin/tool",
+        "builtin chdir sub; ./bin/tool",
+        "c=cd; $c sub; ./bin/tool",
+        "f() { cd sub; }; f; ./bin/tool",
+        "./bin/tool () cd sub; ./bin/tool; ./bin/tool",
+        "{cd,./sub}; ./bin/tool",
+        "./bin/tool || true; ./bin/tool",
+        # Wrappers that start the program in another directory.
+        "env -C sub ./bin/tool",
+        "env --chdir=sub ./bin/tool",
+        "sudo -D sub ./bin/tool",
+        "env -C sub bash -c './bin/tool'",
     ],
 )
 def test_relative_command_paths_after_a_directory_change_fail_closed(

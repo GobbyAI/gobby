@@ -1,5 +1,6 @@
 """Resolve shell programs and bounded executable signatures without reading script bodies."""
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,7 +26,11 @@ _NATIVE_EXECUTABLE_MAGIC = frozenset(
         b"\xbf\xba\xfe\xca",
     }
 )
-_DIRECTORY_COMMANDS = frozenset({"cd", "pushd", "popd"})
+# A command word that names one file before expansion: a slash, and no parameter,
+# command, brace, glob, quote or function-definition syntax.
+_STATIC_PATH = re.compile(r"[\w.~+-]*(?:/[\w.~+-]*)+")
+# Wrappers whose options start the program elsewhere (env -C, sudo -D, sudo -i).
+_DIRECTORY_WRAPPERS = frozenset({"env", "sudo"})
 
 
 @dataclass(frozen=True)
@@ -34,15 +39,24 @@ class ShellExecution:
     script_file: bool = False
 
 
-def changes_directory(words: list[str]) -> bool:
-    """Whether a segment may change this shell's directory.
+def preserves_directory(words: list[str]) -> bool:
+    """Whether a segment provably leaves this shell's directory unchanged.
 
-    Any ``eval`` word counts, since its string runs in this shell behind any wrapper.
+    Only a static path runs a separate program. Any other command word may be a
+    builtin, function or alias that changes directory, and a path followed by ``()``
+    defines a function under that name.
     """
-    if any(shell_command_name(word) == "eval" for word in words):
-        return True
     words = _unwrap(words)
-    return bool(words) and shell_command_name(words[0]) in _DIRECTORY_COMMANDS
+    return not words or (
+        _STATIC_PATH.fullmatch(words[0]) is not None and words[1:2] not in (["()"], ["("])
+    )
+
+
+def starts_elsewhere(words: list[str]) -> bool:
+    """Whether a wrapper may start the segment's program in another directory."""
+    command = _unwrap(words)
+    head = words[: words.index(command[0])] if command and command[0] in words else words
+    return any(shell_command_name(word) in _DIRECTORY_WRAPPERS for word in head)
 
 
 def path_invokes_script(words: list[str], base: Path | None) -> bool:

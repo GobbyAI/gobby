@@ -97,9 +97,10 @@ from gobby.hooks.code_navigation_recovery import (
 from gobby.hooks.provider_launch_guard import _unwrap
 from gobby.hooks.shell_execution import (
     SHELL_WRAPPER_DEPTH,
-    changes_directory,
     path_invokes_script,
+    preserves_directory,
     shell_execution,
+    starts_elsewhere,
 )
 
 _CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
@@ -199,8 +200,8 @@ def _normalize_shell_tool_metadata(
         )
         leading_assignments = assignment_bindings is not None
         parts = _strip_shell_wrappers(raw_parts)
-        segment_base = None if directory_changed else base_cwd
-        directory_changed = directory_changed or changes_directory(parts)
+        segment_base = None if directory_changed or starts_elsewhere(parts) else base_cwd
+        directory_changed = directory_changed or not preserves_directory(parts)
         if not parts:
             metadata.append(
                 _ShellSegmentMetadata(
