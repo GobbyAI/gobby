@@ -85,6 +85,7 @@ _STUB = f"""\
 import select
 import sys
 import termios
+from pathlib import Path
 
 if any(arg in {{"--version", "-v"}} for arg in sys.argv[1:]):
     sys.stdout.write("1.0.0-e2e\\n")
@@ -97,12 +98,11 @@ try:
     termios.tcsetattr(fd, termios.TCSADRAIN, attrs)
 except termios.error:
     pass
-try:
-    open("/tmp/gobby-stack-stub.log", "w", encoding="utf-8").write(
-        "argv=" + repr(sys.argv) + "\\n"
-    )
-except OSError:
-    pass
+session_id = sys.argv[sys.argv.index("--session-id") + 1]
+# SRT permits writes under cwd; a shared /tmp log is outside that grant.
+Path(f".gobby-stack-stub-{{session_id}}.log").write_text(
+    "argv=" + repr(sys.argv) + "\\n", encoding="utf-8"
+)
 sys.stdout.write({READY!r} + "\\n")
 sys.stdout.write("\\n" * 20)
 sys.stdout.write({APPROVAL_PROMPT!r})
@@ -341,17 +341,78 @@ def _list_items(client: httpx.Client) -> list[dict[str, Any]]:
     return list(response.json().get("items") or [])
 
 
-def _live_native_items(client: httpx.Client) -> tuple[dict[str, Any], dict[str, Any]]:
-    live = [
-        item
+def _live_native_items(
+    client: httpx.Client, run_ids: tuple[str, str]
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Wait for each accepted spawn's persisted terminal, ignoring unrelated rows."""
+    terminal_ids: list[str] = []
+    for run_id in run_ids:
+        response = client.get(f"/api/agents/runs/{run_id}")
+        assert response.status_code == 200, response.text
+        run = response.json()["run"]
+        assert run["status"] not in {"error", "timeout", "cancelled", "success"}, run
+        terminal_id = run.get("terminal_id")
+        if not isinstance(terminal_id, str):
+            return None
+        terminal_ids.append(terminal_id)
+    live = {
+        item["id"]: item
         for item in _list_items(client)
         if item.get("backend") == "native"
         and item.get("ownership") == "gobby"
         and item.get("state") == "live"
-    ]
-    if len(live) < 2:
-        raise AssertionError(f"fewer than two live native terminals in {_list_items(client)}")
-    return live[0], live[1]
+    }
+    if not all(terminal_id in live for terminal_id in terminal_ids):
+        return None
+    return live[terminal_ids[0]], live[terminal_ids[1]]
+
+
+@pytest.mark.parametrize("readiness", ["pending", "unpublished", "live"])
+def test_native_readiness_matches_spawn_runs(readiness: str) -> None:
+    """Unrelated live rows never satisfy readiness for the two requested runs."""
+
+    def row(terminal_id: str) -> dict[str, str]:
+        return {"id": terminal_id, "backend": "native", "ownership": "gobby", "state": "live"}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/terminals":
+            items = [row("unrelated-one"), row("unrelated-two")]
+            if readiness == "live":
+                # Roster order must not change the association with each run.
+                items.extend([row("terminal-second"), row("terminal-first")])
+            return httpx.Response(200, json={"items": items})
+        run_id = request.url.path.rsplit("/", 1)[-1]
+        assert run_id in {"first", "second"}
+        return httpx.Response(
+            200,
+            json={
+                "run": {
+                    "status": "running",
+                    "terminal_id": None if readiness == "pending" else f"terminal-{run_id}",
+                }
+            },
+        )
+
+    with httpx.Client(
+        base_url="http://stack.test", transport=httpx.MockTransport(respond)
+    ) as client:
+        live = _live_native_items(client, ("first", "second"))
+    if readiness == "live":
+        assert live == (row("terminal-first"), row("terminal-second"))
+    else:
+        assert live is None
+
+
+def test_native_readiness_reports_failed_run() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/agents/runs/first"
+        return httpx.Response(200, json={"run": {"status": "error", "error": "spawn refused"}})
+
+    with httpx.Client(
+        base_url="http://stack.test", transport=httpx.MockTransport(respond)
+    ) as client:
+        with pytest.raises(AssertionError, match="spawn refused"):
+            _live_native_items(client, ("first", "second"))
 
 
 def _attach_locator(item: dict[str, Any]) -> AttachLocator:
@@ -536,14 +597,16 @@ async def test_terminal_client_stack_end_to_end(
     direct_spawn = _spawn_agent(client)
     native_spawn = _spawn_agent(client)
 
-    def both_live() -> tuple[dict[str, Any], dict[str, Any]] | None:
-        try:
-            first, second = _live_native_items(client)
-            return first, second
-        except AssertionError:
-            return None
-
-    live = wait_for_condition(both_live, timeout=25.0, interval=0.2, description="two native rows")
+    run_ids = (direct_spawn["run_id"], native_spawn["run_id"])
+    assert all(isinstance(run_id, str) for run_id in run_ids), (direct_spawn, native_spawn)
+    # Spawn acceptance precedes native publication. Bound readiness by the run's
+    # terminal_id plus its live roster row, with a two-minute integration deadline.
+    live = wait_for_condition(
+        lambda: _live_native_items(client, run_ids),
+        timeout=120.0,
+        interval=0.2,
+        description=f"live native terminals for runs {run_ids}",
+    )
     assert _is_item_pair(live)
     direct_item, native_item = live
     assert direct_item["backend"] == "native"
@@ -552,6 +615,15 @@ async def test_terminal_client_stack_end_to_end(
     assert native_item["state"] == "live"
     native_id = str(native_item["id"])
     direct_id = str(direct_item["id"])
+    assert direct_id != native_id
+    for spawn in (direct_spawn, native_spawn):
+        session_id = spawn["child_session_id"]
+        assert isinstance(session_id, str), spawn
+        log = daemon_instance.project_dir / f".gobby-stack-stub-{session_id}.log"
+        wait_for_condition(log.is_file, timeout=12.0, description=f"stub log for {session_id}")
+        contents = log.read_text()
+        assert str(shutil.which("claude")) in contents, contents
+        assert session_id in contents, contents
 
     token = daemon_token(daemon_instance.gobby_home)
     native_loc = _attach_locator(native_item)
