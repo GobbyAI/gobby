@@ -271,33 +271,33 @@ def test_expected_owner_skips_claim_moved_to_third_session(
     assert stolen.id not in _claimed_task_ids(harness.session_task_manager, harness.successor_id)
 
 
-def test_link_failure_compensates_ownership_and_keeps_committed_transfer(
+def test_transfer_records_claim_link_in_the_claim_transaction(
     tmp_path: Path,
     hub_db: HubDatabase,
 ) -> None:
     harness = _make_harness(hub_db, tmp_path)
-    kept = harness.create_claimed_task("Link succeeds")
-    broken = harness.create_claimed_task("Link explodes")
-    failing_links = _FailingLinkManager(harness.session_task_manager, {broken.id})
+    first = harness.create_claimed_task("First transfer")
+    second = harness.create_claimed_task("Second transfer")
+    failing_links = _FailingLinkManager(harness.session_task_manager, {first.id, second.id})
 
     preserve_task_claim_state(
         harness.handler(session_task_manager=failing_links),
         harness.sv_mgr,
         harness.successor_id,
         harness.predecessor_id,
-        _predecessor_vars(kept, broken),
+        _predecessor_vars(first, second),
     )
 
-    assert harness.task_manager.get_task(kept.id).claimed_by_session_id == harness.successor_id
-    assert harness.task_manager.get_task(broken.id).claimed_by_session_id == harness.predecessor_id
-    assert kept.id in _claimed_task_ids(harness.session_task_manager, harness.successor_id)
-    assert broken.id not in _claimed_task_ids(harness.session_task_manager, harness.successor_id)
+    assert harness.task_manager.get_task(first.id).claimed_by_session_id == harness.successor_id
+    assert harness.task_manager.get_task(second.id).claimed_by_session_id == harness.successor_id
+    claimed_links = _claimed_task_ids(harness.session_task_manager, harness.successor_id)
+    assert {first.id, second.id} <= claimed_links
     successor_vars = harness.sv_mgr.get_variables(harness.successor_id)
-    assert successor_vars.get("claimed_tasks") == {kept.id: f"#{kept.seq_num}"}
-    assert any(
-        session_id == harness.successor_id and task_id == broken.id and action == "claimed"
-        for session_id, task_id, action in failing_links.calls
-    )
+    assert successor_vars.get("claimed_tasks") == {
+        first.id: f"#{first.seq_num}",
+        second.id: f"#{second.seq_num}",
+    }
+    assert failing_links.calls == []
 
 
 def test_per_task_errors_do_not_abort_remaining_transfers(
