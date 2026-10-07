@@ -1,0 +1,200 @@
+"""Persist tool-start identity separately from provider result delivery."""
+
+from typing import Any
+
+from gobby.adapters.codex_impl.execution_chain import (
+    DIRECT_EXEC_NAMES,
+    FUNCTIONS_EXEC_NAMES,
+    extract_functions_exec_command,
+)
+from gobby.hooks.events import HookEvent, HookEventType
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_claim_state import task_selected_at
+
+
+def _call_key(event: HookEvent) -> str | None:
+    outer_id = event.data.get("verification_execution_id")
+    call_id = outer_id if isinstance(outer_id, str) and outer_id else event.request_id
+    return f"{event.source.value}:{call_id}" if call_id else None
+
+
+def _bindings(variables: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = variables.get("task_tool_bindings")
+    if not isinstance(raw, dict):
+        return {}
+    return {key: dict(value) for key, value in raw.items() if isinstance(value, dict)}
+
+
+def _fences_switch(event: HookEvent) -> bool:
+    name = event.data.get("tool_name", "")
+    if name in {"Bash", "Shell", "Task", "Agent"} or name in DIRECT_EXEC_NAMES:
+        return True
+    if name in FUNCTIONS_EXEC_NAMES:
+        arguments = event.data.get("arguments", event.data.get("tool_input"))
+        return extract_functions_exec_command(arguments) is not None
+    return event.data.get("canonical_tool_kind") == "shell"
+
+
+def _matching_key(event: HookEvent, variables: dict[str, Any]) -> str | None:
+    key = _call_key(event)
+    if key is not None:
+        return key
+    history = variables.get("task_selection_history", [])
+    matches = [
+        key
+        for key, call in _bindings(variables).items()
+        if call.get("anonymous") is True
+        and call.get("source") == event.source.value
+        and call.get("tool_name") == event.data.get("tool_name", "")
+        and call.get("pending") is True
+        and call.get("selection_count") == len(history)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def cleanup_task_tool_bindings(
+    event: HookEvent,
+    manager: SessionVariableManager | None,
+    session_id: str,
+    variables: dict[str, Any],
+) -> None:
+    """Clear abandoned calls before a turn/session boundary's rule evaluation."""
+    if manager is None or event.metadata.get("_native_subagent_binding"):
+        return
+    boundaries = {
+        HookEventType.STOP: "turn_end",
+        HookEventType.AFTER_AGENT: "turn_end",
+        HookEventType.STOP_FAILURE: "turn_end",
+        HookEventType.INTERRUPT: "interrupt",
+        HookEventType.SESSION_END: "session_end",
+    }
+    boundary = boundaries.get(event.event_type)
+    if boundary is None:
+        return
+    TaskToolBindings(manager, session_id).clear_pending(boundary)
+    persisted = manager.get_variables(session_id)
+    if "task_tool_bindings" in persisted:
+        variables["task_tool_bindings"] = persisted["task_tool_bindings"]
+
+
+class TaskToolBindings:
+    def __init__(self, manager: SessionVariableManager, session_id: str) -> None:
+        self.manager = manager
+        self.session_id = session_id
+
+    def assert_can_select(self, task_id: str | None) -> None:
+        """Fence an explicit own switch under the caller's claim transaction."""
+
+        def check(variables: dict[str, Any]) -> tuple[None, bool]:
+            if task_id is not None and variables.get("active_task_id") == task_id:
+                return None, False
+            pending = [
+                key
+                for key, call in _bindings(variables).items()
+                if call.get("pending") is True
+                and call.get("task_id") is not None
+                and call.get("task_id") != task_id
+                and call.get("fences_switch") is True
+            ]
+            if pending:
+                raise ValueError(
+                    f"Task selection is fenced by running calls {', '.join(sorted(pending))}; "
+                    "wait for completion or stop them before calling claim_task again."
+                )
+            return None, False
+
+        self.manager._mutate_variables(self.session_id, check)
+
+    def start(self, event: HookEvent) -> None:
+        key = _call_key(event)
+        anonymous = key is None
+        key = key or f"{event.source.value}:anonymous:{event.timestamp.isoformat()}"
+
+        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
+            calls = _bindings(variables)
+            if event.metadata.get("_native_subagent_binding"):
+                owned = variables.get("claimed_tasks", {})
+                stale = [
+                    call_key
+                    for call_key, call in calls.items()
+                    if call.get("pending") is True
+                    and call.get("tool_name") in {"Task", "Agent"}
+                    and isinstance(call.get("task_id"), str)
+                    and call["task_id"] not in owned
+                ]
+                if stale:
+                    raise ValueError(
+                        f"Native agent calls {', '.join(sorted(stale))} lost task ownership; "
+                        "use claim_task to restore ownership or stop the native agent before "
+                        "retrying its edit."
+                    )
+            if key in calls:
+                return None, False
+            started_at = event.timestamp.timestamp()
+            calls[key] = {
+                "started_at": started_at,
+                "task_id": task_selected_at(variables, started_at),
+                "tool_name": str(event.data.get("tool_name", "")),
+                "pending": True,
+                "background": False,
+                "fences_switch": _fences_switch(event),
+                "anonymous": anonymous,
+                "source": event.source.value,
+            }
+            if anonymous:
+                calls[key]["selection_count"] = len(variables.get("task_selection_history", []))
+            variables["task_tool_bindings"] = calls
+            return None, True
+
+        self.manager._mutate_variables(self.session_id, mutate)
+
+    def clear_pending(self, boundary: str) -> None:
+        """Release abandoned calls while retaining their immutable replay bindings."""
+        if boundary not in {"interrupt", "turn_end", "session_end", "clear"}:
+            raise ValueError(f"Unsupported tool-binding cleanup boundary: {boundary}")
+
+        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
+            calls = _bindings(variables)
+            changed = False
+            for call in calls.values():
+                if call.get("pending") is not True:
+                    continue
+                if call.get("background") is True and boundary in {"interrupt", "turn_end"}:
+                    continue
+                call["pending"] = False
+                changed = True
+            if changed:
+                variables["task_tool_bindings"] = calls
+            return None, changed
+
+        self.manager._mutate_variables(self.session_id, mutate)
+
+    def started_at(self, event: HookEvent) -> float | None:
+        variables = self.manager.get_variables(self.session_id)
+        key = _matching_key(event, variables)
+        calls = _bindings(variables)
+        call = calls.get(key, {}) if key else {}
+        task_id = call.get("task_id")
+        if isinstance(task_id, str) and task_id not in variables.get("claimed_tasks", {}):
+            return None
+        value = call.get("started_at")
+        return (
+            float(value)
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else None
+        )
+
+    def complete(self, event: HookEvent) -> None:
+        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
+            key = _matching_key(event, variables)
+            calls = _bindings(variables)
+            if key is None or key not in calls:
+                return None, False
+            pending = event.data.get("_verification_pending") is True
+            if event.metadata.get("is_failure") is True:
+                pending = False
+            calls[key].update(pending=pending, background=pending)
+            variables["task_tool_bindings"] = calls
+            return None, True
+
+        self.manager._mutate_variables(self.session_id, mutate)

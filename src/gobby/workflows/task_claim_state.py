@@ -8,6 +8,7 @@ Sessions can claim N tasks simultaneously. The state is a single dict
 from __future__ import annotations
 
 import posixpath
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +89,48 @@ def add_claimed_task(variables: dict[str, Any], task_id: str, ref: str) -> dict[
     tasks = _claimed_tasks(variables)
     tasks[task_id] = ref
     return {"task_claimed": True, "claimed_tasks": tasks, "active_task_id": task_id}
+
+
+def record_task_selection(variables: dict[str, Any], previous_task_id: object, epoch: str) -> None:
+    """Retain selection changes in the same transaction as their current projection.
+
+    Entries remain for the session's lifetime: even a closed task may be the
+    predecessor that establishes selection at another open task's window start.
+    """
+    task_id = variables.get("active_task_id")
+    if task_id == previous_task_id and ("task_selection_history" in variables or task_id is None):
+        return
+    history = variables.get("task_selection_history", [])
+    history = list(history) if isinstance(history, list) else []
+    history.append({"task_id": task_id, "epoch": epoch})
+    variables["task_selection_history"] = history
+
+
+def task_selection_events(history: object) -> list[tuple[float, str | None]] | None:
+    """Decode the canonical history shared by edit and close attribution."""
+    if not isinstance(history, list):
+        return None
+    events: list[tuple[float, str | None]] = []
+    for entry in history:
+        if not isinstance(entry, dict) or not isinstance(entry.get("epoch"), str):
+            continue
+        try:
+            at = datetime.fromisoformat(entry["epoch"])
+        except ValueError:
+            continue
+        at = at if at.tzinfo is not None else at.replace(tzinfo=UTC)
+        task_id = entry.get("task_id")
+        events.append((at.timestamp(), task_id if isinstance(task_id, str) else None))
+    return events
+
+
+def task_selected_at(variables: dict[str, Any], epoch: float) -> str | None:
+    """Resolve selection at tool start, preserving delayed and replayed results."""
+    selected: str | None = None
+    for at, task_id in task_selection_events(variables.get("task_selection_history")) or []:
+        if at <= epoch:
+            selected = task_id
+    return selected
 
 
 def release_claimed_task(variables: dict[str, Any], task_id: str) -> dict[str, Any]:
@@ -196,6 +239,30 @@ def task_edited_file_set_for_checkout(
     if not task_id or root is None:
         return set()
     return set(_task_edited_file_checkouts(variables).get(task_id, {}).get(root, []))
+
+
+def assert_task_edit_paths_available(
+    variables: dict[str, Any],
+    task_id: str | None,
+    paths: list[str],
+    checkout_root: str | None,
+) -> None:
+    """Refuse live path overlap between claims instead of guessing edit ownership."""
+    requested = set(paths)
+    for other_id, ref in _claimed_tasks(variables).items():
+        if other_id == task_id:
+            continue
+        owned = (
+            task_edited_file_set_for_checkout(variables, other_id, checkout_root)
+            if checkout_root is not None
+            else task_edited_file_set(variables, other_id)
+        )
+        overlap = requested & owned
+        if overlap:
+            raise ValueError(
+                f"Paths {', '.join(sorted(overlap))} are live-attributed to {ref}; "
+                f"select {ref} with claim_task or finish that task before editing them."
+            )
 
 
 def task_live_checkout_files(variables: dict[str, Any], task_id: str) -> dict[str, set[str]]:

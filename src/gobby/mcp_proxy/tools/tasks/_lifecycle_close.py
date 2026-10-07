@@ -73,6 +73,7 @@ from gobby.tasks.acceptance_artifacts import (
 )
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.close_receipts import close_receipt_facts
+from gobby.tasks.commit_ownership import assert_task_commit_paths_available
 from gobby.tasks.commits import collect_commit_diff_text_async as collect_commit_diff_text
 from gobby.tasks.commits import collect_commit_rename_aliases_async
 from gobby.tasks.criteria_contract import operational_actions_from_command
@@ -554,6 +555,14 @@ async def _evaluate_close(
     delivered_shas = [sha for sha in commit_shas if sha not in net_paths.undelivered]
     validation_paths = set(net_paths.changed)
     deleted_paths = set(net_paths.deleted)
+    try:
+        assert_task_commit_paths_available(
+            ctx.task_manager, task, validation_paths | deleted_paths, repo_path
+        )
+    except ValueError as exc:
+        return evaluation.fail(
+            7, "linked_commits", "commit_task_path_conflict", str(exc)
+        ).block_remaining()
     transcript = TranscriptEvidence()
     command_gate = replace(
         evaluate_validation_commands(

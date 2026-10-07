@@ -75,14 +75,9 @@ def merge_claimed_task_projection(
                 variables.update(updates)
                 variables["claimed_tasks"] = owned
                 variables["task_claimed"] = bool(owned)
-                # An observed successful claim may select its owned task. Other
-                # snapshots retain a still-owned, newer active attribution.
-                if (
-                    isinstance(current_active, str)
-                    and current_active in owned
-                    and observed_claim_task_id not in owned
-                ):
-                    variables["active_task_id"] = current_active
+                # Storage selects at commit time. A delayed provider result or
+                # reconcile snapshot never reselects its older claim.
+                variables["active_task_id"] = current_active
                 variables["active_task_id"] = active_task_id_for_edit(variables)
                 if not owned:
                     variables["task_has_commits"] = False

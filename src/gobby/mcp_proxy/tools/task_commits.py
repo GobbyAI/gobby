@@ -24,6 +24,7 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.tasks import close_receipts
+from gobby.tasks.commit_ownership import assert_task_commit_paths_available
 from gobby.tasks.diff_paging import (
     DEFAULT_GIT_TIMEOUT_SECONDS,
     MAX_COMMITS_LIMIT,
@@ -137,6 +138,9 @@ def create_commit_registry(
         project_path: str | None = None,
     ) -> dict[str, Any]:
         """Link a git commit to a task."""
+        # The tasks package factory composes this registry during initialization.
+        from gobby.mcp_proxy.tools.tasks._task_scope import collect_net_commit_paths_async
+
         # Resolve task reference
         try:
             resolved_task_id = resolve_task_id_for_mcp(task_manager, task_id)
@@ -155,13 +159,21 @@ def create_commit_registry(
         normalized = await normalize_commit_sha(commit_sha, cwd=repo_path)
         if normalized is None:
             return {"error": f"Invalid or unresolved commit SHA: {commit_sha}"}
+        if repo_path is None:
+            return {"error": "Repository path is required to prove commit path ownership."}
         try:
+            paths = await collect_net_commit_paths_async(
+                [normalized], repo_path, candidate=normalized
+            )
+            assert_task_commit_paths_available(
+                task_manager, current_task, set(paths.changed) | set(paths.deleted), repo_path
+            )
             task = task_manager.link_commit(resolved_task_id, normalized)
             return {
                 "task_id": task.id,
                 "commits": task.commits or [],
             }
-        except ValueError as e:
+        except (ValueError, RuntimeError) as e:
             return {"error": str(e)}
 
     registry.register(

@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
-from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
@@ -141,7 +140,7 @@ async def test_handed_off_claim_lets_the_session_create_and_claim_a_task(
 
 
 @pytest.mark.asyncio
-async def test_a_second_active_claim_is_refused_naming_the_active_one(
+async def test_several_active_claims_and_created_tasks_accumulate(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
@@ -156,26 +155,26 @@ async def test_a_second_active_claim_is_refused_naming_the_active_one(
     _approve(temp_db, landed, reviewer)
     await _claim(registry, canonical_task_session, active)
 
-    refused = await _call(registry, canonical_task_session, "claim_task", task_id=third.id)
+    claimed = await _call(registry, canonical_task_session, "claim_task", task_id=third.id)
     created = await _call(
         registry,
         canonical_task_session,
         "create_task",
-        title="Must not exist",
+        title="Additional active claim",
         category="research",
         claim=True,
-        validation_criteria="The task is never created.",
+        validation_criteria="Claims accumulate while earlier tasks stay active.",
     )
 
-    for result in (refused, created):
-        assert result["error_code"] == TaskToolErrorCode.TASK_CLAIM_CONFLICT.value
-        assert result["claimed_task_ref"] == f"#{active.seq_num}"
-    assert manager.get_task(third.id).claimed_by_session_id is None
+    assert claimed["success"] is True
+    assert manager.get_task(third.id).claimed_by_session_id == canonical_task_session.id
+    assert manager.get_task(created["id"]).claimed_by_session_id == canonical_task_session.id
+    assert manager.get_task(active.id).claimed_by_session_id == canonical_task_session.id
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["dirty", "git_unavailable", "unreviewed"])
-async def test_a_claim_that_is_not_handed_off_still_blocks(
+async def test_dirty_unreviewed_or_unavailable_claims_do_not_block_accumulation(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
@@ -202,11 +201,10 @@ async def test_a_claim_that_is_not_handed_off_still_blocks(
     if state == "unreviewed":
         _git(checkout, "commit", "-q", "-am", "held work")
 
-    refused = await _call(registry, canonical_task_session, "claim_task", task_id=nxt.id)
-
-    assert refused["error_code"] == TaskToolErrorCode.TASK_CLAIM_CONFLICT.value
-    assert refused["claimed_task_ref"] == f"#{held.seq_num}"
-    assert manager.get_task(nxt.id).claimed_by_session_id is None
+    claimed = await _call(registry, canonical_task_session, "claim_task", task_id=nxt.id)
+    assert claimed["success"] is True
+    assert manager.get_task(nxt.id).claimed_by_session_id == canonical_task_session.id
+    assert _variables(temp_db, canonical_task_session)["task_edited_files"][held.id] == ["a.py"]
 
 
 @pytest.mark.asyncio
@@ -297,7 +295,7 @@ async def test_releasing_the_newer_claim_makes_the_sole_survivor_the_edit_target
 
 
 @pytest.mark.asyncio
-async def test_a_handed_off_claim_returns_to_active_only_without_another_active_claim(
+async def test_reclaim_selects_a_task_while_another_claim_remains_active(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
@@ -311,16 +309,17 @@ async def test_a_handed_off_claim_returns_to_active_only_without_another_active_
     _approve(temp_db, landed, reviewer)
     await _claim(registry, canonical_task_session, active)
 
-    refused = await _call(registry, canonical_task_session, "claim_task", task_id=landed.id)
-
-    assert refused["error_code"] == TaskToolErrorCode.TASK_CLAIM_CONFLICT.value
-    assert refused["claimed_task_ref"] == f"#{active.seq_num}"
-    assert _variables(temp_db, canonical_task_session)["active_task_id"] == active.id
+    selected = await _call(registry, canonical_task_session, "claim_task", task_id=landed.id)
+    assert selected["success"] is True
+    assert selected["already_claimed"] is True
+    assert _variables(temp_db, canonical_task_session)["active_task_id"] == landed.id
+    assert manager.get_task(active.id).claimed_by_session_id == canonical_task_session.id
 
     _approve(temp_db, active, reviewer)
     reactivated = await _call(registry, canonical_task_session, "claim_task", task_id=landed.id)
 
-    assert reactivated == {"success": True, "task_id": landed.id, "title": "Landed"}
+    assert reactivated["success"] is True
+    assert reactivated["task_id"] == landed.id
     assert _variables(temp_db, canonical_task_session)["active_task_id"] == landed.id
     again = await _call(registry, canonical_task_session, "claim_task", task_id=landed.id)
     assert again["already_claimed"] is True

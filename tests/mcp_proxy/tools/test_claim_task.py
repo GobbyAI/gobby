@@ -10,6 +10,8 @@ combining:
 This follows the pattern established by claim_worktree in worktrees.py.
 """
 
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -17,7 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
-from gobby.storage.tasks import AgentTaskClaimConflictError, LocalTaskManager, Task
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.commit_guard import ForeignPathOwner
 
@@ -50,8 +52,8 @@ def _task(
         title=title,
         priority=2,
         task_type="task",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         description=description,
         labels=labels or [],
         claimed_by_session_id=claimed_by_session_id,
@@ -104,7 +106,7 @@ class TestClaimTaskTool:
     """Tests for the claim_task MCP tool."""
 
     @pytest.fixture(autouse=True)
-    def _set_session_context(self):
+    def _set_session_context(self) -> Iterator[None]:
         """Set session context for all tests — claim_task reads from ContextVar."""
         with session_context_for_test("my-session-id"):
             yield
@@ -166,7 +168,6 @@ class TestClaimTaskTool:
                 sample_task.id,
                 session_id="my-session-id",
                 force=False,
-                handed_off_task_ids=frozenset(),
             )
             assert mock_task_manager.claim_task_for_agent.call_count == 1
             assert mock_task_manager.claim_task_for_agent.call_args is not None
@@ -307,7 +308,6 @@ class TestClaimTaskTool:
             sample_task.id,
             session_id="my-session-id",
             force=False,
-            handed_off_task_ids=frozenset(),
         )
 
     @pytest.mark.asyncio
@@ -346,8 +346,8 @@ class TestClaimTaskTool:
 
     @pytest.mark.asyncio
     async def test_claim_task_already_claimed_by_another_session(
-        self, mock_task_manager, claimed_task
-    ):
+        self, mock_task_manager: MagicMock, claimed_task: Task
+    ) -> None:
         """Test claiming a task already claimed by another session fails without force."""
         registry = create_task_registry(mock_task_manager)
 
@@ -370,7 +370,9 @@ class TestClaimTaskTool:
         assert result.get("claimed_by") == "other-session-id" or "other-session-id" in str(result)
 
     @pytest.mark.asyncio
-    async def test_claim_task_force_override_existing_claim(self, mock_task_manager, claimed_task):
+    async def test_claim_task_force_override_existing_claim(
+        self, mock_task_manager: MagicMock, claimed_task: Task
+    ) -> None:
         """Test claiming a task with force=True overrides existing claim."""
         with (
             patch(
@@ -411,14 +413,13 @@ class TestClaimTaskTool:
                 claimed_task.id,
                 session_id="my-session-id",
                 force=True,
-                handed_off_task_ids=frozenset(),
             )
             assert mock_task_manager.claim_task_for_agent.call_count == 1
             assert mock_task_manager.claim_task_for_agent.call_args is not None
 
     @pytest.mark.asyncio
     async def test_delegated_child_can_claim_parent_owned_task_without_force(
-        self, mock_task_manager, parent_owned_task
+        self, mock_task_manager: MagicMock, parent_owned_task: Task
     ) -> None:
         """A spawned child can claim its assigned parent-owned task without public force."""
         with (
@@ -426,10 +427,6 @@ class TestClaimTaskTool:
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
-            patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_claim.handed_off_claim_ids",
-                return_value=frozenset({"child-handed-off-task"}),
-            ) as handed_off_claim_ids,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -444,7 +441,7 @@ class TestClaimTaskTool:
             registry = create_task_registry(mock_task_manager)
 
             mock_task_manager.get_task.return_value = parent_owned_task
-            mock_task_manager.db.fetchone.return_value = {"id": "run-delegated"}
+            mock_task_manager.db.fetchone.return_value = {"id": "run-delegated", "variables": {}}
             updated_task = MagicMock()
             updated_task.id = parent_owned_task.id
             updated_task.claimed_by_session_id = "my-session-id"
@@ -469,25 +466,18 @@ class TestClaimTaskTool:
                 )
                 for call in mock_task_manager.db.fetchone.call_args_list
             )
-            # The child's own handed-off claims free its capacity for the delegated task.
-            assert handed_off_claim_ids.call_args.args[1:] == (
-                "my-session-id",
-                parent_owned_task.project_id,
-            )
-            assert handed_off_claim_ids.call_args.kwargs == {"target_task_id": parent_owned_task.id}
             mock_task_manager.claim_task_for_agent.assert_called_once_with(
                 parent_owned_task.id,
                 session_id="my-session-id",
                 expected_owner="parent-session-id",
-                handed_off_task_ids=frozenset({"child-handed-off-task"}),
             )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("claim_mode", ["ordinary", "forced", "delegated"])
-    async def test_session_with_an_open_claim_is_refused(
+    async def test_claim_routes_allow_accumulation(
         self, mock_task_manager: MagicMock, parent_owned_task: Task, claim_mode: str
     ) -> None:
-        """Every claim route reports actionable recovery for exhausted capacity."""
+        """Every claim route preserves ownership checks without capacity arguments."""
         if claim_mode == "ordinary":
             parent_owned_task.claimed_by_session_id = None
         with (
@@ -504,11 +494,8 @@ class TestClaimTaskTool:
             )
             MockSessionManager.return_value = mock_session_manager
             mock_task_manager.get_task.return_value = parent_owned_task
-            mock_task_manager.db.fetchone.return_value = {"id": "run-delegated"}
-            mock_task_manager.claim_task_for_agent.side_effect = AgentTaskClaimConflictError(
-                "550e8400-e29b-41d4-a716-446655440041",
-                "#41",
-            )
+            mock_task_manager.db.fetchone.return_value = {"id": "run-delegated", "variables": {}}
+            mock_task_manager.claim_task_for_agent.return_value = parent_owned_task
             registry = create_task_registry(mock_task_manager)
 
             result = await registry.call(
@@ -516,33 +503,24 @@ class TestClaimTaskTool:
                 {"task_id": parent_owned_task.id, "force": claim_mode == "forced"},
             )
 
-            assert result["error_code"] == "TASK_CLAIM_CONFLICT"
-            assert result["claimed_task_ref"] == "#41"
-            assert result["message"] == result["error"]
-            assert 'escalate_task(task_id="#41", reason="<concrete reason>")' in result["message"]
-            assert "genuine blocker or explicitly directed recovery" in result["message"]
-            assert "force=true does not bypass your existing claim" in result["message"]
-            assert (
-                "Do not escalate to bypass validation, committing, or closing." in result["message"]
-            )
+            assert result["success"] is True, result
+            assert result["task_id"] == parent_owned_task.id
             if claim_mode == "delegated":
                 mock_task_manager.claim_task_for_agent.assert_called_once_with(
                     parent_owned_task.id,
                     session_id="my-session-id",
                     expected_owner="parent-session-id",
-                    handed_off_task_ids=frozenset(),
                 )
             else:
                 mock_task_manager.claim_task_for_agent.assert_called_once_with(
                     parent_owned_task.id,
                     session_id="my-session-id",
                     force=claim_mode == "forced",
-                    handed_off_task_ids=frozenset(),
                 )
 
     @pytest.mark.asyncio
     async def test_delegated_child_cannot_claim_third_party_owned_task_without_force(
-        self, mock_task_manager, parent_owned_task
+        self, mock_task_manager: MagicMock, parent_owned_task: Task
     ) -> None:
         """Delegation only applies while the parent still owns the assigned task."""
         third_party_owned_task = _task(
@@ -597,7 +575,9 @@ class TestClaimTaskTool:
             mock_task_manager.claim_task_for_agent.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_claim_task_already_claimed_by_same_session(self, mock_task_manager):
+    async def test_claim_task_already_claimed_by_same_session(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         """Test claiming a task already claimed by the same session succeeds (idempotent)."""
         task_claimed_by_self = _task(
             task_id="550e8400-e29b-41d4-a716-446655440002",
@@ -639,14 +619,14 @@ class TestClaimTaskTool:
             assert "error" not in result
             assert result["already_claimed"] is True
             assert result["title"] == task_claimed_by_self.title
-            assert (
-                'get_task(task_id="550e8400-e29b-41d4-a716-446655440002", brief=false)'
-                in (result["message"])
+            assert "is selected" in result["message"]
+            assert "claim_task" in result["message"]
+            mock_task_manager.claim_task_for_agent.assert_called_once_with(
+                task_claimed_by_self.id, session_id="my-session-id", force=False
             )
-            mock_task_manager.claim_task_for_agent.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_claim_task_not_found(self, mock_task_manager):
+    async def test_claim_task_not_found(self, mock_task_manager: MagicMock) -> None:
         """Test claiming a non-existent task returns error."""
         registry = create_task_registry(mock_task_manager)
 
@@ -663,7 +643,9 @@ class TestClaimTaskTool:
         assert "not found" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_claim_task_resolves_task_reference(self, mock_task_manager, sample_task):
+    async def test_claim_task_resolves_task_reference(
+        self, mock_task_manager: MagicMock, sample_task: Task
+    ) -> None:
         """Test claim_task resolves #N format task references."""
         with patch(
             "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
@@ -692,7 +674,7 @@ class TestClaimTaskTool:
                 assert "error" not in result
 
     @pytest.mark.asyncio
-    async def test_claim_task_missing_session_id(self, mock_task_manager):
+    async def test_claim_task_missing_session_id(self, mock_task_manager: MagicMock) -> None:
         """Test claim_task requires session_id parameter."""
         registry = create_task_registry(mock_task_manager)
 
@@ -709,13 +691,14 @@ class TestClaimTaskTool:
 
         # session_id is no longer in the schema — it's read from SessionContext ContextVar
         schema = registry.get_schema("claim_task")
+        assert schema is not None
         assert "session_id" not in schema["inputSchema"].get("required", [])
         assert "task_id" in schema["inputSchema"]["required"]
 
     @pytest.mark.asyncio
     async def test_claim_task_session_link_failure_does_not_fail_claim(
-        self, mock_task_manager, sample_task
-    ):
+        self, mock_task_manager: MagicMock, sample_task: Task
+    ) -> None:
         """Test that session link failure doesn't fail the overall claim (best-effort linking)."""
         with patch(
             "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
@@ -745,7 +728,7 @@ class TestClaimTaskTool:
 class TestClaimTaskSchema:
     """Tests for claim_task tool schema."""
 
-    def test_claim_task_registered_in_registry(self, mock_task_manager) -> None:
+    def test_claim_task_registered_in_registry(self, mock_task_manager: MagicMock) -> None:
         """Test that claim_task is registered in the task registry."""
         registry = create_task_registry(mock_task_manager)
 
@@ -754,7 +737,7 @@ class TestClaimTaskSchema:
 
         assert "claim_task" in tool_names, "claim_task tool not registered"
 
-    def test_claim_task_schema_has_required_fields(self, mock_task_manager) -> None:
+    def test_claim_task_schema_has_required_fields(self, mock_task_manager: MagicMock) -> None:
         """Test claim_task schema includes required fields."""
         registry = create_task_registry(mock_task_manager)
 
@@ -775,7 +758,7 @@ class TestClaimTaskSchema:
         # Required fields
         assert "task_id" in schema["inputSchema"]["required"]
 
-    def test_claim_task_schema_has_description(self, mock_task_manager) -> None:
+    def test_claim_task_schema_has_description(self, mock_task_manager: MagicMock) -> None:
         """Test claim_task has helpful description."""
         registry = create_task_registry(mock_task_manager)
 
@@ -797,19 +780,15 @@ class TestClaimTaskSessionVariables:
     """Tests for claim_task setting task_claimed session variable."""
 
     @pytest.fixture(autouse=True)
-    def _set_session_context(self):
+    def _set_session_context(self) -> Iterator[None]:
         with session_context_for_test("my-session-id"):
             yield
 
     @pytest.mark.asyncio
-    async def test_claim_task_sets_task_claimed_via_session_variables(
-        self, mock_task_manager, sample_task
+    async def test_claim_task_does_not_reselect_a_delayed_claim_result(
+        self, mock_task_manager: MagicMock, sample_task: Task
     ) -> None:
-        """claim_task must set task_claimed via session_var_manager.merge_variables.
-
-        Regression test for #8642: PreToolUse hook blocked edits despite claimed task
-        because task_claimed was never persisted.
-        """
+        """The MCP adapter preserves selection already committed by storage."""
         with (
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
@@ -828,7 +807,11 @@ class TestClaimTaskSessionVariables:
             MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
-            mock_sv_manager.get_variables.return_value = {}
+            mock_sv_manager.get_variables.return_value = {
+                "task_claimed": True,
+                "claimed_tasks": {"newer-task": "#43"},
+                "active_task_id": "newer-task",
+            }
             MockSVManager.return_value = mock_sv_manager
 
             registry = create_task_registry(mock_task_manager)
@@ -844,18 +827,19 @@ class TestClaimTaskSessionVariables:
 
             assert "error" not in result
 
-            # merge_variables must have been called with task_claimed
+            # Storage already selected the task at commit time. Completing the
+            # older MCP call refreshes skills without overwriting newer focus.
             mock_sv_manager.merge_variables.assert_called_once()
             call_args = mock_sv_manager.merge_variables.call_args
             assert call_args[0][0] == "my-session-id"
             merged_vars = call_args[0][1]
-            assert merged_vars["task_claimed"] is True
-            assert merged_vars["claimed_tasks"].get(sample_task.id) == "#42"
-            assert merged_vars["active_task_id"] == sample_task.id
+            assert "task_claimed" not in merged_vars
+            assert "claimed_tasks" not in merged_vars
+            assert "active_task_id" not in merged_vars
 
     @pytest.mark.asyncio
     async def test_claim_task_sets_extra_skills_via_session_variables(
-        self, mock_task_manager, sample_task
+        self, mock_task_manager: MagicMock, sample_task: Task
     ) -> None:
         """claim_task persists ordered extras for claim-time delivery and reload."""
         with (
@@ -875,7 +859,11 @@ class TestClaimTaskSessionVariables:
             MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
-            mock_sv_manager.get_variables.return_value = {}
+            mock_sv_manager.get_variables.return_value = {
+                "task_claimed": True,
+                "claimed_tasks": {sample_task.id: "#42"},
+                "active_task_id": sample_task.id,
+            }
             MockSVManager.return_value = mock_sv_manager
 
             sample_task.seq_num = 42
@@ -898,12 +886,14 @@ class TestClaimTaskVsUpdateTask:
     """Tests demonstrating why claim_task provides value over update_task."""
 
     @pytest.fixture(autouse=True)
-    def _set_session_context(self):
+    def _set_session_context(self) -> Iterator[None]:
         with session_context_for_test("my-session-id"):
             yield
 
     @pytest.mark.asyncio
-    async def test_claim_task_is_atomic_operation(self, mock_task_manager, sample_task):
+    async def test_claim_task_is_atomic_operation(
+        self, mock_task_manager: MagicMock, sample_task: Task
+    ) -> None:
         """Test that claim_task atomically sets canonical ownership."""
         with (
             patch(
@@ -939,13 +929,14 @@ class TestClaimTaskVsUpdateTask:
                 sample_task.id,
                 session_id="my-session-id",
                 force=False,
-                handed_off_task_ids=frozenset(),
             )
             assert mock_task_manager.claim_task_for_agent.call_count == 1
             assert mock_task_manager.claim_task_for_agent.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_claim_task_detects_conflicts(self, mock_task_manager, claimed_task):
+    async def test_claim_task_detects_conflicts(
+        self, mock_task_manager: MagicMock, claimed_task: Task
+    ) -> None:
         """Test that claim_task detects conflicts before modifying (unlike raw update_task)."""
         registry = create_task_registry(mock_task_manager)
 
@@ -967,12 +958,14 @@ class TestClaimTaskCrossProjectBlocking:
     """Tests for cross-project claim blocking."""
 
     @pytest.fixture(autouse=True)
-    def _set_session_context(self):
+    def _set_session_context(self) -> Iterator[None]:
         with session_context_for_test("my-session-id"):
             yield
 
     @pytest.mark.asyncio
-    async def test_claim_task_blocked_when_different_project(self, mock_task_manager, sample_task):
+    async def test_claim_task_blocked_when_different_project(
+        self, mock_task_manager: MagicMock, sample_task: Task
+    ) -> None:
         """claim_task must reject when task.project_id != session.project_id."""
         with (
             patch(
@@ -1009,8 +1002,8 @@ class TestClaimTaskCrossProjectBlocking:
 
     @pytest.mark.asyncio
     async def test_claim_task_allowed_when_session_lookup_returns_none(
-        self, mock_task_manager, sample_task
-    ):
+        self, mock_task_manager: MagicMock, sample_task: Task
+    ) -> None:
         """claim_task should proceed if session lookup returns None (graceful degradation)."""
         with (
             patch(

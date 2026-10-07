@@ -13,7 +13,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import AgentTaskClaimConflictError, TaskNotFoundError
+from gobby.storage.tasks import TaskNotFoundError
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.isolated_checkout import insert_overlay, install_isolated_checkout_project
 
@@ -1125,20 +1125,19 @@ class TestCreateTaskTool:
             )
 
     @pytest.mark.asyncio
-    async def test_create_and_claim_refuses_second_task_without_creating_it(
+    async def test_create_and_claim_reports_pending_native_call_without_creating_task(
         self,
         mock_task_manager: MagicMock,
         canonical_task_session: Session,
     ) -> None:
-        """A claim-capacity failure leaves task storage and session links untouched."""
+        """An in-flight native call fences selection and leaves storage untouched."""
         with patch(
             "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
         ) as MockSessionTaskManager:
             mock_session_tasks = MagicMock()
             MockSessionTaskManager.return_value = mock_session_tasks
-            mock_task_manager.create_task_for_agent.side_effect = AgentTaskClaimConflictError(
-                "550e8400-e29b-41d4-a716-446655440040",
-                "#40",
+            mock_task_manager.create_task_for_agent.side_effect = ValueError(
+                "Wait for native call call-40 before selecting another task."
             )
             registry = create_task_registry(mock_task_manager)
 
@@ -1152,25 +1151,8 @@ class TestCreateTaskTool:
                 },
             )
 
-            recovery = (
-                "Session already owns open claimed task #40. "
-                "Finish and close it. To start other work while it waits on review, landing or "
-                "close, commit its attributed files and get a reviewer's "
-                "independent_review_approval receipt. For a genuine blocker or explicitly "
-                "directed recovery use "
-                'escalate_task(task_id="#40", reason="<concrete reason>") '
-                "to release ownership. Alternatively, arrange an authorized transfer to another "
-                "session with claim capacity. force=true does not bypass your existing claim. "
-                "Do not escalate to bypass validation, committing, or closing."
-            )
             assert result == {
-                "success": False,
-                "status": "error",
-                "error": recovery,
-                "error_code": "TASK_CLAIM_CONFLICT",
-                "claimed_task_id": "550e8400-e29b-41d4-a716-446655440040",
-                "claimed_task_ref": "#40",
-                "message": f"Task was not created. {recovery}",
+                "error": "Wait for native call call-40 before selecting another task."
             }
             mock_task_manager.create_task_with_decomposition.assert_not_called()
             mock_task_manager.get_task.assert_not_called()
@@ -1207,6 +1189,10 @@ class TestCreateTaskTool:
             mock_task.status = "in_progress"
             mock_task.claimed_by_session_id = "test-session"
             mock_task_manager.create_task_for_agent.return_value = mock_task
+            mock_sv_manager.get_variables.return_value = {
+                "active_task_id": mock_task.id,
+                "claimed_tasks": {mock_task.id: {"ref": "#101"}},
+            }
 
             result = await registry.call(
                 "create_task",
@@ -1223,8 +1209,9 @@ class TestCreateTaskTool:
             call_args = mock_sv_manager.merge_variables.call_args
             assert call_args[0][0] == canonical_task_session.id
             merged_vars = call_args[0][1]
-            assert merged_vars["task_claimed"] is True
-            assert mock_task.id in merged_vars["claimed_tasks"]
+            assert "task_claimed" not in merged_vars
+            assert "claimed_tasks" not in merged_vars
+            mock_task_manager.create_task_for_agent.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_create_task_with_claim_sets_extra_skills(
@@ -1257,6 +1244,10 @@ class TestCreateTaskTool:
             mock_task.to_dict.return_value = {"id": mock_task.id, "title": mock_task.title}
             mock_task_manager.create_task_for_agent.return_value = mock_task
             mock_task_manager.get_task.return_value = mock_task
+            mock_sv_manager.get_variables.return_value = {
+                "active_task_id": mock_task.id,
+                "claimed_tasks": {mock_task.id: {"ref": "#101"}},
+            }
 
             result = await registry.call(
                 "create_task",
