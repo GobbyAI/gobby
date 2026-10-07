@@ -48,16 +48,51 @@ incident and the per-CLI usage sources).
   and limit never change them; paging is a live traversal (Decision 10).
   Spend that no provider record covers reads as unknown, never as zero
   (3.1, 3.2).
-- Codex quota observations from live transcripts feed
-  `ProviderCapacityService`, so `get_provider_capacity` and
-  `gobby tokens quota` show Codex windows, reset times and the credit balance
-  (4.1). Upward level edges and window resets alert the operator through the
-  communications channel (4.2).
+- All six providers have an observation path. Verified structured/reporter
+  quota feeds `ProviderCapacityService`; fresh pane-text matches send an
+  explicitly uncertain "possible quota limit" alert through the same operator
+  sink. Pane text never establishes exhausted/recovered capacity or fail-fast.
+  Unknown numeric quota stays unknown.
+  Live transcripts, AGY reporting and current spawned/interactive/placed
+  terminal scans have explicit collection owners (4.1-4.5).
 - The observability guide separates three surfaces: account quota, context
   occupancy, and spend (5.1).
 
 ## Decision Record
 `kind: framing`
+
+**2026-10-06 P4 amendment (confirmed by LM7 for #23715):**
+Items1-3 were amended by Orchestrator gobby#14972's21:58 CT ruling,
+forwarded by LM7 on2026-10-06:
+1. All six providers are covered. Verified structured/reporter signals drive
+   quota state; text-only pane matches drive only a "possible quota limit"
+   operator alert. Unknown numeric/reset fields stay unknown.
+2. Existing spawned and interactive/placed owners observe promptly independent
+   of idle/coordination/attention guards. Only fresh verified evidence tied to
+   the current spawned source can cause the existing provider_quota_exhausted
+   fail-fast; pane text alone cannot terminate a run.
+3. Both confidence paths use one bounded CommunicationsManager sink. Verified
+   warning/exhausted/reached/reset retain the edge design; pane hints have a
+   separate deduped possible-limit edge and cannot clear or refresh quota state.
+   Recovery needs newer positive quota evidence for the exact scope/limit.
+Items4-6 remain: no statusline/credentials/undocumented endpoints/price table/
+spawn-gate/fallback expansion; separately closeable lifecycle outcomes and
+preserved completed bodies; Orchestrator-owned P1 leaf transition after approval,
+with canonical writes gated by Merge Manager CLEAR and LM7 GO.
+
+The six-provider inventory and P4 below supersede Decision 2's absence of all
+Claude signals and Decision 11's Codex-only collection scope. Claude statusline
+ingestion remains excluded. Verified provider error envelopes and actually emitted
+structured quota events are authoritative; pane strings are uncertain hints.
+Numeric remaining/reset is never inferred
+from spent tokens, credits, generic429, overload, authentication or context-full.
+All six providers share the existing observation owners and one operator sink;
+interactive/placed and spawned owners observe independently of idle eligibility.
+No quota endpoint, credential read, spawn gate or fallback is added. Missing
+recovery evidence remains unknown/stale. P4 leaves are P1; the Orchestrator owns
+rescoping/re-expansion of #23603 and #23604 after approval. Canonical writes wait
+Merge Manager CLEAR and LM7 GO. The historical rulings below remain recorded;
+this amendment governs the affected P4 scope.
 
 Orchestrator rulings (gobby#14972, 2026-10-05, about 14:50 CT):
 
@@ -176,14 +211,16 @@ Writer decisions:
   `docs/reference-audit/*.json`. The leaf that adds an operation adds its audit
   entry and the matching mention in its skill reference.
 - **File sizes.**
-  - `src/gobby/runner_init/services.py` is 847 lines. 4.1 adds exactly one line
+  - `src/gobby/runner_init/services.py` is 847 lines. 4.3 adds exactly one line
     there (848), under the 850-line growth threshold.
   - `src/gobby/sessions/transcripts/codex.py` (825) gains at most 12 lines in
     2.1.
   - `src/gobby/sessions/transcripts/claude.py` (823) is not edited.
   - New logic goes in new modules: `usage_calls.py`, `subagent_usage.py`,
     `reported_usage.py` (sessions and storage), `processor_ledger.py`,
-    `usage_ledger.py`, `codex_rate_limits.py`, and `quota_alerts.py`.
+    `usage_ledger.py`, `codex_rate_limits.py`, `quota_observations.py`,
+    `quota_signals.py`, `processor_quota.py`, `provider_quota_monitor.py`
+    and `quota_alerts.py`.
 - **Privacy.**
   - Ledger rows and reported runs carry ids, timestamps, model names, counts,
     durations, and amounts only. They never carry message content, tool input,
@@ -232,8 +269,8 @@ Writer decisions:
 | #12000 (Implement per-event token tracking end-to-end) | `token_events`, `TokenEventStore`, the live and rebuild writers, `gobby tokens audit` | Reused as the ledger. 2.1 makes its identity per call and adds `api_calls`. |
 | #7580 (Add cost and token tracking display per task) | A web TaskDetail display that no longer exists, because web is Chat-only (memory ac77469d) | Replaced by task scope in the MCP, HTTP, and CLI ledger (3.1, 3.2). No web work (Decision 4). |
 | #19323 (Evaluate Claude OpenTelemetry as optional usage telemetry) | Closed obsolete, with no recommendation | Not reused. The transcript stays the Claude usage authority. |
-| #21700 (Detect provider usage-limit exhaustion in agent output and fail runs fast instead of reporting them as stuck) | Output-based fail-fast for exhausted runs | Kept. Quota observation (4.1) reports state before exhaustion and complements it. |
-| #22075 (Detect provider usage outages across all providers and fall back to the next candidate) | Escalated, needs-decision; owns spawn fallback and gating | Owns any spawn gate. It can read Codex state from `get_provider_capacity` once 4.1 lands. |
+| #21700 (Detect provider usage-limit exhaustion in agent output and fail runs fast instead of reporting them as stuck) | Output-based fail-fast for exhausted runs | Reuse bounded recovery for verified current-source terminal quota errors. Pane-text fail-fast is replaced by possible-limit hints under the21:58 ruling; quota observation4.1 and notification4.2 retain confidence boundaries. |
+| #22075 (Detect provider usage outages across all providers and fall back to the next candidate) | Escalated, needs-decision; owns spawn fallback and gating | Owns any spawn gate. It can read provider state from `get_provider_capacity` once 4.1 lands. |
 | #19364 (Add AGY usage-capacity reporting when CLI becomes compatible) | `AgyUsageReporter` and `ProviderCapacityService` | Reused. 4.1 adds observed providers beside the AGY reporter. |
 | #19319 (Remove statusline usage ingestion) | The transcript is the sole Claude usage authority | Respected (Decision 2). |
 
@@ -242,12 +279,12 @@ Writer decisions:
 
 | Source | Ledger rows | `api_calls` | Reported spend | Quota |
 | --- | --- | --- | --- | --- |
-| Claude | One per API `message.id`, main and subagent transcripts | `usage.iterations` of type `message`, else 1 | `cost-state` USD per process run, with API and wall time | `unknown`: no local source (statusline only, #19319) |
-| Codex | One per increase of `total_token_usage` | 1 | None. Codex reports an account credit balance only, shown in quota details. | `rate_limits` windows and credits, pushed from live transcripts |
-| Grok | One per `turn_completed` | `modelCalls`; NULL when `usageIsIncomplete` | `costUsdTicks` / 1e10 USD per turn, with API time | `unknown`: no local source |
-| Droid | One per parse-pass delta | NULL | `factoryCredits` per session (cumulative sidecar), with active time | `unknown`: no local source |
-| Qwen | One per usage record | NULL | None | `unknown`: no local source |
-| AGY | None (no usage in AGY transcripts) | None | None | `agy -p /usage` reporter (#19364) |
+| Claude | One per API `message.id`, main and subagent transcripts | `usage.iterations` of type `message`, else 1 | `cost-state` USD per process run, with API and wall time | Verified structured events only when actually emitted with native fixture/time provenance; fresh pane matches give possible-limit hints only; no statusline; otherwise unknown quota |
+| Codex | One per increase of `total_token_usage` | 1 | None. Codex reports an account credit balance only, shown in quota details. | Verified live `rate_limits` windows/flags and typed terminal quota errors; fresh pane matches give hints only |
+| Grok | One per `turn_completed` | `modelCalls`; NULL when `usageIsIncomplete` | `costUsdTicks` / 1e10 USD per turn, with API time | Fresh pane matches give possible-limit hints only; no verified structured/numeric quota feed, so quota remains unknown |
+| Droid | One per parse-pass delta | NULL | `factoryCredits` per session (cumulative sidecar), with active time | Fresh pane matches give possible-limit hints only; no verified structured/numeric quota feed, so quota remains unknown |
+| Qwen | One per usage record | NULL | None | Fresh pane matches give possible-limit hints only; no verified structured/numeric quota feed, so quota remains unknown |
+| AGY | None (no usage in AGY transcripts) | None | None | Verified `agy -p /usage` reporter (#19364); fresh pane matches give hints only; ERROR fixture format does not create a new live structured source |
 
 The ledger reports each row of this table as a coverage descriptor (3.1), so a
 reader can see what is exact, what is reported, and what is missing, with a
@@ -507,7 +544,7 @@ session.
 - 2.1.6 - Stored rows whose token totals equal the transcript's still drift when they keep a pre-460 identity. This covers a Claude row and a Grok row with valid ids and NULL `api_calls`, and a Codex rollout without repeated totals whose rows keep index ids. They are reported `stale`. `--fix` rewrites them to keyed rows with `api_calls`, and a second audit reports `stale=0` and `missing=0`. test: `tests/sessions/test_usage_call_identity.py::test_audit_flags_equal_total_identity_drift`.
 - 2.1.7 - `--fix` is safe against live ingestion. In a fixture that interleaves the audit with processor inserts, a row inserted after the audit's stored-row read survives `--fix`, and `sessions.usage_*` afterwards equals `get_session_totals` including it. A line appended after the stored-row read but before the transcript read is reported `missing`, never `stale`, and nothing deletes it. A line appended after the transcript read is outside that pass: that audit does not report it, and a following audit reports it `missing` while it is still not ingested. Only pre-read rows that are unkeyed or absent from the derived set are deleted. A pre-read row with the same key but NULL `api_calls` is corrected in place to `api_calls` 1, keeps its `id`, and is still present after `--fix`. test: `tests/sessions/test_usage_call_identity.py::test_fix_never_deletes_rows_ingested_during_audit`.
 
-### 2.2 Claude subagent calls enter the parent ledger [category: code] (depends: 2.1)
+### 2.2 Claude subagent calls enter the parent ledger [category: code] (depends: 2.1, 4.3)
 `kind: deliverable`
 
 Targets:
@@ -949,212 +986,315 @@ reference entry and one test file.
 - 3.2.2 - `gobby tokens quota codex` prints each window with its reset time and alert level, and the balance, from a stubbed two-window daemon response, and an unreachable daemon exits 1. test: `tests/cli/test_tokens_ledger_cli.py::test_quota_command_reads_daemon_snapshot`.
 - 3.2.3 - For the 3.1.7 scopes, `gobby tokens ledger --session` prints `unknown (no reported run)` for the Claude session without `cost-state`, `0 usd` over 1 run for the zero-cost Grok session, and 1 incomplete run for the incomplete Grok session. test: `tests/cli/test_tokens_ledger_cli.py::test_ledger_command_keeps_unknown_spend_distinct`.
 
-## P4: Codex quota and operator alerts
+## P4: Provider-neutral usage-limit detection and operator alerts
 `kind: framing`
 
-**Goal**: the operator can see Codex quota remaining and is told when it
-crosses a level, without any agent's context carrying the alert.
+**Goal:** the operator learns promptly when any supported provider approaches or
+hits a usage limit, with evidence confidence explicit. Verified structured/
+reporter evidence is authoritative even without a percentage. A fresh text-only
+pane match is useful as a "possible quota limit" alert, with no exhausted,
+recovered or spawned fail-fast inference. All sources share the operator sink.
 
-### 4.1 Codex `rate_limits` observations in `ProviderCapacityService` [category: code] (depends: 1.1, 2.3)
+This is the 2026-10-06 amendment for #23715 (Provider-neutral usage-limit detection
+and operator alerts). It supersedes the Codex-only P4 scope and the old unknown-
+quota reasons for other providers. It retains the ledger, privacy, statusline,
+communications, and spawn-fallback rulings. LM7 gobby#15389 confirmed the six-item
+Decision Record on 2026-10-06; source receipt a1b86a7f-d1a9-44f8-8ec6-6f83981a9003.
+The21:58 CT Orchestrator ruling subsequently amended items1-3 to the two
+confidence paths recorded above; no verified pane origin is claimed.
+
+P4 has five independently testable outcomes: normalization and persisted reads
+(4.1), alert edges and delivery (4.2), live transcript collection (4.3), and
+spawned/reporter collection with run fail-fast (4.4), and interactive/placed
+terminal observation (4.5). It needs the
+existing 1.1 capacity-details schema change, but not the P2 spend ledger.
+No provider process, credential file, or undocumented endpoint is queried for
+quota. AGY keeps its already-supported bounded `/usage` reporter.
+
+### 4.1 Provider-neutral quota observations and persisted capacity reads [category: code] (depends: 1.1)
 `kind: deliverable`
 
 Targets:
+- `src/gobby/providers/quota_observations.py`
+- `src/gobby/providers/quota_signals.py`
 - `src/gobby/providers/codex_rate_limits.py`
-- `src/gobby/providers/capacity_service.py::*` — scope-reason: snapshot details, an observe path, and the observed-provider read path touch the snapshot, storage protocol, service, and record helpers
-- `src/gobby/storage/provider_capacity.py::ProviderCapacityRecord`
-- `src/gobby/storage/provider_capacity.py::ProviderCapacityStorage.upsert`
-- `src/gobby/storage/provider_capacity.py::ProviderCapacityStorage.get`
-- `src/gobby/sessions/processor_ledger.py`
-- `src/gobby/sessions/processor_types.py::ProcessorHost`
-- `src/gobby/runner_init/servers.py::init_servers`
-- `src/gobby/runner_init/services.py::_build_message_processor`
-- `tests/providers/test_codex_quota_observation.py`
+- `src/gobby/providers/capacity_service.py::*` — scope-reason: snapshot details, observation admission, reporter normalization, freshness, and record conversion implement one persisted observation contract
+- `src/gobby/storage/provider_capacity.py::*` — scope-reason: the record, column projection, and conditional upsert must carry details and return write admission together
+- `tests/providers/test_provider_quota_observation.py`
+- `tests/providers/test_capacity_service.py::*` — scope-reason: reporter and reporterless fixtures exercise the changed persisted-read contract
+- `tests/storage/test_provider_capacity.py::*` — scope-reason: storage tests cover component details round trips and row CAS merge admission
 
 **Research context:**
-- A live Codex `rate_limits` sample:
-  `{limit_id: "codex", primary: {used_percent: 80.0, window_minutes: 10080, resets_at: <epoch s>}, secondary: null, credits: {has_credits, unlimited, balance: "62111.98"}, individual_limit, spend_control_reached, plan_type: "pro", rate_limit_reached_type}`.
-  - Every scanned row had `limit_id` `codex`.
-  - Some rows are stale readings from older sessions, and some carry null
-    (`usage-monitor-2026-09.md:198`).
-- `ProviderCapacityService` (capacity_service.py):
-  - `_get_once` returns a persisted row younger than 60 s. Otherwise it calls
-    `_refresh_with_fallback`, which returns `unknown` "no usage reporter" for
-    every provider except AGY and ignores the persisted row.
-  - `ProviderCapacityStorage.upsert` replaces its row unconditionally.
-- The service is built in `init_servers` (servers.py:135) and passed to the
-  service container. `init_servers` already attaches `websocket_server` and
-  `session_manager` to `runner.message_processor` (servers.py:357-359).
-- A config change can rebuild the processor through
-  `_build_message_processor` (services.py:518), whose `activate()` re-attaches
-  live refs, and it already reads `runner.http_server`. Without a matching
-  attach there, a rebuilt processor would stop observing.
-- The HTTP server's service container holds the capacity service
-  (`services.provider_capacity_service`, `servers/http.py:329`).
-- `tests/providers/test_capacity_service.py` has a fake storage whose `upsert`
-  takes no `details`, and it builds `ProviderCapacityRecord` without one.
+- Current `ProviderCapacityService._refresh_with_fallback` discards persisted
+  reporterless observations: `164| if reporter is None:` and
+  `165| return _unknown(provider, "no usage reporter")`.
+  Excerpt hash `31cd62a4d2049ce8947f06b83d522e82fb5097f37161863b3ffba114b197cfda`.
+- The original 4.1 Codex sample has primary/secondary `used_percent`,
+  `window_minutes`, epoch `resets_at`, credits, and reached flags. A windowless
+  reached flag must now survive normalization instead of being discarded.
+- Upstream Claude SDK `RateLimitInfo` distinguishes allowed, warning, and
+  rejected, with optional utilization and reset. This is evidence of the
+  provider type, not evidence that interactive transcripts always contain it.
+  [Primary SDK type source](https://raw.githubusercontent.com/anthropics/claude-agent-sdk-python/main/src/claude_agent_sdk/types.py).
+- Installed provider distributions were inspected without executing them:
+  Claude 2.1.292 SHA256 `97a01e5bc74a199e67189435d0331ea3a24eac2e07db4b76d9148c5b0386138f`;
+  Grok 1.0.46 SHA256 `e8daa302364c9c3b6a5546d511cfbd1ab5e5d407a9b04282f660665ea405f9f3`;
+  Droid SHA256 `d086ee371842583a7acab03bcb6176c07598736a42a263c02162aa956ed851e8`.
+  The literal signals below come from those distributions; binary presence
+  does not prove a particular structured wire envelope or a numeric feed.
+- Qwen 0.24.7 installed `chunks/chunk-PVHUAPKM.js`, SHA256
+  `1e9e9d65fbdc7b6deaed04d8cfdf99d9bddde5fa374a78e0b290ce9f085a6377`,
+  has `QUOTA_EXHAUSTED_PREFIX="Quota exhausted: "`. Its permanent-quota
+  classifier requires quota exhausted/exceeded plus reset guidance, separately
+  from transient capacity retry. The discontinued free-OAuth guidance is not
+  a resettable quota episode. [Primary retry source](https://raw.githubusercontent.com/QwenLM/qwen-code/main/packages/core/src/utils/retry.ts).
+- AGY's checked contract fixture has `648| "error": "Individual quota reached.
+  Please upgrade your subscription to increase your limits. Resets in
+  120h9m43s."` in a provider ERROR result. Excerpt hash
+  `6e930b861444a7850d01483f8ef1bf8667519c1d15a4c9c78701e2ec698b6110`,
+  `tests/fixtures/provider_contracts/agy/command-captures.json:641-650`.
+- Existing `UsageWindow` and `ProviderUsageSnapshot` in providers/usage.py,
+  existing AGY reporting, and the machine/provider storage key are reused.
+  No account identity is inferred from secrets; unknown source/account scope
+  cannot be promoted to a quantitative provider-wide window.
+
+**Provider signal inventory:**
+
+| Provider | Accepted signal | Observation owner | Unknown boundary |
+| --- | --- | --- | --- |
+| Claude | Conditional actual typed `rate_limit_event` with allowed/allowed_warning/rejected and optional utilization/reset is verified; `You've hit your limit` or `Usage limit reached` pane text is a possible-limit hint only | Live raw-record collector4.3 for a timestamped typed event; spawned4.4 and interactive/placed4.5 pane owners | No local emitted-event fixture established yet; SDK types alone cannot enable a new envelope; no statusline or bare429 inference |
+| Codex | Verified transcript `rate_limits`, windowless reached flags and `task_complete.error.codex_error_info=usage_limit_exceeded`; `You've hit your usage limit` pane text is a hint only | Caught-up live collector4.3; spawned4.4 and interactive/placed4.5 | Credits are not session spend; context-full is separate; pane strings never establish origin |
+| Grok | Usage balance exhausted, usage limit reached or out-of-credits pane prefix gives a possible-limit hint | Spawned4.4 and interactive/placed4.5 | No verified structured quota envelope admitted; generic rate/global/concurrency limits are excluded; quantitative/exhausted state stays unknown |
+| Droid | `Standard Usage limit reached.` pane prefix gives a possible-limit hint | Spawned4.4 and interactive/placed4.5 | No verified structured quota envelope admitted; bare402/429, provider_rate_limited and spent factoryCredits excluded |
+| Qwen | `Quota exhausted: ` prefix with exhausted/exceeded and reset guidance gives a possible-limit hint | Spawned4.4 and interactive/placed4.5 | No verified structured quota envelope admitted; bare429, overload and discontinued OAuth guidance excluded; reset text is not an authoritative time |
+| AGY | Existing `/usage` reporter windows are verified; recorded top-level status=ERROR/error=Individual quota reached envelope is a verified format, conditional on an existing source supplying it with provenance; same pane text is a hint only | Existing reporter refresh4.1/4.4; spawned4.4 and interactive/placed4.5 panes | No new CLI command or headless output boundary; the recorded ERROR fixture alone does not make pane output structured; timeout stays unknown/stale |
 
 **Implementation:**
-- New `src/gobby/providers/codex_rate_limits.py::observation_from_rate_limits(raw, observed_at) -> QuotaObservation | None`:
-  - `QuotaObservation` holds `observed_at`, `windows` (a tuple of
-    `UsageWindow`), and `details`.
-  - Each non-null `primary` or `secondary` becomes a window: label `weekly`
-    for 10080 minutes, `five_hour` for 300, else `<n>m`;
-    `used=used_percent`, `limit=100`, `unit="percent"`, and `resets_at` as
-    ISO UTC.
-  - `details` holds `limit_id`, `plan_type`, the `credits` object, and the
-    two reached flags.
-  - It returns None when `raw` is not a dict or has no window.
-- `ProviderCapacitySnapshot` gains `details: Mapping[str, object]` (default
-  empty), carried by `to_dict`, `_from_record`, and `unknown`.
-  `ProviderCapacityRecord` gains a trailing `details` field that defaults to
-  an empty dict. `ProviderCapacityStorage.get` selects it.
-- `ProviderCapacityStorage.upsert` takes a keyword
-  `details: Mapping[str, object] | None = None`, stored as `{}` when None. It
-  adds `WHERE provider_capacity_snapshots.observed_at <= excluded.observed_at`
-  and returns whether the row was written. The AGY reporter path keeps its
-  call unchanged, so existing storage fakes stay valid; only `observe` passes
-  `details`.
-- `ProviderCapacityService.observe(provider, observation) -> bool` runs under
-  a per-provider `asyncio.Lock`:
-  1. It reads the stored row.
-  2. It drops the observation when any window's `resets_at` is earlier than
-     the stored `resets_at` of the window with the same label. That rejects a
-     stale reading on a newer line for each independently resetting window.
-  3. It sets the state to `exhausted` when any window is at or above its
-     limit or either reached flag is set. Otherwise the state is `available`.
-  4. It upserts with `source_version="transcript"` and returns whether the row
-     was written.
-- The read path for providers without a reporter:
-  - `_get_once` takes its 60-second shortcut only for providers with a
-    reporter.
-  - For a provider without one, `_refresh_with_fallback` returns the persisted
-    row. The row keeps its state when it is younger than
-    `OBSERVED_FRESHNESS_SECONDS = 900` and before every window's `resets_at`.
-    Otherwise it is `stale`, with the reason "last observation older than
-    900 s" or "window reset at <time> has passed".
-  - Without a row, Codex returns `unknown` "no Codex rate_limits observed
-    yet". Claude returns "no local quota source (statusline only, #19319)".
-    Grok, Droid, and Qwen return "no local quota source".
-- Live wiring:
-  - `_persist_ledger_batch` observes only on caught-up passes, and only when
-    `self.provider_capacity_service` is set.
-  - It observes the newest Codex `usage` record in the batch whose
-    `raw_json.payload.rate_limits` is non-null and whose timestamp is within
-    900 s of now.
-  - The rebuild and the audit never observe.
-- Attachment:
-  - `ProcessorLedgerMixin` declares the class attribute
-    `provider_capacity_service: ProviderCapacityService | None = None`, and
-    `ProcessorHost` declares it.
-  - `init_servers` attaches the service to `runner.message_processor` beside
-    `websocket_server`.
-  - `_build_message_processor.activate()` adds the single line
-    `processor.provider_capacity_service = getattr(getattr(http_server, "services", None), "provider_capacity_service", None)`.
+- New `QuotaObservation` in quota_observations.py carries provider, observed_at,
+  source kind, normalized windows, an explicit warning/reached/recovery signal,
+  and allowlisted details. Every component carries its own limit_key, scope_key,
+  source_observed_at, occurrence_key and supplied reset epoch. Optional values
+  stay absent, never fabricated zero.
+  Source identifiers used internally for replay control are opaque; details
+  and outbound text never contain prompts, raw provider errors, or credentials.
+- Separate PaneQuotaHint carries provider, opaque source generation/occurrence,
+  detection time and possible-limit kind only: no windows/flags/reset/recovery.
+  Persist dedupe in details["pane_hints"] through the same atomic row path,
+  without refreshing quota components. A hint-only row still reads unknown.
+- New quota_signals.py separates typed-event normalization and pane-hint
+  classification. SnapshotResult supplies text/truncated/dropped_bytes/total_bytes,
+  not message origin or source time. Never pass a synthetic trusted flag to turn
+  pane text into a QuotaObservation. Typed input must come from the existing raw
+  provider envelope/reporter boundary, not JSON quoted inside message content.
+  Unknown envelopes/codes produce no observation. Claude's SDK schema is
+  conditional evidence, not an emitted fixture; keep it disabled unless an
+  actual timestamped provider event in the collector's native format has complete
+  sanitized fixture provenance. No new event feed is added.
+- Pane hints strip ANSI/decorations within last15lines and require the exact
+  provider-specific prefix/form in the inventory. Generic keyword hits do nothing.
+  After stripping only the existing pane decorations, use these bounded literal
+  forms, with a word/punctuation boundary after a prefix: Claude prefixes
+  "You've hit your limit" or "Usage limit reached"; Codex prefix
+  "You've hit your usage limit"; Grok casefolded prefixes "usage balance
+  exhausted", "usage limit reached", "out of credits", "run out of credits"
+  or "You hit your free usage limit."; Droid prefix "Standard Usage limit
+  reached."; Qwen prefix "Quota exhausted: " with exhausted/exceeded plus
+  "will reset"/"reset at" in the same new complete block; AGY prefix
+  "Individual quota reached.". No arbitrary Error:/API wrapper is invented.
+  Unsupported layout/prefix stays unknown; complete synthetic renderer fixtures
+  exercise these static-distribution literals without claiming UI provenance.
+  A genuine-looking prefix and an identical user/tool/assistant quote are
+  indistinguishable and both yield only possible-limit hints. Malformed/truncated
+  ambiguous forms yield nothing. No reset duration, percent, account scope or
+  recovery is inferred from pane text. Preserve complete sanitized input fixtures
+  with provider/version and evidence classification; synthetic rendered inputs
+  are labeled synthetic, never claimed emitted proof.
+- Shared pane occurrence contract: hash existing Terminal.id, created_at,
+  attempt_generation, host_epoch and session_id/agent_run_id ownership together
+  for the opaque generation; no new terminal schema fields. SnapshotResult has
+  no message-origin/time field. On first capture after attachment,
+  ownership change or daemon restart, baseline retained15lines and emit nothing.
+  Later captures need exact suffix/prefix overlap of prior/current normalized
+  line sequences showing newly appended complete lines; consider hints only in
+  those new lines. Identical redraws, no overlap, incomplete matched lines,
+  replacement and host failure rebaseline/ignore rather than assert freshness.
+  truncated=true for older offscreen history alone does not suppress a complete
+  newly appended block with verified snapshot overlap; missing overlap does.
+  Occurrence identity
+  hashes generation, prior/current snapshot fingerprints and matched new block;
+  time is first successful fresh capture, a detection time rather than provider
+  event time. Duplicates are recorded before normalization and never refresh age.
+  Relative pane reset is never normalized, so static AGY banners cannot move a
+  reset forward. Limits present at attachment remain unknown until verified
+  evidence or a fresh appended hint; this conservative gap is documented.
+- Preserve `observation_from_rate_limits` in codex_rate_limits.py: primary and
+  secondary become percent windows, with weekly/five_hour labels for 10080/300
+  minutes; other lengths use `<n>m`. Retain limit_id, plan_type and allowlisted
+  credits fields. A conclusive reached flag works with no windows; a null or
+  windowless value without a signal returns None. Claude utilization becomes
+  percent only when actually supplied; its explicit warning can have no window.
+- ProviderCapacitySnapshot/Record gain default-empty details; to_dict, unknown,
+  `_from_record`, get and the storage protocol carry them. Upsert accepts optional
+  details and returns write admission. Row replacement uses compare-and-swap
+  against the exact previously read observed_at; the row observed_at is a
+  strictly advancing local write revision, not a provider source clock. A CAS
+  miss reloads and remerges component state before retrying; it never publishes
+  edges from the lost write. Component metadata lives in details, so the
+  unchanged UsageWindow input type needs no timestamp fields or new migration.
+  No migration is added here; 1.1 owns details.
+- `ProviderCapacityService.observe` serializes with a per-provider async lock,
+  admits each component independently. A component key is provider plus scope
+  plus limit identity: use a supplied limit_id and window duration/type, never
+  positional primary/secondary or a display label alone. Model-specific limits
+  include the supplied model. A provider-documented account-wide scope uses its
+  supplied opaque account scope; never discover account identity from credentials.
+  If scope is absent, use an opaque current source-stream/generation key and
+  mark scope unknown. Different unknown sources are not asserted to share an
+  account. A windowless hard signal uses its verified signal family as limit
+  identity; it does not overwrite a numeric window or an unrelated model.
+- Store components in details["quota_components"], keyed by that identity,
+  with source_observed_at, last_accepted_occurrence, supplied resets_at, state
+  and optional measured fields. Reject an older timestamp or earlier supplied
+  reset only for that same component. Equal timestamp plus equal occurrence
+  is a duplicate; equal timestamp with contradictory values is ambiguous and
+  rejected. An unseen five-hour reading at t9 remains admissible after a weekly
+  reading at t10. Missing sibling components are preserved with their own clocks;
+  row writes and updates to weekly never refresh five-hour freshness.
+- Recovery must be a newer positive quota reading for the exact same scope and
+  limit, with a later supplied reset or an explicit verified recovery event for
+  that episode. Account-wide recovery cannot clear model-specific or unknown
+  source components. Unknown-scope recovery can clear only its own source and
+  limit, never another seat's unresolved episode. Missing fields, expired data,
+  a vanished pane, an ordinary turn and transient errors never imply recovery.
+- Reads age every component independently: stale when source_observed_at is
+  older than900s or its supplied reset has passed. Fresh exhausted components
+  make the aggregate exhausted; otherwise any retained stale/reset-past component
+  makes it stale, even beside a fresh available component. Available requires
+  every retained component to be fresh and positively available; no accepted
+  component means unknown. A warning remains warning metadata, not exhaustion.
+  Return only fresh numeric windows, retaining stale component metadata/reasons
+  in allowlisted details so an old hard limit cannot look freshly available.
+- Both AGY reporter refresh and pushed observations enter this same admission
+  path. Reporter reads/commands remain bounded and outside the provider lock;
+  stale reporter failure preserves the last row and does not clear a hard signal.
+- Capacity persistence/alerts do not own terminalization.4.4 reuses the existing
+  current-source watchdog transcript error reader and recovery path, independently
+  of successful storage or delivery; no new hard-evidence queue/cache is added.
+- Reporterless reads apply the component-level900s and supplied-reset rules,
+  rather than the row write clock. A verified windowless exhausted
+  observation with no reset uses the 900-second freshness rule and remains
+  useful despite having no windows. Expiry yields stale, never available.
+  With no accepted observation the reason states that provider's supported
+  signal has not been observed; it never claims all non-Codex sources absent.
 
 Consumers unchanged:
-- `tests/providers/test_capacity_service.py` — no-edit-reason: its fake `upsert` and record construction omit `details`, which stays optional, and the reporter path it covers keeps its call.
-- `tests/storage/test_provider_capacity.py` — no-edit-reason: calls `upsert` and `get` without `details`, which defaults to `{}`.
-- `src/gobby/sessions/processor_stats.py` — no-edit-reason: types against `ProcessorHost`, whose new member is additive.
-- `tests/sessions/test_transcript_index_journal.py` — no-edit-reason: types against `ProcessorHost`, whose new member is additive.
-- `src/gobby/runner_init/__init__.py` — no-edit-reason: re-exports `init_servers`, whose signature is unchanged.
-- `src/gobby/runner.py` — no-edit-reason: calls `init_servers` with its unchanged signature.
-- `tests/config/test_restart_config_consumers.py` — no-edit-reason: drives `init_servers` with unchanged arguments.
-- `tests/runner_init/test_config_runtime_startup.py` — no-edit-reason: drives `init_servers` with unchanged arguments.
-- `tests/test_runner_lifecycle.py` — no-edit-reason: drives `init_servers` and `_build_message_processor` with unchanged arguments.
+- `src/gobby/providers/usage.py` — no-edit-reason: existing reporter snapshots and UsageWindow remain the numeric input contract
 
-**Granularity:** one leaf. Observation, persistence, and the read path are one
-contract: an observed provider's snapshot. Shipping observe without the read
-path would persist rows that `get_provider_capacity` still reports as
-`unknown`.
+**Granularity:** ten acceptance items inspect all six provider rows and one
+shared persistence/read contract. Normalizers and persistence stay together
+because a detector whose signal cannot survive get() is unusable. Collection
+and alert lifecycle owners are separate outcomes in4.2-4.5. Pane hints are
+confidence-separated inputs to that contract, not a new poller.
 
-**Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/providers/test_codex_quota_observation.py tests/providers/test_capacity_service.py -q`.
+**Focused verification (planned, not run):**
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/providers/test_provider_quota_observation.py tests/providers/test_capacity_service.py tests/storage/test_provider_capacity.py -q`.
 
 **Acceptance:**
+- 4.1.1 - Claude pane forms yield hints only; typed warning/rejected events require emitted fixture/envelope/time provenance, never SDK types alone. No utilization/reset, statusline or generic429 inference. test: `tests/providers/test_provider_quota_observation.py::test_claude_quota_signals`.
+- 4.1.2 - Codex numeric sample, independent windows, windowless reached flag and typed usage_limit_exceeded normalize as verified; pane banners yield hints only and context-full stays separate. test: `tests/providers/test_provider_quota_observation.py::test_codex_quota_signals`.
+- 4.1.3 - Grok inventory forms yield hints only; transient rate/global/concurrency limits and unverified typed codes do not. test: `tests/providers/test_provider_quota_observation.py::test_grok_quota_signals`.
+- 4.1.4 - Droid Standard Usage form yields a hint only; bare402/429, spent credits and unverified typed codes do not. test: `tests/providers/test_provider_quota_observation.py::test_droid_quota_signals`.
+- 4.1.5 - Qwen quota/reset-guidance form yields a hint without authoritative reset; retryable429, discontinued OAuth guidance and unverified typed codes do not. test: `tests/providers/test_provider_quota_observation.py::test_qwen_quota_signals`.
+- 4.1.6 - AGY reporter windows normalize as verified; recorded top-level ERROR requires an actual native structured source, while identical pane text yields a hint. Relative reset uses the verified first occurrence time once; duplicate admission precedes normalization. Timeout is not exhaustion. test: `tests/providers/test_provider_quota_observation.py::test_agy_quota_signals`.
+- 4.1.7 - Verified windowless hard signals persist exhausted with unknown numeric/reset, then stale after900s. Every provider's hint-only row stays unknown and never refreshes quota clocks or resets. test: `tests/providers/test_provider_quota_observation.py::test_output_only_freshness`.
+- 4.1.8 - Per-component admission accepts disjoint out-of-order five-hour/weekly readings, rejects same-component older/contradictory occurrences and earlier resets, and CAS races remerge without lost components or alerts. Partial weekly refresh leaves five-hour stale after900s or its reset, duplicate occurrences never refresh age, and mismatched scope/model recovery clears nothing. Details and component clocks round-trip through isolated storage. test: `tests/storage/test_provider_capacity.py::test_observation_write_admission`.
+- 4.1.9 - Typed normalization ignores quoted JSON/arbitrary message content, malformed fields, unknown codes, secrets and ambiguous times. Identical genuine/quoted-at-bottom pane forms can yield only the same uncertain hint, never quota/recovery/fail-fast. test: `tests/providers/test_provider_quota_observation.py::test_untrusted_or_ambiguous_signals_are_ignored`.
+- 4.1.10 - Real Terminal/SnapshotResult fields drive baseline/new-line admission: retained-before-start/restart, redraw, unknown overlap and incomplete matches emit nothing; a new complete matching line with overlap gives one hint even when older offscreen history is truncated. Static relative-reset replay never refreshes age or moves reset. test: `tests/providers/test_provider_quota_observation.py::test_pane_occurrence_contract`.
 
-- 4.1.1 - `observation_from_rate_limits` maps the live sample to one `weekly` window (80/100 percent, ISO reset) with credits and plan in `details`, and returns None for a null or windowless value. test: `tests/providers/test_codex_quota_observation.py::test_rate_limits_map_to_windows_and_details`.
-- 4.1.2 - A caught-up live Codex batch writes the newest reading, and `get("codex")` returns it as `available` with `details`. A catch-up pass and a rebuild write nothing. test: `tests/providers/test_codex_quota_observation.py::test_live_caught_up_batch_observes_newest_reading`.
-- 4.1.3 - An older line timestamp, an earlier weekly `resets_at`, or an earlier `five_hour` `resets_at` with the weekly unchanged does not replace the stored row. A two-window reading with only the five-hour window at 100% stores state `exhausted`. test: `tests/providers/test_codex_quota_observation.py::test_stale_readings_are_rejected`.
-- 4.1.4 - A stored row older than 900 s, or past a window's `resets_at`, reads as `stale` with its reason. Codex without a row reads as `unknown` "no Codex rate_limits observed yet". Claude reads as `unknown` with the statusline reason. test: `tests/providers/test_codex_quota_observation.py::test_observed_provider_freshness_and_reasons`.
-- 4.1.5 - A processor rebuilt through `_build_message_processor` keeps `provider_capacity_service`. test: `tests/providers/test_codex_quota_observation.py::test_rebuilt_processor_keeps_capacity_service`.
-
-### 4.2 Quota edge alerts to the operator channel [category: code] (depends: 4.1)
+### 4.2 Provider-neutral quota edges to the operator channel [category: code] (depends: 4.1)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/providers/quota_alerts.py`
-- `src/gobby/providers/capacity_service.py::*` — scope-reason: observe() computes the level transition and calls the sink
+- `src/gobby/providers/capacity_service.py::*` — scope-reason: observation admission persists edge state and schedules the single sink after commit
 - `src/gobby/config/communications.py::CommunicationsConfig`
-- `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated contract entry for communications.operator_alert_channel
-- `tests/contracts/http/config_schema.json::*` — scope-reason: regenerated schema entry for communications.operator_alert_channel
+- `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated operator_alert_channel contract carrier
+- `tests/contracts/http/config_schema.json::*` — scope-reason: regenerated operator_alert_channel schema carrier
 - `src/gobby/runner_init/servers.py::init_servers`
 - `tests/providers/test_quota_alerts.py`
 
 **Research context:**
-- `src/gobby/communications/manager.py::CommunicationsManager.send_message(channel_name, content, session_id=None)`
-  is async. With no session, outbound delivery uses the channel's
-  `config_json["default_destination"]`.
-- `communications.enabled` defaults to False. No daemon-side operator alert
-  setting exists.
-- `runner.communications_manager` is built during orchestration init
-  (`runner_init/orchestration.py:766`), before `init_servers` runs, and can be
-  None.
-- In the 09-22 incident the window passed 90% at 12:38, reached 100% at
-  15:59, and drew credits from 23:59. A purchased reset arrived at 09-24
-  18:53.
+Existing #23604 (Quota edge alerts) supplies the reusable design: independent
+window state, rising reached/credit edges, persisted alert state, post-upsert
+delivery outside the lock, one bounded CommunicationsManager sink and both
+config carriers. CommunicationsManager.send_message is async and selects the
+channel's default_destination when no session is supplied. No agent fanout is
+needed. Reporterless get() currently discards stored rows (capacity excerpt
+hash `31cd62a4d2049ce8947f06b83d522e82fb5097f37161863b3ffba114b197cfda`),
+so 4.1 must precede alerts. Communications may be disabled or its manager absent.
 
 **Implementation:**
-- New `src/gobby/providers/quota_alerts.py`:
-  - Alert state is kept per window, because Codex windows reset
-    independently, and `observe` already marks the provider `exhausted` when
-    any window is exhausted (capacity_service.py:227-228).
-    `WINDOW_LEVELS = ("ok", "warn", "exhausted")`.
-    `window_level(window)` is `exhausted` at or above its limit, `warn` at or
-    above 90% of it, and `ok` otherwise.
-  - Account-wide signals are kept apart from the windows:
-    - `limit_reached` is true when either reached flag is set;
-    - `drawing_credits` is true when any window is exhausted,
-      `credits.has_credits` is true, and the balance is lower than the
-      stored balance.
-  - `transition(previous_details, observation) -> tuple[dict, list[str]]`:
-    - Window state lives in `details["alert_state"]["windows"]`, keyed by
-      window label, holding each window's `level` and `resets_at`.
-    - For each observed window, with the same `resets_at` the stored level is
-      the maximum of the previous and computed levels, so it is monotonic
-      within that window's period. An upward change returns an alert naming
-      that window.
-    - With a later `resets_at`, the window's level is the computed one. When
-      the previous level was above `ok`, a reset alert naming that window is
-      returned. Other windows are untouched.
-    - A window absent from the observation keeps its stored state. (`observe`
-      has already dropped any observation with an earlier `resets_at` for a
-      known window.)
-    - `limit_reached` and `drawing_credits` each alert once on their rising
-      edge and clear silently. `alert_state` also stores them and the
-      balance.
-  - Alert text is one line per alert. It names the provider, the alert, and,
-    for a window alert, that window's label, used percent, and reset time,
-    plus the credit balance. Example: "Codex quota warn: five_hour 92% used,
-    resets 2026-10-05T23:00Z, credit balance 1265.60".
-  - `build_operator_alert_sink(get_manager, get_config) -> Callable[[str], Awaitable[None]]`
-    logs at INFO and returns without sending when comms is disabled, the
-    manager is None, or `operator_alert_channel` is empty. Otherwise it awaits
-    `asyncio.wait_for(manager.send_message(channel, text), ALERT_SEND_TIMEOUT_SECONDS)`
-    with `ALERT_SEND_TIMEOUT_SECONDS = 10`. It catches and logs every
-    exception, including the timeout, and never raises.
-- `ProviderCapacityService`:
-  - gains `alert_sink: Callable[[str], Awaitable[None]] | None = None`;
-  - in `observe`, under the per-provider lock, applies `transition` before
-    writing and stores the new details with the upsert. After a successful
-    upsert, and after the lock is released, it schedules one sink call per
-    alert with the existing
-    `src/gobby/hooks/background_tasks.py::create_background_task`. `observe`
-    never awaits delivery, so a slow channel cannot stall a processor pass
-    or hold the lock.
-- `CommunicationsConfig.operator_alert_channel: str = ""` names a configured
-  channel. Regenerate both config carriers.
-- `init_servers` sets
-  `provider_capacity_service.alert_sink = build_operator_alert_sink(lambda: runner.communications_manager, lambda: runner.config_runtime.capture().snapshot.active.communications)`.
+- Retain per-window ok/warn/exhausted,90% warn and100% exhausted, monotonic
+  level within the same reset epoch, independent reset advances, and unchanged
+  absent-window state. Store level/resets_at by4.1's scope/limit identity, with
+  that component's admitted source time; omit no clocks when persisting edges.
+- Preserve Codex account-signal predicates: limit_reached is true when
+  rate_limit_reached_type is a supplied valid non-null reached type or
+  spend_control_reached is explicitly true. It becomes false only when the
+  former is explicitly null and the latter explicitly false in an admitted
+  same-scope event. Missing fields retain prior values. individual_limit is
+  metadata, not a reached boolean. Persist both supplied reached fields,
+  their source clock and derived state. The original research's Tier1 predicate
+  names these exact fields; do not mistake individual_limit for a reached flag.
+- drawing_credits is true only when a fresh window in that same scope is
+  exhausted, credits.has_credits is explicitly true, and a supplied valid
+  numeric balance is lower than the stored balance. A first balance establishes
+  the baseline without a drawing edge. Persist balance and drawing_credits.
+  Explicit has_credits=false, an equal/rising valid balance, or a complete
+  admitted same-scope reading showing no exhausted window clears drawing_credits
+  silently; missing balance/has_credits/windows retains state. Neither flag
+  clearing is a quota reset or positive recovery of a verified windowless hard episode.
+  Both flags alert once on a false-to-true edge, clear silently, and rearm only
+  after that explicit clearing. Credit balances never measure session spend.
+- Extend transition(previous_details, observation) for explicit provider warning,
+  verified windowless hard exhaustion and limit_reached. State is keyed by
+  machine/provider plus4.1's normalized scope/limit identity;
+  verified identical account limits across seats generate one edge. Unknown
+  source scope remains separate, never falsely correlated for recovery. A repeated pane,
+  reporter result, replay, daemon restart or observation from a second seat
+  does not generate another edge. Persist edge state in details with the row.
+- Explicit warning emits warn without inventing percent. A new hard-limit
+  episode emits exhausted and, if an explicit reached signal is present,
+  limit_reached once each; do not emit duplicate text for the same edge kind.
+  Newer positive quota evidence for the exact same scope/limit resets that
+  episode once; later
+  window reset keeps the original per-window reset behavior. Expiry or wall
+  clock passing a predicted reset only makes the row stale; it is not proof
+  of reset and sends no reset message. Other exhausted windows remain intact.
+- Pane hints send only "<provider>: possible quota limit" through the same sink,
+  with no percent/reset/credit or exhausted/reached/reset semantics. Persist a
+  machine/provider hint edge plus opaque occurrence metadata separately from
+  quota alert_state. Suppress duplicates and hints from other seats while the
+  prior hint is less than900s old. Only a genuinely new occurrence after that
+  bound can notify again; replay never can. This bound is hint notification
+  policy, not quota freshness/recovery. Restart baselines panes again and keeps
+  persisted dedupe. Hints/cooldown expiry never rearm/clear verified incidents.
+  Dedupe keeps only the last occurrence for each live source generation plus
+  the latest provider notification time; retire generation entries when their
+  terminal is no longer live. Restart's baseline prevents historical replay,
+  so no unbounded event history or retention service is required.
+- Observation/admitted reporter writes compute edges under the provider lock,
+  persist them atomically, and schedule sink calls only after successful upsert
+  and after lock release with create_background_task. A lost write sends nothing.
+- Keep build_operator_alert_sink and communications.operator_alert_channel.
+  INFO-only fallback when disabled, missing manager, or empty channel; otherwise
+  wait_for the single channel send with the existing10s bound. Delivery errors
+  and timeout are logged without propagating. Never await channel delivery in
+  a processor/terminal scan or while holding the capacity lock.
+- Alert text is provider, edge kind, optional measured window/percent/reset and
+  allowlisted credit balance. Unknown fields are explicitly unknown or omitted.
+  No session/run ids, raw error text, prompts, model responses or credentials.
+  Startup construction uses late getters for manager and active runtime config.
 
 Consumers unchanged:
 - `src/gobby/communications/identities.py` — no-edit-reason: reads existing `CommunicationsConfig` fields only.
@@ -1176,19 +1316,316 @@ Consumers unchanged:
 - `tests/runner_init/test_config_runtime_startup.py` — no-edit-reason: drives `init_servers` with unchanged arguments.
 - `tests/test_runner_lifecycle.py` — no-edit-reason: drives `init_servers` with unchanged arguments.
 
-**Granularity:** one leaf. The level ladder, edge detection, and delivery are
-one behavior. The config key exists only for this sink.
+**Granularity:** eight acceptance items cover one operator-notification outcome,
+including retained Codex predicates and the confidence-separated hint edge.
+The new configuration field exists only for this sink. Collector wiring is
+separate, so transport policy is testable without running provider monitors.
 
-**Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/providers/test_quota_alerts.py tests/contracts -q -k "config_schema or runtime_config"`.
+**Focused verification (planned, not run):**
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/providers/test_quota_alerts.py -q`.
+Run focused existing config carrier tests, scoped Ruff/mypy, suppression ratchet,
+and quality/type audits covering all changed Python tests.
 
 **Acceptance:**
+- 4.2.1 - Original weekly incident replay sends exactly three alerts: warn at95%, exhausted at100%, drawing_credits on the first falling stored balance, then exactly one reset for a later window; repeats send nothing. Independent five_hour92%/100%/later-reset emits its own warn/exhausted/reset while weekly20% is unchanged. test: `tests/providers/test_quota_alerts.py::test_windows_alert_independently`.
+- 4.2.2 - Verified windowless limits produce one exhausted/reached edge per exact scope/limit; duplicate same-scope seats/restart send nothing, warning has no fabricated percent and exact-scope positive recovery sends one reset. Unknown-scope/model mismatches never recover siblings. test: `tests/providers/test_quota_alerts.py::test_provider_signal_edges`.
+- 4.2.3 - Same-epoch lower readings, omitted windows, stale events, expiry and elapsed reset time do not lower/re-arm state or send reset. test: `tests/providers/test_quota_alerts.py::test_no_inferred_recovery`.
+- 4.2.4 - Single configured channel delivery is bounded10s, outside lock and after accepted write; disabled/missing/raising/hung channels never stall observation or propagate failures. test: `tests/providers/test_quota_alerts.py::test_sink_degrades_without_raising`.
+- 4.2.5 - Text contains only provider/edge and measured optional fields; unknown quota never reads as zero and no content/id/credential-shaped value escapes. test: `tests/providers/test_quota_alerts.py::test_alert_text_is_minimal`.
+- 4.2.6 - Both config carriers expose operator_alert_channel and the startup sink reads current config/manager. test: `tests/providers/test_quota_alerts.py::test_operator_alert_config_carriers`.
+- 4.2.7 - Either Codex reached flag produces one rising edge; explicit false clears silently and later true rearms. Missing flags preserve state. Credit fixtures cover has_credits=false, first/equal/rising/falling balance, exhausted versus nonexhausted windows, missing inputs and silent clearing/rearming; flag clearing never resets a hard quota episode. test: `tests/providers/test_quota_alerts.py::test_codex_flag_and_credit_predicates`.
+- 4.2.8 - Six-provider hints send only possible-limit text through the bounded sink; cross-seat/cooldown/restart duplicates are suppressed, old occurrence replay never rearms and only a new occurrence after900s may notify again. No hint changes quota state/freshness/recovery/fail-fast. test: `tests/providers/test_quota_alerts.py::test_possible_limit_hint_edges`.
 
-- 4.2.1 - Replaying the incident readings (a weekly window only) sends exactly three alerts: weekly warn at 95%, weekly exhausted at 100%, and drawing_credits when the balance first falls. A later window then sends one reset alert. Repeated readings at the same level send nothing. test: `tests/providers/test_quota_alerts.py::test_incident_replay_alerts_on_edges_only`.
-- 4.2.2 - A stale lower reading inside a window does not lower the stored level or re-alert. test: `tests/providers/test_quota_alerts.py::test_level_is_monotonic_within_window`.
-- 4.2.3 - The sink sends to `operator_alert_channel` through `CommunicationsManager.send_message`. It only logs when comms is disabled, the channel is empty, or the manager is None. A raising send is logged and does not fail `observe`. A send that never completes is cut off at `ALERT_SEND_TIMEOUT_SECONDS` and logged. `observe` returns, and the provider lock is free, before the send finishes. test: `tests/providers/test_quota_alerts.py::test_sink_degrades_without_raising`.
-- 4.2.4 - Alert text contains no session id, message content, or credential-shaped value. test: `tests/providers/test_quota_alerts.py::test_alert_text_is_minimal`.
-- 4.2.5 - In a two-window fixture the weekly window stays at 20% with an unchanged `resets_at`. The five-hour window rising to 92% and then 100% sends a warn alert and an exhausted alert, both naming `five_hour`, while the provider reads `exhausted` and the weekly sends nothing. When the five-hour `resets_at` advances and its use falls, one `five_hour` reset alert is sent and the weekly state is unchanged. A reached flag turning on sends one `limit_reached` alert, and repeating it sends nothing. test: `tests/providers/test_quota_alerts.py::test_windows_alert_independently`.
+### 4.3 Caught-up live transcript quota collection [category: code] (depends: 4.2)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/sessions/processor_quota.py`
+- `src/gobby/sessions/processor_transcripts.py::ProcessorTranscriptMixin._process_session_unlocked`
+- `src/gobby/sessions/processor_types.py::ProcessorHost`
+- `src/gobby/sessions/processor.py::SessionMessageProcessor.__init__`
+- `src/gobby/runner_init/servers.py::init_servers`
+- `src/gobby/runner_init/services.py::_build_message_processor`
+- `tests/sessions/test_live_quota_observation.py`
+
+**Research context:**
+ProcessorTranscriptMixin._process_session_unlocked already reads bounded raw
+new_lines, records byte offsets, computes caught_up and then parses records.
+Its `if not stats_records` return loses any provider event the usage parser
+does not retain. Collect quota from typed raw envelopes before that return,
+independently of usage ledger records. Claude rate_limit_event support is
+conditional on an actual provider event; interactive/placed panes belong to4.5,
+while spawned panes belong to4.4.
+Codex transcripts carry rate_limits and a structured usage_limit_exceeded
+terminal error; current watchdog/models already gives the quota terminal reason.
+The rebuild writer is TranscriptProcessingMixin._persist_session_transcript,
+and the audit is a separate caller; neither should publish live observations.
+init_servers builds the shared capacity service. `_build_message_processor`
+rebuilds it via activate(); services.py currently847lines, so use exactly one
+attachment line there. No code is added to the P2 ledger dependency.
+
+**Implementation:**
+- New bounded processor_quota helper consumes provider, raw live lines and
+  source timestamp/cursor provenance. Recognize the supported structured
+  Codex and Claude signals from4.1; unknown provider/event envelopes do nothing.
+  It never scans ordinary user/tool/assistant content for phrases.
+- On caught-up passes only, admit the newest valid observation per relevant
+  limit/window whose source timestamp is within900s of now. Call it before
+  `not stats_records`; quota-only events must work without token usage. A
+  historical catch-up pass, audit, rebuild, malformed/undated event or replay
+  never generates a new observation/alert. Include originating session/stream
+  generation from the processor host, never from arbitrary payload text, for
+  current-source fail-fast linkage. Advance source cursor with the
+  existing processing pass; retries use observation idempotence from4.1.
+- Initialize a typed default-None provider_capacity_service member in SessionMessageProcessor.__init__ and
+  ProcessorHost, attach in init_servers, and reattach in the existing rebuild
+  activation. The helper awaits observe, which schedules delivery and returns
+  without waiting on communications. Isolation of a malformed quota record
+  must not fail ordinary transcript indexing.
+- Preserve per-scope/limit occurrence clocks and reset admission from4.1;
+  newest means newest for each component, never newest for the whole provider.
+  A partial batch carries only observed components and never refreshes omitted
+  siblings. Use the actual typed-envelope source timestamp and stream cursor
+  as occurrence provenance; no processing-time refresh on retry. A
+  supported provider without structured events still gets possible-limit pane
+  hints from spawned4.4 or interactive/placed4.5. This collector neither polls
+  nor promises new CLI events. Unverified Claude envelopes remain conditional;
+  tests need actual native fixture provenance, never collector-invisible flags.
+
+Consumers unchanged:
+- `src/gobby/sessions/liveness_monitor.py` — no-edit-reason: SessionMessageProcessor construction retains its signature and the new service member defaults to None
+- `tests/sessions/test_e2e_session_tracking.py` — no-edit-reason: SessionMessageProcessor construction retains its signature and the new service member defaults to None
+- `tests/sessions/test_liveness_monitor.py` — no-edit-reason: SessionMessageProcessor construction retains its signature and the new service member defaults to None
+- `tests/sessions/test_processor_catchup_occupancy.py` — no-edit-reason: SessionMessageProcessor construction retains its signature and the new service member defaults to None
+- `tests/sessions/test_sessions_processor_unit.py` — no-edit-reason: SessionMessageProcessor construction retains its signature and the new service member defaults to None
+- `tests/workflows/test_observer_context_usage.py` — no-edit-reason: SessionMessageProcessor construction retains its signature and the new service member defaults to None
+- `src/gobby/sessions/processor_stats.py` — no-edit-reason: types against `ProcessorHost`, whose new member is additive.
+- `tests/sessions/test_transcript_index_journal.py` — no-edit-reason: types against `ProcessorHost`, whose new member is additive.
+- `src/gobby/runner_init/__init__.py` — no-edit-reason: re-exports `init_servers`, whose signature is unchanged.
+- `src/gobby/runner.py` — no-edit-reason: calls `init_servers` with its unchanged signature.
+- `tests/config/test_restart_config_consumers.py` — no-edit-reason: drives `init_servers` with unchanged arguments.
+- `tests/runner_init/test_config_runtime_startup.py` — no-edit-reason: drives `init_servers` with unchanged arguments.
+- `tests/test_runner_lifecycle.py` — no-edit-reason: drives `init_servers` and `_build_message_processor` with unchanged arguments.
+- `src/gobby/runner_init/config_subscribers.py` — no-edit-reason: existing rebuild callable keeps its signature
+
+**Granularity:** one live transcript lifecycle owner with startup/rebuild wiring.
+It is independent of terminal observation and needs no new parser or ledger.
+The seven production Targets include a new helper and required host/attachment
+carriers; splitting any attach would leave rebuilds silently unobserved.
+
+**Focused verification (planned, not run):**
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/sessions/test_live_quota_observation.py -q`.
+
+**Acceptance:**
+- 4.3.1 - A caught-up quota-only Codex event without stats reaches observe with actual envelope timestamp/cursor/session-generation provenance; Claude events require a proven emitted native fixture. Newest wins per scope/limit, preserving windowless reached/warning. Weekly t10 followed by unseen five_hour t9 admits both; partial refresh/replay preserve component clocks. test: `tests/sessions/test_live_quota_observation.py::test_quota_only_live_records`.
+- 4.3.2 - Historical catch-up, rebuild, audit, malformed/undated records, user/tool quotes, stale timestamps and cursor replay send no new quota edge. test: `tests/sessions/test_live_quota_observation.py::test_history_is_not_live_quota`.
+- 4.3.3 - A processor rebuilt through activate retains the exact shared service; quota admission does not stall on a slow operator channel. test: `tests/sessions/test_live_quota_observation.py::test_rebuilt_processor_keeps_capacity_service`.
+
+### 4.4 Prompt spawned-terminal hints and verified-source fail-fast [category: code] (depends: 4.3)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/agents/provider_quota_monitor.py`
+- `src/gobby/agents/watchdog/quota.py::*` — scope-reason: reuse the provider-neutral signal classifier while preserving the existing recovery payload contract
+- `src/gobby/agents/idle_check_handler.py::*` — scope-reason: observe active spawned terminal scans before attention/idle gates and preserve fail-fast ordering
+- `src/gobby/agents/lifecycle_monitor.py::*` — scope-reason: add only service forwarding to the idle handler; leave the existing periodic lifecycle and idle guards intact
+- `src/gobby/servers/_app_lifecycle.py::create_lifespan`
+- `tests/agents/test_provider_quota_monitor.py`
+- `tests/agents/test_watchdog_quota.py::*` — scope-reason: original text-only fail-fast tests must exercise verified source evidence and preserve parent notification
+- `tests/providers/test_capacity_service.py::*` — scope-reason: reporter observations and failures feed the shared admission/alert path
+
+**Research context:**
+- Spawned runs already receive an active terminal scan before idle detection.
+  IdleCheckHandler.check_attention_agents captures15lines but currently stops
+  when attention is disabled: `138| if not self._attention_tracker.enabled:`;
+  `139| return 0`. Excerpt hash
+  `5bce38c1570f4e688302e1a208532d51db6de971ee6efc658bb30d22d2657522`.
+  AgentLifecycleMonitor._check_loop calls this before check_idle_agents every
+  configured lifecycle interval (default30s). Recent activity and coordination
+  waits must not suppress quota observation.
+- Interactive/placed terminal observation has its own lifecycle owner in4.5;
+  this section does not require an AgentRun for those sessions or scan their panes.
+- detect_provider_quota currently returns None for any provider other than Codex;
+  its stripped prefix cannot prove provider origin. Under the21:58 ruling
+  pane classification is hint-only; only verified evidence admits fail-fast.
+  fail_provider_quota_agent already delegates to bounded terminalization, but
+  its text-only caller loses origin. Existing verified transcript failures use
+  _fail_on_terminal_provider_error/fail_terminal_provider_agent with the same
+  provider_quota_exhausted reason and parent notification. Preserve that typed
+  recovery path instead of routing text to either failure method.
+- Existing IdleCheckHandler.current_provider_error_snapshot uses the run's
+  child session/provider and existing WatchdogReaderRegistry, requiring newest
+  provider-error output and _provider_error_postdates_run. The Codex reader
+  admits only type=event_msg/payload.type=task_complete/error.codex_error_info=
+  usage_limit_exceeded for this quota reason. Reuse that verified boundary before
+  idle gates; neither aggregate capacity nor printed JSON can substitute for it.
+  A window at100% is not itself a terminal quota error when credits remain.
+- _provider_error_postdates_run explicitly uses error.timestamp >= run.created_at:
+  the run row exists before launch, while run.started_at is persisted afterward
+  and would miss an immediate current-process startup failure. Preserve that
+  inclusive pre-launch boundary. The existing resumed-rollout regression is
+  tests/agents/test_lifecycle_monitor_watchdog_idle_recovery.py::test_resumed_codex_run_ignores_predecessor_terminal_error;
+  it rejects predecessor output then admits a newly appended startup error.
+- Literal consumer sweep: `gcode grep -w detect_provider_quota src/ tests/`
+  found only its definition and idle_check_handler.py import/call. The banner
+  literal sweep additionally found tests/agents/test_watchdog_quota.py's two
+  pane-only fail-fast tests; those are owned Targets and are rewritten for
+  verified evidence, with a paired pane-only no-fail regression. Existing typed
+  Codex quota-error reader/recovery tests remain valid and need no edits.
+- AgyUsageReporter.report already runs the supported usage command with a15s
+  bound and normalizes windows.4.1 routes successful reporter results to observe;
+ 4.4 verifies that actual reporter refresh drives the same alerts.
+
+**Implementation:**
+- Move quota scanning behavior out of lifecycle_monitor.py into the new
+  provider_quota_monitor.py; lifecycle_monitor.py retains only a small service
+  forwarding setter to its existing idle handler. Its current948lines must
+  remain below1000; no quota parser or state machine goes in that file.
+- Wire the shared service during HTTP lifespan startup to the spawned idle
+  handler. Reuse its existing polling task/captures,
+  intervals, startup readiness and shutdown; add no independently scheduled
+  quota poller. Observation occurs on the next normal pass even if attention
+  is disabled, a session was recently active, has a standing lifetime, or holds
+  a coordination wait. Ordinary idle reprompt/completion rules are unchanged.
+- Pane input is SnapshotResult.text/truncated/byte counters only. Hash existing
+  Terminal.id/created_at/attempt_generation/host_epoch/current ownership for
+  generation. First capture after attach/restart/generation change is baseline,
+  with no hint. Later captures need prior-suffix/current-prefix line overlap and
+  newly appended complete matching lines. No overlap, incomplete match, outage
+  or replacement rebaselines without emission; unchanged text never refreshes
+  time. Older clipped history alone does not reject a complete new block with
+  overlap. Hash generation/previous/current fingerprints/new block for occurrence;
+  time is first detection, not provider event time. Never normalize pane-relative
+  reset. Genuine and quoted-at-bottom identical forms yield the same uncertain
+  hint; neither is trusted quota. Shared persisted provider hint cooldown900s
+  suppresses cross-seat noise; it never changes quota clocks/recovery.
+- Spawned scan uses current run/session provider and current owned terminal.
+  Apply4.1's generation/baseline/overlap occurrence contract and submit only a
+  PaneQuotaHint from text. Remove text-only fail-fast admission from watchdog/
+  quota.py and its idle-handler call site; identical quoted text never fails a
+  run. Reuse current_provider_error_snapshot and the existing reader registry
+  for fresh verified current-run terminal quota errors: require source event
+  timestamp within900s, error.timestamp >= run.created_at through the existing
+  _provider_error_postdates_run helper, and error.timestamp >= the current
+  Terminal.attempt_started_at. Both lower bounds are inclusive; never substitute
+  run.started_at, which is written after launch. Retain
+  current ownership, newest provider-error output, and terminal quota reason.
+  Only that evidence calls _fail_on_terminal_provider_error once for the current run;
+  preserve _complete_if_work_finished semantics from the existing recovery.
+  Numeric window exhaustion, provider-wide capacity state, unknown reporter
+  scope and unrelated sessions cannot terminate a seat. Capacity observation
+  and current-source watchdog read are independent; persistence/sink failure
+  never gates verified fail-fast. Reuse current-reader errors/cleanup rather
+  than a new source-evidence queue, poller or provider error feed.
+- Missing/gone terminals, host outage, timeout, ownership generation change,
+  historical retained pane and empty output do not generate quota or recovery.
+  Pane text has no trusted region and is a hint only. Disappearance of the
+  banner is not a reset. Positive structured quota evidence from4.3 or
+  a later valid reporter reading is the recovery source for known state;
+  verified windowless hard components with no recovery signal become stale
+  after freshness, with unknown reset rather than invented recovery. Hint-only
+  providers remain unknown; pane hints never establish or age quota components.
+- Verify actual AGY refresh populates/advises the same service and sink, including
+  a timeout/unsupported reporter returning unknown/stale without an exhaustion
+  or reset edge. No additional AGY command or quota endpoint is introduced.
+
+Consumers unchanged:
+- `src/gobby/servers/app_factory.py` — no-edit-reason: create_lifespan retains its signature and lifecycle ownership
+- `tests/providers/test_version_gate.py` — no-edit-reason: existing lifespan fixture requires no quota observation and default attachment remains optional
+- `src/gobby/agents/watchdog/recovery.py` — no-edit-reason: existing fail_provider_quota_agent accepts the same ProviderQuotaExhaustion contract and already terminalizes with the classified reason
+
+**Granularity:** one spawned-run observation integration outcome. Interactive
+panes have different lifecycle ownership and actions and are split into4.5.
+The shared admission/helper is reused, while each monitor has its own evidence.
+AGY normalization/edge state remains owned by4.1/4.2; this leaf tests real
+reporter-to-sink wiring, not a second reporter state machine.
+
+**Focused verification (planned, not run):**
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_provider_quota_monitor.py tests/providers/test_capacity_service.py -q`.
+Also run the focused existing test_watchdog_quota.py, watchdog/test_codex_reader.py,
+test_lifecycle_monitor_watchdog_idle_recovery.py and
+watchdog/test_interactive_lifecycle_cleanup.py consumer regressions.
+
+**Acceptance:**
+- 4.4.1 - All six providers' newly appended pane forms reach possible-limit hints on the next normal pass using actual snapshot fields and the shared sink; AGY reporter supplies verified windows. test: `tests/agents/test_provider_quota_monitor.py::test_all_provider_observation_owners`.
+- 4.4.2 - Recent/standing/coordination-waiting spawned runs observe hints with attention disabled; only fresh verified current-source quota fails once with provider_quota_exhausted/parent notification. Quoted text and unrelated account/source exhaustion never fail the run; ordinary idle rules remain intact. test: `tests/agents/test_provider_quota_monitor.py::test_quota_precedes_idle_eligibility`.
+- 4.4.3 - Actual snapshot fields enforce first-capture/restart baseline, generation/overlap/new-line guards; retained history, redraw and static relative reset never re-alert or refresh quota. Genuine/quoted matching lines produce the same hint-only classification. Shutdown creates no orphan quota task. test: `tests/agents/test_provider_quota_monitor.py::test_terminal_observation_lifecycle`.
+- 4.4.4 - AGY refresh drives verified windows/edges; transient/unsupported refresh never invents exhausted/reset. Numeric window exhaustion/unknown reporter scope cannot fail a run. The existing current-source watchdog error path still fails verified quota independently of storage/sink failure; pane-only hints never fail. test: `tests/agents/test_provider_quota_monitor.py::test_reporter_and_failure_boundaries`.
+- 4.4.5 - A verified startup quota event with run.created_at and Terminal.attempt_started_at below its timestamp, but timestamp below run.started_at, fails exactly once on the next normal scan; equality at either inclusive lower bound is accepted. Predecessor/pre-attempt errors never fail the successor, and completed work still wins. test: `tests/agents/test_provider_quota_monitor.py::test_startup_quota_uses_prelaunch_identity_bounds`.
+
+### 4.5 Interactive and placed-seat quota observation [category: code] (depends: 4.4)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/agents/interactive_attention_monitor.py::*` — scope-reason: current interactive terminal captures observe quota independently of attention settings while preserving ownership and shutdown guards
+- `src/gobby/servers/_app_lifecycle.py::create_lifespan`
+- `tests/agents/test_interactive_attention_monitor.py::*` — scope-reason: exercise the service callback with absent attention state and current terminal ownership
+- `tests/agents/test_interactive_quota_observation.py`
+
+**Research context:**
+InteractiveAttentionMonitor._check_attention_panes lists interactive sessions,
+skips active agent sessions, resolves the current live terminal and captures
+15lines. `134| if manager is None or session_manager is None:` currently stops
+the scan; `166| if session.id in active_agent_sessions:` separates it from
+spawned scans. Excerpt hash
+`356c6400a7527d9a071c8d333658f81ef4f8f1c8df14c31c585a3aadcd7955fe`.
+HTTP create_lifespan creates/stops this existing monitor with startup/recovery
+readiness. Placed seats without an AgentRun already belong to this boundary.
+4.1 provides the normalizer/admission contract,4.2 the single sink, and4.4
+the shared observation helper; do not create another polling service.
+SnapshotResult exposes text/truncated/byte counters, no origin/event time.
+Existing Terminal carries id/created_at/attempt_generation/host_epoch and
+session_id/agent_run_id ownership; use those fields, never invented provenance.
+
+**Implementation:**
+- Attach the shared capacity service during the existing lifespan's monitor
+  construction. Use the same owned15-line snapshot with4.1's source-generation,
+  first-capture baseline, overlap and newly appended complete-line contract
+  before optional attention syncing. Text can submit only a PaneQuotaHint;
+  no snapshot-origin/timestamp fields or trusted flags are invented.
+  A missing/disabled attention manager does not disable quota observation.
+- Hash that current Terminal identity/ownership into an opaque generation.
+  Baseline first capture after attach/restart/generation change; emit nothing
+  from retained lines. On later captures require prior-suffix/current-prefix
+  line overlap plus new complete matching lines. No overlap, incomplete match,
+  outage or replacement rebaselines; identical redraw never refreshes time.
+  Older clipped history alone permits a complete new block with overlap. Hash
+  generation/previous/current fingerprints/new block for occurrence; detection
+  time is not provider event time. No pane-relative reset normalization occurs.
+  First-sighting limits present at attachment remain unknown until a new hint
+  or verified observation. Genuine and identical quoted bottom lines are equally
+  uncertain; submit possible-limit only. Shared provider cooldown900s and opaque
+  last-source occurrence suppress repeats across seats/restart without refreshing
+  quota components or asserting shared accounts.
+- Keep interactive/placed observation independent of AgentRun, recent session
+  activity, standing lifetime, and coordination hold. It sends no keys and
+  never fails/completes the human or placed session. Active spawned terminals
+  remain owned by4.4 and are not scanned twice here.
+- Preserve startup readiness, current live-terminal ownership/generation,
+  host-unavailable/timeout/gone-terminal handling and existing stop cancellation.
+  Historical retained output, missing captures and disappeared banners cannot
+  create a hint or reset. Genuine/quoted newly appended matching text can raise
+  only an uncertain possible-limit hint, never quota/recovery or session failure.
+  Without verified quota evidence capacity stays unknown; existing stale quota
+  components stay stale. No recovery probe is added.
+- Both scan owners use the same persisted hint dedupe and sink: several seats
+  yield at most one possible-limit notification per provider within900s. Verified
+  quota edges retain4.1's exact scope/limit admission; hints do not assert accounts.
+
+Consumers unchanged:
+- `src/gobby/servers/app_factory.py` — no-edit-reason: create_lifespan retains its signature and lifecycle ownership
+- `tests/providers/test_version_gate.py` — no-edit-reason: existing lifespan fixture requires no quota observation and default attachment remains optional
+
+**Granularity:** one independent interactive-terminal lifecycle owner. It shares
+the existing service but has no spawned cleanup or reporter state machine.
+
+**Focused verification (planned, not run):**
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_interactive_quota_observation.py tests/agents/test_interactive_attention_monitor.py -q`.
+
+**Acceptance:**
+- 4.5.1 - All six providers' placed/interactive sessions without AgentRun observe newly appended pane hints with attention disabled/recent activity/coordination hold; no keys, quota-state mutation or session failure occurs. test: `tests/agents/test_interactive_quota_observation.py::test_all_provider_interactive_signals`.
+- 4.5.2 - Real snapshot fields enforce first-capture/restart/history/ownership/overlap/timeout guards; paired genuine/quoted-at-bottom forms yield hints only. Spawned terminals are excluded and shutdown adds no orphan poller. test: `tests/agents/test_interactive_quota_observation.py::test_interactive_observation_guards`.
+- 4.5.3 - Simultaneous spawned/placed new hints produce one possible-limit notification within900s; replay, disappearance and cooldown expiry do not create quota/reset or refresh component age. test: `tests/agents/test_interactive_quota_observation.py::test_shared_provider_edge_across_seats`.
 
 ## P5: Three surfaces, documented
 `kind: framing`
@@ -1196,7 +1633,7 @@ one behavior. The config key exists only for this sink.
 **Goal**: an operator or agent can tell account quota, context occupancy, and
 spend apart, and knows which tool answers which question.
 
-### 5.1 Observability guide and skill references [category: docs] (depends: 3.2, 4.2)
+### 5.1 Observability guide and skill references [category: docs] (depends: 3.2, 4.5)
 `kind: deliverable`
 
 Targets:
@@ -1224,16 +1661,19 @@ Targets:
   - **Spend:** `get_usage_ledger`, `/api/admin/usage/ledger`, and
     `gobby tokens ledger`. Paging is a live traversal (Decision 10), and
     `spend_observed` separates unknown spend from reported zero.
-- §Provider Capacity gains Codex observation, `details`, the per-window
+- §Provider Capacity gains the six-provider signal/owner inventory, unknown
+  numeric and recovery boundaries, per-component scope/freshness, `details`, the per-window
   alert levels with the account-wide `limit_reached` and `drawing_credits`
-  alerts, and `communications.operator_alert_channel`.
+  alerts, confidence-separated possible-limit pane alerts, first-capture/restart
+  baseline limitations, and `communications.operator_alert_channel`.
 - §Token Ledger Audit gains the post-deploy `gobby tokens audit --all --fix`
   and the unkeyed-row drift rule.
 - The guide states the attribution rules: latest claim wins, intervals start
   at migration 460, and database-clock edges.
 - `cli-commands.md#gobby-tokens` lists `ledger` and `quota`.
   `http-endpoints.md` adds the `/api/admin/usage/ledger` row.
-- `capacity.md` documents Codex observation, `details`, and the alert
+- `capacity.md` documents six-provider observations, source freshness,
+  verified windowless exhausted versus pane-hint-only unknown quota, `details`, and the alert
   setting. `transcripts.md` notes that `get_session_messages` pages rendered
   groups and that the ledger answers per-call questions.
 
@@ -1249,6 +1689,40 @@ model, and they land after every surface exists.
 
 ## V1 Plan Changelog
 `kind: verification`
+
+**2026-10-06 consensus:** Adv2 gobby#15414 reached pre-audit consensus on
+these bytes (receipt 221ca410-a06e-412f-9a12-2140da67ffd3). The
+Orchestrator's 22:39 CT ruling made W4 the canonical writer; Adv4 derives a
+fresh M1 from the canonical narrative. P4 re-expansion and the #23603/#23604
+rescope wait for the new-work freeze to lift.
+
+**2026-10-06 amendment in progress:** #23715 extends P4 to all six providers.
+The original P1-P3 deliverable bodies are preserved byte-for-byte; section2.2's
+heading gains an ordering dependency on4.3 for their shared processor paths.
+None of this
+plan's implementation leaves was closed when checked. Existing 1.1 schema work
+is actively owned and remains unchanged. Old P4 leaves #23603/#23604 remain
+authoritative until the Orchestrator performs their approved rescope/retirement.
+This scratch is narrative-only: old M1 was removed, not edited or reused.
+Adversary consensus, fresh server-derived M1, expansion-mode validation, canonical
+GO, exact-byte commit and P1 leaf transition are not yet done.
+
+**2026-10-06 pre-audit repair in progress:** Adv2 PUSN-F1-F3 and N1 accepted.
+F1 follows the21:58 Orchestrator ruling: actual structured/reporter sources drive
+state/fail-fast, fresh pane text raises possible-limit hints only; first-capture/
+restart baseline and snapshot overlap bound hint freshness. F2 separates scope/
+limit clocks and recovery identity from row CAS. F3 restores both Codex reached
+flags, credit-drawing predicate, persisted balance and silent clearing/rearming,
+with exact incident counts. N1 assigns spawned panes4.4 and interactive/placed4.5.
+New review consensus is pending; no M1 is reused.
+
+**2026-10-06 follow-up pre-audit repair:** Adv2 resolved PUSN-F1-F3/N1.
+PUSN-F4 accepted: specify inclusive source timestamp >= run.created_at and
+>= current Terminal.attempt_started_at, never run.started_at; add immediate
+startup/successor/equality/completed-work regression in4.4. PUSN-N2 accepted:
+current Provider Coverage/Reuse framing and windowless-signal wording now match
+the two confidence paths. Protected P1-P3 bodies remain unchanged. Consensus
+is pending on these revised bytes.
 
 - 2026-10-05: First draft by the Lane 7 Plan Writer gobby#15469 under the
   Orchestrator rulings of about 14:50 CT. Targets and consumers were swept
@@ -1339,9 +1813,15 @@ After every leaf has passed:
    subagent rows, and upserts reported runs. `gobby tokens audit --all` must
    report `stale=0` for every session and `missing=0` for every session that
    is not `active`.
-4. Read `gobby tokens quota codex` while a Codex session is active, and check
-   the weekly percent and reset time against the newest rollout
-   `rate_limits` line.
+4. Planned after implementation: read quota for every provider against the
+   six-provider fixtures and current supported signals. Compare Codex/AGY
+   measured windows with their source; confirm verified windowless exhausted
+   reports have unknown numeric fields, pane-only providers stay unknown and
+   notify possible-limit only, and idle/coordination holds do not hide fresh
+   appended hints or verified observations. Replay all verified edges and pane
+   hints through one isolated sink; verify scope/limit clocks, quoted-text
+   uncertainty, restart baseline and separate persisted dedupe.
+   This is a future integration check, not evidence it has passed.
 5. Run `gobby tokens ledger --task <a task closed after deploy>` and confirm
    that `attribution_since` falls inside the deploy window and that coverage
    lists every source present.
@@ -1440,6 +1920,7 @@ After every leaf has passed:
   task_type: feature
   depends_on:
   - '2.1'
+  - '4.3'
   validation_criteria: '2.2.1: A parent transcript with one subagent file that holds
     two API calls yields two parent-session rows tagged with `agent_id`, through both
     the live path and the rebuild. `sessions.usage_*` includes them. test: `tests/sessions/test_claude_subagent_usage.py::test_subagent_calls_join_parent_ledger`.
@@ -1600,84 +2081,211 @@ After every leaf has passed:
   tdd: true
   source_section: '3.2'
   implementation_domain: backend
-- title: Codex `rate_limits` observations in `ProviderCapacityService`
+- title: Provider-neutral quota observations and persisted capacity reads
   category: code
   task_type: feature
   depends_on:
   - '1.1'
-  - '2.3'
-  validation_criteria: '4.1.1: `observation_from_rate_limits` maps the live sample
-    to one `weekly` window (80/100 percent, ISO reset) with credits and plan in `details`,
-    and returns None for a null or windowless value. test: `tests/providers/test_codex_quota_observation.py::test_rate_limits_map_to_windows_and_details`.
+  validation_criteria: '4.1.1: Claude pane forms yield hints only; typed warning/rejected
+    events require emitted fixture/envelope/time provenance, never SDK types alone.
+    No utilization/reset, statusline or generic429 inference. test: `tests/providers/test_provider_quota_observation.py::test_claude_quota_signals`.
 
-    4.1.2: A caught-up live Codex batch writes the newest reading, and `get("codex")`
-    returns it as `available` with `details`. A catch-up pass and a rebuild write
-    nothing. test: `tests/providers/test_codex_quota_observation.py::test_live_caught_up_batch_observes_newest_reading`.
+    4.1.2: Codex numeric sample, independent windows, windowless reached flag and
+    typed usage_limit_exceeded normalize as verified; pane banners yield hints only
+    and context-full stays separate. test: `tests/providers/test_provider_quota_observation.py::test_codex_quota_signals`.
 
-    4.1.3: An older line timestamp, an earlier weekly `resets_at`, or an earlier `five_hour`
-    `resets_at` with the weekly unchanged does not replace the stored row. A two-window
-    reading with only the five-hour window at 100% stores state `exhausted`. test:
-    `tests/providers/test_codex_quota_observation.py::test_stale_readings_are_rejected`.
+    4.1.3: Grok inventory forms yield hints only; transient rate/global/concurrency
+    limits and unverified typed codes do not. test: `tests/providers/test_provider_quota_observation.py::test_grok_quota_signals`.
 
-    4.1.4: A stored row older than 900 s, or past a window''s `resets_at`, reads as
-    `stale` with its reason. Codex without a row reads as `unknown` "no Codex rate_limits
-    observed yet". Claude reads as `unknown` with the statusline reason. test: `tests/providers/test_codex_quota_observation.py::test_observed_provider_freshness_and_reasons`.
+    4.1.4: Droid Standard Usage form yields a hint only; bare402/429, spent credits
+    and unverified typed codes do not. test: `tests/providers/test_provider_quota_observation.py::test_droid_quota_signals`.
 
-    4.1.5: A processor rebuilt through `_build_message_processor` keeps `provider_capacity_service`.
-    test: `tests/providers/test_codex_quota_observation.py::test_rebuilt_processor_keeps_capacity_service`.'
+    4.1.5: Qwen quota/reset-guidance form yields a hint without authoritative reset;
+    retryable429, discontinued OAuth guidance and unverified typed codes do not. test:
+    `tests/providers/test_provider_quota_observation.py::test_qwen_quota_signals`.
+
+    4.1.6: AGY reporter windows normalize as verified; recorded top-level ERROR requires
+    an actual native structured source, while identical pane text yields a hint. Relative
+    reset uses the verified first occurrence time once; duplicate admission precedes
+    normalization. Timeout is not exhaustion. test: `tests/providers/test_provider_quota_observation.py::test_agy_quota_signals`.
+
+    4.1.7: Verified windowless hard signals persist exhausted with unknown numeric/reset,
+    then stale after900s. Every provider''s hint-only row stays unknown and never
+    refreshes quota clocks or resets. test: `tests/providers/test_provider_quota_observation.py::test_output_only_freshness`.
+
+    4.1.8: Per-component admission accepts disjoint out-of-order five-hour/weekly
+    readings, rejects same-component older/contradictory occurrences and earlier resets,
+    and CAS races remerge without lost components or alerts. Partial weekly refresh
+    leaves five-hour stale after900s or its reset, duplicate occurrences never refresh
+    age, and mismatched scope/model recovery clears nothing. Details and component
+    clocks round-trip through isolated storage. test: `tests/storage/test_provider_capacity.py::test_observation_write_admission`.
+
+    4.1.9: Typed normalization ignores quoted JSON/arbitrary message content, malformed
+    fields, unknown codes, secrets and ambiguous times. Identical genuine/quoted-at-bottom
+    pane forms can yield only the same uncertain hint, never quota/recovery/fail-fast.
+    test: `tests/providers/test_provider_quota_observation.py::test_untrusted_or_ambiguous_signals_are_ignored`.
+
+    4.1.10: Real Terminal/SnapshotResult fields drive baseline/new-line admission:
+    retained-before-start/restart, redraw, unknown overlap and incomplete matches
+    emit nothing; a new complete matching line with overlap gives one hint even when
+    older offscreen history is truncated. Static relative-reset replay never refreshes
+    age or moves reset. test: `tests/providers/test_provider_quota_observation.py::test_pane_occurrence_contract`.'
   labels:
   - covers:provider-usage-spend:4.1:4.1.1
   - covers:provider-usage-spend:4.1:4.1.2
   - covers:provider-usage-spend:4.1:4.1.3
   - covers:provider-usage-spend:4.1:4.1.4
   - covers:provider-usage-spend:4.1:4.1.5
+  - covers:provider-usage-spend:4.1:4.1.6
+  - covers:provider-usage-spend:4.1:4.1.7
+  - covers:provider-usage-spend:4.1:4.1.8
+  - covers:provider-usage-spend:4.1:4.1.9
+  - covers:provider-usage-spend:4.1:4.1.10
   tdd: true
   source_section: '4.1'
   implementation_domain: backend
-- title: Quota edge alerts to the operator channel
+- title: Provider-neutral quota edges to the operator channel
   category: code
   task_type: feature
   depends_on:
   - '4.1'
-  validation_criteria: '4.2.1: Replaying the incident readings (a weekly window only)
-    sends exactly three alerts: weekly warn at 95%, weekly exhausted at 100%, and
-    drawing_credits when the balance first falls. A later window then sends one reset
-    alert. Repeated readings at the same level send nothing. test: `tests/providers/test_quota_alerts.py::test_incident_replay_alerts_on_edges_only`.
+  validation_criteria: '4.2.1: Original weekly incident replay sends exactly three
+    alerts: warn at95%, exhausted at100%, drawing_credits on the first falling stored
+    balance, then exactly one reset for a later window; repeats send nothing. Independent
+    five_hour92%/100%/later-reset emits its own warn/exhausted/reset while weekly20%
+    is unchanged. test: `tests/providers/test_quota_alerts.py::test_windows_alert_independently`.
 
-    4.2.2: A stale lower reading inside a window does not lower the stored level or
-    re-alert. test: `tests/providers/test_quota_alerts.py::test_level_is_monotonic_within_window`.
+    4.2.2: Verified windowless limits produce one exhausted/reached edge per exact
+    scope/limit; duplicate same-scope seats/restart send nothing, warning has no fabricated
+    percent and exact-scope positive recovery sends one reset. Unknown-scope/model
+    mismatches never recover siblings. test: `tests/providers/test_quota_alerts.py::test_provider_signal_edges`.
 
-    4.2.3: The sink sends to `operator_alert_channel` through `CommunicationsManager.send_message`.
-    It only logs when comms is disabled, the channel is empty, or the manager is None.
-    A raising send is logged and does not fail `observe`. A send that never completes
-    is cut off at `ALERT_SEND_TIMEOUT_SECONDS` and logged. `observe` returns, and
-    the provider lock is free, before the send finishes. test: `tests/providers/test_quota_alerts.py::test_sink_degrades_without_raising`.
+    4.2.3: Same-epoch lower readings, omitted windows, stale events, expiry and elapsed
+    reset time do not lower/re-arm state or send reset. test: `tests/providers/test_quota_alerts.py::test_no_inferred_recovery`.
 
-    4.2.4: Alert text contains no session id, message content, or credential-shaped
-    value. test: `tests/providers/test_quota_alerts.py::test_alert_text_is_minimal`.
+    4.2.4: Single configured channel delivery is bounded10s, outside lock and after
+    accepted write; disabled/missing/raising/hung channels never stall observation
+    or propagate failures. test: `tests/providers/test_quota_alerts.py::test_sink_degrades_without_raising`.
 
-    4.2.5: In a two-window fixture the weekly window stays at 20% with an unchanged
-    `resets_at`. The five-hour window rising to 92% and then 100% sends a warn alert
-    and an exhausted alert, both naming `five_hour`, while the provider reads `exhausted`
-    and the weekly sends nothing. When the five-hour `resets_at` advances and its
-    use falls, one `five_hour` reset alert is sent and the weekly state is unchanged.
-    A reached flag turning on sends one `limit_reached` alert, and repeating it sends
-    nothing. test: `tests/providers/test_quota_alerts.py::test_windows_alert_independently`.'
+    4.2.5: Text contains only provider/edge and measured optional fields; unknown
+    quota never reads as zero and no content/id/credential-shaped value escapes. test:
+    `tests/providers/test_quota_alerts.py::test_alert_text_is_minimal`.
+
+    4.2.6: Both config carriers expose operator_alert_channel and the startup sink
+    reads current config/manager. test: `tests/providers/test_quota_alerts.py::test_operator_alert_config_carriers`.
+
+    4.2.7: Either Codex reached flag produces one rising edge; explicit false clears
+    silently and later true rearms. Missing flags preserve state. Credit fixtures
+    cover has_credits=false, first/equal/rising/falling balance, exhausted versus
+    nonexhausted windows, missing inputs and silent clearing/rearming; flag clearing
+    never resets a hard quota episode. test: `tests/providers/test_quota_alerts.py::test_codex_flag_and_credit_predicates`.
+
+    4.2.8: Six-provider hints send only possible-limit text through the bounded sink;
+    cross-seat/cooldown/restart duplicates are suppressed, old occurrence replay never
+    rearms and only a new occurrence after900s may notify again. No hint changes quota
+    state/freshness/recovery/fail-fast. test: `tests/providers/test_quota_alerts.py::test_possible_limit_hint_edges`.'
   labels:
   - covers:provider-usage-spend:4.2:4.2.1
   - covers:provider-usage-spend:4.2:4.2.2
   - covers:provider-usage-spend:4.2:4.2.3
   - covers:provider-usage-spend:4.2:4.2.4
   - covers:provider-usage-spend:4.2:4.2.5
+  - covers:provider-usage-spend:4.2:4.2.6
+  - covers:provider-usage-spend:4.2:4.2.7
+  - covers:provider-usage-spend:4.2:4.2.8
   tdd: true
   source_section: '4.2'
+  implementation_domain: backend
+- title: Caught-up live transcript quota collection
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: '4.3.1: A caught-up quota-only Codex event without stats reaches
+    observe with actual envelope timestamp/cursor/session-generation provenance; Claude
+    events require a proven emitted native fixture. Newest wins per scope/limit, preserving
+    windowless reached/warning. Weekly t10 followed by unseen five_hour t9 admits
+    both; partial refresh/replay preserve component clocks. test: `tests/sessions/test_live_quota_observation.py::test_quota_only_live_records`.
+
+    4.3.2: Historical catch-up, rebuild, audit, malformed/undated records, user/tool
+    quotes, stale timestamps and cursor replay send no new quota edge. test: `tests/sessions/test_live_quota_observation.py::test_history_is_not_live_quota`.
+
+    4.3.3: A processor rebuilt through activate retains the exact shared service;
+    quota admission does not stall on a slow operator channel. test: `tests/sessions/test_live_quota_observation.py::test_rebuilt_processor_keeps_capacity_service`.'
+  labels:
+  - covers:provider-usage-spend:4.3:4.3.1
+  - covers:provider-usage-spend:4.3:4.3.2
+  - covers:provider-usage-spend:4.3:4.3.3
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: backend
+- title: Prompt spawned-terminal hints and verified-source fail-fast
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.3'
+  validation_criteria: '4.4.1: All six providers'' newly appended pane forms reach
+    possible-limit hints on the next normal pass using actual snapshot fields and
+    the shared sink; AGY reporter supplies verified windows. test: `tests/agents/test_provider_quota_monitor.py::test_all_provider_observation_owners`.
+
+    4.4.2: Recent/standing/coordination-waiting spawned runs observe hints with attention
+    disabled; only fresh verified current-source quota fails once with provider_quota_exhausted/parent
+    notification. Quoted text and unrelated account/source exhaustion never fail the
+    run; ordinary idle rules remain intact. test: `tests/agents/test_provider_quota_monitor.py::test_quota_precedes_idle_eligibility`.
+
+    4.4.3: Actual snapshot fields enforce first-capture/restart baseline, generation/overlap/new-line
+    guards; retained history, redraw and static relative reset never re-alert or refresh
+    quota. Genuine/quoted matching lines produce the same hint-only classification.
+    Shutdown creates no orphan quota task. test: `tests/agents/test_provider_quota_monitor.py::test_terminal_observation_lifecycle`.
+
+    4.4.4: AGY refresh drives verified windows/edges; transient/unsupported refresh
+    never invents exhausted/reset. Numeric window exhaustion/unknown reporter scope
+    cannot fail a run. The existing current-source watchdog error path still fails
+    verified quota independently of storage/sink failure; pane-only hints never fail.
+    test: `tests/agents/test_provider_quota_monitor.py::test_reporter_and_failure_boundaries`.
+
+    4.4.5: A verified startup quota event with run.created_at and Terminal.attempt_started_at
+    below its timestamp, but timestamp below run.started_at, fails exactly once on
+    the next normal scan; equality at either inclusive lower bound is accepted. Predecessor/pre-attempt
+    errors never fail the successor, and completed work still wins. test: `tests/agents/test_provider_quota_monitor.py::test_startup_quota_uses_prelaunch_identity_bounds`.'
+  labels:
+  - covers:provider-usage-spend:4.4:4.4.1
+  - covers:provider-usage-spend:4.4:4.4.2
+  - covers:provider-usage-spend:4.4:4.4.3
+  - covers:provider-usage-spend:4.4:4.4.4
+  - covers:provider-usage-spend:4.4:4.4.5
+  tdd: true
+  source_section: '4.4'
+  implementation_domain: backend
+- title: Interactive and placed-seat quota observation
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.4'
+  validation_criteria: '4.5.1: All six providers'' placed/interactive sessions without
+    AgentRun observe newly appended pane hints with attention disabled/recent activity/coordination
+    hold; no keys, quota-state mutation or session failure occurs. test: `tests/agents/test_interactive_quota_observation.py::test_all_provider_interactive_signals`.
+
+    4.5.2: Real snapshot fields enforce first-capture/restart/history/ownership/overlap/timeout
+    guards; paired genuine/quoted-at-bottom forms yield hints only. Spawned terminals
+    are excluded and shutdown adds no orphan poller. test: `tests/agents/test_interactive_quota_observation.py::test_interactive_observation_guards`.
+
+    4.5.3: Simultaneous spawned/placed new hints produce one possible-limit notification
+    within900s; replay, disappearance and cooldown expiry do not create quota/reset
+    or refresh component age. test: `tests/agents/test_interactive_quota_observation.py::test_shared_provider_edge_across_seats`.'
+  labels:
+  - covers:provider-usage-spend:4.5:4.5.1
+  - covers:provider-usage-spend:4.5:4.5.2
+  - covers:provider-usage-spend:4.5:4.5.3
+  tdd: true
+  source_section: '4.5'
   implementation_domain: backend
 - title: Observability guide and skill references
   category: docs
   task_type: chore
   depends_on:
   - '3.2'
-  - '4.2'
+  - '4.5'
   validation_criteria: '5.1.1: The reference audit passes with every audited anchor
     present, and the guide names one tool for each of quota, occupancy, and spend.
     test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.'

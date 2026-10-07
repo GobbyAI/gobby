@@ -8,6 +8,7 @@ import secrets
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
+from gobby.terminals.actor_scope import OPERATOR_ACTOR, SESSION_ACTOR_PREFIX
 from gobby.workflows.pipeline_state import (
     ApprovalRequired,
     ExecutionStatus,
@@ -18,12 +19,25 @@ from gobby.workflows.pipeline_state import (
 
 if TYPE_CHECKING:
     from gobby.storage.pipelines import LocalPipelineExecutionManager
+    from gobby.utils.local_token import AgentApiTokenClaims
     from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 
 logger = logging.getLogger(__name__)
 
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
+
+
+def approval_decider(principal: AgentApiTokenClaims | None, session_id: str | None) -> str:
+    """Name who decides an approval gate from an authenticated caller, never caller text.
+
+    An agent API token names the session bound into it, whatever session the request
+    claims. Operator credentials name the calling session when there is one, else
+    the operator.
+    """
+    if principal is not None:
+        return f"{SESSION_ACTOR_PREFIX}{principal.session_id}"
+    return OPERATOR_ACTOR if session_id is None else f"{SESSION_ACTOR_PREFIX}{session_id}"
 
 
 class ApprovalManager:

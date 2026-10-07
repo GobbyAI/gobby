@@ -7,7 +7,7 @@ type ProfilePayload = {
   display_label: string;
   description: string;
   skip_stages: string[];
-  isolation: BuildProfile["isolation"];
+  checkout_mode: BuildProfile["checkout_mode"];
   unattended: boolean;
   enabled: boolean;
   source?: ProfileSource;
@@ -65,7 +65,7 @@ function profilePayload(
     display_label: profile.display_label,
     description: profile.description,
     skip_stages: profile.skip_stages,
-    isolation: profile.isolation,
+    checkout_mode: profile.checkout_mode,
     unattended: profile.unattended,
     enabled: profile.enabled,
     project_id: profile.project_id,

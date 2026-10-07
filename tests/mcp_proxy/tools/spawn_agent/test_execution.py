@@ -143,7 +143,7 @@ async def test_parent_claim_transfer_failure_cleans_up_spawn(
             spawn_result=spawn_result,
             spawn_request=None,
             isolation_ctx=isolation_context,
-            effective_isolation="none",
+            effective_checkout_mode="none",
             base_commit_sha=None,
             handler=SimpleNamespace(commit_environment=None),
             spawn_config=MagicMock(),
@@ -209,8 +209,6 @@ async def test_auto_claimed_task_titles_child_session(
         pid=None,
         error=None,
     )
-    call_order: list[str] = []
-
     with (
         patch("gobby.mcp_proxy.tools.spawn_agent._execution._persist_spawn_runtime"),
         patch(
@@ -220,12 +218,7 @@ async def test_auto_claimed_task_titles_child_session(
         ),
         patch("gobby.runner_broadcasting.fire_agent_event"),
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._execution._link_auto_claimed_session",
-            side_effect=lambda *_args: call_order.append("link"),
-        ) as link_claim,
-        patch(
-            "gobby.mcp_proxy.tools.spawn_agent._execution.update_title_for_claim",
-            side_effect=lambda *_args: call_order.append("title"),
+            "gobby.mcp_proxy.tools.spawn_agent._execution.update_title_for_claim"
         ) as update_title,
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._execution.build_spawn_response",
@@ -239,7 +232,7 @@ async def test_auto_claimed_task_titles_child_session(
             spawn_result=spawn_result,
             spawn_request=None,
             isolation_ctx=isolation_context,
-            effective_isolation="none",
+            effective_checkout_mode="none",
             base_commit_sha=None,
             handler=SimpleNamespace(commit_environment=None),
             spawn_config=MagicMock(),
@@ -257,8 +250,6 @@ async def test_auto_claimed_task_titles_child_session(
         )
 
         assert result == {"success": True}
-        assert call_order == ["link", "title"]
-        link_claim.assert_called_once_with(task_manager, child_session_id, task_id)
         update_title.assert_called_once_with(
             session_manager,
             child_session_id,
@@ -271,9 +262,7 @@ async def test_auto_claimed_task_titles_child_session(
             escalated_at=None,
         )
         task_manager.claim_task.reset_mock()
-        link_claim.reset_mock()
         update_title.reset_mock()
-        call_order.clear()
 
         result = await finalize_executed_spawn(
             runner=runner,
@@ -282,7 +271,7 @@ async def test_auto_claimed_task_titles_child_session(
             spawn_result=spawn_result,
             spawn_request=None,
             isolation_ctx=isolation_context,
-            effective_isolation="none",
+            effective_checkout_mode="none",
             base_commit_sha=None,
             handler=SimpleNamespace(commit_environment=None),
             spawn_config=MagicMock(),
@@ -301,7 +290,6 @@ async def test_auto_claimed_task_titles_child_session(
 
         assert result == {"success": True}
         task_manager.claim_task.assert_not_called()
-        link_claim.assert_not_called()
         update_title.assert_not_called()
 
 
@@ -353,7 +341,6 @@ async def test_auto_claim_survives_runner_without_session_manager(
             return_value=None,
         ),
         patch("gobby.runner_broadcasting.fire_agent_event"),
-        patch("gobby.mcp_proxy.tools.spawn_agent._execution._link_auto_claimed_session"),
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._execution.update_title_for_claim"
         ) as update_title,
@@ -373,7 +360,7 @@ async def test_auto_claim_survives_runner_without_session_manager(
             spawn_result=spawn_result,
             spawn_request=None,
             isolation_ctx=isolation_context,
-            effective_isolation="worktree",
+            effective_checkout_mode="worktree",
             base_commit_sha=None,
             handler=SimpleNamespace(commit_environment=None),
             spawn_config=MagicMock(),
@@ -446,7 +433,7 @@ class TestSpawnAgentIsolation:
                 {
                     "prompt": "Test prompt",
                     "parent_session_id": "parent-789",
-                    "isolation": "none",
+                    "checkout_mode": "none",
                 },
             )
             await _drain_spawn_background_tasks()
@@ -522,7 +509,7 @@ class TestSpawnAgentIsolation:
                 {
                     "prompt": "Test prompt",
                     "parent_session_id": "parent-789",
-                    "isolation": "worktree",
+                    "checkout_mode": "worktree",
                 },
             )
             await _drain_spawn_background_tasks()
@@ -619,7 +606,7 @@ class TestSpawnAgentIsolation:
                 {
                     "prompt": "Test prompt",
                     "parent_session_id": "parent-789",
-                    "isolation": "worktree",
+                    "checkout_mode": "worktree",
                 },
             )
             await _drain_spawn_background_tasks()
@@ -699,7 +686,7 @@ class TestSpawnAgentIsolation:
                 {
                     "prompt": "Test prompt",
                     "parent_session_id": "parent-789",
-                    "isolation": "clone",
+                    "checkout_mode": "clone",
                 },
             )
             await _drain_spawn_background_tasks()
@@ -800,7 +787,7 @@ class TestSpawnAgentConcurrencyGuards:
                         "prompt": "Test prompt",
                         "parent_session_id": parent_session_id,
                         "task_id": task.id,
-                        "isolation": "none",
+                        "checkout_mode": "none",
                     },
                 ),
                 registry.call(
@@ -809,7 +796,7 @@ class TestSpawnAgentConcurrencyGuards:
                         "prompt": "Test prompt",
                         "parent_session_id": parent_session_id,
                         "task_id": task.id,
-                        "isolation": "none",
+                        "checkout_mode": "none",
                     },
                 ),
             )
@@ -894,7 +881,7 @@ class TestSpawnAgentConcurrencyGuards:
                     "prompt": "Test prompt",
                     "parent_session_id": parent_session_id,
                     "task_id": task.id,
-                    "isolation": "none",
+                    "checkout_mode": "none",
                 },
             )
 
@@ -1268,7 +1255,7 @@ class TestSpawnAgentPreRegistration:
                 {
                     "prompt": "Test prompt",
                     "parent_session_id": parent_session_id,
-                    "isolation": "worktree",
+                    "checkout_mode": "worktree",
                     "cleanup_isolation_on_failure": True,
                 },
             )
@@ -1357,7 +1344,7 @@ class TestSpawnAgentPreRegistration:
                     "prompt": "Test prompt",
                     "parent_session_id": parent_session_id,
                     "task_id": task.id,
-                    "isolation": "none",
+                    "checkout_mode": "none",
                 },
             )
 
@@ -1822,7 +1809,7 @@ async def test_spawn_failure_provenance_is_persisted_before_cleanup(
             spawn_result=result,
             spawn_request=None,
             isolation_ctx=isolation_context,
-            effective_isolation="none",
+            effective_checkout_mode="none",
             base_commit_sha=None,
             handler=MagicMock(),
             spawn_config=MagicMock(),

@@ -1293,18 +1293,18 @@ class TestUpdateTaskCommand:
         runner: CliRunner,
         mock_task: MagicMock,
     ) -> None:
-        """--isolation forwards the new automation isolation mode."""
+        """--checkout-mode forwards the new automation isolation mode."""
         mock_resolve.return_value = mock_task
         mock_manager = MagicMock()
         mock_manager.update_task.return_value = mock_task
         mock_get_manager.return_value = mock_manager
 
-        result = runner.invoke(cli, ["tasks", "update", "gt-abc123", "--isolation", "none"])
+        result = runner.invoke(cli, ["tasks", "update", "gt-abc123", "--checkout-mode", "none"])
 
         assert result.exit_code == 0
         mock_manager.update_task.assert_called_once()
         call_kwargs = mock_manager.update_task.call_args.kwargs
-        assert call_kwargs["isolation"] == "none"
+        assert call_kwargs["checkout_mode"] == "none"
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -1323,7 +1323,7 @@ class TestUpdateTaskCommand:
         )
         mock_get_manager.return_value = mock_manager
 
-        result = runner.invoke(cli, ["tasks", "update", "gt-abc123", "--isolation", "worktree"])
+        result = runner.invoke(cli, ["tasks", "update", "gt-abc123", "--checkout-mode", "worktree"])
 
         assert result.exit_code != 0
         assert (

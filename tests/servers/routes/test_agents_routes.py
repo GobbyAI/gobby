@@ -807,7 +807,6 @@ class TestCreateDefinition:
             json={
                 "name": "full-agent",
                 "description": "Full test",
-                "execution_mode": "interactive",
                 "surfaces": ["spawn", "persona"],
                 "prompts": {
                     "persona": "Help test things interactively.",
@@ -816,7 +815,7 @@ class TestCreateDefinition:
                 "provider": "codex",
                 "model": "gpt-5.4",
                 "version": "1.2.0",
-                "isolation": "worktree",
+                "checkout_mode": "worktree",
                 "base_branch": "develop",
                 "timeout": 300.0,
             },
@@ -828,7 +827,6 @@ class TestCreateDefinition:
         body = AgentDefinitionBody.model_validate_json(defn["definition_json"])
         assert body.surfaces == ["spawn", "persona"]
         assert body.version == "1.2.0"
-        assert body.execution_mode == "interactive"
 
     @pytest.mark.parametrize(
         "field, value",
@@ -1056,7 +1054,6 @@ class TestUpdateDefinition:
             json={
                 "model": "opus",
                 "timeout": 600.0,
-                "execution_mode": "interactive",
                 "surfaces": ["spawn", "persona"],
                 "prompts": {
                     "persona": "Guide the user interactively.",
@@ -1070,7 +1067,6 @@ class TestUpdateDefinition:
         )
         assert definition.model == "opus"
         assert definition.timeout == 600.0
-        assert definition.execution_mode == "interactive"
         assert definition.surfaces == ["spawn", "persona"]
 
     def test_update_scrubs_stale_max_turns(
@@ -1633,7 +1629,14 @@ class TestUpdateDefinitionNestedFields:
     # Endpoint credentials, spawn/message authority and the sync-owned sandbox
     # network are not editable through PUT.
     IMMUTABLE_BODY_FIELDS = frozenset(
-        {"api_base", "api_token", "network", "send_message_targets", "spawnable_agents"}
+        {
+            "api_base",
+            "api_token",
+            "execution_mode",
+            "network",
+            "send_message_targets",
+            "spawnable_agents",
+        }
     )
     # Row columns the requests carry that the body does not store.
     ROW_ONLY_FIELDS = frozenset({"tags", "project_id"})

@@ -1118,7 +1118,7 @@ async def test_native_wake_batch_preserves_target_results_order_and_latches() ->
 
     results = await coordinator.run_native_wake_batch(requests)
 
-    assert len(host.batches) == 1, results
+    assert len(host.batches) == 2, results
     assert [target.recipient_id for target in host.batches[0]] == [
         "session-1",
         "session-2",
@@ -1128,8 +1128,10 @@ async def test_native_wake_batch_preserves_target_results_order_and_latches() ->
         "key",
         "key",
         "text",
-        "key",
     ]
+    assert [target.recipient_id for target in host.batches[1]] == ["session-1"]
+    assert host.batches[1][0].operations[0].data == b"\r"
+    assert host.batches[1][0].operations[0].delay_ms == 0
     assert isinstance(results[0].outcome, Delivered)
     assert isinstance(results[1].outcome, NativeBatchFailure)
     assert results[1].outcome.stage == "partial"
@@ -1138,6 +1140,121 @@ async def test_native_wake_batch_preserves_target_results_order_and_latches() ->
     assert "wake:session-1" not in terminals[0].unresolved_writes
     assert "wake:session-2" in terminals[1].unresolved_writes
     assert "wake:session-3" in terminals[2].unresolved_writes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["none", "partial", "missing", "exception"])
+async def test_native_wake_enter_failure_keeps_the_written_prelude_latched(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    host = FakeHostClient()
+    runtime = NativeTerminalRuntime(host)
+    terminal = _native_terminal(host)
+    store = MemoryTerminalStore(terminal)
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
+    marks: list[int] = []
+
+    async def write_batch(targets: list[HostBatchTarget]) -> list[dict[str, Any]]:
+        if targets[0].operations[0].data != b"\r":
+            assert marks == []
+            return await FakeHostClient.write_batch(host, targets)
+        assert marks == [1]
+        if failure == "exception":
+            raise ConnectionError("lost Enter reply")
+        if failure == "missing":
+            return []
+        host.batch_failures["recipient"] = (
+            "partial" if failure == "partial" else "none",
+            "write_queue_unavailable",
+        )
+        return await FakeHostClient.write_batch(host, targets)
+
+    monkeypatch.setattr(host, "write_batch", write_batch)
+    [result] = await coordinator.run_native_wake_batch(
+        [
+            NativeWakeBatchRequest(
+                result_id="recipient",
+                terminal_id=terminal.id,
+                clear_action_key="wake-clear:recipient",
+                wake_action_key="wake:recipient",
+                operations=(
+                    NativeBatchOperation(kind="text", payload="wake"),
+                    NativeBatchOperation(kind="key", payload="enter"),
+                ),
+                on_submit_dispatch=lambda: marks.append(1),
+            )
+        ]
+    )
+    if failure in {"none", "partial"}:
+        assert isinstance(result.outcome, NativeBatchFailure)
+        assert result.outcome.stage == "partial"
+    else:
+        assert isinstance(result.outcome, IndeterminateWrite)
+    assert host.pty == [b"wake"]
+    assert "wake:recipient" in terminal.unresolved_writes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["prelude", "enter"])
+async def test_native_wake_cancel_in_either_phase_retains_unresolved_action(
+    monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    host = FakeHostClient()
+    runtime = NativeTerminalRuntime(host)
+    terminal = _native_terminal(host)
+    store = MemoryTerminalStore(terminal)
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
+    started = asyncio.Event()
+    hold = asyncio.Event()
+    marks: list[int] = []
+
+    async def write_batch(targets: list[HostBatchTarget]) -> list[dict[str, Any]]:
+        is_enter = targets[0].operations[0].data == b"\r"
+        if is_enter == (phase == "enter"):
+            assert coordinator.lease_registry.lock_held(terminal.id)
+            assert "wake:recipient" in terminal.unresolved_writes
+            started.set()
+            await hold.wait()
+        return await FakeHostClient.write_batch(host, targets)
+
+    monkeypatch.setattr(host, "write_batch", write_batch)
+    task = asyncio.create_task(
+        coordinator.run_native_wake_batch(
+            [
+                NativeWakeBatchRequest(
+                    result_id="recipient",
+                    terminal_id=terminal.id,
+                    clear_action_key="wake-clear:recipient",
+                    wake_action_key="wake:recipient",
+                    operations=(
+                        NativeBatchOperation(kind="text", payload="wake"),
+                        NativeBatchOperation(kind="key", payload="enter"),
+                    ),
+                    on_submit_dispatch=lambda: marks.append(1),
+                )
+            ]
+        )
+    )
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert marks == ([1] if phase == "enter" else [])
+        assert "wake:recipient" in terminal.unresolved_writes
+        assert not coordinator.lease_registry.lock_held(terminal.id)
+    finally:
+        hold.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

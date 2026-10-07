@@ -505,6 +505,10 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "build_profiles.checkout_mode",
+      "definition": "text|text|NO|'worktree'::text|NEVER"
+    },
+    {
       "name": "build_profiles.created_at",
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
@@ -535,10 +539,6 @@
     {
       "name": "build_profiles.id",
       "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "build_profiles.isolation",
-      "definition": "text|text|NO|'worktree'::text|NEVER"
     },
     {
       "name": "build_profiles.name",
@@ -1155,6 +1155,10 @@
     {
       "name": "code_indexed_project_states.community_id_watermark",
       "definition": "integer|int4|NO|0|NEVER"
+    },
+    {
+      "name": "code_indexed_project_states.community_input_digest",
+      "definition": "text|text|YES||NEVER"
     },
     {
       "name": "code_indexed_project_states.created_at",
@@ -4921,6 +4925,10 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "tasks.checkout_mode",
+      "definition": "text|text|NO|'worktree'::text|NEVER"
+    },
+    {
       "name": "tasks.claimed_by_session_id",
       "definition": "uuid|uuid|YES||NEVER"
     },
@@ -5003,10 +5011,6 @@
     {
       "name": "tasks.is_escalated",
       "definition": "boolean|bool|NO|false|NEVER"
-    },
-    {
-      "name": "tasks.isolation",
-      "definition": "text|text|NO|'worktree'::text|NEVER"
     },
     {
       "name": "tasks.labels",
@@ -5971,16 +5975,16 @@
       "definition": "CHECK (source <> 'installed'::text OR project_id IS NULL)"
     },
     {
+      "name": "build_profiles.build_profiles_checkout_mode_check",
+      "definition": "CHECK (checkout_mode = ANY (ARRAY['none'::text, 'worktree'::text, 'clone'::text]))"
+    },
+    {
       "name": "build_profiles.build_profiles_delivery_mode_check",
       "definition": "CHECK (delivery_mode = ANY (ARRAY['auto'::text, 'pull_request'::text]))"
     },
     {
       "name": "build_profiles.build_profiles_enabled_check",
       "definition": "CHECK (enabled = ANY (ARRAY[false, true]))"
-    },
-    {
-      "name": "build_profiles.build_profiles_isolation_check",
-      "definition": "CHECK (isolation = ANY (ARRAY['none'::text, 'worktree'::text, 'clone'::text]))"
     },
     {
       "name": "build_profiles.build_profiles_pkey",
@@ -7427,6 +7431,10 @@
       "definition": "CHECK (blocked_by_merge = ANY (ARRAY[false, true]))"
     },
     {
+      "name": "tasks.tasks_checkout_mode_check",
+      "definition": "CHECK (checkout_mode = ANY (ARRAY['none'::text, 'worktree'::text, 'clone'::text]))"
+    },
+    {
       "name": "tasks.tasks_claimed_by_session_id_fkey",
       "definition": "FOREIGN KEY (claimed_by_session_id) REFERENCES sessions(id) ON DELETE RESTRICT DEFERRABLE"
     },
@@ -7453,10 +7461,6 @@
     {
       "name": "tasks.tasks_is_escalated_check",
       "definition": "CHECK (is_escalated = ANY (ARRAY[false, true]))"
-    },
-    {
-      "name": "tasks.tasks_isolation_check",
-      "definition": "CHECK (isolation = ANY (ARRAY['none'::text, 'worktree'::text, 'clone'::text]))"
     },
     {
       "name": "tasks.tasks_merge_in_progress_check",

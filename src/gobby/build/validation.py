@@ -6,19 +6,19 @@ import logging
 import os
 
 from gobby.build.options import BuildOptions
-from gobby.config.build import Isolation
+from gobby.config.build import CheckoutMode
 from gobby.storage.tasks import LocalTaskManager, Task, TaskArtifacts
 
 logger = logging.getLogger(__name__)
 
 
 def _validate_no_merge(opts: BuildOptions) -> None:
-    if opts.no_merge and opts.isolation == "none":
+    if opts.no_merge and opts.checkout_mode == "none":
         raise ValueError("--no-merge requires worktree or clone build workspace backend")
 
 
 def _validate_clones_dir(opts: BuildOptions) -> None:
-    if opts.isolation != "clone" or opts.clones_dir is None:
+    if opts.checkout_mode != "clone" or opts.clones_dir is None:
         return
     if not opts.clones_dir.exists() or not opts.clones_dir.is_dir():
         logger.info(
@@ -62,8 +62,10 @@ def _validate_planning_seed(opts: BuildOptions) -> None:
         raise ValueError("plan_enhancement_rounds must be greater than or equal to 0")
 
 
-def _validate_epic_isolation_artifacts(isolation: Isolation, artifacts: TaskArtifacts) -> None:
-    if isolation == "clone" and artifacts.worktree_path:
+def _validate_epic_isolation_artifacts(
+    checkout_mode: CheckoutMode, artifacts: TaskArtifacts
+) -> None:
+    if checkout_mode == "clone" and artifacts.worktree_path:
         logger.info(
             "Rejected clone isolation because a worktree artifact already exists",
             extra={"worktree_path": str(artifacts.worktree_path)},
@@ -72,7 +74,7 @@ def _validate_epic_isolation_artifacts(isolation: Isolation, artifacts: TaskArti
             "task already has a worktree artifact; clear existing build artifacts before "
             "switching to clone isolation"
         )
-    if isolation == "worktree" and artifacts.clone_path:
+    if checkout_mode == "worktree" and artifacts.clone_path:
         logger.info(
             "Rejected worktree isolation because a clone artifact already exists",
             extra={"clone_path": str(artifacts.clone_path)},
@@ -86,7 +88,7 @@ def _validate_epic_isolation_artifacts(isolation: Isolation, artifacts: TaskArti
 def _validate_task_ref_isolation_artifacts(
     task_manager: LocalTaskManager,
     task: Task,
-    isolation: Isolation,
+    checkout_mode: CheckoutMode,
 ) -> None:
     artifacts = task_manager.artifacts.get_artifacts(task.id)
-    _validate_epic_isolation_artifacts(isolation, artifacts)
+    _validate_epic_isolation_artifacts(checkout_mode, artifacts)

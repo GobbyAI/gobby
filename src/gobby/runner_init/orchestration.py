@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from datetime import datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -18,6 +21,7 @@ from gobby.runner_init.terminal_wiring import init_terminal_wiring, wake_write_s
 from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.terminals.composer_lock import composer_action_lock
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -51,6 +55,11 @@ async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[
     _, coordinator = wake_write_services()
     delay_ms = round(TMUX_TEXT_ENTER_DELAY_SECONDS * 1_000)
     requests = []
+    submit_marks: dict[str, datetime] = {}
+
+    def record_submit(result_id: str) -> None:
+        submit_marks[result_id] = utc_now()
+
     for target in targets:
         operations = [
             NativeBatchOperation(kind="key", payload=key)
@@ -73,6 +82,7 @@ async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[
                 clear_action_key=f"wake-clear:{target.terminal_id}",
                 wake_action_key=f"wake:{target.terminal_id}",
                 operations=tuple(operations),
+                on_submit_dispatch=partial(record_submit, target.session_id),
             )
         )
 
@@ -82,7 +92,12 @@ async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[
         outcome = result.outcome
         if isinstance(outcome, Delivered):
             wake_results.append(
-                {"session_id": result.result_id, "delivered": True, "method": "terminal"}
+                {
+                    "session_id": result.result_id,
+                    "delivered": True,
+                    "method": "terminal",
+                    "submit_dispatched_at": submit_marks[result.result_id].isoformat(),
+                }
             )
         elif isinstance(outcome, IndeterminateWrite):
             wake_results.append(
@@ -128,9 +143,16 @@ async def _send_tmux_session_wake(
     clear_before_submit: bool = False,
     composer_confirmed_empty: bool = False,
     cli_source: str | None = None,
-) -> None:
+) -> datetime | None:
     from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
     from gobby.terminals.write_coordinator import SequenceDelay, WriteRequest
+
+    submitted_at: datetime | None = None
+
+    def record_step(step: WriteRequest) -> None:
+        nonlocal submitted_at
+        if step.kind == "key" and step.payload == "enter":
+            submitted_at = utc_now()
 
     manager, coordinator = wake_write_services()
     try:
@@ -194,8 +216,14 @@ async def _send_tmux_session_wake(
                 )
             )
         await _deliver_wake_action(
-            coordinator, terminal.id, identity, action_key=action_key, steps=steps
+            coordinator,
+            terminal.id,
+            identity,
+            action_key=action_key,
+            steps=steps,
+            on_step_dispatch=record_step,
         )
+    return submitted_at
 
 
 async def _deliver_wake_action(
@@ -206,6 +234,7 @@ async def _deliver_wake_action(
     action_key: str,
     steps: list[Any],
     latch: bool = True,
+    on_step_dispatch: Callable[[Any], None] | None = None,
 ) -> None:
     """Run one automatic wake action; anything short of Delivered is raised as its kind."""
     from gobby.terminals.runtime import (
@@ -222,6 +251,7 @@ async def _deliver_wake_action(
         origin="automatic",
         steps=steps,
         latch=latch,
+        on_step_dispatch=on_step_dispatch,
     )
     if isinstance(outcome, IndeterminateWrite):
         raise outcome

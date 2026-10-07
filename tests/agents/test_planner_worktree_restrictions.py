@@ -57,7 +57,7 @@ def test_installed_planners_block_worktrees(
         yaml.safe_load((get_bundled_agents_path() / f"{name}.yaml").read_text())
     )
     assert body == template
-    assert body.isolation == "none"
+    assert body.checkout_mode == "none"
     assert "EnterWorktree" in (body.blocked_tools or [])
     assert "gobby-worktrees:create_worktree" in (body.blocked_mcp_tools or [])
 

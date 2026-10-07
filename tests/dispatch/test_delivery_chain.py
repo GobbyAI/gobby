@@ -220,7 +220,7 @@ async def test_parent_epic_waits_for_in_flight_child_with_real_context(
         category="docs",
         validation_criteria="Test task completion is observable.",
     )
-    update_task(temp_db, parent.id, allow_automation=True, isolation="worktree")
+    update_task(temp_db, parent.id, allow_automation=True, checkout_mode="worktree")
     initialize_manifest(temp_db, parent.id, [spec("epic_qa", 0), spec("merge", 1)])
     initialize_manifest(temp_db, child.id, [spec("development", 0), spec("merge", 1)])
     set_stage_state(temp_db, child.id, "development", "in_progress")
@@ -260,7 +260,7 @@ async def test_parent_epic_pr_merge_closes_with_real_heartbeat(
     # gobby build materializes the manifest before work starts, so the epic
     # already owes its delivery stages when its last child closes. Closing the
     # child first would auto-close the epic and strand the manifest.
-    update_task(temp_db, parent.id, allow_automation=True, isolation="none")
+    update_task(temp_db, parent.id, allow_automation=True, checkout_mode="none")
     initialize_manifest(
         temp_db,
         parent.id,

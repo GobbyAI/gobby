@@ -134,7 +134,6 @@ def _request(
         "session_manager": MagicMock(),
         "machine_id": "21000000-0000-4000-8000-000000000002",
         "prepared_spawn": prepared_spawn(),
-        "terminal_backend": runtime.backend,
         "terminal_manager": cast(TerminalManager, manager),
         "terminal_runtime_registry": runtime_registry(runtime),
         "placement_binder": binder,
@@ -1250,7 +1249,7 @@ async def test_owner_retries_settlement_until_storage_recovers(
     caplog.set_level("INFO", logger=spawn_in_doubt_owner.__name__)
     backoff = _Backoff(monkeypatch, park_at=7)
     store = _StagedStore()
-    isolation = _Isolation()
+    checkout_mode = _Isolation()
     task: asyncio.Future[Any] | None = None
     prepared: PreparedSpawn | None = None
     identity_source: PreparedSpawn | None = None
@@ -1280,7 +1279,7 @@ async def test_owner_retries_settlement_until_storage_recovers(
     _own(store, runtime, row, stage, task=task, prepared=prepared, pair=stage != "create")
     compensation = _Compensation()
     assert in_doubt_spawns.defer(row.id, compensation)
-    await isolation.step(store, row.id, None)
+    await checkout_mode.step(store, row.id, None)
     await backoff.entered.wait()
     kills_at_park = runtime.terminate_calls
 
@@ -1324,14 +1323,14 @@ async def test_owner_retries_settlement_until_storage_recovers(
         assert row.state == "orphaned"
         assert row.locator_key == identity_source.locator_key
         assert compensation.runs == 0
-        assert isolation.removals == 0
+        assert checkout_mode.removals == 0
         return
     assert row.state == "exited"
     assert compensation.runs == 1
-    assert isolation.removals == 1
+    assert checkout_mode.removals == 1
     # A step deferred after the release decides from the row: exited removes.
-    await isolation.step(store, row.id, None)
-    assert isolation.removals == 2
+    await checkout_mode.step(store, row.id, None)
+    assert checkout_mode.removals == 2
 
 
 def test_read_back_with_another_pair_is_not_confirmation() -> None:
@@ -1518,7 +1517,7 @@ async def test_indeterminate_create_is_recovered_by_read_back(
     backoff = _Backoff(monkeypatch)
     store = _StagedStore()
     runtime = _StagedRuntime(backend="native")
-    isolation = _Isolation()
+    checkout_mode = _Isolation()
     overrides: dict[str, Any] = {}
     earlier: Terminal | None = None
     if name.startswith("bump"):
@@ -1539,7 +1538,7 @@ async def test_indeterminate_create_is_recovered_by_read_back(
     [terminal_id] = handoffs.terminal_ids
     # The owner has not run yet: the claim is held for steps deferred before release.
     assert in_doubt_spawns.defer(terminal_id, compensation)
-    await isolation.step(store, terminal_id, prior)
+    await checkout_mode.step(store, terminal_id, prior)
     if name == "read-back-outage":
         await backoff.entered.wait()
         assert in_doubt_spawns.holds(terminal_id)
@@ -1551,7 +1550,7 @@ async def test_indeterminate_create_is_recovered_by_read_back(
     assert handoffs.stages == ["create"]
     assert not in_doubt_spawns.holds(terminal_id)
     assert compensation.runs == 1
-    assert isolation.removals == 1
+    assert checkout_mode.removals == 1
     assert runtime.create_calls == 0
     writes = [write for write, _ in store.writes]
     if name.endswith("rolls-back"):
@@ -1566,10 +1565,10 @@ async def test_indeterminate_create_is_recovered_by_read_back(
         assert row is not None
         assert row.state == "exited"
     # A step deferred after the release decides from the row the owner settled.
-    await isolation.step(store, terminal_id, prior)
-    assert isolation.removals == 2
+    await checkout_mode.step(store, terminal_id, prior)
+    assert checkout_mode.removals == 2
     if earlier is not None and name.endswith("rolls-back"):
         # A row carrying a newer pair keeps created isolation.
         earlier.attempt_generation += 1
-        await isolation.step(store, terminal_id, prior)
-        assert isolation.removals == 2
+        await checkout_mode.step(store, terminal_id, prior)
+        assert checkout_mode.removals == 2

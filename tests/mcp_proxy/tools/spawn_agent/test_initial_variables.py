@@ -528,7 +528,9 @@ class TestSpawnAgentStepVariables:
         assert result["success"] is True, result
         assert task_manager.get_task(task.id).claimed_by_session_id == child.id
         links = SessionTaskManager(db).get_task_sessions(task.id)
-        assert [(row["session_id"], row["action"]) for row in links] == [(child.id, "claimed")]
+        assert sorted((row["session_id"], row["action"]) for row in links) == sorted(
+            [(parent.id, "claimed"), (child.id, "claimed")]
+        )
         transferred_parent_variables = parent_variables.get_variables(parent.id)
         assert transferred_parent_variables["claimed_tasks"] == {}
         assert transferred_parent_variables["task_claimed"] is False
@@ -661,22 +663,18 @@ class TestSpawnAgentStepVariables:
         links = SessionTaskManager(db).get_task_sessions(task.id)
         assert [(row["session_id"], row["action"]) for row in links] == [(child_id, "claimed")]
 
-    async def test_auto_claim_link_failure_is_best_effort(
+    async def test_auto_claim_records_link_in_the_claim_transaction(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """A failing session-task link is logged and never fails the spawn (#21102)."""
+        """claim_task writes the claimed link itself; spawn never calls link_task (#23703)."""
         from gobby.storage.session_tasks import SessionTaskManager
 
-        with (
-            patch.object(
-                SessionTaskManager, "link_task", side_effect=RuntimeError("session_tasks down")
-            ),
-            caplog.at_level(logging.DEBUG, logger="gobby.mcp_proxy.tools.spawn_agent"),
-        ):
+        with patch.object(
+            SessionTaskManager, "link_task", side_effect=RuntimeError("session_tasks down")
+        ) as link_task:
             result, task_manager, task, child_id, _ = await self._spawn_with_auto_claim(
                 db,
                 mock_runner,
@@ -686,12 +684,9 @@ class TestSpawnAgentStepVariables:
 
         assert result["success"] is True, result
         assert task_manager.get_task(task.id).claimed_by_session_id == child_id
-        assert SessionTaskManager(db).get_task_sessions(task.id) == []
-        assert any(
-            "Best-effort auto-claim session linking failed" in record.getMessage()
-            and "session_tasks down" in record.getMessage()
-            for record in caplog.records
-        )
+        links = SessionTaskManager(db).get_task_sessions(task.id)
+        assert [(row["session_id"], row["action"]) for row in links] == [(child_id, "claimed")]
+        assert link_task.call_args_list == []
 
     async def test_third_party_claim_skips_auto_claim_and_spawn_succeeds(
         self,
@@ -714,7 +709,8 @@ class TestSpawnAgentStepVariables:
         assert owner_id is not None
         assert result["success"] is True, result
         assert task_manager.get_task(task.id).claimed_by_session_id == owner_id
-        assert SessionTaskManager(db).get_task_sessions(task.id) == []
+        links = SessionTaskManager(db).get_task_sessions(task.id)
+        assert [(row["session_id"], row["action"]) for row in links] == [(owner_id, "claimed")]
         assert any(
             f"already assigned to {owner_id}" in record.getMessage() for record in caplog.records
         )
@@ -1110,7 +1106,7 @@ class TestDispatchBatchIsolationParity:
                         {
                             "agent": "merge-worker",
                             "task_id": "#14094",
-                            "isolation": "none",
+                            "checkout_mode": "none",
                             "worktree_id": "wt-347a5e",
                             "prompt": prompt,
                         }
@@ -1132,7 +1128,7 @@ class TestDispatchBatchIsolationParity:
         assert spawn_kwargs["prompt"] == prompt
         assert spawn_kwargs["agent_lookup_name"] == "merge-worker"
         assert spawn_kwargs["task_id"] == "#14094"
-        assert spawn_kwargs["isolation"] == "none"
+        assert spawn_kwargs["checkout_mode"] == "none"
         assert spawn_kwargs["worktree_id"] == "wt-347a5e"
         assert spawn_kwargs["parent_session_id"] == "parent-789"
 
@@ -1246,7 +1242,7 @@ class TestDispatchBatchIsolationParity:
                     "suggestions": suggestions,
                     "agent": "backend-developer",
                     "clone_id": "clone-abc",
-                    "isolation": "clone",
+                    "checkout_mode": "clone",
                     "branch_name": "feat-9981",
                     "base_branch": "0.2.28",
                     "parent_session_id": "parent-789",

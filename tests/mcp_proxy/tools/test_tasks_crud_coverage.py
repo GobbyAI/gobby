@@ -51,7 +51,7 @@ SUMMARY_TASK_KEYS = {
     "dependencies",
     "allow_automation",
     "unattended",
-    "isolation",
+    "checkout_mode",
     "assigned_agent",
     "implementation_domain",
     "additional_skills",
@@ -565,12 +565,12 @@ class TestUpdateTaskTool:
             "update_task",
             {
                 "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                "isolation": "none",
+                "checkout_mode": "none",
             },
         )
 
         mock_task_manager.update_task.assert_called_with(
-            "550e8400-e29b-41d4-a716-446655440000", isolation="none"
+            "550e8400-e29b-41d4-a716-446655440000", checkout_mode="none"
         )
         assert result == {}
 
@@ -589,7 +589,7 @@ class TestUpdateTaskTool:
             "update_task",
             {
                 "task_id": "550e8400-e29b-41d4-a716-446655440000",
-                "isolation": "clone",
+                "checkout_mode": "clone",
             },
         )
 

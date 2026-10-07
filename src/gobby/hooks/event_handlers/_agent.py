@@ -305,7 +305,8 @@ class AgentEventHandlerMixin(EventHandlersBase):
             return
 
         is_spawned_agent = bool(variables.get("is_spawned_agent"))
-        agent_name = variables.get("_agent_type", "default")
+        persona_name = variables.get("_persona_name") if not is_spawned_agent else None
+        agent_name = persona_name or variables.get("_agent_type", "default")
 
         from gobby.workflows.agent_resolver import resolve_agent
 
@@ -320,6 +321,9 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if not agent_body.supports_surface(definition_surface):
             return
         preamble = agent_body.prompt_for(prompt_surface)
+        drift = variables.get("_agent_definition_drift")
+        if isinstance(drift, str) and drift:
+            preamble = f"{preamble}\n\n{drift}"
         response.add_context(("agent_prompt", preamble), prepend=True)
 
         from gobby.hooks.receipt_effects import (
@@ -334,6 +338,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
                 "_agent_context_injected": True,
                 "_agent_identity_reinject": False,
                 "_agent_context_rehydrate_pending": False,
+                **({"_agent_definition_drift": None} if isinstance(drift, str) and drift else {}),
             },
         }
         existing = response.metadata.get(STAGED_EFFECTS_FIELD)

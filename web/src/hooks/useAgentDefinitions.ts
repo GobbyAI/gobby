@@ -8,7 +8,7 @@ export interface AgentDefInfo {
     mode?: string;
     provider?: string;
     model?: string | null;
-    isolation?: string | null;
+    checkout_mode?: string | null;
     surfaces?: string[] | null;
   };
   source: string;

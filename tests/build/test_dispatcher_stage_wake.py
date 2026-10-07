@@ -237,7 +237,7 @@ async def test_final_worker_submit_for_review_dispatches_reviewer_without_manual
             task_id=str(kwargs["task_id"]),
             run_id="175b4656-fe55-571c-b57a-44c83644b57e",
         )
-        return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
+        return {"success": True, "run_id": run.id, "checkout_mode": kwargs["checkout_mode"]}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",

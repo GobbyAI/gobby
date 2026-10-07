@@ -182,7 +182,6 @@ def init_servers(runner: GobbyRunner) -> None:
         detection_registry=runner.detection_registry,
         terminal_manager=getattr(runner, "terminal_manager", None),
         terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
-        terminal_config=getattr(runner, "terminal_config", None),
         terminal_services=getattr(runner, "terminal_services", None),
         terminal_host_config=getattr(runner, "terminal_host_config", None),
         terminal_host_manager=getattr(runner, "terminal_host_manager", None),
@@ -326,7 +325,6 @@ def init_servers(runner: GobbyRunner) -> None:
             runner.websocket_server.configure_terminals(
                 services.terminal_manager,
                 services.terminal_runtime_registry,
-                services.terminal_config,
                 terminal_services=services.terminal_services,
                 host_manager=services.terminal_host_manager,
                 lease_registry=services.lease_registry,

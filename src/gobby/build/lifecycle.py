@@ -83,7 +83,7 @@ async def build(
         action="build",
         actor="build",
         summary=build_run_summary(
-            {"quick": opts.quick, "isolation": opts.isolation},
+            {"quick": opts.quick, "checkout_mode": opts.checkout_mode},
             coordinator=coordinator,
             build_project_id=project_id,
         ),

@@ -29,6 +29,7 @@
   width: max-content;
   max-width: calc(100vw - 8px);
   overflow: auto;
+  overscroll-behavior: contain;
   padding: env(safe-area-inset-top) env(safe-area-inset-right)
     env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
@@ -58,6 +59,7 @@
   max-width: 100%;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   background: var(--bg-primary);
   color: var(--text-primary);
   border: 1px solid var(--border);

@@ -34,7 +34,7 @@ interface AgentsDetailPanelProps {
   onError: (message: string) => void;
 }
 
-const ISOLATION_OPTIONS = ["inherit", "worktree", "clone", "none"].map(
+const CHECKOUT_MODE_OPTIONS = ["inherit", "worktree", "clone", "none"].map(
   (value) => ({
     value,
     label: value,
@@ -191,11 +191,11 @@ export function AgentsDetailPanel({
             onChange={(value) => setFormField("model", value)}
           />
           <SelectField
-            label="Isolation"
-            ariaLabel="Isolation"
-            value={form.isolation}
-            options={ISOLATION_OPTIONS}
-            onChange={(value) => setFormField("isolation", value)}
+            label="Checkout mode"
+            ariaLabel="Checkout mode"
+            value={form.checkout_mode}
+            options={CHECKOUT_MODE_OPTIONS}
+            onChange={(value) => setFormField("checkout_mode", value)}
           />
           <TextField
             label="Timeout"

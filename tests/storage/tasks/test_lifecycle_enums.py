@@ -16,7 +16,7 @@ EXPECTED_ISOLATIONS = ["none", "worktree", "clone"]
 NEW_TASK_FIELDS = {
     "allow_automation",
     "unattended",
-    "isolation",
+    "checkout_mode",
     "assigned_agent",
     "implementation_domain",
     "additional_skills",
@@ -26,25 +26,25 @@ NEW_TASK_FIELDS = {
 def _task_symbols() -> tuple[type[Any], type[StrEnum]]:
     import gobby.storage.tasks as task_module
 
-    return task_module.Task, task_module.Isolation
+    return task_module.Task, task_module.CheckoutMode
 
 
 def test_isolation_is_str_enum_with_dispatch_values() -> None:
-    _Task, Isolation = _task_symbols()
+    _Task, CheckoutMode = _task_symbols()
 
-    assert issubclass(Isolation, StrEnum)
-    assert [item.value for item in Isolation] == EXPECTED_ISOLATIONS
+    assert issubclass(CheckoutMode, StrEnum)
+    assert [item.value for item in CheckoutMode] == EXPECTED_ISOLATIONS
 
 
 def test_task_dataclass_defines_dispatch_fields_with_safe_defaults() -> None:
-    Task, Isolation = _task_symbols()
+    Task, CheckoutMode = _task_symbols()
 
     task_fields = {item.name: item for item in fields(Task)}
 
     assert NEW_TASK_FIELDS.issubset(task_fields)
     assert task_fields["allow_automation"].default is False
     assert task_fields["unattended"].default is False
-    assert task_fields["isolation"].default is Isolation.worktree
+    assert task_fields["checkout_mode"].default is CheckoutMode.worktree
     assert task_fields["assigned_agent"].default is None
     assert task_fields["implementation_domain"].default is None
     assert task_fields["additional_skills"].default is None
@@ -54,7 +54,7 @@ def test_task_dataclass_defines_dispatch_fields_with_safe_defaults() -> None:
 
 @pytest.mark.parametrize("serializer", ["serialize_task_state", "to_dict", "to_brief"])
 def test_task_serializers_surface_dispatch_fields(serializer: str) -> None:
-    Task, Isolation = _task_symbols()
+    Task, CheckoutMode = _task_symbols()
     task = Task(
         id="task-1",
         project_id="project-1",
@@ -65,7 +65,7 @@ def test_task_serializers_surface_dispatch_fields(serializer: str) -> None:
         updated_at="2026-01-01T00:00:00+00:00",
         allow_automation=True,
         unattended=True,
-        isolation=Isolation.clone,
+        checkout_mode=CheckoutMode.clone,
         assigned_agent="backend-developer",
         implementation_domain="backend",
         additional_skills=["sql-review", "perf-review"],
@@ -78,7 +78,7 @@ def test_task_serializers_surface_dispatch_fields(serializer: str) -> None:
 
     assert payload["allow_automation"] is True
     assert payload["unattended"] is True
-    assert payload["isolation"] == Isolation.clone
+    assert payload["checkout_mode"] == CheckoutMode.clone
     assert payload["assigned_agent"] == "backend-developer"
     assert payload["implementation_domain"] == "backend"
     assert payload["additional_skills"] == ["sql-review", "perf-review"]

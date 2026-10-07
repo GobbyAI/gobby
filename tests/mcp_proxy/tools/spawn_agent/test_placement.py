@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, NoReturn, cast
+from typing import Any, NoReturn, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -161,7 +161,7 @@ class _Harness:
     reserver: AgentPaneReserver
     ops: WorkspaceOps
     runner: MagicMock
-    isolation: _Isolation
+    checkout_mode: _Isolation
     events: list[WorkspaceEvent]
     publish_failures: dict[str, Exception]
     project_id: str
@@ -243,7 +243,7 @@ def _build(
     runner.config_runtime = None
     # Rollback cancels the run row as the real runner does.
     runner.cancel_run.side_effect = lambda run_id: runner.run_storage.cancel(run_id) is not None
-    isolation = _Isolation(worktree.id, str(tmp_path / "placed-wt"))
+    checkout_mode = _Isolation(worktree.id, str(tmp_path / "placed-wt"))
     the_reserver = reserver or AgentPaneReserver(
         workspaces=workspaces,
         terminals=terminals,
@@ -272,7 +272,7 @@ def _build(
             publish=recording_publish,
         ),
         runner=runner,
-        isolation=isolation,
+        checkout_mode=checkout_mode,
         events=events,
         publish_failures=publish_failures,
         project_id=project_id,
@@ -311,7 +311,7 @@ def _build(
     context = {"id": project_id, "project_path": str(tmp_path)}
     monkeypatch.setattr(impl, "execute_spawn", execute)
     monkeypatch.setattr(impl, "prepare_terminal_spawn", counting_prepare)
-    monkeypatch.setattr(impl, "get_isolation_handler", lambda *a, **k: isolation)
+    monkeypatch.setattr(impl, "get_isolation_handler", lambda *a, **k: checkout_mode)
     monkeypatch.setattr(impl, "provider_mcp_config_error", lambda *a, **k: None)
     monkeypatch.setattr(impl, "get_project_context", lambda *a, **k: context)
     monkeypatch.setattr(
@@ -360,13 +360,12 @@ async def _spawn(h: _Harness, placement: dict[str, Any] | None, **overrides: Any
         "prompt": "Run the seat",
         "runner": h.runner,
         "provider": "claude",
-        "isolation": "worktree",
+        "checkout_mode": "worktree",
         "parent_session_id": h.parent_id,
         "project_path": h.project_path,
         "target_project_id": h.project_id,
         "session_manager": h.sessions,
         "db": h.db,
-        "terminal_backend": "native",
         "placement": placement,
         "agent_pane_reserver": h.reserver,
         "project_context_authoritative": True,
@@ -442,8 +441,8 @@ def _kinds(h: _Harness) -> list[str]:
 
 
 def _assert_untouched(h: _Harness, panes: dict[str, str | None], terminals: dict[str, str]) -> None:
-    """No isolation, child session, run, terminal, pane, event or in-flight mark exists."""
-    assert h.isolation.prepared == 0
+    """No checkout_mode, child session, run, terminal, pane, event or in-flight mark exists."""
+    assert h.checkout_mode.prepared == 0
     assert h.prepared == []
     assert h.launches == []
     assert _run_count(h) == 0
@@ -590,7 +589,7 @@ async def test_wrap_failure_refuses_and_releases_pane(placed: _Harness) -> None:
     assert _panes(h) == {} and _tabs(h) == set()
     assert "tab.created" not in _kinds(h)
     assert h.cleanups == [result["run_id"]]
-    assert h.isolation.cleaned == 1
+    assert h.checkout_mode.cleaned == 1
     assert h.kills == []
     _assert_seat_free(h)
 
@@ -658,7 +657,7 @@ async def test_exceptions_and_cancellation_release_pane(placed: _Harness, exit_k
     if exit_kind == "kill_fails":
         h.kill_error = RuntimeError("host kill failed")
     if exit_kind == "cleanup_fails":
-        h.isolation.cleanup_error = RuntimeError("worktree removal failed")
+        h.checkout_mode.cleanup_error = RuntimeError("worktree removal failed")
 
     result: dict[str, Any] = {}
     if exit_kind == "cancelled":
@@ -759,7 +758,7 @@ async def test_late_refusals_leave_no_pane(
 
     assert result["success"] is False
     assert h.launches == []
-    assert h.isolation.prepared == 1 and h.isolation.cleaned == 1
+    assert h.checkout_mode.prepared == 1 and h.checkout_mode.cleaned == 1
     assert h.events == []
     assert _panes(h) == panes
     if refusal == "reserve_busy":
@@ -855,7 +854,7 @@ async def test_failed_placed_spawn_cleans_created_isolation_only(
     git_manager = MagicMock(repo_path=h.project_path)
     if reuse:
         existing = SimpleNamespace(
-            id=h.isolation.worktree_id,
+            id=h.checkout_mode.worktree_id,
             worktree_path=h.project_path,
             branch_name="placed/seat",
             base_branch="main",
@@ -889,11 +888,11 @@ async def test_failed_placed_spawn_cleans_created_isolation_only(
     assert "Sandbox startup failed closed" in result["error"]
     assert _panes(h) == {}
     if reuse:
-        assert h.isolation.prepared == 0 and h.isolation.cleaned == 0
+        assert h.checkout_mode.prepared == 0 and h.checkout_mode.cleaned == 0
         worktree_storage.delete.assert_not_called()
         git_manager.delete_worktree.assert_not_called()
     else:
-        assert h.isolation.prepared == 1 and h.isolation.cleaned == 1
+        assert h.checkout_mode.prepared == 1 and h.checkout_mode.cleaned == 1
 
 
 async def test_concurrent_placed_spawns_share_one_reserver(
@@ -939,9 +938,8 @@ async def test_concurrent_placed_spawns_share_one_reserver(
     arguments = {
         "prompt": "Run the seat",
         "provider": "claude",
-        "isolation": "worktree",
+        "checkout_mode": "worktree",
         "parent_session_id": h.parent_id,
-        "terminal_backend": "native",
         "placement": _tab(h),
     }
 
@@ -994,7 +992,7 @@ async def test_reserve_failure_and_cancellation_clean_dispatch_state(
     run = h.runs.get(run_id)
     assert run is not None and run.status == "cancelled"
     assert _child_sessions(h) == 0
-    assert h.isolation.prepared == 1 and h.isolation.cleaned == 1
+    assert h.checkout_mode.prepared == 1 and h.checkout_mode.cleaned == 1
     assert _panes(h) == {} and _tabs(h) == set()
     _assert_seat_free(h)
 
@@ -1058,16 +1056,15 @@ async def test_duplicate_placed_request_precedence(placed: _Harness) -> None:
     arguments: dict[str, Any] = {
         "prompt": "Run the seat",
         "provider": "claude",
-        "isolation": "worktree",
+        "checkout_mode": "worktree",
         "task_id": task.id,
         "parent_session_id": h.parent_id,
-        "terminal_backend": "native",
     }
 
     free_seat = await tool.call("spawn_agent", {**arguments, "placement": _tab(h)})
 
     assert free_seat == {"success": False, "placement_error": "task_active", "run_id": "run-active"}
-    assert h.isolation.prepared == 1 and h.isolation.cleaned == 1
+    assert h.checkout_mode.prepared == 1 and h.checkout_mode.cleaned == 1
     assert _panes(h) == {}
 
     unplaced = await tool.call("spawn_agent", arguments)
@@ -1106,7 +1103,7 @@ async def test_placed_timeout_race_keeps_pane_until_owner_settles(
     assert in_doubt_spawns.holds(terminal_id)
     [pane_id] = _panes(h)
     assert _panes(h) == {pane_id: terminal_id}
-    assert h.isolation.cleaned == 0
+    assert h.checkout_mode.cleaned == 0
     assert len(h.cleanups) == 1
     # The run rollback waits for the owner, so the held row stays pending.
     assert _run_statuses(h) == ["pending"]
@@ -1131,11 +1128,11 @@ async def test_placed_timeout_race_keeps_pane_until_owner_settles(
     h.workspaces.sweep_dead_panes(h.workspace.id)
     if proven:
         assert _terminal_states(h) == {terminal_id: "exited"}
-        assert h.isolation.cleaned == 1
+        assert h.checkout_mode.cleaned == 1
         assert _panes(h) == {}
         return
     assert _terminal_states(h)[terminal_id] == "orphaned"
-    assert h.isolation.cleaned == 0
+    assert h.checkout_mode.cleaned == 0
     assert _panes(h) == {pane_id: terminal_id}
 
 
@@ -1225,13 +1222,11 @@ class _TmuxCommandRecorder:
 
 
 @pytest.mark.parametrize("kind", ["unplaced", "tab", "split"])
-@pytest.mark.parametrize("terminal_backend", [None, "native"])
 async def test_public_spawn_creates_native_terminals_and_never_runs_tmux(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    terminal_backend: Literal["native"] | None,
     kind: str,
 ) -> None:
     native = FakeRuntime(backend="native")
@@ -1255,7 +1250,7 @@ async def test_public_spawn_creates_native_terminals_and_never_runs_tmux(
     elif kind == "split":
         placement = _split(_held_seat(h, "beside", state="exited").id)
 
-    result = await _spawn(h, placement, terminal_backend=terminal_backend)
+    result = await _spawn(h, placement)
     background = [
         task
         for key, task in impl._spawn_background_tasks.items()
@@ -1265,7 +1260,7 @@ async def test_public_spawn_creates_native_terminals_and_never_runs_tmux(
 
     assert result["success"] is True, result
     [launch] = h.launches
-    assert launch.terminal_backend == "native"
+    assert launch.terminal_lifetime == "run"
     assert native.create_calls == 1
     assert native.last_request is not None
     terminal = h.terminals.get(str(native.last_request.terminal_id))

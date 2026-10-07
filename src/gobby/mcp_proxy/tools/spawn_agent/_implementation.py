@@ -29,7 +29,6 @@ from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
-from gobby.agents.spawn_models import resolve_terminal_backend
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
 from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
@@ -94,7 +93,7 @@ async def spawn_agent_impl(
     task_id: str | None = None,
     task_manager: LocalTaskManager | None = None,
     allow_closed_task: bool = False,
-    isolation: Literal["none", "worktree", "clone"] | None = None,
+    checkout_mode: Literal["none", "worktree", "clone"] | None = None,
     branch_name: str | None = None,
     base_branch: str | None = None,
     clone_id: str | None = None,  # Reuse existing clone instead of creating new isolation
@@ -124,7 +123,6 @@ async def spawn_agent_impl(
     daemon_config: Any | None = None,  # DaemonConfig
     code_index: Any | None = None,  # CodeIndexContext
     held_task_mutex: Any | None = None,
-    terminal_backend: Literal["native"] | None = None,
     droid_mode: Literal["exec", "interactive"] = "exec",
     extra_write_paths: list[str] | None = None,
     write_paths_reason: str | None = None,
@@ -157,10 +155,6 @@ async def spawn_agent_impl(
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
 
-    try:
-        resolved_terminal_backend = resolve_terminal_backend(terminal_backend, daemon_config)
-    except ValueError as exc:
-        return {"success": False, "error": str(exc)}
     # Structural failures block planning roles. Authoring roles may continue
     # past symbol-only failures with repair diagnostics appended to the prompt.
     from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
@@ -178,14 +172,14 @@ async def spawn_agent_impl(
         prompt_append = gate_result.get("prompt_append")
         if isinstance(prompt_append, str):
             prompt = f"{prompt}\n\n{prompt_append}"
-    _raw_isolation: str | None = isolation
-    if _raw_isolation is None and agent_body:
-        _raw_isolation = agent_body.isolation
-    if _raw_isolation in (None, "inherit"):
-        _raw_isolation = "none"
-    effective_isolation = cast(
+    _raw_checkout_mode: str | None = checkout_mode
+    if _raw_checkout_mode is None and agent_body:
+        _raw_checkout_mode = agent_body.checkout_mode
+    if _raw_checkout_mode in (None, "inherit"):
+        _raw_checkout_mode = "none"
+    effective_checkout_mode = cast(
         Literal["none", "worktree", "clone"],
-        _raw_isolation if _raw_isolation in ("none", "worktree", "clone") else "none",
+        _raw_checkout_mode if _raw_checkout_mode in ("none", "worktree", "clone") else "none",
     )
 
     explicit_provider = concrete_provider(provider)
@@ -342,13 +336,13 @@ async def spawn_agent_impl(
 
     manager_repo_path = getattr(target_git_manager, "repo_path", None)
     if git_manager_resolver is not None and manager_repo_path is not None:
-        if effective_isolation != "none" or not resolved_project_path:
+        if effective_checkout_mode != "none" or not resolved_project_path:
             resolved_project_path = str(manager_repo_path)
 
     if not resolved_project_path or not isinstance(resolved_project_path, str):
         return {"success": False, "error": "Could not resolve project_path from context"}
     target_clone_manager = clone_manager
-    if target_git_manager is not None and (effective_isolation == "clone" or clone_id):
+    if target_git_manager is not None and (effective_checkout_mode == "clone" or clone_id):
         try:
             from gobby.clones.git import CloneGitManager
 
@@ -477,7 +471,7 @@ async def spawn_agent_impl(
                 spawn_config=spawn_config,
                 main_repo_path=resolved_project_path,
             )
-            effective_isolation = "worktree"
+            effective_checkout_mode = "worktree"
             context_handler: IsolationHandler = WorktreeIsolationHandler(
                 target_git_manager, worktree_storage
             )
@@ -548,14 +542,14 @@ async def spawn_agent_impl(
             isolation_type="clone",
             extra={"source_repo": resolved_project_path, "reused_clone": True},
         )
-        effective_isolation = "clone"
+        effective_checkout_mode = "clone"
         handler = get_isolation_handler("none")
         context_handler = CloneIsolationHandler(
             target_clone_manager, clone_storage, target_git_manager
         )
     else:
         handler = get_isolation_handler(
-            effective_isolation,
+            effective_checkout_mode,
             git_manager=target_git_manager,
             worktree_storage=worktree_storage,
             clone_manager=target_clone_manager,
@@ -581,7 +575,7 @@ async def spawn_agent_impl(
                 response["error_code"] = error_code
             return response
 
-    if effective_isolation in {"worktree", "clone"}:
+    if effective_checkout_mode in {"worktree", "clone"}:
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
         if config_error is not None:
             await cleanup_created_isolation(
@@ -589,7 +583,7 @@ async def spawn_agent_impl(
             )
             return {"success": False, "error": config_error}
     code_index_mode = code_index_preflight_mode(
-        isolation=effective_isolation,
+        checkout_mode=effective_checkout_mode,
         agent_name=requested_agent_name,
         initial_variables=initial_variables,
         task_category=task_category,
@@ -612,7 +606,7 @@ async def spawn_agent_impl(
     effective_initial_variables, resume_metadata = await build_spawn_context(
         spawn_config=spawn_config,
         isolation_ctx=isolation_ctx,
-        effective_isolation=effective_isolation,
+        effective_checkout_mode=effective_checkout_mode,
         reasoning=reasoning,
         initial_variables=initial_variables,
         local_context_route=endpoint_resolution.local_context_route,
@@ -831,7 +825,6 @@ async def spawn_agent_impl(
                 code_index_api_token=await run_thread_to_completion(read_local_api_token),
                 phase_timings_ms=phase_timings_ms,
                 prewarm_pre_commit_store=prewarm_pre_commit_store,
-                terminal_backend=resolved_terminal_backend,
                 droid_mode=droid_mode,
             )
 
@@ -846,7 +839,7 @@ async def spawn_agent_impl(
                     run_id=run_id,
                     spawn_request=spawn_request,
                     isolation_ctx=isolation_ctx,
-                    effective_isolation=effective_isolation,
+                    effective_checkout_mode=effective_checkout_mode,
                     base_commit_sha=base_commit_sha,
                     handler=handler,
                     spawn_config=spawn_config,
@@ -913,7 +906,7 @@ async def spawn_agent_impl(
                 GRANT_KEY: write_grant,
                 **spawn_identity,
                 "child_session_id": prepared_spawn.session_id,
-                "isolation": effective_isolation,
+                "checkout_mode": effective_checkout_mode,
                 "clone_id": isolation_ctx.clone_id,
                 "reasoning": reasoning.to_dict(),
             }

@@ -104,7 +104,7 @@ def _agent_definition_summary(row: AgentDefinitionRow) -> dict[str, Any]:
         "provider": body.provider,
         "model": body.model,
         "mode": raw.get("mode"),
-        "isolation": body.isolation,
+        "checkout_mode": body.checkout_mode,
         "surfaces": body.surfaces,
         "has_steps": body.step_workflow is not None,
         "step_count": len(body.step_workflow.steps) if body.step_workflow else 0,
@@ -173,11 +173,6 @@ def agents() -> None:
 @click.option("--session", "-s", "parent_session_id", required=True, help="Parent session ID")
 @click.option("--workflow", "-w", help="Workflow name to execute")
 @click.option("--task", "-t", help="Task ID or reference")
-@click.option(
-    "--terminal-backend",
-    type=click.Choice(["native"]),
-    help="Terminal backend override",
-)
 @click.option("--provider", "-p", default="claude", help="LLM provider (claude, qwen, etc.)")
 @click.option("--model", help="Model override")
 @click.option(
@@ -195,7 +190,6 @@ def spawn_agent_cmd(
     parent_session_id: str,
     workflow: str | None,
     task: str | None,
-    terminal_backend: str | None,
     provider: str,
     model: str | None,
     reasoning_effort: str | None,
@@ -239,8 +233,6 @@ def spawn_agent_cmd(
         arguments["workflow"] = workflow
     if task:
         arguments["task_id"] = task
-    if terminal_backend:
-        arguments["terminal_backend"] = terminal_backend
     if model:
         arguments["model"] = model
     if reasoning_effort:
@@ -387,7 +379,7 @@ def show_agent_definition(name: str, json_format: bool) -> None:
     click.echo(f"Provider: {detail['provider']}")
     if detail.get("model"):
         click.echo(f"Model: {detail['model']}")
-    click.echo(f"Isolation: {detail['isolation']}")
+    click.echo(f"Checkout mode: {detail['checkout_mode']}")
     click.echo(f"Surfaces: {', '.join(detail['surfaces'])}")
     click.echo(f"Source: {detail['source']}")
     if detail.get("project_id"):

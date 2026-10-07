@@ -2,6 +2,7 @@
 
 import os
 import shlex
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -984,6 +985,7 @@ class TestHookTemplates:
             "post-checkout",
             "post-merge",
             "post-rewrite",
+            "reference-transaction",
         }
         assert set(HOOK_TEMPLATES.keys()) == expected_hooks
 
@@ -1326,3 +1328,155 @@ def test_install_git_hooks_backs_up_changed_foreign_content(
 
     assert [Path(path).read_text() for path in result["backups"]] == [changed]
     assert len(list(hooks_dir.glob("pre-commit.*.backup"))) == 2
+
+
+def test_missing_template_hook_is_stale_for_managed_install(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    hooks_dir = repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    unmanaged = get_stale_git_hooks(repo)
+    install_git_hooks(repo)
+    # An install made before reference-transaction existed has no such hook.
+    (hooks_dir / "reference-transaction").unlink()
+    missing = get_stale_git_hooks(repo)
+    (hooks_dir / "reference-transaction").write_text("#!/bin/sh\necho foreign\n")
+    sectionless = get_stale_git_hooks(repo)
+    install_git_hooks(repo)
+
+    assert unmanaged == []
+    assert missing == ["reference-transaction"]
+    assert sectionless == ["reference-transaction"]
+    assert get_stale_git_hooks(repo) == []
+    assert (hooks_dir / "reference-transaction").read_text().endswith("echo foreign\n")
+
+
+class _HermeticGit:
+    """Real git with a temporary HOME and no gobby, pre-commit or gcode on PATH."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        git = shutil.which("git")
+        assert git is not None
+        (bin_dir / "git").symlink_to(git)
+        (tmp_path / "home").mkdir()
+        self.log = tmp_path / "foreign.log"
+        self.env = {
+            "PATH": os.pathsep.join([str(bin_dir), "/usr/bin", "/bin"]),
+            "HOME": str(tmp_path / "home"),
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_AUTHOR_NAME": "Test",
+            "GIT_AUTHOR_EMAIL": "test@gobby.local",
+            "GIT_COMMITTER_NAME": "Test",
+            "GIT_COMMITTER_EMAIL": "test@gobby.local",
+            "FOREIGN_LOG": str(self.log),
+        }
+
+    def run(self, cwd: Path, *args: str, **extra_env: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            env=self.env | extra_env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def ok(self, cwd: Path, *args: str, **extra_env: str) -> str:
+        result = self.run(cwd, *args, **extra_env)
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip()
+
+    def commit(self, cwd: Path, rel: str, content: str, **extra_env: str) -> str:
+        (cwd / rel).parent.mkdir(parents=True, exist_ok=True)
+        (cwd / rel).write_text(content, encoding="utf-8")
+        self.ok(cwd, "add", "--", rel)
+        return self.ok(cwd, "commit", "-q", "-m", f"change {rel}", **extra_env)
+
+
+FOREIGN_RECORDER = (
+    "#!/bin/sh\n"
+    "# foreign hook: record the state argument and stdin\n"
+    'printf "== %s %s\\n" "${0##*/}" "$*" >> "$FOREIGN_LOG"\n'
+    'cat >> "$FOREIGN_LOG"\n'
+    '[ "$1" = prepared ] && [ -n "${FOREIGN_REFUSE:-}" ] && exit 1\n'
+    "exit 0\n"
+)
+
+
+def test_gobby_sections_chain_to_foreign_hook_content(tmp_path: Path) -> None:
+    git = _HermeticGit(tmp_path)
+    repo = tmp_path / "repo"
+    git.ok(tmp_path, "init", "-q", "-b", "main", str(repo))
+    git.ok(tmp_path, "init", "-q", "--bare", str(tmp_path / "remote.git"))
+    hooks_dir = repo / ".git" / "hooks"
+    chained = ("reference-transaction", "pre-push", "pre-merge-commit", "post-rewrite")
+    for name in chained:
+        (hooks_dir / name).write_text(FOREIGN_RECORDER)
+        (hooks_dir / name).chmod(0o755)
+    assert install_git_hooks(repo)["success"] is True
+
+    git.commit(repo, "README.md", "base\n")
+    old = git.ok(repo, "rev-parse", "main")
+    git.commit(repo, "docs/a.md", "a\n")
+    new = git.ok(repo, "rev-parse", "main")
+    git.ok(repo, "push", "-q", str(tmp_path / "remote.git"), "main:refs/heads/gone")
+    git.ok(repo, "push", "-q", str(tmp_path / "remote.git"), ":refs/heads/gone")
+    git.ok(repo, "checkout", "-q", "-b", "side")
+    git.commit(repo, "docs/side.md", "side\n")
+    git.ok(repo, "checkout", "-q", "main")
+    git.ok(repo, "merge", "-q", "--no-ff", "-m", "merge side", "side", GOBBY_MERGE="1")
+    merged = git.ok(repo, "rev-parse", "main")
+    git.ok(repo, "commit", "-q", "--amend", "-m", "merge side, amended")
+    amended = git.ok(repo, "rev-parse", "main")
+    refused = git.run(repo, "commit", "-q", "--allow-empty", "-m", "x", FOREIGN_REFUSE="1")
+    log = git.log.read_text()
+
+    assert f"== reference-transaction prepared\n{old} {new} refs/heads/main\n" in log
+    assert f"(delete) {'0' * 40} refs/heads/gone {new}\n" in log
+    assert "== pre-merge-commit \n" in log
+    assert f"== post-rewrite amend\n{merged} {amended}\n" in log
+    assert refused.returncode != 0
+    assert git.ok(repo, "rev-parse", "main") == amended
+    hooks = {name: (hooks_dir / name).read_text() for name in chained}
+    install_git_hooks(repo, force=True)
+    reinstalled = {name: (hooks_dir / name).read_text() for name in chained}
+    uninstall_git_hooks(repo)
+    for name in chained:
+        assert hooks[name].startswith(f"#!/bin/sh\n\n{GOBBY_HOOK_START}")
+        assert reinstalled[name] == hooks[name]
+        assert (hooks_dir / name).read_text().startswith("#!/bin/sh\n")
+        assert FOREIGN_RECORDER.split("\n", 1)[1] in (hooks_dir / name).read_text()
+        assert GOBBY_HOOK_START not in (hooks_dir / name).read_text()
+
+
+def test_posix_precommit_section_runs_under_foreign_sh_shebang(tmp_path: Path) -> None:
+    git = _HermeticGit(tmp_path)
+    repo = tmp_path / "repo"
+    git.ok(tmp_path, "init", "-q", "-b", "main", str(repo))
+    (repo / ".pre-commit-config.yaml").write_text("repos: []\n")
+    # pre-commit double: appends a fix to each staged file once, failing that run.
+    (tmp_path / "bin" / "pre-commit").write_text(
+        "#!/bin/sh\n"
+        "git diff --cached --name-only | {\n"
+        "    status=0\n"
+        "    while IFS= read -r file; do\n"
+        '        if [ "$(tail -n 1 "$file")" != auto-fixed ]; then\n'
+        '            echo auto-fixed >> "$file"\n'
+        "            status=1\n"
+        "        fi\n"
+        "    done\n"
+        '    exit "$status"\n'
+        "}\n"
+    )
+    (tmp_path / "bin" / "pre-commit").chmod(0o755)
+    (repo / ".git" / "hooks" / "pre-commit").write_text(FOREIGN_RECORDER)
+    assert install_git_hooks(repo)["success"] is True
+
+    git.commit(repo, "docs/a.md", "a\n")
+
+    assert git.ok(repo, "show", "HEAD:docs/a.md") == "a\nauto-fixed"
+    assert git.ok(repo, "status", "--porcelain", "--", "docs/a.md") == ""
+    assert "== pre-commit \n" in git.log.read_text()

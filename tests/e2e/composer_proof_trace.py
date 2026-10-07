@@ -13,13 +13,14 @@ from typing import Any, cast
 from uuid import UUID
 
 from gobby.events.live_wake import RETRYABLE_WAKE_SKIPS
+from gobby.events.wake import CONTINUE_WAKE_MESSAGE
 from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.storage.terminals import Terminal
 from gobby.terminals.runtime import WriteOutcome
 from gobby.terminals.write_coordinator import WriteRequest
 from tests.e2e.composer_proof import ProofRefused, ProofScope, Surface
 
-WAKE_TEXT = "Message from Gobby daemon: New activity available."
+WAKE_TEXT = CONTINUE_WAKE_MESSAGE
 
 
 def completion_envelope(

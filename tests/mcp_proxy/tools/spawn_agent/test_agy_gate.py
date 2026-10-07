@@ -151,10 +151,9 @@ async def _spawn(effects: _SideEffects, selection: dict[str, Any]) -> dict[str, 
         parent_session_id="parent",
         caller_session_id=selection["caller_session_id"],
         session_manager=_session_manager(selection["sources"]),
-        isolation="worktree",
+        checkout_mode="worktree",
         worktree_storage=effects.worktree_storage,
         git_manager=effects.git_manager,
-        terminal_backend="native",
     )
 
 
@@ -281,7 +280,6 @@ async def test_gate_and_terminal_executor_emit_one_refusal_message(
         project_id="proj",
         session_manager=MagicMock(),
         prepared_spawn=prepared_spawn(),
-        terminal_backend="native",
     )
     with (
         patch("gobby.providers.version_gate.ensure_agy_support", AsyncMock(return_value=record)),

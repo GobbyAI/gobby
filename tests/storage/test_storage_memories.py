@@ -1375,6 +1375,31 @@ def test_list_dream_candidates_excludes_review_lesson_patterns(memory_manager) -
     assert ordinary.id in ids
 
 
+def test_dream_candidates_skip_every_push_excluded_tag(
+    memory_manager: LocalMemoryManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "gobby.storage.memories_dreams.PUSH_EXCLUDED_TAGS", ("review-lesson", "held-lesson")
+    )
+    cutoff = datetime.now(UTC).isoformat()
+    memory_manager.create_memory(
+        content="review lesson", project_id=PERSONAL_PROJECT_ID, tags=["review-lesson"]
+    )
+    memory_manager.create_memory(
+        content="held lesson", project_id=PERSONAL_PROJECT_ID, tags=["held-lesson"]
+    )
+    ordinary = memory_manager.create_memory(
+        content="ordinary candidate", project_id=PERSONAL_PROJECT_ID, tags=["other"]
+    )
+
+    page = memory_manager.list_dream_candidates(limit=50, redream_cutoff=cutoff, scope=ALL_MEMORIES)
+    snapshot = memory_manager.list_dream_candidate_ids(redream_cutoff=cutoff, scope=ALL_MEMORIES)
+
+    assert [memory.id for memory in page] == [ordinary.id]
+    assert snapshot == [ordinary.id]
+
+
 def test_list_dream_candidates_limit(memory_manager) -> None:
     cutoff = datetime.now(UTC).isoformat()
     for i in range(3):

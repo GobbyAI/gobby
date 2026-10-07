@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -14,16 +15,6 @@ from gobby.workflows.variable_defaults import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _session_has_assigned_or_active_task(db: HubDatabase, session_id: str) -> bool:
-    from gobby.workflows.state_manager import SessionVariableManager
-
-    variables = SessionVariableManager(db).get_variables(session_id)
-    return any(
-        isinstance(value, str) and bool(value.strip())
-        for value in (variables.get("assigned_task_id"), variables.get("active_task_id"))
-    )
 
 
 def build_definition_changes(
@@ -97,10 +88,9 @@ def build_definition_changes(
     changes["_agent_blocked_tools"] = agent_body.blocked_tools or []
     changes["_agent_blocked_mcp_tools"] = agent_body.blocked_mcp_tools or []
 
-    if agent_body.step_workflow and is_spawned:
-        if _session_has_assigned_or_active_task(db, session_id):
-            changes["step_workflow_complete"] = False
-            definition_keys.add("step_workflow_complete")
+    if agent_body.step_workflow and agent_body.step_workflow.steps:
+        changes["step_workflow_complete"] = False
+        definition_keys.add("step_workflow_complete")
 
     changes["_agent_definition_hash"] = definition_pin(agent_body)
     changes["_agent_definition_keys"] = sorted(definition_keys)
@@ -112,6 +102,17 @@ def definition_pin(agent_body: AgentDefinitionBody) -> str:
     from gobby.storage.definitions import compute_definition_hash
 
     return compute_definition_hash(agent_body.model_dump_json())
+
+
+def definition_drift_line(existing: Mapping[str, Any], agent: str, new_pin: str) -> str | None:
+    """Describe a changed pin for the same seat, excluding first activation."""
+    old_pin = existing.get("_agent_definition_hash")
+    if existing.get("_agent_type") != agent or old_pin is None or old_pin == new_pin:
+        return None
+    return (
+        f"Definition `{agent}` changed since this session activated it (`{old_pin[:12]}` → "
+        f"`{new_pin[:12]}`); the current definition now applies."
+    )
 
 
 def build_persona_prompt_context(
@@ -263,12 +264,28 @@ def commit_definition_changes(
             and not is_spawned_session(current, SessionManager(db).get(session_id))
         )
         if identity_change:
+            from gobby.workflows.step_instances import AgentStepInstanceManager
+
+            AgentStepInstanceManager(db).delete_for_session(session_id)
             delta.update(dict.fromkeys(previous_keys - new_keys))
+            if "step_workflow_complete" in changes:
+                delta["step_workflow_complete"] = changes["step_workflow_complete"]
         else:
             new_keys |= previous_keys
         delta["_agent_definition_keys"] = sorted(new_keys)
         delta.update(overlays or {})
-        merged = manager.merge_variables(session_id, delta)
+        if current.get("_persona_name") and "_persona_name" not in (overlays or {}):
+            # SessionStart refreshes seat enforcement while keeping the live persona.
+            delta.pop("_active_skill_names", None)
+            delta.pop("_skill_format", None)
+        drift = definition_drift_line(current, agent, changes["_agent_definition_hash"])
+        if drift:
+            delta["_agent_definition_drift"] = drift
+            delta["_agent_identity_reinject"] = True
+        elif identity_change:
+            delta["_agent_definition_drift"] = None
+        manager.merge_variables(session_id, delta)
+        merged = manager.get_variables(session_id)
         return {"status": "applied", "agent": agent, "variables": merged}
 
 
@@ -356,7 +373,12 @@ async def apply_agent_definition_impl(
     changes, rules, skills = build_definition_changes(
         body, session_id, db, all_skills=all_skills, is_spawned=False
     )
-    overlays = {"_agent_context_injected": False, "_agent_identity_reinject": True, **extra}
+    overlays = {
+        "_persona_name": None,
+        "_agent_context_injected": False,
+        "_agent_identity_reinject": True,
+        **extra,
+    }
     collision = colliding_definition_variable_error(variables, changes=changes, extra_vars=overlays)
     if collision:
         return _refusal("variable_collision", collision)
@@ -373,6 +395,22 @@ async def apply_agent_definition_impl(
     )
     if committed["status"] != "applied":
         return _activation_receipt(committed["status"], committed["agent"], agent)
+    from gobby.hooks.session_activation import _ensure_step_instance
+    from gobby.workflows.step_instances import AgentStepInstanceManager
+
+    step_workflow = None
+    step_workflow_pending = False
+    try:
+        _ensure_step_instance(db, session_id, committed["variables"], session)
+        instance = AgentStepInstanceManager(db).get_for_session(session_id)
+        if instance is not None:
+            step_workflow = {
+                "agent_name": instance.agent_name,
+                "current_step": instance.current_step,
+            }
+    except Exception as exc:
+        logger.warning("Step workflow pending for session %s agent %s: %s", session_id, agent, exc)
+        step_workflow_pending = True
     return {
         "success": True,
         "status": "applied",
@@ -381,5 +419,6 @@ async def apply_agent_definition_impl(
         "rules_count": len(rules),
         "skills_count": len(skills) if skills is not None else len(all_skills),
         "blocked_tools_count": len(body.blocked_tools or []) + len(body.blocked_mcp_tools or []),
-        "step_workflow": None,
+        "step_workflow": step_workflow,
+        **({"step_workflow_pending": True} if step_workflow_pending else {}),
     }

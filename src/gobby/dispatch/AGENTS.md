@@ -26,7 +26,7 @@ Build state is resolved before dispatch:
 - `allow_automation` is the opt-in gate. Backlog tasks stay invisible until `gobby build`
   enables them.
 - `unattended` means rules choose deterministic fallbacks instead of escalating when possible.
-- `isolation` is explicit task state: `none`, `worktree`, or `clone`.
+- `checkout_mode` is explicit task state: `none`, `worktree`, or `clone`.
 - `stages` is the ordered manifest materialized in `task_stage_states` from the
   stage registry. The current stage is the first row whose state is not `done`.
 - Build profiles are DB-backed registry rows synced from

@@ -11,12 +11,17 @@ import psycopg
 
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.plans.review_evidence import register_review_evidence_tools
+from gobby.mcp_proxy.tools.plans.review_evidence import (
+    PROJECT_FORMS,
+    PROJECT_PROPERTY,
+    register_review_evidence_tools,
+)
 from gobby.plans.plan_roots import resolve_plan_overlay_root
 from gobby.storage.concurrency import CoverageExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError, PlanRecord
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.project_context import get_project_context
 
 P = ParamSpec("P")
@@ -92,7 +97,7 @@ def create_plan_registry(
                 "plan_path": {"type": "string"},
                 "plan_kind": {"type": "string", "enum": ["implementation", "strategy"]},
                 "root_task_ref": {"type": "string"},
-                "project": {"type": "string"},
+                "project": PROJECT_PROPERTY,
                 "reactivate": {"type": "boolean", "default": False},
             },
             "required": ["plan_id", "plan_path"],
@@ -119,7 +124,7 @@ def create_plan_registry(
             "type": "object",
             "properties": {
                 "plan_id_or_ref": {"type": "string"},
-                "project": {"type": "string"},
+                "project": PROJECT_PROPERTY,
             },
             "required": ["plan_id_or_ref"],
         },
@@ -154,7 +159,7 @@ def create_plan_registry(
             "properties": {
                 "state": {"type": "string", "enum": ["active", "archived"]},
                 "plan_kind": {"type": "string", "enum": ["implementation", "strategy"]},
-                "project": {"type": "string"},
+                "project": PROJECT_PROPERTY,
             },
         },
         func=list_plans,
@@ -186,7 +191,7 @@ def create_plan_registry(
             "properties": {
                 "plan_id": {"type": "string"},
                 "reason": {"type": "string"},
-                "project": {"type": "string"},
+                "project": PROJECT_PROPERTY,
             },
             "required": ["plan_id"],
         },
@@ -215,7 +220,7 @@ def create_plan_registry(
         description="Recompute a plan hash and regenerate coverage if it changed.",
         input_schema={
             "type": "object",
-            "properties": {"plan_id": {"type": "string"}, "project": {"type": "string"}},
+            "properties": {"plan_id": {"type": "string"}, "project": PROJECT_PROPERTY},
             "required": ["plan_id"],
         },
         func=update_plan_hash,
@@ -249,7 +254,7 @@ def create_plan_registry(
         description="Regenerate the managed coverage manifest for a plan.",
         input_schema={
             "type": "object",
-            "properties": {"plan_id": {"type": "string"}, "project": {"type": "string"}},
+            "properties": {"plan_id": {"type": "string"}, "project": PROJECT_PROPERTY},
             "required": ["plan_id"],
         },
         func=regenerate_coverage_manifest,
@@ -272,7 +277,7 @@ def create_plan_registry(
         description="Hard-delete a plan row and remove its managed coverage manifest.",
         input_schema={
             "type": "object",
-            "properties": {"plan_id": {"type": "string"}, "project": {"type": "string"}},
+            "properties": {"plan_id": {"type": "string"}, "project": PROJECT_PROPERTY},
             "required": ["plan_id"],
         },
         func=delete_plan,
@@ -323,6 +328,7 @@ def create_plan_registry(
             expected_project_id=default_project_id,
             code_index=code_index,
             require_symbol_validation=True,
+            task_manager=LocalTaskManager(db),
         )
 
     registry.register(
@@ -397,9 +403,15 @@ def _optional_project_id(
     default_project_id: str | None,
 ) -> str | None:
     if project:
-        resolved = LocalProjectManager(db).resolve_ref(project)
+        projects = LocalProjectManager(db)
+        resolved = projects.resolve_ref(project)
+        if resolved is None and Path(project).is_absolute():
+            checkout = get_project_context(cwd=Path(project))
+            checkout_id = checkout.get("id") if checkout else None
+            if isinstance(checkout_id, str):
+                resolved = projects.resolve_ref(checkout_id)
         if resolved is None:
-            raise _InvalidProjectError(f"Project not found: {project}")
+            raise _InvalidProjectError(f"Project not found: {project}; pass a {PROJECT_FORMS}")
         return resolved.id
     return default_project_id
 

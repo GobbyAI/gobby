@@ -30,7 +30,7 @@ def test_snapshot_persists_pre_commit_prewarm_for_resume(prewarm: bool) -> None:
         project_id="proj-1",
         project_path="/work",
         parent_session_id="parent-1",
-        isolation="none",
+        checkout_mode="none",
         worktree_id=None,
         clone_id=None,
         branch_name=None,

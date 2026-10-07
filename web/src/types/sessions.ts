@@ -70,10 +70,10 @@ export interface GobbySession {
   commit_count?: number;
   // Task seq_nums linked to this session via three role columns on the tasks
   // table. Populated by /api/sessions on each list response. Empty arrays
-  // when the session has no tasks in a given role.
-  claimed_task_refs?: number[];
-  created_task_refs?: number[];
-  closed_task_refs?: number[];
+  // when the session has no tasks in a given role; null when not loaded.
+  claimed_task_refs?: number[] | null;
+  created_task_refs?: number[] | null;
+  closed_task_refs?: number[] | null;
 }
 
 export const KNOWN_SOURCES = [

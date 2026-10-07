@@ -493,6 +493,38 @@ async def test_timeout_kills_process_group_and_reaps_leader(
 
 
 @pytest.mark.asyncio
+async def test_timeout_warning_reports_loop_stall_overrun(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("WARNING", logger="gobby.utils.daemon_git")
+    _write_fake_git(tmp_path)
+    pids = tmp_path / "pids"
+    task = asyncio.create_task(
+        DaemonGitService().run(
+            ["status"],
+            cwd=tmp_path,
+            timeout=0.5,
+            env=_git_env(tmp_path, GIT_TEST_DELAY="30", GIT_TEST_PIDS=str(pids)),
+        )
+    )
+    await _wait_for_file(pids)
+    # Block only this test loop; the off-loop deadline must still kill Git.
+    threading.Event().wait(timeout=1.0)
+    result = await task
+    assert isinstance(result, GitTimeout)
+    await _assert_processes_gone(*map(int, pids.read_text().split()))
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "gobby.utils.daemon_git" and record.levelname == "WARNING"
+    ]
+    assert len(warnings) == 1
+    fields = dict(field.split("=", 1) for field in warnings[0].split() if "=" in field)
+    assert "overrun_seconds" in fields
+    assert float(fields["overrun_seconds"]) >= 0.4
+
+
+@pytest.mark.asyncio
 async def test_nonstream_timeout_waits_for_worker_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

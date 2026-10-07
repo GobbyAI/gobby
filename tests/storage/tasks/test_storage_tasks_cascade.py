@@ -28,7 +28,7 @@ def test_cascade_uses_unattended_field(
     cascade_build_state_to_subtree(
         temp_db,
         task.id,
-        isolation="none",
+        checkout_mode="none",
         unattended=True,
         allow_automation=True,
         skip_stages=["qa"],

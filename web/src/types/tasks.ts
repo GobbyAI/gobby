@@ -46,7 +46,7 @@ export interface GobbyTask extends LifecycleTask {
   stages: StageStateView[];
   allow_automation?: boolean | null;
   yolo?: boolean | null;
-  isolation?: string | null;
+  checkout_mode?: string | null;
   dispatch_failure_count?: number | null;
   additional_skills?: string[] | null;
   assigned_agent?: string | null;
@@ -78,7 +78,7 @@ export interface GobbyTaskDetail extends GobbyTask {
   expansion_status: string;
   allow_automation?: boolean | null;
   yolo?: boolean | null;
-  isolation?: string | null;
+  checkout_mode?: string | null;
   dispatch_failure_count?: number | null;
   additional_skills?: string[] | null;
   assigned_agent?: string | null;

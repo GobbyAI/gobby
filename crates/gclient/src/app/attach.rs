@@ -52,7 +52,11 @@ impl Pane {
         self.reattach_after_indeterminate = false;
         self.live = false;
         self.control = ControlState::Observe;
-        self.clear_pending_input();
+        // Keys typed while a recovery detached the pane belong to the
+        // attachment it asks for now (#23559).
+        if !self.fallback_in_flight {
+            self.clear_pending_input();
+        }
         self.status_message = None;
     }
 
@@ -165,11 +169,18 @@ impl Pane {
             return false;
         }
         self.tombstones.insert(attachment_id.to_string());
+        // A recovery retiring its own detach attaches again at once, so keys
+        // typed meanwhile wait for that attachment; one that gives up refuses
+        // the attach, which clears them (#23559).
+        let recovering =
+            self.fallback_in_flight && matches!(self.attach, AttachState::Detaching { .. });
         self.attach = AttachState::Detached;
         self.live = false;
         self.control = ControlState::Observe;
         self.take_back = false;
-        self.clear_pending_input();
+        if !recovering {
+            self.clear_pending_input();
+        }
         self.in_flight_write = None;
         self.status_message = reason;
         self.viewport_deferred = false;

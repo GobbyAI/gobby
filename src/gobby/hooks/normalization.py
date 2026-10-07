@@ -5,9 +5,6 @@ Implementation lives in private focused modules. Import from
 """
 
 from gobby.hooks._normalization_canonical import (
-    _build_canonical_tool_metadata as _build_canonical_tool_metadata,
-)
-from gobby.hooks._normalization_canonical import (
     _normalize_shell_tool_metadata as _normalize_shell_tool_metadata,
 )
 from gobby.hooks._normalization_canonical import (
@@ -24,6 +21,9 @@ from gobby.hooks._normalization_mcp import (
 )
 from gobby.hooks._normalization_mcp import (
     normalize_mcp_fields as normalize_mcp_fields,
+)
+from gobby.hooks._normalization_metadata import (
+    _build_canonical_tool_metadata as _build_canonical_tool_metadata,
 )
 from gobby.hooks._normalization_notifications import (
     _notification_severity_from_payload as _notification_severity_from_payload,

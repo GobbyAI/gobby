@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.events.wake import CONTINUE_WAKE_MESSAGE
 from gobby.storage.terminals import Terminal
 from gobby.terminals.runtime import Delivered, WriteOutcome
 from gobby.terminals.write_coordinator import WriteRequest
@@ -126,6 +127,22 @@ def registered_trace(tmp_path: Path) -> tuple[ProofTrace, dict[str, object]]:
     return trace, event
 
 
+@pytest.mark.parametrize("arm_gate", [False, True])
+async def test_trace_accepts_the_current_daemon_wake(tmp_path: Path, arm_gate: bool) -> None:
+    trace, event = registered_trace(tmp_path)
+    event["payload_sha256"] = hashlib.sha256(CONTINUE_WAKE_MESSAGE.encode()).hexdigest()
+    if arm_gate:
+        trace.arm(trace.surfaces[str(event["terminal_id"])], CONTINUE_WAKE_MESSAGE)
+        trace.release.set()
+
+    await trace.accept(event)
+
+    assert len(trace.events) == 1
+    assert trace.events[0]["payload_sha256"] == event["payload_sha256"]
+    if arm_gate:
+        assert trace.staged.is_set()
+
+
 @pytest.mark.asyncio
 async def test_trace_refuses_extra_raw_fields_and_invalid_phases(tmp_path: Path) -> None:
     trace, event = registered_trace(tmp_path)
@@ -139,13 +156,16 @@ async def test_trace_refuses_extra_raw_fields_and_invalid_phases(tmp_path: Path)
 @pytest.mark.asyncio
 async def test_socket_barrier_holds_the_real_after_receipt_and_cleanup_releases_it(
     tmp_path: Path,
+    managed_composer_tmpdir: Path,
 ) -> None:
     trace, event = registered_trace(tmp_path)
     own = trace.surfaces[str(event["terminal_id"])]
     trace.arm(own, WAKE_TEXT)
     # macOS AF_UNIX paths cannot fit pytest's deeply nested temporary directory.
-    socket_root = tempfile.TemporaryDirectory(prefix="proof-", dir="/tmp")
+    socket_root = tempfile.TemporaryDirectory(prefix="p")
     trace.socket = Path(socket_root.name) / "trace.sock"
+    assert Path(socket_root.name).parent == managed_composer_tmpdir
+    assert len(bytes(trace.socket)) < 104
     await trace.start()
     task = asyncio.create_task(exchange_trace(trace.socket, event))
     try:

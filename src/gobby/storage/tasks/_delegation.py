@@ -89,14 +89,16 @@ def transfer_task_authority(
     caller_session_id: str,
     reason: str,
 ) -> Task:
-    """Take over activation-receipt authority from an expired creator/delegator (#23157).
+    """Take over activation-receipt authority no live session can use (#23157, #23624).
 
     A coordinator that filed or delegated a task can expire before the task
     closes, leaving no live session able to record the activation receipt the
-    close reviewer needs. This is the one supported recovery: a live session in
-    the task's project takes the delegator slot the recorded authority held, so
-    the existing creator-or-delegator check accepts it without a receipt-rule
-    change. The task's claimant and its close reviewers stay excluded.
+    close reviewer needs. A creator that claimed its own task is in the same
+    position while it lives, because the claimant cannot record receipts. This
+    is the one supported recovery: a live session in the task's project takes
+    the delegator slot the recorded authority held, so the existing
+    creator-or-delegator check accepts it without a receipt-rule change. The
+    task's claimant and its close reviewers stay excluded.
     """
     from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 
@@ -154,24 +156,29 @@ def transfer_task_authority(
                 raise ValueError("Task not found")
             return Task.from_row(existing)
 
-        if (
+        # A creator that claimed its own task cannot record receipts for it (the claimant
+        # is refused), so it has no authority to keep (#23624).
+        creator_holds = (
             row["creator_status"] in LIVE_SESSION_STATUSES
-            or row["delegator_status"] in LIVE_SESSION_STATUSES
-        ):
+            and row["created_in_session_id"] != row["claimed_by_session_id"]
+        )
+        if creator_holds or row["delegator_status"] in LIVE_SESSION_STATUSES:
             raise ValueError(
                 "the task's creator or delegator is still live and keeps its authority"
             )
 
         slot = "delegator" if row["delegated_by_session_id"] is not None else "creator"
-        expired_id = row["delegated_by_session_id"] or row["created_in_session_id"]
-        if expired_id is None:
-            expired = "no recorded session"
+        holder_id = row["delegated_by_session_id"] or row["created_in_session_id"]
+        if holder_id is None:
+            holder = "no recorded session"
         else:
-            expired = (
-                f"{_session_ref(row[f'{slot}_seq'], expired_id)} (status={row[f'{slot}_status']})"
+            claimant = ", claimant" if holder_id == row["claimed_by_session_id"] else ""
+            holder = (
+                f"{_session_ref(row[f'{slot}_seq'], holder_id)} "
+                f"(status={row[f'{slot}_status']}{claimant})"
             )
         transfer_note = (
-            f"authority transferred from {expired} "
+            f"authority transferred from {holder} "
             f"to {_session_ref(row['actor_seq'], caller_session_id)}: {reason}"
         )
         prior_reason = row["delegation_reason"]

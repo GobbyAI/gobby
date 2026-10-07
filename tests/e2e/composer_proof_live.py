@@ -283,7 +283,7 @@ class LiveProof:
         locator = _attach_locator(row)
         if (
             locator.backend != "native"
-            or locator.host_socket != str(control_socket_path(self.scope.root / "host"))
+            or locator.host_socket != str(control_socket_path(self.scope.root / "h"))
             or not locator.host_terminal_id
         ):
             raise ProofRefused("native host binding outside private proof root")

@@ -201,6 +201,11 @@ def create_commit_registry(
         project_path: str | None = None,
     ) -> dict[str, Any]:
         """Attest another session's close evidence as the calling session."""
+        if kind not in close_receipts.CALLER_RECEIPT_KINDS:
+            return {
+                "error": f"kind must be one of {sorted(close_receipts.CALLER_RECEIPT_KINDS)}; "
+                "landing is written only by land_commit"
+            }
         author_session_id = get_current_session_id()
         if not author_session_id:
             return {"error": "No session context available; a receipt needs a calling session."}
@@ -239,9 +244,14 @@ def create_commit_registry(
         description=(
             "Record a daemon-attested close receipt for another session's task: an "
             "independent_review_approval (LAND) of an exact commit, or an activation of a "
-            "landed commit by the task's creator or delegator. The calling session is the "
-            "author; the task's claimant and task-close reviewers are refused. Idempotent per "
-            "author, kind, and commit."
+            "landed commit by the task's creator or delegator. A landing_approval comes only "
+            "from the creator or delegator and requires a comma-separated reason fact naming "
+            "restart, freeze, or overlap (optional batch). landing is written only by "
+            "land_commit. The calling session is the "
+            "author; the task's claimant and task-close reviewers are refused, and a session "
+            "that has ever claimed the task cannot record its independent_review_approval. "
+            "Idempotent per author, kind, and commit; landing_approval also matches the "
+            "reason set, so changed reasons append a new receipt."
         ),
         input_schema={
             "type": "object",
@@ -252,7 +262,7 @@ def create_commit_registry(
                 },
                 "kind": {
                     "type": "string",
-                    "enum": sorted(close_receipts.CLOSE_RECEIPT_KINDS),
+                    "enum": sorted(close_receipts.CALLER_RECEIPT_KINDS),
                 },
                 "commit_sha": {
                     "type": "string",

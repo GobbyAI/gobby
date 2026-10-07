@@ -1,11 +1,11 @@
 header:
   plan_id: apply-agent-definition
-  plan_hash: d7eec2aff150a6f68fdd571f45d1181d6a4e0a87a786c6a6ff83a10cdea847b4
+  plan_hash: 9c1bc56a46148d657b71c23dff35576ec18f2795cda8e60307882a74b9c49c92
   root_task_ref: '23499'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-05T15:17:36Z'
+  generated_at: '2026-10-06T15:47:16Z'
   task_tree_source: db
-  task_tree_source_hash: 69a9c7bafcd5ebb7f227e780822b34362e1d1f4431a93f98f13b8f8044f22705
+  task_tree_source_hash: 17fa9882a94394e536bb9240d8a2861ce259b049875be8d60510dd540238f7a8
   evidence_summary: []
   evidence: []
 rows:
@@ -79,18 +79,6 @@ rows:
       the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
       in one merge. test: `...'
     matched_artifact_ref: tests/servers/websocket/chat/test_servers_websocket_chat_session.py::test_web_chat_launch_uses_apply_agent_definition
-  deferral_target: null
-  detail: ''
-- section_id: '1.1'
-  item_id: 1.1.7
-  plan_node_hash: 1c964276d0d50aef6beab210cb6047dd19f07615779d94124a073bf6dedf6d8d
-  status: covered
-  leaves:
-  - leaf_task_ref: '#23503'
-    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
-      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
-      in one merge. test: `...'
-    matched_artifact_ref: tests/mcp_proxy/tools/test_apply_agent_definition.py::test_registry_exposes_apply_agent_definition_only
   deferral_target: null
   detail: ''
 - section_id: '1.1'
@@ -175,18 +163,6 @@ rows:
       the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
       in one merge. test: `...'
     matched_artifact_ref: tests/hooks/event_handlers/test_activate_agent_override.py::test_override_never_changes_role
-  deferral_target: null
-  detail: ''
-- section_id: '1.1'
-  item_id: 1.1.15
-  plan_node_hash: f250b024d016be0eb12c1a1cfc79100ac5dc4f5b42104171ffdb7ad8b383fa4d
-  status: covered
-  leaves:
-  - leaf_task_ref: '#23503'
-    validation_criteria_snippet: '1.1.1: Activation from the base agent writes `_agent_type`,
-      the rule, skill, variable and blocked-tools keys and `_agent_definition_hash`
-      in one merge. test: `...'
-    matched_artifact_ref: tests/servers/websocket/test_attached_session_agent.py::test_attached_terminal_role_change_refused_before_write
   deferral_target: null
   detail: ''
 - section_id: '1.1'
@@ -487,6 +463,10 @@ rows:
   plan_node_hash: 4996446f2ea8f7bc51bf169b1ec21b4c2ad45d58bb6aa2bc74a74cf48b38cfae
   status: covered
   leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/servers/test_managed_clear_identity.py::test_successor_tool_call_is_attributed_to_successor
   - leaf_task_ref: '#23508'
     validation_criteria_snippet: '1.6.1: After a staged clear, a wrapper `call_tool`
       for a session-scoped tool that carries the pane''s frozen headers and token
@@ -499,6 +479,10 @@ rows:
   plan_node_hash: 036c4ee4c3da8d9c7f1efa3774d0fba7b8edd0a76ef6cf582401ce8f21e1e865
   status: covered
   leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/servers/test_managed_clear_identity.py::test_successor_hook_and_variables_follow_run
   - leaf_task_ref: '#23508'
     validation_criteria_snippet: '1.6.1: After a staged clear, a wrapper `call_tool`
       for a session-scoped tool that carries the pane''s frozen headers and token
@@ -511,6 +495,10 @@ rows:
   plan_node_hash: 2e88e1d9cc80ae447901cb78bc24ef7fecb3e9806501816413a3aa1c8c2c9aa9
   status: covered
   leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/servers/test_managed_clear_identity.py::test_no_forwarding_without_live_run_binding
   - leaf_task_ref: '#23508'
     validation_criteria_snippet: '1.6.1: After a staged clear, a wrapper `call_tool`
       for a session-scoped tool that carries the pane''s frozen headers and token
@@ -523,6 +511,10 @@ rows:
   plan_node_hash: 96120636aef56839f7b5da7ad4898b0575a739e014ee29cffce3063268edd129
   status: covered
   leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/servers/test_managed_clear_identity.py::test_successor_chat_completion_keeps_issued_grant
   - leaf_task_ref: '#23508'
     validation_criteria_snippet: '1.6.1: After a staged clear, a wrapper `call_tool`
       for a session-scoped tool that carries the pane''s frozen headers and token
@@ -568,45 +560,49 @@ rows:
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.1
-  plan_node_hash: 0ccec116b1e81d58ebfc5c38256a0b5dc9da7d86f9c80e40586d30809795eb5d
+  plan_node_hash: 1bd4c0f52ed5772f3f82ec0ecb22d3f712239847b147de5b205d63b24f659aeb
   status: covered
   leaves:
   - leaf_task_ref: '#23510'
-    validation_criteria_snippet: '3.1.1: The persona reference calls `apply_agent_definition`
-      and names the relaunch refusal. behavior: "apply_agent_definition" in `src/gobby/install/shared/ski...'
-    matched_artifact_ref: apply_agent_definition
+    validation_criteria_snippet: '3.1.1: The persona reference keeps `apply_persona`
+      for the live persona switch, and routes whole-definition activation to `apply_agent_definition`
+      with its rel...'
+    matched_artifact_ref: role_change_requires_relaunch
   deferral_target: null
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.2
-  plan_node_hash: 8be4d63875e33c02488a46d7ae13e8a2fb891d071c738bdd9509b5122ee47475
+  plan_node_hash: 4dbec267b7672b88d2e63fc28bdf62ae33f1f9bf87e2faeccf50af55fa070e83
   status: covered
   leaves:
   - leaf_task_ref: '#23510'
-    validation_criteria_snippet: '3.1.1: The persona reference calls `apply_agent_definition`
-      and names the relaunch refusal. behavior: "apply_agent_definition" in `src/gobby/install/shared/ski...'
+    validation_criteria_snippet: '3.1.1: The persona reference keeps `apply_persona`
+      for the live persona switch, and routes whole-definition activation to `apply_agent_definition`
+      with its rel...'
     matched_artifact_ref: tests/skills/test_review_skill.py::test_epic_review_references_pin_routing_and_verdict_mapping
   deferral_target: null
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.3
-  plan_node_hash: 0ecf80f6dc58141b3793ab0f7353a7835ded4b4f097796a2453ec092db1aefb7
+  plan_node_hash: 05caf6d92354d736ec568461833ddaf2caff2bebb4543fd7fcf56f1071d25a46
   status: covered
   leaves:
   - leaf_task_ref: '#23510'
-    validation_criteria_snippet: '3.1.1: The persona reference calls `apply_agent_definition`
-      and names the relaunch refusal. behavior: "apply_agent_definition" in `src/gobby/install/shared/ski...'
+    validation_criteria_snippet: '3.1.1: The persona reference keeps `apply_persona`
+      for the live persona switch, and routes whole-definition activation to `apply_agent_definition`
+      with its rel...'
     matched_artifact_ref: role_change_requires_relaunch
   deferral_target: null
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.4
-  plan_node_hash: 0500ca98e3ef286d9ae78f3dd4879418ee95d620f37c1dcd65c87d771a6c4b26
+  plan_node_hash: d1a4f8bdbf6aa9b54b290f5e9ff4f2bdb6f5c8cb3f3a70b867c175ee6d45cacd
   status: covered
   leaves:
   - leaf_task_ref: '#23510'
-    validation_criteria_snippet: '3.1.1: The persona reference calls `apply_agent_definition`
-      and names the relaunch refusal. behavior: "apply_agent_definition" in `src/gobby/install/shared/ski...'
+    validation_criteria_snippet: '3.1.1: The persona reference keeps `apply_persona`
+      for the live persona switch, and routes whole-definition activation to `apply_agent_definition`
+      with its rel...'
     matched_artifact_ref: docs/guides/workflows-overview.md
   deferral_target: null
   detail: ''
@@ -615,7 +611,7 @@ rows:
   plan_node_hash: 355c27fc205b29ab47298483ecf5edf30e8a4497fc88001b8ee7acf1375368a4
   status: deferred
   leaves: []
-  deferral_target: '#23511'
+  deferral_target: '#23509'
   detail: deferral is valid
 - section_id: D2
   item_id: D2.1
@@ -636,12 +632,32 @@ rows:
   plan_node_hash: f60578f22f0e13a79cac42f3ac77fd46fd2f1b45541a973dc3606975d9733385
   status: deferred
   leaves: []
-  deferral_target: '#23497'
+  deferral_target: '#23509'
   detail: deferral is valid
 - section_id: D3
   item_id: D3.2
   plan_node_hash: df7ad1bc7f16119677686a033e33988d0e83b4680f777bc798b818b30a764650
   status: deferred
   leaves: []
-  deferral_target: '#23497'
+  deferral_target: '#23509'
   detail: deferral is valid
+- section_id: '1.1'
+  item_id: 1.1.7
+  plan_node_hash: ''
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: item '1.1.7' is not present in section '1.1'
+    matched_artifact_ref: covers:apply-agent-definition:1.1:1.1.7
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.15
+  plan_node_hash: ''
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#23503'
+    validation_criteria_snippet: item '1.1.15' is not present in section '1.1'
+    matched_artifact_ref: covers:apply-agent-definition:1.1:1.1.15
+  deferral_target: null
+  detail: ''

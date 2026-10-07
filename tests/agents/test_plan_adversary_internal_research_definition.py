@@ -43,7 +43,7 @@ def test_adversary_agents_pin_the_reviewer_model() -> None:
     for agent in (tasked, taskless):
         assert agent["reasoning_effort"] == "xhigh"
         assert agent["reasoning_required"] is False
-        assert agent["isolation"] == "none"
+        assert agent["checkout_mode"] == "none"
 
 
 def test_adversaries_have_no_experiment_timeout_contract() -> None:

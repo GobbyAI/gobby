@@ -15,9 +15,9 @@ from gobby.build import (
     build_stop,
     build_stop_target,
 )
-from gobby.build.options import resolve_build_isolation
+from gobby.build.options import resolve_build_checkout_mode
 from gobby.build.service import BuildOptions, build
-from gobby.config.build import Isolation, StageCapOverride
+from gobby.config.build import CheckoutMode, StageCapOverride
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.session_context import get_current_session_id
 
@@ -75,7 +75,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         profile: str | None = None,
         quick: bool = False,
         skip_stages: list[str] | None = None,
-        isolation: Isolation | None = None,
+        checkout_mode: CheckoutMode | None = None,
         workspace_backend: WorkspaceBackend | None = None,
         clone: bool = False,
         unattended: bool | None = None,
@@ -101,8 +101,8 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         resolved_project_id = project_id or ctx.get_current_project_id()
         if resolved_project_id is None:
             raise ValueError("Could not determine project_id for build_task")
-        resolved_isolation = resolve_build_isolation(
-            isolation=isolation,
+        resolved_checkout_mode = resolve_build_checkout_mode(
+            checkout_mode=checkout_mode,
             workspace_backend=workspace_backend,
             clone=clone,
         )
@@ -112,8 +112,8 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             quick=quick,
             skip_stages=skip_stages or [],
             skip_stages_explicit=skip_stages is not None,
-            isolation=resolved_isolation.isolation,
-            isolation_explicit=resolved_isolation.explicit,
+            checkout_mode=resolved_checkout_mode.checkout_mode,
+            checkout_mode_explicit=resolved_checkout_mode.explicit,
             unattended=unattended if unattended is not None else False,
             unattended_explicit=unattended is not None,
             no_merge=no_merge,
@@ -268,7 +268,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "items": {"type": "string"},
                     "default": [],
                 },
-                "isolation": {
+                "checkout_mode": {
                     "type": "string",
                     "enum": ["none", "worktree", "clone"],
                 },

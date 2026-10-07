@@ -4,43 +4,66 @@ Gobby is fleet management for AI coding agents, a local-first control plane:
 persistent sessions, task graphs, workflows, hooks, MCP proxying, agents, memory,
 and deterministic automation around the tools developers already use.
 
-Last refreshed: 2026-09-16 (decision 18). This document is the roadmap and the
-architecture decision record. The live tracker is epic #21542.
+Last refreshed: 2026-10-06 (stage status and decisions 19–23). This document
+is the roadmap and the architecture decision record. The live tracker is
+#21542 Gobby 1.0: front door, strangler port, hub and node.
 
-## Where we are (2026-09-01)
+## Where we are (2026-10-06)
 
-- **Runtime**: the 0.5.0 Python daemon is the supported local-first runtime —
-  sessions, tasks, memory, workflows, rules, pipelines, agents, MCP proxy.
-  Operators start it with `gobby start`. HTTP `:60887`, WS `:60888`.
+- **Runtime**: the 0.5.0 Python backend provides sessions, tasks, memory,
+  workflows, rules, pipelines, agents, and MCP proxying behind the Rust
+  front door. Operators start it with `gobby start`; public HTTP `:60887`
+  and WS `:60888` belong to `gdaemon` (#21551 front door). The bootstrap
+  (#23041), Rust proxy (#23043), hook 503 handling (#23044), and runner
+  integration (#23045) have landed.
 - **Data**: PostgreSQL is the runtime hub; FalkorDB graph; Qdrant vectors.
-  Schema authority lives in Rust — `gcore` embeds one flattened `baseline@420`
-  with no stacked migrations, and `gdaemon schema apply/verify` owns DDL.
-- **Rust bridgehead**: `crates/` ships `gcode`, `ghook`, `gdaemon`,
-  `gobby-terminal` (`gterm`), and `gobby-client` (`gclient`) over the shared
-  `gcore` library. gterminal and gclient are merged on `0.5.0` (`7ccd140a73`);
-  the `gclient` workspace TUI has landed under #21334.
-- **Completed foundations**: daemon-native runtime boundary (#18902 — it deleted
-  `GOBBY_RUNTIME_MODE`), reactive config store (#19645), account/machine
-  ownership (#19650), hub-owned files home (#20330 / #20238), path-independent
-  project identity (#19651).
-- **Shared datastores**: M0 code has landed (leases, remote DSNs, `machine_id`
-  scoping). The remaining gate is the physical two-machine smoke (#19600). The
-  M0 operating model is **one active daemon per shared hub**; standbys hold the
-  lease control surface only.
-- **Terminals**: native PTY is the default (#22104, on the macOS acceptance evidence
-  in `docs/evidence/native-backend-flip.md`); tmux remains supported per spawn or as
-  a deployment-wide rollback via `gobby config set terminals.default_backend tmux`.
-  `gclient` supports direct semantic frames from the local `gterm` host for
-  native PTY rows and tmux rows via the host's tmux observer; the cell-mode
-  daemon-WS proxy (`terminal_frame`, bincode-b64 semantic frames); and remote
-  `gclient --daemon-url` over a daemon bound to its tailnet address.
+  Schema authority lives in Rust: `gcore` embeds flattened `baseline@420`
+  plus migrations through **459** on `0.5.0`. Migration **460**, the
+  #23437 checkout-mode rename, is queued in #23655 checkout-mode landing
+  for integration and cutover.
+  `gdaemon schema apply/verify` owns DDL.
+- **Rust foundations**: `gcode`, `ghook`, `gdaemon`, `gterm`, and
+  `gclient` share `gcore`. Stage 0 #21334 terminal client is complete.
+  The #22411 heartbeat host landed through #23464 heartbeat landing; family-owned Python
+  timer loops retire as their Stage 2 families move.
+- **Front-door authentication**: #23271 API-key schema, issuance, and local
+  adoption, #23272 auth login/key display, #23269 node bootstrap refusal,
+  and #23270 remote-peer TLS with loopback plaintext have landed. S1.4
+  #21555 remains open: #23273 key validation/shared-token cutover and
+  #23274 node channel are outstanding; its deferred work remains open.
+- **Completed foundations**: daemon-native runtime boundary (#18902),
+  reactive config store (#19645), account/machine ownership (#19650),
+  hub-owned files home (#20330 / #20238), and path-independent project
+  identity (#19651).
+- **Shared datastores**: M0 code has landed. The Python-era operating model
+  remains one active daemon per shared hub, with standbys exposing lease
+  control only. PRE remains open for #19600 two-machine acceptance, which
+  now follows #21575 hub mode and #17436 node mode.
+- **Terminals**: native PTY is the default (#22104; acceptance in
+  `docs/evidence/native-backend-flip.md`). gterm is primary for agents;
+  tmux is a fallback agents cannot select (decision 20). `gclient`
+  supports direct local-host semantic frames, the daemon-WS cell-mode
+  proxy, and remote attach over `--daemon-url`.
+
+Stage status is derived from the task DB on 2026-10-06. Counts below are
+closed direct children of the stage epic, not all descendant leaves; lane
+reparenting is called out explicitly.
+
+| Stage | Current status |
+| --- | --- |
+| PRE | #21547 stability checkpoint, #21548 database-wide lease, #21549 machine-scoped terminals, and #21550 hook fallbacks are closed; #19600 physical two-machine acceptance remains open |
+| Stage 0 · #21334 | Complete: 42/42 direct children closed; Windows cross-toolchain #22447 moved to post-1.0 |
+| Stage 1 · #21543 | 16/18 direct children closed; S1.3 #21554 lifecycle and S1.4 #21555 keys/node registration remain open |
+| Stage 2 · #21544 | In progress: S2.1 #21557 async Postgres and S2.8 #21565 gterm adoption began early under Lane 5; all 13 family epics remain open, including those two reparented lane epics (11 direct children remain under Stage 2) |
+| Stage 3 · #21545 | 0/4 direct children closed; S3.1 #21571 operator verbs waits on Stage 2 (#21544) plus S1.1 and S1.3 #21554 for the lifecycle verbs |
+| Stage 4 · #21546 | 1/8 direct children closed (#21577 node gcode configuration); hub and node work remain open |
 
 ## Naming
 
 Today, `gobby` is the Python daemon and the CLI that operates it. That is the
 one name that changes hands, and it changes hands once, at S3.2 — well into
-Stage 3, after the front door has landed and while Stage 2 absorption is still
-in flight. Until that moment `gobby` means what it means today.
+Stage 3, after the front door has landed and Stage 2 absorption is complete.
+Until that moment `gobby` means what it means today.
 
 At S3.2 the Rust client takes the name. `gclient` — the herdr-derived terminal
 client, package `gobby-client`, built through Stage 0 under #21334 — ships as
@@ -167,37 +190,32 @@ Two standards apply to every stage and are stated once here:
 
 ### PRE — pre-flight for the two-machine smoke
 
-Filed as `found-work` leaves under the #21363 feedback burndown, which is the
-stability feed for the checkpoint and is never itself a dependency.
+The original found-work preflight leaves are complete: #21548 database-wide
+singleton lease, #21549 machine-scoped terminal list/get/attach, and #21550
+removal of dormant hook machine-ID fallbacks. #21547 daemon stability
+checkpoint is also closed. The #21363 feedback burndown is the stability feed,
+not a dependency.
 
-- #21548 — scope the daemon singleton lease to the shared database. Today it
-  is `$GOBBY_HOME`-path-scoped, so two Macs at `/Users/josh/.gobby` collide and
-  a Mac and a Linux hub both run active.
-- #21549 — machine-scope terminal list, get, and `attach_locator`. Files are
-  owned by the #21334 worktree; coordinate.
-- #21550 — remove the dormant hook `machine_id` fallbacks (does not gate the
-  smoke).
-- #21547 — manual daemon stability checkpoint before the hub-PC move, closed by
-  a human after the #21363 burndown.
-
-**M0: shared datastores bridge and two-machine acceptance (#19585).** #19600 is
-its only open deliverable: the physical smoke per
-`.gobby/plans/hub-pc-datastore-move.md` R0–R7 and
-`docs/guides/remote-docker-acceptance.md` Phases 1–9. `blocked_by` #21547,
-#21548, #21549.
+**M0: shared datastores bridge and two-machine acceptance (#19585).**
+#19600 two-machine end-to-end acceptance is its only open deliverable:
+the physical smoke in `.gobby/plans/completed/hub-pc-datastore-move.md`
+R0–R7 and `docs/guides/remote-docker-acceptance.md` Phases 1–9.
+It now waits on #21575 hub mode and #17436 node mode. The completed
+#21547, #21548, and #21549 edges remain satisfied. PRE closes after the
+smoke passes; it no longer gates Stage 4 (decision 23).
 
 ### Stage 0 — terminal client and native PTY runtime (#21334)
 
-The client epic has landed (`.gobby/plans/completed/herdr-client-completion.md`).
-Follow-on planning epics are #21357 (D1: native runtime completion — daemon/host
-hardening and the native-default flip), #20202 (D2: hub-wide roster, attach
-routing, and capability tokens for remote attach) and #21908 (D4: worktree
-groups and workspace lifecycle in the client sidebar, planned in
-`.gobby/plans/gclient-workspace-sidebar.md` as the projects/agents sidebar
-rework with per-project tabs, context menus and viewer-precedence sizing;
-#20202 later feeds its machine filter). #21357 and #20202 are tail work
-blocked on this epic's closing leaf 5.1 (#21355); #20202 additionally waits on
-the two-machine smoke #19600.
+Complete: all 42 direct children are closed. The client plan is at
+`.gobby/plans/completed/herdr-client-completion.md`. #22447 Windows cross
+toolchain moved out of Stage 0 to post-1.0, so it no longer blocks the path
+(decision 22).
+
+The #21357 native-runtime planning work and #21908 workspace-sidebar planning
+are closed; the sidebar plan is at
+`.gobby/plans/completed/gclient-workspace-sidebar.md`. #21355 follow-on
+planning/roadmap seed is closed. #20202 remote roster and attach planning
+remains open and waits on #19600 two-machine acceptance.
 
 ### Stage 1 — the gdaemon front door owns the network boundary (#21543)
 
@@ -218,10 +236,15 @@ wrapper, no mismatch latch. Compare mode is a proxy feature.
 | **S1.4** · #21555 | API keys and node registration: `api_keys` (user, machine, hash, label, revocation) replaces the shared `local_cli_token`; front-door middleware resolves a key to user and machine; the runtime handshake bootstraps a fresh machine's first key; node registration over WS; `machines` gains platform/capabilities/heartbeat/endpoint columns; `/api/machines`; revocation drops the node's channel |
 | **S1.5** · #21552 | HTTP contract corpus for the proxied surface (`tests/contracts/http/`), dual-consumed by pytest and Rust; the parity gate for every Stage 2 takeover |
 
-Edges: `S1.2` ← `S1.1`; `S1.3` ← `S1.2`, `#21548`; `S1.4` ← `S1.2`;
+Edges: `S1.2` ← `S1.1`; `S1.3` ← `S1.2`, #21548 database-wide lease;
+`S1.4` ← `S1.2`;
 `S1.5` independent.
-Stage 1 starts now, in its own worktree, concurrent with #21334, #19664, and the
-#21363 burndown.
+Stage 1 is in progress under its owning lanes. S1.1 front door, S1.2 mode
+boundary, and S1.5 contract corpus are closed. S1.3 still needs #23457
+native standby/lifecycle cutover and #23458 Python lease retirement.
+S1.4 still needs #23273 key validation/shared-token cutover and #23274
+node channel. TLS and API-key issuance have landed; those two remaining
+epics are not complete.
 
 ### Stage 2 — strangler absorption behind the front door (#21544)
 
@@ -246,12 +269,21 @@ claimed; S2.3 is the template.
 | **S2.12** · #21570 | MCP front door flip — the last MCP step |
 | **S2.13** · #21568 | Remaining route families — thirteen children, enumerated now so nothing is discovered late |
 
+Stage 2 has started early under Lane 5: S2.1 #21557 async Postgres has
+completed #23081 pool/budget work, and S2.8 #21565 has completed #23207
+terminal-family crate work. The stage-level S1 edge remains; individual
+dependency-ready work can proceed while Stage 1 is open (decision 21).
+
 Edges: `S2` ← `S1`; `S2.3` ← `S1.5`, `S2.1`;
 `S2.4` ← `S2.3`; `S2.5` ← `S2.4`, `S2.2`;
 `S2.6` ← `S2.4`; `S2.7` ← `S2.4`, `S1.4`;
-`S2.8` ← `S2.2`, `#21334`; `S2.9` ← `S2.5`, `S2.7`;
+`S2.9` ← `S2.5`, `S2.7`;
 `S2.10` ← `S2.4`; `S2.11` ← `S2.5`, `S2.9`, `S2.10`;
 `S2.12` ← `S2.10`, `S2.11`; `S2.13` ← `S2.4`, `S2.2`.
+
+S2.8's M1 adoption/epoch work has no S2.2 transport dependency. Its D2
+#23219 terminal WS/relay waits on S2.2 #21558 native WS transport.
+The former Stage 0 hardening prerequisite is complete.
 
 ### Stage 3 — the client takes the name, then Python retires (#21545)
 
@@ -259,12 +291,13 @@ Edges: `S2` ← `S1`; `S2.3` ← `S1.5`, `S2.1`;
 | --- | --- | --- |
 | **S3.1** · #21571 | Operator verbs on the client | The client carries the daily verbs over the public API; the 175-module `src/gobby/cli/` tail is inventoried with a keep, absorb, or drop decision each |
 | **S3.2** · #21573 | The naming switch: `gclient` → `gobby`, Python → `gobby-backend` | `gobby` on PATH is the Rust client, and `gobby start` brings up story A end to end |
-| **S3.3** · #21572 | Parity ledger at `docs/contracts/parity-ledger.md` | Every row `delegated` or dropped by a recorded decision |
+| **S3.3** · #21572 | Planned parity ledger at `docs/contracts/parity-ledger.md` | Every row `delegated` or dropped by a recorded decision |
 | **S3.4** · #21574 | Retire `gobby-backend` | One commit; all golden corpora green against `gdaemon` alone |
 
-Edges: `S3.1` ← `#21334`, `S1.1`; `S3.2` ← `S3.1`; `S3.4` ← `S3.3`, `S2`.
-Stage 3 carries no stage-level edge; S3.1 and S3.2 start as soon as the client
-is real.
+Edges: `S3.1` ← #21334 terminal client, `S1.1`, `S1.3` (the four lifecycle
+verbs), `S2`; `S3.2` ← `S3.1`; `S3.4` ← `S3.3`, `S2`.
+S3.1 starts after Stage 2 (#21544) completes and lands before S3.2 to S3.4
+begin. The naming switch and the Python retirement follow it.
 
 ### Stage 4 — hub and node live, story B (#21546)
 
@@ -273,13 +306,14 @@ is real.
 | **S4.1** · #17436 | Node mode: the per-machine daemon that holds no datastore credentials and runs only local duties |
 | **S4.1b** · #21579 | Rust node duties — cross-reference to S2.7, S2.8, S2.11; closes when a node runs `gdaemon` alone |
 | **S4.2** · #21575 | Hub mode: everything database-backed runs only in `hub` and `standalone` |
-| **S4.3** · #20202 | Remote `gobby` attach — plan home stays under #21334 |
+| **S4.3** · #20202 | Remote `gobby` attach — planning waits on #19600 two-machine acceptance |
 | **S4.4** · #17769 | Per-user auth and multi-user; labeled `later` |
+| **S4.5** · #21577 | Configure `gcode` on nodes (closed) |
 | **S4.6** · #19652 | Hub transcript archive research |
 | **S4.7** · #20203 | Hosted terminal-relay privacy stance — `hosted`, off-spine |
 | **S4.8** · #21576 | Move Telegram and comms attachments onto hub `files_home` |
 
-Edges: `S4` ← `S1`, `#19600`; `S4.1b` ← `S2.7`, `S2.8`, `S2.11`, `#21549`;
+Edges: `S4` ← `S1`; `S4.1b` ← `S2.7`, `S2.8`, `S2.11`, #21549 machine-scoped terminals;
 `S4.2` ← `S1.2`; `S4.4` ← `S1.4`.
 
 **Story B is testable when Stage 1, S4.2, and S4.1b close.** S4.2 runs right
@@ -330,8 +364,8 @@ separate planning effort before implementation.
 
 ## Ports and the proxied surface
 
-- `:60887` HTTP and `:60888` WS are public and become `gdaemon`'s at S1.1;
-  the Python daemon moves to an internal loopback port set in bootstrap.
+- `:60887` HTTP and `:60888` WS are public and belong to `gdaemon`;
+  the Python backend uses an internal loopback port set in bootstrap.
 - `:60889` dev web UI. `:60891` managed PostgreSQL. `:60890` is released — the
   sidecar it was reserved for is not being built.
 - Freeze set for the port: the three terminal protocols, the WS event envelope,
@@ -458,18 +492,64 @@ separate planning effort before implementation.
     I/O pumps keep their own mechanisms, and the node-channel keepalive
     (`gdaemon-front-door.md §4.4`) is unrelated.
 
+19. Ask was built and retired (recorded 2026-10-06). Ask was implemented through about 220
+    commits and later retired. The roadmap records both milestones as project history.
+
+20. gterm is the primary terminal backend (2026-09-22). Agent spawning uses gterm. tmux
+    remains an operator-controlled fallback; agents cannot select it as their spawn backend.
+
+21. Lanes own path epics (recorded 2026-10-06). Each path epic has an assigned lane. Stage 2
+    may begin while Stage 1 remains open where the work's dependencies are satisfied. Lane 5
+    started S2.1 and S2.8, the gterminals family crate, early.
+
+22. Windows support is post-1.0 (2026-10-06). Josh: "Go with orchestrator's recommendation.
+    Windows support for Gobby is untested and shouldn't be a blocker." Move #22447 Windows cross
+    toolchain to post-1.0; it does not gate the current path.
+
+23. Two-machine acceptance follows hub and node (2026-10-06). Josh: "I'm not wanting to test
+    two machines until hub and node is working, otherwise it's a waste of effort." #19600
+    Two-machine end-to-end acceptance runs after #21575 Hub mode and #17436 Node mode. PRE remains
+    open until that smoke passes. #19600 Two-machine acceptance no longer gates #21546 Stage 4 hub
+    and node live (story B).
+
+24. Operator verbs follow Stage 2 and precede the rest of Stage 3 (2026-10-06). Josh, on
+    #21571 Operator verbs on the client: "Ok, it needs to be after stage 2 but before stage 3."
+    This supersedes his earlier Stage 4 idea. S3.1 starts after #21544 Stage 2 completes and
+    lands before S3.2 to S3.4 begin.
+
 ## References
 
-Completed plans: `.gobby/plans/completed/daemon-native-runtime-boundary.md`,
-`shared-remote-stack.md`, `machine-scoped-worktrees-clones.md`,
-`project-checkout-identity.md`, `two-daemon-hub.md`,
-`hub-owned-files-home.md`, `account-identity-machine-ownership.md`,
-`reactive-config-store.md`, `herdr-terminal-client.md`,
-`herdr-terminal-client-qa-fixes.md`, `herdr-foundation-landing.md`,
-`herdr-client-completion.md`, `hub-pc-datastore-move.md`,
-`retire-legacy-wiki.md`.
+Completed plans:
 
-Live plans: `.gobby/plans/m0-shared-datastores-bridge.md`.
+- `.gobby/plans/completed/daemon-native-runtime-boundary.md`
+- `.gobby/plans/completed/shared-remote-stack.md`
+- `.gobby/plans/completed/machine-scoped-worktrees-clones.md`
+- `.gobby/plans/completed/project-checkout-identity.md`
+- `.gobby/plans/completed/two-daemon-hub.md`
+- `.gobby/plans/completed/hub-owned-files-home.md`
+- `.gobby/plans/completed/account-identity-machine-ownership.md`
+- `.gobby/plans/completed/reactive-config-store.md`
+- `.gobby/plans/completed/herdr-terminal-client.md`
+- `.gobby/plans/completed/herdr-terminal-client-qa-fixes.md`
+- `.gobby/plans/completed/herdr-foundation-landing.md`
+- `.gobby/plans/completed/herdr-client-completion.md`
+- `.gobby/plans/completed/hub-pc-datastore-move.md`
+- `.gobby/plans/completed/gclient-workspace-sidebar.md`
+- `.gobby/plans/completed/gcode-agentic-ask-pipeline.md`
+- `.gobby/plans/completed/retire-legacy-wiki.md`
+
+Live path and related stability plans:
+
+- `.gobby/plans/m0-shared-datastores-bridge.md`
+- `.gobby/plans/gdaemon-front-door.md`
+- `.gobby/plans/gdaemon-api-keys-nodes.md`
+- `.gobby/plans/gdaemon-key-cutover.md`
+- `.gobby/plans/gdaemon-node-channel.md`
+- `.gobby/plans/gmcp-stdio.md`
+- `.gobby/plans/gcore-async-postgres.md`
+- `.gobby/plans/daemon-side-gterm-adoption-and-terminal-ws.md`
+- `.gobby/plans/gterm-host-handover.md`
+- `.gobby/plans/gclient-daemon-resilience.md`
 
 Architecture and guides: `docs/architecture/hub-owned-files-home.md`,
 `docs/guides/shared-stack.md`, `docs/guides/remote-docker-acceptance.md`,

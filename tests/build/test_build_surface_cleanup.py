@@ -104,45 +104,45 @@ def test_json_surfaces_omit_removed_fields(temp_db: HubDatabase) -> None:
     registry = create_task_ops_registry(LocalTaskManager(temp_db))
     tool = next(item for item in registry.list_tools() if item["name"] == "build_task")
     schema = cast(dict[str, Any], tool["inputSchema"])
-    assert {"isolation", "quick", "no_merge", "stage", "pr"}.issubset(schema["properties"])
+    assert {"checkout_mode", "quick", "no_merge", "stage", "pr"}.issubset(schema["properties"])
     assert {"stages", "add_stages", "yolo", "composer_yolo"}.isdisjoint(schema["properties"])
-    assert {"profile", "unattended", "isolation", "quick", "no_merge", "stage", "pr"}.issubset(
+    assert {"profile", "unattended", "checkout_mode", "quick", "no_merge", "stage", "pr"}.issubset(
         BuildRequest.model_fields
     )
 
 
 def test_resolve_build_isolation_accepts_legacy_clone_flag() -> None:
-    from gobby.build.options import resolve_build_isolation
+    from gobby.build.options import resolve_build_checkout_mode
 
-    resolved = resolve_build_isolation(isolation=None, workspace_backend=None, clone=True)
+    resolved = resolve_build_checkout_mode(checkout_mode=None, workspace_backend=None, clone=True)
 
-    assert resolved.isolation == "clone"
+    assert resolved.checkout_mode == "clone"
     assert resolved.explicit is True
 
 
 @pytest.mark.parametrize(
-    ("isolation", "workspace_backend", "clone", "message"),
+    ("checkout_mode", "workspace_backend", "clone", "message"),
     [
-        ("worktree", None, True, "clone=true conflicts with isolation=worktree"),
+        ("worktree", None, True, "clone=true conflicts with checkout_mode=worktree"),
         (None, "worktree", True, "clone=true conflicts with workspace_backend=worktree"),
-        ("clone", "worktree", False, "isolation conflicts with workspace_backend"),
+        ("clone", "worktree", False, "checkout_mode conflicts with workspace_backend"),
     ],
 )
 def test_resolve_build_isolation_rejects_conflicts(
-    isolation: str | None,
+    checkout_mode: str | None,
     workspace_backend: str | None,
     clone: bool,
     message: str,
 ) -> None:
     from typing import cast
 
-    from gobby.build.options import resolve_build_isolation
+    from gobby.build.options import resolve_build_checkout_mode
     from gobby.build.workspaces import WorkspaceBackend
-    from gobby.config.build import Isolation
+    from gobby.config.build import CheckoutMode
 
     with pytest.raises(ValueError, match=message):
-        resolve_build_isolation(
-            isolation=cast(Isolation | None, isolation),
+        resolve_build_checkout_mode(
+            checkout_mode=cast(CheckoutMode | None, checkout_mode),
             workspace_backend=cast(WorkspaceBackend | None, workspace_backend),
             clone=clone,
         )

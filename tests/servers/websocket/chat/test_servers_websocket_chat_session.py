@@ -19,6 +19,7 @@ from gobby.servers.websocket.chat._session_binding import _resolve_web_chat_reas
 from gobby.servers.websocket.chat._session_runtime import _resolve_git_branch
 from gobby.servers.websocket.chat._streaming import ChatStreamingMixin
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.daemon_git import GitOk, GitTimeout
 from tests._timing import drain_asyncio_tasks, wait_forever
 
@@ -29,15 +30,15 @@ class DummyMixin(ChatStreamingMixin, ChatSessionMixin):
     _fire_lifecycle: AsyncMock
 
     def __init__(self) -> None:
-        self.clients: dict = {}
-        self._chat_sessions: dict = {}
-        self._active_chat_tasks: dict = {}
-        self._pending_modes: dict = {}
-        self._pending_worktree_paths: dict = {}
-        self._pending_agents: dict = {}
-        self._pending_projects: dict = {}
-        self._pending_providers: dict = {}
-        self._session_create_locks: dict = {}
+        self.clients: dict[Any, dict[str, Any]] = {}
+        self._chat_sessions: dict[str, Any] = {}
+        self._active_chat_tasks: dict[str, Any] = {}
+        self._pending_modes: dict[str, str] = {}
+        self._pending_worktree_paths: dict[str, str] = {}
+        self._pending_agents: dict[str, str] = {}
+        self._pending_projects: dict[str, str] = {}
+        self._pending_providers: dict[str, str] = {}
+        self._session_create_locks: dict[str, asyncio.Lock] = {}
         self.session_manager: Any = None
         self.daemon_config: Any = None
         self.web_chat_runtime_manager: Any = None
@@ -122,10 +123,28 @@ async def test_web_chat_launch_uses_apply_agent_definition(
 async def test_agent_switch_relaunches_through_activation(
     web_activation: tuple[DummyMixin, AsyncMock],
     target: str,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from gobby.mcp_proxy.tools.apply_agent_definition import apply_agent_definition_impl
+    from gobby.storage.definitions import AgentDefinitionManager
+    from gobby.storage.sessions import SessionManager
+    from gobby.workflows.state_manager import SessionVariableManager
+    from tests.fixtures.agent_definitions import make_agent_definition
+    from tests.mcp_proxy.tools.test_apply_agent_definition import register_session
     from tests.servers.websocket.test_set_agent import ConcreteSessionControl
 
     owner, session = web_activation
+    sid = register_session(temp_db, monkeypatch)
+    row = SessionManager(temp_db).get(sid)
+    assert row is not None
+    owner.session_manager.db = temp_db
+    owner.session_manager.register.return_value = row
+    for name in ("default", "x", "y"):
+        body = make_agent_definition(name=name, surfaces=["persona"], prompts={"persona": name})
+        AgentDefinitionManager(temp_db).create(name=name, definition_json=body.model_dump_json())
+    variables = SessionVariableManager(temp_db)
+    variables.merge_variables(sid, {"_agent_type": "x", "_persona_name": "y"})
     old_session = MagicMock(db_session_id="db-id-x", _pending_agent_name="x")
     old_session.stop = AsyncMock()
     owner._chat_sessions["seat-chat"] = old_session
@@ -151,8 +170,12 @@ async def test_agent_switch_relaunches_through_activation(
         ),
         patch(
             "gobby.mcp_proxy.tools.apply_agent_definition.apply_agent_definition_impl",
-            new=AsyncMock(return_value={"success": True, "status": "applied"}),
+            new=AsyncMock(wraps=apply_agent_definition_impl),
         ) as activate,
+        patch(
+            "gobby.servers.websocket.chat._session.resolve_chat_session_project_path",
+            return_value=None,
+        ),
     ):
         resolve.return_value = MagicMock(name=target)
         created = await owner._create_chat_session_inner("seat-chat")
@@ -160,11 +183,13 @@ async def test_agent_switch_relaunches_through_activation(
     activate.assert_awaited_once_with(
         agent=target,
         db=owner.session_manager.db,
-        session_id="db-id-seat",
+        session_id=sid,
         cli_source="qwen",
         relaunch=True,
     )
     assert created is session
+    assert variables.get_variables(sid)["_persona_name"] is None
+    assert variables.get_variables(sid)["_agent_type"] == target
     assert session.system_prompt_override == f"Instructions for {target}"
     owner._fire_lifecycle.assert_awaited_once_with(
         "seat-chat", HookEventType.SESSION_START, {"skip_default_agent_activation": True}
@@ -271,8 +296,7 @@ class TestResolveGitBranch:
 class TestCancelActiveChat:
     @pytest.mark.asyncio
     async def test_cancel_active_chat_no_session(self, mixin: DummyMixin) -> None:
-        result = await mixin._cancel_active_chat("conv-xyz")
-        assert result is None
+        await mixin._cancel_active_chat("conv-xyz")
         assert "conv-xyz" not in mixin._active_chat_tasks
 
     @pytest.mark.asyncio
@@ -555,6 +579,7 @@ class TestCreateChatSessionInner:
             session = await mixin._create_chat_session_inner("conv-1")
 
             # Emulate the mode changed hook firing
+            assert session._on_mode_changed is not None
             await session._on_mode_changed("accept_edits", "testing")
             mock_ws.send.assert_called()
             call_args = mock_ws.send.call_args[0][0]
@@ -562,6 +587,7 @@ class TestCreateChatSessionInner:
             assert "accept_edits" in call_args
 
             # Check that plan ready is broadcast
+            assert session._on_plan_ready is not None
             await session._on_plan_ready("plan data", {"allowedPrompts": ["y"]}, "plan-tool")
             call_args_plan = mock_ws.send.call_args[0][0]
             assert "plan_pending_approval" in call_args_plan
@@ -1035,9 +1061,12 @@ class TestCreateChatSessionInner:
         mixin.session_manager = MagicMock()
         mixin.session_manager.db = MagicMock()
         mixin.session_manager.get.return_value = existing_db_sess
-        mixin.session_manager.activate_web_chat_session.side_effect = (
-            lambda _session_id: lifecycle_order.append("activate") or activated_db_sess
-        )
+
+        def activate(_session_id: str) -> MagicMock:
+            lifecycle_order.append("activate")
+            return activated_db_sess
+
+        mixin.session_manager.activate_web_chat_session.side_effect = activate
 
         session = await mixin._create_chat_session_inner("db-expired")
 

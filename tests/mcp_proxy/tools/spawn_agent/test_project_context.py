@@ -43,7 +43,7 @@ async def test_explicit_checkout_project_identity_at_tool_boundary(
                 "prompt": "Review this checkout",
                 "project_path": str(tmp_path),
                 "parent_session_id": "parent-session",
-                "isolation": "none",
+                "checkout_mode": "none",
             },
         )
 

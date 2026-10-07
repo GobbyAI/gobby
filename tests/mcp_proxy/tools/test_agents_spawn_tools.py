@@ -137,23 +137,22 @@ async def test_supplied_model_without_provider_is_rejected_before_allocation() -
     with (
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
-        ) as isolation,
+        ) as checkout_mode,
         patch("gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn") as execute,
     ):
         result = await spawn_agent_impl(
             prompt="work",
             runner=runner,
             model="grok-4.6",
-            terminal_backend="native",
             parent_session_id="parent",
-            isolation="worktree",
+            checkout_mode="worktree",
         )
 
     assert result["success"] is False
     assert result["error_code"] == PROVIDER_REQUIRED_FOR_MODEL
     assert result["model"] == "grok-4.6"
     assert "provider" in result["error"]
-    isolation.assert_not_called()
+    checkout_mode.assert_not_called()
     execute.assert_not_called()
     runner.can_spawn.assert_not_called()
 
@@ -171,13 +170,12 @@ async def test_supplied_model_does_not_use_agent_or_session_provider() -> None:
 
     with patch(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
-    ) as isolation:
+    ) as checkout_mode:
         result = await spawn_agent_impl(
             prompt="work",
             runner=runner,
             agent_body=agent_body,
             model="grok-4.6",
-            terminal_backend="native",
             parent_session_id="parent",
             caller_session_id="caller",
             session_manager=session_manager,
@@ -185,7 +183,7 @@ async def test_supplied_model_does_not_use_agent_or_session_provider() -> None:
 
     assert result["success"] is False
     assert result["error_code"] == PROVIDER_REQUIRED_FOR_MODEL
-    isolation.assert_not_called()
+    checkout_mode.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -202,7 +200,7 @@ async def test_incompatible_pair_does_not_create_worktree(
     with (
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
-        ) as isolation,
+        ) as checkout_mode,
         patch("gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn") as execute,
     ):
         result = await spawn_agent_impl(
@@ -210,10 +208,9 @@ async def test_incompatible_pair_does_not_create_worktree(
             runner=runner,
             provider="codex",
             model="grok-4.6",
-            isolation="worktree",
+            checkout_mode="worktree",
             worktree_storage=worktree_storage,
             project_path=str(repo),
-            terminal_backend="native",
             parent_session_id="parent",
         )
 
@@ -225,7 +222,7 @@ async def test_incompatible_pair_does_not_create_worktree(
     assert "codex" in result["error"]
     assert result["compatible_providers"] == ["grok"]
     assert capability_resolver.find_model("codex", "grok-4.6") is None
-    isolation.assert_not_called()
+    checkout_mode.assert_not_called()
     execute.assert_not_called()
     worktree_storage.create.assert_not_called()
     worktree_storage.get_by_branch.assert_not_called()

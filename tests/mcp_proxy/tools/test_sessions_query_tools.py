@@ -10,6 +10,7 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions._crud import register_crud_tools
 from gobby.storage.session_models import Session
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -62,7 +63,15 @@ def _session_manager(*sessions: Session) -> MagicMock:
     manager.list.return_value = list(sessions)
     manager.count.return_value = len(sessions)
     manager.fetch_task_refs_by_session.side_effect = _fetch_side_effect
+    manager.load_task_refs.side_effect = lambda rows: SessionManager.load_task_refs(manager, rows)
     return manager
+
+
+def test_unloaded_task_refs_are_unknown() -> None:
+    row = _make_session().to_dict()
+    assert row["claimed_task_refs"] is None
+    assert row["created_task_refs"] is None
+    assert row["closed_task_refs"] is None
 
 
 def test_list_sessions_and_get_session_agree_on_task_refs() -> None:

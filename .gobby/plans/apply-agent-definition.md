@@ -20,17 +20,23 @@ an agent definition on the caller's interactive session:
 - tool blocks;
 - the step workflow.
 
-The activation survives compaction, resume and `/clear`. `apply_persona` is
-deleted with no alias, and every caller migrates. This is a functional
-expansion, not a rename.
+The activation survives compaction, resume and `/clear`. `apply_persona`
+stays beside it as the lightweight persona switch: it overlays a definition's
+persona prompt and skills on the session, live, and activates nothing else
+(Decision 3). Josh's ruling on 2026-10-06 keeps both tools, and #23647 restores
+`apply_persona` after 1.1 deleted it. This is a functional expansion, not a
+rename.
 
 What users will see:
-- In a terminal pane, changing an active seat to another agent, or back to the
-  default agent, now needs a relaunch. If you pick a new agent for an attached
-  terminal in the web UI, you get an error that tells you to start a new
-  terminal session with that agent, and the current agent stays selected.
-  Picking an agent for a pane that still runs the default agent works as
-  before.
+- In a terminal pane, picking an agent for an attached terminal in the web UI
+  switches the pane's persona live through `apply_persona`, with no relaunch.
+  The prompt and skills change, and an active seat's rules, tool blocks and
+  step workflow stay in force. Picking `default` returns the pane to its own
+  definition's prompt and skills.
+- Changing a terminal pane's agent definition, from one seat to another or
+  from a seat back to the default agent, needs a relaunch: start a new
+  terminal session with that agent. `apply_agent_definition` refuses the
+  change in place with `role_change_requires_relaunch`.
 - In web chat, switching agents keeps working. The switch restarts the chat's
   CLI process with the new agent, and the conversation continues on the same
   session.
@@ -47,7 +53,7 @@ enforces it (#22902 Constraints, boundary paragraph).
 ## Decision Record
 `kind: framing`
 
-1. **One activation tool, self-session only.**
+1. **One definition-activation tool, self-session only.**
    - Tool: `gobby-agents:apply_agent_definition(agent, variables=None,
      task_id=None)`.
    - It acts on the caller's own session, resolved from session context. It
@@ -59,8 +65,18 @@ enforces it (#22902 Constraints, boundary paragraph).
    - Rejected: Orchestrator-targeted activation of another session. No flow in #22902,
      #22904 or #22895 needs it. It would also change another agent's rules and
      tool blocks mid-turn with no receipt.
-   - `apply_persona` and its module are deleted, with no alias (AGENTS.md rule
-     10).
+   - `gobby-agents:apply_persona` stays beside it as the lightweight persona
+     switch (Josh, 2026-10-06 00:48 CT: "Keep both."). The two tools have
+     distinct roles:
+     - `apply_agent_definition` activates a whole definition: identity,
+       prompt, rules, skills, variables, tool blocks and the step workflow. A
+       role change needs a relaunch (Decision 5).
+     - `apply_persona` overlays a definition's persona prompt, skill set and
+       skill format on the caller's session. It switches live with no
+       relaunch, and changes no rules, variables, tool blocks or step workflow
+       (Decision 3).
+   - Amended 2026-10-06 (#23648): the earlier draft deleted `apply_persona`,
+     and 1.1 did so at e8f43fb8ab. #23647 restores it.
 2. **The delta is the SessionStart delta.**
    - Activation reuses `build_persona_changes`, renamed `build_definition_changes`
      and moved to the new module.
@@ -80,18 +96,45 @@ enforces it (#22902 Constraints, boundary paragraph).
        makes rules follow the seat.
      - `resolve_agent_name` returns a stored non-default `_agent_type`, so every
        later SessionStart re-activation resolves the same seat. That closes the
-       compaction hazard: today a persona session reverts to the `default`
-       skills on its first compact.
-   - Rejected: a second, narrower persona delta. That is today's
-     `build_session_persona_changes`, and it is the source of the hazard.
-3. **`_persona_name` is retired.**
+       compaction hazard for an activated definition: before 1.1, a persona
+       session reverted to the `default` skills on its first compact. A
+       persona overlay keeps its skills through #23647 (Decision 3).
+   - Rejected: activating a definition through the narrower persona delta
+     (`build_session_persona_changes` before e8f43fb8ab). It writes no
+     `_agent_type`, which was the source of the hazard. That delta serves only
+     `apply_persona`'s overlay (Decision 3).
+3. **`_persona_name` is `apply_persona`'s overlay, never a definition
+   identity.** Amended 2026-10-06 (#23648): the earlier draft retired it, and
+   1.1 removed its readers at e8f43fb8ab. #23647 restores them.
+   - `apply_persona` writes `_persona_name` with the persona's skill set and
+     skill format, and requests identity reinjection. It writes no
+     `_agent_type`, rules, variables, tool blocks or step instance.
    - There are two readers. `_agent.py::_inject_agent_instructions_if_needed`
      chooses the prompt, and `skills/discovery.py::get_session_skill_exclusions`
-     chooses skill exclusions. Both read `_agent_type`.
+     chooses skill exclusions. On an interactive session both take
+     `_persona_name` first, then `_agent_type`. A spawned session reads
+     `_agent_type` only.
+   - Seat rules, tool blocks and step workflows are keyed on `_agent_type`
+     only (1.5). A persona overlay never makes a session a seat.
+   - Compact or resume re-activation keeps the overlay. While `_persona_name`
+     is set, the session keeps the persona's prompt, skill set and skill
+     format. A seated session also keeps its seat's rules, variables, tool
+     blocks and step workflow (#23647).
+   - `apply_persona(agent="default")` removes the overlay. A base-agent
+     session returns to the default persona, and a seated session returns to
+     its definition's own prompt and skill set (#23647).
+   - A definition activation that writes, through the tool or a web-chat
+     relaunch, clears `_persona_name`, so the activated definition's own
+     prompt and skills apply. `apply_agent_definition_impl` writes
+     `_persona_name: None` beside the reinjection flags (#23647). SessionStart
+     re-activation leaves the overlay as it is, and so do a refusal and an
+     `unchanged` receipt, which write nothing.
    - The prompt surface stays keyed on `is_spawned_agent`: `persona` for
      interactive sessions, `agent` for spawned ones.
-   - Rejected: keeping `_persona_name` as a mirror of `_agent_type`. Two
-     variables for one identity is the drift this plan removes.
+   - Rejected: retiring `_persona_name`, the earlier draft. Josh, 2026-10-06
+     00:27 CT, on the deletion: "They served two different roles."
+   - Rejected: keeping `_persona_name` as a mirror of `_agent_type`. It names
+     an overlay. A second variable for the same identity would drift.
 4. **Pin and drift.**
    - Activation stores the pin `_agent_definition_hash`. Its value is
      `compute_definition_hash(agent_body.model_dump_json())` over the resolved
@@ -263,14 +306,18 @@ enforces it (#22902 Constraints, boundary paragraph).
     - R2: once the role files retire (D2), a lane derives from task and queue
       ownership: the claimed task's epic, or the lane queue that assigned it.
       There is no lane session variable.
-12. **The `/gobby persona` command word stays.**
+12. **The `/gobby persona` command routes to `apply_persona`.**
     - The web UI's attached-terminal `set_agent` sends `/gobby persona <name>`
       (`servers/websocket/handlers/session_config.py::_set_attached_session_agent`,
       pinned by `tests/servers/websocket/test_set_agent.py`).
-    - The command routes to the `references/agents/personas.md` skill reference.
-      This plan rewrites that reference to call `apply_agent_definition`, and
-      neither the websocket handler nor the reference path changes. `persona`
-      stays the name of the prompt surface.
+    - The command routes to the `references/agents/personas.md` skill
+      reference, which calls `apply_persona`. The picker therefore switches the
+      terminal's persona live, and #23647 restores that switch. 3.1 adds the
+      definition-activation route to the reference. #23647 returns the
+      websocket handler to its pre-#23503 switch, and the reference path does
+      not change. `persona` stays the name of the prompt surface.
+    - Amended 2026-10-06 (#23648): the earlier draft rewrote the reference to
+      call `apply_agent_definition`.
 
 ## As-Is Facts
 `kind: framing`
@@ -529,8 +576,8 @@ shared main checkout.
 Corrections (line hints are against 45e6be4254, which is still the plan's last
 commit on 2026-10-05):
 
-- Line 86: the skill-selector readers become `resolve_skills_for_agent` and
-  `apply_agent_definition`.
+- Line 86: the skill-selector readers become `resolve_skills_for_agent`,
+  `apply_agent_definition` and, once #23647 restores it, `apply_persona`.
 - D2 (lane text) and 4.1 (lane files): the lane derives from task and queue
   ownership (R2). The lane line in each lane role file lasts only until D2 of
   this plan retires the files.
@@ -555,6 +602,13 @@ commit on 2026-10-05):
 - P4 goal, 4.1 research context, pointer text and rollout; acceptance 4.1.1 and
   4.1.2; V1 live check; M1 validation criteria for 4.1: every `apply_persona`
   becomes `apply_agent_definition`.
+  - 4.1.1 (#23001, "Role files point at seat definitions"): each role file
+    points its seat at `apply_agent_definition(agent=<seat>)`, not
+    `apply_persona`. Amended 2026-10-06 (#23671): keeping `apply_persona`
+    (Decision 1) does not change this, because after #23507 ("Seat rules
+    match `_agent_type` only", 1.5) `apply_persona` gives a session no seat
+    rules and no activation receipt. The Orchestrator updates #23001's
+    description and criteria when the corrected plan is ready.
 - Seat rename (#23038; the Orchestrator's ruling on 2026-09-28): `program-director` becomes
   `orchestrator` everywhere, so the plan matches the SEATS list #22994 committed at
   59255a9. That covers the Decision 2 catalogue, Decisions 7 and 10, the 2.2
@@ -574,9 +628,8 @@ SessionStart re-activation keeps it.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/mcp_proxy/tools/apply_agent_definition.py`
-- `src/gobby/mcp_proxy/tools/apply_persona.py::*` — operation: delete — scope-reason: the module is replaced by apply_agent_definition.py with no alias
-- `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::*` — scope-reason: replace the nested apply_persona registration with apply_agent_definition
+- `src/gobby/mcp_proxy/tools/apply_agent_definition.py::*` — scope-reason: 1.1 creates the module: the shared activation core (build_definition_changes, activation_decision, commit_definition_changes) and apply_agent_definition_impl
+- `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::*` — scope-reason: 1.1 replaced the nested apply_persona registration with apply_agent_definition; #23647 registers apply_persona again beside it
 - `src/gobby/hooks/event_handlers/_session_start/agents.py::build_agent_changes`
 - `src/gobby/hooks/event_handlers/_session_start/agents.py::activate_default_agent`
 - `src/gobby/hooks/event_handlers/_agent.py::AgentEventHandlerMixin._inject_agent_instructions_if_needed`
@@ -584,26 +637,46 @@ Targets:
 - `src/gobby/servers/websocket/chat/_session_launch.py::start_hydrated_session`
 - `src/gobby/servers/websocket/chat/_session.py::ChatSessionMixin._create_chat_session_inner`
 - `src/gobby/servers/websocket/handlers/session_config.py::_set_attached_session_agent`
-- `tests/mcp_proxy/tools/test_apply_agent_definition.py`
-- `tests/hooks/test_session_start_reactivation.py`
+- `tests/mcp_proxy/tools/test_apply_agent_definition.py::*` — scope-reason: 1.1 creates the tool's activation, refusal, seat, relaunch and concurrency tests
+- `tests/hooks/test_session_start_reactivation.py::*` — scope-reason: 1.1 creates the SessionStart compact, provider-pin, dropped-skill and drift-relaunch reactivation tests
 - `tests/servers/websocket/test_attached_session_agent.py::*` — scope-reason: the fixture seeds the target's variables at the base agent, plus the role-change refusal and current-agent echo case
-- `tests/mcp_proxy/tools/test_apply_persona.py::*` — operation: delete — scope-reason: replaced by test_apply_agent_definition.py
 - `tests/workflows/test_step_snapshot_semantics.py::*` — scope-reason: retarget module paths; persona switch tests become refusal and no-op tests
 - `tests/mcp_proxy/tools/skills/test_list_skills.py::*` — scope-reason: import the renamed delta builder
 - `tests/workflows/test_session_defaults.py::*` — scope-reason: import the renamed delta builder
 - `tests/servers/websocket/chat/test_servers_websocket_chat_session.py::*` — scope-reason: patch targets move to the new module
-- `tests/hooks/test_agent_events_coverage.py::*` — scope-reason: fixtures set _agent_type instead of the retired _persona_name
-- `tests/hooks/test_session_activation_reconciliation.py::*` — scope-reason: fixtures set _agent_type instead of the retired _persona_name
+- `tests/hooks/test_agent_events_coverage.py::*` — scope-reason: fixtures set the seat identity in _agent_type instead of _persona_name
+- `tests/hooks/test_session_activation_reconciliation.py::*` — scope-reason: fixtures set the seat identity in _agent_type instead of _persona_name
 - `tests/hooks/event_handlers/test_session_variable_preservation.py::*` — scope-reason: the always-reapply set gains the pin and key-list keys
 - `tests/hooks/event_handlers/test_activate_agent_override.py::*` — scope-reason: an override that is a role change on a seat row keeps the stored seat
+
+**Amendment, 2026-10-06 (#23648):** Josh's ruling on `apply_persona` (00:48
+CT, "Keep both.") reverses part of what #23503 delivered at e8f43fb8ab.
+#23647 restores, beside `apply_agent_definition`:
+- the `apply_persona` tool, its registration and its persona-switch helpers,
+  adapted to the shared core, and `test_apply_persona.py`;
+- the `_persona_name`-first reads in `_inject_agent_instructions_if_needed`
+  and `get_session_skill_exclusions` (Decision 3);
+- the attached-terminal picker's live persona switch. `_set_attached_session_agent`
+  sends `/gobby persona <name>` again in place of the
+  `ROLE_CHANGE_REQUIRES_RELAUNCH` refusal that #23503 delivered under 1.1.15,
+  which #23647 criterion 3 reverses.
+
+#23647 also removes the registry test's assertion that `apply_persona` is
+absent (1.1.7). 1.1.7 and 1.1.15 leave the acceptance items, and the item ids
+of the rest stay. The zero-persona `rg` sweep that 1.1 ran is withdrawn as a
+standing check. 1.1's Targets no longer list `apply_persona.py` or
+`test_apply_persona.py`: #23503 removed both at e8f43fb8ab, and #23647
+restores them. The rest of this section records 1.1 as delivered. Where it
+deletes or retires a persona symbol, or refuses the attached-terminal switch,
+this amendment governs.
 
 **Granularity:** ten production files, one behavior. The tool, its shared
 core, the two web-chat callers, the attached-terminal handler and the two
 `_persona_name` readers change together.
-Deleting `apply_persona.py` breaks every importer in the same commit, so they
-cannot be split without a red tree. The switch paths change in the same commit
-as the role-change refusal, because the refusal alone would break today's
-web-chat switch.
+At e8f43fb8ab, removing `apply_persona.py` broke every importer in the same
+commit, so they could not be split without a red tree. The switch paths
+change in the same commit as the role-change refusal, because the refusal
+alone would break today's web-chat switch.
 
 **Research context:** the current code:
 - `apply_persona.py` (305 lines) holds:
@@ -849,8 +922,6 @@ Tests: `test_apply_agent_definition.py` uses the `HubDatabase` fixtures of
   and a `skill_format`, and a seat with neither. The reactivation case patches
   definition resolution to drop the seat's selectors and format before
   SessionStart `compact`.
-- The registry case lists the registered tools of
-  `register_agent_spawn_tools` and asserts that `apply_persona` is absent.
 - The relaunch case seeds two seat rows, X declaring `workflows.variables`
   `{x_only: 1}` and Y declaring none, activates X, and relaunches to Y and,
   separately, to `default`.
@@ -880,18 +951,15 @@ Tests: `test_apply_agent_definition.py` uses the `HubDatabase` fixtures of
   command cases and at seat X for the refusal.
 
 Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/test_session_start_reactivation.py tests/workflows/test_step_snapshot_semantics.py tests/mcp_proxy/tools/skills/test_list_skills.py tests/workflows/test_session_defaults.py tests/servers/websocket/chat/test_servers_websocket_chat_session.py tests/servers/websocket/test_set_agent.py tests/servers/websocket/test_attached_session_agent.py tests/hooks/test_agent_events_coverage.py tests/hooks/test_session_activation_reconciliation.py tests/hooks/event_handlers/test_session_variable_preservation.py tests/hooks/event_handlers/test_activate_agent_override.py tests/hooks/test_session_start_handlers.py tests/hooks/test_session_materialize.py -q`.
-Then run `uv run ruff check` and `uv run mypy` on the changed files, and
-`rg -w 'apply_persona|_persona_name|build_session_persona_changes' src tests --glob '!tests/mcp_proxy/tools/test_apply_agent_definition.py' --glob '!src/gobby/install/shared/workflows/rules' --glob '!tests/workflows/test_seat_rules.py' --glob '!src/gobby/install/shared/skills/gobby/references/agents/personas.md' --glob '!src/gobby/install/shared/skills/gobby/references/review/epic.md' --glob '!src/gobby/install/shared/workflows/review.yaml' --glob '!tests/skills/test_review_skill.py'`,
-which must print nothing. The first excluded file holds the retirement-absence
-assertion of 1.1.7, and `rg -w -c apply_persona tests/mcp_proxy/tools/test_apply_agent_definition.py`
-must print `1`. The other exclusions are paths that later leaves own. 1.5
-removes the rule clauses and the seat-rule fixtures, and 3.1 rewrites the two
-references, the review workflow and its test. The final-state `rg` in V2 covers
-all of them.
+Then run `uv run ruff check` and `uv run mypy` on the changed files. 1.1 also
+ran a zero-persona `rg` sweep at e8f43fb8ab. The 2026-10-06 amendment above
+withdraws it, because #23647 restores `apply_persona` and the `_persona_name`
+reads.
 
 Consumers unchanged:
 - `src/gobby/hooks/event_handlers/_base.py` — no-edit-reason: calls get_session_skill_exclusions by name; the signature and return type are unchanged, only the variable it reads changes.
 - `src/gobby/mcp_proxy/tools/skills/_context.py` — no-edit-reason: calls get_session_skill_exclusions by name with the same signature.
+- `tests/mcp_proxy/tools/test_apply_persona.py` — no-edit-reason: #23647 restored it at ef7886df52 after 1.1 removed it; it calls get_session_skill_exclusions by name with the same signature.
 - `tests/servers/test_fire_lifecycle_parity.py` — no-edit-reason: drives start_hydrated_session and patches no apply_persona path; the renamed call is internal to the function.
 - `tests/servers/websocket/chat/test_launch_contracts.py` — no-edit-reason: exercises start_hydrated_session launch contracts and patches no apply_persona path (ripgrep sweep in Constraints).
 - `tests/servers/websocket/chat/test_launch_contracts_codex.py` — no-edit-reason: exercises start_hydrated_session launch contracts and patches no apply_persona path.
@@ -921,9 +989,6 @@ Consumers unchanged:
 - 1.1.6 - Web-chat persona launch activates through
   `apply_agent_definition_impl`. test:
   `tests/servers/websocket/chat/test_servers_websocket_chat_session.py::test_web_chat_launch_uses_apply_agent_definition`.
-- 1.1.7 - `apply_persona.py` no longer exists and the tool registry exposes
-  `apply_agent_definition` and no `apply_persona`. test:
-  `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_registry_exposes_apply_agent_definition_only`.
 - 1.1.8 - A `provider: inherit` seat on a `codex` session keeps one pin across
   tool activation, a `compact` SessionStart and a repeat tool call. The
   SessionStart stores the same pin, and the repeat call returns `unchanged`
@@ -959,12 +1024,6 @@ Consumers unchanged:
   and Y. It activates Y on a base-agent row.
   test:
   `tests/hooks/event_handlers/test_activate_agent_override.py::test_override_never_changes_role`.
-- 1.1.15 - `set_agent` for an attached terminal at seat X with agent Y writes no
-  terminal command. It sends `ROLE_CHANGE_REQUIRES_RELAUNCH`, whose text tells
-  the user to start a new terminal session with Y, and then `agent_changed`
-  naming X. From the base agent, the same request still writes
-  `/gobby persona Y`. test:
-  `tests/servers/websocket/test_attached_session_agent.py::test_attached_terminal_role_change_refused_before_write`.
 - 1.1.16 - After seat X's definition drops `x_only` and a `compact`
   SessionStart re-activates X, `x_only` keeps its value and
   `_agent_definition_keys` still names it. A later `relaunch=True` to Y sets
@@ -990,10 +1049,10 @@ Consumers unchanged:
 `kind: deliverable`
 
 Targets:
-- `src/gobby/mcp_proxy/tools/apply_agent_definition.py`
+- `src/gobby/mcp_proxy/tools/apply_agent_definition.py::*` — scope-reason: commit_definition_changes ends the previous step instance in its transaction, build_definition_changes seeds the step gate for every declared step workflow, _session_has_assigned_or_active_task is deleted, and apply_agent_definition_impl fills the receipt's step_workflow
 - `src/gobby/hooks/session_activation.py::_missing_step_state`
 - `src/gobby/hooks/session_activation.py::_ensure_step_instance`
-- `tests/hooks/test_interactive_step_instance.py`
+- `tests/hooks/test_interactive_step_instance.py::*` — scope-reason: 1.2 creates the interactive step-instance creation, reconcile repair, spawned preservation and replacement tests
 - `tests/workflows/test_step_snapshot_semantics.py::*` — scope-reason: invert the tests that pinned the no-instance non-goal
 - `tests/hooks/test_session_activation_reconciliation.py::*` — scope-reason: step recovery no longer requires a spawned session or task
 
@@ -1117,11 +1176,11 @@ Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 `kind: deliverable`
 
 Targets:
-- `src/gobby/mcp_proxy/tools/apply_agent_definition.py`
+- `src/gobby/mcp_proxy/tools/apply_agent_definition.py::*` — scope-reason: adds definition_drift_line and stores the drift line from apply_agent_definition_impl's same-agent re-apply
 - `src/gobby/hooks/event_handlers/_session_start/agents.py::activate_default_agent`
 - `src/gobby/hooks/event_handlers/_agent.py::AgentEventHandlerMixin._inject_agent_instructions_if_needed`
-- `tests/hooks/test_session_start_reactivation.py`
-- `tests/mcp_proxy/tools/test_apply_agent_definition.py`
+- `tests/hooks/test_session_start_reactivation.py::*` — scope-reason: adds the SessionStart drift-line cases beside the 1.1 re-activation tests
+- `tests/mcp_proxy/tools/test_apply_agent_definition.py::*` — scope-reason: adds the same-seat repeat-call drift case beside the 1.1 activation tests
 
 **Granularity:** the drift comparison is shared by the tool and SessionStart,
 so both entry points change with it. 1.3 depends on 1.2 because 1.2 also edits
@@ -1410,10 +1469,10 @@ Consumers unchanged:
 `kind: deliverable`
 
 Targets:
-- `src/gobby/install/shared/workflows/rules/roles/inject-seat-common.yaml::*` — scope-reason: drop the retired _persona_name clause, its comment and the seat-identity guidance wording
-- `src/gobby/install/shared/workflows/rules/roles/seat-spawn-policy.yaml::*` — scope-reason: drop the retired _persona_name clauses from every seat condition and the header comment
-- `src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml::*` — scope-reason: drop the retired _persona_name clauses from both write-scope conditions
-- `tests/workflows/test_seat_rules.py::*` — scope-reason: fixtures set _agent_type instead of the retired _persona_name, plus one stale-variable regression
+- `src/gobby/install/shared/workflows/rules/roles/inject-seat-common.yaml::*` — scope-reason: drop the persona-overlay _persona_name clause, its comment and the seat-identity guidance wording
+- `src/gobby/install/shared/workflows/rules/roles/seat-spawn-policy.yaml::*` — scope-reason: drop the persona-overlay _persona_name clauses from every seat condition and the header comment
+- `src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml::*` — scope-reason: drop the persona-overlay _persona_name clauses from both write-scope conditions
+- `tests/workflows/test_seat_rules.py::*` — scope-reason: fixtures set _agent_type instead of _persona_name, plus one persona-only regression
 
 **Research context:** the `rules/roles/` group landed with #22994 (Roles rule
 group with shared seat guidance) and #22995 (Seat spawn and write policy with
@@ -1437,10 +1496,11 @@ sessions").
 - `reset-seat-common-on-context-loss.yaml` reads neither variable.
 
 After 1.1, activation writes `_agent_type` for every seat. The `_persona_name`
-clauses are then dead, and the V2 `rg` cannot pass while they remain. The edit
-cannot land before 1.1, because until then a persona session carries only
-`_persona_name`. Bundled rule templates sync to the rule registry (AGENTS.md
-rule 8).
+clauses then only let a persona overlay act as a seat, which Decision 3
+forbids: `apply_persona` switches prompt and skills and never seat rules. The
+V2 rule-directory `rg` cannot pass while they remain. The edit cannot land
+before 1.1, because until then a seat session carried only `_persona_name`.
+Bundled rule templates sync to the rule registry (AGENTS.md rule 8).
 
 `tests/workflows/test_seat_rules.py` drives a `RuleEngine` fixture with variable
 dicts:
@@ -1455,7 +1515,8 @@ Implementation:
 - Each condition keeps only its `_agent_type` side. The disjunctions become
   `variables.get('_agent_type') in [<SEATS>]`, and each two-variable list
   membership becomes `variables.get('_agent_type') == '<seat>'` (or `!=`).
-- Both comments say that activation and spawn both set `_agent_type`.
+- Both comments say that activation and spawn both set `_agent_type`, and
+  that a persona overlay (`_persona_name`) never matches a seat rule.
 - The guidance line becomes "Your seat is the definition named by your
   `_agent_type`."
 - Test fixtures set `{"_agent_type": <seat>}`. A new test asserts that a
@@ -1463,7 +1524,7 @@ Implementation:
 
 Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_seat_rules.py -q`, and
 `rg -w _persona_name src/gobby/install/shared/workflows/rules`, which must print
-nothing. The test file keeps exactly one retirement-absence fixture, the 1.5.1
+nothing. The test file keeps exactly one persona-only fixture, the 1.5.1
 context: `rg -w -c _persona_name tests/workflows/test_seat_rules.py` must print
 `1`.
 
@@ -1759,70 +1820,88 @@ Consumers unchanged:
 
 Targets:
 - `src/gobby/install/shared/skills/gobby/references/agents/personas.md`
-- `src/gobby/install/shared/skills/gobby/references/review/epic.md`
-- `src/gobby/install/shared/workflows/review.yaml::*` — scope-reason: the mode input description names the retired tool
 - `docs/guides/agents.md`
 - `docs/guides/workflows-overview.md`
-- `docs/reference-audit/agents.json::*` — scope-reason: the tool inventory entry names the retired tool
-- `docs/reference-audit/variables.json::*` — scope-reason: the implementation pointer names the retired module
-- `tests/skills/test_review_skill.py::*` — scope-reason: the pinned epic-review phrase names the retired tool
+- `docs/reference-audit/variables.json::*` — scope-reason: the selector finding's implementation pointer names build_persona_changes, which 1.1 moved to apply_agent_definition.py::build_definition_changes
 
 **Research context:** what each file says today:
 - `personas.md` routes `/gobby persona <name>` (sent by the web UI's
   `_set_attached_session_agent`). It tells the agent to call
   `gobby-agents:apply_persona`, says `agent="default"` restores the default, and
-  says activation installs no rules, tool restrictions or step instances.
-- `review/epic.md` (the interactive branch) says
-  `apply_persona(agent="epic-reviewer")`, and
-  `test_review_skill.py::test_epic_review_references_pin_routing_and_verdict_mapping`
-  pins that phrase.
-- `review.yaml` input `mode` says "the skill's in-line mode uses apply_persona".
+  says activation installs no rules, tool restrictions or step instances. It
+  does not mention `apply_agent_definition`.
 - `docs/guides/agents.md`:
-  - the surface table row names `gobby-agents:apply_persona`;
-  - a paragraph says it is "intentionally narrow";
-  - the run-tools list names it.
-- `workflows-overview.md` names it once.
-- The reference-audit JSONs name the tool and the module path.
+  - the `persona` surface row names only `gobby-agents:apply_persona`;
+  - a paragraph says `apply_persona` is "intentionally narrow";
+  - the run-tools list names `apply_persona` and not `apply_agent_definition`.
+- `workflows-overview.md` says a definition "can be applied to the current
+  session with `gobby-agents:apply_persona`".
+- `docs/reference-audit/variables.json`'s selector finding points at
+  `apply_persona.py::build_persona_changes`.
+- These stay as they are, because each describes a persona switch inside a
+  running session, which is `apply_persona`'s role (Decision 1):
+  `review/epic.md` (the in-line epic review calls
+  `apply_persona(agent="epic-reviewer")`), the phrase that
+  `test_review_skill.py::test_epic_review_references_pin_routing_and_verdict_mapping`
+  pins, and `review.yaml`'s `mode` input.
+- `docs/reference-audit/agents.json` stays as it is: #23647 restores its
+  `apply_persona` inventory entry beside the `apply_agent_definition` entry,
+  because `tests/skills/test_reference_library.py` maps every registered tool.
+- #23647 (Restore apply_persona) blocks this leaf: the edits document the
+  restored tool.
 
 Edits:
-- `personas.md`:
-  - It calls `gobby-agents:apply_agent_definition`.
-  - It states that activation applies prompt, rules, skills, variables, tool
-    blocks and the step workflow.
-  - It states that a session already bound to a non-default definition refuses
-    another with `role_change_requires_relaunch`, and that the user relaunches
-    the pane instead. The `agent="default"` restore sentence is deleted.
-  - It states that a repeat call for the active seat returns `unchanged` and
-    ignores `variables` and `task_id`.
-  - It lists the typed refusals.
-- `epic.md` and the test phrase: `apply_agent_definition(agent="epic-reviewer")`.
-- `review.yaml`: "uses apply_agent_definition".
+- `personas.md` keeps calling `gobby-agents:apply_persona`, and keeps its
+  `agent="default"` sentence and its no-rules, no-tool-restrictions,
+  no-step-instance sentence. It adds:
+  - On a session with an active non-default definition, `agent="default"`
+    returns to that definition's own prompt and skill set, and the
+    definition's rules, tool blocks and step workflow stay in force.
+  - The persona's prompt, skill set and skill format survive compaction and
+    resume.
+  - To activate a whole definition (rules, variables, tool blocks and the
+    step workflow as well), call `gobby-agents:apply_agent_definition`. An
+    activation that writes clears any persona overlay. An `unchanged` receipt
+    or a refusal writes nothing and keeps the overlay. To drop the overlay
+    without activating, call `apply_persona(agent="default")`. A session
+    already bound to a non-default definition refuses another with
+    `role_change_requires_relaunch`, and the user relaunches the pane instead.
 - `agents.md`:
-  - The surface row names the new tool.
-  - The "intentionally narrow" paragraph becomes the activation contract:
-    Decisions 2, 4, 5, 7 and 8, the continuity table from Decision 10, and the
-    run-lifetime fields `execution_mode` and `idle_ttl_seconds` (Decision 9).
-  - The run-tools list names `apply_agent_definition`.
-- `workflows-overview.md`: the tool name.
-- The JSONs: the tool name and `apply_agent_definition.py::build_definition_changes`.
+  - The `persona` surface row names both tools: `apply_persona` switches the
+    persona prompt and skill selection live, and `apply_agent_definition`
+    activates the whole definition.
+  - The "intentionally narrow" paragraph stays, describing `apply_persona`. A
+    new paragraph after it gives the `apply_agent_definition` activation
+    contract: Decisions 2, 3, 4, 5, 7 and 8, the continuity table from
+    Decision 10, and the run-lifetime fields `execution_mode` and
+    `idle_ttl_seconds` (Decision 9).
+  - The run-tools list names `apply_agent_definition` beside `apply_persona`.
+- `workflows-overview.md`: a definition is activated on the current session
+  with `gobby-agents:apply_agent_definition`, its persona is switched live
+  with `gobby-agents:apply_persona`, or it is used to spawn a child session.
+- `variables.json`: the pointer becomes
+  `src/gobby/mcp_proxy/tools/apply_agent_definition.py::build_definition_changes`.
 
-Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/test_review_skill.py -q`, and
-`rg -w apply_persona src docs/guides docs/reference-audit tests --glob '!tests/mcp_proxy/tools/test_apply_agent_definition.py'`,
-which must print nothing. The excluded file holds only the 1.1.7
-retirement-absence assertion.
+Planned verification: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/test_review_skill.py tests/skills/test_reference_library.py -q`.
+`rg -w -l apply_agent_definition src/gobby/install/shared/skills/gobby/references/agents/personas.md docs/guides/agents.md docs/guides/workflows-overview.md`
+must print all three paths, and
+`rg -w -l apply_persona src/gobby/install/shared/skills/gobby/references/agents/personas.md docs/guides/agents.md docs/guides/workflows-overview.md`
+must print all three as well.
 
 **Acceptance:**
 
-- 3.1.1 - The persona reference calls `apply_agent_definition` and names the
-  relaunch refusal. behavior: "apply_agent_definition" in
+- 3.1.1 - The persona reference keeps `apply_persona` for the live persona
+  switch, and routes whole-definition activation to `apply_agent_definition`
+  with its relaunch refusal. behavior: "role_change_requires_relaunch" in
   `src/gobby/install/shared/skills/gobby/references/agents/personas.md`.
-- 3.1.2 - The epic-review reference and its test name the new tool. test:
+- 3.1.2 - The epic-review reference, its pinned test phrase and the review
+  pipeline's `mode` input keep `apply_persona` for the in-line review. test:
   `tests/skills/test_review_skill.py::test_epic_review_references_pin_routing_and_verdict_mapping`.
-- 3.1.3 - The agents guide documents the activation contract, continuity table
-  and `idle_ttl_seconds`. behavior: "role_change_requires_relaunch" in
-  `docs/guides/agents.md`.
-- 3.1.4 - The workflows overview, the review pipeline, and both reference-audit
-  files name `apply_agent_definition` and no `apply_persona`. file:
+- 3.1.3 - The agents guide documents both tools, the activation contract, the
+  continuity table and `idle_ttl_seconds`. behavior:
+  "role_change_requires_relaunch" in `docs/guides/agents.md`.
+- 3.1.4 - The workflows overview names both tools, and the variables audit
+  points at `build_definition_changes`. file:
   `docs/guides/workflows-overview.md`.
 
 ## D1 Seat run-lifetime values (depends: 2.1)
@@ -1849,9 +1928,14 @@ observation seats: code-reviewer, archivist, log-monitor, researcher) and
 #22999 (Planning council seats and the review flow). Editing those files here
 would collide with those leaves.
 
+Amended 2026-10-06 (#23671): Josh's dedupe folded the D1 task #23511 and the D3
+task #23497 into the 2.1 leaf #23509, "Run lifetime on agent definitions: idle
+TTL field, watchdog enforcement and seat values", which carries both provenance
+labels. D1 and D3 now name #23509.
+
 ```yaml
 deferral:
-  task_ref: "#23511"
+  task_ref: "#23509"
   reason: "External prerequisite: the seat YAML files are created or rewritten by the open #22902 P3 leaves (#22996-#22999) under root #22988."
   owner: "orchestrator"
   original_acceptance_items:
@@ -1934,9 +2018,12 @@ reaches its parent through a numeric ref:
    would have added: `#N` blocked by the 2.1 leaf, and the root epic blocked by
    `#N`.
 
+Amended 2026-10-06 (#23671): the dedupe recorded in D1 moved D3 to #23509, the
+2.1 leaf itself, so step 4's edge from the 2.1 leaf no longer applies.
+
 ```yaml
 deferral:
-  task_ref: "#23497"
+  task_ref: "#23509"
   reason: "Orchestrator rulings (2026-10-05, 08:10 and 08:18 CT, R4): runtime lifecycle enforcement is parented under #22691 (Lane 3 - Runbooks). The Orchestrator files the task after Josh approves this plan, the Writer replaces this placeholder with its numeric ref before expansion, and the Orchestrator adds the 2.1 and root-epic edges after expansion."
   owner: "orchestrator"
   original_acceptance_items:
@@ -2022,6 +2109,65 @@ deferral:
   eight deliverables, and the original 40 keep their order. The stale M1 was
   withdrawn for re-derivation (memory f5577ae0).
 
+- 2026-10-06: Renewed consensus between the Lane 7 Plan Writer gobby#15528 and
+  the Plan Adversary gobby#15471 under #23648 (Amend apply-agent-definition
+  plan: keep apply_persona alongside apply_agent_definition). Josh ruled on the
+  `apply_persona` deletion that 1.1 delivered at e8f43fb8ab: "Irritating. They
+  served two different roles." (00:27 CT) and "Keep both." (00:48 CT). #23647
+  restores the tool. The Orchestrator's 00:57 CT ruling set the scope: every
+  forward-looking clause that contradicts the ruling is reconciled in this
+  pass.
+  - Overview and What users will see: the attached-terminal picker switches
+    the persona live, and only a change of agent definition needs a relaunch.
+  - Decisions 1, 2, 3 and 12 keep `apply_persona` as the persona overlay
+    beside `apply_agent_definition`. Seat rules, tool blocks and step
+    workflows stay keyed on `_agent_type` only.
+  - 1.1 carries a dated amendment. 1.1.7 (the registry absence assertion)
+    and 1.1.15 (the attached-terminal refusal) are withdrawn, and so is 1.1's
+    zero-persona sweep.
+  - 1.5 still drops the `_persona_name` seat-rule clauses, now because a
+    persona overlay never makes a session a seat.
+  - 3.1 documents both tools. `review/epic.md`, `review.yaml`, their test and
+    `docs/reference-audit/agents.json` leave its Targets.
+  - V2's sweep keeps only the rule-directory check.
+
+  The Orchestrator's 01:04 CT ruling added two items to #23647 that the
+  Writer raised. A definition activation that writes clears `_persona_name`
+  (Decision 3). The `apply_persona` entry in the reference-audit inventory
+  returns with the tool. The plan has 49 acceptance items over eight
+  deliverables, and the remaining items keep their ids. The stale M1 was
+  withdrawn for re-derivation (memory f5577ae0).
+- 2026-10-06: Close-review repair under #23648 (CR7 gobby#15396 F1, the
+  Orchestrator's ruling). With completed-section exemptions stubbed out, the
+  close-review sandbox condition of #23620 (memory 1033f9db), validation
+  failed on four bare Targets naming files that 1.1 and 1.2 created and the
+  index now reports symbols for. 1.1's `apply_agent_definition.py`,
+  `test_apply_agent_definition.py` and `test_session_start_reactivation.py`
+  and 1.2's `test_interactive_step_instance.py` become `::*` Targets with a
+  scope-reason naming what the section creates, the #23618 pattern
+  (f39512cb1a). M1 inputs are unchanged. 1.1's two delete Targets stay bare
+  paths while `apply_persona.py` and `test_apply_persona.py` are absent; the
+  sandbox failure they meet once #23647 restores the files belongs to
+  #23620's root fix.
+- 2026-10-06: Second close-review repair under #23648 (review 20f093de). The
+  reviewer read 1.1's `apply_persona.py — operation: delete` Target as a live
+  deletion clause, against the task's no-deletion criterion. 1.1 drops both
+  delete Targets (`apply_persona.py`, `test_apply_persona.py`), its amendment
+  records that #23503 removed them at e8f43fb8ab and #23647 restores them,
+  and the granularity note moves to the past tense. This supersedes the
+  previous entry's last sentence: no delete Target remains, so none can fail
+  once #23647 restores the files.
+- 2026-10-06: Mechanical repoint under #23671 (the Orchestrator's request,
+  relayed by the Lane Manager gobby#15389). Josh's dedupe folded #23511 (D1)
+  and #23497 (D3) into the 2.1 leaf #23509, so both deferrals' `task_ref`
+  values name #23509, and D1 and D3 carry dated amendments. The Cross-Plan
+  Correction now states that #22902's 4.1.1 (#23001) points seats at
+  `apply_agent_definition`, because after #23507 `apply_persona` gives no seat
+  rules and no activation receipt. 1.1's Consumers unchanged inventory gains
+  `tests/mcp_proxy/tools/test_apply_persona.py`, which #23647 restored at
+  ef7886df52 and which failed consumer-coverage on the committed plan. No
+  deliverable, acceptance item or M1 entry changed.
+
 ## V2: Verification
 `kind: verification`
 
@@ -2029,18 +2175,19 @@ Each leaf runs its own planned verification after its final edit. Run this
 block after the last leaf lands:
 
 ```bash
-DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/test_session_start_reactivation.py tests/hooks/test_interactive_step_instance.py tests/hooks/test_clear_successor_seat.py tests/workflows/test_step_snapshot_semantics.py tests/workflows/test_step_runtime_transitions.py tests/workflows/test_agent_definitions_v2.py tests/workflows/test_session_defaults.py tests/workflows/test_seat_rules.py tests/mcp_proxy/tools/skills/test_list_skills.py tests/mcp_proxy/tools/spawn_agent/test_factory.py tests/servers/websocket/chat/test_servers_websocket_chat_session.py tests/servers/websocket/test_set_agent.py tests/hooks/test_agent_events_coverage.py tests/hooks/test_session_activation_reconciliation.py tests/hooks/event_handlers/test_session_variable_preservation.py tests/hooks/test_session_start_handlers.py tests/hooks/test_session_end_handlers.py tests/hooks/test_session_events_coverage.py tests/hooks/test_session_materialize.py tests/sessions/test_clear_acknowledgment.py tests/sessions/test_handoff.py tests/sessions/test_mailbox.py tests/servers/websocket/chat/test_clear_session.py tests/agents/watchdog/test_interactive_lifecycle_cleanup.py tests/servers/test_managed_clear_identity.py tests/servers/test_auth_service.py tests/servers/test_grant_auth.py tests/servers/routes/mcp_endpoints/test_execution_context.py tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py tests/servers/test_mcp_execution_context.py tests/servers/routes/test_llm_routes.py tests/servers/routes/test_session_variables.py tests/servers/routes/mcp/test_hook_session_metadata.py tests/skills/test_review_skill.py tests/agents/test_agents_sync.py -q
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_agent_definition.py tests/hooks/test_session_start_reactivation.py tests/hooks/test_interactive_step_instance.py tests/hooks/test_clear_successor_seat.py tests/workflows/test_step_snapshot_semantics.py tests/workflows/test_step_runtime_transitions.py tests/workflows/test_agent_definitions_v2.py tests/workflows/test_session_defaults.py tests/workflows/test_seat_rules.py tests/mcp_proxy/tools/skills/test_list_skills.py tests/mcp_proxy/tools/spawn_agent/test_factory.py tests/servers/websocket/chat/test_servers_websocket_chat_session.py tests/servers/websocket/test_set_agent.py tests/servers/websocket/test_attached_session_agent.py tests/hooks/test_agent_events_coverage.py tests/hooks/test_session_activation_reconciliation.py tests/hooks/event_handlers/test_session_variable_preservation.py tests/hooks/test_session_start_handlers.py tests/hooks/test_session_end_handlers.py tests/hooks/test_session_events_coverage.py tests/hooks/test_session_materialize.py tests/sessions/test_clear_acknowledgment.py tests/sessions/test_handoff.py tests/sessions/test_mailbox.py tests/servers/websocket/chat/test_clear_session.py tests/agents/watchdog/test_interactive_lifecycle_cleanup.py tests/servers/test_managed_clear_identity.py tests/servers/test_auth_service.py tests/servers/test_grant_auth.py tests/servers/routes/mcp_endpoints/test_execution_context.py tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py tests/servers/test_mcp_execution_context.py tests/servers/routes/test_llm_routes.py tests/servers/routes/test_session_variables.py tests/servers/routes/mcp/test_hook_session_metadata.py tests/skills/test_review_skill.py tests/skills/test_reference_library.py tests/mcp_proxy/tools/test_apply_persona.py tests/agents/test_agents_sync.py -q
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
-rg -w 'apply_persona|_persona_name|build_session_persona_changes' src tests docs/guides docs/reference-audit --glob '!tests/mcp_proxy/tools/test_apply_agent_definition.py' --glob '!tests/workflows/test_seat_rules.py'
-rg -w -c 'apply_persona|_persona_name|build_session_persona_changes' tests/mcp_proxy/tools/test_apply_agent_definition.py tests/workflows/test_seat_rules.py
+rg -w _persona_name src/gobby/install/shared/workflows/rules
+rg -w -c _persona_name tests/workflows/test_seat_rules.py
 uv run gobby plans validate .gobby/plans/apply-agent-definition.md -p /Users/josh/Projects/gobby
 ```
 
-The first `rg` must print nothing: no production code, bundled template, guide
-or other test names a retired identifier. It can pass only after 1.5 and 3.1
-land. The second prints `1` for each file,
-because each allowlisted file holds exactly one retirement-absence assertion
-(1.1.7 and 1.5.1). Do not run the full pytest suite.
+The first `rg` must print nothing: no seat rule reads `_persona_name`, so a
+persona overlay never matches one (Decision 3, 1.5). It can pass only after 1.5
+lands. The second prints `1`, the 1.5.1 persona-only fixture. `apply_persona`
+and `_persona_name` stay in production code, tests and guides (Decision 1).
+`test_apply_persona.py` exists once #23647, which blocks 3.1, has landed. Do
+not run the full pytest suite.
 
 Live check after the Orchestrator-owned restart, which is announced globally
 before and after and happens outside quiet hours:
@@ -2052,12 +2199,16 @@ before and after and happens outside quiet hours:
 4. `apply_agent_definition(agent="researcher")` returns
    `role_change_requires_relaunch`.
 5. After a compaction the session still reports the seat's skills.
-6. After a `/clear`, the successor reports `_agent_type: plan-writer` and a
+6. `apply_persona(agent="researcher")` succeeds without a relaunch:
+   `_agent_type` stays `plan-writer`, and the next turn carries the researcher
+   persona prompt. `apply_persona(agent="default")` then returns the next turn
+   to the plan-writer prompt.
+7. After a `/clear`, the successor reports `_agent_type: plan-writer` and a
    fresh step instance once the seat's step workflow exists.
-7. A spawned interactive seat that stages `set_handoff(clear_session=true)`
+8. A spawned interactive seat that stages `set_handoff(clear_session=true)`
    keeps its run: after the clear, `list_agents` shows the same run
    `running` with the successor as its session.
-8. In that successor, `get_variable("_agent_type")` returns the seat, and a
+9. In that successor, `get_variable("_agent_type")` returns the seat, and a
    `set_variable` lands on the successor's row (the session `#N` the pane now
    reports), not on the predecessor's.
 
@@ -2090,9 +2241,6 @@ before and after and happens outside quiet hours:
 
     1.1.6: Web-chat persona launch activates through `apply_agent_definition_impl`.
     test: `tests/servers/websocket/chat/test_servers_websocket_chat_session.py::test_web_chat_launch_uses_apply_agent_definition`.
-
-    1.1.7: `apply_persona.py` no longer exists and the tool registry exposes `apply_agent_definition`
-    and no `apply_persona`. test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_registry_exposes_apply_agent_definition_only`.
 
     1.1.8: A `provider: inherit` seat on a `codex` session keeps one pin across tool
     activation, a `compact` SessionStart and a repeat tool call. The SessionStart
@@ -2127,11 +2275,6 @@ before and after and happens outside quiet hours:
     seat X on a row stored at X and logs one warning naming the session, X and Y.
     It activates Y on a base-agent row. test: `tests/hooks/event_handlers/test_activate_agent_override.py::test_override_never_changes_role`.
 
-    1.1.15: `set_agent` for an attached terminal at seat X with agent Y writes no
-    terminal command. It sends `ROLE_CHANGE_REQUIRES_RELAUNCH`, whose text tells the
-    user to start a new terminal session with Y, and then `agent_changed` naming X.
-    From the base agent, the same request still writes `/gobby persona Y`. test: `tests/servers/websocket/test_attached_session_agent.py::test_attached_terminal_role_change_refused_before_write`.
-
     1.1.16: After seat X''s definition drops `x_only` and a `compact` SessionStart
     re-activates X, `x_only` keeps its value and `_agent_definition_keys` still names
     it. A later `relaunch=True` to Y sets `x_only` to `None`. test: `tests/hooks/test_session_start_reactivation.py::test_drift_then_relaunch_clears_retired_definition_key`.
@@ -2156,7 +2299,6 @@ before and after and happens outside quiet hours:
   - covers:apply-agent-definition:1.1:1.1.4
   - covers:apply-agent-definition:1.1:1.1.5
   - covers:apply-agent-definition:1.1:1.1.6
-  - covers:apply-agent-definition:1.1:1.1.7
   - covers:apply-agent-definition:1.1:1.1.8
   - covers:apply-agent-definition:1.1:1.1.9
   - covers:apply-agent-definition:1.1:1.1.10
@@ -2164,7 +2306,6 @@ before and after and happens outside quiet hours:
   - covers:apply-agent-definition:1.1:1.1.12
   - covers:apply-agent-definition:1.1:1.1.13
   - covers:apply-agent-definition:1.1:1.1.14
-  - covers:apply-agent-definition:1.1:1.1.15
   - covers:apply-agent-definition:1.1:1.1.16
   - covers:apply-agent-definition:1.1:1.1.17
   - covers:apply-agent-definition:1.1:1.1.18
@@ -2372,16 +2513,18 @@ before and after and happens outside quiet hours:
   - '1.4'
   - '1.6'
   - '2.1'
-  validation_criteria: '3.1.1: The persona reference calls `apply_agent_definition`
-    and names the relaunch refusal. behavior: "apply_agent_definition" in `src/gobby/install/shared/skills/gobby/references/agents/personas.md`.
+  validation_criteria: '3.1.1: The persona reference keeps `apply_persona` for the
+    live persona switch, and routes whole-definition activation to `apply_agent_definition`
+    with its relaunch refusal. behavior: "role_change_requires_relaunch" in `src/gobby/install/shared/skills/gobby/references/agents/personas.md`.
 
-    3.1.2: The epic-review reference and its test name the new tool. test: `tests/skills/test_review_skill.py::test_epic_review_references_pin_routing_and_verdict_mapping`.
+    3.1.2: The epic-review reference, its pinned test phrase and the review pipeline''s
+    `mode` input keep `apply_persona` for the in-line review. test: `tests/skills/test_review_skill.py::test_epic_review_references_pin_routing_and_verdict_mapping`.
 
-    3.1.3: The agents guide documents the activation contract, continuity table and
-    `idle_ttl_seconds`. behavior: "role_change_requires_relaunch" in `docs/guides/agents.md`.
+    3.1.3: The agents guide documents both tools, the activation contract, the continuity
+    table and `idle_ttl_seconds`. behavior: "role_change_requires_relaunch" in `docs/guides/agents.md`.
 
-    3.1.4: The workflows overview, the review pipeline, and both reference-audit files
-    name `apply_agent_definition` and no `apply_persona`. file: `docs/guides/workflows-overview.md`.'
+    3.1.4: The workflows overview names both tools, and the variables audit points
+    at `build_definition_changes`. file: `docs/guides/workflows-overview.md`.'
   labels:
   - covers:apply-agent-definition:3.1:3.1.1
   - covers:apply-agent-definition:3.1:3.1.2

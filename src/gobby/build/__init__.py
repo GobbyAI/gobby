@@ -8,7 +8,7 @@ from gobby.build.controls import (
     build_stop_target,
 )
 from gobby.build.observability import explain_dispatch, get_build_status, list_build_history
-from gobby.build.options import BuildIsolationResolution, resolve_build_isolation
+from gobby.build.options import BuildCheckoutModeResolution, resolve_build_checkout_mode
 from gobby.build.results import (
     BuildAgentSummary,
     BuildTargetAction,
@@ -31,7 +31,7 @@ __all__ = [
     "BuildAgentSummary",
     "BuildArtifactSummary",
     "BuildControlResult",
-    "BuildIsolationResolution",
+    "BuildCheckoutModeResolution",
     "BuildLifecycleEvent",
     "BuildOptions",
     "BuildResult",
@@ -50,5 +50,5 @@ __all__ = [
     "build_stop",
     "build_stop_target",
     "resolve_stage_manifest_specs",
-    "resolve_build_isolation",
+    "resolve_build_checkout_mode",
 ]

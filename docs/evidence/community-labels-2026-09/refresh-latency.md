@@ -44,8 +44,55 @@ unchanged, 2,353 communities, `skipped_unchanged=true`.
 | #22858, run 1 | 2.47 s | 0.33 s |
 | #22858, run 2 | 0.99 s | 0.46 s |
 
-The input-digest contingency below is not needed: the rebuild is now cheap, and the
-existing output-signature skip avoids the write.
+These unpaired samples establish the `internal_edges` improvement, but do not
+establish the +250 ms community-refresh budget. Task #22862 measures that delta
+with interleaved refresh and bypass variants on the same live path.
+
+## 2026-10-06 paired live-path measurement (#22862)
+
+The Orchestrator authorized two optimized local binaries built from the same lane
+source, `f361117692a6542f581682ab95ca9e018dfed958`. A runs the existing refresh;
+B adds a temporary `if std::hint::black_box(true) { return; }` at the start of
+`index/indexer/lifecycle.rs::refresh_communities`. The bypass was restored after
+building B, and neither binary was installed or promoted. Both builds used
+`cargo build --release -p gobby-code --bin gcode`.
+
+The shell stayed in the lane worktree. Both binaries ran the same command:
+
+```text
+<local-binary> index --project /Users/josh/Projects/gobby --files=crates/gcode/src/lib.rs --quiet
+```
+
+One excluded warm-up per variant used JSON output to check refresh status. A
+reported 2,557 communities, `skipped_unchanged=true`, and zero changed/new/retired
+communities; B reported no communities. Neither warm-up was degraded. Warm-up
+wall times were 11,527.926 ms and 2,181.142 ms. The five measured pairs then ran
+A, B, A, B in order, with no instrumentation environment variable. Every sample
+exited zero. The helper checked the corpus HEAD and target-file hash before and
+after each sample; both stayed unchanged.
+
+| Pair | A start (UTC) | A wall (ms) | A load 1m, start/end | B start (UTC) | B wall (ms) | B load 1m, start/end |
+| --- | --- | ---: | --- | --- | ---: | --- |
+| 1 | 17:04:31.518 | 2,470.521 | 16.2783 / 16.2783 | 17:04:34.061 | 791.118 | 16.2783 / 16.2783 |
+| 2 | 17:04:34.972 | 2,019.487 | 16.2783 / 14.9746 | 17:04:37.088 | 669.080 | 14.9746 / 14.9746 |
+| 3 | 17:04:37.954 | 1,826.560 | 14.9746 / 14.9746 | 17:04:39.935 | 907.692 | 14.9746 / 13.8555 |
+| 4 | 17:04:40.991 | 2,849.724 | 13.8555 / 13.8555 | 17:04:44.060 | 972.922 | 13.8555 / 13.8555 |
+| 5 | 17:04:45.152 | 1,732.071 | 13.8555 / 15.0679 | 17:04:47.043 | 789.993 | 15.0679 / 15.0679 |
+
+A p50 is **2,019.487 ms**; B p50 is **791.118 ms**. Their difference is
+**+1,228.369 ms**, over the +250 ms budget. The median within-pair difference is
++1,350.407 ms. This result requires the input-digest contingency below.
+
+Provenance:
+
+- Corpus HEAD: `12ab0abfcff3653403178b7a42c58775f78a6220`.
+- Target SHA-256: `34a9494955e7aba646eb70e7ec032b2f50c47deb4cee213efeb711bd906c08b1`.
+- A binary SHA-256: `b4e1b2fe6db3a0e468a4c074616bce1f6d094bfff7c9a917933fa2b8096bda88`.
+- B binary SHA-256: `afd7f18d5a537399f941f86f6697f42e484a839af6f5007364ace14cdaf19de8`.
+- Session artifacts: `.gobby/tmp/22862-measure-ab.py` and
+  `.gobby/tmp/22862-ab-results.json` in the lane worktree. The helper measures
+  subprocess wall time, records `os.getloadavg()[0]`, excludes warm-ups, and
+  computes both medians from the unrounded samples.
 
 ## Over-budget contingency
 

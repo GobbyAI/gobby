@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, cast
 
@@ -58,7 +58,7 @@ from gobby.storage.tasks._models import (
     PRIORITY_MAP,
     UNSET,
     VALID_CATEGORIES,
-    Isolation,
+    CheckoutMode,
     MaybeUnset,
     SeqNumCollisionError,
     Task,
@@ -247,10 +247,12 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         assigned_agent: str | None = None,
         implementation_domain: str | None = None,
         additional_skills: list[str] | None = None,
+        handed_off_task_ids: Collection[str] = (),
     ) -> Task:
         """Atomically create and claim one task for an agent session."""
         task_id = _create_task_for_agent(
             self.db,
+            handed_off_task_ids=handed_off_task_ids,
             session_id=session_id,
             project_id=project_id,
             title=title,
@@ -369,7 +371,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         allow_automation: MaybeUnset[bool] = UNSET,
         unattended: MaybeUnset[bool] = UNSET,
         yolo: MaybeUnset[bool] = UNSET,
-        isolation: MaybeUnset[Isolation | str | None] = UNSET,
+        checkout_mode: MaybeUnset[CheckoutMode | str | None] = UNSET,
         assigned_agent: MaybeUnset[str | None] = UNSET,
         implementation_domain: MaybeUnset[str | None] = UNSET,
         additional_skills: MaybeUnset[list[str] | None] = UNSET,
@@ -439,7 +441,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
                 allow_automation=allow_automation,
                 unattended=unattended,
                 yolo=yolo,
-                isolation=isolation,
+                checkout_mode=checkout_mode,
                 assigned_agent=assigned_agent,
                 implementation_domain=implementation_domain,
                 additional_skills=additional_skills,
@@ -502,7 +504,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
     def cascade_build_state_to_subtree(
         self,
         epic_id: str,
-        isolation: Isolation | str,
+        checkout_mode: CheckoutMode | str,
         unattended: bool | None,
         allow_automation: bool,
         *,
@@ -517,7 +519,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         result = _cascade_build_state_to_subtree(
             self.db,
             epic_id=epic_id,
-            isolation=isolation,
+            checkout_mode=checkout_mode,
             unattended=unattended,
             allow_automation=allow_automation,
             skip_stages=skip_stages,
@@ -625,7 +627,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         stage_state: str | None = None,
         limit: int = 50,
         offset: int = 0,
-        sort_by: str = "hierarchy",
+        sort_by: str | None = None,
         sort_order: str = "asc",
     ) -> list[Task]:
         """List tasks with filtering.
@@ -633,9 +635,11 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         Args:
             current_stage_state: Filter by current stage state. Can be a single
                 state string, a list of states, or None to include all stage states.
+            sort_by: None lists closed tasks (``closed=True``) newest closure
+                first and everything else hierarchically.
 
-        Results are ordered hierarchically: parents appear before their children,
-        with siblings sorted by priority ASC, then created_at ASC.
+        Hierarchical results put parents before their children, with siblings
+        sorted by priority ASC, then created_at ASC.
         """
         return _list_tasks(
             self.db,

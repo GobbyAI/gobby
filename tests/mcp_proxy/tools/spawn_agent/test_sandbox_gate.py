@@ -34,7 +34,6 @@ def _runner() -> MagicMock:
 
 async def _spawn(runner: MagicMock, daemon_config: DaemonConfig) -> dict[str, Any]:
     return await spawn_agent_impl(
-        terminal_backend="native",
         prompt="Do the thing",
         runner=runner,
         provider="claude",
@@ -61,7 +60,7 @@ async def test_unsandboxed_config_refused_before_side_effects(
         patch(f"{_IMPL}.authorize_write_grant", return_value=grant),
         patch(f"{_IMPL}.get_project_context", return_value={"id": "p", "project_path": "/repo"}),
         patch(f"{_IMPL}.get_machine_id", return_value="21000000-0000-4000-8000-000000000001"),
-        patch(f"{_IMPL}.get_isolation_handler") as isolation,
+        patch(f"{_IMPL}.get_isolation_handler") as checkout_mode,
         patch(f"{_IMPL}.prepare_terminal_spawn") as prepare,
         patch(f"{_IMPL}.execute_spawn") as execute,
     ):
@@ -71,7 +70,7 @@ async def test_unsandboxed_config_refused_before_side_effects(
     assert result["error_code"] == "sandbox_required"
     verifier.assert_not_called()
     runner.can_spawn.assert_not_called()
-    isolation.assert_not_called()
+    checkout_mode.assert_not_called()
     prepare.assert_not_called()
     execute.assert_not_called()
 
@@ -101,7 +100,7 @@ async def test_gate_refuses_when_isolated_srt_is_missing(
     with (
         patch(f"{_IMPL}.get_project_context", return_value={"id": "p", "project_path": "/repo"}),
         patch(f"{_IMPL}.get_machine_id", return_value="21000000-0000-4000-8000-000000000001"),
-        patch(f"{_IMPL}.get_isolation_handler") as isolation,
+        patch(f"{_IMPL}.get_isolation_handler") as checkout_mode,
         patch(f"{_IMPL}.execute_spawn") as execute,
     ):
         result = await _spawn(runner, DaemonConfig())
@@ -111,7 +110,7 @@ async def test_gate_refuses_when_isolated_srt_is_missing(
     # The default config is enabled srt, so the refusal is the real verifier's.
     assert result["error"].startswith("managed SRT is unavailable:")
     runner.can_spawn.assert_not_called()
-    isolation.assert_not_called()
+    checkout_mode.assert_not_called()
     execute.assert_not_called()
 
 

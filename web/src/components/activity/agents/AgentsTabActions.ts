@@ -78,7 +78,7 @@ export function buildAgentDefinitionBody(
         ? false
         : draft.form.reasoning_required,
     fallback_agent: optionalString(draft.form.fallback_agent),
-    isolation: draft.form.isolation,
+    checkout_mode: draft.form.checkout_mode,
     base_branch: draft.form.base_branch,
     timeout: requireNonNegativeNumber(draft.form.timeout, "Timeout"),
     enabled: draft.enabled,
@@ -103,6 +103,7 @@ const CREATE_REFUSED_KEYS = new Set([
   "is_local",
   "api_base",
   "api_token",
+  "execution_mode",
   "network",
   "spawnable_agents",
   "send_message_targets",

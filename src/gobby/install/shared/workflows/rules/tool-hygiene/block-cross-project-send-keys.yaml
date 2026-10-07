@@ -2,21 +2,21 @@ tags: [tool-hygiene, enforcement, gobby, default]
 
 rules:
   block-cross-project-send-keys:
-    description: "Block send_keys to a session outside the caller's project and agent tree"
+    description: "Block send_keys and capture_output on a session outside the caller's project and agent tree"
     event: before_tool
     enabled: true
     priority: 10
     # The tool guard comes first so an evaluation error, which fails closed,
-    # can only refuse send_keys.
+    # can only refuse these two terminal tools.
     when: >
       tool_input.get('server_name') == 'gobby-sessions'
-      and tool_input.get('tool_name') == 'send_keys'
+      and tool_input.get('tool_name') in ['send_keys', 'capture_output']
       and not send_keys_target_in_scope(
         event.metadata.get('_platform_session_id'), tool_input.get('session_id'))
     effects:
       - type: block
-        mcp_tools: ["gobby-sessions:send_keys"]
+        mcp_tools: ["gobby-sessions:send_keys", "gobby-sessions:capture_output"]
         reason: >-
-          send_keys only reaches the caller's own session, sessions in its project,
-          and sessions in its agent tree. Use gobby-agents:send_message for
-          cross-session communication.
+          send_keys and capture_output only reach the caller's own session, sessions
+          in its project, and sessions in its agent tree. Use gobby-agents:send_message
+          for cross-session communication.

@@ -289,7 +289,7 @@ def live(
         {"test": request.node.name, "srt": rig.srt, "native_sha256": rig.binaries},
     )
     try:
-        state.evidence["isolation"] = _assert_isolated(state)
+        state.evidence["checkout_mode"] = _assert_isolated(state)
         state.evidence["host"] = _assert_adopted(state)
         yield state
     finally:

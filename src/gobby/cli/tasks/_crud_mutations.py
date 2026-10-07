@@ -102,7 +102,7 @@ def update_task_impl(
     priority: int | None,
     parent_task_id: str | None,
     task_type: str | None,
-    isolation: str | None,
+    checkout_mode: str | None,
     affected_files: list[str] | None,
 ) -> None:
     manager = services.get_task_manager()
@@ -132,9 +132,9 @@ def update_task_impl(
         kwargs["affected_files"] = affected_files
 
     try:
-        if isolation is not None:
-            kwargs["isolation"] = services.validate_task_isolation_artifacts(
-                manager, resolved.id, isolation
+        if checkout_mode is not None:
+            kwargs["checkout_mode"] = services.validate_task_isolation_artifacts(
+                manager, resolved.id, checkout_mode
             )
         task = manager.update_task(resolved.id, **kwargs)
     except ValueError as exc:

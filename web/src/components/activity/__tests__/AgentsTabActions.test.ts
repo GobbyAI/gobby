@@ -18,6 +18,7 @@ function agentDefinition(): AgentDefInfo {
       surfaces: ["spawn"],
       prompts: { agent: "Review the assigned implementation." },
       provider: "claude",
+      execution_mode: "terminal",
       model: "opus",
       reasoning_effort: null,
       reasoning_required: false,
@@ -25,7 +26,7 @@ function agentDefinition(): AgentDefInfo {
       is_local: false,
       sources: ["https://example.com/reviewer.yaml"],
       version: "1.2.0",
-      isolation: "worktree",
+      checkout_mode: "worktree",
       base_branch: "0.5.0",
       timeout: 120,
       workflows: {
@@ -61,6 +62,19 @@ function agentDefinition(): AgentDefInfo {
 }
 
 describe("AgentsTabActions", () => {
+  it.each(["none", "worktree", "clone", "inherit"])(
+    "saves checkout mode %s without copying sync-owned sandbox settings",
+    (mode) => {
+      const definition = agentDefinition();
+      definition.definition.checkout_mode = mode;
+      const body = buildAgentDefinitionBody(agentToDraft(definition));
+
+      expect(body.checkout_mode).toBe(mode);
+      expect(body).not.toHaveProperty("isolation");
+      expect(body).not.toHaveProperty("network");
+    },
+  );
+
   it("preserves wildcard, exclusions, and custom workflow keys across edit-save", () => {
     const body = buildAgentDefinitionBody(agentToDraft(agentDefinition()));
 
@@ -139,6 +153,7 @@ describe("AgentsTabActions", () => {
     // The create API forbids unknown keys, so response-only fields must not leak.
     expect(body).not.toHaveProperty("is_local");
     expect(body).not.toHaveProperty("mode");
+    expect(body).not.toHaveProperty("execution_mode");
     // Sync-owned network and spawn/message authority never ride a UI copy.
     expect(body).not.toHaveProperty("network");
     expect(body).not.toHaveProperty("spawnable_agents");

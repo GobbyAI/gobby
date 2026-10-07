@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.tasks.state_semantics import serialize_task_state
+
+if TYPE_CHECKING:
+    from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 
 MATCH_PREVIEW_MAX_LENGTH = 160
 
@@ -76,6 +79,7 @@ def task_state_payload(task: Any) -> dict[str, Any]:
         "is_closed": state.get("is_closed", False),
         "closed_at": state.get("closed_at"),
         "is_claimed": state.get("is_claimed", False),
+        "claimed_by_session_id": state.get("owner_session_id"),
         "is_blocked": state.get("is_blocked", False),
         "is_escalated": state.get("is_escalated", False),
     }
@@ -162,8 +166,26 @@ def task_summary_payload(
         "dependencies": dependencies,
         "allow_automation": _task_value(task, "allow_automation", False),
         "unattended": _task_value(task, "unattended", False),
-        "isolation": _plain(_task_value(task, "isolation")),
+        "checkout_mode": _plain(_task_value(task, "checkout_mode")),
         "assigned_agent": _task_value(task, "assigned_agent"),
         "implementation_domain": _task_value(task, "implementation_domain"),
         "additional_skills": _task_list_value(task, "additional_skills"),
     }
+
+
+def brief_task_card(ctx: RegistryContext, task: Any) -> dict[str, Any]:
+    """Build the shared default get_task card, including dependency summaries."""
+    blockers = ctx.dep_manager.get_blockers(task.id)
+    blocking = ctx.dep_manager.get_blocking(task.id)
+
+    def summary(dep: Any, linked_task_id: str) -> dict[str, Any]:
+        linked = ctx.task_manager.get_task(linked_task_id)
+        return dependency_payload(dep, linked_task_id, linked)
+
+    return task_summary_payload(
+        task,
+        {
+            "blocked_by": [summary(dep, dep.depends_on) for dep in blockers],
+            "blocking": [summary(dep, dep.task_id) for dep in blocking],
+        },
+    )

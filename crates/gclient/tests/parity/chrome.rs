@@ -268,7 +268,7 @@ fn frame_digest(terminal: &Terminal<TestBackend>) -> String {
 
 /// herdr help label for a gclient action: herdr's workspace/agent nouns are
 /// gclient's terminal/attention nouns (UPSTREAM.md keymap provenance).
-fn herdr_help_label(name: &str) -> Option<&'static str> {
+fn upstream_help_label(name: &str) -> Option<&'static str> {
     Some(match name {
         "previous_terminal" => "previous workspace",
         "next_terminal" => "next workspace",
@@ -339,7 +339,7 @@ fn keybind_help_groups(chrome: &Chrome) -> Vec<(&'static str, Vec<HelpRow>)> {
                 .iter()
                 .filter(|entry| names.contains(&entry.name))
                 .map(|entry| {
-                    let label = herdr_help_label(entry.name).unwrap_or(entry.description);
+                    let label = upstream_help_label(entry.name).unwrap_or(entry.description);
                     (entry.keys.clone(), Cow::Borrowed(label))
                 })
                 .collect();
@@ -1243,12 +1243,14 @@ switch_project = "ctrl+1..9"
                     // surface_dim band (#23280), then headings, the tab row
                     // and the menu bar took the theme's header fill, the
                     // active tab its selection fill, and the unfocused pane
-                    // its own fill, its scrollbar lane included (#23416): 4.1.3
+                    // its own fill, its scrollbar lane included (#23416), then
+                    // the menu bar stepped off that fill onto its own bar
+                    // (#23626 C): 4.1.3
                     // requires a glyph change to fail here, so this digest
                     // moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "4b7087b4dc95b4423dce0d2d51e71cc3b62a20da6c18fa12a29b5d72e0b6d952",
+                        "fc3f69e1f8d5f469b2b6e5d21cbfbb051f0128da3fa844bf141e2c22b2a7c352",
                         "the frame moved; read it against the boards before pinning:\n{}",
                         rect_rows(&terminal, frame).join("\n")
                     );

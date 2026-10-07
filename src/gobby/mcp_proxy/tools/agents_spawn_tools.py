@@ -21,7 +21,7 @@ def register_agent_spawn_tools(
         agent: str = "default",
         workflow: str | None = None,
         task_id: str | None = None,
-        isolation: str | None = None,
+        checkout_mode: str | None = None,
         provider: str | None = None,
         model: str | None = None,
         branch_name: str | None = None,
@@ -56,7 +56,7 @@ def register_agent_spawn_tools(
             agent=agent,
             workflow=workflow,
             task_id=task_id,
-            isolation=isolation,
+            checkout_mode=checkout_mode,
             provider=provider,
             model=model,
             branch_name=branch_name,
@@ -114,6 +114,25 @@ def register_agent_spawn_tools(
         from gobby.mcp_proxy.tools.apply_agent_definition import apply_agent_definition_impl
 
         return await apply_agent_definition_impl(
+            agent=agent,
+            db=ctx.db,
+            variables=variables,
+            task_id=task_id,
+            task_manager=ctx.task_manager,
+        )
+
+    @registry.tool(
+        name="apply_persona",
+        description="Switch the current session's persona prompt and skills live, preserving its seat.",
+    )
+    async def apply_persona(
+        agent: str,
+        variables: dict[str, Any] | None = None,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+
+        return await apply_persona_impl(
             agent=agent,
             db=ctx.db,
             variables=variables,

@@ -9,12 +9,12 @@ from typing import Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._authorization import require_claim_authority
 from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session_activity
+from gobby.mcp_proxy.tools.tasks._claim_handoff import handed_off_claim_ids
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._formatters import (
-    dependency_payload,
+    brief_task_card,
     task_discovery_payload,
-    task_summary_payload,
 )
 from gobby.mcp_proxy.tools.tasks._live_session_label import live_session_label_change_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
@@ -243,6 +243,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if claim:
                 task = ctx.task_manager.create_task_for_agent(
                     session_id=resolved_session_id,
+                    handed_off_task_ids=handed_off_claim_ids(ctx, resolved_session_id, project_id),
                     **task_fields,
                 )
             else:
@@ -500,22 +501,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if not task:
             return {"error": f"Task {task_id} not found", "found": False}
 
-        # Enrich with dependency info
+        if brief:
+            return brief_task_card(ctx, task)
+
         blockers = ctx.dep_manager.get_blockers(resolved_id)
         blocking = ctx.dep_manager.get_blocking(resolved_id)
-
-        if brief:
-
-            def _dep_summary(dep: Any, linked_task_id: str) -> dict[str, Any]:
-                linked = ctx.task_manager.get_task(linked_task_id)
-                return dependency_payload(dep, linked_task_id, linked)
-
-            dependencies = {
-                "blocked_by": [_dep_summary(b, b.depends_on) for b in blockers],
-                "blocking": [_dep_summary(b, b.task_id) for b in blocking],
-            }
-            return task_summary_payload(task, dependencies)
-
         result: dict[str, Any] = task.to_dict()
         result["dependencies"] = {
             "blocked_by": [b.to_dict() for b in blockers],
@@ -559,7 +549,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         start_date: str | None = None,
         due_date: str | None = None,
         allow_automation: bool | None = None,
-        isolation: str | None = None,
+        checkout_mode: str | None = None,
         assigned_agent: str | None = None,
         implementation_domain: str | None = None,
         additional_skills: list[str] | None = None,
@@ -648,10 +638,10 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             kwargs["due_date"] = due_date
         if allow_automation is not None:
             kwargs["allow_automation"] = allow_automation
-        if isolation is not None:
+        if checkout_mode is not None:
             try:
-                kwargs["isolation"] = validate_task_isolation_artifacts(
-                    ctx.task_manager, resolved_id, isolation
+                kwargs["checkout_mode"] = validate_task_isolation_artifacts(
+                    ctx.task_manager, resolved_id, checkout_mode
                 )
             except ValueError as e:
                 return {"error": str(e)}
@@ -753,10 +743,10 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "description": "Enable or disable dispatcher automation for this task.",
                     "default": None,
                 },
-                "isolation": {
+                "checkout_mode": {
                     "type": "string",
                     "enum": ["none", "worktree", "clone"],
-                    "description": "Automation isolation mode for future dispatch.",
+                    "description": "Automation checkout mode for future dispatch.",
                     "default": None,
                 },
                 "assigned_agent": {

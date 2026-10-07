@@ -110,7 +110,7 @@ def _spawn_event(caller_id: str, agent: str) -> HookEvent:
             "tool_input": {
                 "server_name": "gobby-agents",
                 "tool_name": "spawn_agent",
-                "arguments": {"agent": agent, "isolation": "none"},
+                "arguments": {"agent": agent, "checkout_mode": "none"},
             },
         },
         metadata={"_platform_session_id": caller_id, "_mcp_proxy_dispatch": True},

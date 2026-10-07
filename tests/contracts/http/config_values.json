@@ -857,7 +857,6 @@
           "tmux_poll_interval_ms": 150
         },
         "terminals": {
-          "default_backend": "native",
           "hook_write_shutdown_timeout_seconds": 5.0,
           "hook_write_timeout_seconds": 5.0,
           "spawn_in_doubt_seconds": 150.0,
@@ -1919,7 +1918,6 @@
           "tmux_poll_interval_ms": 150
         },
         "terminals": {
-          "default_backend": "native",
           "hook_write_shutdown_timeout_seconds": 5.0,
           "hook_write_timeout_seconds": 5.0,
           "spawn_in_doubt_seconds": 150.0,

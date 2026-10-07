@@ -565,6 +565,14 @@ class EvaluationMixin:
                     dict(current_project) if isinstance(current_project, dict) else current_project
                 )
 
+            # A rule with no effect for this event never reads its `when`, so an
+            # unrelated tool's input shape can't error it or fail it closed.
+            if not any(
+                self._effect_matches_event(effect, evaluation.event)
+                for effect in body.resolved_effects
+            ):
+                continue
+
             # Check rule-level `when` condition
             if body.when:
                 fail_closed = any(effect.type == "block" for effect in body.resolved_effects)

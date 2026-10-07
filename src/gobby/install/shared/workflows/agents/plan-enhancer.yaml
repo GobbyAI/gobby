@@ -11,7 +11,7 @@ surfaces: [spawn, persona]
 provider: codex
 model: gpt-5.6-sol
 reasoning_effort: xhigh
-isolation: none
+checkout_mode: none
 # The enhancer is advisory-only and must never edit the plan artifact.
 blocked_tools:
   - "EnterWorktree"
@@ -43,7 +43,7 @@ prompts:
     suggestion; unjustified mechanism is.
 
     Read the plan off the local filesystem with your native file-read tools;
-    this run is `isolation: none`. Walk it through both lenses (Better =
+    this run is `checkout_mode: none`. Walk it through both lenses (Better =
     strengthen in-scope work; Bigger = net-new scope the parent intent
     justifies) and send plan-writer the structured result enhancement.md
     defines: `converged` plus ranked `suggestions`, each with
@@ -64,6 +64,7 @@ prompts:
     - Terminate only through end_agent_run, never kill_agent.
     - Run Python through `uv run`.
     - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
+    - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`; raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
 workflows:
   rule_selectors:
     include:

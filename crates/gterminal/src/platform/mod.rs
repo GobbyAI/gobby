@@ -32,7 +32,7 @@ pub(crate) fn detached_custom_command_process(command: &str) -> std::process::Co
     process
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn pane_custom_command_pty_builder(command: &str) -> portable_pty::CommandBuilder {
     pane_custom_command_pty_builder_platform(command)
 }
@@ -119,19 +119,10 @@ pub(crate) fn watch_terminal_resize_signal() {
     }
 }
 
-#[cfg(not(unix))]
-pub(crate) fn watch_terminal_resize_signal() {}
-
 /// Returns whether a terminal size change was signalled since the last call.
 #[cfg(unix)]
 pub(crate) fn take_terminal_resize_signal() -> bool {
     TERMINAL_RESIZE_SIGNALLED.swap(false, std::sync::atomic::Ordering::AcqRel)
-}
-
-/// Windows relies on size polling.
-#[cfg(not(unix))]
-pub(crate) fn take_terminal_resize_signal() -> bool {
-    false
 }
 
 #[cfg(unix)]

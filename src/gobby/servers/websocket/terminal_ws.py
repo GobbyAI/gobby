@@ -120,7 +120,6 @@ class TerminalWsMixin(TerminalWriteMixin):
     terminal_manager: Any
     write_coordinator: Any
     terminal_runtime_registry: Any
-    terminal_config: Any
     terminal_services: Any | None = None
     terminal_host_manager: Any | None = None
     open_proxy_frame: Any | None = None

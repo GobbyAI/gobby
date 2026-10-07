@@ -312,7 +312,7 @@ def _task_status(
         "escalation_reason": task.escalation_reason,
         "allow_automation": task.allow_automation,
         "unattended": task.unattended,
-        "isolation": task.isolation.value,
+        "checkout_mode": task.checkout_mode.value,
         "claimed_by_session_id": task.claimed_by_session_id,
         "active_blocked_by": sorted(task.active_blocked_by),
         "current_stage": _stage_summary(current_stage),
@@ -599,7 +599,7 @@ def _dispatch_inputs(task: Task) -> dict[str, Any]:
         "closed_at": task.closed_at,
         "is_escalated": task.is_escalated,
         "active_blocked_by": sorted(task.active_blocked_by),
-        "isolation": task.isolation.value,
+        "checkout_mode": task.checkout_mode.value,
         "assigned_agent": task.assigned_agent,
         "dispatch_failure_count": task.dispatch_failure_count,
     }

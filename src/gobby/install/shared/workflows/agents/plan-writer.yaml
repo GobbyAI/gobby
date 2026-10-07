@@ -11,7 +11,7 @@ surfaces: [spawn, persona]
 provider: codex
 model: gpt-5.6-sol
 reasoning_effort: medium
-isolation: none
+checkout_mode: none
 blocked_tools:
   - "EnterWorktree"
 blocked_mcp_tools:
@@ -61,6 +61,7 @@ prompts:
     - Terminate only through end_agent_run, never kill_agent.
     - Run Python through `uv run`.
     - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
+    - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`; raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
 workflows:
   rule_selectors:
     include:

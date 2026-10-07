@@ -10,7 +10,7 @@ surfaces: [spawn, persona]
 provider: codex
 model: gpt-5.6-sol
 reasoning_effort: xhigh
-isolation: none
+checkout_mode: none
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 

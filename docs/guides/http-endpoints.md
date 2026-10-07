@@ -296,6 +296,7 @@ available at `/mcp`.
 | `GET` | `/api/mcp/templates` | List templates visible to the resolved project with parameter contracts. |
 | `GET` | `/api/mcp/status` | Return MCP registry/status data. |
 | `POST` | `/api/mcp/bridge/ready` | Stdio bridge report, sent once the CLI lists the Gobby tools; sets `_mcp_proxy_ready` on the caller's session. An unresolved wrapper caller gets `409 SESSION_REQUIRED`; the bridge retries that, `DAEMON_UNAVAILABLE` and `REQUEST_TIMEOUT` eight times, with backoff sleeps totalling about 90 seconds, and logs a late success, or a give-up as a warning unless no session ever registered. |
+| `GET` | `/api/mcp/bridge/tool-timeouts` | Return the active `mcp_client_proxy.tool_timeouts` map. The stdio bridge reads it once per process, on its first tool call, and retries the read after a failure. Agent tokens may read it. |
 | `POST` | `/api/mcp/refresh` | Re-index tool schemas: `server`/`server_id` targets one resolved instance; otherwise every internal registry and enabled visible instance. Body may include `server`, `server_id`, `project_id`, `scope`, and `force`. |
 | `GET` | `/api/mcp/tools` | List tools across servers. |
 | `POST` | `/api/mcp/tools/search` | Search tools. |
@@ -479,7 +480,7 @@ gates remain in the agent call path; HTTP claim/release is not an agent workarou
 
 `PATCH /api/tasks/{task_id}` accepts metadata fields such as `title`,
 `description`, `priority`, `task_type`, `labels`, `parent_task_id`, `category`,
-`validation_criteria`, `allow_automation`, and `isolation`. `isolation` must be
+`validation_criteria`, `allow_automation`, and `checkout_mode`. `checkout_mode` must be
 `none`, `worktree`, or `clone`. Retargeting to `worktree` is rejected when clone
 artifacts exist, and retargeting to `clone` is rejected when worktree artifacts
 exist.
@@ -526,7 +527,7 @@ there is no corresponding PUT route. Use configuration management for changes.
 `POST /api/build` accepts `input_ref`, `profile`, `project_id`, `coordinator`,
 `dry_run`, `unattended`, delivery fields, `quick`, `skip_stages`, `stage`,
 `target_branch`, `agent`, `reset_expansion_output`, `max_active_agents`,
-`max_retries`, the planning-seed fields, and build isolation fields. `isolation`
+`max_retries`, the planning-seed fields, and build isolation fields. `checkout_mode`
 accepts `none`, `worktree`, or `clone`; `workspace_backend` (`worktree` or
 `clone`) and `clone` are supported aliases. Contradictory isolation
 inputs return `400` instead of silently choosing one value.

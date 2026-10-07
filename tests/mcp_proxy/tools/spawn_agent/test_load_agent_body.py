@@ -23,7 +23,7 @@ class TestLoadAgentBody:
             description="Developer agent",
             provider="claude",
             model="claude-sonnet-4-6",
-            isolation="worktree",
+            checkout_mode="worktree",
             base_branch="main",
             timeout=120.0,
             workflows=make_agent_workflows(rules=["require-task-before-edit", "require-commit"]),
@@ -40,7 +40,7 @@ class TestLoadAgentBody:
         assert result.name == "test-dev-load"
         assert result.provider == "claude"
         assert result.model == "claude-sonnet-4-6"
-        assert result.isolation == "worktree"
+        assert result.checkout_mode == "worktree"
         assert result.workflows.rules == ["require-task-before-edit", "require-commit"]
 
     def test_returns_none_for_missing_agent(self, db: HubDatabase) -> None:

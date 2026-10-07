@@ -94,6 +94,28 @@ def test_step_workflow_nesting() -> None:
         AgentStepWorkflowBody(steps=[])
 
 
+@pytest.mark.parametrize("checkout_mode", ["clone", "worktree"])
+@pytest.mark.parametrize("include_current_key", [False, True])
+def test_removed_isolation_key_rejected(checkout_mode: str, include_current_key: bool) -> None:
+    from gobby.workflows.agent_models import AgentDefinitionBody
+
+    data = _load(_STEPLESS_YAML)
+    data["isolation"] = checkout_mode
+    if include_current_key:
+        data["checkout_mode"] = "none"
+    with pytest.raises(ValidationError, match="isolation.*use checkout_mode"):
+        AgentDefinitionBody.model_validate(data)
+
+
+@pytest.mark.parametrize("checkout_mode", ["none", "worktree", "clone", "inherit"])
+def test_checkout_mode_preserved(checkout_mode: str) -> None:
+    from gobby.workflows.agent_models import AgentDefinitionBody
+
+    data = _load(_STEPLESS_YAML)
+    data["checkout_mode"] = checkout_mode
+    assert AgentDefinitionBody.model_validate(data).checkout_mode == checkout_mode
+
+
 def test_legacy_step_keys_rejected() -> None:
     """Top-level step fields are gone and fail loud with nested replacement names."""
     from gobby.workflows.agent_models import AgentDefinitionBody

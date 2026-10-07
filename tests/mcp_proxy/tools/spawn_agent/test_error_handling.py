@@ -44,7 +44,7 @@ class TestSpawnAgentImplErrorBranches:
 
         assert (
             code_index_preflight_mode(
-                isolation="worktree",
+                checkout_mode="worktree",
                 agent_name="backend-developer",
                 initial_variables=None,
                 task_category="code",
@@ -57,7 +57,7 @@ class TestSpawnAgentImplErrorBranches:
 
         assert (
             code_index_preflight_mode(
-                isolation="none",
+                checkout_mode="none",
                 agent_name="planner",
                 initial_variables={"stage_name": "planning"},
                 task_category="planning",
@@ -78,7 +78,6 @@ class TestSpawnAgentImplErrorBranches:
             return_value=None,
         ):
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -99,7 +98,6 @@ class TestSpawnAgentImplErrorBranches:
             return_value={"project_path": "/path"},
         ):
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -120,7 +118,6 @@ class TestSpawnAgentImplErrorBranches:
             return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -140,7 +137,6 @@ class TestSpawnAgentImplErrorBranches:
             return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -175,7 +171,6 @@ class TestSpawnAgentImplErrorBranches:
             ) as mock_execute,
         ):
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -207,7 +202,6 @@ class TestSpawnAgentImplErrorBranches:
             return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -251,7 +245,6 @@ class TestSpawnAgentImplErrorBranches:
             ) as cleanup_target,
         ):
             failed = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -264,7 +257,6 @@ class TestSpawnAgentImplErrorBranches:
             worktree_storage.delete.assert_not_called()
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -293,7 +285,6 @@ class TestSpawnAgentImplErrorBranches:
             return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -336,7 +327,6 @@ class TestSpawnAgentImplErrorBranches:
             ) as cleanup_target,
         ):
             failed = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -349,7 +339,6 @@ class TestSpawnAgentImplErrorBranches:
             clone_storage.delete.assert_not_called()
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -388,7 +377,6 @@ class TestSpawnAgentImplErrorBranches:
             ),
         ):
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -436,12 +424,11 @@ class TestSpawnAgentImplErrorBranches:
             ),
         ):
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 provider="claude",
                 parent_session_id="sess-1",
-                isolation="worktree",
+                checkout_mode="worktree",
                 cleanup_isolation_on_failure=True,
                 git_manager=MagicMock(),
                 worktree_storage=MagicMock(),
@@ -598,7 +585,6 @@ class TestSpawnAgentImplErrorBranches:
             )
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -689,7 +675,6 @@ test"""
             )
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -781,7 +766,6 @@ test"""
             ) as mock_execute,
         ):
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -890,7 +874,6 @@ test"""
             mock_execute.side_effect = execute
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -989,7 +972,6 @@ test"""
             )
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -1056,13 +1038,12 @@ test"""
             ) as mock_execute,
         ):
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="plan",
                 runner=runner,
                 parent_session_id="sess-1",
                 agent_lookup_name=agent_name,
                 provider="codex",
-                isolation="none",
+                checkout_mode="none",
                 initial_variables={"stage_name": "planning", "stage_state": stage_state},
             )
             await _drain_spawn_background_tasks()
@@ -1118,13 +1099,12 @@ test"""
             ) as mock_execute,
         ):
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="plan",
                 runner=runner,
                 parent_session_id="sess-1",
                 agent_lookup_name="planner",
                 provider="codex",
-                isolation="none",
+                checkout_mode="none",
                 initial_variables={"stage_name": "planning", "stage_state": "in_progress"},
             )
             await _drain_spawn_background_tasks()
@@ -1205,7 +1185,6 @@ test"""
             ) as mock_execute,
         ):
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -1274,7 +1253,6 @@ test"""
             ),
         ):
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
@@ -1331,7 +1309,6 @@ test"""
             )
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="test",
                 runner=runner,
                 provider="claude",
@@ -1451,7 +1428,6 @@ async def test_dirty_reused_worktree_refusal_surfaces_verbatim(
         ) as sync,
     ):
         result = await spawn_agent_impl(
-            terminal_backend="native",
             prompt="test",
             runner=runner,
             provider="codex",

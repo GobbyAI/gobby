@@ -80,7 +80,7 @@ async def resume_existing_lifecycle(
         resume_skip_stages,
     )
     apply_stage_caps_to_existing_lifecycle(task_manager, task.id, resume_opts)
-    _validate_task_ref_isolation_artifacts(task_manager, task, resume_opts.isolation)
+    _validate_task_ref_isolation_artifacts(task_manager, task, resume_opts.checkout_mode)
     existing_target_branch = task_manager.artifacts.get_artifacts(task.id).target_branch
     task_manager.artifacts.set_artifacts_atomic(
         task.id,
@@ -90,7 +90,7 @@ async def resume_existing_lifecycle(
         task.id,
         allow_automation=True,
         unattended=opts.unattended,
-        isolation=resume_opts.isolation,
+        checkout_mode=resume_opts.checkout_mode,
         assigned_agent=(
             opts.assigned_agent if opts.assigned_agent is not None else task.assigned_agent
         ),
@@ -101,11 +101,11 @@ async def resume_existing_lifecycle(
         if not resume_opts.dry_run:
             cascade_result = task_manager.cascade_build_state_to_subtree(
                 task.id,
-                isolation=resume_opts.isolation,
+                checkout_mode=resume_opts.checkout_mode,
                 unattended=opts.unattended,
                 allow_automation=True,
                 parent_manifest_specs=cascade_parent_specs,
-                include_merge_stage=resume_opts.isolation in {"worktree", "clone"}
+                include_merge_stage=resume_opts.checkout_mode in {"worktree", "clone"}
                 and not opts.no_merge,
             )
             warnings.extend(
@@ -130,7 +130,7 @@ async def resume_existing_lifecycle(
             task_manager,
             task,
             False,
-            isolation=resume_opts.isolation,
+            checkout_mode=resume_opts.checkout_mode,
         )
     return BuildResult(
         task_id=task.id,

@@ -15,6 +15,7 @@ from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.utils.git import run_thread_to_completion
 from gobby.worktrees.events import WorktreeEvent, emit_worktree_event
 from gobby.worktrees.executor import DestructiveBoundary
+from gobby.worktrees.occupancy import refuse_occupied_worktree
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
@@ -118,6 +119,17 @@ async def _delete_worktree(
     task_manager: LocalTaskManager | None,
     context: contextvars.Context,
 ) -> WorktreeDeletionResult:
+    occupied = await run_thread_to_completion(
+        context.run,
+        refuse_occupied_worktree,
+        worktree_storage.db,
+        worktree.worktree_path,
+        worktree_id=worktree.id,
+    )
+    if occupied is not None:
+        return WorktreeDeletionResult(
+            success=False, git_deleted=False, error=occupied, error_code="worktree_in_use"
+        )
     git_manager = await run_thread_to_completion(context.run, resolve_git_manager, worktree)
     if request.merged_into is not None and git_manager is None:
         return WorktreeDeletionResult(

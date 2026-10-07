@@ -11,7 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from gobby.agents.launcher_session import aget_or_create_launcher_session
 from gobby.agents.reasoning import normalize_reasoning_effort
@@ -61,11 +61,13 @@ class ReasoningEffortMixin(BaseModel):
 class AgentSpawnRequest(ReasoningEffortMixin):
     """Request body for spawning an agent on a task."""
 
+    model_config = ConfigDict(extra="forbid")
+
     task_id: str
     agent_name: str = "default"
     prompt: str | None = None
     web_chat: bool = False
-    isolation: Literal["none", "worktree", "clone"] | None = None
+    checkout_mode: Literal["none", "worktree", "clone"] | None = None
     provider: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
@@ -74,7 +76,6 @@ class AgentSpawnRequest(ReasoningEffortMixin):
     branch_name: str | None = None
     base_branch: str | None = None
     timeout: float | None = None
-    terminal_backend: Literal["native"] | None = None
     extra_write_paths: list[str] | None = None
     write_paths_reason: str | None = None
 
@@ -87,7 +88,7 @@ class AgentSpawnResponse(BaseModel):
     child_session_id: str | None = None
     conversation_id: str | None = None
     prompt: str | None = None
-    isolation: str | None = None
+    checkout_mode: str | None = None
     branch_name: str | None = None
     pid: int | None = None
     message: str | None = None
@@ -116,7 +117,7 @@ class BatchSpawnResponse(BaseModel):
 
 _BUILT_IN_DEFAULTS: dict[str, Any] = {
     "agent_name": "default",
-    "isolation": "inherit",
+    "checkout_mode": "inherit",
     "model": None,
     "reasoning_effort": None,
     "reasoning_required": False,
@@ -307,7 +308,6 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         # Load agent definition
         from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
 
-        agent_body = None
         try:
             agent_body = await asyncio.to_thread(
                 resolve_agent,
@@ -315,12 +315,8 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 server.services.database,
                 project_id=effective_project_id,
             )
-        except AgentResolutionError:
-            if req.agent_name != "default":
-                return AgentSpawnResponse(
-                    success=False,
-                    error=f"Agent definition '{req.agent_name}' not found",
-                )
+        except AgentResolutionError as exc:
+            return AgentSpawnResponse(success=False, error=str(exc))
 
         # Compose prompt with preamble
         effective_prompt = prompt
@@ -368,7 +364,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             agent_lookup_name=req.agent_name,
             task_id=req.task_id,
             task_manager=task_manager,
-            isolation=req.isolation,
+            checkout_mode=req.checkout_mode,
             branch_name=req.branch_name,
             base_branch=req.base_branch,
             worktree_storage=server.services.worktree_storage,
@@ -389,7 +385,6 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             db=server.services.database,
             completion_registry=server.services.completion_registry,
             daemon_config=config_snapshot.active,
-            terminal_backend=req.terminal_backend,
             extra_write_paths=req.extra_write_paths,
             write_paths_reason=req.write_paths_reason,
         )
@@ -408,7 +403,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 success=True,
                 run_id=result.get("run_id"),
                 child_session_id=result.get("child_session_id"),
-                isolation=result.get("isolation"),
+                checkout_mode=result.get("checkout_mode"),
                 branch_name=result.get("branch_name"),
                 pid=result.get("pid"),
                 message=result.get("message"),

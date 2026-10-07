@@ -52,7 +52,7 @@ VALID_CATEGORIES: frozenset[str] = frozenset(
 )
 
 
-class Isolation(StrEnum):
+class CheckoutMode(StrEnum):
     none = "none"
     worktree = "worktree"
     clone = "clone"
@@ -233,7 +233,9 @@ class AgentTaskClaimConflictError(ValueError):
             return
         super().__init__(
             f"Session already owns open claimed task {claimed_task_ref}. "
-            "Finish and close it, or for a genuine blocker or explicitly directed recovery use "
+            "Finish and close it. To start other work while it waits on review, landing or "
+            "close, commit its attributed files and get a reviewer's independent_review_approval "
+            "receipt. For a genuine blocker or explicitly directed recovery use "
             f'escalate_task(task_id="{claimed_task_ref}", reason="<concrete reason>") '
             "to release ownership. Alternatively, arrange an authorized transfer to another "
             "session with claim capacity. force=true does not bypass your existing claim. "
@@ -312,7 +314,7 @@ class Task:
     # Automation dispatch fields
     allow_automation: bool = False
     unattended: bool = False
-    isolation: Isolation = Isolation.worktree
+    checkout_mode: CheckoutMode = CheckoutMode.worktree
     assigned_agent: str | None = None
     implementation_domain: str | None = None
     additional_skills: list[str] | None = None
@@ -325,7 +327,7 @@ class Task:
     def __post_init__(self) -> None:
         """Normalize enum-backed fields for manually constructed tasks."""
         self.task_type = validate_task_type(self.task_type)
-        self.isolation = Isolation(self.isolation)
+        self.checkout_mode = CheckoutMode(self.checkout_mode)
         self.implementation_domain = validate_implementation_domain(self.implementation_domain)
         if self.escalated_at and not self.closed_at:
             self.is_escalated = True
@@ -408,10 +410,10 @@ class Task:
             due_date=_normalize_date(row["due_date"] if "due_date" in keys else None),
             allow_automation=bool(row["allow_automation"]) if "allow_automation" in keys else False,
             unattended=bool(row["unattended"]) if "unattended" in keys else False,
-            isolation=(
-                Isolation(row["isolation"])
-                if "isolation" in keys and row["isolation"] is not None
-                else Isolation.worktree
+            checkout_mode=(
+                CheckoutMode(row["checkout_mode"])
+                if "checkout_mode" in keys and row["checkout_mode"] is not None
+                else CheckoutMode.worktree
             ),
             assigned_agent=row["assigned_agent"] if "assigned_agent" in keys else None,
             implementation_domain=(
@@ -468,7 +470,7 @@ class Task:
             "due_date": self.due_date,
             "allow_automation": self.allow_automation,
             "unattended": self.unattended,
-            "isolation": self.isolation,
+            "checkout_mode": self.checkout_mode,
             "assigned_agent": self.assigned_agent,
             "implementation_domain": self.implementation_domain,
             "additional_skills": self.additional_skills,
@@ -511,7 +513,7 @@ class Task:
             "due_date": self.due_date,
             "allow_automation": self.allow_automation,
             "unattended": self.unattended,
-            "isolation": self.isolation,
+            "checkout_mode": self.checkout_mode,
             "assigned_agent": self.assigned_agent,
             "implementation_domain": self.implementation_domain,
             "additional_skills": self.additional_skills,

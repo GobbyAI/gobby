@@ -13,7 +13,7 @@ Ask only for a required unresolved choice or authority, not repeated approval.
 
 Resolve the installed profile (default name `default`), isolation, delivery
 intent, stage settings, agent, target branch, coordinator, and concurrency.
-Use the profiles topic for precedence. `isolation` is `none`, `worktree`, or
+Use the profiles topic for precedence. `checkout_mode` is `none`, `worktree`, or
 `clone`; reject conflicting isolation aliases. `no_merge` requires an isolated
 workspace. `stage` accepts selectors/settings such as
 `development:max_review_rounds=4`. `max_retries=0` means one work attempt.

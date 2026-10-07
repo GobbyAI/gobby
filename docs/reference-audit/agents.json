@@ -19,7 +19,7 @@
         "runtime-tools",
         "blocked-child-communication",
         "recovery-checkpoints",
-        "isolation",
+        "checkout-modes",
         "recommended-patterns",
         "related-guides"
       ],
@@ -320,6 +320,21 @@
       "audience": "agent",
       "server": "gobby-agents",
       "tool": "apply_agent_definition"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/personas.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agents_spawn_tools.py",
+        "symbol": "register_agent_spawn_tools.apply_persona"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "apply_persona"
     },
     {
       "surface": "mcp",

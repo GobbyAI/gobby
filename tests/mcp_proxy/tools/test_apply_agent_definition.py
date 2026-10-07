@@ -15,7 +15,7 @@ from uuid import uuid4
 
 import pytest
 
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.agents_spawn_tools import register_agent_spawn_tools
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -78,6 +78,113 @@ def definitions(monkeypatch: pytest.MonkeyPatch) -> dict[str, AgentDefinitionBod
 
 def apply_definition() -> Callable[..., Any]:
     return cast(Callable[..., Any], activation_module().apply_agent_definition_impl)
+
+
+def inject_definition_context(db: HubDatabase, sid: str) -> str:
+    """Deliver and acknowledge a real prompt receipt before the next injection."""
+    import logging
+
+    from gobby.hooks.event_handlers._agent import AgentEventHandlerMixin
+    from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, apply_acknowledged_receipt
+
+    handler = SimpleNamespace(
+        _session_manager=SessionManager(db), logger=logging.getLogger(__name__)
+    )
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id=sid,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={},
+    )
+    response = HookResponse(decision="allow")
+    AgentEventHandlerMixin._inject_agent_instructions_if_needed(
+        cast(Any, handler), event, sid, response
+    )
+    apply_acknowledged_receipt(
+        SimpleNamespace(staged_payload=response.metadata.get(STAGED_EFFECTS_FIELD)),
+        variable_manager=SessionVariableManager(db),
+    )
+    return response.context or ""
+
+
+@pytest.mark.asyncio
+async def test_same_seat_changed_row_reports_drift_once(
+    temp_db: HubDatabase,
+    session_id: str,
+    definitions: dict[str, AgentDefinitionBody],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "gobby.workflows.agent_resolver.resolve_agent",
+        lambda name, *args, **kwargs: definitions[name],
+    )
+    apply = apply_definition()
+    manager = SessionVariableManager(temp_db)
+    first = await apply(agent="x", db=temp_db, session_id=session_id)
+    assert first["success"]
+    old_pin = first["definition_hash"]
+    assert not manager.get_variables(session_id).get("_agent_definition_drift")
+    assert inject_definition_context(temp_db, session_id) == "Instructions for x."
+    manager.merge_variables(session_id, {"_agent_definition_drift": None})
+    definitions["x"].prompts.persona = "Updated instructions."
+    changed = await apply(agent="x", db=temp_db, session_id=session_id)
+    assert changed["success"]
+    new_pin = changed["definition_hash"]
+    assert new_pin != old_pin
+    line = (
+        f"Definition `x` changed since this session activated it (`{old_pin[:12]}` → "
+        f"`{new_pin[:12]}`); the current definition now applies."
+    )
+    assert manager.get_variables(session_id).get("_agent_definition_drift") == line
+    context = inject_definition_context(temp_db, session_id)
+    assert context.startswith("Updated instructions.")
+    assert context.count(line) == 1
+    assert manager.get_variables(session_id)["_agent_definition_drift"] is None
+    assert inject_definition_context(temp_db, session_id) == ""
+    unchanged = await apply(agent="x", db=temp_db, session_id=session_id)
+    assert unchanged["status"] == "unchanged"
+    assert not manager.get_variables(session_id)["_agent_identity_reinject"]
+    assert manager.get_variables(session_id)["_agent_definition_drift"] is None
+
+
+@pytest.mark.asyncio
+async def test_relaunch_clears_undelivered_previous_seat_drift(
+    temp_db: HubDatabase,
+    session_id: str,
+    definitions: dict[str, AgentDefinitionBody],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "gobby.workflows.agent_resolver.resolve_agent",
+        lambda name, *args, **kwargs: definitions[name],
+    )
+    apply = apply_definition()
+    assert (await apply(agent="x", db=temp_db, session_id=session_id))["success"]
+    definitions["x"].prompts.persona = "Changed x."
+    assert (await apply(agent="x", db=temp_db, session_id=session_id))["success"]
+    assert SessionVariableManager(temp_db).get_variables(session_id)["_agent_definition_drift"]
+    assert (await apply(agent="y", db=temp_db, session_id=session_id, relaunch=True))["success"]
+    assert inject_definition_context(temp_db, session_id) == "Instructions for y."
+    assert inject_definition_context(temp_db, session_id) == ""
+
+
+@pytest.mark.parametrize(
+    ("old_agent", "old_pin", "new_agent", "new_pin", "drift"),
+    [
+        ("x", None, "x", "new", False),
+        ("x", "same", "x", "same", False),
+        ("x", "old", "y", "new", False),
+        ("x", "old", "x", "new", True),
+    ],
+)
+def test_definition_drift_comparison(
+    old_agent: str, old_pin: str | None, new_agent: str, new_pin: str, drift: bool
+) -> None:
+    line = activation_module().definition_drift_line(
+        {"_agent_type": old_agent, "_agent_definition_hash": old_pin}, new_agent, new_pin
+    )
+    assert bool(line) is drift
 
 
 @pytest.mark.asyncio
@@ -488,7 +595,7 @@ async def test_activated_seat_refuses_worktree_tools(
     assert_worktree_tools_blocked(temp_db, session_id)
 
 
-def test_registry_exposes_apply_agent_definition_only() -> None:
+def test_registry_exposes_definition_and_persona() -> None:
     registry = InternalToolRegistry("gobby-agents")
     context = cast(AgentsRegistryContext, MagicMock())
     with patch(
@@ -496,11 +603,11 @@ def test_registry_exposes_apply_agent_definition_only() -> None:
         return_value=InternalToolRegistry("spawn"),
     ):
         register_agent_spawn_tools(registry, context)
-    retired = "apply_persona"
+    persona = "apply_persona"
     names = {tool["name"] for tool in registry.list_tools()}
     assert "apply_agent_definition" in names
-    assert retired not in names
-    assert importlib.util.find_spec(f"gobby.mcp_proxy.tools.{retired}") is None
+    assert persona in names
+    assert importlib.util.find_spec(f"gobby.mcp_proxy.tools.{persona}") is not None
 
 
 class TestBuildDefinitionChanges:
@@ -611,7 +718,7 @@ class TestBuildDefinitionChanges:
 
         assert changes["_skill_format"] == "compact"
 
-    def test_step_workflow_not_created_for_caller_persona(self, db: HubDatabase) -> None:
+    def test_step_completion_seeded_for_caller_persona(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_agent_definition import build_definition_changes
         from gobby.workflows.definitions import WorkflowStep
 
@@ -651,7 +758,7 @@ class TestBuildDefinitionChanges:
         )
 
         assert "_step_workflow_name" not in changes
-        assert "step_workflow_complete" not in changes
+        assert changes["step_workflow_complete"] is False
 
         from gobby.workflows.step_instances import AgentStepInstanceManager
 
@@ -663,7 +770,7 @@ class TestBuildDefinitionChanges:
         [{}, {"assigned_task_id": None, "active_task_id": None}],
         ids=["missing", "json-null"],
     )
-    def test_step_workflow_not_created_for_taskless_spawn(
+    def test_step_completion_seeded_for_taskless_spawn(
         self,
         db: HubDatabase,
         task_variables: dict[str, object],
@@ -707,7 +814,7 @@ class TestBuildDefinitionChanges:
         )
 
         assert "_step_workflow_name" not in changes
-        assert "step_workflow_complete" not in changes
+        assert changes["step_workflow_complete"] is False
         instance = AgentStepInstanceManager(db).get_for_session(session_id)
         assert instance is None
 

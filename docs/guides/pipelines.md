@@ -129,7 +129,7 @@ steps:
         prompt: "Review task ${{ inputs.task_id }}"
         agent: "${{ inputs.reviewer_agent }}"
         task_id: "${{ inputs.task_id }}"
-        isolation: "none"
+        checkout_mode: "none"
         parent_session_id: "${{ session_id }}"
 
   - id: wait_for_reviewer
@@ -344,18 +344,17 @@ When a gate fires, Gobby stores an approval token and marks the execution
 `waiting_approval`. Approve or reject the token through:
 
 ```python
-call_tool("gobby-workflows", "approve_pipeline", {
-    "token": token,
-    "approved_by": "operator"
-})
+call_tool("gobby-workflows", "approve_pipeline", {"token": token})
 ```
 
 ```python
-call_tool("gobby-workflows", "reject_pipeline", {
-    "token": token,
-    "rejected_by": "operator"
-})
+call_tool("gobby-workflows", "reject_pipeline", {"token": token})
 ```
+
+The recorded approver or rejecter comes from the authenticated caller, never
+from arguments. An agent API token records the session bound into it as
+`session:<id>`. Operator credentials record the calling session when there is
+one, otherwise `operator`. In-process dispatch with no calling session is refused.
 
 Approval tokens are single-use and project-scoped by the execution manager.
 Approval consumes the token and executes the gated step, then continues until

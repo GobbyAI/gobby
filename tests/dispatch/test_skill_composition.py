@@ -258,7 +258,7 @@ async def test_spawn_and_explain_share_unknown_skill_failure(
         category="code",
         validation_criteria="Test task completion is observable.",
     )
-    task = task_manager.update_task(task.id, allow_automation=True, isolation="none")
+    task = task_manager.update_task(task.id, allow_automation=True, checkout_mode="none")
     agent_body = _agent()
     dumped = agent_body.model_dump(mode="json")
     AgentDefinitionManager(temp_db).upsert_with_steps(

@@ -43,7 +43,7 @@ class SpawnEvaluation:
     agent_name: str | None = None
     agent_found: bool = False
     effective_workflow: str | None = None
-    effective_isolation: str | None = None
+    effective_checkout_mode: str | None = None
     effective_provider: str | None = None
     branch_name: str | None = None
 
@@ -57,7 +57,7 @@ class SpawnEvaluation:
             "agent_name": self.agent_name,
             "agent_found": self.agent_found,
             "effective_workflow": self.effective_workflow,
-            "effective_isolation": self.effective_isolation,
+            "effective_checkout_mode": self.effective_checkout_mode,
             "effective_provider": self.effective_provider,
             "branch_name": self.branch_name,
             "workflow_evaluation": self.workflow_evaluation.to_dict()
@@ -95,7 +95,7 @@ async def evaluate_spawn(
     agent: str = "default",
     workflow: str | None = None,
     task_id: str | None = None,
-    isolation: str | None = None,
+    checkout_mode: str | None = None,
     provider: str | None = None,
     model: str | None = None,
     branch_name: str | None = None,
@@ -119,7 +119,7 @@ async def evaluate_spawn(
     """
     Evaluate a spawn_agent call without executing.
 
-    Checks agent definition, workflow resolution, isolation config,
+    Checks agent definition, workflow resolution, checkout configuration,
     provider/model compatibility, and runtime environment to identify
     issues before spawning.
     """
@@ -201,20 +201,20 @@ async def evaluate_spawn(
                 )
             )
             eff_provider = None
-    eff_isolation = isolation or agent_body.isolation or "none"
+    eff_checkout_mode = checkout_mode or agent_body.checkout_mode or "none"
 
     result.effective_provider = eff_provider
-    result.effective_isolation = eff_isolation
+    result.effective_checkout_mode = eff_checkout_mode
 
     result.items.append(
         EvaluationItem(
             layer="agent",
             level="info",
             code="AGENT_RESOLVED",
-            message=f"Agent '{agent}' found: provider={eff_provider}, isolation={eff_isolation}",
+            message=f"Agent '{agent}' found: provider={eff_provider}, checkout_mode={eff_checkout_mode}",
             detail={
                 "provider": eff_provider,
-                "isolation": eff_isolation,
+                "checkout_mode": eff_checkout_mode,
                 "model": agent_body.model,
                 "timeout": agent_body.timeout,
             },
@@ -273,7 +273,7 @@ async def evaluate_spawn(
         )
 
     # ---- Layer 3: Isolation Resolution ----
-    if eff_isolation in ("worktree", "clone"):
+    if eff_checkout_mode in ("worktree", "clone"):
         target_git_manager = git_manager
         target_clone_manager = clone_manager
         if git_manager_resolver is not None:
@@ -281,7 +281,7 @@ async def evaluate_spawn(
                 target_git_manager = None
                 result.items.append(
                     EvaluationItem(
-                        layer="isolation",
+                        layer="checkout_mode",
                         level="error",
                         code="PROJECT_CONTEXT_MISSING",
                         message="Could not resolve target project for isolation",
@@ -294,7 +294,7 @@ async def evaluate_spawn(
                     target_git_manager = None
                     result.items.append(
                         EvaluationItem(
-                            layer="isolation",
+                            layer="checkout_mode",
                             level="error",
                             code="GIT_MANAGER_UNAVAILABLE",
                             message=(
@@ -308,7 +308,7 @@ async def evaluate_spawn(
                 ):
                     result.items.append(
                         EvaluationItem(
-                            layer="isolation",
+                            layer="checkout_mode",
                             level="error",
                             code="GIT_MANAGER_UNAVAILABLE",
                             message=(
@@ -321,7 +321,7 @@ async def evaluate_spawn(
         if git_manager_resolver is not None and manager_repo_path is not None:
             resolved_project_path = str(manager_repo_path)
 
-        if eff_isolation == "clone" and target_git_manager is not None:
+        if eff_checkout_mode == "clone" and target_git_manager is not None:
             try:
                 from gobby.clones.git import CloneGitManager
 
@@ -330,7 +330,7 @@ async def evaluate_spawn(
                 target_clone_manager = None
                 result.items.append(
                     EvaluationItem(
-                        layer="isolation",
+                        layer="checkout_mode",
                         level="error",
                         code="CLONE_MANAGER_UNAVAILABLE",
                         message=(
@@ -340,16 +340,18 @@ async def evaluate_spawn(
                     )
                 )
 
-        storage = worktree_storage if eff_isolation == "worktree" else clone_storage
-        manager_dep = target_git_manager if eff_isolation == "worktree" else target_clone_manager
+        storage = worktree_storage if eff_checkout_mode == "worktree" else clone_storage
+        manager_dep = (
+            target_git_manager if eff_checkout_mode == "worktree" else target_clone_manager
+        )
 
         if manager_dep is None or storage is None:
             result.items.append(
                 EvaluationItem(
-                    layer="isolation",
+                    layer="checkout_mode",
                     level="warning",
                     code="ISOLATION_DEPS_MISSING",
-                    message=f"{eff_isolation.title()} isolation requires dependencies",
+                    message=f"{eff_checkout_mode.title()} isolation requires dependencies",
                 )
             )
         elif resolved_project_path and eff_provider is not None:
@@ -382,17 +384,20 @@ async def evaluate_spawn(
                 if existing:
                     result.items.append(
                         EvaluationItem(
-                            layer="isolation",
+                            layer="checkout_mode",
                             level="info",
-                            code=f"EXISTING_{eff_isolation.upper()}",
-                            message=f"Existing {eff_isolation} found for branch '{computed_branch}' — will be reused",
-                            detail={"branch": computed_branch, f"{eff_isolation}_id": existing.id},
+                            code=f"EXISTING_{eff_checkout_mode.upper()}",
+                            message=f"Existing {eff_checkout_mode} found for branch '{computed_branch}' — will be reused",
+                            detail={
+                                "branch": computed_branch,
+                                f"{eff_checkout_mode}_id": existing.id,
+                            },
                         )
                     )
             except Exception:
                 logger.debug(
                     "Failed to check existing %s for branch '%s'",
-                    eff_isolation,
+                    eff_checkout_mode,
                     computed_branch,
                     exc_info=True,
                 )

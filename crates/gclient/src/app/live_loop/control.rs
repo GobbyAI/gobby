@@ -182,7 +182,7 @@ pub(super) fn retire_live_control(
     let writer = pane.writer.as_ref().expect("writer spawned");
     // Only a writer whose loop already exited refuses it, and that loop is
     // the one retiring.
-    let _ = writer.enqueue_barrier(Some(message), None, None);
+    let _ = writer.enqueue_barrier(Some(message), None, None, attachment_id);
 }
 
 /// Give up `pane_id`'s lease. This only marks the release; the loop sends it
@@ -256,8 +256,9 @@ fn enqueue_release(
     let flushed = pane
         .frame_source_mut()
         .and_then(PaneFrameSource::take_write_receipt);
+    let attachment = pane.attachment_id().to_owned();
     let writer = pane.writer.as_ref().expect("writer spawned");
-    let done = writer.enqueue_barrier(Some(message), after, flushed);
+    let done = writer.enqueue_barrier(Some(message), after, flushed, attachment);
     pane.release_pending = done.is_none();
     pane.release_done.clone_from(&done);
     done
@@ -291,8 +292,9 @@ pub(super) fn close_barrier(
         return None;
     }
     let pane = pane_writer(workspace, outcomes, pane_id);
+    let attachment = pane.attachment_id().to_owned();
     let writer = pane.writer.as_ref().expect("writer spawned");
-    writer.enqueue_barrier(None, None, flushed)
+    writer.enqueue_barrier(None, None, flushed, attachment)
 }
 
 /// Keys for a held pane go out at once; an observed pane takes control
@@ -330,8 +332,13 @@ pub(super) fn send_live_input(
     }
     let acquiring = workspace.awaiting_control(pane_id);
     let pane = workspace.pane(pane_id);
+    // A key typed while the pane re-attaches, or while a recovery detaches it
+    // to attach again, is its ask for control, as it would be a moment later
+    // on the live attachment; the take waits until the new attachment is
+    // live, and a failed attach clears the queue.
     if !pane.is_live()
-        && !(acquiring && matches!(pane.attach_state(), AttachState::Attaching { .. }))
+        && !pane.fallback_in_flight
+        && !matches!(pane.attach_state(), AttachState::Attaching { .. })
     {
         return Ok(());
     }

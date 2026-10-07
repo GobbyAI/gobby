@@ -61,7 +61,7 @@ async def test_no_isolation_preserves_requested_worktree_for_sandbox(
                 "prompt": "Verify the existing workspace without external grants",
                 "parent_session_id": parent,
                 "project_path": str(workspace),
-                "isolation": "none",
+                "checkout_mode": "none",
             },
         )
         await _drain_spawn_background_tasks()
@@ -181,7 +181,7 @@ async def test_worktree_spawn_uses_target_repository(
     arguments = {
         "prompt": "Inspect the target checkout",
         "parent_session_id": parent_session_id,
-        "isolation": "worktree",
+        "checkout_mode": "worktree",
         "branch_name": f"agent/{targeting}",
     }
     if targeting == "explicit_path":
@@ -350,7 +350,7 @@ async def test_worktree_spawn_fails_closed_when_base_divergence_is_unavailable(
                 "prompt": "Reject an unsafe worktree base",
                 "parent_session_id": parent_session_id,
                 "task_id": f"#{task.seq_num}",
-                "isolation": "worktree",
+                "checkout_mode": "worktree",
                 "branch_name": "agent/unsafe-base",
             },
         )
@@ -442,7 +442,7 @@ async def test_clone_spawn_derives_manager_from_target_repository(
                 "prompt": "Clone the target checkout",
                 "parent_session_id": "parent",
                 "project_path": target_project.root_path,
-                "isolation": "clone",
+                "checkout_mode": "clone",
             },
         )
 
@@ -580,7 +580,7 @@ async def test_spawn_fails_closed_when_target_checkout_is_unresolved(
             {
                 "prompt": "Do not fall back",
                 "parent_session_id": parent_session_id,
-                "isolation": "worktree",
+                "checkout_mode": "worktree",
             },
         )
 

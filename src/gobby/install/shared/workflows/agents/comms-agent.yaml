@@ -6,7 +6,7 @@ version: "1.2"
 enabled: true
 surfaces: [persona]
 provider: inherit
-isolation: none
+checkout_mode: none
 
 prompts:
   persona: |

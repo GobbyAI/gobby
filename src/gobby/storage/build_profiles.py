@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 import yaml
 
-from gobby.config.build import Isolation
+from gobby.config.build import CheckoutMode
 from gobby.paths import get_install_dir
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model
@@ -45,7 +45,7 @@ class BuildProfile:
     display_label: str
     description: str
     skip_stages: list[str]
-    isolation: Isolation
+    checkout_mode: CheckoutMode
     unattended: bool
     delivery_mode: str
     delivery_target_repo: str | None
@@ -188,9 +188,13 @@ class BuildProfileLoader:
     def _parse_profile(index: int, raw: dict[str, Any]) -> BuildProfile:
         name = _required_string(raw, "name", index)
         _validate_profile_name(name)
-        isolation = raw.get("isolation", "worktree")
-        if isolation not in {"none", "worktree", "clone"}:
-            raise BuildProfileError(f"Build profile {name} isolation is invalid")
+        if "isolation" in raw:
+            raise BuildProfileError(
+                f"Build profile {name} isolation is no longer accepted: use checkout_mode"
+            )
+        checkout_mode = raw.get("checkout_mode", "worktree")
+        if checkout_mode not in {"none", "worktree", "clone"}:
+            raise BuildProfileError(f"Build profile {name} checkout_mode is invalid")
         skip_stages = raw.get("skip_stages", [])
         if not isinstance(skip_stages, list) or not all(
             isinstance(stage, str) for stage in skip_stages
@@ -231,7 +235,7 @@ class BuildProfileLoader:
             display_label=_required_string(raw, "display_label", index),
             description=_required_string(raw, "description", index),
             skip_stages=list(skip_stages),
-            isolation=isolation,
+            checkout_mode=checkout_mode,
             unattended=unattended,
             delivery_mode=delivery_mode,
             delivery_target_repo=delivery_target_repo,
@@ -324,7 +328,7 @@ class BuildProfileManager:
         display_label: str,
         description: str,
         skip_stages: Iterable[str],
-        isolation: Isolation,
+        checkout_mode: CheckoutMode,
         unattended: bool,
         enabled: bool = True,
         delivery_mode: str = "auto",
@@ -345,7 +349,7 @@ class BuildProfileManager:
             display_label=display_label,
             description=description,
             skip_stages=list(skip_stages),
-            isolation=isolation,
+            checkout_mode=checkout_mode,
             unattended=unattended,
             delivery_mode=delivery_mode,
             delivery_target_repo=delivery_target_repo,
@@ -494,14 +498,17 @@ class BuildProfileManager:
 
     @staticmethod
     def _hash_payload(payload: dict[str, Any]) -> str:
-        body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        # Keep the persisted digest format stable across the public field rename.
+        digest_payload = dict(payload)
+        digest_payload["isolation"] = digest_payload.pop("checkout_mode")
+        body = json.dumps(digest_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(body).hexdigest()
 
     def _insert_profile(self, profile: BuildProfile) -> None:
         self.db.execute(
             """
             INSERT INTO build_profiles (
-                id, name, display_label, description, skip_stages_json, isolation,
+                id, name, display_label, description, skip_stages_json, checkout_mode,
                 unattended, plan_enhancement_rounds, delivery_mode, delivery_target_repo,
                 enabled, source, project_id,
                 tags_json, bundled_hash, deleted_at
@@ -537,7 +544,7 @@ class BuildProfileManager:
                SET display_label = %s,
                    description = %s,
                    skip_stages_json = %s,
-                   isolation = %s,
+                   checkout_mode = %s,
                    unattended = %s,
                    plan_enhancement_rounds = %s,
                    delivery_mode = %s,
@@ -553,7 +560,7 @@ class BuildProfileManager:
                 profile.display_label,
                 profile.description,
                 json.dumps(profile.skip_stages),
-                profile.isolation,
+                profile.checkout_mode,
                 bool(profile.unattended),
                 int(profile.plan_enhancement_rounds),
                 profile.delivery_mode,
@@ -573,7 +580,7 @@ class BuildProfileManager:
             profile.display_label,
             profile.description,
             json.dumps(profile.skip_stages),
-            profile.isolation,
+            profile.checkout_mode,
             bool(profile.unattended),
             int(profile.plan_enhancement_rounds),
             profile.delivery_mode,
@@ -592,7 +599,7 @@ class BuildProfileManager:
             display_label=row["display_label"],
             description=row["description"],
             skip_stages=_json_list(row["skip_stages_json"], "skip_stages_json"),
-            isolation=row["isolation"],
+            checkout_mode=row["checkout_mode"],
             unattended=bool(row["unattended"]),
             delivery_mode=row["delivery_mode"],
             delivery_target_repo=row["delivery_target_repo"],
@@ -622,7 +629,7 @@ class BuildProfileManager:
             "display_label": profile.display_label,
             "description": profile.description,
             "skip_stages": list(profile.skip_stages),
-            "isolation": profile.isolation,
+            "checkout_mode": profile.checkout_mode,
             "unattended": profile.unattended,
             "plan_enhancement_rounds": profile.plan_enhancement_rounds,
             "delivery_mode": profile.delivery_mode,
@@ -638,7 +645,7 @@ class BuildProfileManager:
             "display_label": profile.display_label,
             "description": profile.description,
             "skip_stages": list(profile.skip_stages),
-            "isolation": profile.isolation,
+            "checkout_mode": profile.checkout_mode,
             "unattended": profile.unattended,
             "plan_enhancement_rounds": profile.plan_enhancement_rounds,
             "delivery_mode": profile.delivery_mode,
@@ -661,7 +668,7 @@ class BuildProfileManager:
             "display_label": row["display_label"],
             "description": row["description"],
             "skip_stages": _json_list(row["skip_stages_json"], "skip_stages_json"),
-            "isolation": row["isolation"],
+            "checkout_mode": row["checkout_mode"],
             "unattended": bool(row["unattended"]),
             "plan_enhancement_rounds": int(row["plan_enhancement_rounds"] or 0),
             "delivery_mode": row["delivery_mode"],
@@ -672,8 +679,8 @@ class BuildProfileManager:
     @staticmethod
     def _validate_profile(profile: BuildProfile) -> None:
         _validate_profile_name(profile.name)
-        if profile.isolation not in {"none", "worktree", "clone"}:
-            raise BuildProfileError("isolation must be one of: none, worktree, clone")
+        if profile.checkout_mode not in {"none", "worktree", "clone"}:
+            raise BuildProfileError("checkout_mode must be one of: none, worktree, clone")
         if profile.delivery_mode != "auto":
             raise BuildProfileError("delivery_mode must be auto")
         if profile.plan_enhancement_rounds < 0:

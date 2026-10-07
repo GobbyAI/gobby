@@ -14,7 +14,7 @@ const form: AgentFormData = {
   model: "",
   reasoning_effort: "auto",
   reasoning_required: false,
-  isolation: "none",
+  checkout_mode: "none",
   base_branch: "inherit",
   timeout: 0,
   pipeline: "",

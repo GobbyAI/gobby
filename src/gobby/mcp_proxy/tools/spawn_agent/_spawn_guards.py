@@ -21,7 +21,9 @@ from gobby.tasks.state_semantics import (
     is_task_reviewable,
 )
 from gobby.utils.git import run_thread_to_completion, run_to_completion
-from gobby.utils.session_context import get_current_session_id
+from gobby.utils.local_token import AgentApiTokenClaims
+from gobby.utils.session_context import get_current_session_id, get_request_principal
+from gobby.workflows.condition_helpers_sessions import _spawn_caller, spawn_target_allowed
 
 from ._idempotency import active_task_spawn_response, non_actionable_task_spawn_response
 from ._runtime import _normalize_string_list
@@ -32,10 +34,69 @@ from ._step_state import (
 )
 
 if TYPE_CHECKING:
+    from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.workflows.definitions import AgentDefinitionBody
 
 logger = logging.getLogger(__name__)
+
+
+async def enforce_spawn_caller(
+    session_manager: SessionManager | None,
+    agent: str,
+    target_project_id: str | None,
+) -> str | None:
+    """Enforce spawnable_agents at admission, including calls that skip tool rules.
+
+    Caller authority comes from the request principal, then seeded session context,
+    never the spawn's parent argument. Sessionless operator/internal calls retain
+    their authority. Return the verified caller for launch attribution.
+    """
+    try:
+        principal = await get_request_principal()
+    except LookupError:
+        principal = None
+    if principal is False:
+        raise ValueError("spawnable_agents: rejected request credentials")
+    context_session_id = get_current_session_id()
+    caller_ref = (
+        principal.session_id if isinstance(principal, AgentApiTokenClaims) else context_session_id
+    )
+    if not caller_ref:
+        return None
+
+    def authorize() -> str:
+        if session_manager is None:
+            raise ValueError("caller session cannot be verified without a session manager")
+        caller, agent_name = _spawn_caller(session_manager, caller_ref)
+        if isinstance(principal, AgentApiTokenClaims):
+            if (
+                caller.id != principal.session_id
+                or caller.project_id != principal.project_id
+                or caller.machine_id != principal.machine_id
+                or (
+                    principal.agent_run_id is not None
+                    and caller.agent_run_id != principal.agent_run_id
+                )
+                or (context_session_id is not None and context_session_id != caller.id)
+            ):
+                raise ValueError("request principal and caller session identity disagree")
+        if agent_name is not None and target_project_id is None:
+            raise ValueError("spawn target project cannot be resolved")
+        if not spawn_target_allowed(
+            session_manager,
+            caller.id,
+            "spawn_agent",
+            agent,
+            target_project_id=target_project_id,
+        ):
+            raise ValueError(f"caller may not spawn {agent!r} or its target-project fallback chain")
+        return caller.id
+
+    try:
+        return await asyncio.to_thread(authorize)
+    except (ValueError, RuntimeError) as exc:
+        raise ValueError(f"spawnable_agents: {exc}") from exc
 
 
 _SLOT_LOCKS: dict[str, asyncio.Lock] = {}

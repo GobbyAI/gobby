@@ -22,7 +22,7 @@ def _options(**overrides: object) -> object:
     values = {
         "quick": False,
         "skip_stages": [],
-        "isolation": "worktree",
+        "checkout_mode": "worktree",
         "no_merge": False,
         "pr": None,
         "target_branch": None,
@@ -190,7 +190,7 @@ async def test_target_branch_persisted_before_isolation_action(
 
     await _build(
         f"#{task.seq_num}",
-        _options(isolation="none", target_branch="release"),
+        _options(checkout_mode="none", target_branch="release"),
         db=temp_db,
         project_id=project_id,
     )
@@ -216,7 +216,7 @@ async def test_leaf_build_inherits_target_branch_via_cascade(
 
     await _build(
         f"#{leaf.seq_num}",
-        _options(isolation="none", target_branch="release"),
+        _options(checkout_mode="none", target_branch="release"),
         db=temp_db,
         project_id=project_id,
     )
@@ -243,7 +243,7 @@ async def test_worktree_leaf_build_persists_target_branch(
 
     await _build(
         f"#{leaf.seq_num}",
-        _options(isolation="worktree", target_branch="release"),
+        _options(checkout_mode="worktree", target_branch="release"),
         db=temp_db,
         project_id=project_id,
     )
@@ -263,4 +263,4 @@ def test_clone_isolation_requires_existing_clones_dir(tmp_path: Path) -> None:
     from gobby.build.validation import _validate_clones_dir
 
     with pytest.raises(ValueError, match="clones_dir must exist and be a directory"):
-        _validate_clones_dir(_options(isolation="clone", clones_dir=tmp_path / "missing"))
+        _validate_clones_dir(_options(checkout_mode="clone", clones_dir=tmp_path / "missing"))

@@ -12,7 +12,111 @@ use crate::index::indexer::{IndexDegradation, IndexOutcome, refresh_communities}
 use crate::models::{ImportRelation, IndexedFile};
 use crate::{db, models};
 
-use super::{LabelSource, StoredCommunity, read_for_context, refresh_project_communities};
+use super::{
+    LabelSource, StoredCommunity, read_for_context, refresh_project_communities,
+    refresh_with_partition_builder,
+};
+
+#[test]
+#[serial_test::serial(serial_db)]
+fn input_digest_skips_partition_build_and_rebuilds_changed_imports() {
+    let (mut conn, database_url, project_id, _cleanup) = seeded_project("input-digest");
+    let root = Path::new("/tmp").join(&project_id);
+    seed_file(&mut conn, &project_id, &root, "pkg/a.py", &["pkg.b"]);
+    seed_file(&mut conn, &project_id, &root, "pkg/b.py", &["pkg.a"]);
+    seed_file(&mut conn, &project_id, &root, "pkg/c.py", &[]);
+    let ctx = test_context(database_url, &project_id, ProjectIndexScope::Single);
+    let mut builds = 0;
+    let mut refresh = |conn: &mut postgres::Client| {
+        refresh_with_partition_builder(conn, &ctx, |identity, rows| {
+            builds += 1;
+            super::partition::build_partition(identity, rows)
+        })
+        .expect("counted refresh")
+    };
+
+    let first = refresh(&mut conn);
+    let before = raw_rows(&mut conn, &project_id);
+    let unchanged = refresh(&mut conn);
+    assert!(unchanged.skipped_unchanged);
+    assert_eq!(unchanged.communities, first.communities);
+    assert_eq!(raw_rows(&mut conn, &project_id), before);
+
+    replace_imports(
+        &mut conn,
+        &project_id,
+        "pkg/a.py",
+        &["pkg.b".to_owned(), "pkg.c".to_owned()],
+    );
+    let changed = refresh(&mut conn);
+    assert!(!changed.skipped_unchanged);
+    assert!(refresh(&mut conn).skipped_unchanged);
+    assert_eq!(
+        builds, 2,
+        "unchanged inputs must never invoke partition building"
+    );
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+fn input_digest_tracks_visible_files_and_refreshes_after_migration() {
+    let (mut conn, database_url, project_id, _cleanup) = seeded_project("digest-files");
+    let root = Path::new("/tmp").join(&project_id);
+    seed_file(&mut conn, &project_id, &root, "pkg/a.py", &[]);
+    let ctx = test_context(database_url, &project_id, ProjectIndexScope::Single);
+    refresh_project_communities(&mut conn, &ctx).expect("initial refresh");
+    let before = raw_rows(&mut conn, &project_id);
+    let id = db::id_param(&project_id).expect("project uuid");
+    conn.execute(
+        "UPDATE code_indexed_project_states SET community_input_digest = NULL WHERE project_id = $1",
+        &[&id],
+    )
+    .expect("simulate migrated project");
+    let mut builds = 0;
+    let mut refresh = |conn: &mut postgres::Client| {
+        refresh_with_partition_builder(conn, &ctx, |identity, rows| {
+            builds += 1;
+            super::partition::build_partition(identity, rows)
+        })
+        .expect("counted refresh")
+    };
+    assert!(refresh(&mut conn).skipped_unchanged);
+    assert!(refresh(&mut conn).skipped_unchanged);
+    assert_eq!(raw_rows(&mut conn, &project_id), before);
+    seed_file(&mut conn, &project_id, &root, "pkg/isolated.py", &[]);
+    let changed = refresh(&mut conn);
+    assert!(!changed.skipped_unchanged);
+    assert_eq!(changed.communities, 2);
+    assert!(refresh(&mut conn).skipped_unchanged);
+    assert_eq!(
+        builds, 2,
+        "NULL digest rebuilds once; isolated files invalidate it"
+    );
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+fn input_digest_deduplicates_and_sorts_import_rows() {
+    let (mut conn, database_url, project_id, _cleanup) = seeded_project("digest-dedup");
+    let root = Path::new("/tmp").join(&project_id);
+    seed_file(
+        &mut conn,
+        &project_id,
+        &root,
+        "pkg/a.py",
+        &["pkg.b", "external"],
+    );
+    let ctx = test_context(database_url, &project_id, ProjectIndexScope::Single);
+    let mut inputs = super::identity::load_project_inputs(&mut conn, &ctx).expect("inputs");
+    let before = inputs.digest(&ctx);
+    inputs.rows.extend(inputs.rows.clone());
+    inputs.rows.reverse();
+    assert_eq!(inputs.digest(&ctx), before);
+    inputs
+        .rows
+        .push(("pkg/a.py".to_owned(), "new_module".to_owned()));
+    assert_ne!(inputs.digest(&ctx), before);
+}
 
 #[test]
 #[serial_test::serial(serial_db, serial_env)]

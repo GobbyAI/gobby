@@ -21,7 +21,7 @@ def test_build_spawn_response_serializes_paths_and_omits_null_reasoning() -> Non
             pid=123,
             message="spawned",
         ),
-        effective_isolation="worktree",
+        effective_checkout_mode="worktree",
         isolation_ctx=SimpleNamespace(
             branch_name="branch",
             worktree_id="wt-123",
@@ -50,7 +50,7 @@ def test_build_spawn_response_reports_reused_worktree() -> None:
             pid=123,
             message="spawned",
         ),
-        effective_isolation="worktree",
+        effective_checkout_mode="worktree",
         isolation_ctx=SimpleNamespace(
             branch_name="branch",
             worktree_id="wt-123",
@@ -78,7 +78,7 @@ def test_build_spawn_response_reports_fresh_after_conflict() -> None:
             pid=123,
             message="spawned",
         ),
-        effective_isolation="worktree",
+        effective_checkout_mode="worktree",
         isolation_ctx=SimpleNamespace(
             branch_name="branch-retry-deadbeef",
             worktree_id="wt-fresh",

@@ -321,7 +321,7 @@ async def test_definition_switch_refused_leaves_instance_untouched(
 
 
 @pytest.mark.asyncio
-async def test_persona_without_agent_run_creates_no_step_instance(
+async def test_definition_activation_materializes_step_instance(
     snap_db: PostgresHubDatabase,
 ) -> None:
     from gobby.mcp_proxy.tools.apply_agent_definition import apply_agent_definition_impl
@@ -333,10 +333,13 @@ async def test_persona_without_agent_run_creates_no_step_instance(
         result = await apply_agent_definition_impl(agent="alpha", db=snap_db, session_id=S1)
 
     assert result["success"] is True
-    assert manager.get_for_session(S1) is None
+    instance = manager.get_for_session(S1)
+    assert instance is not None
+    assert instance.agent_name == "alpha"
+    assert instance.current_step == "claim"
     count = snap_db.fetchone("SELECT COUNT(*) AS n FROM agent_step_instances")
     assert count is not None
-    assert count["n"] == 0
+    assert count["n"] == 1
     stored = snap_db.fetchone(
         "SELECT variables FROM session_variables WHERE session_id = %s", (S1,)
     )
@@ -451,7 +454,8 @@ async def test_apply_agent_definition_rejects_reserved_caller_variables(
     assert result["success"] is True
     after = manager.get_for_session(S1)
     assert after is not None
-    assert after.agent_name == "alpha"
+    assert after.agent_name == "beta"
+    assert after.current_step == "review"
     stored = snap_db.fetchone(
         "SELECT variables FROM session_variables WHERE session_id = %s", (S1,)
     )
@@ -611,6 +615,9 @@ def test_fresh_snapshot_recovery_emits_structured_warning(
         agent_depth=1,
     )
     variables = {"_agent_type": "alpha", "assigned_task_id": "#1"}
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    SessionVariableManager(snap_db).merge_variables(S1, variables)
     with (
         patch(
             "gobby.workflows.agent_resolver.resolve_agent_with_row",
@@ -1323,7 +1330,7 @@ async def _run_post_launch_failure_case(
                 ),
                 task_id=task.id,
                 task_manager=task_manager,
-                isolation="none",
+                checkout_mode="none",
                 parent_session_id=parent_session_id,
                 project_path=str(sample_project["repo_path"]),
                 session_manager=session_manager,
