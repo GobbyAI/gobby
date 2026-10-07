@@ -7,6 +7,47 @@ use super::super::labels::{derive_label, label_candidates};
 use super::super::partition::{PartitionCommunity, ProjectPartition};
 use super::{AssignedCommunity, PriorCommunity, assign_ids};
 
+#[test]
+fn singleton_remap_stays_within_index_budget() {
+    let count = 6_000;
+    let previous: Vec<_> = (0..count)
+        .map(|index| {
+            prior(
+                index + 1,
+                &[&format!("old/file-{index}.rs")],
+                "old",
+                LabelSource::Deterministic,
+            )
+        })
+        .collect();
+    let partition = project(
+        (0..count)
+            .map(|index| {
+                let directory = if index < count / 2 { "old" } else { "new" };
+                community(&[&format!("{directory}/file-{index}.rs")], "current")
+            })
+            .collect(),
+    );
+    let started = std::time::Instant::now();
+    let (assigned, watermark) = assign_ids(&partition, &previous, count);
+    let elapsed = started.elapsed();
+    eprintln!("singleton remap: {count} current/prior communities, {elapsed:?}");
+    assert_eq!(assigned.len(), count as usize);
+    for (index, assigned) in assigned.iter().enumerate() {
+        let expected = if index < count as usize / 2 {
+            index as i32 + 1
+        } else {
+            count + index as i32 - count / 2 + 1
+        };
+        assert_eq!(assigned.community_id, expected);
+    }
+    assert_eq!(watermark, count + count / 2);
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "singleton remap consumed {elapsed:?} of the daemon's 30s index budget"
+    );
+}
+
 fn community(members: &[&str], signature: &str) -> PartitionCommunity {
     let members: Vec<String> = members.iter().map(|member| (*member).to_owned()).collect();
     let in_degree = members.iter().cloned().map(|member| (member, 0)).collect();
@@ -17,6 +58,47 @@ fn community(members: &[&str], signature: &str) -> PartitionCommunity {
         in_degree,
         member_signature: signature.to_owned(),
     }
+}
+
+#[test]
+fn candidate_overlaps_preserve_repeated_and_shared_members() {
+    let previous = vec![
+        prior(8, &["a", "a", "b"], "old-a", LabelSource::Deterministic),
+        prior(3, &["b", "c"], "old-b", LabelSource::Deterministic),
+        prior(11, &["b"], "old-c", LabelSource::Deterministic),
+    ];
+    let partition = project(vec![
+        community(&["a", "a", "b"], "current-a"),
+        community(&["b", "c", "c"], "current-b"),
+        community(&["z"], "disjoint"),
+        community(&[], "empty"),
+    ]);
+    let candidates: Vec<_> = super::match_candidates(&partition, &previous)
+        .into_iter()
+        .map(|candidate| {
+            (
+                candidate.new_index,
+                candidate.prior_index,
+                candidate.old_id,
+                candidate.overlap,
+                candidate.union,
+            )
+        })
+        .collect();
+    assert_eq!(
+        candidates,
+        vec![
+            (0, 0, 8, 3, 3),
+            (0, 1, 3, 1, 4),
+            (0, 2, 11, 1, 3),
+            (1, 0, 8, 1, 5),
+            (1, 1, 3, 3, 2),
+            (1, 2, 11, 1, 3),
+        ]
+    );
+    let (assigned, watermark) = assign_ids(&partition, &previous, 11);
+    assert_eq!(ids(&assigned), vec![8, 3, 12, 13]);
+    assert_eq!(watermark, 13);
 }
 
 fn project(communities: Vec<PartitionCommunity>) -> ProjectPartition {
