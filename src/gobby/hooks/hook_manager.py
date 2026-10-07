@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.hooks import grok_pending_context
 from gobby.hooks.agent_run_ingress import (
     TERMINAL_INGRESS_HOOK_TYPES,
+    session_end_targets_live_cli,
     validate_managed_agent_hook,
 )
 from gobby.hooks.broadcaster import schedule_hook_broadcast
@@ -374,6 +375,16 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
                 )
                 return HookResponse(decision="allow")
             if gated:
+                if event.event_type == HookEventType.SESSION_END and platform_session_id:
+                    session = self._session_manager.get(platform_session_id)
+                    if session_end_targets_live_cli(
+                        event, session, local_machine_id=self.get_machine_id()
+                    ):
+                        self.logger.info(
+                            "Ignoring SESSION_END for live terminal CLI session %s",
+                            platform_session_id,
+                        )
+                        return HookResponse(decision="allow")
                 ingress = validate_managed_agent_hook(
                     event,
                     session_manager=self._session_manager,

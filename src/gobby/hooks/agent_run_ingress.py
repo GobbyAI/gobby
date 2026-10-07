@@ -10,7 +10,9 @@ from uuid import UUID
 
 from gobby.agents.resume_finalization import finalize_resume_handoff_threadsafe
 from gobby.hooks.events import HookEvent, HookEventType
+from gobby.hooks.hook_types import SessionEndReason
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.terminal_ownership import recorded_process_is_alive
 
 _PROVISIONAL_RESUME_PHASES = {"launch_requested", "runtime_persisted"}
 
@@ -25,6 +27,25 @@ TERMINAL_INGRESS_HOOK_TYPES = frozenset(
         HookEventType.AFTER_AGENT,
     }
 )
+
+
+def session_end_targets_live_cli(
+    event: HookEvent, session: object, *, local_machine_id: str | None
+) -> bool:
+    """A backend thread end cannot retire its still-running terminal seat.
+
+    Inspect the durable identity before an incoming hook can backfill it. Codex's
+    shared app-server can end threads while their seat TUIs continue running.
+    Explicit compaction remains a handoff boundary rather than a process exit.
+    """
+    return (
+        event.event_type == HookEventType.SESSION_END
+        and event.data.get("reason") != SessionEndReason.COMPACT.value
+        and getattr(session, "session_type", None) == "terminal"
+        and isinstance(local_machine_id, str)
+        and getattr(session, "machine_id", None) == local_machine_id
+        and recorded_process_is_alive(session)
+    )
 
 
 class _SessionManager(Protocol):

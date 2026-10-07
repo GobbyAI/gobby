@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, call, patch
 
+import psutil
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
@@ -19,6 +21,122 @@ pytestmark = pytest.mark.unit
 
 class TestSessionEndHandling:
     """Test SESSION_END handler edge cases and error paths."""
+
+    @pytest.mark.parametrize("replayed", [False, True], ids=["live", "restart-replay"])
+    def test_session_end_preserves_live_recorded_cli(
+        self, mock_dependencies: dict[str, Any], replayed: bool
+    ) -> None:
+        """A SessionEnd cannot retire a seat while its recorded CLI still runs."""
+        session = MagicMock()
+        session.id = "sess-123"
+        session.status = "active"
+        session.session_type = "terminal"
+        session.agent_run_id = "run-123"
+        session.machine_id = "21000000-0000-4000-8000-000000000008"
+        session.terminal_context = {
+            "parent_pid": os.getpid(),
+            "parent_create_time": psutil.Process(os.getpid()).create_time(),
+        }
+        storage = mock_dependencies["session_storage"]
+        storage.get.return_value = session
+        worker = MagicMock()
+        terminal_manager = MagicMock()
+        handlers = EventHandlers(
+            **mock_dependencies,
+            session_end_auto_link_worker=worker,
+            terminal_manager=terminal_manager,
+            get_machine_id=lambda: session.machine_id,
+        )
+        processor = MagicMock()
+        handlers._session_message_processors[session.id] = processor
+        metadata: dict[str, Any] = {"_platform_session_id": session.id}
+        if replayed:
+            metadata["_enqueued_at"] = "2026-10-07T17:25:45Z"
+        event = make_event(
+            HookEventType.SESSION_END,
+            session_id="codex-thread-123",
+            source="codex",
+            data={"reason": "exit"},
+            metadata=metadata,
+        )
+
+        response = handlers.handle_session_end(event)
+
+        assert response.decision == "allow"
+        storage.update_status_if_non_terminal.assert_not_called()
+        mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
+        worker.submit.assert_not_called()
+        processor.unregister_session.assert_not_called()
+        assert handlers._session_message_processors[session.id] is processor
+        mock_dependencies["task_manager"].remove_label.assert_not_called()
+        terminal_manager.release_session.assert_not_called()
+        terminal_manager.mark_exited.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("identity", "reason", "expected_status"),
+        [
+            ("reused-pid", "exit", "expired"),
+            ("missing", "exit", "expired"),
+            ("foreign", "exit", "expired"),
+            ("live", "compact", "awaiting_handoff"),
+        ],
+    )
+    def test_session_end_preserves_real_exit_and_compact_semantics(
+        self,
+        mock_dependencies: dict[str, Any],
+        identity: str,
+        reason: str,
+        expected_status: str,
+    ) -> None:
+        """Local PID reuse and foreign PIDs cannot impersonate a living seat."""
+        session = MagicMock()
+        session.id = "sess-123"
+        session.status = "active"
+        session.session_type = "terminal"
+        session.agent_run_id = None
+        session.machine_id = "foreign-machine" if identity == "foreign" else "local-machine"
+        session.terminal_context = (
+            {}
+            if identity == "missing"
+            else {
+                "parent_pid": os.getpid(),
+                "parent_create_time": psutil.Process(os.getpid()).create_time()
+                - (3600 if identity == "reused-pid" else 0),
+            }
+        )
+        storage = mock_dependencies["session_storage"]
+        storage.get.return_value = session
+        handlers = EventHandlers(**mock_dependencies, get_machine_id=lambda: "local-machine")
+        event = make_event(
+            HookEventType.SESSION_END,
+            source="codex",
+            data={"reason": reason},
+            metadata={"_platform_session_id": session.id},
+        )
+
+        response = handlers.handle_session_end(event)
+
+        assert response.decision == "allow"
+        storage.update_status_if_non_terminal.assert_called_once_with(session.id, expected_status)
+
+    def test_session_end_keeps_a_seat_when_process_inspection_is_denied(
+        self, mock_dependencies: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An inaccessible recorded process is not proof of CLI exit."""
+        session = MagicMock()
+        session.id = "sess-123"
+        session.session_type = "terminal"
+        session.machine_id = "local-machine"
+        session.terminal_context = {"parent_pid": 12345, "parent_create_time": 100.0}
+        storage = mock_dependencies["session_storage"]
+        storage.get.return_value = session
+        process = MagicMock(side_effect=psutil.AccessDenied(12345))
+        monkeypatch.setattr("gobby.terminal_ownership.psutil.Process", process)
+        handlers = EventHandlers(**mock_dependencies, get_machine_id=lambda: "local-machine")
+        event = make_event(HookEventType.SESSION_END, metadata={"_platform_session_id": session.id})
+
+        assert handlers.handle_session_end(event).decision == "allow"
+        storage.update_status_if_non_terminal.assert_not_called()
 
     def test_session_end_lookup_from_database(self, mock_dependencies: dict[str, Any]) -> None:
         """Test session_id lookup from database when not in metadata."""

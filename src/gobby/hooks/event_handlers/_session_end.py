@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from gobby.hooks.agent_run_ingress import session_end_targets_live_cli
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.hook_types import SessionEndReason
@@ -59,6 +60,10 @@ class SessionEndMixin(EventHandlersBase):
                 session = self._session_manager.get(session_id)
             except Exception as e:
                 self.logger.warning("Failed to fetch session %s: %s", session_id, e)
+
+        if session_end_targets_live_cli(event, session, local_machine_id=self._get_machine_id()):
+            self.logger.info("Ignoring SESSION_END for live terminal CLI session %s", session_id)
+            return HookResponse(decision="allow")
 
         try:
             end_reason = SessionEndReason(event.data.get("reason"))
