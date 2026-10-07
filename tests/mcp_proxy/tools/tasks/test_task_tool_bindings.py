@@ -21,6 +21,107 @@ from gobby.workflows.task_tool_bindings import TaskToolBindings
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize(
+    "source,name,output,poll_name,poll_input",
+    [
+        (
+            SessionSource.CODEX,
+            "exec_command",
+            {"session_id": 99},
+            "write_stdin",
+            {"session_id": 99},
+        ),
+        (
+            SessionSource.CODEX,
+            "functions.exec",
+            "Script running with cell ID cell-99",
+            "functions.wait",
+            {"cell_id": "cell-99"},
+        ),
+        (
+            SessionSource.CLAUDE,
+            "Bash",
+            "Command did not complete within its 10s timeout and was moved to the background (ID: job-99). Output is being written to: /tmp/job-99.output. ",
+            "TaskOutput",
+            {"task_id": "job-99"},
+        ),
+    ],
+)
+def test_background_poll_uses_persisted_original_start_and_releases_fence(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    canonical_task_session: Session,
+    source: SessionSource,
+    name: str,
+    output: object,
+    poll_name: str,
+    poll_input: dict[str, object],
+) -> None:
+    tasks = LocalTaskManager(temp_db)
+    first = tasks.create_task(
+        sample_project["id"], "First", validation_criteria="Poll retains start."
+    )
+    second = tasks.create_task(
+        sample_project["id"], "Second", validation_criteria="Poll releases fence."
+    )
+    tasks.claim_task_for_agent(first.id, canonical_task_session.id)
+    variables = SessionVariableManager(temp_db)
+    epoch = variables.get_variables(canonical_task_session.id)["task_selection_history"][-1][
+        "epoch"
+    ]
+    before = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        source=source,
+        session_id=canonical_task_session.external_id,
+        timestamp=datetime.fromisoformat(epoch),
+        request_id="background-start",
+        data={
+            "tool_name": name,
+            "tool_input": {"command": "uv run pytest tests/unit"},
+            "arguments": 'await tools.exec_command({cmd: "uv run pytest tests/unit"})',
+        },
+    )
+    binding = TaskToolBindings(variables, canonical_task_session.id)
+    binding.start(before)
+    binding.complete(
+        replace(
+            before, event_type=HookEventType.AFTER_TOOL, data={**before.data, "tool_output": output}
+        )
+    )
+    binding.clear_pending("turn_end")
+    with pytest.raises(ValueError, match="background-start"):
+        tasks.claim_task_for_agent(second.id, canonical_task_session.id)
+    poll = replace(
+        before,
+        timestamp=before.timestamp + timedelta(seconds=10),
+        request_id="poll-result",
+        data={"tool_name": poll_name, "tool_input": poll_input, "arguments": poll_input},
+    )
+    recreated = TaskToolBindings(SessionVariableManager(temp_db), canonical_task_session.id)
+    recreated.start(poll)
+    recreated.complete(
+        replace(
+            poll,
+            event_type=HookEventType.AFTER_TOOL,
+            data={**poll.data, "tool_output": "receipt unavailable"},
+        )
+    )
+    with pytest.raises(ValueError, match="background-start"):
+        tasks.claim_task_for_agent(second.id, canonical_task_session.id)
+    after = replace(
+        poll,
+        event_type=HookEventType.AFTER_TOOL,
+        data={**poll.data, "tool_output": {"exit_code": 0, "output": "passed"}},
+    )
+    assert recreated.started_at(after) == before.timestamp.timestamp()
+    recreated.complete(after)
+    assert (
+        tasks.claim_task_for_agent(second.id, canonical_task_session.id).claimed_by_session_id
+        == canonical_task_session.id
+    )
+    assert recreated.started_at(after) == before.timestamp.timestamp()
+
+
 def test_completed_call_replay_retains_its_start_after_focus_changes(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

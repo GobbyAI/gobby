@@ -99,14 +99,22 @@ call_tool(server_name="gobby-tasks", tool_name="claim_task", arguments={
 
 `claim_task` sets canonical ownership for the current session and detects claim
 conflicts. `force=true` overrides another owner and should be reserved for
-explicit recovery situations. A session holds at most one active claim: finish
-its existing claim, or hand it off, before claiming another task. A claim is
-handed off once a reviewer recorded an `independent_review_approval` receipt for
-it and none of its attributed files is uncommitted. It stays claimed while it
-waits on landing or close, and the new claim receives the session's edits.
-Reclaiming a handed-off task makes it active again only when no other active
-claim exists. An `already_claimed` response means read the task and continue,
-rather than claiming it again.
+explicit recovery situations. A session may hold any number of active claims.
+Each successful claim selects its task for new edits and validation commands;
+call `claim_task` on an already-owned task to switch back. `already_claimed`
+confirms that ownership and selection. Other claims retain their edit history.
+If several claims remain without a selection, select one before editing.
+
+Finish or stop native shell/agent calls before explicitly switching tasks. Their
+results retain the selection from their start, even when delivery is delayed or
+replayed. A refused switch names the running calls; create-and-claim rolls back
+without creating a task. If a native child loses ownership during a transfer,
+restore ownership with `claim_task` or stop the child before retrying its edits.
+
+An edit or linked commit cannot include paths still live-attributed to another
+active claim. Select their owning task or finish it, and split commits by task.
+Close uses validation runs started while its task was selected; edits to that
+task's owned paths always count and stale earlier green evidence.
 
 ### Close
 

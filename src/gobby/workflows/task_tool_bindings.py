@@ -5,9 +5,21 @@ from typing import Any
 from gobby.adapters.codex_impl.execution_chain import (
     DIRECT_EXEC_NAMES,
     FUNCTIONS_EXEC_NAMES,
+    WAIT_NAMES,
+    WRITE_STDIN_NAMES,
+    decoded_exec_results,
+    definitive_exit_code,
+    exec_session_id,
+    extract_direct_exec_running_session_id,
+    extract_direct_exec_terminal_result,
+    extract_direct_write_stdin_session_id,
     extract_functions_exec_command,
+    extract_functions_write_stdin_session_id,
+    extract_wait_cell_id,
+    extract_yielded_cell_id,
 )
 from gobby.hooks.events import HookEvent, HookEventType
+from gobby.tasks.transcript_background import background_job_receipt
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import task_selected_at
 
@@ -35,10 +47,73 @@ def _fences_switch(event: HookEvent) -> bool:
     return event.data.get("canonical_tool_kind") == "shell"
 
 
+def _continuation_alias(event: HookEvent) -> str | None:
+    name = event.data.get("_original_tool_name", event.data.get("tool_name", ""))
+    arguments = event.data.get("arguments", event.data.get("tool_input"))
+    token = None
+    kind = "session"
+    if name in WRITE_STDIN_NAMES:
+        token = extract_direct_write_stdin_session_id(arguments)
+    elif name in FUNCTIONS_EXEC_NAMES:
+        token = extract_functions_write_stdin_session_id(arguments)
+    elif name in WAIT_NAMES:
+        kind = "cell"
+        token = extract_wait_cell_id({"tool_input": arguments})
+    elif name in {"TaskOutput", "TaskStop"} and isinstance(arguments, dict):
+        kind = "job"
+        token = arguments.get("task_id")
+    return f"{event.source.value}:{kind}:{token}" if token is not None else None
+
+
+def _returned_aliases(event: HookEvent) -> list[str]:
+    output = event.data.get("tool_output", event.data.get("tool_response"))
+    aliases: set[str] = set()
+    cell = extract_yielded_cell_id(event.data)
+    if cell is not None:
+        aliases.add(f"{event.source.value}:cell:{cell}")
+    session = extract_direct_exec_running_session_id(output)
+    if session is not None:
+        aliases.add(f"{event.source.value}:session:{session}")
+    for result in decoded_exec_results(output):
+        session = exec_session_id(result)
+        if session is not None and result.get("exit_code") is None:
+            aliases.add(f"{event.source.value}:session:{session}")
+    receipt = background_job_receipt(output) if event.source.value == "claude" else None
+    if receipt is not None:
+        aliases.add(f"{event.source.value}:job:{receipt['job']}")
+    return sorted(aliases)
+
+
+def _terminal_background_receipt(event: HookEvent) -> bool:
+    output = event.data.get("tool_output", event.data.get("tool_response"))
+    name = event.data.get("_original_tool_name", event.data.get("tool_name", ""))
+    if name == "TaskStop" and event.metadata.get("is_failure") is not True:
+        return output is not None
+    if extract_direct_exec_terminal_result(output) is not None:
+        return True
+    results = decoded_exec_results(output)
+    canonical = event.data.get("tool_result")
+    if isinstance(canonical, dict):
+        results.append(canonical)
+    if isinstance(output, dict) and isinstance(output.get("task"), dict):
+        results.append(output["task"])
+    return any(definitive_exit_code(result) is not None for result in results)
+
+
 def _matching_key(event: HookEvent, variables: dict[str, Any]) -> str | None:
     key = _call_key(event)
-    if key is not None:
+    calls = _bindings(variables)
+    if key in calls:
         return key
+    alias = _continuation_alias(event)
+    matches = [
+        call_key
+        for call_key, call in calls.items()
+        if (key is not None and key in call.get("aliases", []))
+        or (alias is not None and alias in call.get("aliases", []))
+    ]
+    if matches or key is not None:
+        return matches[0] if len(matches) == 1 else None
     history = variables.get("task_selection_history", [])
     matches = [
         key
@@ -112,6 +187,16 @@ class TaskToolBindings:
 
         def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
             calls = _bindings(variables)
+            original = _matching_key(event, variables)
+            if _continuation_alias(event) is not None:
+                if original is None:
+                    return None, False
+                aliases = calls[original].setdefault("aliases", [])
+                if key not in aliases:
+                    aliases.append(key)
+                    variables["task_tool_bindings"] = calls
+                    return None, True
+                return None, False
             if event.metadata.get("_native_subagent_binding"):
                 owned = variables.get("claimed_tasks", {})
                 stale = [
@@ -190,8 +275,13 @@ class TaskToolBindings:
             calls = _bindings(variables)
             if key is None or key not in calls:
                 return None, False
-            pending = event.data.get("_verification_pending") is True
-            if event.metadata.get("is_failure") is True:
+            aliases = _returned_aliases(event)
+            calls[key]["aliases"] = sorted(set(calls[key].get("aliases", [])) | set(aliases))
+            pending = event.data.get("_verification_pending") is True or bool(aliases)
+            continuation = _continuation_alias(event) is not None
+            if calls[key].get("background") is True and continuation:
+                pending = pending or not _terminal_background_receipt(event)
+            if event.metadata.get("is_failure") is True and not continuation:
                 pending = False
             calls[key].update(pending=pending, background=pending)
             variables["task_tool_bindings"] = calls

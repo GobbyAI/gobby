@@ -28,39 +28,32 @@ call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={
 }, session_id="#2333")
 ```
 
-Create with `claim=true` or claim existing work before edits. A successful
-already-claimed response means read the task and continue; do not claim again,
-except to reclaim a handed-off task as described below.
-One session holds at most one active claim. A claim is handed off, and stops
-holding capacity, once a reviewer recorded an `independent_review_approval`
-receipt for it and none of its attributed files is uncommitted. It stays claimed
-while it waits on landing or close, and a new claim becomes the active one that
-receives your edits. Reclaiming a handed-off task makes it active again only when
-no other active claim exists. While you hold several claims and none is active,
-edits are refused until you reclaim the one they belong to. Once the newer
-claim ends, reclaim the handed-off task with `claim_task` before re-validating
-it: runs made before that reclaim do not count toward its close. Closing it judges only runs made while it was
-active, but every edit you make to its files counts and stales its earlier
-green. Cross-project claims are rejected. `TASK_CLAIM_CONFLICT` covers two
-different claim failures:
+Create with `claim=true` or claim existing work before edits. A session may hold
+any number of active claims. Each successful claim selects that task for new
+edits and validation commands. Call `claim_task(task_id)` on an already-owned
+task to select it again; `already_claimed` confirms ownership and selection.
+Other claims retain their ownership and edit history. If several claims remain
+without a selected task, select one with `claim_task` before editing.
 
-- `TaskAlreadyClaimedError` / foreign ownership (`claimed_by`): coordinate with
-  the named owner. An authorized receiving session with claim capacity can use
-  `claim_task(task_id="<task>", force=true)` to transfer that owner's claim.
-- `AgentTaskClaimConflictError` / same-session accumulation (`claimed_task_id`,
-  `claimed_task_ref`): your session owns the named different active task. Finish
-  and close it normally, or hand it off as above. For a genuine blocker or
-  explicitly directed recovery,
-  use `escalate_task(task_id="<existing claim>", reason="<concrete reason>")`;
-  escalation releases canonical ownership, freeing your claim capacity. Do not
-  escalate to bypass validation, committing, or closing. Alternatively, arrange
-  an authorized transfer of the existing claim to another session with capacity.
-  `force=true` does not resolve same-session accumulation, including on a
-  delegated claim. A create-and-claim capacity conflict creates no task.
+Finish or stop native shell/agent calls before explicitly selecting another task.
+Their completion stays bound to the task selected at their start, including
+delayed or replayed results. A selection refusal names the running calls;
+create-and-claim rolls back without creating a task. If a native child loses
+ownership during a transfer, restore ownership with `claim_task` or stop that
+child before retrying its edits.
 
-An active pending/running agent run for the task can authorize a parent/child
-ownership transfer without `force` in either direction. The receiving session
-must still have claim capacity. Neither transfer route bypasses that guard.
+Paths still live-attributed to another active claim cannot be edited or included
+in this task's commit. Select the owning task or finish it, and split commits by
+task. Close judges validation runs started while this task was selected, while
+all edits to its owned paths count and stale earlier green evidence.
+
+Cross-project claims are rejected. `TASK_CLAIM_CONFLICT` identifies foreign
+ownership (`claimed_by`): coordinate with the named owner. An authorized
+receiving session can use `claim_task(task_id="<task>", force=true)` to transfer
+that claim. An active pending/running agent run for the task can authorize a
+parent/child ownership transfer without `force` in either direction. Transfers
+preserve every unrelated claim. Escalate only for a genuine blocker or explicitly
+directed recovery, never to bypass validation, committing, or closing.
 
 Use `update_task` for supported metadata, not `status` or `assignee`. Add/remove
 ordinary labels through their tools. The `live-session` label has special root
