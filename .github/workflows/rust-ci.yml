@@ -260,10 +260,11 @@ jobs:
           GOBBY_SCHEMA_TEST_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby_pool_test
         run: cargo nextest run --profile ci -p gobby-core --features postgres-pool -E 'test(postgres_pool)'
 
-      # The in-crate serial_db suites compile only when the DSN is set at build
-      # time (crates/gcode/build.rs); .config/nextest.toml serializes them.
-      - name: Test gcode serial_db suites
-        run: cargo nextest run --profile ci -p gobby-code -E 'test(serial_db)'
+      # The DSN enables every gcode_postgres_tests module at build time.
+      # Run all tests so new DB modules need no name-based CI allowlist, and
+      # serialize nextest processes because they share one test database.
+      - name: Test all gcode suites with PostgreSQL
+        run: cargo nextest run --profile ci -p gobby-code --test-threads 1
 
       # projection_stale is gated behind required-features = ["test-support"];
       # without this step no CI lane compiles or runs it. Plain cargo test keeps

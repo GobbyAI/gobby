@@ -23,6 +23,28 @@ const DTOLNAY_RUST_TOOLCHAIN_SHA: &str = "29eef336d9b2848a0b548edc03f92a220660cd
 const ACTIONS_CACHE_SHA: &str = "0057852bfaa89a56745cba8c7296529d2fc39830";
 const ACTIONS_UPLOAD_ARTIFACT_SHA: &str = "ea165f8d65b6e75b540449e92b4886f43607fa02";
 
+#[test]
+fn ci_postgres_job_runs_all_gcode_tests_serially() {
+    let workflow = include_str!("../../../.github/workflows/rust-ci.yml");
+    let job = workflow
+        .split_once("\n  postgres-backed-tests:\n")
+        .expect("PostgreSQL test job")
+        .1
+        .split_once("\n  coverage:\n")
+        .expect("following coverage job")
+        .0;
+    let commands: Vec<_> = job
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("run: cargo nextest run") && line.contains("-p gobby-code"))
+        .collect();
+    assert_eq!(
+        commands,
+        ["run: cargo nextest run --profile ci -p gobby-code --test-threads 1"],
+        "Every DB-gated module must run, including modules without serial_db in their names; nextest processes must serialize their shared database access"
+    );
+}
+
 fn release_upload_marker(workflow: &str) -> Option<usize> {
     workflow
         .find("softprops/action-gh-release")
@@ -257,7 +279,6 @@ fn ci_workflow_runs_postgres_backed_rust_tests_without_standalone_setup() {
     assert!(workflow.contains("-d gobby_gcode_test \\"));
     assert!(workflow.contains("CREATE EXTENSION IF NOT EXISTS pg_search"));
     assert!(workflow.contains("> \"$GOBBY_HOME/machine_id\""));
-    assert!(workflow.contains("cargo nextest run --profile ci -p gobby-code -E 'test(serial_db)'"));
     assert!(
         workflow
             .contains("cargo test -p gobby-code --features test-support --test projection_stale")
