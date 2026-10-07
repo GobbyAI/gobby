@@ -34,6 +34,7 @@ from gobby.agents.idle_detector import (
     IdleDetector,
     composer_text,
 )
+from gobby.agents.srt_runtime import SRT_PREFLIGHT_TIMEOUT_SECONDS
 from gobby.servers.websocket.terminal_ws import WRITE_FAULT_NAME
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
 from gobby.storage.terminals import AttachLocator, TerminalManager
@@ -616,32 +617,60 @@ async def test_terminal_client_stack_end_to_end(
     native_id = str(native_item["id"])
     direct_id = str(direct_item["id"])
     assert direct_id != native_id
-    for spawn in (direct_spawn, native_spawn):
-        session_id = spawn["child_session_id"]
-        assert isinstance(session_id, str), spawn
-        log = daemon_instance.project_dir / f".gobby-stack-stub-{session_id}.log"
-        wait_for_condition(log.is_file, timeout=12.0, description=f"stub log for {session_id}")
-        contents = log.read_text()
-        assert str(shutil.which("claude")) in contents, contents
-        assert session_id in contents, contents
-
     token = daemon_token(daemon_instance.gobby_home)
     native_loc = _attach_locator(native_item)
     direct_loc = _attach_locator(direct_item)
     native_frames = await _open_viewer(native_loc, token, cols=VIEWER_COLS, rows=VIEWER_ROWS)
     direct_frames = await _open_viewer(direct_loc, token, cols=VIEWER_COLS, rows=VIEWER_ROWS)
-    native_seen = await _read_until(
-        native_frames,
-        _has_ready_marker,
-        timeout=12.0,
-        description="native ready frames",
-    )
-    direct_seen = await _read_until(
-        direct_frames,
-        _has_ready_marker,
-        timeout=12.0,
-        description="direct ready frames",
-    )
+    readiness_frames: list[dict[str, Any]] = []
+
+    def ready(message: dict[str, Any]) -> bool:
+        readiness_frames.append(
+            {
+                "type": message.get("type"),
+                "width": message.get("width"),
+                "height": message.get("height"),
+                "text": _frame_text(message),
+            }
+        )
+        del readiness_frames[:-8]
+        return _has_ready_marker(message)
+
+    # Native publication proves the SRT runner execed, not that Seatbelt has
+    # compiled and started the CLI. Measured READY at ~57 s with 1376 write
+    # denies; use SRT's 90 s preflight budget for this second compilation too.
+    try:
+        native_seen = await _read_until(
+            native_frames,
+            ready,
+            timeout=SRT_PREFLIGHT_TIMEOUT_SECONDS,
+            description="native ready frames",
+        )
+        direct_seen = await _read_until(
+            direct_frames,
+            ready,
+            timeout=SRT_PREFLIGHT_TIMEOUT_SECONDS,
+            description="direct ready frames",
+        )
+    except AssertionError as exc:
+        evidence = tmp_path / "stack-readiness.json"
+        logs = sorted(path.name for path in daemon_instance.project_dir.glob(".gobby-stack-*.log"))
+        evidence.write_text(json.dumps({"frames": readiness_frames}))
+        raise AssertionError(
+            f"{exc}; cwds={(direct_item.get('cwd'), native_item.get('cwd'))}; "
+            f"logs={logs}; first-output evidence={evidence}"
+        ) from exc
+    for spawn, item in ((direct_spawn, direct_item), (native_spawn, native_item)):
+        session_id = spawn["child_session_id"]
+        assert isinstance(session_id, str), spawn
+        cwd = item.get("cwd")
+        assert isinstance(cwd, str), item
+        assert Path(cwd).resolve() == daemon_instance.project_dir.resolve(), cwd
+        log = daemon_instance.project_dir / f".gobby-stack-stub-{session_id}.log"
+        assert log.is_file(), f"stub log missing after READY: {log}"
+        contents = log.read_text()
+        assert str(shutil.which("claude")) in contents, contents
+        assert session_id in contents, contents
     assert {_frame_text(item) and item.get("type") for item in native_seen}  # nonempty
     assert all(item.get("type") in _FRAME_TYPES for item in native_seen)
     assert all(item.get("type") in _FRAME_TYPES for item in direct_seen)
