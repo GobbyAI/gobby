@@ -617,9 +617,10 @@ acknowledges can have an unknown outcome. No indicator tells the two apart; a
 pane that typed instantly and then went sluggish fell back, and
 `~/.gobby/logs/gclient.log` records it as `direct-fallback`. Under `auto`, a
 fallen-back pane keeps trying the direct connection beside its proxy, first
-after 5 seconds and then backing off to once a minute. When the host accepts
-it, the pane switches back without dropping a frame, a lease you held follows
-it, and the log records `direct-promotion`.
+after 5 seconds and then backing off to once a minute. The proxy keeps
+delivering until the host accepts and the direct stream is in place. Then the
+pane switches back, a lease you held follows it, and the log records
+`direct-promotion`.
 
 On hosts that support the kitty keyboard protocol, gclient enables disambiguated
 key reporting while the client is active. That lets the host distinguish modified
