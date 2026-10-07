@@ -58,6 +58,11 @@ _PROVIDER_DOMAINS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# Login-refresh hosts: reachable, but never injection hosts for provider API keys.
+_PROVIDER_AUTH_DOMAINS: dict[str, tuple[str, ...]] = {
+    "droid": ("api.workos.com",),
+}
+
 _PROVIDER_AUTH_PATHS: dict[str, tuple[str, ...]] = {
     # claude-cli-nodejs is where the CLI creates its per-workspace MCP log
     # directory; without the grant SRT denies that file-write-create at startup.
@@ -79,6 +84,7 @@ _PROVIDER_AUTH_READ_ONLY_PATHS: dict[str, tuple[str, ...]] = {
         "~/.gemini/config/projects",
         "~/Library/Keychains/login.keychain-db",
     ),
+    "droid": ("~/Library/Keychains/login.keychain-db",),
 }
 
 _PROVIDER_CREDENTIAL_ENV: dict[str, tuple[str, ...]] = {
@@ -502,7 +508,11 @@ def allowed_domains(
     api_base: str | None,
 ) -> list[str]:
     """Resolve provider, local endpoint, Git, registry, and operator domain grants."""
-    provider_domains = _PROVIDER_DOMAINS.get(provider, ()) if provider else ()
+    provider_domains = (
+        (*_PROVIDER_DOMAINS.get(provider, ()), *_PROVIDER_AUTH_DOMAINS.get(provider, ()))
+        if provider
+        else ()
+    )
     domains = [*provider_domains, *config.allowed_domains]
     if api_base:
         parsed = urlparse(api_base)
