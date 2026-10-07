@@ -5,14 +5,15 @@ import json
 import logging
 import os
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import FastAPI
 
@@ -31,6 +32,7 @@ from gobby.hooks.envelope_dedupe import (
 from gobby.hooks.inbox import (
     HookInboxBarrierResult,
     _get_hook_inbox_drain_lock,
+    _get_hook_settle_listeners,
     _load_envelope,
     _post_envelope,
     _quarantine_file,
@@ -40,18 +42,26 @@ from gobby.hooks.inbox import (
 )
 from gobby.hooks.inbox_maintenance import _compute_sleep_seconds
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
+from gobby.servers.auth_service import AuthService
+from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.storage import workspace_machine_scope
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.postgres import TEST_USER_ID
 
+if TYPE_CHECKING:
+    from gobby.servers.http import HTTPServer
+
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
 def _operator_token() -> Iterator[None]:
-    with patch("gobby.hooks.inbox.read_local_api_token", return_value="test-operator-token"):
+    with (
+        patch("gobby.hooks.inbox.read_local_api_token", return_value="test-operator-token"),
+        patch("gobby.utils.daemon_url.resolve_daemon_url", return_value="http://front-door.test"),
+    ):
         yield
 
 
@@ -411,6 +421,48 @@ async def test_replayed_envelope_without_id_is_quarantined_and_barrier_settles(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("keys", "statuses", "expected_status", "expected_keys"),
+    [
+        (["old-key", "new-key"], [401, 200], 200, ["old-key", "new-key"]),
+        (["old-key", "new-key"], [401, 401], 401, ["old-key", "new-key"]),
+        (["old-key", "old-key"], [401], 401, ["old-key"]),
+        ([None], [], 503, []),
+        (["old-key", None], [401], 503, ["old-key"]),
+    ],
+)
+async def test_replay_key_rotation_is_bounded_and_missing_key_is_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+    keys: list[str | None],
+    statuses: list[int],
+    expected_status: int,
+    expected_keys: list[str],
+) -> None:
+    requests: list[httpx.Request] = []
+    responses = iter(statuses)
+
+    def front_door(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(next(responses, 401))
+
+    real_client = httpx.AsyncClient
+
+    def replay_client(**kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = httpx.MockTransport(front_door)
+        return real_client(**kwargs)
+
+    monkeypatch.setattr("gobby.hooks.inbox.httpx.AsyncClient", replay_client)
+    with patch("gobby.hooks.inbox.read_local_api_token", side_effect=keys) as read_key:
+        response = await _post_envelope(_valid_envelope())
+
+    assert response.status_code == expected_status
+    assert [request.headers["Authorization"] for request in requests] == [
+        f"Bearer {key}" for key in expected_keys
+    ]
+    assert read_key.call_count == len(keys)
+
+
+@pytest.mark.asyncio
 async def test_replay_attaches_operator_token(monkeypatch: pytest.MonkeyPatch) -> None:
     """Inbox replay authenticates as the operator, never a run capability.
 
@@ -436,7 +488,7 @@ async def test_replay_attaches_operator_token(monkeypatch: pytest.MonkeyPatch) -
     ):
         client.__aenter__ = AsyncMock(return_value=client)
         client.__aexit__ = AsyncMock(return_value=False)
-        replay_response = await _post_envelope(FastAPI(), envelope)
+        replay_response = await _post_envelope(envelope)
 
     assert replay_response is response
     assert client.post.await_args.args == ("/api/hooks/execute",)
@@ -446,6 +498,129 @@ async def test_replay_attaches_operator_token(monkeypatch: pytest.MonkeyPatch) -
         "X-Gobby-Project-Id": "project-123",
         "Authorization": "Bearer fresh-operator-token",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spooled_during_downtime", [False, True])
+async def test_replay_shared_key_passes_through_front_door_auth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spooled_during_downtime: bool
+) -> None:
+    """Direct ASGI replay bypasses the shared-key verifier and gets a 401."""
+    auth_service = AuthService(
+        MagicMock(side_effect=AssertionError("unexpected database access")),
+        bootstrap_file=tmp_path / "bootstrap.yaml",
+        break_glass_file=tmp_path / "absent-break-glass",
+    )
+    auth_service.bind_runtime(
+        grant_service=None,
+        lease_live=None,
+        local_machine_id="machine-1",
+        effect_fence=None,
+        clock=None,
+        front_door_secret="test-front-door-secret",
+    )
+
+    async def run_db(function: Callable[..., Any], *args: Any) -> Any:
+        return function(*args)
+
+    server = cast("HTTPServer", SimpleNamespace(auth_service=auth_service, run_db=run_db))
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware, server=server)
+
+    @app.post("/api/hooks/execute")
+    async def execute() -> dict[str, bool]:
+        return {"continue": True}
+
+    backend = httpx.ASGITransport(app=app)
+    front_door_requests: list[httpx.Request] = []
+    daemon_ready = not spooled_during_downtime
+
+    async def front_door(request: httpx.Request) -> httpx.Response:
+        front_door_requests.append(request)
+        if not daemon_ready:
+            return httpx.Response(503, json={"status": "retry", "reason": "daemon_not_ready"})
+        if request.headers.get("Authorization") != "Bearer test-operator-token":
+            return httpx.Response(401, json={"code": "invalid_token"})
+        request.headers.update(
+            {
+                "X-Gobby-Front-Door": "test-front-door-secret",
+                "X-Gobby-User-Id": "user-1",
+                "X-Gobby-Machine-Id": "machine-1",
+                "X-Gobby-Key-Id": "key-1",
+            }
+        )
+        return await backend.handle_async_request(request)
+
+    real_client = httpx.AsyncClient
+
+    def replay_client(**kwargs: Any) -> httpx.AsyncClient:
+        kwargs.setdefault("transport", httpx.MockTransport(front_door))
+        return real_client(**kwargs)
+
+    monkeypatch.setattr("gobby.hooks.inbox.httpx.AsyncClient", replay_client)
+    if spooled_during_downtime:
+        inbox_dir = tmp_path / "inbox"
+        inbox_dir.mkdir()
+        paths = [inbox_dir / f"n-0000000000001-restart-{index}.json" for index in range(46)]
+        for path in paths:
+            path.write_text(json.dumps(_valid_envelope()))
+        assert await drain_hook_inbox_once(app, inbox_dir, include_fresh=True) == 0
+        assert all(path.exists() for path in paths)
+        assert not (inbox_dir / "quarantine").exists()
+        daemon_ready = True
+        assert await drain_hook_inbox_once(app, inbox_dir, include_fresh=True) == 46
+        assert await drain_hook_inbox_once(app, inbox_dir, include_fresh=True) == 0
+        assert all(not path.exists() for path in paths)
+        assert not (inbox_dir / "quarantine").exists()
+        assert len(front_door_requests) == 92
+        assert {request.headers[ENVELOPE_ID_HEADER] for request in front_door_requests} == {
+            path.stem for path in paths
+        }
+    else:
+        response = await _post_envelope(_valid_envelope(), envelope_id="replayed-hook")
+        assert response.status_code == 200
+        assert response.json() == {"continue": True}
+        assert len(front_door_requests) == 1
+        assert front_door_requests[0].headers[ENVELOPE_ID_HEADER] == "replayed-hook"
+    assert all(request.url.host == "front-door.test" for request in front_door_requests)
+
+
+@pytest.mark.asyncio
+async def test_replay_terminal_401_is_quarantined_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    inbox_dir = tmp_path / "inbox"
+    inbox_dir.mkdir()
+    envelope = _valid_envelope()
+    envelope["headers"] = {"Authorization": "Bearer persisted-secret"}
+    envelope_path = _write_inbox_envelope(inbox_dir, "terminal-auth", envelope)
+    post = AsyncMock(return_value=httpx.Response(401, text="response-secret"))
+    settled = MagicMock()
+    app = FastAPI()
+    _get_hook_settle_listeners(app).add(settled)
+
+    with (
+        patch("gobby.hooks.inbox._post_envelope", new=post),
+        caplog.at_level(logging.WARNING, logger="gobby.hooks.inbox"),
+    ):
+        first = await drain_hook_inbox_once(app, inbox_dir, include_fresh=True)
+        later = await drain_hook_inbox_once(app, inbox_dir, include_fresh=True)
+
+    assert first == 1
+    assert later == 0
+    post.assert_awaited_once()
+    settled.assert_called_once_with()
+    assert not envelope_path.exists()
+    quarantine = get_hook_quarantine_dir(inbox_dir)
+    assert (quarantine / envelope_path.name).read_bytes() == json.dumps(envelope).encode()
+    metadata = json.loads((quarantine / f"{envelope_path.name}.meta.json").read_text())
+    assert metadata["reason"] == "replay_auth_rejected"
+    assert metadata["detail"] == "Hook replay returned HTTP 401"
+    warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    assert "401" in warnings[0].getMessage()
+    assert "persisted-secret" not in caplog.text
+    assert "response-secret" not in caplog.text
 
 
 @pytest.mark.asyncio
