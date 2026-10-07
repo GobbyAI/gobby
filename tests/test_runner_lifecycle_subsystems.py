@@ -434,7 +434,7 @@ async def test_node_mode_skips_hub_only_phases(
     assert called == {*EVERY_MODE_STEPS, NODE_ONLY_STEP}
     assert _phase_skips(caplog) == sorted(
         f"skipping hub-only {phase} in node mode"
-        for phase in ("code_index_bm25", "metrics_cleanup", "expansion_cleanup", "vector_store")
+        for phase in {*HUB_ONLY_PHASES, "communications_start"}
     )
 
 
