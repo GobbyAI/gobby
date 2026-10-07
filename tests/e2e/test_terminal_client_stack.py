@@ -1209,10 +1209,11 @@ class ClientWire:
         self.paths.append(request.path)
         if request.path == "/ws":
             return None
+        authorization = request.headers.get("Authorization")
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 self.daemon.http_url + request.path,
-                headers={"Authorization": request.headers.get("Authorization", "")},
+                headers={"Authorization": authorization} if authorization is not None else {},
             )
         body = response.content
         self.responses[request.path] = response.text[:3000]

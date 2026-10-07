@@ -252,11 +252,11 @@ def test_http_auth_matrix(daemon_instance: DaemonInstance) -> None:
         )
         assert invalid.status_code == 401
 
-        local_header = client.get(
+        retired_header = client.get(
             "/api/admin/config",
             headers={"X-Gobby-Local-Token": token},
         )
-        assert local_header.status_code == 200
+        assert retired_header.status_code == 401
 
     with httpx.Client(
         base_url=daemon_instance.http_url,
