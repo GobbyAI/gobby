@@ -2676,16 +2676,16 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
     from gobby.config.bootstrap import load_bootstrap
     from gobby.mcp_proxy.stdio_proxy import DaemonProxy
     from gobby.utils.daemon_url import resolve_daemon_url
-    from gobby.utils.local_token import local_token_path
 
     child_session_id = "11111111-2222-3333-4444-555555555555"
     parent_session_id = "99999999-8888-7777-6666-000000000000"
     run_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-    local_token_path().write_text("operator-token\n")
     bootstrap_path = tmp_path / "bootstrap.yaml"
-    bootstrap_path.write_text(f"daemon_port: 31579\nfiles_home: {tmp_path / 'files'}\n")
+    bootstrap_path.write_text(
+        f"daemon_port: 31579\nfiles_home: {tmp_path / 'files'}\napi_key: operator-token\n"
+    )
     bootstrap_path.chmod(0o600)
     for name in ("GOBBY_DAEMON_URL", "GOBBY_PORT", "GOBBY_DAEMON_PORT"):
         monkeypatch.delenv(name, raising=False)

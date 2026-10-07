@@ -19,6 +19,7 @@ from gobby.config.registry import (
     ConfigVisibility,
     UnknownConfigKeyError,
     config_structured_identity_field,
+    is_removed_config_store_key,
 )
 from gobby.config.registry_key_encoding import (
     DYNAMIC_SEGMENT_CODEC_VECTORS,
@@ -184,6 +185,12 @@ def test_structured_voice_api_key_secrecy_is_registry_owned() -> None:
 def test_postgres_pool_is_bootstrap_only() -> None:
     with pytest.raises(UnknownConfigKeyError):
         CONFIG_REGISTRY.resolve("postgres_pool")
+
+
+def test_shared_token_hash_is_retired() -> None:
+    assert is_removed_config_store_key("auth.api_token_hash")
+    with pytest.raises(UnknownConfigKeyError):
+        CONFIG_REGISTRY.resolve("auth.api_token_hash")
 
 
 def test_bootstrap_field_names_never_enter_runtime_registry() -> None:

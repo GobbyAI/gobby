@@ -178,11 +178,11 @@ fn grant_recovery(error: &GrantError) -> Option<&'static str> {
 
 fn unauthorized_recovery(code: &str) -> Option<&'static str> {
     match code {
-        "missing_auth" | "invalid_token" | "session_invalid" => Some(
-            "refresh ~/.gobby/local_cli_token with `gobby install` or `gobby auth token --rotate`",
-        ),
-        "operator_token_unavailable" => Some(
-            "the daemon cannot read ~/.gobby/local_cli_token; run `gobby install`, then restart the Gobby daemon",
+        "missing_auth" | "invalid_token" | "session_invalid" => {
+            Some("refresh the bootstrap API key with `gobby auth login`")
+        }
+        "key_resolver_unavailable" => Some(
+            "the front door cannot validate API keys; check the hub connection and run `gobby auth login`",
         ),
         "capability_invalid" => Some(
             "the capability was signed with a rotated local API token; restart the session to receive a fresh one",

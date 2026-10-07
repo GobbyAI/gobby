@@ -163,6 +163,11 @@ def test_mask_vector_matches_expected() -> None:
 @pytest.mark.unit
 def test_manifest_contract() -> None:
     manifest = http_corpus.load_manifest()
+    assert manifest["schema_version"] == 2
+    assert manifest["families"]["runtime_challenge"] == {
+        "parity": "native",
+        "origin": "gdaemon",
+    }
     families = manifest["families"]
     assert families
     for name, family in families.items():

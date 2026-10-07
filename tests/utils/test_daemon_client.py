@@ -10,8 +10,7 @@ pytestmark = pytest.mark.unit
 
 AUTH_HEADERS = {"Authorization": "Bearer test-token"}
 AUTH_REMEDIATION = (
-    "token missing or stale; run 'gobby install' or 'gobby auth token --rotate' on the hub "
-    "machine and copy ~/.gobby/local_cli_token here"
+    "API key missing or stale; run 'gobby auth login' to provision this machine's bootstrap key"
 )
 
 
@@ -55,7 +54,7 @@ def test_daemon_client_401_has_actionable_remediation() -> None:
 
     with (
         patch("gobby.utils.daemon_client.httpx.post", return_value=unauthorized),
-        pytest.raises(RuntimeError, match="token missing or stale") as exc_info,
+        pytest.raises(RuntimeError, match="API key missing or stale") as exc_info,
     ):
         client.call_http_api("/api/example", method="POST")
 

@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "config_values",
   "family": "config",
   "backend": "up",
@@ -17,7 +17,7 @@
       "content-type": "application/json"
     },
     "body": {
-      "revision": 3,
+      "revision": 2,
       "desired": {
         "clones_dir": "~/.gobby/clones",
         "cors_origins": [

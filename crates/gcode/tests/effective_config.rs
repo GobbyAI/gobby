@@ -27,8 +27,8 @@ impl EnvGuard {
             managed_execution_bootstrap: std::env::var_os("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"),
             agent_api_token: std::env::var_os("GOBBY_AGENT_API_TOKEN"),
         };
-        std::fs::write(home.join("local_cli_token"), "effective-token\n")
-            .expect("write local token");
+        std::fs::write(home.join("bootstrap.yaml"), "api_key: effective-token\n")
+            .expect("write API key");
         // SAFETY: this integration-test binary contains one test, so no peer
         // thread can observe these temporary process environment overrides.
         unsafe {

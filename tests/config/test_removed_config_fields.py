@@ -18,7 +18,7 @@ from gobby.config.communications import CommunicationsConfig
 from gobby.config.tasks import TaskExpansionConfig
 from gobby.storage.config_repository import ConfigRepository, UnknownStoredConfigKeyError
 from gobby.storage.config_store import flatten_config
-from gobby.storage.hub.protocol import Row
+from gobby.storage.hub.protocol import HubDatabase, Row
 
 pytestmark = pytest.mark.unit
 
@@ -49,6 +49,7 @@ REMOVED_ACCESSORS = {
     "get_tool_summarizer_config",
 }
 REMOVED_CONFIG_STORE_ROWS = {
+    "auth.api_token_hash": "retired-hash",
     "code_index.auto_index_on_commit": False,
     "code_index.content_extensions": [".txt"],
     "code_index.exclude_patterns": ["vendor"],
@@ -166,3 +167,33 @@ def test_read_only_snapshot_skips_removed_rows_and_names_them() -> None:
 
     assert snapshot.unknown_keys == tuple(REMOVED_CONFIG_STORE_ROWS)
     assert dict(snapshot.overrides) == {}
+
+
+@pytest.mark.integration
+def test_retired_auth_token_hash_row_is_deleted(hub_db: HubDatabase) -> None:
+    repository = ConfigRepository(hub_db)
+    with hub_db.transaction() as transaction:
+        transaction.execute(
+            "INSERT INTO config_store (key, value, is_secret, revision) VALUES (%s, %s, %s, %s)",
+            (
+                "auth.api_token_hash",
+                json.dumps("retired-hash"),
+                True,
+                repository.current_revision(),
+            ),
+        )
+    repository.reconcile_registry()
+    assert (
+        hub_db.fetchone("SELECT key FROM config_store WHERE key = %s", ("auth.api_token_hash",))
+        is None
+    )
+
+    unknown = "unexpected.operator_auth_field"
+    with hub_db.transaction() as transaction:
+        transaction.execute(
+            "INSERT INTO config_store (key, value, is_secret, revision) VALUES (%s, %s, %s, %s)",
+            (unknown, json.dumps("unrecognized"), False, repository.current_revision()),
+        )
+    with pytest.raises(UnknownStoredConfigKeyError, match=unknown):
+        repository.reconcile_registry()
+    assert hub_db.fetchone("SELECT key FROM config_store WHERE key = %s", (unknown,)) is not None

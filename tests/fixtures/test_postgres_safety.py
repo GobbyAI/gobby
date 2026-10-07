@@ -16,8 +16,6 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 from gobby.daemon_lease import ActiveDaemonLease
-from gobby.storage.hub.postgres import PostgresHubDatabase
-from gobby.storage.maintenance_epoch import abort_maintenance_epoch, open_maintenance_epoch
 from gobby.storage.schema_contract import SchemaContractError
 from tests.fixtures.postgres import (
     _ISOLATED_SCHEMA_APPLICATION_PREFIX,
@@ -324,33 +322,19 @@ def test_isolated_test_schema_holds_schema_lease_for_fixture_lifetime(
 
 
 @pytest.mark.integration
-def test_isolated_test_schema_recovers_after_maintenance_epoch_terminates_backend(
+def test_isolated_test_schema_recovers_after_its_backend_is_terminated(
     isolated_postgres_database_url: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    with psycopg.connect(isolated_postgres_database_url, autocommit=True) as connection:
-        connection.execute("CREATE EXTENSION pg_search")
-
-    database = PostgresHubDatabase(isolated_postgres_database_url)
-    try:
-        database.apply_migrations()
-    finally:
-        database.close()
-
     caplog.set_level("INFO", logger="tests.fixtures.postgres")
-    with isolated_test_schema(isolated_postgres_database_url, "epoch") as schema:
-        epoch = open_maintenance_epoch(
-            isolated_postgres_database_url,
-            campaign="purge",
-            opened_by="test-isolated-schema-teardown",
-            scope_note="terminate the fixture backend",
-        )
-        abort_maintenance_epoch(
-            isolated_postgres_database_url,
-            epoch.id,
-            disposition="fixture resilience test completed",
-            confirmed=True,
-        )
+    with isolated_test_schema(isolated_postgres_database_url, "terminated") as schema:
+        with psycopg.connect(isolated_postgres_database_url, autocommit=True) as connection:
+            terminated = connection.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname = current_database() AND application_name LIKE %s",
+                (f"{_ISOLATED_SCHEMA_APPLICATION_PREFIX}%",),
+            ).fetchall()
+        assert terminated == [(True,)]
 
     with psycopg.connect(isolated_postgres_database_url, autocommit=True) as connection:
         assert (

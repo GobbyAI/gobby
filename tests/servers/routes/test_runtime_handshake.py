@@ -12,10 +12,12 @@ import threading
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
@@ -34,6 +36,7 @@ from gobby.runtime_grants.service import (
     StaleEpochGrant,
 )
 from gobby.servers.auth_service import _AGENT_CAPABILITY_MATRIX, AuthService
+from gobby.servers.routes.runtime_handshake import create_runtime_handshake_router
 from gobby.utils.local_token import (
     derive_managed_signing_key,
     issue_agent_api_token,
@@ -71,12 +74,8 @@ def test_managed_challenge_uses_derived_signing_key(tmp_path: Path) -> None:
     signature = base64.urlsafe_b64decode(encoded_signature + "=" * (-len(encoded_signature) % 4))
     bootstrap = tmp_path / "bootstrap.yaml"
     bootstrap.write_text("api_key: bootstrap-key\n")
-    token_file = tmp_path / "local-token"
-    token_file.write_text(OPERATOR_TOKEN)
     server = create_http_server(config=DaemonConfig(), authenticated_requests=False)
-    server.auth_service = AuthService(
-        lambda: server.services.database, token_file=token_file, bootstrap_file=bootstrap
-    )
+    server.auth_service = AuthService(lambda: server.services.database, bootstrap_file=bootstrap)
     client = TestClient(server.app)
     body = {"nonce": base64.urlsafe_b64encode(nonce).decode(), "kind": "managed", "claims": claims}
     response = client.post("/api/runtime/handshake/challenge", json=body)
@@ -85,11 +84,8 @@ def test_managed_challenge_uses_derived_signing_key(tmp_path: Path) -> None:
     interactive = client.post(
         "/api/runtime/handshake/challenge", json={"nonce": body["nonce"], "kind": "interactive"}
     )
-    assert interactive.status_code == 200
-    assert (
-        interactive.json()["proof"]
-        == hmac.new(OPERATOR_TOKEN.encode(), nonce, hashlib.sha256).hexdigest()
-    )
+    assert interactive.status_code == 400
+    assert interactive.json()["detail"] == "interactive_challenge_is_native"
     bootstrap.unlink()
     missing = client.post("/api/runtime/handshake/challenge", json=body)
     assert missing.status_code == 503
@@ -170,14 +166,9 @@ def test_route_registered_in_app() -> None:
 
 def test_challenge_proof_before_bearer(tmp_path: Path) -> None:
     nonce = os.urandom(16)
-    interactive = challenge_proof(
-        nonce,
-        kind="interactive",
-        operator_token=OPERATOR_TOKEN,
-        signing_key=derive_managed_signing_key(OPERATOR_TOKEN),
-    )
-    expected = hmac.new(OPERATOR_TOKEN.encode(), nonce, hashlib.sha256).hexdigest()
-    assert interactive == expected
+    with pytest.raises(HandshakeRejection) as interactive:
+        challenge_proof(nonce, kind="interactive")
+    assert interactive.value.code == "claims_mismatch"
 
     token = issue_agent_api_token(
         derive_managed_signing_key(OPERATOR_TOKEN),
@@ -192,7 +183,6 @@ def test_challenge_proof_before_bearer(tmp_path: Path) -> None:
     managed = challenge_proof(
         nonce,
         kind="managed",
-        operator_token=OPERATOR_TOKEN,
         signing_key=derive_managed_signing_key(OPERATOR_TOKEN),
         claims=claims,
     )
@@ -204,24 +194,22 @@ def test_challenge_proof_before_bearer(tmp_path: Path) -> None:
     token_file = tmp_path / "unused"
     server.auth_service = AuthService(
         lambda: server.services.database,
-        token_file=token_file,
         bootstrap_file=_managed_bootstrap(token_file),
     )
-    with patch.object(server.auth_service, "local_token", return_value=OPERATOR_TOKEN):
-        client = TestClient(server.app)
-        rejected = client.post(
-            "/api/runtime/handshake/challenge",
-            json={"nonce": base64.urlsafe_b64encode(nonce).decode(), "kind": "interactive"},
-            headers={"Authorization": f"Bearer {OPERATOR_TOKEN}"},
-        )
-        assert rejected.status_code == 401
-        assert rejected.json()["code"] == "credential_before_proof"
-        allowed = client.post(
-            "/api/runtime/handshake/challenge",
-            json={"nonce": base64.urlsafe_b64encode(nonce).decode(), "kind": "interactive"},
-        )
-        assert allowed.status_code == 200
-        assert allowed.json()["proof"] == expected
+    client = TestClient(server.app)
+    rejected = client.post(
+        "/api/runtime/handshake/challenge",
+        json={"nonce": base64.urlsafe_b64encode(nonce).decode(), "kind": "interactive"},
+        headers={"Authorization": f"Bearer {OPERATOR_TOKEN}"},
+    )
+    assert rejected.status_code == 401
+    assert rejected.json()["code"] == "credential_before_proof"
+    native = client.post(
+        "/api/runtime/handshake/challenge",
+        json={"nonce": base64.urlsafe_b64encode(nonce).decode(), "kind": "interactive"},
+    )
+    assert native.status_code == 400
+    assert native.json()["detail"] == "interactive_challenge_is_native"
 
 
 def test_challenge_proof_matches_agent_run_token_kind(tmp_path: Path) -> None:
@@ -244,18 +232,16 @@ def test_challenge_proof_matches_agent_run_token_kind(tmp_path: Path) -> None:
     token_file = tmp_path / "unused"
     server.auth_service = AuthService(
         lambda: server.services.database,
-        token_file=token_file,
         bootstrap_file=_managed_bootstrap(token_file),
     )
-    with patch.object(server.auth_service, "local_token", return_value=OPERATOR_TOKEN):
-        response = TestClient(server.app).post(
-            "/api/runtime/handshake/challenge",
-            json={
-                "nonce": base64.urlsafe_b64encode(nonce).decode(),
-                "kind": "managed",
-                "claims": claims,
-            },
-        )
+    response = TestClient(server.app).post(
+        "/api/runtime/handshake/challenge",
+        json={
+            "nonce": base64.urlsafe_b64encode(nonce).decode(),
+            "kind": "managed",
+            "claims": claims,
+        },
+    )
 
     assert response.status_code == 200
     assert response.json()["proof"] == expected
@@ -342,6 +328,7 @@ def test_bearer_claim_binding_matrix() -> None:
     with pytest.raises(HandshakeRejection) as operator_machine:
         handshake.issue_for_operator(
             machine_id="ffffffff-ffff-4fff-8fff-ffffffffffff",
+            forwarded_machine_id=LOCAL_MACHINE_ID,
             project_id=PROJECT_ID,
             session_id=SESSION_ID,
         )
@@ -350,6 +337,7 @@ def test_bearer_claim_binding_matrix() -> None:
     with pytest.raises(HandshakeRejection) as unknown_project:
         handshake.issue_for_operator(
             machine_id=LOCAL_MACHINE_ID,
+            forwarded_machine_id=LOCAL_MACHINE_ID,
             project_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
             session_id=SESSION_ID,
         )
@@ -425,6 +413,7 @@ def test_maintenance_admits_indexed_project_targets_beyond_registry() -> None:
     with pytest.raises(HandshakeRejection) as operator_rejected:
         handshake.issue_for_operator(
             machine_id=LOCAL_MACHINE_ID,
+            forwarded_machine_id=LOCAL_MACHINE_ID,
             project_id=indexed_only,
             session_id=SESSION_ID,
         )
@@ -474,6 +463,7 @@ def test_expiry_bounded_and_serialized() -> None:
     def run() -> GrantBundle:
         return service.issue_for_operator(
             machine_id=LOCAL_MACHINE_ID,
+            forwarded_machine_id=LOCAL_MACHINE_ID,
             project_id=PROJECT_ID,
             session_id=SESSION_ID,
         )
@@ -508,6 +498,7 @@ def test_operator_overlay_flows_into_principal() -> None:
     )
     grant = service.issue_for_operator(
         machine_id=LOCAL_MACHINE_ID,
+        forwarded_machine_id=LOCAL_MACHINE_ID,
         project_id=PROJECT_ID,
         session_id=SESSION_ID,
         code_overlay_project_id=OVERLAY_PROJECT_ID,
@@ -516,6 +507,7 @@ def test_operator_overlay_flows_into_principal() -> None:
     assert seen[0].code_overlay_project_id == OVERLAY_PROJECT_ID
     plain = service.issue_for_operator(
         machine_id=LOCAL_MACHINE_ID,
+        forwarded_machine_id=LOCAL_MACHINE_ID,
         project_id=PROJECT_ID,
         session_id=SESSION_ID,
     )
@@ -526,12 +518,75 @@ def test_operator_overlay_flows_into_principal() -> None:
         with pytest.raises(HandshakeRejection) as rejected:
             service.issue_for_operator(
                 machine_id=LOCAL_MACHINE_ID,
+                forwarded_machine_id=LOCAL_MACHINE_ID,
                 project_id=PROJECT_ID,
                 session_id=SESSION_ID,
                 code_overlay_project_id=bad_overlay,
             )
         assert rejected.value.code == "claims_mismatch"
     assert len(seen) == 2
+
+
+def test_handshake_endpoint_binds_forwarded_machine(tmp_path: Path) -> None:
+    forwarded_machine = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+
+    def no_database() -> Any:
+        raise AssertionError("forwarded identity must not query Python's key database")
+
+    auth = AuthService(no_database, bootstrap_file=tmp_path / "bootstrap.yaml")
+    auth.bind_runtime(
+        grant_service=None,
+        lease_live=lambda: True,
+        local_machine_id=LOCAL_MACHINE_ID,
+        effect_fence=None,
+        clock=None,
+        front_door_secret="test-front-door-secret",
+    )
+    server = SimpleNamespace(auth_service=auth, handshake_service=_handshake())
+    app = FastAPI()
+    app.include_router(create_runtime_handshake_router(server))
+    client = TestClient(app)
+    headers = {
+        "Authorization": "Bearer gobby_key_test",
+        "X-Gobby-Front-Door": "test-front-door-secret",
+        "X-Gobby-User-Id": "node-user",
+        "X-Gobby-Machine-Id": forwarded_machine,
+        "X-Gobby-Key-Id": "node-key",
+    }
+    response = client.post(
+        "/api/runtime/handshake",
+        json={"machine_id": forwarded_machine, "project_id": PROJECT_ID},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["grant"]["principal"]["machine_id"] == forwarded_machine
+    refused = client.post(
+        "/api/runtime/handshake",
+        json={"machine_id": LOCAL_MACHINE_ID, "project_id": PROJECT_ID},
+        headers=headers,
+    )
+    assert refused.status_code == 403
+    assert refused.json()["code"] == "claims_mismatch"
+
+
+def test_operator_issue_binds_forwarded_machine() -> None:
+    forwarded_machine = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    service = _handshake()
+    grant = service.issue_for_operator(
+        machine_id=forwarded_machine,
+        forwarded_machine_id=forwarded_machine,
+        project_id=PROJECT_ID,
+        session_id=SESSION_ID,
+    )
+    assert grant.principal.machine_id == forwarded_machine
+    with pytest.raises(HandshakeRejection) as mismatch:
+        service.issue_for_operator(
+            machine_id=LOCAL_MACHINE_ID,
+            forwarded_machine_id=forwarded_machine,
+            project_id=PROJECT_ID,
+            session_id=SESSION_ID,
+        )
+    assert mismatch.value.code == "claims_mismatch"
 
 
 def test_operator_issue_accepts_missing_session_id() -> None:
@@ -551,6 +606,7 @@ def test_operator_issue_accepts_missing_session_id() -> None:
     )
     grant = service.issue_for_operator(
         machine_id=LOCAL_MACHINE_ID,
+        forwarded_machine_id=LOCAL_MACHINE_ID,
         project_id=PROJECT_ID,
         session_id=None,
     )
@@ -624,6 +680,7 @@ def test_epoch_bump_rejects_prior_grants(tmp_path: Path) -> None:
     handshake = _handshake(grants)
     grant = handshake.issue_for_operator(
         machine_id=LOCAL_MACHINE_ID,
+        forwarded_machine_id=LOCAL_MACHINE_ID,
         project_id=PROJECT_ID,
         session_id=SESSION_ID,
     )
@@ -702,6 +759,7 @@ def test_operator_and_agent_grants_are_v2() -> None:
     handshake = _handshake()
     operator = handshake.issue_for_operator(
         machine_id=LOCAL_MACHINE_ID,
+        forwarded_machine_id=LOCAL_MACHINE_ID,
         project_id=PROJECT_ID,
         session_id=SESSION_ID,
     )
@@ -731,10 +789,8 @@ def _config_server(grants: GrantService, token_file: Path) -> Any:
     from gobby.servers.lease_fence import EffectFence
 
     server = create_http_server(config=DaemonConfig(), authenticated_requests=False)
-    token_file.write_text(OPERATOR_TOKEN)
     server.auth_service = AuthService(
         lambda: server.services.database,
-        token_file=token_file,
         bootstrap_file=_managed_bootstrap(token_file),
     )
     server.auth_service.bind_runtime(
@@ -777,6 +833,7 @@ def test_maintenance_admits_soft_deleted_purge_targets_the_operator_path_refuses
     with pytest.raises(HandshakeRejection) as operator_rejected:
         handshake.issue_for_operator(
             machine_id=LOCAL_MACHINE_ID,
+            forwarded_machine_id=LOCAL_MACHINE_ID,
             project_id=soft_deleted,
             session_id=SESSION_ID,
         )
@@ -803,6 +860,5 @@ def test_maintenance_target_admission_query_covers_indexed_and_soft_deleted_proj
 
 def _managed_bootstrap(token_file: Path) -> Path:
     bootstrap = token_file.with_name(token_file.name + ".bootstrap.yaml")
-    api_key = token_file.read_text().strip() if token_file.exists() else OPERATOR_TOKEN
-    bootstrap.write_text(json.dumps({"api_key": api_key}))
+    bootstrap.write_text(json.dumps({"api_key": OPERATOR_TOKEN}))
     return bootstrap

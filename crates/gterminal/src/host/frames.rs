@@ -77,7 +77,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
         .await;
         return;
     };
-    if local_token != state.local_token {
+    if !super::read_api_key().is_some_and(|api_key| local_token == api_key) {
         let _ = write_frame(
             &mut writer,
             &ServerMessage::Error {

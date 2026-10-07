@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets
 import socket
 import subprocess  # nosec B404 # the runner owns its gdaemon child
 import sys
@@ -90,6 +91,7 @@ class FrontDoorChild:
         self._bind_host = bind_host
         self._public_ports = public_ports
         self._bootstrap_dir = bootstrap_dir
+        self.secret = secrets.token_urlsafe(32)
         self._lock = threading.Lock()
         self._proc: subprocess.Popen[bytes] | None = None
         self._write_fd: int | None = None
@@ -111,7 +113,7 @@ class FrontDoorChild:
         if binary is None:
             raise FrontDoorStartupError(
                 "front_door.enabled is true but no gdaemon binary was found; run "
-                "`gobby install` or set front_door.enabled: false in bootstrap.yaml"
+                "`gobby install` to restore the front door required for API-key authentication"
             )
         return cls(
             binary=binary,
@@ -193,6 +195,7 @@ class FrontDoorChild:
         read_fd, write_fd = os.pipe()
         env = os.environ.copy()
         env["GOBBY_HOME"] = str(self._bootstrap_dir)
+        env["GOBBY_FRONT_DOOR_SECRET"] = self.secret
         command = [self._binary, "serve"]
         try:
             if sys.platform == "win32":

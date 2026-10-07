@@ -12,7 +12,7 @@ import pytest
 
 from gobby import runner as runner_module
 from gobby.config.bootstrap import BootstrapConfig, FrontDoorConfig
-from gobby.daemon_lease_control import LeaseLoss, LeaseLossReason
+from gobby.daemon_lease_control import LeaseLoss, LeaseLossReason, StandbyLeaseControl
 from gobby.runner_pid_file import PidOwnershipResolution
 from gobby.shutdown_intent import ShutdownIntent
 
@@ -48,8 +48,9 @@ class FakeLease:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("front_door_enabled", [False, True])
 async def test_standby_never_constructs_full_runner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, front_door_enabled: bool
 ) -> None:
     events: list[str] = []
     lease = FakeLease(False, events)
@@ -57,7 +58,7 @@ async def test_standby_never_constructs_full_runner(
     bootstrap = BootstrapConfig(
         database_url="postgresql://test.invalid/gobby_test",
         daemon_port=60991,
-        front_door=FrontDoorConfig(enabled=False),
+        front_door=FrontDoorConfig(enabled=front_door_enabled),
     )
 
     monkeypatch.setattr("gobby.config.bootstrap.load_bootstrap", lambda *_a, **_kw: bootstrap)
@@ -76,7 +77,27 @@ async def test_standby_never_constructs_full_runner(
         fake_probe,
     )
 
-    async def serve(*_args: object, **_kwargs: object) -> bool:
+    class FakeFrontDoor:
+        secret = "per-boot-front-door-secret"
+
+        def start(self) -> None:
+            events.append("front-door-start")
+
+        def arm_respawn(self) -> None:
+            events.append("front-door-watch")
+
+        def stop(self) -> None:
+            events.append("front-door-stop")
+
+    front_door = FakeFrontDoor() if front_door_enabled else None
+    monkeypatch.setattr(
+        "gobby.runner_front_door.FrontDoorChild.from_bootstrap",
+        lambda *_args: front_door,
+    )
+
+    async def serve(control: StandbyLeaseControl, **_kwargs: object) -> bool:
+        expected_secret = front_door.secret if front_door is not None else None
+        assert control.front_door_secret == expected_secret
         events.append("standby")
         return False
 
@@ -93,7 +114,14 @@ async def test_standby_never_constructs_full_runner(
         ownership_resolution=cast(PidOwnershipResolution, ownership),
     )
 
-    assert events == ["verify", "acquire", "standby", "release"]
+    expected = ["verify"]
+    if front_door_enabled:
+        expected.extend(["front-door-start", "front-door-watch"])
+    expected.extend(["acquire", "standby"])
+    if front_door_enabled:
+        expected.append("front-door-stop")
+    expected.append("release")
+    assert events == expected
     assert ownership.released == 1
 
 

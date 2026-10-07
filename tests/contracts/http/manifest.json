@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "cases": [
     "health_ok.json",
     "health_backend_down.json",
@@ -29,6 +29,10 @@
     "runtime_handshake": {
       "parity": "proxy",
       "origin": "python"
+    },
+    "runtime_challenge": {
+      "parity": "native",
+      "origin": "gdaemon"
     },
     "auth": {
       "parity": "proxy",

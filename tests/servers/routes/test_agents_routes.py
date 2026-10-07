@@ -31,7 +31,6 @@ from gobby.servers.routes.agents import (
     UpdateAgentDefinitionRequest,
 )
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
-from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
@@ -488,11 +487,10 @@ def test_signed_spawned_agent_bearer_cannot_read_definition_credentials(
     tmp_path: Path,
 ) -> None:
     operator_token = "test-definition-operator"
-    token_file = tmp_path / "operator-token"
-    token_file.write_text(operator_token)
-    AuthStore(temp_db).set_local_api_token_hash(hash_token(operator_token))
     server.auth_service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
+        lambda: temp_db,
+        bootstrap_file=_managed_bootstrap(tmp_path / "bootstrap.yaml", operator_token),
+        break_glass_file=tmp_path / "missing-break-glass",
     )
     session = session_manager.register(
         external_id="definition-read-spawned-agent",
@@ -2004,8 +2002,6 @@ def test_create_rejects_missing_rule_selectors(
     assert "rule_selectors" in response.json()["detail"]
 
 
-def _managed_bootstrap(token_file: Path) -> Path:
-    bootstrap = token_file.with_name(token_file.name + ".bootstrap.yaml")
-    api_key = token_file.read_text().strip() if token_file.exists() else None
+def _managed_bootstrap(bootstrap: Path, api_key: str) -> Path:
     bootstrap.write_text(json.dumps({"api_key": api_key}))
     return bootstrap

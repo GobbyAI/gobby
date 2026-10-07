@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -25,13 +26,12 @@ from gobby.servers.routes.mcp.endpoints.bridge import (
 )
 from gobby.servers.routes.mcp.tools import create_mcp_router
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
 from gobby.utils.session_context import SeededContextTokens
 from gobby.workflows.state_manager import SessionVariableManager
-from tests.servers.conftest import _managed_bootstrap, create_http_server
+from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
@@ -142,6 +142,11 @@ async def test_bridge_ready_without_a_session_propagates_session_required(
     assert "_mcp_proxy_ready" not in SessionVariableManager(temp_db).get_variables(SESSION_ID)
 
 
+def _managed_bootstrap(bootstrap: Path, api_key: str) -> Path:
+    bootstrap.write_text(json.dumps({"api_key": api_key}))
+    return bootstrap
+
+
 def _agent_bridge_client(
     temp_db: HubDatabase, sessions: SessionManager, project_id: str, tmp_path: Path
 ) -> tuple[TestClient, dict[str, str], str, str]:
@@ -159,9 +164,6 @@ def _agent_bridge_client(
     run = LocalAgentRunManager(temp_db).create(
         parent_session_id=own.id, child_session_id=own.id, provider="codex", prompt="bridge"
     )
-    token_file = tmp_path / "operator-token"
-    token_file.write_text("bridge-operator-token")
-    AuthStore(temp_db).set_local_api_token_hash(hash_token("bridge-operator-token"))
     server = create_http_server(
         database=temp_db,
         session_manager=sessions,
@@ -170,7 +172,9 @@ def _agent_bridge_client(
     )
     server.app.state.server = server
     server.auth_service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
+        lambda: temp_db,
+        bootstrap_file=_managed_bootstrap(tmp_path / "bootstrap.yaml", "bridge-operator-token"),
+        break_glass_file=tmp_path / "missing-break-glass",
     )
     token = issue_agent_api_token(
         derive_managed_signing_key("bridge-operator-token"),

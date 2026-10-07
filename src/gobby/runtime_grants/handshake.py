@@ -65,21 +65,17 @@ def challenge_proof(
     nonce: bytes,
     *,
     kind: str,
-    operator_token: str,
     signing_key: bytes | None = None,
     claims: AgentApiTokenClaims | None = None,
 ) -> str:
     """HMAC the client nonce with the caller's credential secret."""
-    if kind == "interactive":
-        secret = operator_token.encode()
-    elif kind == "managed":
-        if claims is None:
-            raise HandshakeRejection("managed challenge requires claims", code="claims_mismatch")
-        if not signing_key:
-            raise HandshakeRejection("signing_key_unavailable", code="signing_key_unavailable")
-        secret = _recompute_capability_signature(signing_key, claims)
-    else:
+    if kind != "managed":
         raise HandshakeRejection(f"unknown challenge kind {kind}", code="claims_mismatch")
+    if claims is None:
+        raise HandshakeRejection("managed challenge requires claims", code="claims_mismatch")
+    if not signing_key:
+        raise HandshakeRejection("signing_key_unavailable", code="signing_key_unavailable")
+    secret = _recompute_capability_signature(signing_key, claims)
     return hmac.new(secret, nonce, hashlib.sha256).hexdigest()
 
 
@@ -120,13 +116,14 @@ class HandshakeService:
         self,
         *,
         machine_id: str,
+        forwarded_machine_id: str,
         project_id: str,
         session_id: str | None,
         code_overlay_project_id: str | None = None,
     ) -> GrantBundle:
-        if machine_id != self.local_machine_id:
+        if not forwarded_machine_id or machine_id != forwarded_machine_id:
             raise HandshakeRejection(
-                "operator machine_id must match the daemon machine",
+                "operator machine_id must match the authenticated machine",
                 code="claims_mismatch",
             )
         if not self._project_admitted(project_id):

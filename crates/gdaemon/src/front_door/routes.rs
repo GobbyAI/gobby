@@ -245,7 +245,14 @@ mod tests {
     #[tokio::test]
     async fn health_family_honors_proxy_native_and_compare() {
         let (addr, hits) = python_stub().await;
-        let state = FrontDoorState::new(addr, BackendState::Down);
+        let state = FrontDoorState::new(
+            addr,
+            BackendState::Down,
+            Arc::new(
+                super::super::auth::AuthState::new("test-secret".into(), None, Default::default())
+                    .expect("auth"),
+            ),
+        );
 
         let proxied = get(&table(RouteBackend::Proxy, &state), &state, "/api/health").await;
         assert_eq!(proxied.headers().get(SERVED_BY_HEADER), None);
@@ -272,7 +279,14 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let refused = listener.local_addr().expect("addr");
         drop(listener);
-        let state = FrontDoorState::new(refused, BackendState::Down);
+        let state = FrontDoorState::new(
+            refused,
+            BackendState::Down,
+            Arc::new(
+                super::super::auth::AuthState::new("test-secret".into(), None, Default::default())
+                    .expect("auth"),
+            ),
+        );
 
         let response = get(&table(RouteBackend::Native, &state), &state, "/api/health").await;
 
@@ -287,7 +301,14 @@ mod tests {
     #[tokio::test]
     async fn unclaimed_methods_and_paths_under_a_native_family_are_proxied() {
         let (addr, hits) = python_stub().await;
-        let state = FrontDoorState::new(addr, BackendState::Down);
+        let state = FrontDoorState::new(
+            addr,
+            BackendState::Down,
+            Arc::new(
+                super::super::auth::AuthState::new("test-secret".into(), None, Default::default())
+                    .expect("auth"),
+            ),
+        );
         let table = table(RouteBackend::Native, &state);
 
         let deeper = get(&table, &state, "/api/health/details").await;

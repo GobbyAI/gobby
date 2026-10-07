@@ -48,8 +48,8 @@ _PROTECTED_PREFIXES = (
 )
 
 _LOGIN_GUIDANCE = (
-    "Authentication required. CLI clients need ~/.gobby/local_cli_token "
-    "(run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
+    "Authentication required. CLI clients need an API key in bootstrap.yaml "
+    "and gdaemon (run 'gobby auth login'). Browsers: log in."
 )
 # Absent or unrecognised operator/browser credentials get login guidance; typed
 # grant and capability rejections carry their own message.

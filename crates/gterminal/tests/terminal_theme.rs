@@ -79,7 +79,11 @@ impl Host {
     fn start(token: &str) -> Self {
         let dir = temp_socket_dir();
         write_token(dir.path(), token);
-        std::fs::write(dir.path().join("local_cli_token"), LOCAL).unwrap();
+        std::fs::write(
+            dir.path().join("bootstrap.yaml"),
+            format!("api_key: {LOCAL}\n"),
+        )
+        .unwrap();
         let proc = spawn_host(dir.path());
         wait_socket(&dir.path().join(CONTROL_SOCKET));
         wait_socket(&dir.path().join(FRAMES_SOCKET));

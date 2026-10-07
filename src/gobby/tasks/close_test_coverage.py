@@ -12,13 +12,21 @@ import re
 import threading
 from collections import OrderedDict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, replace
 from fnmatch import fnmatchcase
+from functools import cached_property, lru_cache
 from pathlib import Path, PurePosixPath
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
-from gobby.tasks.command_equivalence import pytest_targets, run_location, vitest_related_targets
+from gobby.tasks.command_equivalence import (
+    pytest_targets,
+    run_location,
+    runs_outside_root,
+    vitest_related_targets,
+)
 from gobby.tasks.related_tests import RELATED_TEST_MAX_FILES
-from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
+from gobby.tasks.transcript_evidence_models import TranscriptEvidence, TranscriptValidationRun
+from gobby.utils.git import run_git_command
 
 _TEST_TYPES_AUDIT_MATCHER = "gobby-test-types-audit"
 logger = logging.getLogger(__name__)
@@ -291,13 +299,14 @@ def uncovered_pytest_paths(
     *,
     close_root: str | None = None,
     changed_paths: Sequence[str] = (),
+    candidate: CloseCandidate | None = None,
 ) -> tuple[str, ...]:
     """Return changed tests no successful pytest run targets.
 
     Without ``close_root`` targets match lexically. With it, each target resolves from
     the run's location: a target in ``close_root`` covers as before, and one in another
-    tree covers only when that tree holds the root's bytes for the test and every
-    changed path (#23653).
+    tree covers only when that tree holds the close ``candidate`` commit's bytes for the
+    test and every changed path (#23653).
     """
     if close_root is None:
         covered: list[str] = []
@@ -309,8 +318,38 @@ def uncovered_pytest_paths(
     return tuple(
         test
         for test in changed_python_tests
-        if not any(_runs_test(target, test, root, changed_paths) for target in resolved)
+        if not any(_runs_test(target, test, root, changed_paths, candidate) for target in resolved)
     )
+
+
+def drop_foreign_runs(
+    evidence: TranscriptEvidence,
+    changed_python_tests: tuple[str, ...],
+    close_root: str,
+    changed_paths: Sequence[str],
+    candidate: CloseCandidate | None = None,
+) -> tuple[TranscriptEvidence, list[str]]:
+    """Drop runs that validated another checkout and return their commands.
+
+    A run whose ``uv`` location points outside ``close_root`` neither credits nor fails
+    this task, unless it ran identical copies of the changed tests.
+    """
+    foreign: list[str] = []
+
+    def in_scope(run: TranscriptValidationRun) -> bool:
+        if runs_outside_root(run.core_command or run.command, close_root) and not (
+            identical_copy_run(run, changed_python_tests, close_root, changed_paths, candidate)
+        ):
+            foreign.append(run.command)
+            return False
+        return True
+
+    scoped = replace(
+        evidence,
+        validation_runs=tuple(filter(in_scope, evidence.validation_runs)),
+        command_runs=tuple(filter(in_scope, evidence.command_runs)),
+    )
+    return scoped, foreign
 
 
 def identical_copy_run(
@@ -318,6 +357,7 @@ def identical_copy_run(
     changed_python_tests: tuple[str, ...],
     close_root: str,
     changed_paths: Sequence[str],
+    candidate: CloseCandidate | None = None,
 ) -> bool:
     """Whether a passing pytest run targets only identical copies of changed tests.
 
@@ -328,7 +368,7 @@ def identical_copy_run(
     targets = _resolved_pytest_targets(run, root) if run.outcome == "success" else ()
     return bool(targets) and all(
         any(
-            _runs_test(target, test, root, changed_paths, copy_only=True)
+            _runs_test(target, test, root, changed_paths, candidate, copy_only=True)
             for test in changed_python_tests
         )
         for target in targets
@@ -340,6 +380,7 @@ def copy_differing_paths(
     tests: Sequence[str],
     close_root: str | None,
     changed_paths: Sequence[str],
+    candidate: CloseCandidate | None = None,
 ) -> tuple[str, ...]:
     """Return the paths whose bytes kept another tree's run of ``tests`` from crediting.
 
@@ -356,7 +397,7 @@ def copy_differing_paths(
         for tree in _target_trees(target, test)
         if tree != root and os.path.isfile(os.path.join(tree, test))
         for path in (test, *changed_paths)
-        if not _same_bytes(tree, root, path)
+        if not _same_bytes(tree, root, path, candidate)
     }
     return tuple(sorted(differing))
 
@@ -377,18 +418,19 @@ def _runs_test(
     test: str,
     root: str,
     changed_paths: Sequence[str],
+    candidate: CloseCandidate | None,
     *,
     copy_only: bool = False,
 ) -> bool:
     """Whether absolute ``target`` runs ``test`` at ``root`` or as an identical copy.
 
-    A tree other than ``root`` must hold the root's bytes for ``test`` and every changed
-    path, or it tests other code; equal bytes are git blob identity for an unfiltered file.
+    A tree other than ``root`` must hold the candidate's bytes for ``test`` and every
+    changed path, or it tests other code.
     """
     return any(
         not copy_only
         if tree == root
-        else all(_same_bytes(tree, root, path) for path in (test, *changed_paths))
+        else all(_same_bytes(tree, root, path, candidate) for path in (test, *changed_paths))
         for tree in _target_trees(target, test)
     )
 
@@ -402,13 +444,77 @@ def _target_trees(target: str, test: str) -> Iterator[str]:
             yield target.removesuffix(f"/{prefix}")
 
 
-def _same_bytes(tree: str, root: str, path: str) -> bool:
-    """Whether ``path`` holds the same bytes in both trees, or is absent from both."""
-    copy, original = os.path.join(tree, path), os.path.join(root, path)
+def _same_bytes(tree: str, root: str, path: str, candidate: CloseCandidate | None) -> bool:
+    """Whether ``tree`` holds ``path`` as the close candidate commit does, or both lack it.
+
+    The candidate is the reference, so another session's uncommitted edit in ``root``
+    does not void a copy, and a candidate git cannot list matches nothing. Without a
+    candidate ``root``'s working tree is the reference. Equal bytes are git blob
+    identity for an unfiltered file; a path committed as a symlink or submodule never
+    matches, which refuses credit and never grants it.
+    """
+    copy = os.path.join(tree, path)
+    if not candidate:
+        original = os.path.join(root, path)
+        try:
+            return filecmp.cmp(copy, original, shallow=False)
+        except OSError:
+            return not os.path.exists(copy) and not os.path.exists(original)
+    blobs = candidate.blobs
+    if blobs is None:
+        return False
+    blob = blobs.get(path)
     try:
-        return filecmp.cmp(copy, original, shallow=False)
+        data = Path(copy).read_bytes()
     except OSError:
-        return not os.path.exists(copy) and not os.path.exists(original)
+        return blob is None and not os.path.exists(copy)
+    algorithm = "sha256" if blob is not None and len(blob) == 64 else "sha1"
+    object_id = hashlib.new(algorithm, b"blob %d\0" % len(data) + data, usedforsecurity=False)
+    return object_id.hexdigest() == blob
+
+
+@dataclass
+class CloseCandidate:
+    """The close candidate commit as one gate evaluation compares copies against it.
+
+    A listed commit is immutable, so its listing is shared across evaluations. A failed
+    listing is remembered only by this evaluation: its paths fail closed after one git
+    timeout, and the next evaluation asks git again.
+    """
+
+    root: str
+    commit: str
+
+    @cached_property
+    def blobs(self) -> Mapping[str, str] | None:
+        """Blob ids by repo path in the commit's tree, or None when git cannot list it."""
+        try:
+            return _candidate_blobs(self.root, self.commit)
+        except _UnlistedCommitError:
+            return None
+
+
+class _UnlistedCommitError(Exception):
+    """Git could not list the close candidate commit's tree."""
+
+
+@lru_cache(maxsize=4)
+def _candidate_blobs(root: str, commit: str) -> Mapping[str, str]:
+    """Return blob ids by repo path in ``commit``'s tree.
+
+    A failure raises, which ``lru_cache`` never stores.
+    """
+    listing = run_git_command(
+        ["git", "ls-tree", "-r", "-z", "--full-tree", commit], cwd=root, timeout=30
+    )
+    if listing is None:
+        raise _UnlistedCommitError(commit)
+    blobs: dict[str, str] = {}
+    for entry in listing.split("\0"):
+        meta, tab, path = entry.partition("\t")
+        if tab:
+            blobs[path] = meta.rsplit(" ", 1)[-1]
+    return blobs
 
 
 def coverage_failure_message(
@@ -421,7 +527,8 @@ def coverage_failure_message(
     """Describe the first uncovered test obligation in checklist priority order."""
     copies = (
         " A run from another tree is credited only when that tree matches the close "
-        f"checkout; these paths differ: {', '.join(f'`{path}`' for path in differing_paths)}."
+        "candidate commit, or the close checkout without one; these paths differ: "
+        f"{', '.join(f'`{path}`' for path in differing_paths)}."
         if differing_paths
         else ""
     )

@@ -36,7 +36,6 @@ fn test_state(config: HostConfig) -> Arc<HostState> {
     HostState::new(
         config,
         CONTROL_TOKEN.to_string(),
-        "local-token".to_string(),
         "test-epoch".to_string(),
         crate::host::image::PinnedImage::for_tests(),
         std::process::id(),
@@ -312,7 +311,9 @@ async fn rpc_reply_survives_recoverable_reader_stall() {
         .expect("control peer read");
     assert!(!first_bytes.is_empty());
 
-    tokio::time::sleep(state.config.control_deadline() * 3).await;
+    tokio::time::pause();
+    tokio::time::advance(state.config.control_deadline() * 3).await;
+    tokio::time::resume();
     let reply = timeout(Duration::from_secs(5), peer.next_response())
         .await
         .expect("stalled reply must complete after reads resume")
