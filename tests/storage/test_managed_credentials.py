@@ -1671,7 +1671,6 @@ def test_sessionless_operator_handshake_persists_null_session_id(
     service = HandshakeService(
         grants=grants,
         local_machine_id=str(fixture.machine_id),
-        operator_token="operator-token",
         issue_postgres=issue_postgres,
         admitted_projects=frozenset({str(fixture.project_id)}),
         clock=lambda: int(time.time()),

@@ -23,6 +23,7 @@ from gobby.storage.managed_credential_types import SecretStore
 from gobby.storage.managed_credentials import ManagedCredentialManager, RevocationOutcome
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
+    derive_managed_signing_key,
     issue_agent_api_token,
     issue_tool_api_token,
     verify_agent_api_token,
@@ -97,7 +98,7 @@ def _claims(
 ) -> AgentApiTokenClaims:
     if kind == "agent_run":
         token = issue_agent_api_token(
-            _OPERATOR_TOKEN,
+            derive_managed_signing_key(_OPERATOR_TOKEN),
             agent_run_id=str(execution_id),
             session_id=str(fixture.session_id),
             project_id=str(fixture.project_id),
@@ -106,14 +107,14 @@ def _claims(
         )
     else:
         token = issue_tool_api_token(
-            _OPERATOR_TOKEN,
+            derive_managed_signing_key(_OPERATOR_TOKEN),
             managed_execution_id=str(execution_id),
             session_id=str(fixture.session_id),
             project_id=str(fixture.project_id),
             machine_id=str(fixture.machine_id),
             timeout_seconds=7200,
         )
-    claims = verify_agent_api_token(token, _OPERATOR_TOKEN)
+    claims = verify_agent_api_token(token, derive_managed_signing_key(_OPERATOR_TOKEN))
     assert claims is not None
     return claims
 
@@ -143,7 +144,6 @@ def _handshake(
     return HandshakeService(
         grants=grants,
         local_machine_id=str(fixture.machine_id),
-        operator_token=_OPERATOR_TOKEN,
         issue_postgres=issue_postgres,
         admitted_projects=frozenset({str(fixture.project_id)}),
         clock=lambda: int(time.time()),

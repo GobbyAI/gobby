@@ -77,7 +77,7 @@ from gobby.tasks.transcript_output_retention import (
     _drop_settled_command_output,
     _retained_output,
 )
-from gobby.tasks.transcript_task_claims import task_claim
+from gobby.tasks.transcript_task_claims import codex_item_claim, task_claim
 from gobby.tasks.transcript_tool_arguments import (
     edited_source,
     python_added_source,
@@ -171,7 +171,7 @@ def _derivation_fingerprint(
     """Fingerprint every input the derived records are a function of."""
     payload = json.dumps(
         {
-            "derivation_version": 13,
+            "derivation_version": 15,
             "session": session.id,
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,
@@ -475,6 +475,9 @@ def _derive_transcript_path_evidence(
     for event in parser.iter_parse_events(select_window_raw_lines(lines, window_start)):
         for outcome in event.codex_exec_outcomes:
             _consume_codex_outcome(state, outcome)
+        for item in event.codex_mcp_calls:
+            if claim := codex_item_claim(item, state.window_start, state.pending):
+                state.claims.append(claim)
         for record in event.records:
             if isinstance(record, ParsedMessage):
                 _observe_record_time(state, record.timestamp)

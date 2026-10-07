@@ -11,7 +11,7 @@ import pytest
 
 from gobby.agents import resume_executor
 from gobby.agents.sandbox import SandboxConfig
-from gobby.agents.sandbox_network import definition_sandbox_config
+from gobby.agents.sandbox_network import apply_network_override, definition_sandbox_config
 from gobby.agents.srt_runtime import SrtRuntimeError
 from gobby.config.app import DaemonConfig
 from gobby.workflows.agent_models import AgentDefinitionBody
@@ -143,24 +143,25 @@ async def test_cancel_during_refusal_parking_still_parks_once(
     assert runner._test_runtime.create_calls == 0
 
 
-async def test_resume_replays_trusted_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
-    trusted = definition_sandbox_config(
-        DaemonConfig(),
-        AgentDefinitionBody.model_validate(
-            {
-                "name": "net-agent",
-                "provider": "claude",
-                "prompts": {"agent": "Run the assigned task."},
-                "workflows": {"rule_selectors": {"include": []}},
-                "network": "trusted",
-            }
-        ),
+def _net_body(network: str) -> AgentDefinitionBody:
+    return AgentDefinitionBody.model_validate(
+        {
+            "name": "net-agent",
+            "provider": "claude",
+            "prompts": {"agent": "Run the assigned task."},
+            "workflows": {"rule_selectors": {"include": []}},
+            "network": network,
+        }
     )
+
+
+async def _replayed_config(monkeypatch: pytest.MonkeyPatch, saved: SandboxConfig) -> SandboxConfig:
+    """Resume a run whose metadata holds ``saved``; return the config it relaunches with."""
     _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
     prepare_sandbox = AsyncMock(side_effect=OSError("stop after the replayed config"))
     monkeypatch.setattr(resume_executor, "prepare_sandbox_launch", prepare_sandbox)
     metadata = _resume_metadata()
-    metadata["sandbox_config"] = trusted.model_dump(mode="json")
+    metadata["sandbox_config"] = saved.model_dump(mode="json")
 
     # The seed is unreadable now: the resume must replay its snapshot, never re-resolve.
     with (
@@ -176,6 +177,36 @@ async def test_resume_replays_trusted_snapshot(monkeypatch: pytest.MonkeyPatch) 
 
     assert prepare_sandbox.await_args is not None
     replayed = prepare_sandbox.await_args.kwargs["config"]
+    assert isinstance(replayed, SandboxConfig)
+    return replayed
+
+
+async def test_resume_replays_trusted_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    trusted = definition_sandbox_config(DaemonConfig(), _net_body("trusted"))
+
+    replayed = await _replayed_config(monkeypatch, trusted)
+
     assert replayed.allowed_domains == trusted.allowed_domains
     assert (replayed.allow_git_network, replayed.allow_package_registries) == (True, True)
+    assert replayed.allow_network is False
+
+
+@pytest.mark.parametrize(
+    ("definition", "override", "trusted"),
+    [
+        pytest.param("none", "trusted", True, id="overridden-to-trusted"),
+        pytest.param("trusted", "none", False, id="overridden-to-none"),
+    ],
+)
+async def test_resume_replays_an_overridden_profile(
+    monkeypatch: pytest.MonkeyPatch, definition: str, override: str, trusted: bool
+) -> None:
+    saved = definition_sandbox_config(
+        DaemonConfig(), apply_network_override(_net_body(definition), override)
+    )
+
+    replayed = await _replayed_config(monkeypatch, saved)
+
+    assert replayed.allowed_domains == saved.allowed_domains
+    assert (replayed.allow_git_network, replayed.allow_package_registries) == (trusted, trusted)
     assert replayed.allow_network is False

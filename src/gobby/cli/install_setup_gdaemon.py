@@ -17,6 +17,7 @@ from gobby.install.bin_set_coherence import (
     promote_workspace_binary_set,
 )
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+from gobby.paths import get_gobby_home
 from gobby.storage.schema_contract import (
     expected_schema_identity,
     expected_schema_identity_json,
@@ -165,7 +166,7 @@ def _install_gdaemon(binary: Path, version: str) -> str:
 
 def ensure_gdaemon(*, bin_dir: Path | None = None, force: bool = False) -> dict[str, object]:
     """Provision gdaemon and verify its same-binary identity before DB initialization."""
-    directory = bin_dir or Path.home() / ".gobby" / "bin"
+    directory = bin_dir if bin_dir is not None else get_gobby_home() / "bin"
     binary = directory / _BINARY_NAME
     expected = expected_schema_identity()
     version = _probe_version(binary) if binary.is_file() else None

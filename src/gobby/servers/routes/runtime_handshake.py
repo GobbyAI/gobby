@@ -126,14 +126,19 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
             nonce = base64.urlsafe_b64decode(body.nonce + "=" * (-len(body.nonce) % 4))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="invalid nonce") from exc
-        operator_token = server.auth_service.local_token()
+        kind = _challenge_kind(body)
+        signing_key = server.auth_service.managed_signing_key() if kind == "managed" else None
+        operator_token = server.auth_service.local_token() if kind == "interactive" else ""
+        if kind == "managed" and signing_key is None:
+            raise HTTPException(status_code=503, detail="signing_key_unavailable")
         if operator_token is None:
             raise HTTPException(status_code=503, detail="operator token unavailable")
         try:
             proof = challenge_proof(
                 nonce,
-                kind=_challenge_kind(body),
+                kind=kind,
                 operator_token=operator_token,
+                signing_key=signing_key,
                 claims=_challenge_claims(body),
             )
         except HandshakeRejection as error:

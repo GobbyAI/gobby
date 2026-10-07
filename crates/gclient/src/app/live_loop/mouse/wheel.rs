@@ -1,12 +1,59 @@
 //! Wheel notches: what a scroll over each chrome region means.
 
-use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
-use crate::ui::hit::{sidebar_section_at, Hit, SidebarSection};
+use crate::ui::dialogs::Dialog;
+use crate::ui::hit::{hit_test, sidebar_section_at, Hit, SidebarSection};
 use crate::ui::sidebar::{section_metrics, TERMINAL_ROW};
-use crate::ui::{Chrome, WorkspaceView};
+use crate::ui::{Chrome, Mode, WorkspaceView};
 
+use super::super::modal_input::{keybind_help_key, navigator_key};
+use super::super::projects::project_dialog_key;
 use super::{focus_active_tab, forward, on_roster, MouseOutcome, MOUSE_SCROLL_LINES};
+
+/// A vertical notch while the keybinding help, the navigator, or the Alerts,
+/// Open worktree or Destroy orphaned terminals dialog is up does what that
+/// overlay's arrow keys do, so it stops where they stop: the help and the
+/// alert log scroll `MOUSE_SCROLL_LINES` rows, and the navigator and the two
+/// pick lists move their selection one row. A notch outside the popup does
+/// nothing. `None` leaves every other event, and every other mode, to the
+/// mode's own router.
+pub(super) fn overlay<W: WorkspaceView>(
+    ws: &W,
+    chrome: &mut Chrome,
+    mouse: &MouseEvent,
+) -> Option<MouseOutcome> {
+    let key = KeyEvent::from(match mouse.kind {
+        MouseEventKind::ScrollUp => KeyCode::Up,
+        MouseEventKind::ScrollDown => KeyCode::Down,
+        _ => return None,
+    });
+    let rows = match (chrome.mode, &chrome.dialog) {
+        (Mode::KeybindHelp, _) | (Mode::ProjectDialog, Some(Dialog::Alerts { .. })) => {
+            MOUSE_SCROLL_LINES
+        }
+        (Mode::Navigator, _)
+        | (
+            Mode::ProjectDialog,
+            Some(Dialog::OpenWorktree { .. } | Dialog::DestroyOrphans { .. }),
+        ) => 1,
+        _ => return None,
+    };
+    let inside = matches!(
+        hit_test(&chrome.view, mouse.column, mouse.row),
+        Hit::Dialog | Hit::DialogButton(_)
+    );
+    if inside {
+        for _ in 0..rows {
+            match chrome.mode {
+                Mode::KeybindHelp => keybind_help_key(chrome, &key),
+                Mode::Navigator => navigator_key(ws, chrome, &key),
+                _ => project_dialog_key(chrome, &key),
+            };
+        }
+    }
+    Some(MouseOutcome::Handled)
+}
 
 /// A wheel notch over `hit`.
 ///
@@ -154,3 +201,7 @@ fn clamp_scroll_rows(max_scroll: u32, requested: u32) -> u32 {
         requested
     }
 }
+
+#[cfg(test)]
+#[path = "wheel/tests.rs"]
+mod tests;

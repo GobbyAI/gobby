@@ -109,8 +109,8 @@ async def composer_fixture(
     (nested / "bin").symlink_to(native_bin, target_is_directory=True)
     link_operator_srt(home)
     # Short private socket root accommodates macOS AF_UNIX limits.
-    root = Path(tempfile.mkdtemp(prefix="p22915-", dir="/tmp"))
-    host = root / "host"
+    root = Path(tempfile.mkdtemp(prefix="p"))
+    host = root / "h"
     host.mkdir(mode=0o700)
     scope = ProofScope(
         root, _PROJECT, frozenset(map(str, spec.excluded_identities)), spec.reviewed_commit
@@ -121,7 +121,6 @@ async def composer_fixture(
         expected_revision=mutations.repository.current_revision(),
         patch=ConfigPatch(
             values={
-                "terminals.default_backend": "native",
                 "terminal_host.socket_dir": str(host),
                 "terminal_host.max_attachments_total": 8,
                 "terminal_host.max_attachments_per_terminal": 4,

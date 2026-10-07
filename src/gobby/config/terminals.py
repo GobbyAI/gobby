@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TerminalConfig(BaseModel):
-    """Shared terminal settings for spawn, reaping, and REST/WS surfaces."""
+    """Shared terminal settings for spawn, reaping, and REST/WS surfaces.
 
-    default_backend: Literal["native"] = Field(
-        default="native",
-        description="TerminalRuntime backend for new Gobby-owned terminals; only native spawns.",
-    )
+    No setting selects a backend: native gterm is always attempted first.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
     spawn_in_doubt_seconds: float = Field(
         default=150.0,
         gt=0,

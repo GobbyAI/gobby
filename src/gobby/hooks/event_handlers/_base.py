@@ -102,6 +102,7 @@ class EventHandlersBase:
             provider_turn_key=event.provider_turn_key,
             request_id=event.request_id,
             cursor=event.protocol_cursor,
+            event_time=event.timestamp,
         )
 
     def _begin_turn_lifecycle(self, event: HookEvent) -> None:

@@ -12,6 +12,7 @@ from typing import Literal, NamedTuple
 
 from starlette.requests import HTTPConnection
 
+from gobby.config.bootstrap import is_loopback_host
 from gobby.identity import DUMMY_PASSWORD_HASH, verify_password_hash
 from gobby.servers.grant_auth import (
     GRANT_HEADER,
@@ -33,11 +34,14 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.managed_credential_types import resolve_auth_schema
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.users import LocalUserManager, User
+from gobby.utils.break_glass import BREAK_GLASS_HEADER, break_glass_matches, break_glass_path
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
     AgentApiTokenRejection,
     classify_agent_api_token,
+    daemon_bootstrap_path,
     local_token_path,
+    read_managed_signing_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,6 +99,7 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("POST", "/api/mcp/tools/recommend", True),
     _AgentRoute("POST", "/api/mcp/tools/search", True),
     _AgentRoute("POST", "/api/mcp/*/tools/*", True),
+    _AgentRoute("GET", "/api/mcp/bridge/tool-timeouts", False),
     # Session-scoped variables (stdio proxy get/set_variable).
     _AgentRoute("POST", "/api/sessions/*/variables/get", True),
     _AgentRoute("POST", "/api/sessions/*/variables/set", True),
@@ -209,6 +214,8 @@ class AuthService:
         local_machine_id: str | None = None,
         effect_fence: EffectFence | None = None,
         clock: Callable[[], int] | None = None,
+        break_glass_file: Path | None = None,
+        bootstrap_file: Path | None = None,
     ) -> None:
         self._database_getter = database_getter
         self._auth_schema: str | None = None
@@ -222,6 +229,26 @@ class AuthService:
         self._local_machine_id = local_machine_id
         self._effect_fence = effect_fence
         self._clock = clock
+        self._break_glass_file = break_glass_file
+        self._bootstrap_file = bootstrap_file
+        self._managed_key_stamp: tuple[Path, int, int, int] | None = None
+        self._managed_key: bytes | None = None
+
+    def managed_signing_key(self) -> bytes | None:
+        """Observe bootstrap replacement on the next request, without a refresh interval."""
+        path = self._bootstrap_file or daemon_bootstrap_path()
+        with self._lock:
+            try:
+                stat = path.stat()
+            except OSError:
+                self._managed_key_stamp = None
+                self._managed_key = None
+                return None
+            stamp = (path, stat.st_ino, stat.st_mtime_ns, stat.st_size)
+            if stamp != self._managed_key_stamp:
+                self._managed_key = read_managed_signing_key(path)
+                self._managed_key_stamp = stamp
+            return self._managed_key
 
     def bind_runtime(
         self,
@@ -321,6 +348,8 @@ class AuthService:
 
     def _legacy_rejection(self, request: HTTPConnection) -> str | None:
         """Return why operator, browser, or managed credentials were refused, or None."""
+        if self._break_glass_admits(request):
+            return None
         authorization = request.headers.get("Authorization")
         if authorization is not None:
             parts = authorization.split(maxsplit=1)
@@ -352,6 +381,8 @@ class AuthService:
         self, request: HTTPConnection
     ) -> AgentApiTokenClaims | None | Literal[False]:
         """Return agent claims, None for the local operator, or False if rejected."""
+        if self._break_glass_admits(request):
+            return None
         authorization = request.headers.get("Authorization")
         if authorization is not None:
             parts = authorization.split(maxsplit=1)
@@ -367,6 +398,17 @@ class AuthService:
         if session_token is not None:
             return None if self.validate_session(session_token) else False
         return False
+
+    def _break_glass_admits(self, request: HTTPConnection) -> bool:
+        if request.scope.get("type") != "http" or request.client is None:
+            return False
+        if not is_loopback_host(request.client.host):
+            return False
+        value = request.headers.get(BREAK_GLASS_HEADER)
+        return value is not None and break_glass_matches(
+            self._break_glass_file if self._break_glass_file is not None else break_glass_path(),
+            value,
+        )
 
     @property
     def effect_fence(self) -> EffectFence | None:
@@ -402,7 +444,7 @@ class AuthService:
         request: HTTPConnection,
         token: str,
     ) -> AgentApiTokenClaims | _CapabilityRejection:
-        claims = classify_agent_api_token(token, self.local_token())
+        claims = classify_agent_api_token(token, self.managed_signing_key())
         if not isinstance(claims, AgentApiTokenClaims):
             return claims
         entry = _agent_capability_allows(request)

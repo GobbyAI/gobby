@@ -97,7 +97,7 @@ def materialize_managed_launch(
     grant: GrantBundle,
     *,
     dest_dir: Path,
-    operator_token: str,
+    signing_key: bytes,
     deadline_seconds: float,
 ) -> ManagedLaunch:
     """Write the grant file and mint a matching run-scoped capability token."""
@@ -107,7 +107,7 @@ def materialize_managed_launch(
         if grant.principal.execution_id is None or grant.principal.session_id is None:
             raise ValueError("tool_chat grant is missing execution or session identity")
         token = issue_tool_api_token(
-            operator_token,
+            signing_key,
             managed_execution_id=grant.principal.execution_id,
             session_id=grant.principal.session_id,
             project_id=grant.principal.project_id,
@@ -118,7 +118,7 @@ def materialize_managed_launch(
         if grant.principal.execution_id is None:
             raise ValueError("maintenance grant is missing execution identity")
         token = issue_maintenance_api_token(
-            operator_token,
+            signing_key,
             execution_id=grant.principal.execution_id,
             project_id=grant.principal.project_id,
             machine_id=grant.principal.machine_id,
@@ -128,7 +128,7 @@ def materialize_managed_launch(
         if grant.principal.execution_id is None or grant.principal.session_id is None:
             raise ValueError("agent_run grant is missing execution or session identity")
         token = issue_agent_api_token(
-            operator_token,
+            signing_key,
             agent_run_id=grant.principal.execution_id,
             session_id=grant.principal.session_id,
             project_id=grant.principal.project_id,

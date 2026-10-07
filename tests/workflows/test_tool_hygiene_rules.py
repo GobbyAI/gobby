@@ -470,8 +470,16 @@ class TestRequireUvShouldBlock:
         assert engine._should_block(_require_uv_effect(), event) is True
 
 
+# The terminal tools the send_keys scope rules cover, each with the arguments it takes.
+TERMINAL_TOOL_ARGUMENTS: dict[str, dict[str, Any]] = {
+    "send_keys": {"keys": "ls"},
+    "capture_output": {"lines": 50},
+}
+TERMINAL_TOOL_MATCHERS = ["gobby-sessions:send_keys", "gobby-sessions:capture_output"]
+
+
 class TestBlockWebChatSendKeys:
-    def test_rule_syncs_enabled_with_send_keys_matcher(
+    def test_rule_syncs_enabled_with_terminal_tool_matchers(
         self,
         db: HubDatabase,
         manager: RuleDefinitionManager,
@@ -483,9 +491,10 @@ class TestBlockWebChatSendKeys:
         assert row.enabled is True
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when == "event.metadata.get('session_type') == 'web_chat'"
-        assert body.resolved_effects[0].mcp_tools == ["gobby-sessions:send_keys"]
+        assert body.resolved_effects[0].mcp_tools == TERMINAL_TOOL_MATCHERS
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", list(TERMINAL_TOOL_ARGUMENTS))
     @pytest.mark.parametrize(
         ("session_type", "expected_decision"),
         [("web_chat", "block"), ("terminal", "allow")],
@@ -493,6 +502,7 @@ class TestBlockWebChatSendKeys:
     async def test_rule_applies_only_to_web_chat(
         self,
         db: HubDatabase,
+        tool: str,
         session_type: str,
         expected_decision: str,
     ) -> None:
@@ -501,11 +511,8 @@ class TestBlockWebChatSendKeys:
             "tool_name": "mcp__gobby__call_tool",
             "tool_input": {
                 "server_name": "gobby-sessions",
-                "tool_name": "send_keys",
-                "arguments": {
-                    "session_id": "#42",
-                    "keys": "hello",
-                },
+                "tool_name": tool,
+                "arguments": {"session_id": "#42", **TERMINAL_TOOL_ARGUMENTS[tool]},
             },
         }
         normalize_tool_fields(data)
@@ -536,14 +543,14 @@ class _UnreachableSessions(SessionManager):
         raise RuntimeError("session store unavailable")
 
 
-def _send_keys_event(caller_id: str, target_ref: str) -> HookEvent:
-    """The before_tool event the MCP proxy builds for one send_keys dispatch."""
+def _terminal_tool_event(caller_id: str, target_ref: str, tool: str) -> HookEvent:
+    """The before_tool event the MCP proxy builds for one terminal-tool dispatch."""
     data: dict[str, Any] = {
         "tool_name": "mcp__gobby__call_tool",
         "tool_input": {
             "server_name": "gobby-sessions",
-            "tool_name": "send_keys",
-            "arguments": {"session_id": target_ref, "keys": "ls"},
+            "tool_name": tool,
+            "arguments": {"session_id": target_ref, **TERMINAL_TOOL_ARGUMENTS[tool]},
         },
     }
     normalize_tool_fields(data)
@@ -599,11 +606,12 @@ class TestBlockCrossProjectSendKeys:
         assert row.enabled is True
         effect = RuleDefinitionBody.model_validate(row.definition_json).resolved_effects[0]
         assert effect.type == "block"
-        assert effect.mcp_tools == ["gobby-sessions:send_keys"]
+        assert effect.mcp_tools == TERMINAL_TOOL_MATCHERS
         assert effect.reason is not None
         assert "gobby-agents:send_message" in effect.reason
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", list(TERMINAL_TOOL_ARGUMENTS))
     @pytest.mark.parametrize(
         ("target", "expected_decision"),
         [
@@ -619,6 +627,7 @@ class TestBlockCrossProjectSendKeys:
         db: HubDatabase,
         session_manager: SessionManager,
         tree: dict[str, Session],
+        tool: str,
         target: str,
         expected_decision: str,
     ) -> None:
@@ -627,7 +636,9 @@ class TestBlockCrossProjectSendKeys:
         engine = RuleEngine(db, session_manager=session_manager)
 
         response = await engine.evaluate(
-            _send_keys_event(caller_id, tree[target].id), session_id=caller_id, variables={}
+            _terminal_tool_event(caller_id, tree[target].id, tool),
+            session_id=caller_id,
+            variables={},
         )
 
         assert response.decision == expected_decision
@@ -637,12 +648,14 @@ class TestBlockCrossProjectSendKeys:
             assert "gobby-agents:send_message" in response.reason
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", list(TERMINAL_TOOL_ARGUMENTS))
     async def test_disabling_the_rule_lifts_the_cross_project_block(
         self,
         db: HubDatabase,
         manager: RuleDefinitionManager,
         session_manager: SessionManager,
         tree: dict[str, Session],
+        tool: str,
     ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name(CROSS_PROJECT_SEND_KEYS)
@@ -651,7 +664,7 @@ class TestBlockCrossProjectSendKeys:
         caller_id = tree["caller"].id
 
         response = await RuleEngine(db, session_manager=session_manager).evaluate(
-            _send_keys_event(caller_id, tree["cross_project"].id),
+            _terminal_tool_event(caller_id, tree["cross_project"].id, tool),
             session_id=caller_id,
             variables={},
         )
@@ -659,15 +672,16 @@ class TestBlockCrossProjectSendKeys:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", list(TERMINAL_TOOL_ARGUMENTS))
     async def test_evaluation_error_still_refuses_the_cross_project_target(
-        self, db: HubDatabase, tree: dict[str, Session]
+        self, db: HubDatabase, tree: dict[str, Session], tool: str
     ) -> None:
         _sync_bundled(db)
         caller_id = tree["caller"].id
         engine = RuleEngine(db, session_manager=_UnreachableSessions(db))
 
         response = await engine.evaluate(
-            _send_keys_event(caller_id, tree["cross_project"].id),
+            _terminal_tool_event(caller_id, tree["cross_project"].id, tool),
             session_id=caller_id,
             variables={},
         )

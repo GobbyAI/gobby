@@ -364,10 +364,15 @@ fn run() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let mut index_timings = matches!(&cli.command, Command::Index { .. })
+        .then(|| crate::index::indexer::IndexTimings::new("dispatch.context"));
     let ctx = config::Context::resolve_with_services(
         cli.project.as_deref(),
         cli.quiet,
-        service_config_selection(&cli.command, evidence_request.as_ref()),
+        service_config_selection(
+            &cli.command,
+            evidence_request.as_ref().map(|value| &value.request),
+        ),
     )
     .map_err(|error| {
         if evidence_request.is_some() {
@@ -376,6 +381,9 @@ fn run() -> anyhow::Result<()> {
             error
         }
     })?;
+    if let Some(timings) = &mut index_timings {
+        timings.phase("dispatch.command");
+    }
     let cwd = std::env::current_dir()?;
 
     if navigation::dispatch(

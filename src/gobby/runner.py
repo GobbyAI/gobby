@@ -163,6 +163,7 @@ class GobbyRunner:
     _sync_worker_shutdown: asyncio.Event | None
     _websocket_task: asyncio.Task[None] | None
     _subsystem_init_task: asyncio.Task[None] | None
+    _startup_recovery_task: asyncio.Task[None] | None
     _sandbox_run_root_sweep_task: asyncio.Task[None] | None
     _provider_capability_refresh_task: asyncio.Task[None] | None
     _generation_endpoint_health_task: asyncio.Task[None] | None
@@ -381,7 +382,7 @@ async def run_gobby(
     ownership_resolution: PidOwnershipResolution | None = None,
 ) -> None:
     from gobby.cli.utils import get_gobby_home
-    from gobby.config.bootstrap import load_bootstrap
+    from gobby.config.bootstrap import load_bootstrap, resolve_bootstrap_path
     from gobby.daemon_lease import ActiveDaemonLease
     from gobby.daemon_lease_control import (
         LeaseLoss,
@@ -400,9 +401,17 @@ async def run_gobby(
         probe_daemon_lock,
     )
     from gobby.storage.schema_contract import verify_schema
-    from gobby.utils.local_token import read_local_api_token
+    from gobby.utils.break_glass import ensure_break_glass_credential
+    from gobby.utils.local_token import (
+        bind_daemon_bootstrap,
+        daemon_bootstrap_path,
+        read_local_api_token,
+    )
     from gobby.utils.machine_id import require_machine_id
 
+    bind_daemon_bootstrap(
+        resolve_bootstrap_path(str(config_path) if config_path is not None else None)
+    )
     if ownership_resolution is None:
         pid_file = get_gobby_home() / "gobby.pid"
         if os.environ.get(SERVICE_LAUNCH_ENV) == "1":
@@ -447,11 +456,19 @@ async def run_gobby(
     front_door: FrontDoorChild | None = None
     try:
         await asyncio.to_thread(verify_schema, database_url)
+        try:
+            await asyncio.to_thread(ensure_break_glass_credential, daemon_bootstrap_path().parent)
+        except Exception:
+            logger.warning(
+                "Could not create break-glass credential at %s; "
+                "if the existing file is damaged, remove it and restart to recreate it",
+                daemon_bootstrap_path().parent / "break_glass",
+            )
         # gdaemon takes the public ports before this runner binds the backend pair
         # (standby included), so either launch path gets the same child.
         front_door = FrontDoorChild.from_bootstrap(
             bootstrap,
-            Path(config_path).expanduser().parent if config_path is not None else get_gobby_home(),
+            daemon_bootstrap_path().parent,
         )
         if front_door is not None:
             await asyncio.to_thread(front_door.start)

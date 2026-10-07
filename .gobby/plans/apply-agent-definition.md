@@ -602,6 +602,13 @@ commit on 2026-10-05):
 - P4 goal, 4.1 research context, pointer text and rollout; acceptance 4.1.1 and
   4.1.2; V1 live check; M1 validation criteria for 4.1: every `apply_persona`
   becomes `apply_agent_definition`.
+  - 4.1.1 (#23001, "Role files point at seat definitions"): each role file
+    points its seat at `apply_agent_definition(agent=<seat>)`, not
+    `apply_persona`. Amended 2026-10-06 (#23671): keeping `apply_persona`
+    (Decision 1) does not change this, because after #23507 ("Seat rules
+    match `_agent_type` only", 1.5) `apply_persona` gives a session no seat
+    rules and no activation receipt. The Orchestrator updates #23001's
+    description and criteria when the corrected plan is ready.
 - Seat rename (#23038; the Orchestrator's ruling on 2026-09-28): `program-director` becomes
   `orchestrator` everywhere, so the plan matches the SEATS list #22994 committed at
   59255a9. That covers the Decision 2 catalogue, Decisions 7 and 10, the 2.2
@@ -952,6 +959,7 @@ reads.
 Consumers unchanged:
 - `src/gobby/hooks/event_handlers/_base.py` — no-edit-reason: calls get_session_skill_exclusions by name; the signature and return type are unchanged, only the variable it reads changes.
 - `src/gobby/mcp_proxy/tools/skills/_context.py` — no-edit-reason: calls get_session_skill_exclusions by name with the same signature.
+- `tests/mcp_proxy/tools/test_apply_persona.py` — no-edit-reason: #23647 restored it at ef7886df52 after 1.1 removed it; it calls get_session_skill_exclusions by name with the same signature.
 - `tests/servers/test_fire_lifecycle_parity.py` — no-edit-reason: drives start_hydrated_session and patches no apply_persona path; the renamed call is internal to the function.
 - `tests/servers/websocket/chat/test_launch_contracts.py` — no-edit-reason: exercises start_hydrated_session launch contracts and patches no apply_persona path (ripgrep sweep in Constraints).
 - `tests/servers/websocket/chat/test_launch_contracts_codex.py` — no-edit-reason: exercises start_hydrated_session launch contracts and patches no apply_persona path.
@@ -1920,9 +1928,14 @@ observation seats: code-reviewer, archivist, log-monitor, researcher) and
 #22999 (Planning council seats and the review flow). Editing those files here
 would collide with those leaves.
 
+Amended 2026-10-06 (#23671): Josh's dedupe folded the D1 task #23511 and the D3
+task #23497 into the 2.1 leaf #23509, "Run lifetime on agent definitions: idle
+TTL field, watchdog enforcement and seat values", which carries both provenance
+labels. D1 and D3 now name #23509.
+
 ```yaml
 deferral:
-  task_ref: "#23511"
+  task_ref: "#23509"
   reason: "External prerequisite: the seat YAML files are created or rewritten by the open #22902 P3 leaves (#22996-#22999) under root #22988."
   owner: "orchestrator"
   original_acceptance_items:
@@ -2005,9 +2018,12 @@ reaches its parent through a numeric ref:
    would have added: `#N` blocked by the 2.1 leaf, and the root epic blocked by
    `#N`.
 
+Amended 2026-10-06 (#23671): the dedupe recorded in D1 moved D3 to #23509, the
+2.1 leaf itself, so step 4's edge from the 2.1 leaf no longer applies.
+
 ```yaml
 deferral:
-  task_ref: "#23497"
+  task_ref: "#23509"
   reason: "Orchestrator rulings (2026-10-05, 08:10 and 08:18 CT, R4): runtime lifecycle enforcement is parented under #22691 (Lane 3 - Runbooks). The Orchestrator files the task after Josh approves this plan, the Writer replaces this placeholder with its numeric ref before expansion, and the Orchestrator adds the 2.1 and root-epic edges after expansion."
   owner: "orchestrator"
   original_acceptance_items:
@@ -2141,6 +2157,16 @@ deferral:
   and the granularity note moves to the past tense. This supersedes the
   previous entry's last sentence: no delete Target remains, so none can fail
   once #23647 restores the files.
+- 2026-10-06: Mechanical repoint under #23671 (the Orchestrator's request,
+  relayed by the Lane Manager gobby#15389). Josh's dedupe folded #23511 (D1)
+  and #23497 (D3) into the 2.1 leaf #23509, so both deferrals' `task_ref`
+  values name #23509, and D1 and D3 carry dated amendments. The Cross-Plan
+  Correction now states that #22902's 4.1.1 (#23001) points seats at
+  `apply_agent_definition`, because after #23507 `apply_persona` gives no seat
+  rules and no activation receipt. 1.1's Consumers unchanged inventory gains
+  `tests/mcp_proxy/tools/test_apply_persona.py`, which #23647 restored at
+  ef7886df52 and which failed consumer-coverage on the committed plan. No
+  deliverable, acceptance item or M1 entry changed.
 
 ## V2: Verification
 `kind: verification`

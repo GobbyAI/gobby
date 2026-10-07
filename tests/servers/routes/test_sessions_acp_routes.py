@@ -78,8 +78,8 @@ class _SM:
     def list(self, **_kwargs: Any) -> list[_Session]:
         return list(self.rows.values())
 
-    def fetch_task_refs_by_session(self, _ids: Sequence[str]) -> dict[str, Any]:
-        return {}
+    def load_task_refs(self, _sessions: Sequence[_Session]) -> None:
+        """ACP fake responses omit task projections."""
 
     # -- lifecycle path ------------------------------------------------
     def get(self, session_id: str) -> _Session | None:

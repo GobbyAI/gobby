@@ -264,7 +264,16 @@ def decoded_exec_results(
                 if isinstance(item, dict) and isinstance(item.get("text"), str):
                     serialized_results.extend(decoded_exec_results(item["text"]))
             return serialized_results if len(serialized_results) == 1 else []
-        return [terminal_result]
+        # A cell completes even when the exec it printed is still running or
+        # exited non-zero (#23724). The printed exit code or PTY session, not
+        # the cell's status, is the command's outcome.
+        printed = [
+            result
+            for item in value[1:]
+            for result in decoded_exec_results(item["text"])
+            if exec_session_id(result) is not None or definitive_exit_code(result) is not None
+        ]
+        return printed or [terminal_result]
     if isinstance(value, str):
         try:
             value = json.loads(value)

@@ -4265,16 +4265,6 @@
           "default": 150,
           "description": "Host capture-poll interval for tmux observers."
         },
-        "terminals.default_backend": {
-          "type": "string",
-          "namespace": "terminals",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": "native",
-          "description": "TerminalRuntime backend for new Gobby-owned terminals; only native spawns."
-        },
         "terminals.hook_write_shutdown_timeout_seconds": {
           "type": "number",
           "namespace": "terminals",

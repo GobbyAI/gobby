@@ -1850,6 +1850,81 @@ def test_python_postproduction_red_cannot_borrow_sibling_notimplemented() -> Non
     assert result.passed is False, result
 
 
+@pytest.mark.parametrize("failure_in_sibling", [False, True])
+def test_tdd_evidence_credits_function_local_import_of_new_module_stub(
+    failure_in_sibling: bool,
+) -> None:
+    started = datetime(2026, 10, 6, tzinfo=UTC)
+    body = (
+        "def test_credential_is_owner_only_and_never_rewritten(tmp_path):\n"
+        "    from gobby.utils.break_glass import ensure_break_glass_credential\n"
+        "    ensure_break_glass_credential(tmp_path)\n"
+        "    assert (tmp_path / 'break_glass').is_file()\n"
+    )
+    test = AcceptanceTest(
+        reference="tests/utils/test_break_glass.py::test_credential_is_owner_only_and_never_rewritten",
+        path="tests/utils/test_break_glass.py",
+        symbol="test_credential_is_owner_only_and_never_rewritten",
+        body=body,
+    )
+    # Same API-only module shape as the original break-glass RED, with its
+    # NotImplementedError at line 14 and an import inside the named test body.
+    stub = (
+        "from pathlib import Path\n"
+        + "\n" * 11
+        + (
+            "def ensure_break_glass_credential(home: Path) -> None:\n"
+            "    raise NotImplementedError\n"
+        )
+    )
+    red = replace(
+        _run(
+            test,
+            started + timedelta(minutes=2),
+            "failure",
+            "Pytest: 0 passed, 1 failed\nFailures:\n"
+            "1. [FAIL] test_credential_is_owner_only_and_never_rewritten\n"
+            "    tests/utils/test_break_glass.py:3: in "
+            "test_credential_is_owner_only_and_never_rewritten\n"
+            + (
+                "2. [FAIL] test_sibling\n    tests/utils/test_break_glass.py:40: in test_sibling\n"
+                if failure_in_sibling
+                else ""
+            )
+            + "    src/gobby/utils/break_glass.py:14: in ensure_break_glass_credential\n"
+            "    raise NotImplementedError\n",
+            3,
+        ),
+        command="pytest tests/utils/test_break_glass.py -q",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            replace(
+                _edit(test.path, started, 1),
+                source_after=body,
+                source_confirmed=True,
+                source_confirmed_at=started + timedelta(seconds=1),
+            ),
+            replace(
+                _edit("src/gobby/utils/break_glass.py", started + timedelta(minutes=1), 2),
+                source_after=stub,
+                source_created=True,
+                source_confirmed=True,
+                source_confirmed_at=started + timedelta(seconds=61),
+            ),
+            _edit("src/gobby/utils/break_glass.py", started + timedelta(minutes=3), 4),
+        ),
+        validation_runs=(
+            red,
+            _run(test, started + timedelta(minutes=4), "success", "1 passed", 5),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed is not failure_in_sibling, result.findings
+    assert result.red_runs == (() if failure_in_sibling else (red.command,))
+
+
 def test_tdd_evidence_credits_rtk_not_implemented_raise_after_stub_edit() -> None:
     started = datetime(2026, 9, 26, tzinfo=UTC)
     body = "from feature import feature\n\ndef test_feature():\n    assert feature() == 1\n"

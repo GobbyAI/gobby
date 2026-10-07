@@ -276,6 +276,7 @@ pub struct EvidenceLibrary {
     files: std::collections::BTreeMap<String, FileFact>,
     facts: Arc<dyn EvidenceFacts>,
     hybrid: Option<Arc<dyn HybridSearch>>,
+    working_tree: bool,
 }
 
 impl EvidenceLibrary {
@@ -309,7 +310,14 @@ impl EvidenceLibrary {
             files,
             facts,
             hybrid: None,
+            working_tree: false,
         })
+    }
+
+    /// Use current indexed working-tree bytes when the caller omitted a binding.
+    pub fn with_working_tree(mut self) -> Self {
+        self.working_tree = true;
+        self
     }
 
     pub fn with_hybrid(mut self, hybrid: Arc<dyn HybridSearch>) -> Self {
@@ -320,7 +328,7 @@ impl EvidenceLibrary {
     pub fn query(&self, request: EvidenceRequest) -> Result<EvidenceResponse> {
         self.validate_request(&request)?;
         let canonical = request.canonical();
-        let request_fingerprint = source::canonical_hash(&canonical)?;
+        let request_fingerprint = source::canonical_hash(&(&canonical, self.working_tree))?;
         let query_result = match &canonical.operation {
             EvidenceOperation::Search { search } => search::execute(self, search)?,
             EvidenceOperation::Read { read } => read::execute(self, read)?,

@@ -11,8 +11,10 @@ Use evidence to cite it: each source item carries `path`, line and byte bounds,
 give exact line numbers. Quote those lines and hashes; never retype a line
 number from memory or invent a hash or ID.
 
-Send exactly one schema v1 object through `--request-json`. Omit `binding`;
-it resolves from `--project` or the current directory.
+Send exactly one schema v1 object through `--request-json`. Omit `binding` for
+working-tree reads; it resolves from `--project` or the current directory.
+An explicit `binding` pins source bytes to that commit's Git blobs. Bound range
+reads can retrieve paths absent from the current checkout or index.
 
 | Operation | Selector |
 | --- | --- |
@@ -26,10 +28,10 @@ gcode evidence --request-json '{"schema_version":1,"operation":"read","read":{"k
 gcode evidence --request-json '{"schema_version":1,"operation":"graph","graph":{"query":"callers","source":{"kind":"symbol","path":"src/gobby/workflows/safe_evaluator.py","qualified_name":"_assistant_response_text"}}}'
 ```
 
-Source bytes come from the working tree and must match the indexed content
+Unbound source bytes come from the working tree and must match the indexed content
 hash, so indexed uncommitted edits are citable; a mismatch fails as
 `stale_range` or `fact_mismatch`. The binding's `commit_oid` and `tree_oid`
-record HEAD as provenance and do not pin the bytes to that commit.
+record HEAD as provenance only when `binding` is omitted from the request.
 `commit_metadata` reads Git. Community items orient; cite `read` items from
 their members. `--allow-stale` is rejected.
 

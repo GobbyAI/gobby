@@ -6,8 +6,10 @@ Keep quote provenance until executable contexts have been identified.
 
 from __future__ import annotations
 
+import ast
 import re
-from collections.abc import Collection
+import shlex
+from collections.abc import Collection, Mapping
 from typing import Any
 
 from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect
@@ -21,6 +23,12 @@ from gobby.hooks._normalization_shell import (
     is_shell_output_redirection_token,
     is_shell_tool,
     scan_shell_command,
+)
+from gobby.hooks._python_pipeline_classifier import (
+    _PYTHON_PROCESS_CALLS,
+    _call_name,
+    _imported_bindings,
+    _inline_interpreter_parts,
 )
 
 _PROVIDERS = frozenset({"codex", "claude", "droid", "grok", "qwen", "agy"})
@@ -528,25 +536,155 @@ def _shell_stdin(words: list[str]) -> bool:
     return True
 
 
-def _piped_to_shell(tokens: list[ShellToken], end: int) -> bool:
+def _piped_to_shell(tokens: list[ShellToken], end: int, *, python: bool = False) -> bool:
     while end < len(tokens) and tokens[end].value == "|":
         start = end + 1
         end = start
         while end < len(tokens) and not _separator(tokens[end]):
             end += 1
-        if _shell_stdin(_unwrap(_executable_words(tokens[start:end]))):
+        words = _unwrap(_executable_words(tokens[start:end]))
+        if _python_program(words)[1] if python else _shell_stdin(words):
+            return True
+    return False
+
+
+def _python_program(words: list[str]) -> tuple[str | None, bool]:
+    """The Python code operand or whether stdin is code, stopping at a file operand."""
+    parts = _inline_interpreter_parts(words)
+    if not parts and words[:2] == ["uv", "run"]:
+        parts = next((words[index:] for index, word in enumerate(words) if _python_name(word)), [])
+    if not parts or not _python_name(parts[0]):
+        return None, False
+    args = parts[1:]
+    while args:
+        option = args[0]
+        if option == "-":
+            return None, True
+        if option == "--":
+            return None, len(args) == 1 or args[1] == "-"
+        if option == "--check-hash-based-pycs":
+            args = args[2:]
+            continue
+        if option.startswith("--") or not option.startswith("-"):
+            return None, False
+        consumed = 1
+        for index, flag in enumerate(option[1:], 2):
+            if flag in "hV?m":
+                return None, False
+            if flag == "c":
+                code = option[index:] or (args[1] if len(args) > 1 else None)
+                return code, False
+            if flag in "WX":
+                consumed = 1 if option[index:] else 2
+                break
+            if flag not in "bBdEiIOPqRsSuvx":
+                return None, False
+        args = args[consumed:]
+    return None, True
+
+
+def _python_name(word: str) -> bool:
+    return re.fullmatch(r"python(?:3(?:\.\d+)?)?", word.rsplit("/", 1)[-1]) is not None
+
+
+def _python_skeleton(node: ast.AST | None, bindings: Mapping[str, str]) -> str:
+    """Keep literal command text while unknown values cannot earn help exemptions."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(_python_skeleton(value, bindings) for value in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _python_skeleton(node.left, bindings) + _python_skeleton(node.right, bindings)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        if isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):
+            return node.left.value
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        receiver = node.func.value
+        literal_receiver = isinstance(receiver, ast.Constant) and isinstance(receiver.value, str)
+        if node.func.attr == "format" and literal_receiver:
+            return _python_skeleton(receiver, bindings)
+        if node.args and isinstance(node.args[0], ast.List | ast.Tuple):
+            words = [_python_skeleton(element, bindings) for element in node.args[0].elts]
+            if _call_name(node, bindings) == "shlex.join":
+                return shlex.join(words)
+            if node.func.attr == "join" and isinstance(receiver, ast.Constant):
+                if isinstance(receiver.value, str):
+                    return receiver.value.join(words)
+    return "__gobby_dynamic__"
+
+
+def _python_launch(script: str, depth: int, dialect: ShellDialect) -> bool:
+    """Inspect process-call operands, never arbitrary Python string literals."""
+    try:
+        return _analyze_python_launch(script, depth, dialect)
+    except (MemoryError, RecursionError):
+        return True
+
+
+def _analyze_python_launch(script: str, depth: int, dialect: ShellDialect) -> bool:
+    try:
+        tree = ast.parse(script)
+    except SyntaxError:
+        return False
+    bindings = _imported_bindings(tree)
+    if bindings is None:
+        return True
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _call_name(node, bindings)
+        if name not in _PYTHON_PROCESS_CALLS:
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+        operand = node.args[0] if node.args else keywords.get("args", keywords.get("cmd"))
+        shell_operand = keywords.get("shell")
+        shell = name in {"os.system", "asyncio.create_subprocess_shell"} or (
+            shell_operand is not None
+            and not (
+                isinstance(shell_operand, ast.Constant) and shell_operand.value in (False, None, 0)
+            )
+        )
+        if name != "asyncio.create_subprocess_exec" and not isinstance(
+            operand, ast.List | ast.Tuple
+        ):
+            value = _python_skeleton(operand, bindings)
+            command = value if shell else shlex.join([value])
+        else:
+            operands = (
+                node.args
+                if name == "asyncio.create_subprocess_exec"
+                else operand.elts
+                if isinstance(operand, ast.List | ast.Tuple)
+                else []
+            )
+            argv = [_python_skeleton(arg, bindings) for arg in operands]
+            if not argv:
+                continue
+            command = argv[0] if shell else shlex.join(argv)
+        executable = keywords.get("executable")
+        executable_name = (
+            executable.value
+            if isinstance(executable, ast.Constant) and isinstance(executable.value, str)
+            else None
+        )
+        if shell:
+            command = shlex.join([executable_name or "/bin/sh", "-c", command])
+        elif executable_name is not None:
+            command = shlex.join([executable_name, *shlex.split(command)[1:]])
+        if _blocked(command, depth + 1, dialect):
             return True
     return False
 
 
 def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
-    if depth > _MAX_DEPTH or len(command) > _MAX_LENGTH:
+    if depth > _MAX_DEPTH:
         return True
     try:
         prepared, expansions = _prepare(command, depth)
         if any(_blocked(body, depth + 1, dialect) for body in expansions):
             return True
         scan = scan_shell_command(prepared, dialect=dialect)
+        inspected_length = 0
         start = 0
         for end in range(len(scan.tokens) + 1):
             if end < len(scan.tokens) and not _separator(scan.tokens[end]):
@@ -562,7 +700,28 @@ def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
             inner: ShellDialect = "zsh" if name == "zsh" else "bash"
             if name in _PROVIDERS and not _administration(words[1:], name):
                 return True
+            # Budget executable words; code operands and heredoc payloads belong
+            # to their consumers, whose process operands are checked recursively.
+            python_script, python_stdin = _python_program(words)
+            inspected_length += sum(len(word) for word in words) - len(python_script or "")
+            if python_script is not None and _python_launch(python_script, depth + 1, dialect):
+                return True
+            if python_stdin:
+                if any(_python_launch(body.text, depth + 1, dialect) for body in bodies):
+                    return True
             piped = _piped_to_shell(scan.tokens, end)
+            python_piped = _piped_to_shell(scan.tokens, end, python=True)
+            if python_stdin:
+                for index, token in enumerate(segment[:-1]):
+                    if not token.quoted and token.value == "<<<":
+                        if _python_launch(segment[index + 1].value, depth + 1, dialect):
+                            return True
+            if python_piped:
+                if name in {"echo", "printf"}:
+                    if any(_python_launch(value, depth + 1, dialect) for value in words[1:]):
+                        return True
+                if any(_python_launch(body.text, depth + 1, dialect) for body in bodies):
+                    return True
             if piped and name in {"echo", "printf"}:
                 if any(_blocked(value, depth + 1, dialect) for value in words[1:]):
                     return True
@@ -590,7 +749,7 @@ def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
                     _, substitutions = _prepare(body.text, depth, data=True)
                     if any(_blocked(value, depth + 1, dialect) for value in substitutions):
                         return True
-        return False
+        return inspected_length > _MAX_LENGTH
     except ValueError:
         # A malformed or over-deep command cannot earn an administrative exemption.
         return True

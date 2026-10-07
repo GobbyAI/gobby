@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -613,6 +613,80 @@ def test_nested_exec_write_stdin_accepts_native_terminal_envelope() -> None:
 
     assert [(item.identity, item.command, item.result["exit_code"]) for item in outcomes] == [
         ("exec-nested-stdin:0", "pytest nested", 0)
+    ]
+
+
+def _native_poll(exit_code: int) -> list[str]:
+    return [
+        _function_call("stdin-poll", "write_stdin", json.dumps({"session_id": 7487, "chars": ""})),
+        _raw_output(
+            "stdin-poll",
+            (
+                "Chunk ID: done\n"
+                "Wall time: 28.300 seconds\n"
+                f"Process exited with code {exit_code}\n"
+                "Original token count: 3\n"
+                "Final output:\n"
+                "done\n"
+            ),
+            payload_type="function_call_output",
+        ),
+    ]
+
+
+def _wrapped_poll(exit_code: int) -> list[str]:
+    return [
+        _call(
+            "stdin-poll",
+            "exec",
+            (
+                "for(let i=0;i<4;i++){const r=await tools.write_stdin({session_id:7487});"
+                "if(r.output)text(r.output);"
+                "if(r.exit_code!==undefined){text({exit_code:r.exit_code});break;}}"
+            ),
+        ),
+        _output(
+            "stdin-poll",
+            "Script completed\nWall time 8.1 seconds\nOutput:\n",
+            "     Summary 5 tests run\n",
+            json.dumps({"exit_code": exit_code}),
+        ),
+    ]
+
+
+@pytest.mark.parametrize("poll", [_native_poll, _wrapped_poll], ids=["native", "wrapped"])
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_wrapped_yielded_exec_waits_for_its_poll(
+    poll: Callable[[int], list[str]], exit_code: int
+) -> None:
+    """A completed cell's status is not the result of an exec it printed (#23724)."""
+    parser = CodexTranscriptParser()
+    outcomes = _outcomes(
+        parser,
+        [
+            _call(
+                "exec-wrapped-yield",
+                "exec",
+                (
+                    "text(await tools.mcp__gobby__call_tool({server_name:'gobby-agents'}));\n"
+                    "const run = await tools.exec_command("
+                    '{cmd:"pytest wrapped", yield_time_ms:1000}); text(run);'
+                ),
+            ),
+            _output(
+                "exec-wrapped-yield",
+                "Script completed\nWall time 3.8 seconds\nOutput:\n",
+                json.dumps(
+                    {"content": [], "structuredContent": {"success": True}, "isError": False}
+                ),
+                json.dumps({"chunk_id": "db2e24", "session_id": 7487, "output": ""}),
+            ),
+            *poll(exit_code),
+        ],
+    )
+
+    assert [(item.command, item.result.get("exit_code")) for item in outcomes] == [
+        ("pytest wrapped", exit_code)
     ]
 
 

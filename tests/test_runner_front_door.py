@@ -15,6 +15,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -26,6 +28,86 @@ from gobby.runner_front_door import FrontDoorChild, FrontDoorStartupError
 from gobby.runner_pid_file import SERVICE_LAUNCH_ENV, PidOwnershipResolution, claim_pid_file
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX liveness pipe")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("creation_fails", [False, True])
+async def test_run_gobby_creates_break_glass_before_front_door(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, creation_fails: bool
+) -> None:
+    from starlette.requests import Request
+
+    from gobby.servers.auth_service import AuthService
+    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.utils import break_glass, local_token
+
+    home = tmp_path / "home"
+    outside = tmp_path / "outside"
+    home.mkdir()
+    outside.mkdir()
+    config = outside / "bootstrap.yaml"
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    monkeypatch.setattr(local_token, "_daemon_bootstrap", None)
+    bootstrap = BootstrapConfig(database_url="postgresql://test.invalid/gobby_test")
+    monkeypatch.setattr("gobby.config.bootstrap.load_bootstrap", lambda *_a, **_kw: bootstrap)
+    monkeypatch.setattr("gobby.utils.machine_id.require_machine_id", lambda: "machine-a")
+    monkeypatch.setattr("gobby.storage.schema_contract.verify_schema", lambda _url: None)
+    monkeypatch.setattr("gobby.daemon_lease.ActiveDaemonLease", lambda *_a, **_kw: FakeLease())
+    monkeypatch.setattr("gobby.providers.version_gate.probe_and_publish_agy_support", AsyncMock())
+    monkeypatch.setattr("gobby.runner_init.servers._bind_runtime_grants", lambda *_a: None)
+    monkeypatch.setattr("gobby.daemon_lease_control.monitor_active_lease", AsyncMock())
+    runner = SimpleNamespace(
+        http_server=SimpleNamespace(effect_fence=None),
+        run=AsyncMock(),
+        request_shutdown=MagicMock(),
+    )
+    monkeypatch.setattr(runner_module.GobbyRunner, "create", AsyncMock(return_value=runner))
+    observed: list[Path] = []
+
+    def broken_database() -> HubDatabase:
+        raise RuntimeError("database unavailable")
+
+    def start_child() -> None:
+        observed.append(local_token.daemon_bootstrap_path())
+        path = outside / "break_glass"
+        if creation_fails:
+            assert not path.exists()
+        else:
+            assert path.is_file()
+            request = Request(
+                {
+                    "type": "http",
+                    "method": "GET",
+                    "path": "/api/projects",
+                    "headers": [(b"x-gobby-break-glass", path.read_bytes())],
+                    "client": ("127.0.0.1", 50000),
+                    "query_string": b"",
+                }
+            )
+            assert AuthService(broken_database).authenticate(request).allowed
+
+    child = MagicMock(spec=FrontDoorChild)
+    child.start.side_effect = start_child
+
+    def from_bootstrap(_bootstrap: BootstrapConfig, child_home: Path) -> FrontDoorChild:
+        assert child_home == outside
+        return child
+
+    monkeypatch.setattr(FrontDoorChild, "from_bootstrap", from_bootstrap)
+    if creation_fails:
+
+        def fail_creation(_home: Path) -> None:
+            raise OSError("isolated creation failure")
+
+        monkeypatch.setattr(break_glass, "ensure_break_glass_credential", fail_creation)
+    claim = claim_pid_file(home / "gobby.pid")
+    assert claim is not None
+    await runner_module.run_gobby(config, ownership_resolution=claim)
+    assert observed == [config]
+    runner.run.assert_awaited_once()
+    child.stop.assert_called_once()
+    assert not (home / "break_glass").exists()
+
 
 # Stands in for `gdaemon serve`: logs what it inherited, then binds, exits, or
 # hangs per FAKE_GDAEMON_MODE, and serves until its parent pipe reaches EOF.
@@ -108,7 +190,12 @@ def _free_port_pair() -> tuple[int, int]:
         http_port, ws_port = (sock.getsockname()[1] for sock in socks)
         for sock in socks:
             sock.close()
-        if max(http_port, ws_port) <= 65435:
+        if max(http_port, ws_port) <= 65435 and 60891 not in (
+            http_port,
+            ws_port,
+            http_port + 100,
+            ws_port + 100,
+        ):
             return http_port, ws_port
 
 
@@ -148,6 +235,8 @@ def fake_gdaemon(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeGdaemon
     binary.chmod(0o755)
     home = tmp_path / "home"
     home.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    monkeypatch.setattr("gobby.utils.local_token._daemon_bootstrap", None)
     fake = FakeGdaemon(binary, tmp_path / "gdaemon.log", _free_port_pair(), home)
     monkeypatch.setattr(runner_front_door, "resolve_native_bin", lambda _name: str(binary))
     monkeypatch.setenv("FAKE_GDAEMON_LOG", str(fake.log))
