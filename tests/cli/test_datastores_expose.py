@@ -138,7 +138,8 @@ def test_cold_start_reads_bind_from_bootstrap(
     monkeypatch.setattr(daemon_start, "worktree_daemon_refusal", lambda: None)
     monkeypatch.setattr("gobby.storage.schema_divergence.binary_set_apply_refusal", lambda: None)
 
-    def start_services(home: Path) -> ServiceStartResult:
+    def start_services(home: Path, *, require_schema_owner: bool) -> ServiceStartResult:
+        assert require_schema_owner
         bind = read_bootstrap_yaml(home / "bootstrap.yaml")["services_bind_address"]
         order.append(f"services:{bind}")
         return ServiceStartResult("success", "ready")

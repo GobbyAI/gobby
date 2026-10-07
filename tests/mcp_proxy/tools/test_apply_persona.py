@@ -127,18 +127,18 @@ class TestBuildSessionPersonaChanges:
         }
         assert active_skills is None
 
-    def test_backend_definition_separates_persona_from_agent_lifecycle(
+    def test_tech_writer_definition_separates_persona_from_agent_lifecycle(
         self,
         db: HubDatabase,
     ) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_session_persona_context
 
-        path = get_bundled_agents_path() / "backend-developer.yaml"
+        path = get_bundled_agents_path() / "tech-writer.yaml"
         agent = AgentDefinitionBody.model_validate(yaml.safe_load(path.read_text()))
 
         persona, _ = build_session_persona_context(agent, db, cli_source="codex")
         assert persona is not None
-        assert "interactive backend engineering guidance" in persona
+        assert "interactive technical-writing guidance" in persona
         assert "assigned_task_id" not in persona
         assert "end_agent_run" not in persona
         assert "submit_for_review" not in persona
@@ -147,7 +147,7 @@ class TestBuildSessionPersonaChanges:
         assert spawned is not None
         assert "assigned_task_id" in spawned
         assert "end_agent_run" in spawned
-        assert "interactive backend engineering guidance" not in spawned
+        assert "interactive technical-writing guidance" not in spawned
 
 
 # ═══════════════════════════════════════════════════════════════════════

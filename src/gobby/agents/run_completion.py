@@ -485,10 +485,13 @@ async def complete_and_notify_agent_run(
 
         result = dict(notify_result) if notify_result is not None else {"status": current.status}
         result["run_id"] = run_id
-        if notify_result is None:
+        if notify_result is None or current.status != "success":
+            result["status"] = current.status
             error = getattr(current, "error", None)
             if error is not None:
                 result["error"] = error
+            else:
+                result.pop("error", None)
         elif result.get("error") is None:
             result.pop("error", None)
         await deliver_and_cleanup_terminal_run(

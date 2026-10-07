@@ -592,12 +592,10 @@ _REMOVED_TMUX_SPAWN_KEYS = (
     "wsl_distribution",
     "registration_timeout_seconds",
 )
-# terminals.default_backend accepts only its default, so a stored row is
-# redundant, and a row saved as "tmux" before #22856 would refuse startup.
 _REMOVED_STORED_KEYS = frozenset(
     {f"memory.{key}" for key in REMOVED_MEMORY_CONFIG_KEYS}
     | {f"tmux.{key}" for key in _REMOVED_TMUX_SPAWN_KEYS}
-    | {"terminals.default_backend"}
+    | {"auth.api_token_hash"}
 )
 _REMOVED_STORED_SECTIONS = ("memory_usefulness",)
 
@@ -765,7 +763,6 @@ def _supplemental_key_specs() -> tuple[ConfigKeySpec, ...]:
             secrecy=ConfigSecrecy.PAYLOAD,
         )
         for key, annotation in (
-            ("auth.api_token_hash", str),
             (EMBEDDING_SWITCH_JOURNAL_KEY, dict[str, object]),
             (EMBEDDING_SWITCH_COMPLETED_KEY, dict[str, object]),
         )

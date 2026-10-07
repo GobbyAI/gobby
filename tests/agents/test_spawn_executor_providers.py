@@ -36,7 +36,6 @@ def _sandbox_request() -> tuple[SpawnRequest, PreparedSpawn, MagicMock]:
         run_manager=run_manager,
         sandbox_config=SandboxConfig(enabled=True, backend="srt"),
         prepared_spawn=spawn_context,
-        terminal_backend="native",
     )
     return request, spawn_context, run_manager
 

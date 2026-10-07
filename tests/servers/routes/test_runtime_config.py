@@ -5,12 +5,11 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from starlette.requests import HTTPConnection
 
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime import ConfigRuntime
@@ -82,24 +81,24 @@ def _client(
     tmp_path: Path, config: DaemonConfig
 ) -> tuple[TestClient, GrantService, HandshakeService]:
     grants, handshake, snapshot = _services(config)
-    server = create_http_server(config=config, authenticated_requests=False)
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text(OPERATOR_TOKEN)
+    database = MagicMock()
+    database.fetchone.return_value = {"status": "running"}
+    server = create_http_server(config=config, database=database, authenticated_requests=False)
+    bootstrap = tmp_path / "bootstrap.yaml"
+    bootstrap.write_text(json.dumps({"api_key": OPERATOR_TOKEN}))
     server.auth_service = AuthService(
         lambda: server.services.database,
-        token_file=token_file,
-        bootstrap_file=_managed_bootstrap(token_file),
+        bootstrap_file=bootstrap,
+        break_glass_file=tmp_path / "absent-break-glass",
     )
-
-    def _header_authenticated(request: HTTPConnection) -> bool:
-        return bool(request.headers.get("Authorization"))
-
-    def _header_rejection(request: HTTPConnection) -> str | None:
-        return None if _header_authenticated(request) else "missing_auth"
-
-    auth = cast(Any, server.auth_service)
-    auth.is_request_authenticated = _header_authenticated
-    auth._legacy_rejection = _header_rejection
+    server.auth_service.bind_runtime(
+        grant_service=grants,
+        lease_live=None,
+        local_machine_id=LOCAL_MACHINE_ID,
+        effect_fence=None,
+        clock=lambda: 1_700_000_000,
+        front_door_secret=_FRONT_DOOR_SECRET,
+    )
     server.grant_service = grants
     server.handshake_service = handshake
     runtime = MagicMock(spec=ConfigRuntime)
@@ -114,6 +113,7 @@ def test_grant_presenting_config_transport(tmp_path: Path) -> None:
     client, _grants, handshake = _client(tmp_path, config)
     operator_grant = handshake.issue_for_operator(
         machine_id=LOCAL_MACHINE_ID,
+        forwarded_machine_id=LOCAL_MACHINE_ID,
         project_id=PROJECT_ID,
         session_id=SESSION_ID,
     )
@@ -136,7 +136,7 @@ def test_grant_presenting_config_transport(tmp_path: Path) -> None:
     operator = client.get(
         "/api/runtime/config",
         headers={
-            "Authorization": f"Bearer {OPERATOR_TOKEN}",
+            **_OPERATOR_IDENTITY,
             "X-Gobby-Runtime-Grant": encode_grant_header(operator_grant),
         },
     )
@@ -162,13 +162,14 @@ def test_config_revision_in_response(tmp_path: Path) -> None:
     client, _grants, handshake = _client(tmp_path, daemon_config())
     grant = handshake.issue_for_operator(
         machine_id=LOCAL_MACHINE_ID,
+        forwarded_machine_id=LOCAL_MACHINE_ID,
         project_id=PROJECT_ID,
         session_id=SESSION_ID,
     )
     response = client.get(
         "/api/runtime/config",
         headers={
-            "Authorization": f"Bearer {OPERATOR_TOKEN}",
+            **_OPERATOR_IDENTITY,
             "X-Gobby-Runtime-Grant": encode_grant_header(grant),
         },
     )
@@ -179,8 +180,10 @@ def test_config_revision_in_response(tmp_path: Path) -> None:
     assert "settings" in body
 
 
-def _managed_bootstrap(token_file: Path) -> Path:
-    bootstrap = token_file.with_name(token_file.name + ".bootstrap.yaml")
-    api_key = token_file.read_text().strip() if token_file.exists() else None
-    bootstrap.write_text(json.dumps({"api_key": api_key}))
-    return bootstrap
+_FRONT_DOOR_SECRET = "runtime-config-front-door-secret"
+_OPERATOR_IDENTITY = {
+    "X-Gobby-Front-Door": _FRONT_DOOR_SECRET,
+    "X-Gobby-User-Id": "runtime-config-user",
+    "X-Gobby-Machine-Id": LOCAL_MACHINE_ID,
+    "X-Gobby-Key-Id": "runtime-config-key",
+}

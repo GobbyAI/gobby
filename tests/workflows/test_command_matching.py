@@ -8,8 +8,13 @@ and everything else fails closed.
 
 from __future__ import annotations
 
+import shlex
+
 import pytest
 
+from gobby.hooks._ansi_c import ShellDialect
+from gobby.hooks._normalization_shell import ShellScan, scan_shell_command
+from gobby.workflows.engine import command_matching
 from gobby.workflows.engine.command_matching import (
     command_patterns_match,
     executable_command_subjects,
@@ -317,6 +322,9 @@ def test_mask_quoted_unwraps_literal_execution_wrappers() -> None:
     for command in (
         "bash -c 'git commit'",
         'bash -c "git commit"',
+        "bash -euo pipefail -c 'git commit'",
+        "bash -eo pipefail -c 'git commit'",
+        "bash -euO extglob -c 'git commit'",
         "eval 'git commit'",
         "echo 1 | xargs -I{} git commit",
         "timeout 5 git commit",
@@ -330,3 +338,73 @@ def test_mask_quoted_unwraps_literal_execution_wrappers() -> None:
     assert not command_patterns_match(
         "cat <<'EOF'\ngit commit\nEOF", pattern=COMMIT_PATTERN, mask_quoted=True
     )
+
+
+def test_selectors_reuse_one_commands_subject_derivation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every rule's selector reads the same command; it is scanned once (#23359)."""
+    scanned: list[str] = []
+
+    def counting_scan(command: str, *, dialect: ShellDialect = "bash") -> ShellScan:
+        scanned.append(command)
+        return scan_shell_command(command, dialect=dialect)
+
+    monkeypatch.setattr("gobby.workflows.engine.command_matching.scan_shell_command", counting_scan)
+    command = "git status && bash -c 'git push origin main' # selector reuse (#23359)"
+
+    assert command_patterns_match(command, pattern=r"\bgit\s+push\b")
+    first_scans = len(scanned)
+    assert first_scans > 0
+    assert not command_patterns_match(command, pattern=COMMIT_PATTERN)
+    assert command_patterns_match(command, pattern=r"\bgit\s+status\b")
+
+    assert len(scanned) == first_scans
+
+
+def _nested_bash(command: str, levels: int) -> str:
+    for _ in range(levels):
+        command = f"bash -c {shlex.quote(command)}"
+    return command
+
+
+@pytest.mark.parametrize(
+    ("command", "outcomes"),
+    [
+        ("git commit -m 'feat: x' && git push", {True, False}),
+        ('echo "git commit"', {True, False}),
+        ("cat <<'EOF'\ngit commit\nEOF", {True, False}),
+        ("uv run pytest tests/x.py", {True, False}),
+        ("ssh host 'git commit' # it's", {True, False}),
+        # Nested past the wrapper bound: every selector fails closed.
+        (_nested_bash("git status", command_matching._WRAPPER_DEPTH + 2), {True}),
+    ],
+)
+def test_selector_cache_hits_match_misses(command: str, outcomes: set[bool]) -> None:
+    """A cached subject derivation decides every selector as a fresh one does."""
+    selectors = [
+        (pattern, not_pattern, mask_quoted, resolve_uv_run)
+        for pattern in (COMMIT_PATTERN, PYTEST_PATTERN, r"^(?:echo|cat)\b", r"\bnever\b")
+        for not_pattern in (None, r"--no-verify|\bpush\b")
+        for mask_quoted in (False, True)
+        for resolve_uv_run in (False, True)
+    ]
+
+    def decide(selector: tuple[str, str | None, bool, bool]) -> bool:
+        pattern, not_pattern, mask_quoted, resolve_uv_run = selector
+        return command_patterns_match(
+            command,
+            pattern=pattern,
+            not_pattern=not_pattern,
+            mask_quoted=mask_quoted,
+            resolve_uv_run=resolve_uv_run,
+        )
+
+    misses = []
+    for selector in selectors:
+        command_matching._selector_subjects.cache_clear()
+        misses.append(decide(selector))
+    hits = [decide(selector) for selector in selectors]
+
+    assert hits == misses
+    assert set(misses) == outcomes

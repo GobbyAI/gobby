@@ -7,6 +7,7 @@ and the pre-compact state boundary carried by ``preserve-context-on-compact``.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -324,3 +325,61 @@ class TestClearHandoffGateOnCompactStart:
         # Only the pending states release, so a failed delivery keeps its retry gate.
         assert "delivery_pending" in when
         assert "attempt_pending" in when
+
+
+CLEAR_SESSION_GUARDS = (
+    "block-autonomous-clear-session",
+    "block-clear-session-with-claimed-tasks",
+    "block-clear-session-in-plan-mode",
+)
+CLAIMED_TASKS = {"3fa139a6-eb7b-43c6-a369-7807db9062cc": "#23587"}
+GUARDS_ARMED = {"is_spawned_agent": True, "plan_mode": True, "claimed_tasks": CLAIMED_TASKS}
+
+
+class TestClearSessionGuardsOnOtherTools:
+    """The guards never read an input their set_handoff effect can't act on (#23587)."""
+
+    @pytest.mark.parametrize(
+        ("tool_name", "tool_input"),
+        [("mcp__other__run", {"arguments": "--verbose"}), ("Read", "{not-json")],
+        ids=["string-arguments", "string-tool-input"],
+    )
+    @pytest.mark.asyncio
+    async def test_other_tool_input_shapes_never_error_the_guards(
+        self,
+        db: HubDatabase,
+        caplog: pytest.LogCaptureFixture,
+        tool_name: str,
+        tool_input: Any,
+    ) -> None:
+        caplog.set_level(logging.ERROR)
+        data: dict[str, Any] = {"tool_name": tool_name, "tool_input": tool_input}
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+            metadata={},
+        )
+
+        response = await _evaluate(db, event, dict(GUARDS_ARMED))
+
+        guard_errors = [
+            record.getMessage()
+            for record in caplog.records
+            if "Failed to evaluate condition" in record.getMessage()
+            and "clear_session" in record.getMessage()
+        ]
+        assert guard_errors == []
+        assert not any(guard in (response.reason or "") for guard in CLEAR_SESSION_GUARDS)
+
+    @pytest.mark.asyncio
+    async def test_a_claimed_task_still_blocks_a_real_clear_session(self, db: HubDatabase) -> None:
+        event = _set_handoff_event({**HANDOFF_ARGUMENTS, "clear_session": True})
+
+        response = await _evaluate(db, event, {"claimed_tasks": CLAIMED_TASKS})
+
+        assert response.decision == "block"
+        assert "while working inside a task" in (response.reason or "")

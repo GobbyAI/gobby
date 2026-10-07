@@ -64,6 +64,38 @@ def _config_value(db: Any, key: str) -> Any | None:
     return json.loads(row["value"])
 
 
+def test_startup_provisions_no_operator_token(
+    mock_config_with_websocket: DaemonConfig,
+    tmp_path: Path,
+) -> None:
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    bootstrap_path.write_text("api_key: test-bootstrap-key\n", encoding="utf-8")
+    patches = create_base_patches(mock_config=mock_config_with_websocket)
+
+    with ExitStack() as stack:
+        entered = [stack.enter_context(patch_context) for patch_context in patches]
+        mocks = {
+            patch_context.attribute: entered_mock
+            for patch_context, entered_mock in zip(patches, entered, strict=True)
+        }
+        key_provision = mocks["ensure_local_api_key"]
+        secret_store = mocks["SecretStore"].return_value
+        ordering = MagicMock()
+        ordering.attach_mock(key_provision, "ensure_local_api_key")
+        ordering.attach_mock(secret_store.ensure_ready, "ensure_ready")
+
+        runner = GobbyRunner(config_path=bootstrap_path)
+
+    key_provision.assert_called_once_with(runner.database, runner.machine_id, bootstrap_path)
+    assert [entry[0] for entry in ordering.mock_calls] == [
+        "ensure_local_api_key",
+        "ensure_ready",
+    ]
+    assert not (tmp_path / "local_cli_token").exists()
+    database = cast(MagicMock, runner.database)
+    assert "auth.api_token_hash" not in str(database.mock_calls)
+
+
 class TestGobbyRunnerInit:
     def test_machine_registration_precedes_system_session_bootstrap(
         self, mock_config_with_websocket: MagicMock
@@ -281,36 +313,6 @@ class TestGobbyRunnerInit:
         assert mock_store.ensure_ready.call_args.args == ()
         assert mock_store.ensure_ready.call_args.kwargs == {}
         assert mock_config_store.method_calls == []
-
-    def test_init_provisions_local_api_token_after_config_reconciliation(
-        self,
-        mock_config_with_websocket: DaemonConfig,
-    ) -> None:
-        patches = create_base_patches(mock_config=mock_config_with_websocket)
-
-        with ExitStack() as stack:
-            entered = [stack.enter_context(patch_context) for patch_context in patches]
-            mocks = {
-                patch_context.attribute: entered_mock
-                for patch_context, entered_mock in zip(patches, entered, strict=True)
-            }
-            secret_store = mocks["SecretStore"].return_value
-            config_repository = mocks["ConfigRepository"].return_value
-            auth_store = mocks["AuthStore"].return_value
-            ensure_token = mocks["ensure_local_api_token"]
-            ordering = MagicMock()
-            ordering.attach_mock(secret_store.ensure_ready, "ensure_ready")
-            ordering.attach_mock(config_repository.reconcile_registry, "reconcile_registry")
-            ordering.attach_mock(ensure_token, "ensure_local_api_token")
-
-            GobbyRunner()
-
-        assert [call[0] for call in ordering.mock_calls[:3]] == [
-            "ensure_ready",
-            "reconcile_registry",
-            "ensure_local_api_token",
-        ]
-        ensure_token.assert_called_once_with(auth_store)
 
     def test_failing_local_key_adoption_does_not_block_start(
         self,
@@ -677,10 +679,7 @@ class TestInitHubDatabase:
         from gobby.runner_init import helpers
 
         with (
-            patch(
-                "gobby.runner_init.helpers.admitted_database_url",
-                side_effect=lambda database_url: database_url,
-            ),
+            patch("gobby.runner_init.helpers.psycopg.connect"),
             patch("gobby.storage.hub.postgres.PostgresHubDatabase") as postgres_database,
         ):
             migration_db = MagicMock()
@@ -752,10 +751,7 @@ class TestInitHubDatabase:
             "gobby.storage.hub.postgres.PostgresHubDatabase",
             FakePostgresDatabase,
         )
-        monkeypatch.setattr(
-            "gobby.runner_init.helpers.admitted_database_url",
-            lambda database_url: database_url,
-        )
+        monkeypatch.setattr("gobby.runner_init.helpers.psycopg.connect", MagicMock())
         monkeypatch.setattr("gobby.runner_init.helpers.time.sleep", sleeps.append)
         config = SimpleNamespace(
             hub_backend="postgres",

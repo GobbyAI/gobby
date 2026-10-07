@@ -279,7 +279,7 @@ def evaluate(
         task_records=task_records,
         task_tree_file=task_tree_file,
     )
-    scoped_records = _filter_to_scope(records, root_task_ref)
+    scoped_records = _filter_to_scope(records, root_task_ref, plan_id)
     return _evaluate_records(
         plan_doc=plan_doc,
         plan_id=plan_id,
@@ -855,7 +855,9 @@ def _optional_ref(raw: str) -> str | None:
     return normalize_task_ref(raw) if raw else None
 
 
-def _filter_to_scope(records: Sequence[_TaskRecord], root_task_ref: str) -> tuple[_TaskRecord, ...]:
+def _filter_to_scope(
+    records: Sequence[_TaskRecord], root_task_ref: str, plan_id: str
+) -> tuple[_TaskRecord, ...]:
     normalized_root = normalize_task_ref(root_task_ref)
     root_key = normalized_root.lstrip("#")
     included = {
@@ -878,7 +880,15 @@ def _filter_to_scope(records: Sequence[_TaskRecord], root_task_ref: str) -> tupl
                 continue
             included.add(child_ref)
             stack.append(child_ref)
-    return tuple(record for record in records if record.ref in included)
+    # Leaves stay in scope wherever they sit: lanes re-parent plan sections under other epics.
+    return tuple(
+        record for record in records if record.ref in included or _covers_plan(record, plan_id)
+    )
+
+
+def _covers_plan(record: _TaskRecord, plan_id: str) -> bool:
+    matches = (COVERS_LABEL_REGEX.match(label) for label in record.labels)
+    return any(match is not None and match["plan_id"] == plan_id for match in matches)
 
 
 def _path_in_scope(path_cache: str | None, root_key: str) -> bool:

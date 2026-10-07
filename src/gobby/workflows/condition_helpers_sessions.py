@@ -12,19 +12,23 @@ from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.agent_resolver import resolve_agent
 
 if TYPE_CHECKING:
+    from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
 
 
 def send_keys_target_in_scope(
     session_manager: SessionManager | None, caller_ref: Any, target_ref: Any
 ) -> bool:
-    """False only when a resolvable caller provably cannot reach the send_keys target.
+    """False only when a resolvable caller provably cannot reach a terminal tool's target.
 
-    The caller and target resolve exactly as ``send_keys`` resolves them, and the
-    decision is ``ActorScope.admits``: the caller's own session, its project, and
-    its agent tree in either direction. A caller or target the tool refuses on its
-    own (missing, unresolvable, autonomous agent) passes here so the tool keeps
-    reporting that specific error. Any other failure raises, and a raising block
+    It scopes ``send_keys`` and ``capture_output``. The caller and target resolve
+    exactly as ``send_keys`` resolves them, and the decision is ``ActorScope.admits``:
+    the caller's own session, its project, and its agent tree in either direction.
+    A missing, unresolvable or autonomous caller, and an unresolvable target, pass
+    here. ``send_keys`` refuses each with its own error. For ``capture_output``, a
+    request with no caller is the operator's, agent enforcement refuses autonomous
+    callers before rules run, and the target lookup takes a session UUID, which
+    resolves here by primary key. Any other failure raises, and a raising block
     condition fails closed.
     """
     if session_manager is None:
@@ -79,7 +83,7 @@ def send_message_target_allowed(
 
 
 # The ``agent`` defaults of the gobby-agents spawn tools, for calls that omit it.
-_SPAWN_TOOL_DEFAULT_AGENT = {"spawn_agent": "default", "dispatch_batch": "backend-developer"}
+_SPAWN_TOOL_DEFAULT_AGENT = {"spawn_agent": "default", "dispatch_batch": "developer"}
 # spawn_agent walks at most this many fallback_agent hops (spawn_agent/_factory.py).
 _FALLBACK_CHAIN_MAX_HOPS = 5
 
@@ -117,44 +121,92 @@ def _fallback_chain(target: str, db: Any, project_id: str | None) -> list[str]:
     return chain
 
 
+def _spawn_caller(session_manager: SessionManager, caller_ref: Any) -> tuple[Session, str | None]:
+    """The verified caller session and its agent run's definition name, None for a root.
+
+    A root session has no agent run and depth 0. A spawned caller's name comes from
+    its agent run record, never from a caller-supplied parent. A run-less session
+    below the root, a missing run, or a run that names no definition raises.
+    """
+    if not isinstance(caller_ref, str) or not caller_ref:
+        raise ValueError("spawn scope needs the caller session")
+    caller = session_manager.get(session_manager.resolve_session_reference(caller_ref))
+    if caller is None:
+        raise ValueError(f"Caller session {caller_ref} not found")
+    if caller.agent_run_id is None and caller.agent_depth == 0:
+        return caller, None
+    if caller.agent_run_id is None:
+        raise ValueError(f"Spawned session {caller.id} has no agent run")
+    run = LocalAgentRunManager(session_manager.db).get(caller.agent_run_id)
+    if run is None or not run.agent_name:
+        raise ValueError(f"Agent run {caller.agent_run_id} names no agent definition")
+    if run.child_session_id != caller.id:
+        from gobby.sessions.clear_continuation import resolve_clear_successor
+
+        if (
+            run.child_session_id is None
+            or resolve_clear_successor(session_manager.db, run.child_session_id) != caller.id
+        ):
+            raise ValueError(
+                f"Agent run {caller.agent_run_id} does not belong to caller {caller.id}"
+            )
+    return caller, run.agent_name
+
+
 def spawn_target_allowed(
     session_manager: SessionManager | None,
     caller_ref: Any,
     tool_name: Any,
     agent: Any,
     suggestions: Any = None,
+    *,
+    target_project_id: str | None = None,
 ) -> bool:
     """Whether the caller may start every agent the gobby-agents ``tool_name`` call can.
 
     A root session (no agent run, depth 0) spawns anything. A spawned caller's
     definition comes from its agent run record, and its ``spawnable_agents``
     decides: any agent, the listed agents, or none. Every effective target must
-    be allowed: each dispatch_batch suggestion's agent and every agent in a
-    target's fallback_agent chain. Anything unresolvable raises, and a raising
-    block condition fails closed.
+    be allowed. Without a resolved target project, a before_tool rule checks
+    only requested names. Admission passes the launch's target project to check
+    its fallback chain as well. Anything unresolvable raises and fails closed.
     """
     if session_manager is None:
         raise RuntimeError("spawn target scope needs a session manager")
-    if not isinstance(caller_ref, str) or not caller_ref:
-        raise ValueError("spawn target scope needs the caller session")
-    caller = session_manager.get(session_manager.resolve_session_reference(caller_ref))
-    if caller is None:
-        raise ValueError(f"Caller session {caller_ref} not found")
-    if caller.agent_run_id is None and caller.agent_depth == 0:
+    caller, agent_name = _spawn_caller(session_manager, caller_ref)
+    if agent_name is None:
         return True
-    if caller.agent_run_id is None:
-        raise ValueError(f"Spawned session {caller.id} has no agent run")
-    run = LocalAgentRunManager(session_manager.db).get(caller.agent_run_id)
-    if run is None or not run.agent_name:
-        raise ValueError(f"Agent run {caller.agent_run_id} names no agent definition")
-    body = resolve_agent(run.agent_name, session_manager.db, project_id=caller.project_id)
+    body = resolve_agent(agent_name, session_manager.db, project_id=caller.project_id)
     if body is None:
-        raise ValueError(f"Agent definition {run.agent_name!r} not found")
+        raise ValueError(f"Agent definition {agent_name!r} not found")
     return all(
         body.may_spawn(name)
         for target in _spawn_targets(tool_name, agent, suggestions)
-        for name in _fallback_chain(target, session_manager.db, caller.project_id)
+        for name in (
+            [target]
+            if target_project_id is None
+            else _fallback_chain(target, session_manager.db, target_project_id)
+        )
     )
+
+
+# Spawned definitions that may choose a spawn's network profile; a root session always may.
+_NETWORK_OVERRIDE_AGENTS = frozenset({"default", "orchestrator"})
+
+
+def network_override_allowed(session_manager: SessionManager | None, caller_ref: Any) -> bool:
+    """Whether the caller may pass an explicit ``network`` profile to a spawn.
+
+    A root session may. A spawned caller may only when its agent run names
+    ``default`` or ``orchestrator``; other spawned callers still spawn with the
+    inherited profile. Identity comes from the verified caller session, never a
+    caller-supplied ``parent_session_id``. Anything unresolvable raises, and a
+    raising block condition fails closed.
+    """
+    if session_manager is None:
+        raise RuntimeError("network override scope needs a session manager")
+    _, agent_name = _spawn_caller(session_manager, caller_ref)
+    return agent_name is None or agent_name in _NETWORK_OVERRIDE_AGENTS
 
 
 def session_condition_helpers(
@@ -170,5 +222,8 @@ def session_condition_helpers(
         ),
         "spawn_target_allowed": lambda caller_ref, tool_name, agent, suggestions=None: (
             spawn_target_allowed(session_manager, caller_ref, tool_name, agent, suggestions)
+        ),
+        "network_override_allowed": lambda caller_ref: network_override_allowed(
+            session_manager, caller_ref
         ),
     }

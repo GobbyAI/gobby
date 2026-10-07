@@ -16,11 +16,9 @@ For each TDD-required `code` or eligible `config` deliverable:
   for supported touched tests. Outside Gobby, unsupported-language warnings
   must be paired with focused repo-native validation.
 
-Code tasks must include `implementation_domain`:
-
-- `backend` routes to `backend-developer`;
-- `frontend` routes to `frontend-developer`;
-- `fullstack` routes to `fullstack-developer`.
+Code tasks must include `implementation_domain` (`backend`, `frontend`, or
+`fullstack`). Every domain routes to `developer`, which reads the domain to pick
+its skills.
 
 ## Categories for TDD
 

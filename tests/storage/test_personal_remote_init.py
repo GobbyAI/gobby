@@ -62,7 +62,6 @@ def test_runtime_hub_open_skips_identity_on_remote(tmp_path: Path) -> None:
     db = MagicMock()
     with (
         patch("gobby.storage.hub.runtime.load_bootstrap") as load,
-        patch("gobby.storage.hub.runtime.admitted_database_url", return_value="postgresql://x"),
         patch("gobby.storage.hub.postgres.PostgresHubDatabase", return_value=db),
         patch("gobby.storage.projects.ensure_personal_project") as ensure,
     ):

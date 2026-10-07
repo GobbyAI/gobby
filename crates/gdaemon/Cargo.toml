@@ -22,12 +22,14 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 axum = { version = "0.8", default-features = false }
+base64 = "0.22"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 gobby-core = { path = "../gcore", version = "0.10.0", features = ["postgres", "postgres-pool"] }
 deadpool-postgres = { version = "0.14.2", features = ["rt_tokio_1"] }
 gobby-terminals = { path = "../gterminals" }
 http-body-util = "0.1"
+hmac = "0.12"
 hyper = { version = "1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "server", "tokio"] }
 # ring only, matching the workspace's rustls; aws-lc-rs stays out of the build.

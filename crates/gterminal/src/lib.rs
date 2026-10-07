@@ -2,7 +2,9 @@
 //!
 //! `src/ghostty/`, `src/pane/`, and `src/pty/` compile only with the `vt-engine`
 //! feature. Wire protocol, input encoding, layout, selection, and theme modules
-//! stay feature-free so default-feature builds remain Zig-free.
+//! stay feature-free so default-feature builds remain Zig-free. `src/host/`
+//! serves Unix sockets and signals, so it and `src/ipc.rs`, its socket layer,
+//! compile only on Unix.
 
 #[cfg(feature = "vt-engine")]
 pub(crate) const GTERM_ENV_VAR: &str = "GTERM_ENV";
@@ -11,8 +13,10 @@ pub(crate) const GTERM_ENV_VALUE: &str = "1";
 
 #[cfg(feature = "vt-engine")]
 pub mod gterm;
+#[cfg(unix)]
 pub mod host;
 pub mod input;
+#[cfg(unix)]
 pub mod ipc;
 pub mod layout;
 pub mod platform;
@@ -20,6 +24,7 @@ pub mod protocol;
 #[cfg(feature = "vt-engine")]
 pub mod pty;
 pub mod raw_input;
+#[cfg(any(unix, feature = "vt-engine"))]
 pub mod render_prof;
 #[cfg(feature = "vt-engine")]
 pub mod runtime;

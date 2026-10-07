@@ -22,7 +22,7 @@ from gobby.servers.auth_service import AuthService
 from gobby.servers.grant_auth import AuthDecision
 from gobby.servers.lease_fence import EffectFence
 from gobby.servers.middleware.auth import AuthMiddleware
-from gobby.storage.auth import AuthStore, hash_token
+from gobby.storage.auth import AuthStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 from tests.fixtures.postgres import TEST_USER_ID
@@ -198,8 +198,8 @@ def test_protected_routes_require_auth_when_enabled(
     assert response.status_code == 401, path
     assert response.json() == {
         "error": (
-            "Authentication required. CLI clients need ~/.gobby/local_cli_token "
-            "(run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
+            "Authentication required. CLI clients need an API key in bootstrap.yaml "
+            "and gdaemon (run 'gobby auth login'). Browsers: log in."
         )
     }
 
@@ -224,7 +224,7 @@ def test_grant_rejection_omits_login_guidance(
     auth_service.authenticate.return_value = AuthDecision(allowed=False, code=code, status_code=401)
     response = client.get("/api/tasks")
     body = response.json()
-    assert "local_cli_token" not in body["error"]
+    assert "API key" not in body["error"]
     assert "log in" not in body["error"].casefold()
     assert body["error"] == "Request rejected"
     assert body["code"] == code
@@ -238,40 +238,42 @@ def test_unrecognised_credentials_keep_login_guidance(
     auth_service.authenticate.return_value = AuthDecision(allowed=False, code=code, status_code=401)
     response = client.get("/api/tasks")
     body = response.json()
-    assert "local_cli_token" in body["error"]
+    assert "API key" in body["error"]
+    assert "bootstrap.yaml" in body["error"]
     assert body["code"] == code
 
 
 @pytest.mark.asyncio
-async def test_repeated_requests_reuse_cached_credentials_without_secret_store(
-    hub_db: HubDatabase,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+async def test_repeated_front_door_identity_needs_no_database_or_secret_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    old_token = "old-local-token"
-    new_token = "new-local-token"
-    auth_store = AuthStore(hub_db)
-    auth_store.set_local_api_token_hash(hash_token(old_token))
-
-    original_get = AuthStore.get_local_api_token_hash
-    credential_lookup_threads: list[int] = []
-
-    def tracked_get(store: AuthStore) -> str | None:
-        credential_lookup_threads.append(threading.get_ident())
-        return original_get(store)
-
-    monkeypatch.setattr(AuthStore, "get_local_api_token_hash", tracked_get)
+    database_getter = MagicMock(side_effect=AssertionError("database consulted"))
     secret_store_init = MagicMock(side_effect=AssertionError("SecretStore constructed"))
     monkeypatch.setattr(SecretStore, "__init__", secret_store_init)
-
     auth_service = AuthService(
-        lambda: hub_db,
-        token_file=tmp_path / "missing-token",
+        database_getter,
+        bootstrap_file=tmp_path / "bootstrap.yaml",
+        break_glass_file=tmp_path / "absent-break-glass",
     )
-    server = cast(
-        "HTTPServer",
-        SimpleNamespace(auth_service=auth_service, run_db=_run_db),
-    )
+
+    def bind(secret: str) -> None:
+        auth_service.bind_runtime(
+            grant_service=None,
+            lease_live=None,
+            local_machine_id="machine-1",
+            effect_fence=None,
+            clock=None,
+            front_door_secret=secret,
+        )
+
+    bind("first-secret")
+    headers = {
+        "X-Gobby-Front-Door": "first-secret",
+        "X-Gobby-User-Id": "user-1",
+        "X-Gobby-Machine-Id": "machine-1",
+        "X-Gobby-Key-Id": "key-1",
+    }
+    server = cast("HTTPServer", SimpleNamespace(auth_service=auth_service, run_db=_run_db))
     app = FastAPI()
     app.add_middleware(AuthMiddleware, server=server)
 
@@ -279,28 +281,23 @@ async def test_repeated_requests_reuse_cached_credentials_without_secret_store(
     async def protected() -> dict[str, bool]:
         return {"ok": True}
 
-    event_loop_thread = threading.get_ident()
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        first = await client.get(
-            "/api/tasks",
-            headers={"Authorization": f"Bearer {old_token}"},
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        first = await client.get("/api/tasks", headers=headers)
+        second = await client.get("/api/tasks", headers=headers)
+        bind("second-secret")
+        stale = await client.get("/api/tasks", headers=headers)
+        fresh = await client.get(
+            "/api/tasks", headers={**headers, "X-Gobby-Front-Door": "second-secret"}
         )
-        second = await client.get(
-            "/api/tasks",
-            headers={"Authorization": f"Bearer {old_token}"},
-        )
-
-        auth_store.set_local_api_token_hash(hash_token(new_token))
-        auth_service._last_refresh -= auth_service.MIN_REFRESH_INTERVAL
-        after_change = await client.get(
-            "/api/tasks",
-            headers={"Authorization": f"Bearer {new_token}"},
-        )
-
-    assert [first.status_code, second.status_code, after_change.status_code] == [200, 200, 200]
-    assert len(credential_lookup_threads) == 2
-    assert all(thread_id != event_loop_thread for thread_id in credential_lookup_threads)
+    assert [first.status_code, second.status_code, stale.status_code, fresh.status_code] == [
+        200,
+        200,
+        401,
+        200,
+    ]
+    database_getter.assert_not_called()
     secret_store_init.assert_not_called()
 
 
@@ -321,7 +318,8 @@ async def test_session_cookie_validation_runs_off_event_loop(
     monkeypatch.setattr(AuthStore, "validate_session", tracked_validate)
     auth_service = AuthService(
         lambda: hub_db,
-        token_file=tmp_path / "missing-token",
+        bootstrap_file=tmp_path / "bootstrap.yaml",
+        break_glass_file=tmp_path / "absent-break-glass",
     )
     server = cast(
         "HTTPServer",

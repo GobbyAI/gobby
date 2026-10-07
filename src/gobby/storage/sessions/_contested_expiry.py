@@ -18,6 +18,7 @@ from gobby.sessions.contested_expiry import (
     contested_expiry_payload,
 )
 from gobby.storage.hub.protocol import HubDatabase, SessionVariableMutation
+from gobby.storage.hub.read_scope import SESSION_VARIABLES_TABLES, scoped_read
 from gobby.utils.datetime import utc_now
 
 
@@ -78,9 +79,14 @@ def clear_contested_terminal_expiry(db: HubDatabase, session_id: str) -> None:
 
 def read_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any] | None:
     """Return a session's stored variables, or None when it has no row."""
-    row = db.fetchone(
-        "SELECT variables FROM session_variables WHERE session_id = %s",
-        (session_id,),
+    row = scoped_read(
+        db,
+        ("session_variables", session_id),
+        SESSION_VARIABLES_TABLES,
+        lambda: db.fetchone(
+            "SELECT variables FROM session_variables WHERE session_id = %s",
+            (session_id,),
+        ),
     )
     if row is None:
         return None

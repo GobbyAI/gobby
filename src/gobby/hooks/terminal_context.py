@@ -75,6 +75,49 @@ def hook_cwd(data: Mapping[str, Any], event_cwd: Any = None) -> str | None:
     return _non_empty_str(data.get("cwd")) or _non_empty_str(event_cwd)
 
 
+def hook_sender_belongs_to_seat(sender_context: object, seat_context: object) -> bool:
+    """Verify the raw hook sender descends from the recorded CLI process identity.
+
+    A shared Codex host serves other seats even when this seat launched it.
+    Missing or uninspectable sender identity cannot authorize ending a live seat.
+    """
+    if not isinstance(sender_context, Mapping) or not isinstance(seat_context, Mapping):
+        return False
+    sender_pid = sender_context.get("parent_pid")
+    seat_pid = seat_context.get("parent_pid")
+    seat_start = seat_context.get("parent_create_time")
+    if (
+        isinstance(sender_pid, bool)
+        or not isinstance(sender_pid, (int, str))
+        or isinstance(seat_pid, bool)
+        or not isinstance(seat_pid, (int, str))
+        or isinstance(seat_start, bool)
+        or not isinstance(seat_start, (int, float, str))
+    ):
+        return False
+    try:
+        sender_pid, seat_pid, seat_start = int(sender_pid), int(seat_pid), float(seat_start)
+        if sender_pid <= 0 or seat_pid <= 0:
+            return False
+        sender = psutil.Process(sender_pid)
+        sender_start = sender_context.get("parent_create_time")
+        if sender_start is not None:
+            if isinstance(sender_start, bool) or not isinstance(sender_start, (int, float, str)):
+                return False
+            if not abs(float(sender.create_time()) - float(sender_start)) < 1.0:
+                return False
+        process: psutil.Process | None = sender
+        while process is not None:
+            if _is_codex_shared_host(process):
+                return False
+            if process.pid == seat_pid:
+                return abs(float(process.create_time()) - seat_start) < 1.0
+            process = process.parent()
+    except (*_PSUTIL_ERRORS, ValueError, OverflowError):
+        return False
+    return False
+
+
 def enrich_terminal_context_with_cwd(
     terminal_context: dict[str, Any] | None,
     cwd: Any,

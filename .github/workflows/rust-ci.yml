@@ -113,7 +113,8 @@ jobs:
       - name: Test (gobby-daemon)
         run: cargo nextest run --profile ci -p gobby-daemon
 
-      # gobby-terminal: Zig-free default-features gate, then vt-engine + Windows cross
+      # gobby-terminal: Zig-free default-features gate, then vt-engine, then the
+      # default-features Windows cross lint
       - name: Clippy (gobby-terminal)
         run: cargo clippy -p gobby-terminal --all-targets -- -D warnings
 
@@ -139,12 +140,13 @@ jobs:
       - name: Test (gobby-client)
         run: cargo nextest run --profile ci -p gobby-client
 
-      - name: Clippy (gobby-terminal, Windows cross)
-        env:
-          LIBGHOSTTY_VT_SIMD: "false"
+      # Windows cross lints default features only: the vendored libghostty-vt zig
+      # build can't find the msvc stdlib.h on this runner. #22447 restores
+      # vt-engine for this target after 1.0.
+      - name: Clippy (gobby-terminal, Windows cross, default features)
         run: |
           rustup target add x86_64-pc-windows-msvc
-          cargo clippy -p gobby-terminal --target x86_64-pc-windows-msvc --features vt-engine --all-targets -- -D warnings
+          cargo clippy -p gobby-terminal --target x86_64-pc-windows-msvc --all-targets -- -D warnings
 
       - name: Test workspace
         run: cargo nextest run --profile ci --workspace

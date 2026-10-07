@@ -216,7 +216,7 @@ class TestAgentsSpawnCommand:
         assert "--session" in result.output
         assert "--workflow" in result.output
         assert "--model" in result.output
-        assert "--terminal-backend" in result.output
+        assert "--terminal-backend" not in result.output
         assert "--provider" in result.output
 
     def test_spawn_requires_session(self, runner: CliRunner) -> None:
@@ -317,8 +317,6 @@ class TestAgentsSpawnCommand:
                 "plan-execute",
                 "--task",
                 "gt-task123",
-                "--terminal-backend",
-                "native",
                 "--provider",
                 "claude",
                 "--model",
@@ -343,7 +341,6 @@ class TestAgentsSpawnCommand:
             "parent_session_id": "sess-parent123",
             "workflow": "plan-execute",
             "task_id": "gt-task123",
-            "terminal_backend": "native",
             "provider": "claude",
             "model": "claude-3-opus",
             "timeout": 300.0,
@@ -502,24 +499,6 @@ class TestAgentsSpawnCommand:
 
         assert result.exit_code == 1
         assert "Error: Unexpected error" in result.output
-
-    def test_spawn_terminal_backend_choices(self, runner: CliRunner) -> None:
-        """Test spawn terminal backend option rejects tmux."""
-        result = runner.invoke(
-            cli,
-            [
-                "agents",
-                "spawn",
-                "Test",
-                "--session",
-                "sess",
-                "--terminal-backend",
-                "tmux",
-            ],
-        )
-
-        assert result.exit_code == 2
-        assert "Invalid value" in result.output
 
 
 # ==============================================================================

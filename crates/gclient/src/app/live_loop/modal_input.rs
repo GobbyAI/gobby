@@ -262,7 +262,11 @@ pub(super) fn keybind_help_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutc
     ModalOutcome::Consumed
 }
 
-fn navigator_key<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
+pub(super) fn navigator_key<W: WorkspaceView>(
+    ws: &W,
+    chrome: &mut Chrome,
+    key: &KeyEvent,
+) -> ModalOutcome {
     let rows = navigator_rows(ws, chrome);
     let last = rows.len().saturating_sub(1);
     let nav = &mut chrome.navigator;

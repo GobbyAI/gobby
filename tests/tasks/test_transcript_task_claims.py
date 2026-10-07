@@ -195,3 +195,113 @@ async def test_codex_direct_mcp_task_claims_are_derived(
     )
 
     assert evidence.task_claims == expected
+
+
+def _codex_mcp_item(
+    item_id: str, offset: int, tool: str, arguments: dict[str, Any], result: Any
+) -> dict[str, Any]:
+    """Codex's completed MCP item, the only record of a call made inside functions.exec."""
+    return {
+        "type": "event_msg",
+        "timestamp": (BASE_TIME + timedelta(seconds=offset)).isoformat(),
+        "payload": {
+            "type": "item_completed",
+            "item": {
+                "type": "McpToolCall",
+                "id": item_id,
+                "server": "gobby",
+                "tool": tool,
+                "arguments": arguments,
+                "status": "completed",
+                "result": result,
+            },
+        },
+    }
+
+
+def _codex_response_item(offset: int, payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "response_item",
+        "timestamp": (BASE_TIME + timedelta(seconds=offset)).isoformat(),
+        "payload": payload,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("structured", "expected"),
+    [
+        pytest.param(
+            {"success": True, "result": {"task_id": CLAIMED, "title": "Task"}},
+            (TranscriptTaskClaim(task_ref=CLAIMED, claimed_at=BASE_TIME + timedelta(seconds=2)),),
+            id="nested-claim",
+        ),
+        pytest.param(
+            {"success": False, "status": "error", "error": "Task already claimed"},
+            (),
+            id="refused-nested-claim",
+        ),
+    ],
+)
+async def test_codex_functions_exec_task_claims_are_derived(
+    tmp_path: Path, structured: dict[str, Any], expected: tuple[TranscriptTaskClaim, ...]
+) -> None:
+    """#23724: a claim_task proxied inside functions.exec moves the session onto its task."""
+    claim = {"server_name": "gobby-tasks", "tool_name": "claim_task"}
+    transcript = tmp_path / "codex.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            _codex_response_item(
+                0,
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "claim-cell",
+                    "name": "exec",
+                    "input": (
+                        'text(await tools.mcp__gobby__get_tool_schema({server_name:"gobby-tasks",'
+                        'tool_name:"claim_task"})); text(await tools.mcp__gobby__call_tool('
+                        '{server_name:"gobby-tasks",tool_name:"claim_task",'
+                        'arguments:{task_id:"#23612"}}));'
+                    ),
+                },
+            ),
+            # Fetching the schema names claim_task too, but claims nothing.
+            _codex_mcp_item(
+                "exec-schema",
+                1,
+                "get_tool_schema",
+                claim,
+                {"structuredContent": {"success": True, "tool": {"name": "claim_task"}}},
+            ),
+            _codex_mcp_item(
+                "exec-claim",
+                2,
+                "call_tool",
+                {**claim, "arguments": {"task_id": "#23612"}},
+                {
+                    "content": [{"type": "text", "text": json.dumps(structured)}],
+                    "structuredContent": structured,
+                    "isError": False,
+                },
+            ),
+            _codex_response_item(
+                3,
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "claim-cell",
+                    "output": [{"type": "input_text", "text": "Script completed\nOutput:\n"}],
+                },
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert evidence.task_claims == expected

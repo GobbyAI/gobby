@@ -135,4 +135,3 @@ def test_bootstrap_binding_controls_only_daemon_credential_location(
     local_token.bind_daemon_bootstrap(bound)
     assert local_token.daemon_bootstrap_path() == bound
     assert break_glass_path() == bound.parent / "break_glass"
-    assert local_token.local_token_path() == tmp_path / "home/local_cli_token"

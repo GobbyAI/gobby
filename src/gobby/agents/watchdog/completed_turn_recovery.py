@@ -102,7 +102,7 @@ def step_progress_requires_gobby_mcp(step_context: StepWorkflowContext | None) -
 
 
 def codex_mcp_startup_error(pane_tail: str | None) -> str | None:
-    """Return the latest Codex MCP startup diagnostic, retaining wrapped cause text."""
+    """Return the latest failed Gobby startup diagnostic, retaining wrapped cause text."""
     if pane_tail is None:
         return None
     paragraphs: list[str] = re.split(r"\n\s*\n", pane_tail)
@@ -110,11 +110,13 @@ def codex_mcp_startup_error(pane_tail: str | None) -> str | None:
         # Codex's required-server error can wrap inside the identifying phrase
         # and the handshake cause. Blank lines separate it from other output.
         diagnostic = " ".join(paragraph.split())
-        if "required MCP servers failed to initialize:" in diagnostic:
+        if "required MCP servers failed to initialize:" in diagnostic and re.search(
+            r"\bgobby\s*:", diagnostic
+        ):
             return diagnostic
         for raw_line in reversed(paragraph.splitlines()):
             line = raw_line.strip()
-            if "MCP client for" in line and "failed to start" in line:
+            if re.search(r"MCP client for [`'\"]?gobby[`'\"]? failed to start\b", line):
                 return line
     return None
 
@@ -184,6 +186,16 @@ async def recover_completed_turn(
         return 0
 
     step_context, lookup_succeeded = await host._load_step_workflow_context(run)
+    if await host._complete_if_work_finished(run):
+        await host._log_transcript_snapshot(
+            run,
+            reason="completing idle agent whose work already finished",
+            snapshot=snapshot,
+            level=logging.INFO,
+        )
+        return 1
+
+    startup_error = codex_mcp_startup_error(pane_tail)
     if step_context is not None:
         mcp_required_by = (
             f"while pinned in MCP-gated step '{step_context.current_step}'"
@@ -195,18 +207,15 @@ async def recover_completed_turn(
     if (
         lookup_succeeded
         and mcp_required_by is not None
+        and startup_error is not None
         and await host._session_made_successful_mcp_call(run) is False
     ):
-        # An MCP-gated step cannot advance, and an unbound run cannot hand back
-        # its result, without a Gobby MCP call. The session has never completed
-        # one, so no number of reprompts can help.
+        # Zero successful calls alone does not prove a broken bridge. Require
+        # a concrete failed Gobby initialization before bypassing recovery.
         reason = (
             "Gobby MCP proxy tools unavailable: session made no successful Gobby MCP "
-            f"call {mcp_required_by} (likely stdio bridge startup failure)"
+            f"call {mcp_required_by}; provider startup error: {startup_error}"
         )
-        startup_error = codex_mcp_startup_error(pane_tail)
-        if startup_error is not None:
-            reason = f"{reason}; provider startup error: {startup_error}"
         logger.error("Failing idle agent %s without reprompts: %s", run.id, reason)
         await host._log_transcript_snapshot(
             run,
@@ -215,15 +224,6 @@ async def recover_completed_turn(
             level=logging.ERROR,
         )
         await host._fail_idle_agent(run, reason=reason)
-        return 1
-
-    if await host._complete_if_work_finished(run):
-        await host._log_transcript_snapshot(
-            run,
-            reason="completing idle agent whose work already finished",
-            snapshot=snapshot,
-            level=logging.INFO,
-        )
         return 1
 
     fingerprint = workflow_fingerprint(

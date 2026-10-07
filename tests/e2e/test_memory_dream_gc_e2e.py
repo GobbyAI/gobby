@@ -19,9 +19,11 @@ dream service code — only the LLM planner is faked (the matrix mandates no
 live LLM), so the real validator, apply, ``mark_dreamed``, snapshot, and purge
 paths all execute.
 
-Before daemon startup, the fixture resolves managed FalkorDB credentials from
-the authoritative config and secret stores, verifies authentication, and binds
-an isolated graph with teardown cleanup. Daemon health must report the graph
+Before daemon startup, the fixture reads FalkorDB credentials from the explicit
+``GOBBY_FALKORDB_HOST``/``_PORT``/``_PASSWORD`` test environment, verifies
+authentication, and binds an isolated graph with teardown cleanup. Without that
+environment the test skips: the live-hub connect guard refuses the managed
+install's config store under test. Daemon health must report the graph
 subsystem as healthy before the memory and dream/GC assertions run.
 """
 
@@ -38,7 +40,6 @@ import httpx
 import pytest
 from falkordb.asyncio import FalkorDB
 
-from gobby.cli.installers.compose_env import resolve_compose_runtime
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.service import run_memory_dream
@@ -64,45 +65,35 @@ def e2e_pre_daemon_setup(
     postgres_schema: str,
     request: pytest.FixtureRequest,
 ) -> None:
-    """Require managed FalkorDB and configure an isolated authenticated graph."""
+    """Require explicit FalkorDB test env and configure an isolated graph."""
     config_path, _http_port, _ws_port = e2e_config
+    environment = {
+        name: os.environ.get(name)
+        for name in (
+            "GOBBY_FALKORDB_HOST",
+            "GOBBY_FALKORDB_PORT",
+            "GOBBY_FALKORDB_PASSWORD",
+        )
+    }
+    # The managed install's config store lives on the live hub, which the
+    # connect guard (tests/fixtures/postgres.py) refuses in every test run.
+    if not any(environment.values()):
+        pytest.skip(
+            "Memory dream/GC E2E needs an authenticated FalkorDB through "
+            "GOBBY_FALKORDB_HOST, GOBBY_FALKORDB_PORT and GOBBY_FALKORDB_PASSWORD"
+        )
     try:
-        environment = {
-            name: os.environ.get(name)
-            for name in (
-                "GOBBY_FALKORDB_HOST",
-                "GOBBY_FALKORDB_PORT",
-                "GOBBY_FALKORDB_PASSWORD",
+        missing = [name for name, value in environment.items() if not value]
+        if missing:
+            raise ValueError(
+                f"incomplete FalkorDB environment; missing {', '.join(sorted(missing))}"
             )
-        }
-        if any(environment.values()):
-            missing = [name for name, value in environment.items() if not value]
-            if missing:
-                raise ValueError(
-                    f"incomplete FalkorDB environment; missing {', '.join(sorted(missing))}"
-                )
-        else:
-            runtime = resolve_compose_runtime(
-                Path.home() / ".gobby",
-                profiles=("falkordb",),
-            )
-            environment = {
-                name: runtime.environment[name]
-                for name in (
-                    "GOBBY_FALKORDB_HOST",
-                    "GOBBY_FALKORDB_PORT",
-                    "GOBBY_FALKORDB_PASSWORD",
-                )
-            }
         host = str(environment["GOBBY_FALKORDB_HOST"])
         password = str(environment["GOBBY_FALKORDB_PASSWORD"])
         port = int(str(environment["GOBBY_FALKORDB_PORT"]))
         asyncio.run(_verify_falkordb_prerequisite(host, port, password))
     except Exception as exc:
-        pytest.fail(
-            "Memory dream/GC E2E requires a complete managed local install with "
-            f"authenticated FalkorDB: {exc}"
-        )
+        pytest.fail(f"Memory dream/GC E2E requires an authenticated FalkorDB: {exc}")
 
     graph_identity = hashlib.sha256(postgres_schema.encode()).hexdigest()[:16]
     graph_name = f"gobby_memory_e2e_{graph_identity}"

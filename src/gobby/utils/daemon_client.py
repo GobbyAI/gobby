@@ -45,8 +45,7 @@ from gobby.utils.local_token import daemon_auth_headers
 
 PLANNED_RESTART_MARKER_MAX_AGE_SECONDS = 120.0
 DAEMON_AUTH_REMEDIATION = (
-    "token missing or stale; run 'gobby install' or 'gobby auth token --rotate' on the hub "
-    "machine and copy ~/.gobby/local_cli_token here"
+    "API key missing or stale; run 'gobby auth login' to provision this machine's bootstrap key"
 )
 
 

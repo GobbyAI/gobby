@@ -227,7 +227,8 @@ _TEXT = "Call get_handoff() on gobby-sessions, then continue."
 class _ScriptedPane:
     """PaneIO fake whose composer reads follow a script, one entry per probe.
 
-    The last entry repeats, so a one-entry script is a composer that never changes.
+    The first entry is the read ``submit_text`` takes before it types. The last
+    entry repeats, so a one-entry script is a composer that never changes.
     """
 
     backend = "fake"
@@ -278,7 +279,11 @@ line_regex = ["wrapped draft is present"]
 
 
 async def _submit(
-    pane: _ScriptedPane, monkeypatch: pytest.MonkeyPatch, *, verify_seconds: float = 0.0
+    pane: _ScriptedPane,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    verify_seconds: float = 0.0,
+    text: str = _TEXT,
 ) -> SubmitResult:
     async def no_sleep(_seconds: float) -> None:
         return None
@@ -287,7 +292,7 @@ async def _submit(
     monkeypatch.setattr("gobby.terminals.pane_io.asyncio.sleep", no_sleep)
     return await submit_text(
         cast(PaneIO, pane),
-        _TEXT,
+        text,
         "session-1",
         label="the prompt",
         cli_source="claude",
@@ -311,14 +316,14 @@ async def test_the_write_and_a_delayed_enter_submit_and_an_empty_composer_proves
     assert (await _submit(pane, monkeypatch)).ok is True
     assert pane.typed == [f"{_TEXT}\n"]
     assert pane.keys == ["enter"]
-    assert pane.probes == 1
+    assert pane.probes == 2
 
 
 @pytest.mark.asyncio
 async def test_a_repaint_after_enter_is_polled_until_the_composer_settles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pane = _ScriptedPane([ComposerRead("unknown"), ComposerRead("empty")])
+    pane = _ScriptedPane([ComposerRead("empty"), ComposerRead("unknown"), ComposerRead("empty")])
 
     assert (await _submit(pane, monkeypatch, verify_seconds=1.0)).ok is True
     assert pane.typed == [f"{_TEXT}\n"]
@@ -329,7 +334,9 @@ async def test_a_repaint_after_enter_is_polled_until_the_composer_settles(
 async def test_stale_empty_frame_does_not_hide_a_held_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pane = _ScriptedPane([ComposerRead("empty"), ComposerRead("draft", _TEXT)])
+    pane = _ScriptedPane(
+        [ComposerRead("empty"), ComposerRead("empty"), ComposerRead("draft", _TEXT)]
+    )
 
     result = await _submit(pane, monkeypatch, verify_seconds=0.02)
 
@@ -395,7 +402,7 @@ async def test_unreadable_draft_is_not_reported_submitted(
         unreadable_draft = detector.composer_read(frame)
         detector.composer_read(frame)
 
-    pane = _ScriptedPane([unreadable_draft])
+    pane = _ScriptedPane([ComposerRead("empty"), unreadable_draft])
     monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.02)
     result = await _submit(pane, monkeypatch, verify_seconds=0.01)
 
@@ -417,7 +424,9 @@ async def test_unreadable_draft_is_not_reported_submitted(
 async def test_held_draft_is_submitted_by_a_second_enter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pane = _ScriptedPane([ComposerRead("draft", _TEXT), ComposerRead("empty")])
+    pane = _ScriptedPane(
+        [ComposerRead("empty"), ComposerRead("draft", _TEXT), ComposerRead("empty")]
+    )
 
     assert (await _submit(pane, monkeypatch)).ok is True
     assert pane.typed == [f"{_TEXT}\n"]
@@ -428,7 +437,7 @@ async def test_held_draft_is_submitted_by_a_second_enter(
 async def test_held_retry_logs_at_debug_and_exhaustion_still_fails(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    pane = _ScriptedPane([ComposerRead("draft", _TEXT)])
+    pane = _ScriptedPane([ComposerRead("empty"), ComposerRead("draft", _TEXT)])
     monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.02)
 
     with caplog.at_level(logging.DEBUG, logger="gobby.terminals.pane_io"):
@@ -447,11 +456,66 @@ async def test_held_retry_logs_at_debug_and_exhaustion_still_fails(
 async def test_an_unreadable_composer_after_a_held_read_is_unverified(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pane = _ScriptedPane([ComposerRead("draft", _TEXT), ComposerRead("unknown")])
+    pane = _ScriptedPane(
+        [ComposerRead("empty"), ComposerRead("draft", _TEXT), ComposerRead("unknown")]
+    )
 
     result = await _submit(pane, monkeypatch)
 
     assert result.ok is False
     assert result.error_code == "submit_unverified"
     assert pane.typed == [f"{_TEXT}\n"]
+    assert pane.keys == ["enter", "enter"]
+
+
+#: A wake that was typed but never submitted, as a stuck seat shows it (#23730).
+_STUCK_DRAFT = "[Gobby] Check messages"
+
+
+@pytest.mark.asyncio
+async def test_an_ignored_enter_under_an_existing_draft_is_not_reported_submitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``gclient send-keys REF " " --enter`` on a seat whose composer already holds a draft.
+
+    The typed text lands behind the draft, so after an ignored Enter the composer
+    still starts with the draft, not with the text. Matching on the text alone read
+    that as ``left`` and reported a submit that never happened.
+    """
+    pane = _ScriptedPane([ComposerRead("draft", _STUCK_DRAFT)])
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.02)
+
+    result = await _submit(pane, monkeypatch, verify_seconds=0.01, text=" ")
+
+    assert result.ok is False
+    assert result.error_code == TEXT_NOT_SUBMITTED_ERROR_CODE
+    assert pane.typed == [" \n"]
+    assert pane.keys == ["enter", "enter"]
+
+
+@pytest.mark.asyncio
+async def test_an_existing_draft_that_leaves_on_enter_is_submitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pane = _ScriptedPane([ComposerRead("draft", _STUCK_DRAFT), ComposerRead("empty")])
+
+    result = await _submit(pane, monkeypatch, text=" ")
+
+    assert result.ok is True
+    assert pane.typed == [" \n"]
+    assert pane.keys == ["enter"]
+
+
+@pytest.mark.asyncio
+async def test_trailing_whitespace_in_the_text_does_not_hide_a_held_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The composer read trims its line, so the held match must trim the text too."""
+    pane = _ScriptedPane([ComposerRead("empty"), ComposerRead("draft", "/compact")])
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.02)
+
+    result = await _submit(pane, monkeypatch, verify_seconds=0.01, text="/compact ")
+
+    assert result.ok is False
+    assert result.error_code == TEXT_NOT_SUBMITTED_ERROR_CODE
     assert pane.keys == ["enter", "enter"]

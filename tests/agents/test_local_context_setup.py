@@ -119,7 +119,6 @@ async def _spawn_request(
         ) as execute_spawn,
     ):
         result = await spawn_agent_impl(
-            terminal_backend="native",
             prompt="test local context setup",
             runner=runner,
             parent_session_id="parent-session",

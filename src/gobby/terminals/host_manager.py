@@ -744,7 +744,7 @@ class TerminalHostManager:
         if client is None:
             try:
                 client = await self._connect()
-            except (OSError, ConnectionError) as exc:
+            except (OSError, ConnectionError, HostUnavailableError) as exc:
                 logger.info("no gterm host answered the control socket: %s", exc)
                 client = None
             if client is not None:

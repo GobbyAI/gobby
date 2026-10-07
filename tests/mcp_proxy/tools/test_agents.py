@@ -1947,6 +1947,7 @@ class TestEndAgentRun:
 
         def complete_run(run_id: str, **_completion: object) -> bool:
             events.append(("complete", run_id, None))
+            mock_run.status = "success"
             return True
 
         async def kill_process(*args: Any, **kwargs: Any) -> dict[str, bool]:
@@ -2033,7 +2034,12 @@ class TestEndAgentRun:
         )
         runner.run_storage.get_by_session.return_value = mock_run
         runner.get_run.return_value = mock_run
-        runner.complete_run.return_value = True
+
+        def complete_run(_run_id: str, **_completion: object) -> bool:
+            mock_run.status = "success"
+            return True
+
+        runner.complete_run.side_effect = complete_run
 
         ism_manager = InterSessionMessageManager(temp_db)
         session_manager = MagicMock()

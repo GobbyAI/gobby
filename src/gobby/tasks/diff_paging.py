@@ -13,6 +13,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal, Protocol, TypedDict
 
+from gobby.tasks.commit_graph import CommitGraph
 from gobby.tasks.diff_manifest import (
     Base64Content as Base64Content,
 )
@@ -257,6 +258,29 @@ async def _canonicalize_commits(
     return canonical
 
 
+async def _merge_views(
+    commits: Sequence[str],
+    *,
+    cwd: Path,
+    subprocess_deadline: float | None,
+    git_timeout_seconds: float,
+) -> dict[str, str]:
+    """Each linked commit's ``git show`` merge option, classified against the whole set."""
+    linked = list(commits)
+    if not linked:
+        return {}
+    graph = await CommitGraph.load(
+        linked,
+        cwd=cwd,
+        timeout=_remaining_timeout(
+            subprocess_deadline=subprocess_deadline, git_timeout_seconds=git_timeout_seconds
+        ),
+    )
+    if graph is None:
+        raise DiffPagingError("git_failed", "linked commit ancestry did not load")
+    return {sha: graph.merge_view(sha, linked) for sha in linked}
+
+
 def decode_content(content: EncodedContent) -> bytes:
     if content["encoding"] == "utf-8":
         return content["text"].encode("utf-8")
@@ -281,6 +305,7 @@ def _encode_window(value: bytes) -> tuple[EncodedContent, int]:
 async def _numstat_totals(
     commit: str,
     *,
+    merge_view: str,
     cwd: Path,
     subprocess_deadline: float | None,
     git_timeout_seconds: float,
@@ -289,7 +314,7 @@ async def _numstat_totals(
         [
             "--literal-pathspecs",
             "show",
-            "--diff-merges=first-parent",
+            merge_view,
             "--format=",
             "--numstat",
             "-z",
@@ -307,6 +332,7 @@ async def _numstat_totals(
 async def _manifest_page_candidates(
     commits: Sequence[str],
     *,
+    merge_views: dict[str, str],
     offset: int,
     limit: int,
     wanted_selector: str | None,
@@ -335,7 +361,7 @@ async def _manifest_page_candidates(
             [
                 "--literal-pathspecs",
                 "show",
-                "--diff-merges=first-parent",
+                merge_views[commit],
                 "--format=",
                 "--name-status",
                 "-z",
@@ -352,6 +378,7 @@ async def _manifest_page_candidates(
         if len(items) > first_item:
             numstat = await _numstat_totals(
                 commit,
+                merge_view=merge_views[commit],
                 cwd=cwd,
                 subprocess_deadline=subprocess_deadline,
                 git_timeout_seconds=git_timeout_seconds,
@@ -415,6 +442,7 @@ def _validate_tokens(
 async def _stream_diff_view(
     *,
     commits: Sequence[str],
+    merge_views: dict[str, str],
     selected_commit: str | None,
     raw_path: bytes | None,
     include_uncommitted: bool,
@@ -452,7 +480,7 @@ async def _stream_diff_view(
         args: list[str | bytes] = [
             "--literal-pathspecs",
             "show",
-            "--diff-merges=first-parent",
+            merge_views[selected_sha],
             "--format=",
             "--no-ext-diff",
             "--no-textconv",
@@ -742,8 +770,15 @@ async def _get_page(
             raise DiffPagingError("commit_not_linked", "commit is not linked to the task")
         selected_commit = requested
 
+    merge_views = await _merge_views(
+        canonical_commits,
+        cwd=repo,
+        subprocess_deadline=subprocess_deadline,
+        git_timeout_seconds=git_timeout_seconds,
+    )
     manifest_candidates, manifest_total, path_match = await _manifest_page_candidates(
         canonical_commits,
+        merge_views=merge_views,
         offset=manifest_offset,
         limit=manifest_limit,
         wanted_selector=path_selector,
@@ -788,6 +823,7 @@ async def _get_page(
     else:
         await _stream_diff_view(
             commits=canonical_commits,
+            merge_views=merge_views,
             selected_commit=selected_commit,
             raw_path=raw_path,
             include_uncommitted=include_uncommitted,

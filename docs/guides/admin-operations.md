@@ -276,9 +276,6 @@ tree. Inspect the published manifest and each store's archive/restore evidence;
 an existing archive alone is insufficient. The normal command coordinates a
 stopped-daemon maintenance window and restores prior daemon lifecycle.
 
-The `--epoch` option is for a matching hub-maintenance child invocation, which
-owns lifecycle and leaves the daemon stopped. Do not supply a made-up epoch.
-
 `hub-backup restore` verifies the manifest and requires the daemon stopped plus
 an explicit `--database-url` target. It restores hub files, PostgreSQL globals
 and data, and reconciles principals. It does not automatically restore every
@@ -322,9 +319,6 @@ pending handoffs. Inspect the reported blocker. `--wait` defers eligible work;
 Native terminals survive ordinary daemon restarts; `--terminals` drains them.
 
 For schema disagreement, use the coherent [cutover procedure](release-guide.md#local-install-check).
-For interrupted destructive maintenance, inspect `gobby hub-maintenance status`
-and use `resume` with the hub-recorded campaign state. `abort` records a
-partial-state disposition and releases the fence; it is not a rollback.
 
 ## Setup And Diagnostics
 
@@ -385,7 +379,6 @@ Use progressive discovery before calling any server.
 - `src/gobby/cli/service.py`: service manager CLI.
 - `src/gobby/cli/pack.py`: pack/unpack.
 - `src/gobby/cli/hub_backup/`: verified hub backups and restore.
-- `src/gobby/cli/hub_maintenance.py`: fenced maintenance campaigns.
 - `src/gobby/servers/routes/auth.py`: auth HTTP routes.
 - `src/gobby/servers/routes/admin/`: setup, health, status, metrics, usage,
   savings, and lifecycle routes.

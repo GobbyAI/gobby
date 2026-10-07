@@ -14,9 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from gobby.app_context import get_app_context
 from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from gobby.utils.url_sanitize import sanitize_url
 from gobby.worktrees.git import WorktreeGitManager
+from gobby.worktrees.occupancy import refuse_occupied_worktree
 
 logger = logging.getLogger(__name__)
 CLONES_ROOT = Path.home() / ".gobby" / "clones"
@@ -505,6 +507,15 @@ class CloneGitManager:
                 success=True,
                 message=f"Clone already does not exist: {clone_path}",
             )
+
+        # Every caller runs in the daemon; without its container there is no hub to ask.
+        services = get_app_context()
+        if services is not None:
+            occupied = await asyncio.to_thread(
+                refuse_occupied_worktree, services.database, str(clone_path)
+            )
+            if occupied is not None:
+                return GitOperationResult(success=False, message=occupied, error=occupied)
 
         try:
             # Check for uncommitted changes unless force

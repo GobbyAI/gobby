@@ -923,7 +923,7 @@ class TestComputeSandboxPaths:
             for name in (
                 "bootstrap.yaml",
                 ".secret_kek",
-                "local_cli_token",
+                "break_glass",
                 "gcode-runtime",
                 "tools/srt",
             )
@@ -933,12 +933,12 @@ class TestComputeSandboxPaths:
             for name in (
                 "bootstrap.yaml",
                 ".secret_kek",
-                "local_cli_token",
+                "break_glass",
                 "gcode-runtime",
                 "tools/srt",
             )
         }
-        write_protected_names = ("bootstrap.yaml", ".secret_kek", "local_cli_token", "tools/srt")
+        write_protected_names = ("bootstrap.yaml", ".secret_kek", "break_glass", "tools/srt")
         literal_write_protected = {str(gobby_home / name) for name in write_protected_names}
         resolved_write_protected = {
             str((gobby_home / name).resolve()) for name in write_protected_names
@@ -1210,6 +1210,7 @@ class TestToolchainGrants:
         for relative in relative_roots:
             (home / relative).mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        monkeypatch.setenv("HOME", str(home))
         monkeypatch.setenv("GOBBY_HOME", str(home / ".gobby"))
         return home
 
@@ -1468,6 +1469,7 @@ class TestRtkSandboxGrants:
         workspace = tmp_path / "workspace"
         binary = home / ".gobby" / "bin" / "rtk"
         monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        monkeypatch.setenv("HOME", str(home))
         workspace.mkdir()
         binary.parent.mkdir(parents=True)
         binary.touch()
@@ -1502,6 +1504,7 @@ class TestRtkSandboxGrants:
         home = tmp_path / "home"
         workspace = tmp_path / "workspace"
         monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        monkeypatch.setenv("HOME", str(home))
         workspace.mkdir()
         expected = platform_paths(home=home)
         expected.data_dir.mkdir(parents=True)
@@ -1562,6 +1565,7 @@ class TestSandboxCacheProvisioning:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
         project_root = tmp_path / "project"
         workspace = tmp_path / "worktree"
         daemon_path = tmp_path / "daemon-cache"

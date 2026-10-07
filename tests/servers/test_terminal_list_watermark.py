@@ -327,7 +327,6 @@ async def test_create_and_kill_publish_ordered_lifecycle_events(
     )
     server.terminal_manager = manager
     server.terminal_runtime_registry = SimpleNamespace(resolve=lambda _backend: runtime)
-    server.terminal_config = SimpleNamespace(default_backend="native")
     monkeypatch.setattr(
         "gobby.terminals.web_spawn.spawn_web_terminal",
         AsyncMock(return_value=WebSpawnResult(True, row.id)),

@@ -415,10 +415,16 @@ def resolve_edit_path(
         return normalize_known_path(path, repo_path)
     if os.path.isabs(path):
         return os.path.realpath(path)
+    cwd = tool_workdir(arguments)
+    return os.path.realpath(os.path.join(cwd, path)) if cwd is not None else None
+
+
+def tool_workdir(arguments: dict[str, Any]) -> str | None:
+    """Return the absolute working directory a tool call names, if any."""
     for key in ("workdir", "cwd"):
         cwd = arguments.get(key)
         if isinstance(cwd, str) and os.path.isabs(cwd):
-            return os.path.realpath(os.path.join(cwd, path))
+            return cwd
     return None
 
 

@@ -166,13 +166,8 @@ class TestGetPipelineExecutor:
         assert executor is None
         assert container._project_infra_cache == {}
 
-    def test_lazy_creation_runs_startup_sweep(self) -> None:
-        """Lazily created executors sweep restart-orphaned RUNNING executions.
-
-        Per-project executors are the only sweep point for projects outside
-        the runner's home project (#17756); the sweep delegates to the
-        execution manager's fail_stale_running_executions.
-        """
+    def test_lazy_creation_leaves_recovery_to_runner(self) -> None:
+        """Lazy creation must preserve live runs and pre-start resumable runs."""
         startup_execution_manager = MagicMock()
         project_execution_manager = MagicMock()
         project_execution_manager.fail_stale_running_executions.return_value = 0
@@ -192,24 +187,8 @@ class TestGetPipelineExecutor:
         assert executor is not None
         assert executor.execution_manager is project_execution_manager
         assert container.get_pipeline_executor(project_id="proj-1") is executor
-        project_execution_manager.fail_stale_running_executions.assert_called_once_with(
-            exclude_ids=set()
-        )
+        project_execution_manager.fail_stale_running_executions.assert_not_called()
         startup_execution_manager.fail_stale_running_executions.assert_not_called()
-
-    def test_startup_sweep_failure_does_not_block_lazy_creation(self) -> None:
-        """A sweep failure must not make the executor unavailable."""
-        execution_manager = MagicMock()
-        execution_manager.fail_stale_running_executions.side_effect = RuntimeError("db down")
-        container = _make_container(
-            database=MagicMock(),
-            workflow_loader=MagicMock(),
-            pipeline_execution_manager=execution_manager,
-        )
-
-        executor = container.get_pipeline_executor(project_id="proj-1")
-
-        assert executor is not None
 
 
 def test_get_git_manager_uses_machine_checkout(  # tdd-red window

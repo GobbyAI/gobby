@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.hooks import grok_pending_context
 from gobby.hooks.agent_run_ingress import (
     TERMINAL_INGRESS_HOOK_TYPES,
+    session_end_targets_live_cli,
     validate_managed_agent_hook,
 )
 from gobby.hooks.broadcaster import schedule_hook_broadcast
@@ -38,6 +39,7 @@ from gobby.hooks.session_activation import reconcile_session_activation
 from gobby.hooks.session_materialize import activate_deferred_session, has_deferred_help_activation
 from gobby.hooks.session_summary_wiring import build_session_summary_dispatcher
 from gobby.hooks.session_types import HookSessionManager
+from gobby.storage.hub.read_scope import hub_read_scope
 from gobby.telemetry.tracing import create_span
 
 if TYPE_CHECKING:
@@ -233,7 +235,8 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
             },
         ) as span:
             try:
-                response = self._handle_internal(event)
+                with hub_read_scope():
+                    response = self._handle_internal(event)
                 if span.is_recording():
                     span.set_attribute("decision", response.decision)
                 return response
@@ -261,7 +264,8 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
             },
         ) as span:
             try:
-                response = await self._handle_internal_async(event)
+                with hub_read_scope():
+                    response = await self._handle_internal_async(event)
                 if span.is_recording():
                     span.set_attribute("decision", response.decision)
                 return response
@@ -371,6 +375,16 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
                 )
                 return HookResponse(decision="allow")
             if gated:
+                if event.event_type == HookEventType.SESSION_END and platform_session_id:
+                    session = self._session_manager.get(platform_session_id)
+                    if session_end_targets_live_cli(
+                        event, session, local_machine_id=self.get_machine_id()
+                    ):
+                        self.logger.info(
+                            "Ignoring SESSION_END for live terminal CLI session %s",
+                            platform_session_id,
+                        )
+                        return HookResponse(decision="allow")
                 ingress = validate_managed_agent_hook(
                     event,
                     session_manager=self._session_manager,

@@ -26,6 +26,20 @@ or mismatched ancestor paths become explicit child indexing gaps. A selected com
 with no matching live indexed checkout has no inherited rows and uses the cold path.
 Ask continues to read the caller's live index; its commit IDs do not select an index.
 
+A fork from a dirty parent is clean. A new worktree forked from a caller checkout
+with modified, staged, deleted, or untracked files holds the selected commit's
+tracked tree and none of those changes. After isolation repair, every path tracked
+at the selected commit holds that commit's bytes, except the declared isolation
+transforms `.mcp.json` and `.factory/hooks/hooks.json`. Each transform's output
+is a deterministic function of the selected commit's bytes at that path plus the
+isolation parameters, and it never reads the parent's working tree or index.
+Provider hook repair never writes over a tracked path. `git status --porcelain` in
+the fork has no line that `src/gobby/agents/worktree_reuse.py::_blocking_status_lines`
+counts as blocking, the same check a reused worktree must pass. Its pin inherits
+none of the parent's uncommitted content (B2.2), so the child indexes those paths
+from the selected commit's tree. A1.9 proves the tree byte for byte, and B2.2
+proves the index. A reused worktree follows A1.4's rebase instead.
+
 The pin governs every read lane, including graph and vector, and remains a
 content-GC root until the child overlay is purged. When a source projection moves,
 stale graph and vector rows are excluded immediately, and the existing daemon
@@ -42,7 +56,8 @@ to host load. Memory f1e1200c requires reused worktree conflicts to preserve
 continuation ancestry and return a recoverable error.
 
 Idle baseline, observed on #23433 at 2026-10-05 02:17 CDT (run
-`d50ddf68-0066-4ce2-b39f-316bdbc36b41`): a Claude worktree spawn with base branch
+`d50ddf68-0066-4ce2-b39f-316bdbc36b41`): a worktree spawn (agent `default` on the
+Claude provider) with base branch
 `0.5.0`, forked at `084f759f15`, no other agents running, a healthy parent index at
 that commit, and no content difference from the indexed parent commit. The
 `spawn_agent` call took 33.9 s wall. `phase_timings_ms` recorded
@@ -51,8 +66,12 @@ that commit, and no content difference from the indexed parent commit. The
 timed phase under 100 ms; the timed phases sum to 9.7 s, leaving about 24 s in no
 timed phase. The daemon log timeline: 02:17:35 worktree start, 02:17:38 isolation
 sidecar written, 02:17:58 MCP config written, 02:18:08 SRT verification,
-02:18:09 Claude trust pre-approved and timings logged. The parent index's
-`last_indexed_at` advanced to 07:18:54 UTC, after the spawn.
+02:18:09 provider trust pre-approval (Claude for this run) and timings logged.
+The parent index's `last_indexed_at` advanced to 07:18:54 UTC, after the spawn.
+The defect is not specific to Claude: preflight admission in
+`code_index_preflight_mode` (`src/gobby/mcp_proxy/tools/spawn_agent/_code_index.py`)
+depends on the planning context, the checkout mode and the task category, never on
+the provider.
 
 Attribution. The 7.064 s `code_index_index` on a zero-diff fork is this plan's
 defect against Josh's 2026-10-05 contract that a new worktree should "copy, clone,
@@ -167,7 +186,7 @@ seeding is outside this plan.
 
 Planned checks: focused isolated pytest for
 `tests/agents/test_spawn_isolation_timing.py` and `tests/agents/test_isolation.py`,
-then one load-matched idle zero-diff Claude worktree spawn after landing whose
+then one load-matched idle zero-diff worktree spawn after landing whose
 subphase breakdown and residual are recorded on the T1 leaf.
 
 **Granularity:** Eleven production files change, but they carry one timing map
@@ -204,6 +223,7 @@ Targets:
 - `src/gobby/mcp_proxy/tools/spawn_agent/_isolation_prepare.py`
 - `src/gobby/agents/isolation_worktree.py::*` — scope-reason: preparation and cleanup share fork provenance
 - `src/gobby/agents/worktree_reuse.py::*` — scope-reason: refresh, conflict, and pin provenance share one continuation path
+- `src/gobby/agents/isolation_repair.py::*` — scope-reason: hook copying skips tracked paths and the `.mcp.json` transform reads the selected commit's bytes
 - `src/gobby/mcp_proxy/tools/worktrees/_create.py::*` — scope-reason: omitted base selects the caller's HEAD and remote-style refs are accepted
 - `src/gobby/cli/worktrees.py::*` — scope-reason: CLI creation defaults to the caller's HEAD
 - `src/gobby/servers/routes/source_control_worktrees.py::*` — scope-reason: client worktree creation forks the exact selected commit
@@ -301,8 +321,42 @@ case). The `create_worktree` hits in `tests/cli/test_cli_worktrees_coverage.py`,
 `tests/integration/test_worktree_lifecycle.py` only build stored `Worktree`
 fixtures with `base_branch="main"`, which remains a valid recorded branch.
 `src/gobby/agents/resume_metadata.py` keeps its `base_branch: str` parameter,
-because handlers always report a branch name. Planned check: isolated focused
-pytest for local HEAD, unpushed commits, detached HEAD, explicit local `main`
+because handlers always report a branch name.
+
+Isolation repair can leak parent bytes into a fork (Adversary gobby#15471,
+finding WI-001, 2026-10-06). The worktree handler runs
+`repair_isolation_environment` after creation. Its first step,
+`_copy_cli_hooks` in `src/gobby/agents/isolation_repair.py`, copies the parent's
+whole live `.claude/` or `.codex/` directory over the fork with
+`shutil.copytree(..., dirs_exist_ok=True)`, so a tracked file under either
+directory takes the parent's working-tree bytes. `apply_isolation_git_hygiene`
+then marks tracked generated paths skip-worktree, and `_blocking_status_lines`
+ignores the provider subtrees, so a status check alone cannot see the leak. Under
+the Orchestrator's 2026-10-06 rulings (16:52 and 16:53 CT), `_copy_cli_hooks` reads
+the fork's tracked paths under the provider directory with `git ls-files` and copies
+only parent paths outside that set. The declared isolation transforms are
+`.mcp.json` and `.factory/hooks/hooks.json`. `_patch_mcp_config_for_isolation`
+reads the fork's `.mcp.json`, which holds the selected commit's bytes when that
+commit tracks it, replaces only `mcpServers.gobby` with the isolation entry, and
+writes the result. When the selected commit does not track the file, it writes
+the isolation entry alone, as today. It never reads the parent's `.mcp.json`. The
+Droid hook repair already merges Gobby's hook groups into the fork's own
+`hooks.json`. `ensure_project_json_for_isolation` copies `.gobby/project.json`
+only when the fork lacks it, so a tracked copy keeps the selected commit's bytes.
+Default `global` hook installs live outside the checkout. A `project`-mode hook
+entry that exists only as an uncommitted edit to a tracked provider file is parent
+dirt and does not reach the fork.
+
+A1.9 drives the worktree handler's `prepare_environment` with the `codex`
+provider against a real temporary repository. The selected commit tracks
+`.codex/dirty-parent-sentinel.txt` and a `.mcp.json` holding one non-Gobby server.
+The parent checkout carries a modified, a staged, a deleted, and an untracked
+file, plus parent-only edits to both tracked files, so isolation repair runs
+inside the checked fork. The test compares every tracked child path outside the
+two transforms with `git show <selected>:<path>`, compares `.mcp.json` with the
+selected commit's server set plus the isolation `gobby` entry, and asserts that
+the parent's untracked file is absent. Planned check: isolated focused
+pytest for local HEAD, unpushed commits, a dirty parent, detached HEAD, explicit local `main`
 while on another branch, explicit local and remote refs, mismatched existing
 branch, reuse conflict, and each public creation surface, plus every migrated
 test file above.
@@ -323,6 +377,7 @@ independent work.
 - A1.6 - The worktree hook forks the exact local HEAD without an origin fallback. test: `tests/hooks/test_misc_handlers.py::TestWorktreeHandlers::test_worktree_create_uses_exact_local_head`.
 - A1.7 - Client worktree creation forks the exact selected commit. test: `tests/servers/test_source_control_worktrees.py::test_create_client_worktree_uses_exact_selected_commit`.
 - A1.8 - An omitted agent base reaches the handler as `None` and resolves the target checkout's HEAD once; a detached HEAD fails recoverably without side effects, and an explicit local `main` on another branch forks local `main`. test: `tests/agents/test_worktree_fork_commit.py::test_omitted_base_survives_to_one_head_resolution`.
+- A1.9 - A new worktree forked from a parent checkout with modified, staged, deleted, and untracked files, including a tracked provider-directory file and a tracked `.mcp.json` edited only in the parent, holds the selected commit's bytes at every tracked path outside the declared isolation transforms, holds a `.mcp.json` derived only from the selected commit's bytes, lacks the parent's untracked file, and has no `git status --porcelain` line `_blocking_status_lines` counts as blocking. test: `tests/agents/test_worktree_fork_commit.py::test_dirty_parent_fork_yields_clean_worktree`.
 
 ### A2 Local clone selection and Git module extraction (depends: A1)
 `kind: deliverable`
@@ -923,6 +978,23 @@ C2's signature and on the pinned read and retention paths it measures.
   `_implementation.py` to 926 lines in T1 and A1. No acceptance item changed. The
   stale M1 is withdrawn whole; the Adversary gobby#15401 re-derives it with the
   canonical tools.
+- 2026-10-06: Amendment under #23696 (Writer gobby#15528, Lane Manager
+  gobby#15389), applying Josh's rulings on #23433 relayed by the Assistant
+  gobby#15070. About 15:55, asked whether to add a guarantee and test that a
+  fork from a dirty parent yields a clean worktree: "Yes". R1 states the
+  guarantee for the tree and the index, A1 gains A1.9 with its test, and B2.2
+  remains the index proof. About 16:00: "And the name is misleading, it's not
+  just Claude". R2 records the idle baseline's provider as a run attribute and
+  cites `code_index_preflight_mode` for provider neutrality, and T1's planned
+  spawn check names no provider. Two remaining Claude mentions in R2 describe
+  that run, not the defect. The Plan Adversary gobby#15471's finding WI-001
+  showed that provider hook repair copies the parent's working bytes over
+  tracked provider files. Under the Orchestrator gobby#14972's 16:52 and 16:53 CT
+  rulings, which allow no exception to the guarantee, A1 owns `_copy_cli_hooks` and
+  `_patch_mcp_config_for_isolation`, `.mcp.json` and `.factory/hooks/hooks.json`
+  are the only declared isolation transforms, and A1.9 compares the child's bytes
+  with the selected commit. M1 changes for A1 only (A1.9 and two Targets); the
+  Plan Adversary re-derives and applies it.
 
 ## V2: Verification
 `kind: verification`
@@ -989,7 +1061,15 @@ subphases, residual) against it.
 
     A1.8: An omitted agent base reaches the handler as `None` and resolves the target
     checkout''s HEAD once; a detached HEAD fails recoverably without side effects,
-    and an explicit local `main` on another branch forks local `main`. test: `tests/agents/test_worktree_fork_commit.py::test_omitted_base_survives_to_one_head_resolution`.'
+    and an explicit local `main` on another branch forks local `main`. test: `tests/agents/test_worktree_fork_commit.py::test_omitted_base_survives_to_one_head_resolution`.
+
+    A1.9: A new worktree forked from a parent checkout with modified, staged, deleted,
+    and untracked files, including a tracked provider-directory file and a tracked
+    `.mcp.json` edited only in the parent, holds the selected commit''s bytes at every
+    tracked path outside the declared isolation transforms, holds a `.mcp.json` derived
+    only from the selected commit''s bytes, lacks the parent''s untracked file, and
+    has no `git status --porcelain` line `_blocking_status_lines` counts as blocking.
+    test: `tests/agents/test_worktree_fork_commit.py::test_dirty_parent_fork_yields_clean_worktree`.'
   labels:
   - covers:workspace-index-pin:A1:A1.1
   - covers:workspace-index-pin:A1:A1.2
@@ -999,6 +1079,7 @@ subphases, residual) against it.
   - covers:workspace-index-pin:A1:A1.6
   - covers:workspace-index-pin:A1:A1.7
   - covers:workspace-index-pin:A1:A1.8
+  - covers:workspace-index-pin:A1:A1.9
   tdd: true
   source_section: A1
   implementation_domain: backend

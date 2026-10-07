@@ -129,7 +129,7 @@ def _task(
         task.id,
         allow_automation=fields.pop("allow_automation", True),
         task_type=fields.pop("task_type", "task"),
-        assigned_agent=fields.pop("assigned_agent", "backend-developer"),
+        assigned_agent=fields.pop("assigned_agent", "developer"),
         checkout_mode=fields.pop("checkout_mode", "none"),
         claimed_by_session_id=fields.pop("claimed_by_session_id", None),
         **fields,
@@ -389,7 +389,7 @@ def test_development_prompt_includes_persisted_epic_failure_context(
         sample_project,
         title="Reopened leaf",
         stage_state="in_progress",
-        assigned_agent="backend-developer",
+        assigned_agent="developer",
     )
     temp_db.execute(
         """

@@ -7,7 +7,7 @@ use crate::grant::{
     encode_grant_header,
 };
 use crate::local_token::{
-    AUTHORIZATION_HEADER, authorization_bearer, read_local_cli_token as read_shared_local_cli_token,
+    AUTHORIZATION_HEADER, authorization_bearer, read_api_key as read_shared_api_key,
 };
 
 pub(crate) fn daemon_client() -> Result<Client, AiError> {
@@ -24,8 +24,8 @@ pub(crate) fn daemon_url(path: &str) -> String {
     )
 }
 
-pub(crate) fn read_local_cli_token() -> Result<String, AiError> {
-    read_shared_local_cli_token().map_err(|error| AiError::not_configured(None, error.to_string()))
+pub(crate) fn read_api_key() -> Result<String, AiError> {
+    read_shared_api_key().map_err(|error| AiError::not_configured(None, error.to_string()))
 }
 
 pub(crate) fn with_local_token(request: RequestBuilder, token: &str) -> RequestBuilder {

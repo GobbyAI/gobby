@@ -6,26 +6,19 @@ import json
 import os
 import subprocess
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from importlib import import_module
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
-from uuid import UUID
 
 import click
 import psycopg
 import pytest
 from click.testing import CliRunner
-from psycopg.conninfo import conninfo_to_dict
 
 from gobby.cli import postgres_backup
 from gobby.cli.hub_backup import cli, rehearsal
 from gobby.cli.hub_backup.files_home import maintenance_claim
 from gobby.runner_pid_file import claim_pid_file
-from gobby.storage.maintenance_epoch import MaintenanceEpoch
-
-hub_maintenance = import_module("gobby.cli.hub_maintenance")
 
 
 @dataclass
@@ -139,7 +132,6 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> RehearsalHarness:
     monkeypatch.delenv("PGHOSTADDR", raising=False)
     monkeypatch.delenv("PGSERVICE", raising=False)
     monkeypatch.setattr(rehearsal, "ensure_docker_allowed", MagicMock())
-    monkeypatch.setattr(rehearsal, "discover_active_maintenance_epoch", lambda url: None)
     monkeypatch.setattr(subprocess, "run", harness.run)
     monkeypatch.setattr(psycopg, "connect", connect)
     return harness
@@ -243,54 +235,20 @@ def test_profile_rejects_falkordb_mount_outside_the_image_storage_directory(
     stack.connect.assert_not_called()
 
 
-def test_profile_binds_discovered_epoch_without_changing_environment(
-    stack: RehearsalHarness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    epoch = MaintenanceEpoch(
-        id=UUID("a260be66-d16e-4a27-bc5b-d1d1b8d2c617"),
-        campaign="purge",
-        opened_at=datetime(2026, 9, 5, tzinfo=UTC),
-        opened_by="hub-maintenance:purge",
-        scope_note="isolated test",
-        released_at=None,
-        released_by_command=None,
-    )
-    discover = MagicMock(return_value=epoch)
-    monkeypatch.setattr(rehearsal, "discover_active_maintenance_epoch", discover)
-    before = dict(os.environ)
-    assert rehearsal.load_rehearsal_profile(stack.database_url) is not None
-    discover.assert_called_once_with(stack.database_url)
-    target = conninfo_to_dict(stack.connect.call_args.args[0])
-    assert target.pop("options") == f"-c gobby.maintenance_epoch={epoch.id}"
-    assert target == conninfo_to_dict(stack.database_url)
-    assert dict(os.environ) == before
-
-
-def test_profile_identity_without_epoch_keeps_original_connection_target(
+def test_profile_identity_uses_the_original_connection_target(
     stack: RehearsalHarness,
 ) -> None:
     assert rehearsal.load_rehearsal_profile(stack.database_url) is not None
     stack.connect.assert_called_once_with(stack.database_url, connect_timeout=5, autocommit=True)
 
 
-@pytest.mark.parametrize("stage", ["discovery", "identity"])
-def test_profile_refuses_unavailable_epoch_or_identity(
-    stack: RehearsalHarness, monkeypatch: pytest.MonkeyPatch, stage: str
-) -> None:
-    error = psycopg.OperationalError("isolated connection unavailable")
-    if stage == "discovery":
-        monkeypatch.setattr(
-            rehearsal, "discover_active_maintenance_epoch", MagicMock(side_effect=error)
-        )
-    else:
-        stack.connect.side_effect = error
+def test_profile_refuses_unavailable_identity(stack: RehearsalHarness) -> None:
+    stack.connect.side_effect = psycopg.OperationalError("isolated connection unavailable")
     with pytest.raises(
         click.ClickException, match="Could not verify rehearsal PostgreSQL identity"
     ):
         rehearsal.load_rehearsal_profile(stack.database_url)
     assert all(command[1] in {"container", "volume", "ps"} for command in stack.calls)
-    if stage == "discovery":
-        stack.connect.assert_not_called()
 
 
 def test_profile_rejects_wrong_database_and_source_identity(stack: RehearsalHarness) -> None:
@@ -375,38 +333,32 @@ def test_archive_readability_probe_uses_owned_postgres(
     assert stack.calls[-1] == ["docker", "exec", "-i", "1" * 64, "pg_restore", "--list"]
 
 
-def test_rehearsal_maintenance_never_controls_installed_daemon(
+def test_rehearsal_never_starts_the_installed_daemon(
     stack: RehearsalHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from gobby.cli.installers import service
 
-    stop = MagicMock(side_effect=AssertionError("global daemon stop called"))
     start = MagicMock(side_effect=AssertionError("global daemon start called"))
-    monkeypatch.setattr(hub_maintenance, "stop_daemon", stop)
     monkeypatch.setattr(service, "get_service_status", start)
-    hub_maintenance._stop_daemon_before_fence(stack.database_url)
     cli._start_daemon()
-    stop.assert_not_called()
     start.assert_not_called()
     assert all(command[1] in {"container", "volume", "ps"} for command in stack.calls)
-    pid_file = stack.path.parent / "gobby.pid"
-    pid_file.write_text(str(os.getpid()))
-    with pytest.raises(click.ClickException, match="daemonless"):
-        hub_maintenance._stop_daemon_before_fence(stack.database_url)
-    stop.assert_not_called()
-    assert pid_file.read_text() == str(os.getpid())
 
 
 def test_profile_accepts_its_held_maintenance_claim_and_rejects_release(
     stack: RehearsalHarness,
 ) -> None:
     home = stack.path.parent
+    # A maintenance claim records its holder in the lock only; the PID file left by
+    # this process's own earlier daemon claim is what the held claim must admit.
+    (home / "gobby.pid").write_text(str(os.getpid()))
     with maintenance_claim(home) as claim:
         profile = rehearsal.load_rehearsal_profile(stack.database_url)
         assert profile is not None
         assert profile.gobby_home == str(home)
         assert claim.role == "maintenance"
-        assert (home / "gobby.pid").read_text() == str(os.getpid())
+        record = json.loads((home / "gobby.pid.lock").read_text())
+        assert (record["role"], record["pid"]) == ("maintenance", os.getpid())
     with pytest.raises(click.ClickException, match="daemonless"):
         rehearsal.load_rehearsal_profile(stack.database_url)
 

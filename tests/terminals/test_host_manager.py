@@ -22,7 +22,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import AttachLocator, Terminal, TerminalManager, native_locator_key
 from gobby.terminals import host_event_reader, host_events
 from gobby.terminals.frame_client import FrameClient
-from gobby.terminals.host_client import HostManagerStopped
+from gobby.terminals.host_client import HostManagerStopped, HostUnavailableError
 from gobby.terminals.host_events import (
     HostInventorySnapshot,
     InputActivityEvent,
@@ -736,6 +736,31 @@ async def test_host_shutdown_escalates(
         assert [args.args[1] for args in kill.call_args_list] == expected_signals
         assert host.last_error == f"gterm host {pid} exited after {rung}"
         assert host._host_exit_deadline_seconds() == pytest.approx(0.2)
+
+
+@pytest.mark.asyncio
+async def test_host_shutdown_escalates_when_the_control_socket_is_not_bound(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A host that has exec'd but not yet bound its control socket is live and
+    # unreachable; the drain must still reach it through the signal rungs.
+    from gobby.terminals.host_protocol import write_pidfile
+
+    pid = 7_450
+    write_pidfile(tmp_path, pid)
+    host = _host(tmp_path, TerminalManager(temp_db), FakeControlClient(host_pid=pid))
+    monkeypatch.setattr(
+        host, "_connect", AsyncMock(side_effect=HostUnavailableError("gterm host unavailable"))
+    )
+    monkeypatch.setattr(host, "_await_host_exit", AsyncMock(side_effect=[False, True]))
+
+    with patch("gobby.terminals.host_manager.os.kill") as kill:
+        await host._host_shutdown()
+
+    assert [args.args for args in kill.call_args_list] == [(pid, signal.SIGTERM)]
+    assert host.last_error == f"gterm host {pid} exited after SIGTERM"
 
 
 @pytest.mark.asyncio

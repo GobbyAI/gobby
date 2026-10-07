@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import psutil
 import pytest
 
 from gobby.agents.tmux.session_manager import TmuxPaneInfo
@@ -16,7 +17,11 @@ from gobby.sessions.liveness_monitor import (
     _TerminalLivenessRecord,
 )
 from gobby.sessions.processor import SessionMessageProcessor
-from gobby.terminal_ownership import OwnershipState
+from gobby.terminal_ownership import (
+    ForegroundOwnershipInspection,
+    OwnershipState,
+    inspect_foreground_ownership,
+)
 
 _LOCAL = "21000000-0000-4000-8000-000000000003"
 _REMOTE = "21000000-0000-4000-8000-000000000004"
@@ -301,6 +306,41 @@ class TestTmuxTargetLiveness:
 
         # A session rebound while the probe ran has moved on and must not match.
         assert storage.expire_snapshots == [("a", _LOCAL, _OBSERVED)]
+
+
+@pytest.mark.asyncio
+async def test_codex_seat_expires_after_its_recorded_pid_disappears(
+    monitor: SessionLivenessMonitor, storage: _Storage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A shared-host end can be ignored; liveness still retires the exited TUI."""
+    record = _record("codex-seat", pane=None, window=None)
+    monkeypatch.setattr(monitor, "_get_active_terminal_sessions", lambda: [record])
+    seat_alive = True
+    process = MagicMock(spec=psutil.Process)
+    assert record.terminal_context is not None
+    process.create_time.return_value = record.terminal_context["parent_create_time"]
+
+    def process_factory(pid: int) -> psutil.Process:
+        assert pid == record.parent_pid
+        if not seat_alive:
+            raise psutil.NoSuchProcess(pid)
+        return process
+
+    def inspect(candidate: _TerminalLivenessRecord) -> ForegroundOwnershipInspection:
+        return inspect_foreground_ownership(
+            candidate,
+            process_factory=process_factory,
+            process_group_factory=lambda pid: pid,
+            foreground_group_factory=lambda pid: pid,
+        )
+
+    monkeypatch.setattr(liveness_mod, "inspect_foreground_ownership", inspect)
+    await monitor._check_sessions()
+    assert storage.expire_calls == []
+
+    seat_alive = False
+    await monitor._check_sessions()
+    assert storage.expire_snapshots == [(record.session_id, _LOCAL, _OBSERVED)]
 
 
 class TestConditionalExpiry:

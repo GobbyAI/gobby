@@ -10,7 +10,7 @@ Provides fixtures for:
 - MCP client connections
 """
 
-import errno
+import asyncio
 import json
 import math
 import os
@@ -24,6 +24,7 @@ import tempfile
 import threading
 import time
 from collections.abc import AsyncGenerator, Callable, Generator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -39,7 +40,10 @@ from websockets.sync.client import connect as connect_websocket
 
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
 from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
-from gobby.guard_set_g import finalize_pidfile_host, socket_dir_from_cmdline
+from gobby.config.terminal_host import TerminalHostConfig
+from gobby.config.terminals import TerminalConfig
+from gobby.guard_set_g import socket_dir_from_cmdline
+from gobby.terminals.host_manager import TerminalHostManager
 from gobby.terminals.host_protocol import read_pidfile, write_pidfile
 from gobby.utils.dependency_requirements import SRT_RELEASE
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
@@ -82,6 +86,10 @@ class DaemonHealthTimeoutError(AssertionError):
         log_tail: str,
         error_log_tail: str,
         mcp_log_tail: str,
+        backend_state: str | None,
+        thread_stack_tail: str,
+        task_stack_tail: str,
+        startup_timing_tail: str,
     ) -> None:
         self.port = port
         self.elapsed_seconds = elapsed_seconds
@@ -94,6 +102,10 @@ class DaemonHealthTimeoutError(AssertionError):
         self.log_tail = log_tail
         self.error_log_tail = error_log_tail
         self.mcp_log_tail = mcp_log_tail
+        self.backend_state = backend_state
+        self.thread_stack_tail = thread_stack_tail
+        self.task_stack_tail = task_stack_tail
+        self.startup_timing_tail = startup_timing_tail
         super().__init__(
             f"Isolated daemon on port {port} did not serve /api/auth/status after "
             f"{elapsed_seconds:.3f}s: attempts={attempts}, connect_refused={connect_refused}, "
@@ -101,7 +113,11 @@ class DaemonHealthTimeoutError(AssertionError):
             f"last_status_code={last_status_code}, process={process_status}\n"
             f"--- daemon log tail ---\n{log_tail}\n"
             f"--- daemon error log tail ---\n{error_log_tail}\n"
-            f"--- mcp log tail ---\n{mcp_log_tail}"
+            f"--- mcp log tail ---\n{mcp_log_tail}\n"
+            f"--- sanitized backend state ---\n{backend_state}\n"
+            f"--- failed-process thread stacks ---\n{thread_stack_tail}\n"
+            f"--- failed-process task stacks ---\n{task_stack_tail}\n"
+            f"--- startup stage timings ---\n{startup_timing_tail}"
         )
 
 
@@ -342,42 +358,24 @@ class DaemonInstance:
             )
 
 
-def _checkout_gdaemon_bin_dir(
-    checkout_gdaemon: Path, pinned_bin_dir: Path, home_dir: str | Path | None
+def _isolated_native_bin_dir(
+    checkout_gdaemon: Path | None, pinned_bin_dir: Path, home_dir: str | Path | None
 ) -> Path:
-    """Link the pinned dir's binaries beside the checkout gdaemon in a fresh dir.
+    """Copy the native set so test provisioning and locks cannot mutate its source.
 
-    The runner resolves every native binary from one dir, so a test pinning its
-    gterm dir would otherwise run that dir's gdaemon. The pinned identity stamp
-    stays out: it describes the gdaemon this dir replaces.
-
-    Pinned files are hard links, never symlinks: gterm pins its own executable
-    and refuses to host when that executable is a symlink. A sandbox that cannot
-    write the pinned dir refuses the link with EPERM, so those files are copied
-    into this temp dir; the installed set itself is never touched. The checkout
-    gdaemon stays a symlink so a rebuild that replaces its inode is still followed.
+    gterm refuses a symlinked executable. Copies also isolate in-place writes,
+    unlike hard links. A checkout gdaemon stays a symlink to follow rebuilds;
+    only that replacement invalidates the pinned set's identity stamp.
     """
     from gobby.utils.native_bin import IDENTITY_STAMP_NAME, native_bin_name
 
     composite = Path(tempfile.mkdtemp(prefix="native-bin-", dir=home_dir))
-    skipped = {native_bin_name("gdaemon"), IDENTITY_STAMP_NAME}
+    skipped = {native_bin_name("gdaemon"), IDENTITY_STAMP_NAME} if checkout_gdaemon else set()
     for entry in pinned_bin_dir.iterdir():
         if entry.is_file() and entry.name not in skipped:
-            try:
-                os.link(entry.resolve(), composite / entry.name)
-            except OSError as exc:
-                if exc.errno == errno.EPERM:
-                    # A sandbox without write access to the pinned dir refuses every link.
-                    shutil.copy2(entry, composite / entry.name)
-                    continue
-                if exc.errno != errno.EXDEV:
-                    raise
-                # No symlink fallback: a symlinked gterm refuses to host.
-                raise RuntimeError(
-                    f"cannot hard-link {entry} into {composite}: {exc}. The pinned native "
-                    "bin dir and the e2e home must share a filesystem."
-                ) from exc
-    (composite / checkout_gdaemon.name).symlink_to(checkout_gdaemon.resolve())
+            shutil.copy2(entry, composite / entry.name)
+    if checkout_gdaemon is not None:
+        (composite / checkout_gdaemon.name).symlink_to(checkout_gdaemon.resolve())
     return composite
 
 
@@ -450,18 +448,17 @@ def prepare_daemon_env(
     from tests.fixtures.gdaemon_binary import select_test_gdaemon
 
     checkout_gdaemon = select_test_gdaemon(root_dir, env, native_bin_name("gdaemon"))
-    pinned_bin_dir = env.get(NATIVE_BIN_DIR_ENV)
-    if (
+    pinned_bin_dir = Path(env.get(NATIVE_BIN_DIR_ENV) or native_bin_dir())
+    if home_dir is not None or (
         checkout_gdaemon is not None
-        and pinned_bin_dir is not None
-        and Path(pinned_bin_dir).resolve() != checkout_gdaemon.parent.resolve()
+        and pinned_bin_dir.resolve() != checkout_gdaemon.parent.resolve()
     ):
         env[NATIVE_BIN_DIR_ENV] = str(
-            _checkout_gdaemon_bin_dir(checkout_gdaemon, Path(pinned_bin_dir), home_dir)
+            _isolated_native_bin_dir(checkout_gdaemon, pinned_bin_dir, home_dir)
         )
     env.setdefault(
         NATIVE_BIN_DIR_ENV,
-        str(checkout_gdaemon.parent if checkout_gdaemon is not None else native_bin_dir()),
+        str(checkout_gdaemon.parent if checkout_gdaemon is not None else pinned_bin_dir),
     )
 
     # Override HOME so that ~/.gobby resolves to <temp>/.gobby instead of
@@ -625,6 +622,8 @@ def wait_for_daemon_health(
     min_attempts: int = DAEMON_HEALTH_MIN_PROBE_ATTEMPTS,
 ) -> None:
     """Wait for isolated daemon health or raise with bounded startup diagnostics."""
+    from tests.e2e.readiness_capture import capture_readiness_timeout, safe_backend_state
+
     start = time.monotonic()
     deadline = start + timeout
     attempts = 0
@@ -632,6 +631,7 @@ def wait_for_daemon_health(
     timed_out = 0
     transport_errors = 0
     last_status_code: int | None = None
+    backend_state: str | None = None
 
     while attempts < min_attempts or time.monotonic() < deadline:
         remaining = max(deadline - time.monotonic(), 0.0)
@@ -643,6 +643,7 @@ def wait_for_daemon_health(
                 timeout=probe_timeout,
             )
             last_status_code = response.status_code
+            backend_state = safe_backend_state(response)
             if response.status_code == 200:
                 return
         except httpx.ConnectError:
@@ -657,6 +658,7 @@ def wait_for_daemon_health(
             time.sleep(min(DAEMON_HEALTH_POLL_INTERVAL_SECONDS, remaining))
 
     elapsed_seconds = time.monotonic() - start
+    capture = capture_readiness_timeout(log_file.parent if log_file is not None else None, process)
 
     def read_tail(path: Path | None, label: str) -> str:
         if path is None:
@@ -696,6 +698,10 @@ def wait_for_daemon_health(
         log_tail=log_tail,
         error_log_tail=error_log_tail,
         mcp_log_tail=mcp_log_tail,
+        backend_state=backend_state,
+        thread_stack_tail=capture.thread_stack_tail,
+        task_stack_tail=capture.task_stack_tail,
+        startup_timing_tail=capture.startup_timing_tail,
     )
 
 
@@ -704,7 +710,7 @@ def wait_for_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> b
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            token = (home / "local_cli_token").read_text().strip()
+            token = daemon_token(home)
             with connect_websocket(
                 f"ws://localhost:{port}",
                 additional_headers={"Authorization": f"Bearer {token}"},
@@ -713,7 +719,7 @@ def wait_for_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> b
                 proxy=None,
             ):
                 return True
-        except (OSError, TimeoutError, WebSocketException):
+        except (OSError, RuntimeError, TimeoutError, WebSocketException):
             time.sleep(0.1)
     return False
 
@@ -792,6 +798,7 @@ def terminate_process_tree(pid: int, timeout: float = 5.0) -> None:
 # Records the pytest process that created a host socket directory, so a later
 # session can stop hosts orphaned when that process died before teardown.
 E2E_HOST_OWNER_FILE = "e2e-owner.pid"
+E2E_HOST_SETTLE_SECONDS = 1.0
 
 
 def create_host_socket_dir(root: Path | None = None, prefix: str = "gh-") -> Path:
@@ -801,29 +808,50 @@ def create_host_socket_dir(root: Path | None = None, prefix: str = "gh-") -> Pat
     return socket_dir
 
 
+def _hosts_serving(socket_dir: Path) -> list[int]:
+    return [
+        process.pid
+        for process in psutil.process_iter(["cmdline"])
+        if socket_dir_from_cmdline(process.info["cmdline"]) == socket_dir
+    ]
+
+
+def _drain_terminal_host(socket_dir: Path) -> None:
+    """Drain through the host's own control socket, escalating to TERM and KILL."""
+    manager = TerminalHostManager(
+        config=TerminalHostConfig(socket_dir=str(socket_dir)),
+        terminal_config=TerminalConfig(),
+    )
+    # Fixture teardown can run inside a test's event loop; drain on a fresh one.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(asyncio.run, manager.stop(drain_host=True)).result()
+
+
 def stop_terminal_host(socket_dir: Path) -> None:
-    """Stop the detached gterm host serving ``socket_dir``.
+    """Stop every detached gterm host serving ``socket_dir``.
 
     The host outlives its daemon by design, so stopping the daemon leaves it
     running. Only a process whose command line is ``gterm host`` with this
-    exact ``--socket-dir`` is signalled.
+    exact ``--socket-dir`` is stopped. A daemon torn down mid-spawn can exec
+    its host after the first look, so the directory must stay quiet for
+    ``E2E_HOST_SETTLE_SECONDS`` before teardown may delete it: deleting it
+    under a live host drops the owner marker and no later reap finds the host.
     """
     resolved = socket_dir.resolve()
-    pid = read_pidfile(resolved)
-    if pid is None:
-        # The spawner can die between starting the host and recording its pid.
-        pid = next(
-            (
-                process.pid
-                for process in psutil.process_iter(["cmdline"])
-                if socket_dir_from_cmdline(process.info["cmdline"]) == resolved
-            ),
-            None,
-        )
-        if pid is None:
+    quiet_until = time.monotonic() + E2E_HOST_SETTLE_SECONDS
+    while True:
+        hosts = _hosts_serving(resolved)
+        if hosts:
+            # The spawner can die between starting the host and recording its pid.
+            if read_pidfile(resolved) not in hosts:
+                write_pidfile(resolved, hosts[0])
+            _drain_terminal_host(resolved)
+            if survivors := set(_hosts_serving(resolved)) & set(hosts):
+                raise RuntimeError(f"gterm host {sorted(survivors)} survived drain of {resolved}")
+            quiet_until = time.monotonic() + E2E_HOST_SETTLE_SECONDS
+        elif time.monotonic() >= quiet_until:
             return
-        write_pidfile(resolved, pid)
-    finalize_pidfile_host(pid, resolved, (resolved.parent,))
+        time.sleep(0.05)
 
 
 def reap_orphaned_terminal_hosts(root: Path) -> None:
@@ -946,7 +974,7 @@ def e2e_srt_spawn_home() -> Generator[Path]:
 
     The sensitive-path contract (``assert_sensitive_path_contract``) refuses a
     sandbox allow path containing ``GOBBY_HOME`` credentials such as
-    ``bootstrap.yaml`` or ``local_cli_token``. A spawn whose workspace is the
+    ``bootstrap.yaml`` or ``.secret_kek``. A spawn whose workspace is the
     project directory must therefore run against a home outside that directory.
     """
     home = Path(tempfile.mkdtemp(prefix="gobby_e2e_home_")).resolve()
@@ -1067,6 +1095,9 @@ front_door:
 """
     bootstrap_path.write_text(bootstrap_content)
     bootstrap_path.chmod(0o600)
+    from gobby.storage.api_keys import ensure_local_api_key
+
+    ensure_local_api_key(postgres_db, "21000000-0000-4000-8000-000000000002", bootstrap_path)
 
     yield config_path, http_port, ws_port
 
@@ -1137,7 +1168,13 @@ def spawn_daemon_instance(
     env["GOBBY_CONFIG"] = str(config_path)
     env["GOBBY_HOME"] = str(gobby_home)
 
-    command = [sys.executable, "-m", runner_module, "--config", str(config_path)]
+    command = [
+        sys.executable,
+        str(Path(__file__).with_name("readiness_bootstrap.py")),
+        runner_module,
+        "--config",
+        str(config_path),
+    ]
 
     # Start daemon process
     with open(log_file, "w") as log_f, open(error_log_file, "w") as err_f:
@@ -1228,11 +1265,33 @@ async def async_daemon_client(
 
 
 def daemon_token(gobby_home: Path) -> str:
-    """Read the isolated daemon's CLI bearer token."""
-    token = (gobby_home / "local_cli_token").read_text().strip()
+    """Read the isolated daemon's current bootstrap API key."""
+    from gobby.utils.local_token import read_local_api_token
+
+    token = read_local_api_token(gobby_home / "bootstrap.yaml")
     if not token:
-        raise RuntimeError(f"Daemon token is empty: {gobby_home / 'local_cli_token'}")
+        raise RuntimeError(f"Daemon API key is missing: {gobby_home / 'bootstrap.yaml'}")
     return token
+
+
+def copy_daemon_api_key(source_home: Path, target_home: Path) -> None:
+    """Share an isolated fixture key while preserving the target's bootstrap fields."""
+    from gobby.config.bootstrap_io import read_bootstrap_yaml, update_bootstrap_yaml
+
+    source = read_bootstrap_yaml(source_home / "bootstrap.yaml")
+    key = daemon_token(source_home)
+    target_home.mkdir(exist_ok=True)
+
+    def copy_key(data: dict[str, Any]) -> None:
+        for field in ("datastore_mode", "files_home", "hub_daemon_url"):
+            if field in source:
+                data.setdefault(field, source[field])
+        data.update(api_key=key, api_key_id=source.get("api_key_id"))
+
+    update_bootstrap_yaml(
+        target_home / "bootstrap.yaml",
+        copy_key,
+    )
 
 
 def daemon_auth_headers(gobby_home: Path) -> dict[str, str]:

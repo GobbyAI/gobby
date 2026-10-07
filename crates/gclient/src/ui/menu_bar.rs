@@ -57,16 +57,16 @@ pub struct MenuBarHits {
     pub titles: Vec<(usize, Rect)>,
 }
 
-/// One full-width row on the theme's header fill, the sidebar's section
-/// header rows' colour, with their bold titles (`band_ink`). Each title's
-/// cell pads it by one on either side, so neighbours read two cells apart
-/// and the cells tile the bar from its left edge; the title whose menu is
-/// open sits on the selection fill, like the active tab.
+/// One full-width row on the theme's bar fill, a lightness step off the
+/// header fill, with bold titles (`bar_ink`). Each title's cell pads it by
+/// one on either side, so neighbours read two cells apart and the cells tile
+/// the bar from its left edge; the title whose menu is open sits on the
+/// selection fill, like the active tab.
 pub fn render_menu_bar(frame: &mut Frame, rect: Rect, chrome: &Chrome) -> MenuBarHits {
     let p = &chrome.palette;
     let bar = Style::new()
-        .bg(p.band)
-        .fg(p.band_ink.ink(p.subtext0))
+        .bg(p.bar)
+        .fg(p.bar_ink.ink(p.subtext0))
         .add_modifier(Modifier::BOLD);
     // The title stays open while a submenu cascades from its menu.
     let root = std::iter::successors(chrome.menu.as_ref(), |menu| menu.parent.as_deref()).last();
@@ -131,7 +131,7 @@ mod tests {
         });
     }
 
-    /// One full-width row on the header fill, the titles two cells apart,
+    /// One full-width row on the bar fill, the titles two cells apart,
     /// and each title's cell padded by one on either side so the cells tile
     /// the bar from its left edge.
     #[test]
@@ -148,7 +148,7 @@ mod tests {
             let cell = &buffer[(x, 0)];
             assert_eq!(
                 (cell.fg, cell.bg),
-                (palette.band_ink.ink(palette.subtext0), palette.band),
+                (palette.bar_ink.ink(palette.subtext0), palette.bar),
                 "x={x}"
             );
             assert!(cell.modifier.contains(Modifier::BOLD), "x={x}");
@@ -170,7 +170,7 @@ mod tests {
 
     /// The title whose menu is open sits on the selection fill across its
     /// whole cell, also while a submenu cascades from it; every other cell
-    /// keeps the header fill.
+    /// keeps the bar fill.
     #[test]
     fn the_open_title_reads_in_the_open_colours() {
         let mut chrome = Chrome::new(Theme::new(ThemeKind::Light));
@@ -189,7 +189,7 @@ mod tests {
             let expected = if (view.left()..view.right()).contains(&x) {
                 (palette.selection_ink.text, palette.selection)
             } else {
-                (palette.band_ink.ink(palette.subtext0), palette.band)
+                (palette.bar_ink.ink(palette.subtext0), palette.bar)
             };
             assert_eq!((cell.fg, cell.bg), expected, "x={x}");
         }

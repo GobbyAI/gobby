@@ -15,7 +15,7 @@
 
 use crate::envelope::Envelope;
 use anyhow::{Context, Result};
-use gobby_core::local_token::{AUTHORIZATION_HEADER, authorization_bearer, read_local_cli_token};
+use gobby_core::local_token::{AUTHORIZATION_HEADER, authorization_bearer, read_api_key};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -249,7 +249,7 @@ pub fn post_and_cleanup(
             req = req.set(k, v);
         }
     }
-    if let Ok(token) = read_local_cli_token() {
+    if let Ok(token) = read_api_key() {
         req = req.set(AUTHORIZATION_HEADER, &authorization_bearer(&token));
     }
     if let Some(envelope_id) = envelope_id_from_path(enqueued_path) {
@@ -826,7 +826,11 @@ mod tests {
     #[test]
     fn post_includes_bearer_when_token_present() {
         let home = tempdir().unwrap();
-        fs::write(home.path().join("local_cli_token"), "ghook-test-token\n").unwrap();
+        fs::write(
+            home.path().join("bootstrap.yaml"),
+            "api_key: ghook-test-token\n",
+        )
+        .unwrap();
 
         with_transport_test_env(home.path(), || {
             let inbox = home.path().join("inbox");

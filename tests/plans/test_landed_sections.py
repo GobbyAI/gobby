@@ -6,8 +6,10 @@ import textwrap
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
+import psycopg
 import pytest
 
 from gobby.plans.parser import parse_plan
@@ -93,7 +95,7 @@ def _task(*, closed: bool = False) -> Task:
     )
 
 
-def _validate(plan: Path, index: _Index, tasks: list[Task]) -> dict[str, object]:
+def _validate(plan: Path, index: _Index, tasks: list[Task]) -> dict[str, Any]:
     manager = MagicMock(spec=LocalTaskManager)
     manager.list_tasks.return_value = tasks
     return validate_plan_file(
@@ -102,6 +104,94 @@ def _validate(plan: Path, index: _Index, tasks: list[Task]) -> dict[str, object]
         project_context={"id": PROJECT_ID, "project_path": str(plan.parent)},
         code_index=index,
         require_symbol_validation=True,
+    )
+
+
+@pytest.mark.parametrize("problem", ["manager", "project", "database"])
+def test_unavailable_completion_is_distinct_from_target_failures(
+    landed_plan: tuple[Path, _Index], problem: str
+) -> None:
+    plan, index = landed_plan
+    manager = MagicMock(spec=LocalTaskManager)
+    manager.list_tasks.side_effect = [
+        [_task(closed=True)],
+        psycopg.OperationalError("lookup unavailable"),
+    ]
+    result = validate_plan_file(
+        SimpleNamespace(),
+        plan,
+        project_context=(
+            None if problem == "project" else {"id": PROJECT_ID, "project_path": str(plan.parent)}
+        ),
+        task_manager=None if problem == "manager" else manager,
+        code_index=index,
+        require_symbol_validation=True,
+    )
+    assert result["valid"] is False
+    assert result["condition"] == "completed_section_exemptions_unavailable"
+    assert len(result["errors"]) == 1
+    assert "completed-section exemptions unavailable" in result["errors"][0]
+    assert result["symbol_validation"]["status"] == "skipped"
+    assert not index.file_queries
+
+
+@pytest.mark.parametrize(
+    "failure", [PermissionError("sandbox"), psycopg.OperationalError("offline")]
+)
+def test_cli_reports_unavailable_completion_without_target_errors(
+    landed_plan: tuple[Path, _Index], monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    plan, _index = landed_plan
+    cli = importlib.import_module("gobby.cli.plans")
+    monkeypatch.setattr(cli, "_open_db", MagicMock(side_effect=failure))
+    monkeypatch.setattr(
+        cli,
+        "get_project_context",
+        lambda _path: {"id": PROJECT_ID, "project_path": str(plan.parent)},
+    )
+    result = cli._validate_plan_for_cli(plan, None, mode="standard")
+    assert result["valid"] is False
+    assert result["condition"] == "completed_section_exemptions_unavailable"
+    assert result["errors"] == [
+        f"completed-section exemptions unavailable: task database: {failure}"
+    ]
+
+
+@pytest.mark.parametrize("closed", [True, False])
+def test_deleted_wildcard_target_only_exempts_completed_section(
+    landed_plan: tuple[Path, _Index], closed: bool
+) -> None:
+    plan, index = landed_plan
+    plan.write_text(
+        plan.read_text().replace(
+            "`src/large.py::run`", "`src/large.py::*` — scope-reason: delete entire module"
+        )
+    )
+    (plan.parent / "src/large.py").unlink()
+    index.files.pop((PROJECT_ID, "src/large.py"))
+    result = _validate(plan, index, [_task(closed=closed)])
+    assert result["valid"] is closed, result
+    codes = {issue["code"] for issue in result["symbol_validation"]["issues"]}
+    assert (UNRESOLVED_SYMBOL in codes) is not closed
+
+
+def test_p0_counts_and_validates_lettered_deliverable_targets(
+    landed_plan: tuple[Path, _Index],
+) -> None:
+    plan, index = landed_plan
+    plan.write_text(plan.read_text().replace("## P1:", "## P0:").replace("1.1", "T1"))
+    task = _task(closed=True)
+    task.labels = [label.replace("1.1", "T1") for label in task.labels or []]
+    result = _validate(plan, index, [task])
+    assert result["valid"] is True, result
+    assert result["phase_count"] == 1
+    assert result["phases"] == {0: "Work"}
+    plan.write_text(plan.read_text().replace("src/large.py::run", "src/large.py::missing"))
+    result = _validate(plan, index, [task])
+    assert result["valid"] is False
+    assert any(
+        issue["code"] == UNRESOLVED_SYMBOL and issue["section_id"] == "T1"
+        for issue in result["symbol_validation"]["issues"]
     )
 
 

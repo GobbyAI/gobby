@@ -455,7 +455,6 @@ def seed_manifest_json(manifest: SeedManifest) -> str:
 
 _BOOKKEEPING_TABLES = frozenset(
     {
-        "destructive_batches",
         "migration_batches",
         "migration_receipts",
         "schema_migrations",

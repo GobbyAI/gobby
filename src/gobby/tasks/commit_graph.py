@@ -89,3 +89,7 @@ class CommitGraph:
                 return False
             first_parent_work |= on_first or self.is_ancestor(sha, other)
         return first_parent_work
+
+    def merge_view(self, sha: str, linked: list[str]) -> str:
+        """The ``git show`` merge option for ``sha``: a sync merge shows only what it authored."""
+        return "--remerge-diff" if self.is_sync_merge(sha, linked) else "--diff-merges=first-parent"

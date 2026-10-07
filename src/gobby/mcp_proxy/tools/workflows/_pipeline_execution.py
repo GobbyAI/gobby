@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any, Protocol
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -584,7 +585,7 @@ async def approve_pipeline(
     Args:
         executor: PipelineExecutor instance
         token: Approval token from the waiting execution
-        approved_by: Identifier of who approved (email, user ID, etc.)
+        approved_by: The authenticated decider, ``operator`` or ``session:<id>``
 
     Returns:
         Dict with execution status
@@ -622,7 +623,7 @@ async def reject_pipeline(
     Args:
         executor: PipelineExecutor instance
         token: Approval token from the waiting execution
-        rejected_by: Identifier of who rejected (email, user ID, etc.)
+        rejected_by: The authenticated decider, ``operator`` or ``session:<id>``
 
     Returns:
         Dict with execution status (cancelled)
@@ -656,6 +657,7 @@ async def resume_interrupted_pipelines(
     project_id: str | None = None,
     *,
     run_db: RunDb | None = None,
+    created_before: datetime | None = None,
 ) -> list[str]:
     """Resume pipelines that were running when the daemon last stopped.
 
@@ -671,6 +673,7 @@ async def resume_interrupted_pipelines(
         execution_manager: LocalPipelineExecutionManager instance.
         project_id: Current project ID (unused; each execution resumes under
             its own stored project_id).
+        created_before: Exclude runs admitted at or after this daemon startup cutoff.
 
     Returns:
         List of execution IDs that were successfully re-queued.
@@ -695,6 +698,9 @@ async def resume_interrupted_pipelines(
 
     resumed: list[str] = []
     for execution in recoverable_executions:
+        # Recovery can run after HTTP admission. Never replay a current-daemon run.
+        if created_before is not None and execution.created_at >= created_before:
+            continue
         try:
             pipeline = await loader.load_pipeline(
                 execution.pipeline_name,

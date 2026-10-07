@@ -5,10 +5,10 @@
 //! where it is not offered draws Restored instead, its pick still saved.
 //!
 //! A theme sets two fills and a model colour. The header fill takes the
-//! sidebar's section header rows, the tab row and the menu bar; the
-//! selection fill takes the selected and active sidebar rows, the active tab
-//! and the open menu title. Dark and Light also set the theme's own ground;
-//! System draws over the host terminal's.
+//! sidebar's section header rows and the tab row, and the menu bar steps
+//! off it (`Theme::bar`); the selection fill takes the selected and active
+//! sidebar rows, the active tab and the open menu title. Dark and Light also
+//! set the theme's own ground; System draws over the host terminal's.
 
 use serde::{Deserialize, Serialize};
 
@@ -72,7 +72,7 @@ const fn o(lightness: f32, chroma: f32, hue: u16) -> Oklch {
 /// One theme's fills in one appearance.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Fills {
-    /// Section header rows, the tab row and the menu bar.
+    /// Section header rows and the tab row; the menu bar steps off it.
     pub band: Oklch,
     /// The selected and active sidebar rows, the active tab and the open
     /// menu title.

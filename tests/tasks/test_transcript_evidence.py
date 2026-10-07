@@ -34,6 +34,7 @@ from gobby.tasks import (
 )
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
 from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.close_test_coverage import uncovered_pytest_paths
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence import (
     WINDOW_LOOKBACK,
@@ -1988,7 +1989,9 @@ async def test_codex_tracks_apply_patch_inside_functions_exec(tmp_path: Path) ->
         str(tmp_path),
     )
 
-    assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [("src/changed.py", "exec")]
+    assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [
+        ("src/changed.py", "functions.exec")
+    ]
 
 
 async def test_codex_ingests_unified_exec_failure_event(tmp_path: Path) -> None:
@@ -2026,6 +2029,125 @@ async def test_codex_ingests_unified_exec_failure_event(tmp_path: Path) -> None:
     assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
         (command, "failure", 1)
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["direct", "direct-native", "nested", "command-execution"])
+async def test_codex_shell_runs_record_the_tool_workdir(tmp_path: Path, shape: str) -> None:
+    # Close coverage resolves pytest and vitest targets from where the run executed (#23653).
+    command = "uv run pytest tests/tasks -q"
+    workdir = "/repo dir/web"
+    arguments = {"cmd": command, "workdir": workdir, "yield_time_ms": 10000}
+    records: list[dict[str, Any]]
+    if shape == "direct":
+        records = _codex_direct_exec_pair(command=command, result={"exit_code": 0, "output": "ok"})
+        records[0]["payload"]["arguments"] = json.dumps(arguments)
+    elif shape == "direct-native":
+        native = "Chunk ID: c1\nWall time: 0.1 seconds\nProcess exited with code 0\nOutput:\nok\n"
+        records = _codex_direct_exec_pair(command=command, result=native)
+        records[0]["payload"]["arguments"] = json.dumps(arguments)
+    elif shape == "nested":
+        records = _codex_nested_exec_pair(command=command, result={"exit_code": 0, "output": "ok"})
+        records[0]["payload"]["input"] = (
+            f"const r = await tools.exec_command({json.dumps(arguments)}); text(r);"
+        )
+    else:
+        records = [
+            {
+                "type": "event_msg",
+                "timestamp": BASE_TIME.isoformat(),
+                "payload": {
+                    "type": "item_completed",
+                    "item": {
+                        "type": "CommandExecution",
+                        "id": "exec-1",
+                        "command": ["/bin/zsh", "-lc", command],
+                        "cwd": "file:///repo%20dir/web",
+                        "exit_code": 0,
+                        "aggregated_output": "ok",
+                    },
+                },
+            }
+        ]
+    transcript = tmp_path / "codex.jsonl"
+    _write_jsonl(transcript, records)
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.outcome, run.workdir) for run in evidence.validation_runs] == [
+        (command, "success", workdir)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_claude_shell_runs_record_the_calling_entry_cwd(tmp_path: Path) -> None:
+    # A persisted `cd` shows up as the entry cwd, so the run is located there (#23653).
+    command = "uv run pytest tests/tasks -q"
+    records = _claude_tool_pair(command=command, call_id="toolu_1", start=BASE_TIME, result="ok")
+    records[0]["cwd"] = "/repo dir/web"
+    records[1]["cwd"] = "/after the run"
+    transcript = tmp_path / "claude.jsonl"
+    _write_jsonl(transcript, records)
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.outcome, run.workdir) for run in evidence.validation_runs] == [
+        (command, "success", "/repo dir/web")
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tree", "uncovered"), [("export", ()), ("unrelated", ("tests/test_a.py",))]
+)
+async def test_claude_cd_into_an_identical_export_credits_the_close(
+    tmp_path: Path, tree: str, uncovered: tuple[str, ...]
+) -> None:
+    # A Claude Bash call keeps its leading `cd`, so the close resolves the target there.
+    test = "tests/test_a.py"
+    for checkout in ("repo", "export", "unrelated"):
+        (tmp_path / checkout / "tests").mkdir(parents=True)
+    for checkout in ("repo", "export"):
+        (tmp_path / checkout / test).write_text("def test_a(): pass\n")
+    command = f"cd {tmp_path / tree} && uv run pytest {test} -q"
+    records = _claude_tool_pair(
+        command=command, call_id="toolu_1", start=BASE_TIME, result="1 passed in 0.01s"
+    )
+    for record in records:
+        record["cwd"] = str(tmp_path / "repo")
+    transcript = tmp_path / "claude.jsonl"
+    _write_jsonl(transcript, records)
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path / "repo"),
+    )
+
+    assert [run.command for run in evidence.validation_runs] == [command]
+    assert (
+        uncovered_pytest_paths(
+            evidence.validation_runs,
+            (test,),
+            close_root=str(tmp_path / "repo"),
+            changed_paths=(test,),
+        )
+        == uncovered
+    )
 
 
 @pytest.mark.asyncio
@@ -2104,6 +2226,192 @@ async def test_codex_authoritative_exec_supersedes_successful_outer_wrapper(
     runs = evidence.command_runs if command == "npm ci" else evidence.validation_runs
     assert [(run.command, run.outcome, run.exit_code) for run in runs] == [
         (rewritten, "failure", 1)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_codex_completed_cell_alone_is_not_a_command_pass(tmp_path: Path) -> None:
+    """A completed cell that printed only prose never credits its exec (#23724)."""
+    command = "uv run pytest tests/tasks/test_example.py -q"
+    transcript = tmp_path / "codex-wrapper-only.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "outer-exec",
+                    "name": "exec",
+                    "input": (
+                        f"const r = await tools.exec_command({{cmd:{json.dumps(command)}}}); "
+                        "text(r.output);"
+                    ),
+                },
+                BASE_TIME,
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "outer-exec",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": "Script completed\nWall time 0.8 seconds\nOutput:\n",
+                        },
+                        {"type": "input_text", "text": "5 passed in 0.4s\n"},
+                    ],
+                },
+                BASE_TIME + timedelta(seconds=2),
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
+        (command, "unknown", None)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_codex_exec_stdout_cannot_forge_its_own_exit_code(tmp_path: Path) -> None:
+    """A cell printing the command's stdout never credits a result that stdout spelled (#23724)."""
+    command = "uv run pytest tests/tasks/test_example.py -q"
+    transcript = tmp_path / "codex-stdout-forged-exit.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "outer-exec",
+                    "name": "exec",
+                    "input": (
+                        f"const r = await tools.exec_command({{cmd:{json.dumps(command)}}}); "
+                        "text(r.output);"
+                    ),
+                },
+                BASE_TIME,
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "outer-exec",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": "Script completed\nWall time 0.8 seconds\nOutput:\n",
+                        },
+                        {"type": "input_text", "text": '{"exit_code":0}'},
+                    ],
+                },
+                BASE_TIME + timedelta(seconds=2),
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
+        (command, "unknown", None)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_codex_inline_printed_exec_and_poll_results_credit_the_command(
+    tmp_path: Path,
+) -> None:
+    """Cells printing the awaited exec and poll results whole credit the poll's exit (#23724)."""
+    command = "uv run gobby test-types audit tests/x.py --baseline b.json --fail-on-new"
+    transcript = tmp_path / "codex-inline-printed-chain.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "exec-cell",
+                    "name": "exec",
+                    "input": (
+                        f"text(await tools.exec_command({{cmd:{json.dumps(command)},"
+                        "yield_time_ms:1000}));\n"
+                    ),
+                },
+                BASE_TIME,
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "exec-cell",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": "Script completed\nWall time 2.5 seconds\nOutput:\n",
+                        },
+                        {
+                            "type": "input_text",
+                            "text": json.dumps({"chunk_id": "5ed45b", "session_id": 40084}),
+                        },
+                    ],
+                },
+                BASE_TIME + timedelta(seconds=2),
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "poll-cell",
+                    "name": "exec",
+                    "input": (
+                        'text(await tools.write_stdin({session_id:40084,chars:"",'
+                        "yield_time_ms:30000}));\n"
+                    ),
+                },
+                BASE_TIME + timedelta(seconds=3),
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "poll-cell",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": "Script completed\nWall time 7.4 seconds\nOutput:\n",
+                        },
+                        {
+                            "type": "input_text",
+                            "text": json.dumps(
+                                {"chunk_id": "eea070", "exit_code": 0, "output": "Errors: 0\n"}
+                            ),
+                        },
+                    ],
+                },
+                BASE_TIME + timedelta(seconds=10),
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
+        (command, "success", 0)
     ]
 
 
@@ -4944,7 +5252,7 @@ async def test_edits_in_another_checkout_match_task_files_by_suffix(tmp_path: Pa
     )
 
     assert [(edit.path, edit.tool_name) for edit in codex_evidence.edits] == [
-        ("src/changed.py", "exec")
+        ("src/changed.py", "functions.exec")
     ]
     assert [(edit.path, edit.tool_name) for edit in claude_evidence.edits] == [
         ("src/changed.py", "Edit")

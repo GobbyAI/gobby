@@ -47,7 +47,11 @@ fn read_msg(stream: &mut UnixStream) -> ServerMessage {
 fn start_host(token: &str) -> (tempfile::TempDir, host_support::HostProc) {
     let dir = temp_socket_dir();
     write_token(dir.path(), token);
-    std::fs::write(dir.path().join("local_cli_token"), LOCAL).unwrap();
+    std::fs::write(
+        dir.path().join("bootstrap.yaml"),
+        format!("api_key: {LOCAL}\n"),
+    )
+    .unwrap();
     let child = spawn_host(dir.path());
     wait_socket(&dir.path().join(CONTROL_SOCKET));
     wait_socket(&dir.path().join(FRAMES_SOCKET));
@@ -154,6 +158,82 @@ fn expect_refusal(stream: &mut UnixStream, expected: &str) {
         ServerMessage::InputRefused { code } => assert_eq!(code, expected),
         other => panic!("expected InputRefused {expected}: {other:?}"),
     }
+}
+
+#[test]
+fn rotated_key_applies_to_next_hello() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (dir, _host) = start_host("bootstrap-rotation");
+    let bootstrap = dir.path().join("bootstrap.yaml");
+    let mut control = control_hello(dir.path(), "bootstrap-rotation");
+    let host_terminal_id = spawn_sleep(&mut control, "rotation-stream");
+    let mut attached = connect(&dir.path().join(FRAMES_SOCKET));
+    write_msg(&mut attached, &hello_frame(80, 24));
+    assert!(matches!(
+        read_msg(&mut attached),
+        ServerMessage::Welcome { .. }
+    ));
+    write_msg(
+        &mut attached,
+        &ClientMessage::AttachTerminal {
+            host_terminal_id,
+            reservation_id: None,
+            locator: None,
+        },
+    );
+    assert!(matches!(
+        read_reply(&mut attached),
+        ServerMessage::Attached { .. }
+    ));
+    let hello = |key: &str| {
+        let mut stream = connect(&dir.path().join(FRAMES_SOCKET));
+        write_msg(
+            &mut stream,
+            &ClientMessage::Hello {
+                version: PROTOCOL_VERSION,
+                encoding: RenderEncoding::SemanticFrame,
+                local_token: key.into(),
+                cols: 80,
+                rows: 24,
+                tmux_identity: None,
+            },
+        );
+        read_msg(&mut stream)
+    };
+    assert!(matches!(hello(LOCAL), ServerMessage::Welcome { .. }));
+    std::fs::write(&bootstrap, "api_key: rotated-key\n").unwrap();
+    write_msg(
+        &mut attached,
+        &ClientMessage::SetScrollOffset {
+            rows_from_live_edge: 0,
+        },
+    );
+    assert!(matches!(
+        read_reply(&mut attached),
+        ServerMessage::ScrollOffsetApplied { .. }
+    ));
+    assert!(matches!(hello(LOCAL), ServerMessage::Error { code, .. } if code == "invalid_token"));
+    assert!(matches!(
+        hello("rotated-key"),
+        ServerMessage::Welcome { .. }
+    ));
+
+    for content in ["", "api_key: ''\n", "api_key: 123\n", "api_key: [\n"] {
+        std::fs::write(&bootstrap, content).unwrap();
+        assert!(matches!(hello(""), ServerMessage::Error { code, .. } if code == "invalid_token"));
+        assert!(
+            matches!(hello("rotated-key"), ServerMessage::Error { code, .. } if code == "invalid_token")
+        );
+    }
+    std::fs::write(&bootstrap, "api_key: rotated-key\n").unwrap();
+    std::fs::set_permissions(&bootstrap, std::fs::Permissions::from_mode(0o000)).unwrap();
+    assert!(
+        matches!(hello("rotated-key"), ServerMessage::Error { code, .. } if code == "invalid_token")
+    );
+    std::fs::set_permissions(&bootstrap, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::remove_file(&bootstrap).unwrap();
+    assert!(matches!(hello(""), ServerMessage::Error { code, .. } if code == "invalid_token"));
 }
 
 #[test]

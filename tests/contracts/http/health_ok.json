@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "health_ok",
   "family": "health",
   "backend": "up",
@@ -22,6 +22,7 @@
       "degraded_services": [],
       "hook_runtime": "@mask@",
       "install_dir": "@mask@",
+      "restart_recovery_pending": "@mask@",
       "gterm_host": "@mask@"
     }
   },
@@ -29,6 +30,7 @@
     "/response/body/status",
     "/response/body/hook_runtime",
     "/response/body/install_dir",
+    "/response/body/restart_recovery_pending",
     "/response/body/gterm_host"
   ]
 }

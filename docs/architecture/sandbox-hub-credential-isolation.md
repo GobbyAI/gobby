@@ -65,8 +65,8 @@ file disclosure into operator-level hub access.
    login.
 10. Every connection authenticated through a Gobby-issued credential presents
     an `application_name` under the reserved `gobby` prefix, so
-    maintenance-epoch termination, quiescence proof, and backup drain observe
-    it; run-scoped connections also identify their managed execution.
+    `pg_stat_activity` attributes it to Gobby; run-scoped connections also
+    identify their managed execution.
     Authorization never derives from `application_name` — revocation and RLS
     target the authenticated role.
 
@@ -315,14 +315,11 @@ capability role owns no SQL objects, as required for safe inherited-only
 membership.
 
 Connections made with an ephemeral login present
-`application_name = gobby-agent-<managed-execution-id>`. The maintenance-epoch
-fence terminates and counts only `gobby%`-named client backends
-(`src/gobby/storage/maintenance_epoch.py`, task #19519), so this convention is
-what makes run-scoped sessions visible to epoch open, quiescence proof, and
-backup drain. gcode currently forces `application_name = gobby-cli`
+`application_name = gobby-agent-<managed-execution-id>`, which attributes each
+run-scoped session to its execution. gcode currently forces `application_name = gobby-cli`
 (`crates/gcore/src/postgres.rs`), which satisfies the reserved-prefix
 invariant; WP3 extends the managed runtime path to carry the execution
-identity instead. The name is observability and drain surface only — targeted
+identity instead. The name is observability only — drain and targeted
 revocation matches the authenticated role from the registry, never the
 application name.
 
@@ -533,10 +530,10 @@ Backup and restore:
 3. Restore reconciliation drops any reserved-prefix login and clears stale
    bindings before the daemon accepts agent work, including restores of a
    legacy artifact that predates the backup exclusion.
-4. Drain is hub-wide, not daemon-local: the maintenance-epoch fence terminates
-   and counts `gobby%`-named client backends across every attached daemon and
-   machine, so invariant 10's naming convention is what makes multi-daemon
-   drain observable before the backup proceeds.
+4. Drain is hub-wide, not daemon-local:
+   `gobby_agent_auth.drain_ephemeral_principals()` revokes every bound
+   principal, then terminates and drops each unbound reserved-prefix role's
+   backends by authenticated role, across every attached daemon and machine.
 5. Role credentials belong to the restore destination. The globals dump runs
    with `--no-role-passwords`, so the artifact keeps role attributes,
    memberships, and ACLs but no password verifiers. Restore also strips any

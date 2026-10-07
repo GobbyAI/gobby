@@ -256,12 +256,13 @@ pub fn restore(spec: &HelperSpec) -> RestoredHost {
 pub fn launch(spec: &HelperSpec) -> RestoredHost {
     let dir = &spec.socket_dir;
     write_token(dir, TOKEN);
-    std::fs::write(dir.join("local_cli_token"), "local-token").expect("local token");
+    std::fs::write(dir.join("bootstrap.yaml"), "api_key: local-token\n").expect("API key");
     let stderr = std::fs::File::create(dir.join("helper.stderr")).expect("helper stderr");
     let child = Command::new(std::env::current_exe().expect("test binary"))
         .args([HELPER_TEST, "--exact", "--ignored", "--nocapture"])
         .env(SPEC_ENV, serde_json::to_string(spec).expect("encode spec"))
         .env("GTERM_LOG_FILE", dir.join("gterm.log"))
+        .env("GOBBY_HOME", dir)
         .envs(spec.env.iter().map(|(name, value)| (name, value)))
         .stdin(Stdio::null())
         .stdout(Stdio::null())

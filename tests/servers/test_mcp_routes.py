@@ -28,13 +28,14 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect
 
@@ -69,7 +70,6 @@ from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_STALE_ERROR_CODE,
 )
 from gobby.servers.http import HTTPServer
-from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -4313,6 +4313,7 @@ class TestHooksEndpoints:
     @pytest.mark.integration
     async def test_legacy_identity_less_envelope_is_removed_and_barrier_settles(
         self,
+        route_hook_replay_to_app: Callable[[FastAPI], None],
         session_storage: SessionManager,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -4364,9 +4365,8 @@ class TestHooksEndpoints:
         )
         server.app.state.hook_manager = hook_manager
 
-        token = "test-token"
-        (tmp_path / "local_cli_token").write_text(token, encoding="utf-8")
-        AuthStore(session_storage.db).set_local_api_token_hash(hash_token(token))
+        (tmp_path / "bootstrap.yaml").write_text("api_key: test-api-key\n", encoding="utf-8")
+        route_hook_replay_to_app(server.app)
         first = await drain_hook_inbox_barrier(
             server.app,
             inbox_dir,

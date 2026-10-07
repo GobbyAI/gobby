@@ -17,7 +17,6 @@ from gobby.cli.installers.compose_env import MANAGED_SERVICE_PROFILES, ComposeRu
 from gobby.cli.installers.docker_guard import DockerTestProtectError, ensure_docker_allowed
 from gobby.cli.pack import _import_docker_volume
 from gobby.cli.postgres_backup import _run_pg_dump
-from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
 from tests.fixtures.fake_hub import fake_database_url
 
 pytestmark = pytest.mark.unit
@@ -186,19 +185,3 @@ def test_hub_backup_container_inspection_fails_closed(
 
     with pytest.raises(DockerTestProtectError, match="hub backup container inspection"):
         hub_cli._container_running("gobby-postgres")
-
-
-def test_hub_backup_epoch_compose_fails_closed(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _protect(monkeypatch)
-    epoch = "test-maintenance-epoch"
-    monkeypatch.setenv(MAINTENANCE_EPOCH_ENV, epoch)
-    runtime = ComposeRuntime(
-        environment={"PGOPTIONS": f"-c gobby.maintenance_epoch={epoch}"},
-        profiles=(),
-    )
-
-    with pytest.raises(DockerTestProtectError, match="hub backup epoch compose up"):
-        hub_cli._run_epoch_compose_up(tmp_path / "docker-compose.yml", tmp_path, runtime)

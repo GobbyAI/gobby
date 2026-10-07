@@ -1,11 +1,26 @@
 # Safari development installation
 
-Build shared resources with `npm ci && npm run build:extension` from
-`gobby-annotate/`, then open `safari/GobbyAnnotate.xcodeproj` in Xcode. The project
+Run `npm ci` in both `gobby-annotate/` and `web/`, then open
+`safari/GobbyAnnotate.xcodeproj` in Xcode. Each extension target's first phase,
+"Build extension bundle", runs `npm run build:extension` on every build, so the
+app never ships a stale `packages/extension/dist/safari`; it fails with a clear
+error when npm or either `node_modules` is missing. Run your Xcode build again
+after pulling extension changes, so the installed app gets the new bundle. The project
 contains macOS and iOS app/extension targets. App identifier is `ai.gobby.annotate`;
-the extension uses `ai.gobby.annotate.Extension`. Configure your development team
-externally for every target and register the shared `group.ai.gobby.annotate`
-App Group. Do not commit personal signing-team values.
+the extension uses `ai.gobby.annotate.Extension`. Register the shared
+`group.ai.gobby.annotate` App Group.
+
+The project commits no signing team. Every target inherits the project base
+configuration `safari/Signing.xcconfig`, which optionally includes the gitignored
+`safari/Signing.local.xcconfig`. Run this once from `gobby-annotate/`,
+substituting your Apple team ID, before signed Cmd+R builds:
+
+```sh
+echo 'DEVELOPMENT_TEAM = YOUR_TEAM_ID' > safari/Signing.local.xcconfig
+```
+
+Do not pick a team in Xcode's Signing & Capabilities tab: that writes it into
+`project.pbxproj`, which `packages/extension/test/safari-project.test.ts` rejects.
 
 Select Xcode per command instead of changing the machine's global developer path:
 
@@ -16,8 +31,9 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
   -derivedDataPath safari/build CODE_SIGNING_ALLOWED=NO build
 ```
 
-This checks compilation only. For development installation, select your team and
-Mac/iPhone/iPad destination in Xcode and Run a signed build. Enable the extension
+This checks compilation only. For development installation, create
+`Signing.local.xcconfig` as above, select your Mac/iPhone/iPad destination in
+Xcode and Run a signed build. Enable the extension
 in Safari Settings on Mac or Settings → Apps → Safari → Extensions on iOS/iPadOS.
 Grant access to the site you want to annotate, then activate from Safari's
 extension controls. Developer-mode/unsigned-extension options on Mac may help

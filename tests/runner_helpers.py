@@ -287,10 +287,7 @@ def create_base_patches(
         # Startup otherwise shells out to gdaemon to drop test schemas on config.database_url.
         patch("gobby.runner_maintenance.storage_hygiene.sweep_orphaned_test_schemas"),
         patch("gobby.storage.hub.postgres.PostgresHubDatabase", side_effect=make_postgres_db),
-        patch(
-            "gobby.runner_init.helpers.admitted_database_url",
-            side_effect=lambda database_url: database_url,
-        ),
+        patch("gobby.runner_init.helpers.psycopg.connect"),
         patch(RUNNER_INIT_SESSION_MANAGER_PATCH),
         patch("gobby.runner_init.storage.LocalTaskManager"),
         patch("gobby.runner_init.storage.SessionTaskManager"),
@@ -313,13 +310,11 @@ def create_base_patches(
             return_value=credential_manager,
         ),
         patch("gobby.storage.config_store.ConfigStore"),
-        patch("gobby.runner_init.storage.AuthStore"),
         patch("gobby.storage.config_repository.ConfigRepository", return_value=config_repository),
         # init_storage_and_config imports ConfigRuntime function-locally, so the
         # patch must target the defining module.
         patch("gobby.config.runtime.ConfigRuntime", return_value=config_runtime),
         patch("gobby.storage.config_notifications.ConfigNotificationListener", return_value=None),
-        patch("gobby.runner_init.storage.ensure_local_api_token"),
         patch("gobby.runner_init.storage.ensure_local_api_key"),
         patch("gobby.runner_init.storage.DatabaseSaturationWatchdog"),
         patch("gobby.utils.dev.is_dev_mode", return_value=False),

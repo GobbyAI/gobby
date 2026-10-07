@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, cast
 
@@ -247,10 +247,12 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         assigned_agent: str | None = None,
         implementation_domain: str | None = None,
         additional_skills: list[str] | None = None,
+        handed_off_task_ids: Collection[str] = (),
     ) -> Task:
         """Atomically create and claim one task for an agent session."""
         task_id = _create_task_for_agent(
             self.db,
+            handed_off_task_ids=handed_off_task_ids,
             session_id=session_id,
             project_id=project_id,
             title=title,
@@ -625,7 +627,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         stage_state: str | None = None,
         limit: int = 50,
         offset: int = 0,
-        sort_by: str = "hierarchy",
+        sort_by: str | None = None,
         sort_order: str = "asc",
     ) -> list[Task]:
         """List tasks with filtering.
@@ -633,9 +635,11 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         Args:
             current_stage_state: Filter by current stage state. Can be a single
                 state string, a list of states, or None to include all stage states.
+            sort_by: None lists closed tasks (``closed=True``) newest closure
+                first and everything else hierarchically.
 
-        Results are ordered hierarchically: parents appear before their children,
-        with siblings sorted by priority ASC, then created_at ASC.
+        Hierarchical results put parents before their children, with siblings
+        sorted by priority ASC, then created_at ASC.
         """
         return _list_tasks(
             self.db,

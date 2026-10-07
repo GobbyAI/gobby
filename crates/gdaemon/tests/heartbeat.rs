@@ -311,7 +311,16 @@ async fn dropping_host_aborts_its_active_child() -> Result<()> {
 
 #[tokio::test(start_paused = true)]
 async fn zero_job_serve_stops_cleanly() -> Result<()> {
-    let result = gobby_daemon::serve::serve(Vec::new(), &Default::default(), None, async {}).await;
+    let auth = std::sync::Arc::new(
+        gobby_daemon::front_door::auth::AuthState::new(
+            "test-secret".into(),
+            None,
+            Default::default(),
+        )
+        .expect("auth"),
+    );
+    let result =
+        gobby_daemon::serve::serve(Vec::new(), &Default::default(), None, auth, async {}).await;
     assert!(result.is_ok(), "{result:?}");
     Ok(())
 }

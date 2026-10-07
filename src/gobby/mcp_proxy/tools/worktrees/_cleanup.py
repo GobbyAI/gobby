@@ -12,6 +12,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
 from gobby.mcp_proxy.tools.worktrees._merge_state import is_worktree_git_merged
+from gobby.worktrees.occupancy import refuse_occupied_worktree
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,17 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
             }
 
             if delete_git and not dry_run and resolved_git_manager:
+                occupied = await asyncio.to_thread(
+                    refuse_occupied_worktree,
+                    ctx.worktree_storage.db,
+                    wt.worktree_path,
+                    worktree_id=wt.id,
+                )
+                if occupied is not None:
+                    result["git_skipped"] = True
+                    result["git_skip_reason"] = occupied
+                    results.append(result)
+                    continue
                 status = await resolved_git_manager.get_worktree_status(wt.worktree_path)
                 if status is None:
                     result["git_skipped"] = True
@@ -205,6 +217,17 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 if git_merged is not True and not force_delete_branch:
                     result["git_skipped"] = True
                     result["git_skip_reason"] = "Git no longer reports the branch as merged"
+                    results.append(result)
+                    continue
+                occupied = await asyncio.to_thread(
+                    refuse_occupied_worktree,
+                    ctx.worktree_storage.db,
+                    wt.worktree_path,
+                    worktree_id=wt.id,
+                )
+                if occupied is not None:
+                    result["git_skipped"] = True
+                    result["git_skip_reason"] = occupied
                     results.append(result)
                     continue
                 status = await resolved_git_manager.get_worktree_status(wt.worktree_path)
