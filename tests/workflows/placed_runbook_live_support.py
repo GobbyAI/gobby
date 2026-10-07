@@ -580,14 +580,20 @@ def stop_fixture_host(host: FixtureHost) -> dict[str, Any]:
     from tests.e2e.conftest import stop_terminal_host
 
     already_exited = not host.alive()
-    stop_terminal_host(host.socket_dir)
-    host.process.wait(timeout=15)
-    return {"pid": host.pid, "already_exited": already_exited, "method": "socket_dir_drain"}
+    method = "socket_dir_drain"
+    try:
+        stop_terminal_host(host.socket_dir)
+    finally:
+        if host.alive():
+            method = "kill"
+            host.process.kill()
+        host.process.wait(timeout=15)
+    return {"pid": host.pid, "already_exited": already_exited, "method": method}
 
 
 @contextmanager
 def host_socket_dir() -> Iterator[Path]:
-    """A short private socket directory, removed whatever happens while it is in use."""
+    """A private marked directory, removed after its hosts drain successfully."""
     from tests.e2e.conftest import create_host_socket_dir, stop_terminal_host
 
     socket_dir = create_host_socket_dir(prefix="grb-")

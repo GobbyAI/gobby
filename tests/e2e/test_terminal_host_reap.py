@@ -251,9 +251,9 @@ def test_placed_runbook_socket_dir_host_is_reaped(
     monkeypatch.setattr(tempfile, "tempdir", str(host_root))
     with placed.host_socket_dir() as socket_dir:
         marker = socket_dir / E2E_HOST_OWNER_FILE
-        if marker.exists():
-            assert int(marker.read_text()) == os.getpid()
-            marker.write_text(str(_dead_pid()))
+        assert marker.exists()
+        assert int(marker.read_text()) == os.getpid()
+        marker.write_text(str(_dead_pid()))
         host = _start_host(spawn, socket_dir)
         reap_orphaned_terminal_hosts(host_root)
         assert host.poll() is not None

@@ -158,23 +158,60 @@ def test_start_fixture_host_reaps_a_host_that_never_gets_ready(tmp_path: Path) -
 def test_fixture_host_is_killed_and_its_directory_removed_when_shutdown_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from tests.e2e import conftest as e2e
+
     class ShutdownFailed(Exception):
         pass
 
-    async def refuse(socket_dir: Path) -> None:
-        raise ShutdownFailed(socket_dir)
+    drain = e2e.stop_terminal_host
+    attempts = 0
 
-    monkeypatch.setattr(support, "_shutdown", refuse)
-    with pytest.raises(ShutdownFailed), host_socket_dir() as socket_dir:
+    def refuse(socket_dir: Path) -> None:
+        # Only the fixture's drain fails; the directory context still performs cleanup.
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ShutdownFailed(socket_dir)
+        drain(socket_dir)
+
+    monkeypatch.setattr(e2e, "stop_terminal_host", refuse)
+    host: support.FixtureHost | None = None
+    try:
+        with pytest.raises(ShutdownFailed), host_socket_dir() as socket_dir:
+            ready = (
+                f': > "{control_socket_path(socket_dir)}"\n'
+                f'printf %s "$$" > "{pidfile_path(socket_dir)}"\n'
+                "exec sleep 30"
+            )
+            binary = _script(tmp_path / "ready-host", ready)
+            with fixture_host(binary, socket_dir, os.environ) as host:
+                assert host.alive() and read_pidfile(socket_dir) == host.pid
+        assert host is not None and not host.alive()
+        assert not socket_dir.exists()
+    finally:
+        if host is not None and host.alive():
+            host.process.kill()
+            host.process.wait(timeout=5)
+
+
+def test_fixture_host_handle_is_killed_when_directory_drain_misses(tmp_path: Path) -> None:
+    with host_socket_dir() as socket_dir:
         ready = (
             f': > "{control_socket_path(socket_dir)}"\n'
             f'printf %s "$$" > "{pidfile_path(socket_dir)}"\n'
             "exec sleep 30"
         )
-        binary = _script(tmp_path / "ready-host", ready)
-        with fixture_host(binary, socket_dir, os.environ) as host:
-            assert host.alive() and read_pidfile(socket_dir) == host.pid
-    assert not host.alive()
+        host = start_fixture_host(_script(tmp_path / "ready-host", ready), socket_dir, os.environ)
+        try:
+            try:
+                support.stop_fixture_host(host)
+            except subprocess.TimeoutExpired:
+                pass
+            assert not host.alive()
+        finally:
+            if host.alive():
+                host.process.kill()
+                host.process.wait(timeout=5)
     assert not socket_dir.exists()
 
 

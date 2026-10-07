@@ -37,7 +37,7 @@ def watch_pytest_parent() -> Iterator[None]:
                 and owner.is_running()
                 and owner.status() != psutil.STATUS_ZOMBIE
             )
-        except psutil.NoSuchProcess:
+        except psutil.Error:
             return False
 
     def watch() -> None:
