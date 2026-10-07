@@ -16,12 +16,14 @@
 | lane-manager.md | gobby#15388 |
 | lane-manager.md | gobby#15389 |
 | lane-7-front-door.md | gobby#15397 |
-| lane-1-gclient.md | gobby#15398 |
+| lane-1-gclient.md | gobby#15707 |
 | lane-4-runbooks.md | gobby#15382 |
 | lane-2-stability.md | gobby#15381 |
 | lane-2-stability.md | gobby#15411 |
 | rust-migration.md | gobby#15405 |
 | lane-6-everything-else.md | gobby#15399 |
+| rust-migration.md | gobby#15708 |
+| lane-2-stability.md | gobby#15709 |
 | plan-writer.md | gobby#15434 |
 | plan-adversary.md | gobby#15401 |
 | plan-writer.md | gobby#15577 |
@@ -41,4 +43,4 @@
 
 Every role reads _common.md first.
 
-Lanes (2026-10-05): 1 Rust Front Door, 2 gClient chrome, 3 Runbooks, 4 Daemon stability, 5 Rust, 6 Everything else, 7 Planning/research. Each lane has a manager, a code reviewer and its developers, in lane order above. Lane 4 also runs a second developer (gobby#15411, worktree lane-4-stability-2) and code reviewer (gobby#15410). Lane 7 runs four writer/adversary pairs (15434/15401, 15577/15414, 15468/15470 and 15528/15471), all reviewed by gobby#15396. Lane role files predate this numbering; Josh is reviewing them.
+Lanes (2026-10-05): 1 Rust Front Door, 2 gClient chrome, 3 Runbooks, 4 Daemon stability, 5 Rust, 6 Everything else, 7 Planning/research, 8 Terminal port (developer gobby#15708, managed by the Lane 5 manager), 9 Load (developer gobby#15709, worktree lane-9-load, managed by the Lane 4 manager). Each lane has a manager, a code reviewer and its developers, in lane order above. Lane 4 also runs a second developer (gobby#15411, worktree lane-4-stability-2) and code reviewer (gobby#15410). Lane 7 runs four writer/adversary pairs (15434/15401, 15577/15414, 15468/15470 and 15528/15471), all reviewed by gobby#15396. Lane role files predate this numbering; Josh is reviewing them.
