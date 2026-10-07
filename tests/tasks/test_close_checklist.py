@@ -396,6 +396,7 @@ def _run(
     outcome: str = "success",
     categories: tuple[str, ...] = ("test",),
     command: str = "pytest",
+    workdir: str | None = None,
 ) -> TranscriptValidationRun:
     exit_code = 0 if outcome == "success" else 1 if outcome == "failure" else None
     return TranscriptValidationRun(
@@ -410,6 +411,7 @@ def _run(
         started_at=BASE_TIME + timedelta(seconds=order - 1),
         completed_at=BASE_TIME + timedelta(seconds=order),
         order=order,
+        workdir=workdir,
     )
 
 
@@ -1175,6 +1177,32 @@ def test_vitest_related_run_that_omits_a_changed_web_path_does_not_cover_it(
     assert gate.details["vitest_related_uncovered_paths"] == [_MARKDOWN_BODY]
 
 
+_MARKDOWN_BODY_BARE_RELATED = (
+    "node_modules/.bin/vitest related src/components/shared/MarkdownBody.tsx --run"
+)
+
+
+@pytest.mark.parametrize(
+    ("command", "workdir", "uncovered"),
+    [
+        pytest.param(_MARKDOWN_BODY_BARE_RELATED, "/repo/web", [], id="workdir-web"),
+        pytest.param(_MARKDOWN_BODY_BARE_RELATED, "/repo", [_MARKDOWN_BODY], id="workdir-root"),
+        pytest.param(
+            _MARKDOWN_BODY_BARE_RELATED, "/other/web", [_MARKDOWN_BODY], id="workdir-other-checkout"
+        ),
+        pytest.param(_MARKDOWN_BODY_RELATED, "/repo", [], id="cd-web-from-root-workdir"),
+        pytest.param(_MARKDOWN_BODY_RELATED, None, [], id="cd-web"),
+    ],
+)
+def test_vitest_related_run_is_located_by_its_tool_workdir(
+    command: str, workdir: str | None, uncovered: list[str]
+) -> None:
+    gate = _changed_web_gate(_run(1, command=command, workdir=workdir))
+
+    assert gate.details["vitest_related_uncovered_paths"] == uncovered
+    assert gate.status == ("failed" if uncovered else "passed"), gate.message
+
+
 def test_tasks_without_web_source_changes_need_no_vitest_related_run() -> None:
     gate = _changed_test_gate("uv run pytest tests/tasks/test_close_checklist.py -q")
 
@@ -1201,6 +1229,8 @@ def test_tasks_without_web_source_changes_need_no_vitest_related_run() -> None:
             ("web/src/a.tsx",),
         ),
         ("cd /repo && cd web && npx vitest related --run src/a.tsx", ("web/src/a.tsx",)),
+        ("export CI=1 && cd web && npx vitest related src/a.tsx --run", ("web/src/a.tsx",)),
+        ("cd web && CI=1 rtk npx vitest related src/a.tsx --run", ("web/src/a.tsx",)),
         ("cd web && npx vitest related", None),
         ("cd web && npx vitest related --run", None),
         ("cd web && npx vitest related src/a.tsx", None),
@@ -1340,6 +1370,247 @@ def test_failing_uv_run_no_sync_pytest_earns_no_credit() -> None:
     )
 
     assert gate.status == "failed"
+
+
+_E2E_TEST = "tests/e2e/test_stateless_ambient_session.py"
+_E2E_BODY = "def test_session() -> None:\n    assert True\n"
+
+
+def _export_tree_gate(
+    tmp_path: Path, run: TranscriptValidationRun, *, export_body: str = _E2E_BODY
+) -> CloseGateResult:
+    """Close from ``repo`` after a pytest run against the ``export`` tree (#23653)."""
+    for tree, body in (("repo", _E2E_BODY), ("export", export_body)):
+        (tmp_path / tree / "tests/e2e").mkdir(parents=True)
+        (tmp_path / tree / _E2E_TEST).write_text(body)
+    (tmp_path / "unrelated").mkdir()
+    return evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_scoped_audit_run(1, _E2E_TEST), run)),
+        has_attributed_edits=True,
+        changed_paths=(_E2E_TEST,),
+        close_root=str(tmp_path / "repo"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("command", "workdir", "export_body", "uncovered"),
+    [
+        pytest.param(
+            f"uv run pytest {{tmp}}/export/{_E2E_TEST} -v", None, _E2E_BODY, [], id="absolute-same"
+        ),
+        pytest.param(
+            f"uv run pytest {{tmp}}/export/{_E2E_TEST} -v",
+            None,
+            "def test_other() -> None:\n    assert True\n",
+            [_E2E_TEST],
+            id="absolute-differing",
+        ),
+        pytest.param(f"uv run pytest {_E2E_TEST} -v", "export", _E2E_BODY, [], id="workdir-export"),
+        pytest.param("uv run pytest -v", "export", _E2E_BODY, [], id="whole-tree-from-export"),
+        pytest.param(
+            f"uv run pytest {_E2E_TEST} -v",
+            "unrelated",
+            _E2E_BODY,
+            [_E2E_TEST],
+            id="workdir-unrelated",
+        ),
+        pytest.param(
+            f"cd {{tmp}}/export && uv run pytest {_E2E_TEST} -v",
+            None,
+            _E2E_BODY,
+            [],
+            id="cd-export",
+        ),
+        pytest.param(
+            f"cd {{tmp}}/unrelated && uv run pytest {_E2E_TEST} -v",
+            None,
+            _E2E_BODY,
+            [_E2E_TEST],
+            id="cd-unrelated",
+        ),
+        pytest.param(
+            f"uv run --directory {{tmp}}/export pytest {_E2E_TEST} -v",
+            None,
+            _E2E_BODY,
+            [],
+            id="uv-directory-export",
+        ),
+        pytest.param(
+            f"uv run --directory {{tmp}}/unrelated pytest {_E2E_TEST} -v",
+            None,
+            _E2E_BODY,
+            [_E2E_TEST],
+            id="uv-directory-unrelated",
+        ),
+        pytest.param(
+            f"GOBBY_TEST_PROTECT=1 rtk uv run --directory {{tmp}}/repo pytest {_E2E_TEST}",
+            "unrelated",
+            _E2E_BODY,
+            [],
+            id="rtk-uv-directory-close-root-from-unrelated",
+        ),
+        pytest.param(
+            f"rtk uv run --directory ../export pytest {_E2E_TEST} -v",
+            "repo",
+            "def test_other() -> None:\n    assert True\n",
+            [_E2E_TEST],
+            id="rtk-uv-directory-relative-differing",
+        ),
+    ],
+)
+def test_pytest_target_outside_close_root_credits_only_an_identical_copy(
+    tmp_path: Path, command: str, workdir: str | None, export_body: str, uncovered: list[str]
+) -> None:
+    run = _run(
+        2,
+        command=command.format(tmp=tmp_path),
+        workdir=str(tmp_path / workdir) if workdir else None,
+    )
+
+    gate = _export_tree_gate(tmp_path, run, export_body=export_body)
+
+    assert gate.details["pytest_uncovered_paths"] == uncovered
+    assert gate.status == ("failed" if uncovered else "passed"), gate.message
+
+
+def test_foreign_project_run_from_an_identical_export_credits_the_changed_test(
+    tmp_path: Path,
+) -> None:
+    # The #23518 shape: the landed commit exported and run with another checkout's project.
+    command = (
+        f"PYTHONPATH={tmp_path}/export/src uv run --project {tmp_path}/lane pytest {_E2E_TEST} -v"
+    )
+
+    gate = _export_tree_gate(tmp_path, _run(2, command=command, workdir=str(tmp_path / "export")))
+
+    assert gate.status == "passed", gate.message
+    assert gate.details["foreign_scope_runs"] == []
+    assert gate.details["pytest_uncovered_paths"] == []
+
+
+@pytest.mark.parametrize(
+    ("target", "workdir", "export_body"),
+    [
+        pytest.param(_E2E_TEST, None, _E2E_BODY, id="target-in-close-root"),
+        pytest.param(
+            _E2E_TEST, "export", "def test_other() -> None:\n    assert True\n", id="differing"
+        ),
+    ],
+)
+def test_foreign_project_run_without_an_identical_copy_stays_foreign(
+    tmp_path: Path, target: str, workdir: str | None, export_body: str
+) -> None:
+    # The close root's own file is no copy.
+    command = f"uv run --project {tmp_path}/lane pytest {target} -v"
+    run = _run(2, command=command, workdir=str(tmp_path / workdir) if workdir else None)
+
+    gate = _export_tree_gate(tmp_path, run, export_body=export_body)
+
+    assert gate.details["foreign_scope_runs"] == [command]
+    assert gate.details["pytest_uncovered_paths"] == [_E2E_TEST]
+
+
+@pytest.mark.parametrize("tree", ["link", "filelink"])
+def test_foreign_project_run_through_a_symlinked_copy_credits_the_changed_test(
+    tmp_path: Path, tree: str
+) -> None:
+    # pytest runs the tree the target sits in; here it holds the close root's bytes.
+    (tmp_path / "link").symlink_to(tmp_path / "repo")
+    (tmp_path / "filelink/tests/e2e").mkdir(parents=True)
+    (tmp_path / "filelink" / _E2E_TEST).symlink_to(tmp_path / "repo" / _E2E_TEST)
+    command = f"uv run --project {tmp_path}/lane pytest {tmp_path}/{tree}/{_E2E_TEST} -v"
+
+    gate = _export_tree_gate(tmp_path, _run(2, command=command))
+
+    assert gate.status == "passed", gate.message
+    assert gate.details["foreign_scope_runs"] == []
+    assert gate.details["pytest_uncovered_paths"] == []
+
+
+@pytest.mark.parametrize(
+    ("changed_paths", "export_widget", "differing"),
+    [
+        pytest.param(("src/widget.py",), "value = 2\n", [], id="related-test-same-source"),
+        pytest.param(
+            ("src/widget.py",), "value = 1\n", ["src/widget.py"], id="related-test-old-source"
+        ),
+        pytest.param(
+            ("src/widget.py", "tests/test_widget.py"),
+            "value = 1\n",
+            ["src/widget.py"],
+            id="changed-test-old-source",
+        ),
+        pytest.param(
+            ("src/widget.py", "src/gone.py"), "value = 2\n", [], id="deleted-path-absent-in-both"
+        ),
+    ],
+)
+def test_copy_credit_requires_every_changed_path_identical(
+    tmp_path: Path, changed_paths: tuple[str, ...], export_widget: str, differing: list[str]
+) -> None:
+    # A tree without the task's source change tests other code, even with the same test file.
+    for tree, widget in (("repo", "value = 2\n"), ("export", export_widget)):
+        (tmp_path / tree / "src").mkdir(parents=True)
+        (tmp_path / tree / "src/widget.py").write_text(widget)
+        (tmp_path / tree / "tests").mkdir()
+        (tmp_path / tree / "tests/test_widget.py").write_text("def test_widget(): pass\n")
+    run = _run(2, command="uv run pytest tests/test_widget.py -q", workdir=str(tmp_path / "export"))
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_scoped_audit_run(1, "tests/test_widget.py"), run)
+        ),
+        has_attributed_edits=True,
+        changed_paths=changed_paths,
+        close_root=str(tmp_path / "repo"),
+    )
+
+    assert gate.status == ("failed" if differing else "passed"), gate.message
+    assert gate.details.get("pytest_copy_differing_paths", []) == differing
+    for path in differing:
+        assert f"`{path}`" in gate.message
+
+
+@pytest.mark.parametrize("link", ["file", "directory"])
+@pytest.mark.parametrize(
+    ("tree_widget", "differing"),
+    [
+        pytest.param("value = 1\n", ["src/widget.py"], id="old-source"),
+        pytest.param("value = 2\n", [], id="same-source"),
+    ],
+)
+def test_symlink_into_close_root_credits_only_an_identical_tree(
+    tmp_path: Path, link: str, tree_widget: str, differing: list[str]
+) -> None:
+    # pytest imports the symlinking tree's source, so that tree's bytes decide the credit.
+    repo, tree = tmp_path / "repo", tmp_path / "tree"
+    for checkout, widget in ((repo, "value = 2\n"), (tree, tree_widget)):
+        (checkout / "src").mkdir(parents=True)
+        (checkout / "src/widget.py").write_text(widget)
+    (repo / "tests").mkdir()
+    (repo / "tests/test_widget.py").write_text("def test_widget(): pass\n")
+    if link == "file":
+        (tree / "tests").mkdir()
+        (tree / "tests/test_widget.py").symlink_to(repo / "tests/test_widget.py")
+    else:
+        (tree / "tests").symlink_to(repo / "tests")
+    run = _run(2, command="uv run pytest tests/test_widget.py -q", workdir=str(tree))
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_scoped_audit_run(1, "tests/test_widget.py"), run)
+        ),
+        has_attributed_edits=True,
+        changed_paths=("src/widget.py", "tests/test_widget.py"),
+        close_root=str(repo),
+    )
+
+    assert gate.status == ("failed" if differing else "passed"), gate.message
+    assert gate.details["pytest_uncovered_paths"] == (["tests/test_widget.py"] if differing else [])
+    assert gate.details.get("pytest_copy_differing_paths", []) == differing
 
 
 def _scoped_pytest_gate(tmp_path: Path, failing_command: str) -> CloseGateResult:

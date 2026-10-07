@@ -83,6 +83,7 @@ from gobby.tasks.transcript_tool_arguments import (
     python_added_source,
     python_edit_tokens,
     python_keyword_stub,
+    tool_workdir,
 )
 from gobby.tasks.transcript_tool_arguments import (
     extract_command as _extract_command,
@@ -586,7 +587,9 @@ def _consume_message(state: _DerivationState, message: ParsedMessage) -> None:
         name = message.tool_name or ""
         arguments = message.tool_input or {}
         if call_id:
-            state.pending[call_id] = PendingTool(name, arguments, timestamp, order, call_id)
+            state.pending[call_id] = PendingTool(
+                name, arguments, timestamp, order, call_id, workdir=tool_workdir(message.raw_json)
+            )
         _record_edit(state, name, arguments, timestamp, order)
         return
     if message.content_type != "tool_result" or not call_id:
@@ -711,6 +714,7 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             unknown_reason=unknown_reason,
             output=output,
             output_truncated=output_truncated,
+            workdir=outcome.workdir,
             validation_segments=segments,
         )
     )
@@ -831,6 +835,7 @@ def _record_validation_run(
             unknown_reason=unknown_reason,
             output=output,
             output_truncated=output_truncated,
+            workdir=tool_workdir(pending.arguments) or pending.workdir,
             validation_segments=segments,
         )
     )
