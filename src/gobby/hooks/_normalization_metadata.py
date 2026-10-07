@@ -1,6 +1,7 @@
 """Assemble canonical semantics and scope from classified shell segments."""
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from gobby.hooks._normalization_bindings import (
@@ -84,6 +85,27 @@ def _merge_code_navigation_extra(metadata: list[_ShellSegmentMetadata]) -> dict[
         if broad_values:
             merged["canonical_code_navigation_broad"] = any(bool(value) for value in broad_values)
     return merged
+
+
+def _gate_rewritable_scripts(
+    metadata: list[_ShellSegmentMetadata],
+) -> list[_ShellSegmentMetadata]:
+    """Make classified script bodies opaque when another segment of the command writes.
+
+    A body is classified as it reads now. Any other write in the command, before it,
+    beside it in a pipeline or on a later loop pass, may rewrite it first.
+    """
+    writes = [
+        item.kind == "write" or item.repo_mutation or bool(item.write_paths) for item in metadata
+    ]
+    return [
+        replace(item, extra={**item.extra, "canonical_script_execution": True})
+        if item.extra
+        and item.extra.get("canonical_script_bodies")
+        and any(write for other, write in enumerate(writes) if other != index)
+        else item
+        for index, item in enumerate(metadata)
+    ]
 
 
 def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict[str, Any]:
@@ -193,6 +215,15 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     ]
     if not pure_gcode_navigation:
         extra = _without_code_index_navigation(extra)
+    # Every level's classified script bodies, which a single extra would overwrite.
+    script_bodies = {
+        body
+        for item in active
+        if item.extra
+        for body in item.extra.get("canonical_script_bodies", ())
+    }
+    if script_bodies:
+        extra["canonical_script_bodies"] = sorted(script_bodies)
     if mutation_scope_unknown:
         extra["_canonical_repo_mutation_scope_unknown"] = True
     if saw_unexpanded_mutation_path and mutation_scope_resolved_by_loop_binding:

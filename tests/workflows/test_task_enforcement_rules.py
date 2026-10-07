@@ -809,12 +809,20 @@ class TestRequireTaskBeforeEdit:
             ("sh -c 'touch /project/owned.py'", False, True),
             ("bash -c 'touch /tmp/scratchpad/probe.py'", False, False),
             ("sh -c 'cat /project/source.py'", False, False),
+            # Readable shell scripts are classified by their bodies.
+            ('{scripts}/q.sh "select 1"', False, False),
+            ("zsh {scripts}/idle.sh", False, False),
+            ("bash {scripts}/edit.sh", False, True),
+            ("bash {scripts}/edit.sh", True, False),
+            ("printf x > {scripts}/q.sh && {scripts}/q.sh", False, True),
+            ("{scripts}/pytest {scripts}/export/tests -q --basetemp={scripts}/pt", False, False),
         ],
     )
     def test_script_execution_claim_gate(
         self,
         db: HubDatabase,
         manager: RuleDefinitionManager,
+        tmp_path: Path,
         command: str,
         claimed: bool,
         blocked: bool,
@@ -822,6 +830,12 @@ class TestRequireTaskBeforeEdit:
         from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
         from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 
+        scripts = tmp_path.resolve()
+        (scripts / "q.sh").write_text('#!/bin/zsh\npsql "$DB_URL" -c "$1"\n')
+        (scripts / "idle.sh").write_text(f"#!/bin/zsh\ndate > {scripts}/state.txt\n")
+        (scripts / "edit.sh").write_text("#!/bin/sh\ntouch /project/owned.py\n")
+        (scripts / "pytest").write_text("#!/project/.venv/bin/python\nimport sys\n")
+        command = command.replace("{scripts}", str(scripts))
         _sync_bundled(db)
         row = manager.get_by_name("require-task-before-edit")
         assert row is not None
