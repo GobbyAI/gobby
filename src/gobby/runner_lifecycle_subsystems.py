@@ -399,6 +399,7 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
                         executor=executor,
                         execution_manager=execution_manager,
                         project_id=project_id,
+                        created_before=runner.started_at,
                         run_db=lambda operation, *args, **kwargs: _run_db(
                             runner,
                             operation,
@@ -418,6 +419,7 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
                         runner,
                         execution_manager.interrupt_stale_running_executions,
                         exclude_ids=set(resumed_ids),
+                        created_before=runner.started_at,
                     )
                     if stale_count > 0:
                         logger.info(
@@ -474,6 +476,8 @@ async def _wake_interrupted_pipeline_subscribers(
                 offset=offset,
             )
             for exe in interrupted:
+                if exe.created_at >= runner.started_at:
+                    continue
                 subs = await _run_db(
                     runner,
                     execution_manager.get_completion_subscribers,
