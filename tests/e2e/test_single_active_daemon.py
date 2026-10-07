@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,39 @@ from tests.e2e.conftest import (
 )
 
 pytestmark = pytest.mark.e2e
+
+
+@pytest.mark.parametrize("mode", ["local", "remote"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_copy_daemon_api_key_keeps_valid_bootstrap_owner_fields(
+    tmp_path: Path, mode: str, existing: bool
+) -> None:
+    from gobby.config.bootstrap_io import read_bootstrap_yaml
+
+    source = tmp_path / "source"
+    source.mkdir()
+    target = tmp_path / "target"
+    owner = (
+        {"files_home": str(tmp_path / "files")}
+        if mode == "local"
+        else {"hub_daemon_url": "http://hub.example.test:7443"}
+    )
+    source_data = {"datastore_mode": mode, **owner, "api_key": "fixture-api-key"}
+    (source / "bootstrap.yaml").write_text(json.dumps(source_data))
+    if existing:
+        target.mkdir()
+        (target / "bootstrap.yaml").write_text(
+            json.dumps({**source_data, "daemon_port": 31234, "api_key": "old-fixture-key"})
+        )
+
+    copy_daemon_api_key(source, target)
+
+    copied = read_bootstrap_yaml(target / "bootstrap.yaml")
+    assert copied["datastore_mode"] == mode
+    assert all(copied[field] == value for field, value in owner.items())
+    assert copied["api_key"] == "fixture-api-key"
+    if existing:
+        assert copied["daemon_port"] == 31234
 
 
 def _write_daemon_home(

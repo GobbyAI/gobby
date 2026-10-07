@@ -65,6 +65,37 @@ async fn response_json(response: Response<Body>) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn interactive_challenge_cannot_expose_managed_signing_key() {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    let home = tempfile::tempdir().expect("home");
+    let path = home.path().join("bootstrap.yaml");
+    std::fs::write(&path, format!("api_key: {TEST_API_KEY}\n")).expect("key");
+    let (backend, mut seen) = header_backend().await;
+    let auth = Arc::new(AuthState::new("boot-secret".into(), None, path).expect("auth"));
+    let state = FrontDoorState::new(backend, BackendState::Down, auth);
+    let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
+    let door = FrontDoor::new(state, table);
+    let response = request_challenge(
+        &door,
+        serde_json::json!({"nonce": "Z29iYnktbWFuYWdlZC10b2tlbi12MQ=="}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut mac = Hmac::<Sha256>::new_from_slice(TEST_API_KEY.as_bytes()).expect("HMAC key");
+    mac.update(b"gobby-managed-token-v1");
+    let signing_key: String = mac
+        .finalize()
+        .into_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_ne!(response_json(response).await["proof"], signing_key);
+    assert!(seen.try_recv().is_err(), "native challenge reached Python");
+}
+
+#[tokio::test]
 async fn interactive_challenge_answered_locally() {
     let home = tempfile::tempdir().expect("home");
     let path = home.path().join("bootstrap.yaml");
@@ -86,7 +117,7 @@ async fn interactive_challenge_answered_locally() {
         assert_eq!(response.headers()["content-type"], "application/json");
         assert_eq!(
             response_json(response).await,
-            serde_json::json!({"proof": "e1a3de0391d5c478a85d0b284268532aeda08f8ec8838e79ec0b9cea5647a5b5"})
+            serde_json::json!({"proof": "4163c345e4d8622b215e6153831f84cd9f9f5d1dbac5f27bd3760568c3e3ee73"})
         );
     }
     std::fs::write(
@@ -98,7 +129,7 @@ async fn interactive_challenge_answered_locally() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response_json(response).await["proof"],
-        "9960762d237af08d730167b72352b789c6895409a0b4e5490ca201a4466c0cc8"
+        "06c880760459f24b9d4814114c4e6d088427b1f1af1e48552f20bfa222fb9dbd"
     );
     for nonce in ["a".repeat(45), "!invalid!".into(), "aGVsbG8===".into()] {
         let response = request_challenge(&door, serde_json::json!({"nonce": nonce})).await;

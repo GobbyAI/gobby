@@ -87,6 +87,10 @@ pub(super) async fn answer(
         .and_then(|bootstrap| bootstrap.api_key)
         .ok_or_else(key_unavailable)?;
     let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes()).map_err(|_| key_unavailable())?;
+    // Caller-selected nonces must never expose another API-key-derived secret.
+    mac.update(b"gobby-interactive-proof-v1");
+    let proof_key = mac.finalize().into_bytes();
+    let mut mac = Hmac::<Sha256>::new_from_slice(&proof_key).map_err(|_| key_unavailable())?;
     mac.update(&nonce);
     let proof: String = mac
         .finalize()

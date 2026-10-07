@@ -335,7 +335,20 @@ fn spawn_scripted(steps: Vec<Step>) -> Scripted {
                                 .and_then(|rest| rest.split('"').next())
                                 .unwrap_or_default();
                             let proof = if *valid {
-                                hmac_hex(token.as_bytes(), &b64url_decode(nonce))
+                                let body: serde_json::Value = serde_json::from_str(
+                                    request.split("\r\n\r\n").nth(1).expect("body"),
+                                )
+                                .expect("challenge JSON");
+                                if body["kind"] == "managed" {
+                                    hmac_hex(token.as_bytes(), &b64url_decode(nonce))
+                                } else {
+                                    let proof_key = super::handshake::hmac_sha256(
+                                        token.as_bytes(),
+                                        b"gobby-interactive-proof-v1",
+                                    )
+                                    .expect("interactive proof key");
+                                    hmac_hex(&proof_key, &b64url_decode(nonce))
+                                }
                             } else {
                                 "00".repeat(32)
                             };

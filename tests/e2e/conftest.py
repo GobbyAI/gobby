@@ -1241,9 +1241,16 @@ def copy_daemon_api_key(source_home: Path, target_home: Path) -> None:
     source = read_bootstrap_yaml(source_home / "bootstrap.yaml")
     key = daemon_token(source_home)
     target_home.mkdir(exist_ok=True)
+
+    def copy_key(data: dict[str, Any]) -> None:
+        for field in ("datastore_mode", "files_home", "hub_daemon_url"):
+            if field in source:
+                data.setdefault(field, source[field])
+        data.update(api_key=key, api_key_id=source.get("api_key_id"))
+
     update_bootstrap_yaml(
         target_home / "bootstrap.yaml",
-        lambda data: data.update(api_key=key, api_key_id=source.get("api_key_id")),
+        copy_key,
     )
 
 
