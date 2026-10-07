@@ -1785,14 +1785,19 @@ def _scoped_pytest_gate(tmp_path: Path, failing_command: str) -> CloseGateResult
     )
 
 
+@pytest.mark.parametrize(
+    "foreign",
+    [
+        "rtk uv run --directory {tmp}/task-b --no-sync pytest tests/tasks/test_close_checklist.py",
+        "uv run --project {tmp}/task-b pytest tests/tasks/test_close_checklist.py",
+    ],
+    ids=["other-directory", "other-project"],
+)
 def test_failing_pytest_scoped_to_another_worktree_does_not_fail_the_close(
-    tmp_path: Path,
+    tmp_path: Path, foreign: str
 ) -> None:
     # The #23010/#23188 shape: a RED run for task B lands after task A's clean run.
     (tmp_path / "task-b").mkdir()
-    foreign = (
-        "rtk uv run --directory {tmp}/task-b --no-sync pytest tests/tasks/test_close_checklist.py"
-    )
 
     gate = _scoped_pytest_gate(tmp_path, foreign)
 
@@ -1807,8 +1812,10 @@ def test_failing_pytest_scoped_to_another_worktree_does_not_fail_the_close(
         "uv run --project={own}/tests pytest tests/tasks/test_close_checklist.py",
         "uv run --directory ../task-b pytest tests/tasks/test_close_checklist.py",
         "uv run pytest tests/tasks/test_close_checklist.py",
+        # --directory sets the run's working directory; --project only picks the environment.
+        "uv run --directory {own} --project {tmp}/task-b pytest tests/tasks/test_close_checklist.py",
     ],
-    ids=["own-worktree", "own-subdirectory", "relative-scope", "no-scope"],
+    ids=["own-worktree", "own-subdirectory", "relative-scope", "no-scope", "own-dir-other-project"],
 )
 def test_failing_pytest_in_own_or_unresolvable_scope_still_fails(
     tmp_path: Path, failing_command: str

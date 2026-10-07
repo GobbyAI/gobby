@@ -388,18 +388,21 @@ def _drop_neutral_uv_options(tokens: list[str]) -> tuple[list[str], dict[str, st
 def runs_outside_root(command: str, root: str) -> bool:
     """Whether a ``uv`` location option points the command away from ``root``.
 
-    Only an absolute ``--directory``/``--project`` outside ``root`` counts. With no
-    location, or a relative one whose cwd was never recorded, the scope is
-    unresolvable and the command is judged as running in ``root``.
+    ``--directory`` sets the working directory, so it decides whenever it is given,
+    as in ``run_location``; ``--project`` counts only without it. Only an absolute
+    location outside ``root`` counts. With no location, or a relative one whose cwd
+    was never recorded, the scope is unresolvable and the command is judged as
+    running in ``root``.
     """
     parsed = parse_validation_shell(command)
     if len(parsed.segments) != 1:
         return False
     _tokens, locations = _drop_neutral_uv_options(list(parsed.segments[0]))
-    return any(
-        os.path.isabs(location)
+    location = locations.get("--directory", locations.get("--project"))
+    return (
+        location is not None
+        and os.path.isabs(location)
         and not Path(location).resolve().is_relative_to(Path(root).resolve())
-        for location in locations.values()
     )
 
 
