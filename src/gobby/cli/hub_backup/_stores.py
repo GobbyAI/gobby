@@ -43,7 +43,6 @@ from gobby.cli.postgres_backup import (
     _raise_for_subprocess_error,
 )
 from gobby.config.logging import RULE_ALLOW_AUDIT_LOG_FILENAME
-from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
 from gobby.storage.managed_credential_types import auth_schema_for
 
 POSTGRES_DUMP_RELPATH = "postgres/gobby.dump"
@@ -370,8 +369,6 @@ def _postgres_client_command(
     container: str = POSTGRES_CONTAINER,
 ) -> list[str]:
     command = ["docker", "exec"]
-    if os.environ.get(MAINTENANCE_EPOCH_ENV):
-        command.extend(["-e", "PGOPTIONS"])
     if interactive:
         command.append("-i")
     return [*command, container, client, *args]

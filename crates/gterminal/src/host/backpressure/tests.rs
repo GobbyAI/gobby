@@ -36,7 +36,6 @@ fn test_state(config: HostConfig) -> Arc<HostState> {
     HostState::new(
         config,
         CONTROL_TOKEN.to_string(),
-        "local-token".to_string(),
         "test-epoch".to_string(),
         crate::host::image::PinnedImage::for_tests(),
         std::process::id(),
@@ -312,7 +311,9 @@ async fn rpc_reply_survives_recoverable_reader_stall() {
         .expect("control peer read");
     assert!(!first_bytes.is_empty());
 
-    tokio::time::sleep(state.config.control_deadline() * 3).await;
+    tokio::time::pause();
+    tokio::time::advance(state.config.control_deadline() * 3).await;
+    tokio::time::resume();
     let reply = timeout(Duration::from_secs(5), peer.next_response())
         .await
         .expect("stalled reply must complete after reads resume")
@@ -762,6 +763,67 @@ async fn native_broadcast_skips_unchanged_semantic_frames_per_attachment() {
     reconnected.note_drain();
     assert!(first.try_pop().is_none());
     assert!(second.try_pop().is_none());
+}
+
+/// The 30 ms frame pass must not rebuild an idle pane's grid. A write that
+/// skips the content generation is invisible to the pass only if it skips
+/// the build; output through the PTY-read path is picked up on the next pass.
+#[cfg(feature = "vt-engine")]
+#[tokio::test]
+async fn native_broadcast_skips_frame_builds_for_idle_panes() {
+    let state = test_state(HostConfig::default());
+    insert_native_slot(&state, "ht-idle", 4, 20).await;
+    let (runtime, _received) = crate::pane::PaneRuntime::test_with_channel(20, 4);
+    let identity = {
+        let mut inner = state.inner.lock().await;
+        let identity = inner
+            .by_host_id
+            .get("ht-idle")
+            .expect("terminal identity")
+            .clone();
+        inner
+            .terminals
+            .get_mut(&identity)
+            .expect("terminal slot")
+            .child = Some(crate::host::spawn::PreparedChild::from_test_runtime(
+            runtime,
+        ));
+        identity
+    };
+    let (_, viewer) = state
+        .attach("ht-idle", None, RenderEncoding::SemanticFrame, 4, 20)
+        .await
+        .expect("viewer");
+    state.broadcast_frames().await;
+    assert!(matches!(viewer.try_pop(), Some(ServerMessage::Frame(_))));
+    viewer.note_drain();
+
+    let with_runtime = |write: fn(&crate::pane::PaneRuntime)| {
+        let state = state.clone();
+        let identity = identity.clone();
+        async move {
+            let inner = state.inner.lock().await;
+            let slot = inner.terminals.get(&identity).expect("terminal slot");
+            write(&slot.child.as_ref().expect("child").runtime);
+        }
+    };
+    with_runtime(|runtime| runtime.test_write_without_generation(b"hidden")).await;
+    state.broadcast_frames().await;
+    assert!(
+        viewer.try_pop().is_none(),
+        "idle frame pass rebuilt an unchanged pane"
+    );
+
+    with_runtime(|runtime| runtime.test_feed_output(b" shown")).await;
+    state.broadcast_frames().await;
+    let Some(ServerMessage::Frame(frame)) = viewer.try_pop() else {
+        panic!("output did not reach the viewer");
+    };
+    let top_row: String = frame.cells[..usize::from(frame.width)]
+        .iter()
+        .map(|cell| cell.symbol.as_str())
+        .collect();
+    assert!(top_row.starts_with("hidden shown"), "top row: {top_row:?}");
 }
 
 /// A frame of the attachment's viewport, as the frame pass renders one, with

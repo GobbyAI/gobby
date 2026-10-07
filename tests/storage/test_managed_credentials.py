@@ -1678,6 +1678,7 @@ def test_sessionless_operator_handshake_persists_null_session_id(
     try:
         grant = service.issue_for_operator(
             machine_id=str(fixture.machine_id),
+            forwarded_machine_id=str(fixture.machine_id),
             project_id=str(fixture.project_id),
             session_id=None,
         )

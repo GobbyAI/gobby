@@ -1422,10 +1422,12 @@ only edit.
 
 Consumers unchanged:
 - `tests/hooks/test_session_materialize.py` — no-edit-reason: calls take_clear_handoff_marker, whose signature and boolean result are unchanged; its assertions read sessions.parent_session_id, which the take does not move.
+- `tests/mcp_proxy/tools/spawn_agent/test_spawn_guards.py` — no-edit-reason: calls take_clear_handoff_marker with the same signature and boolean result; it pre-binds the successor to the predecessor's agent_run_id and agent_depth, the values the lineage move writes.
 - `tests/sessions/test_clear_acknowledgment.py` — no-edit-reason: calls take_clear_handoff_marker with the same signature and result; its agent-run manager is a mock with no bound run.
 - `tests/sessions/test_handoff.py` — no-edit-reason: calls take_clear_handoff_marker with the same signature and result; its runs are children of other sessions, so only their parent_session_id moves, as today.
 - `tests/sessions/test_mailbox.py` — no-edit-reason: calls take_clear_handoff_marker with the same signature and result; it seeds no agent run.
 - `tests/workflows/test_session_end_cleanup.py` — no-edit-reason: drives handle_session_end without a clear reason, so the staged-clear hand-off never applies.
+- `tests/workflows/test_spawn_scope_rules.py` — no-edit-reason: calls take_clear_handoff_marker with the same signature and boolean result; it pre-binds the successor to the predecessor's agent_run_id and agent_depth, the values the lineage move writes.
 
 **Acceptance:**
 
@@ -2167,6 +2169,16 @@ deferral:
   `tests/mcp_proxy/tools/test_apply_persona.py`, which #23647 restored at
   ef7886df52 and which failed consumer-coverage on the committed plan. No
   deliverable, acceptance item or M1 entry changed.
+- 2026-10-07: Repair under #23671 by the Orchestrator gobby#14972's 02:05 CT
+  ruling (a), relayed by the Lane Manager gobby#15389. #23676 (83c36a9618) and
+  #23675 (96aedefe2e) added `take_clear_handoff_marker` calls to
+  `tests/mcp_proxy/tools/spawn_agent/test_spawn_guards.py` and
+  `tests/workflows/test_spawn_scope_rules.py`, so 1.4 failed
+  consumer-coverage. Both join 1.4's Consumers unchanged inventory: each calls
+  the take with the same signature and boolean result and pre-binds the
+  successor to the predecessor's `agent_run_id` and `agent_depth`, the values
+  1.4's lineage move writes. No deliverable or acceptance item changed. The M1
+  block was withdrawn for re-derivation (memory f5577ae0).
 
 ## V2: Verification
 `kind: verification`

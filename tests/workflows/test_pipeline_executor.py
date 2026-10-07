@@ -1,11 +1,9 @@
-"""Tests for detached pipeline runs and the executor startup sweep (#17756).
+"""Tests for detached pipeline runs (#17756).
 
 Split-off executor behaviors live in test_pipeline_executor_core.py and
-siblings; this module covers PipelineExecutor.start_detached and
-PipelineExecutor.startup_sweep.
+siblings; this module covers PipelineExecutor.start_detached.
 """
 
-import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
@@ -154,54 +152,3 @@ class TestStartDetached:
         assert executor._detached_tasks == set()
         error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
         assert error_records == []
-
-
-class TestStartupSweep:
-    """Tests for PipelineExecutor.startup_sweep()."""
-
-    def test_startup_sweep_marks_orphans_failed(
-        self, mock_db, mock_execution_manager, mock_llm_service
-    ) -> None:
-        """Executor startup marks restart-orphaned RUNNING executions FAILED
-        (acceptance 1.6.3). A fresh executor has no detached tasks, so every
-        RUNNING execution in scope is an orphan."""
-        mock_execution_manager.fail_stale_running_executions.return_value = 2
-
-        executor = _make_executor(mock_db, mock_execution_manager, mock_llm_service)
-        count = executor.startup_sweep()
-
-        assert count == 2
-        mock_execution_manager.fail_stale_running_executions.assert_called_once_with(
-            exclude_ids=set()
-        )
-
-    @pytest.mark.asyncio
-    async def test_startup_sweep_excludes_inflight_detached_runs(
-        self, mock_db, mock_execution_manager, mock_llm_service, simple_pipeline
-    ) -> None:
-        """A sweep while a detached run is in flight must not fail it."""
-        mock_execution_manager.fail_stale_running_executions.return_value = 0
-        executor = _make_executor(mock_db, mock_execution_manager, mock_llm_service)
-
-        release = asyncio.Event()
-
-        async def _blocked_execute(*args, **kwargs):
-            await release.wait()
-
-        executor.execute = AsyncMock(side_effect=_blocked_execute)
-
-        execution = await executor.start_detached(
-            pipeline=simple_pipeline,
-            inputs={},
-            project_id="proj-123",
-        )
-
-        assert execution.id in executor._detached_execution_ids
-        executor.startup_sweep()
-        mock_execution_manager.fail_stale_running_executions.assert_called_once_with(
-            exclude_ids={execution.id}
-        )
-
-        release.set()
-        await next(iter(executor._detached_tasks))
-        assert executor._detached_execution_ids == set()

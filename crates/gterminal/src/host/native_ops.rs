@@ -772,7 +772,7 @@ impl HostState {
         let mut lagged = Vec::new();
         let ids: Vec<u64> = inner.attachments.keys().copied().collect();
         for id in ids {
-            let (host_id, rows, cols, scroll, encoding) = {
+            let (host_id, rows, cols, scroll, encoding, reusable_generation) = {
                 let Some(att) = inner.attachments.get(&id) else {
                     continue;
                 };
@@ -781,12 +781,15 @@ impl HostState {
                     reservation_id = att.reservation_id.as_deref(),
                     "broadcast attachment"
                 );
+                // A lagged stream still takes the full pass so it is closed.
+                let in_sync = !att.desynced && !att.mailbox.is_lagged(lag);
                 (
                     att.host_terminal_id.clone(),
                     att.rows,
                     att.cols,
                     att.scroll,
                     att.encoding,
+                    att.built_generation.filter(|_| in_sync),
                 )
             };
             let Some(identity) = inner.by_host_id.get(&host_id).cloned() else {
@@ -800,7 +803,7 @@ impl HostState {
                 continue;
             }
             #[cfg(feature = "vt-engine")]
-            let (frame, seq) = {
+            let (frame, seq, built_generation) = {
                 let Some(slot) = inner.terminals.get_mut(&identity) else {
                     continue;
                 };
@@ -815,6 +818,12 @@ impl HostState {
                 let Some(child) = slot.child.as_mut() else {
                     continue;
                 };
+                // Read before building: a write that races the build leaves the
+                // recorded generation behind, so the next pass rebuilds.
+                let generation = child.runtime.content_generation();
+                if reusable_generation == Some(generation) {
+                    continue;
+                }
                 if scroll > 0 {
                     child.runtime.set_scroll_offset_from_bottom(scroll as usize);
                 } else {
@@ -829,11 +838,11 @@ impl HostState {
                     slot.title = truncate_title(&title);
                     slot.last_seq += 1;
                 }
-                (frame, slot.last_seq)
+                (frame, slot.last_seq, Some(generation))
             };
             #[cfg(not(feature = "vt-engine"))]
-            let (frame, seq) = {
-                let _ = scroll;
+            let (frame, seq, built_generation) = {
+                let _ = (scroll, reusable_generation);
                 (
                     crate::protocol::FrameData {
                         cells: Vec::new(),
@@ -848,6 +857,7 @@ impl HostState {
                         .terminals
                         .get(&identity)
                         .map_or(0, |slot| slot.last_seq),
+                    None,
                 )
             };
             if let Some(att) = inner.attachments.get_mut(&id) {
@@ -866,6 +876,8 @@ impl HostState {
                     RenderEncoding::SemanticFrame => push_semantic_frame(att, frame, cap),
                     RenderEncoding::TerminalAnsi => push_terminal_ansi(att, &frame, seq, cap),
                 };
+                // Overflow and failed keyframes set `desynced`, which forces a rebuild.
+                att.built_generation = built_generation;
                 if sent {
                     att.delta_len = att.delta_len.saturating_add(1);
                     att.delta_bytes = att.mailbox.queued_bytes();

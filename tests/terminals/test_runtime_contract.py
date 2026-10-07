@@ -208,9 +208,9 @@ async def _open_frame_client(
     rows: int = SPAWN_ROWS,
 ) -> FrameClient:
     from gobby.storage.terminals import AttachLocator
+    from gobby.utils.local_token import read_local_api_token
 
-    token_path = socket_dir / "local_cli_token"
-    token = token_path.read_text(encoding="utf-8").strip() if token_path.is_file() else ""
+    token = read_local_api_token(socket_dir / "bootstrap.yaml") or ""
     reader, writer = await asyncio.open_unix_connection(str(frames_socket_path(socket_dir)))
     client = FrameClient(reader, writer)
     await client.handshake(
@@ -222,7 +222,7 @@ async def _open_frame_client(
     return client
 
 
-async def _start_harness(backend: str) -> ContractHarness:
+async def _start_harness(backend: str, monkeypatch: pytest.MonkeyPatch) -> ContractHarness:
     async with AsyncExitStack() as cleanup:
         workdir = _short_dir("gobby-rt")
         cleanup.callback(shutil.rmtree, workdir, ignore_errors=True)
@@ -242,7 +242,10 @@ async def _start_harness(backend: str) -> ContractHarness:
         assert binary is not None
         socket_dir = _short_dir("gobby-host")
         cleanup.callback(shutil.rmtree, socket_dir, ignore_errors=True)
-        (socket_dir / "local_cli_token").write_text("contract-frame-token\n", encoding="utf-8")
+        monkeypatch.setenv("GOBBY_HOME", str(socket_dir))
+        (socket_dir / "bootstrap.yaml").write_text(
+            "api_key: contract-frame-token\n", encoding="utf-8"
+        )
         host = TerminalHostManager(
             config=TerminalHostConfig(
                 enabled=True,
@@ -341,7 +344,7 @@ async def _collect_native_output(client: FrameClient, needle: str) -> str:
 
 @pytest.mark.asyncio
 async def test_contract_matrix(contract_backend: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    harness = await _start_harness(contract_backend)
+    harness = await _start_harness(contract_backend, monkeypatch)
     runtime = harness.runtime
     terminal = harness.terminal
     try:
@@ -410,7 +413,7 @@ async def test_contract_matrix(contract_backend: str, monkeypatch: pytest.Monkey
             with pytest.raises(TerminalWriteError) as exc:
                 await runtime.write_text(terminal, "ECHO gone", submit=True)
             assert exc.value.stage in {"none", "partial"}
-        await _assert_terminate_with_grace(contract_backend)
+        await _assert_terminate_with_grace(contract_backend, monkeypatch)
     finally:
         await harness.close()
 
@@ -484,8 +487,8 @@ async def _assert_native_partial(
     assert exc.value.stage == "partial"
 
 
-async def _assert_terminate_with_grace(backend: str) -> None:
-    hang = await _start_harness(backend)
+async def _assert_terminate_with_grace(backend: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    hang = await _start_harness(backend, monkeypatch)
     try:
         await hang.runtime.terminate(hang.terminal, 0.4)
 
@@ -497,17 +500,15 @@ async def _assert_terminate_with_grace(backend: str) -> None:
         await hang.close()
 
 
-def _patch_daemon_backend(
+def _patch_daemon_host(
     postgres_db: HubDatabase,
     *,
-    backend: str,
     socket_dir: Path,
     binary: Path | None,
 ) -> None:
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 
     values: dict[str, object] = {
-        "terminals.default_backend": backend,
         "terminal_host.socket_dir": str(socket_dir),
         "terminal_host.enabled": True,
     }
@@ -526,7 +527,6 @@ def _start_isolated_daemon(
     postgres_db: HubDatabase,
     postgres_database_url: str,
     postgres_schema: str,
-    backend: str,
 ) -> tuple[DaemonInstance, Path]:
     """Start a daemon whose gterm host lives in the returned socket dir.
 
@@ -547,7 +547,7 @@ def _start_isolated_daemon(
         cleanup.callback(_stop_host, socket_dir)
         binary = gterm_binary()
         _seed_e2e_runtime_state(postgres_db, home)
-        _patch_daemon_backend(postgres_db, backend=backend, socket_dir=socket_dir, binary=binary)
+        _patch_daemon_host(postgres_db, socket_dir=socket_dir, binary=binary)
         (home / "machine_id").write_text(MACHINE_ID)
         http_port = find_free_port()
         ws_port = find_free_port()
@@ -769,7 +769,6 @@ async def test_daemon_restart_continuity(
         postgres_db=postgres_db,
         postgres_database_url=postgres_database_url,
         postgres_schema=postgres_schema,
-        backend=contract_backend,
     )
     script = daemon.project_dir / "probe.py"
     script.write_text(_PROBE)

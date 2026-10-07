@@ -375,7 +375,6 @@ def _native_request(
         "project_id": "project",
         "machine_id": "machine-1",
         "prepared_spawn": prepared_spawn(),
-        "terminal_backend": "native",
         "terminal_manager": store,
         "terminal_runtime_registry": registry,
         "daemon_config": MagicMock(terminals=TerminalConfig()),

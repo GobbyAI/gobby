@@ -67,7 +67,6 @@ _COMMAND_SOURCES: dict[str, tuple[str, str]] = {
     "unpack": ("pack", "unpack"),
     "files": ("files", "files"),
     "hub-backup": ("hub_backup.cli", "hub_backup"),
-    "hub-maintenance": ("hub_maintenance", "hub_maintenance"),
     "comms": ("communications", "comms"),
     "build": ("build", "build_command"),
     "plan": ("plan", "plan"),

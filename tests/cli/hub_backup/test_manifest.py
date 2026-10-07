@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -67,12 +68,10 @@ def _manifest(
     created_at: datetime = _NOW,
     identity: SourceIdentity | None = None,
     restore_verified: bool = True,
-    epoch_id: str | None = None,
 ) -> HubBackupManifest:
     return HubBackupManifest(
         created_at=created_at.isoformat(),
         gobby_version="0.5.0",
-        epoch_id=epoch_id,
         source_identity=identity or _identity(),
         backup_starting_head=353,
         row_count_probes={"tasks": 19388, "sessions": 9930},
@@ -96,7 +95,7 @@ def _manifest(
 
 class TestManifestRoundTrip:
     def test_write_then_load_preserves_contract_fields(self, tmp_path: Path) -> None:
-        manifest = _manifest(epoch_id="epoch-123")
+        manifest = _manifest()
         path = tmp_path / "manifest.json"
 
         write_manifest(manifest, path)
@@ -104,7 +103,6 @@ class TestManifestRoundTrip:
 
         assert loaded.manifest_format == MANIFEST_FORMAT == "gobby-hub-backup-manifest"
         assert loaded.manifest_version == MANIFEST_VERSION == 3
-        assert loaded.epoch_id == "epoch-123"
         assert loaded.source_identity == _identity()
         assert loaded.backup_starting_head == 353
         assert loaded.row_count_probes["tasks"] == 19388
@@ -116,6 +114,18 @@ class TestManifestRoundTrip:
         path = tmp_path / "manifest.json"
         write_manifest(_manifest(), path)
         assert path.stat().st_mode & 0o777 == 0o600
+
+    def test_load_accepts_the_epoch_id_of_a_retired_maintenance_backup(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "manifest.json"
+        write_manifest(_manifest(), path)
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        assert "epoch_id" not in raw
+        raw["epoch_id"] = "epoch-123"
+        path.write_text(json.dumps(raw), encoding="utf-8")
+
+        assert load_manifest(path).source_identity == _identity()
 
     def test_load_rejects_wrong_format(self, tmp_path: Path) -> None:
         path = tmp_path / "manifest.json"

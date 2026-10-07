@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "auth_missing_auth",
   "family": "auth",
   "backend": "up",
@@ -21,7 +21,7 @@
       "content-type": "application/json"
     },
     "body": {
-      "error": "Authentication required. CLI clients need ~/.gobby/local_cli_token (run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in.",
+      "error": "Authentication required. CLI clients need an API key in bootstrap.yaml and gdaemon (run 'gobby auth login'). Browsers: log in.",
       "code": "missing_auth"
     }
   },

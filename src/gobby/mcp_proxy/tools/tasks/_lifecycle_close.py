@@ -638,6 +638,7 @@ async def _evaluate_close(
                 changed_paths=validation_paths,
                 deleted_paths=deleted_paths,
                 close_root=repo_path,
+                candidate_commit_sha=evaluation.candidate_commit_sha,
             ),
             item=10,
         )

@@ -49,7 +49,6 @@ const CONTROL_SOCKET: &str = "gterm-control.sock";
 const FRAMES_SOCKET: &str = "gterm-frames.sock";
 const PID_FILE: &str = "gterm.pid";
 const TOKEN_FILE: &str = "gterm-control.token";
-const LOCAL_CLI_TOKEN_FILE: &str = "local_cli_token";
 
 /// Commit steps a restore leaves for after the listeners accept. A build
 /// without the vt engine never restores, so it has none.
@@ -117,7 +116,6 @@ pub async fn run() -> io::Result<()> {
     };
     let (token, host_config) = setup?;
     let images_dir = args.socket_dir.join(image::IMAGES_DIR);
-    let local_token = read_local_token(&args.socket_dir);
     let host_pid = std::process::id();
     let control_path = args.socket_dir.join(CONTROL_SOCKET);
     let frames_path = args.socket_dir.join(FRAMES_SOCKET);
@@ -147,7 +145,6 @@ pub async fn run() -> io::Result<()> {
             let state = HostState::restored(
                 host_config,
                 token,
-                local_token,
                 running_image.clone(),
                 host_pid,
                 shutdown_tx.clone(),
@@ -184,7 +181,6 @@ pub async fn run() -> io::Result<()> {
             let state = HostState::new(
                 host_config,
                 token,
-                local_token,
                 uuid::Uuid::new_v4().to_string(),
                 running_image.clone(),
                 host_pid,
@@ -532,24 +528,15 @@ fn parse_u32(value: String) -> u32 {
     value.parse().unwrap_or(u32::MAX)
 }
 
-fn read_local_token(socket_dir: &Path) -> String {
-    read_local_token_from(socket_dir, gobby_home().as_deref())
+fn read_api_key() -> Option<String> {
+    read_api_key_from(gobby_home().as_deref())
 }
 
-fn read_local_token_from(socket_dir: &Path, gobby_home: Option<&Path>) -> String {
-    let mut candidates = vec![socket_dir.join(LOCAL_CLI_TOKEN_FILE)];
-    if let Some(home) = gobby_home {
-        candidates.push(home.join(LOCAL_CLI_TOKEN_FILE));
-    }
-    for path in candidates {
-        if let Ok(text) = fs::read_to_string(&path) {
-            let trimmed = text.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
-            }
-        }
-    }
-    String::new()
+fn read_api_key_from(gobby_home: Option<&Path>) -> Option<String> {
+    let text = fs::read_to_string(gobby_home?.join("bootstrap.yaml")).ok()?;
+    let bootstrap: yaml_serde::Value = yaml_serde::from_str(&text).ok()?;
+    let api_key = bootstrap.get("api_key")?.as_str()?.trim();
+    (!api_key.is_empty()).then(|| api_key.to_owned())
 }
 
 fn dirs_home() -> Option<PathBuf> {
@@ -558,9 +545,9 @@ fn dirs_home() -> Option<PathBuf> {
 
 /// Gobby home for this host, honouring `GOBBY_HOME` exactly as the daemon does.
 ///
-/// An isolated daemon sets `GOBBY_HOME` and writes `local_cli_token` there. Falling
+/// An isolated daemon sets `GOBBY_HOME` and writes its bootstrap API key there. Falling
 /// straight through to `~/.gobby` would make the host expect the machine-wide operator
-/// token and reject the credential its own daemon sends.
+/// key and reject the credential its own daemon sends.
 fn gobby_home() -> Option<PathBuf> {
     if let Some(configured) = std::env::var_os("GOBBY_HOME") {
         let path = PathBuf::from(configured);

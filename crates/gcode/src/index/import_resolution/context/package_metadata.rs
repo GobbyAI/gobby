@@ -146,7 +146,7 @@ fn collect_rust_manifest_dependencies(contents: &[u8], crates: &mut HashSet<Stri
     }
 }
 
-fn rust_manifest_paths(root_path: &Path) -> Vec<PathBuf> {
+pub(super) fn rust_manifest_paths(root_path: &Path) -> Vec<PathBuf> {
     let root_manifest = root_path.join("Cargo.toml");
     let mut manifests = vec![root_manifest.clone()];
     let Ok(contents) = std::fs::read_to_string(&root_manifest) else {

@@ -141,9 +141,6 @@ def test_build_smoke_agent_runtime_mappings() -> None:
     expected = {
         "analyst": ("codex", "gpt-5.6-sol", "xhigh"),
         "architect": ("codex", "gpt-5.6-sol", "xhigh"),
-        "backend-developer": ("codex", "gpt-5.6-sol", "xhigh"),
-        "fullstack-developer": ("codex", "gpt-5.6-sol", "xhigh"),
-        "frontend-developer": ("codex", "gpt-5.6-sol", "xhigh"),
         "tech-writer": ("codex", "gpt-5.6-sol", "xhigh"),
         "qa-reviewer": ("codex", "gpt-5.6-sol", "medium"),
         "doc-reviewer": ("codex", "gpt-5.6-sol", "medium"),
@@ -169,6 +166,11 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         assert agent["provider"] == provider
         assert agent["model"] == model
         assert agent["reasoning_effort"] == reasoning_effort
+
+    # Decision 12: the developer seat inherits its provider and model from the launch.
+    developer = _agent("developer")
+    assert developer["provider"] == "inherit"
+    assert "model" not in developer
 
 
 def test_merge_worker_blocks_native_delegation_tools() -> None:
@@ -219,9 +221,7 @@ def test_claim_guidance_accounts_for_spawn_preclaim() -> None:
     agents_with_updated_claim_steps = (
         "analyst",
         "architect",
-        "backend-developer",
-        "frontend-developer",
-        "fullstack-developer",
+        "developer",
         "merge-orchestrator",
         "product-manager",
         "researcher",
@@ -360,59 +360,7 @@ def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
     assert transitions == [{"to": "terminate", "when": "vars.review_complete"}]
 
 
-@pytest.mark.parametrize(
-    ("agent_name", "tool_words"),
-    [
-        ("frontend-developer", {"npm", "pnpm", "yarn", "playwright", "vite", "eslint"}),
-        ("backend-developer", {"pytest", "mypy", "ruff", "psql", "uv", "poetry"}),
-        ("fullstack-developer", {"pytest", "ruff", "npm", "pnpm", "playwright", "uv"}),
-    ],
-)
-def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
-    agent_name: str,
-    tool_words: set[str],
-) -> None:
-    agent = _agent(agent_name)
-    load_required = _step(agent, "load_required_skills")
-    load_skills = _step(agent, "load_additional_skills")
-    implement = _step(agent, "implement")
-    terminate = _step(agent, "terminate")
-
-    missing_tools = {word for word in tool_words if word not in agent["prompts"]["agent"]}
-    assert not missing_tools
-    assert agent["step_workflow"]["variables"]["required_skills"] == [
-        "gobby:references/development/obligations.md",
-        "restraint",
-        "gobby:references/tasks/overview.md",
-    ]
-    assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_required)
-    for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
-        if ":references/" in skill_name:
-            name, path = skill_name.split(":", 1)
-            directive = f'get_skill_file(name="{name}", path="{path}")'
-        else:
-            directive = f'get_skill(name="{skill_name}")'
-        assert directive in load_required["status_message"]
-    assert "references/development/obligations.md" in agent["prompts"]["agent"]
-    assert "tasks" in agent["prompts"]["agent"]
-    assert "test-driven-development" in agent["prompts"]["agent"]
-    assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skills)
-    assert "additional_skills" in load_skills["status_message"]
-    assert "additional_skills_loaded" in agent["step_workflow"]["variables"]
-    assert "skill_loaded(skill)" in str(load_skills["transitions"])
-    assert "gobby-agents:end_agent_run" not in _blocked_mcp_tools(implement)
-    assert "_skipped_stages" not in implement["status_message"]
-    assert "manifest" in implement["status_message"]
-    assert "close_task" in implement["status_message"]
-    assert "submit_for_review" in implement["status_message"]
-    assert "gobby-agents:end_agent_run" in _allowed_mcp_tools(terminate)
-    assert "gobby-agents:kill_agent" not in _allowed_mcp_tools(terminate)
-
-
-@pytest.mark.parametrize(
-    "agent_name",
-    ["backend-developer", "frontend-developer", "fullstack-developer", "tech-writer"],
-)
+@pytest.mark.parametrize("agent_name", ["tech-writer"])
 def test_direct_close_agents_preview_then_wait_for_reviewer(agent_name: str) -> None:
     agent = _agent(agent_name)
     implement = _step(agent, "implement")
@@ -432,6 +380,27 @@ def test_direct_close_agents_preview_then_wait_for_reviewer(agent_name: str) -> 
     assert len(get_task_handlers) == 1
     assert "is_closed" in str(get_task_handlers[0].get("when"))
     assert get_task_handlers[0]["variable"] == "implementation_complete"
+
+
+def test_developer_submit_waits_for_the_close_reviewer_then_reads_the_task() -> None:
+    submit = _step(_agent("developer"), "submit")
+    guidance = submit["status_message"]
+
+    assert {"gobby-agents:wait_for_agent", "gobby-tasks:get_task"} <= set(
+        submit["allowed_mcp_tools"]
+    )
+    assert "close_review_required" in guidance
+    assert "wait_for_agent once" in guidance
+    assert "reviewer_run_id" in guidance
+    assert "get_task(task_id=assigned_task_id)" in guidance
+
+
+def test_developer_route_skills_can_page_an_offloaded_task_card() -> None:
+    route_skills = _step(_agent("developer"), "route_skills")
+
+    assert "gobby-results:get_tool_result" in route_skills["allowed_mcp_tools"]
+    assert "offloaded" in route_skills["status_message"]
+    assert "get_tool_result" in route_skills["status_message"]
 
 
 def test_merge_orchestrator_no_work_close_waits_for_reviewer() -> None:
@@ -460,10 +429,7 @@ def test_merge_orchestrator_no_work_close_waits_for_reviewer() -> None:
     assert all("is_closed" in str(handler.get("when")) for handler in get_task_handlers)
 
 
-@pytest.mark.parametrize(
-    "agent_name",
-    ["backend-developer", "frontend-developer", "fullstack-developer", "tech-writer"],
-)
+@pytest.mark.parametrize("agent_name", ["tech-writer"])
 def test_task_assigned_agents_document_parent_reply_paths(agent_name: str) -> None:
     status = " ".join(_step(_agent(agent_name), "implement")["status_message"].split())
 
@@ -473,9 +439,8 @@ def test_task_assigned_agents_document_parent_reply_paths(agent_name: str) -> No
     assert "reply arrives in a later tool result" in status
 
 
-@pytest.mark.parametrize("agent_name", ["backend-developer", "fullstack-developer"])
-def test_developer_agents_avoid_full_cargo_test_suites(agent_name: str) -> None:
-    instructions = _agent(agent_name)["prompts"]["agent"]
+def test_developer_avoids_full_cargo_test_suites() -> None:
+    instructions = _agent("developer")["prompts"]["agent"]
 
     assert "**Never run the full test suite**" in instructions
     assert "`cargo test -p <package>`" in instructions
@@ -557,15 +522,6 @@ def test_triage_agent_uses_current_agent_schema_and_methodology_skill() -> None:
     assert body.prompts.agent is not None
     assert "Return structured JSON only" in body.prompts.agent
     assert 'get_skill(name="triage-judgment")' in body.prompts.agent
-
-
-def test_backend_developer_documents_default_fallback_audit_marker() -> None:
-    agent = _agent("backend-developer")
-    instructions = agent["prompts"]["agent"]
-
-    assert "default-agent fallback" in instructions
-    assert "## Agent Selection" in instructions
-    assert "Defaulted to `backend-developer`" in instructions
 
 
 def test_tech_writer_loads_methodology_skill_after_claim() -> None:

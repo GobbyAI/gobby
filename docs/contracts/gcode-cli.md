@@ -19,8 +19,8 @@ The `index` result includes its `communities` report. The companion
 `communities` evidence operation exposes the same stored partition to evidence
 consumers.
 
-Version 9 adds `evidence --request-json`, a JSON-only read surface over indexed
-working-tree source for deterministic source citations, commit metadata, indexed search, and graph
+Version 9 adds `evidence --request-json`, a JSON-only read surface over commit-bound
+or indexed working-tree source for deterministic source citations, commit metadata, indexed search, and graph
 facts. It returns the evidence schema v1 response unchanged from the Rust
 evidence library and exposes every library failure as a typed exit-2 error.
 
@@ -142,7 +142,7 @@ Operations and selector semantics are:
   orient a reader; cite `read` items from their members instead.
 
 The response echoes the canonical request (with continuation removed), its
-fingerprint, the snapshot binding (HEAD commit and tree recorded as
+fingerprint, the requested commit/tree binding (or automatically recorded HEAD
 provenance), contract identity, whole evidence items, completeness state, applied bounds, exclusions, warnings, and an
 optional continuation. Source citations include content and excerpt
 hashes plus line and byte bounds. Their byte-exact `excerpt` is repeated as
@@ -150,17 +150,26 @@ hashes plus line and byte bounds. Their byte-exact `excerpt` is repeated as
 so a reader can cite a line without counting newlines. Commit metadata is derived from the bound Git
 commit. Graph evidence carries a hash-verified source citation, owner content
 hash, endpoints, direction/relation, and `extracted`, `inferred`, or
-`unresolved` provenance. Indexed facts only locate evidence: source bytes are
-read from the working tree under the project root and must match the indexed
-content hash before return, so indexed uncommitted edits are citable and a
-mismatch fails as `stale_range` or `fact_mismatch`. The binding records HEAD as
-provenance; it does not pin source bytes to that commit.
+`unresolved` provenance. When the request supplies `binding`, source bytes come
+from that commit's regular-file blob, even after checkout HEAD moves; `content_hash`
+hashes the full bound blob. A missing commit or path, a mismatched tree, or an
+excluded file mode fails as `repository_binding_mismatch`, naming the commit and tree, with
+no working-tree fallback. Explicit line ranges can read historical paths absent
+from the current index. Indexed symbol, search, and graph offsets require their
+file hashes to match the selected source or fail as `stale_range` or
+`fact_mismatch`.
+
+When `binding` is omitted, the CLI records current HEAD and tree as provenance
+and reads the working tree under the project root. Those bytes must match the
+indexed content hash, so indexed uncommitted edits remain citable and an
+unindexed edit fails. This automatically recorded binding does not pin source
+bytes to a commit.
 
 Pagination sorts and deduplicates semantic items, then admits the largest whole
 prefix whose sum of serialized item bytes fits `max_bytes`. It never slices an
 item. If any remaining item is itself too large, the request fails with
 `narrowing_required` and returns no partial success. A continuation is bound to
-the canonical request fingerprint; changing the binding, selector, limits, or
+the canonical request fingerprint; changing the explicit/omitted binding mode, binding, selector, limits, or
 byte budget returns `continuation_mismatch`. `complete`, `completeness`,
 `returned_items`, `total_items`, `serialized_item_bytes`, index truncation, and
 graph traversal truncation describe the actual page and upstream bounds.

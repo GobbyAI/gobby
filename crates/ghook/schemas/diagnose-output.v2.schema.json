@@ -15,7 +15,7 @@
     "daemon_host",
     "daemon_port",
     "cli_recognized",
-    "local_token_file_present",
+    "api_key_present",
     "auth_401_remediation"
   ],
   "additionalProperties": false,
@@ -78,9 +78,9 @@
       "type": ["string", "null"],
       "description": "URL the binary was fetched from (typically a GitHub release asset URL), sourced from the install sidecar. null when unknown or not applicable."
     },
-    "local_token_file_present": {
+    "api_key_present": {
       "type": "boolean",
-      "description": "Whether the local_cli_token file exists in the active Gobby home."
+      "description": "Whether the active Gobby home's bootstrap contains a readable API key."
     },
     "auth_401_remediation": {
       "type": "string",

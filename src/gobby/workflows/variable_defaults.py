@@ -7,6 +7,9 @@ from uuid import UUID
 
 from gobby.storage.definitions import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.read_scope import scoped_read
+
+_SESSION_TABLES = frozenset({"sessions"})
 
 
 def resolve_session_project_id(db: HubDatabase, session_id: str) -> str | None:
@@ -17,7 +20,12 @@ def resolve_session_project_id(db: HubDatabase, session_id: str) -> str | None:
         UUID(session_id)
     except ValueError:
         return None
-    row = db.fetchone("SELECT project_id FROM sessions WHERE id = %s", (session_id,))
+    row = scoped_read(
+        db,
+        ("session_project_id", session_id),
+        _SESSION_TABLES,
+        lambda: db.fetchone("SELECT project_id FROM sessions WHERE id = %s", (session_id,)),
+    )
     if row is None or row["project_id"] is None:
         return None
     return str(row["project_id"])

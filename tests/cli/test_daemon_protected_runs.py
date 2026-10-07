@@ -37,7 +37,7 @@ AUTH_HEADERS = {"Authorization": "Bearer test-local-cli-token"}
 
 @pytest.fixture(autouse=True)
 def _fake_local_token() -> Generator[None]:
-    """Keep the probe off the real ~/.gobby/local_cli_token."""
+    """Keep the probe off the real startup bootstrap API key."""
     with patch(
         "gobby.cli._daemon_protected_runs.daemon_auth_headers",
         return_value=dict(AUTH_HEADERS),

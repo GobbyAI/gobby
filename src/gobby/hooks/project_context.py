@@ -34,7 +34,7 @@ class ProjectIdResolver:
         *,
         session_manager: HookSessionManager | None = None,
         logger: logging.Logger | None = None,
-        ensure_project_in_db: Callable[[dict[str, Any]], None] | None = None,
+        ensure_project_in_db: Callable[[dict[str, Any]], object] | None = None,
     ) -> None:
         self.session_manager = session_manager
         self.logger = logger

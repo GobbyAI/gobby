@@ -71,14 +71,16 @@ async def test_completed_turn_exhaustion_completes_unbound_run(
 
 
 @pytest.mark.asyncio
-async def test_unbound_run_without_gobby_mcp_calls_fails_without_reprompts(
+@pytest.mark.parametrize("failed_startup", [False, True], ids=["no-attempt", "failed-startup"])
+async def test_unbound_run_requires_failed_gobby_startup_to_fail(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
+    failed_startup: bool,
 ) -> None:
-    """An unbound run whose Gobby MCP never connected cannot deliver, so it fails."""
+    """No successful MCP calls alone do not prove the Gobby bridge failed."""
     transcript_path = tmp_path / "codex-unbound-no-mcp.jsonl"
     _write_codex_lifecycle_transcript(transcript_path, age_seconds=120)
     monitor, run = _make_idle_monitor_run(
@@ -92,13 +94,22 @@ async def test_unbound_run_without_gobby_mcp_calls_fails_without_reprompts(
         made_gobby_mcp_call=False,
     )
 
-    with _pane_text(monitor, "❯\n"):
+    pane_tail = (
+        "MCP client for `gobby` failed to start: transport closed\n❯\n" if failed_startup else "❯\n"
+    )
+    with _pane_text(monitor, pane_tail):
         assert await monitor.check_idle_agents() == 1
 
-    assert [text for kind, text in _runtime_of(monitor).write_log if kind == "text"] == []
+    reprompts = [text for kind, text in _runtime_of(monitor).write_log if kind == "text"]
+    assert reprompts == ([] if failed_startup else [IdleDetector.REPROMPT_MESSAGE])
     updated_run = agent_run_manager.get(run.id)
     assert updated_run is not None
-    assert updated_run.status == "error"
-    assert updated_run.error is not None
-    assert "Gobby MCP proxy tools unavailable" in updated_run.error
-    assert "with no step workflow or task" in updated_run.error
+    if failed_startup:
+        assert updated_run.status == "error"
+        assert updated_run.error is not None
+        assert "Gobby MCP proxy tools unavailable" in updated_run.error
+        assert "with no step workflow or task" in updated_run.error
+        assert "transport closed" in updated_run.error
+    else:
+        assert updated_run.status == "running"
+        assert updated_run.error is None

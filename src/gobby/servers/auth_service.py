@@ -5,8 +5,7 @@ from __future__ import annotations
 import logging
 import secrets
 import threading
-import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Literal, NamedTuple
 
@@ -26,10 +25,7 @@ from gobby.servers.grant_auth import (
 )
 from gobby.servers.lease_fence import EffectFence
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
-from gobby.storage.auth import (
-    AuthStore,
-    hash_token,
-)
+from gobby.storage.auth import AuthStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.managed_credential_types import resolve_auth_schema
 from gobby.storage.session_resolution import resolve_session_reference
@@ -40,15 +36,12 @@ from gobby.utils.local_token import (
     AgentApiTokenRejection,
     classify_agent_api_token,
     daemon_bootstrap_path,
-    local_token_path,
     read_managed_signing_key,
 )
 
 logger = logging.getLogger(__name__)
 
 _SESSION_COOKIE = "gobby_session"
-_LOCAL_TOKEN_HEADER = "X-Gobby-Local-Token"
-_NEVER_REFRESHED = float("-inf")
 
 _CALLER_PROJECT_HEADER = "X-Gobby-Caller-Project-Id"
 _TARGET_PROJECT_HEADER = "X-Gobby-Project-Id"
@@ -99,6 +92,7 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("POST", "/api/mcp/tools/recommend", True),
     _AgentRoute("POST", "/api/mcp/tools/search", True),
     _AgentRoute("POST", "/api/mcp/*/tools/*", True),
+    _AgentRoute("POST", "/api/mcp/bridge/ready", True),
     _AgentRoute("GET", "/api/mcp/bridge/tool-timeouts", False),
     # Session-scoped variables (stdio proxy get/set_variable).
     _AgentRoute("POST", "/api/sessions/*/variables/get", True),
@@ -188,26 +182,36 @@ def _agent_identity_matches(
     return not bind_identity
 
 
-def _read_token_file(path: Path) -> str | None:
-    try:
-        token = path.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
+class FrontDoorIdentity(NamedTuple):
+    user_id: str
+    machine_id: str
+    key_id: str
+
+
+def verified_front_door_identity(
+    request: HTTPConnection | Mapping[str, str], secret: str | None
+) -> FrontDoorIdentity | None:
+    """Resolve identity only from the configured front door's complete headers."""
+    headers = request.headers if isinstance(request, HTTPConnection) else request
+    supplied = headers.get("X-Gobby-Front-Door")
+    if not secret or not supplied:
         return None
-    except OSError as exc:
-        logger.warning("Unable to read local API token file %s: %s", path, exc)
+    if not secrets.compare_digest(supplied.encode(), secret.encode()):
         return None
-    return token or None
+    user_id = headers.get("X-Gobby-User-Id")
+    machine_id = headers.get("X-Gobby-Machine-Id")
+    key_id = headers.get("X-Gobby-Key-Id")
+    if not user_id or not machine_id or not key_id:
+        return None
+    return FrontDoorIdentity(user_id, machine_id, key_id)
 
 
 class AuthService:
     """Cache and verify all daemon authentication credentials."""
 
-    MIN_REFRESH_INTERVAL = 5.0
-
     def __init__(
         self,
         database_getter: Callable[[], HubDatabase],
-        token_file: Path | None = None,
         *,
         grant_service: GrantPresenter | None = None,
         lease_live: Callable[[], bool] | None = None,
@@ -219,11 +223,8 @@ class AuthService:
     ) -> None:
         self._database_getter = database_getter
         self._auth_schema: str | None = None
-        self._token_file = token_file or local_token_path()
         self._lock = threading.Lock()
-        self._last_refresh = _NEVER_REFRESHED
-        self._token_hash: str | None = None
-        self._local_token_plaintext: str | None = None
+        self._front_door_secret: str | None = None
         self._grant_service = grant_service
         self._lease_live = lease_live
         self._local_machine_id = local_machine_id
@@ -258,25 +259,23 @@ class AuthService:
         local_machine_id: str | None,
         effect_fence: EffectFence | None,
         clock: Callable[[], int] | None,
+        front_door_secret: str | None = None,
     ) -> None:
         self._grant_service = grant_service
         self._lease_live = lease_live
         self._local_machine_id = local_machine_id
         self._effect_fence = effect_fence
         self._clock = clock
+        self._front_door_secret = front_door_secret
 
-    def verify_bearer(self, token: str) -> bool:
-        candidate_hash = hash_token(token)
-        self.refresh()
+    def verified_front_door_identity(
+        self, request: HTTPConnection | Mapping[str, str]
+    ) -> FrontDoorIdentity | None:
+        return verified_front_door_identity(request, self._front_door_secret)
 
-        if secrets.compare_digest(candidate_hash, self._token_hash_snapshot()):
-            return True
-
-        self.refresh()
-        return secrets.compare_digest(candidate_hash, self._token_hash_snapshot())
-
-    async def verify_ws_token(self, token: str) -> str | None:
-        return "local-cli" if self.verify_bearer(token) else None
+    async def verify_ws_identity(self, headers: Mapping[str, str]) -> str | None:
+        identity = self.verified_front_door_identity(headers)
+        return identity.user_id if identity is not None else None
 
     def is_request_authenticated(self, request: HTTPConnection) -> bool:
         return self.authenticate(request).allowed
@@ -298,7 +297,13 @@ class AuthService:
                 and not self._effectful_allowed()
             ):
                 return AuthDecision(allowed=False, code="lease_not_held", status_code=409)
-            return AuthDecision(allowed=True)
+            identity = self.verified_front_door_identity(request)
+            return AuthDecision(
+                allowed=True,
+                user_id=identity.user_id if identity else None,
+                machine_id=identity.machine_id if identity else None,
+                key_id=identity.key_id if identity else None,
+            )
 
         bearer = self._accepted_bearer(request)
         if bearer is False:
@@ -319,10 +324,11 @@ class AuthService:
         )
         if isinstance(presented, AuthDecision):
             return presented
+        identity = self.verified_front_door_identity(request)
         if not bearer_matches_grant(
             presented.principal,
             claims=bearer,
-            local_machine_id=self._local_machine_id,
+            local_machine_id=identity.machine_id if identity else self._local_machine_id,
         ):
             return AuthDecision(allowed=False, code="forged_identity", status_code=401)
         if not identity_headers_match(request, presented.principal):
@@ -344,11 +350,16 @@ class AuthService:
             grant=presented,
             bearer_claims=bearer,
             status_code=200,
+            user_id=identity.user_id if identity else None,
+            machine_id=identity.machine_id if identity else None,
+            key_id=identity.key_id if identity else None,
         )
 
     def _legacy_rejection(self, request: HTTPConnection) -> str | None:
         """Return why operator, browser, or managed credentials were refused, or None."""
-        if self._break_glass_admits(request):
+        if self.break_glass_admits(request):
+            return None
+        if self.verified_front_door_identity(request) is not None:
             return None
         authorization = request.headers.get("Authorization")
         if authorization is not None:
@@ -356,14 +367,8 @@ class AuthService:
             if parts and parts[0].casefold() == "bearer":
                 if len(parts) != 2:
                     return "missing_auth"
-                if self.verify_bearer(parts[1]):
-                    return None
                 claims = self._classify_agent_token(request, parts[1])
                 return None if isinstance(claims, AgentApiTokenClaims) else claims
-
-        local_token = request.headers.get(_LOCAL_TOKEN_HEADER)
-        if local_token is not None:
-            return None if self.verify_bearer(local_token) else "invalid_token"
 
         session_token = request.cookies.get(_SESSION_COOKIE)
         if session_token is not None:
@@ -381,25 +386,22 @@ class AuthService:
         self, request: HTTPConnection
     ) -> AgentApiTokenClaims | None | Literal[False]:
         """Return agent claims, None for the local operator, or False if rejected."""
-        if self._break_glass_admits(request):
+        if self.break_glass_admits(request):
+            return None
+        if self.verified_front_door_identity(request) is not None:
             return None
         authorization = request.headers.get("Authorization")
         if authorization is not None:
             parts = authorization.split(maxsplit=1)
             if parts and parts[0].casefold() == "bearer" and len(parts) == 2:
-                if self.verify_bearer(parts[1]):
-                    return None
                 claims = self._verified_agent_claims_for_token(request, parts[1])
                 return claims if claims is not None else False
-        local_token = request.headers.get(_LOCAL_TOKEN_HEADER)
-        if local_token is not None:
-            return None if self.verify_bearer(local_token) else False
         session_token = request.cookies.get(_SESSION_COOKIE)
         if session_token is not None:
             return None if self.validate_session(session_token) else False
         return False
 
-    def _break_glass_admits(self, request: HTTPConnection) -> bool:
+    def break_glass_admits(self, request: HTTPConnection) -> bool:
         if request.scope.get("type") != "http" or request.client is None:
             return False
         if not is_loopback_host(request.client.host):
@@ -518,25 +520,3 @@ class AuthService:
         if not verify_password_hash(password, stored_hash):
             return None
         return user
-
-    def local_token(self) -> str | None:
-        self.refresh()
-        with self._lock:
-            return self._local_token_plaintext
-
-    def refresh(self) -> None:
-        now = time.monotonic()
-        with self._lock:
-            if now - self._last_refresh < self.MIN_REFRESH_INTERVAL:
-                return
-
-            token_hash = AuthStore(self._database_getter()).get_local_api_token_hash()
-            local_token_plaintext = _read_token_file(self._token_file)
-
-            self._token_hash = token_hash
-            self._local_token_plaintext = local_token_plaintext
-            self._last_refresh = now
-
-    def _token_hash_snapshot(self) -> str:
-        with self._lock:
-            return self._token_hash or ""

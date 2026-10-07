@@ -1337,9 +1337,10 @@ async def _send_pull_prompt(
 @pytest.mark.parametrize("cli_source", ["claude", "codex"])
 @pytest.mark.parametrize("state", ["draft", "unknown", "probe_error"])
 async def test_pull_prompt_refuses_unconfirmed_composer_and_keeps_durable_message(
-    session_db: HubDatabase, cli_source: str, state: str
+    session_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, cli_source: str, state: str
 ) -> None:
     """An unreadable frame may conceal a draft; refusal must write nothing."""
+    monkeypatch.setattr("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0)
     tmux = _FakeTmux()
     tmux.composer_text = "unreadable frame containing the operator's unsent draft"
 
@@ -1368,6 +1369,93 @@ async def test_pull_prompt_refuses_unconfirmed_composer_and_keeps_durable_messag
     assert [(message.content, message.message_type) for message in queued] == [
         (_PULL_PROMPT, "handoff_continuation")
     ]
+
+
+class _RedrawingTmux(_FakeTmux):
+    """A Claude pane still redrawing after compaction: its first probes show no frame."""
+
+    def __init__(self, unframed_probes: int) -> None:
+        super().__init__()
+        self.unframed_probes = unframed_probes
+
+    async def snapshot_lines(
+        self, pane_id: str, lines: int = 5, *, mode: SnapshotMode = "text"
+    ) -> str | None:
+        if lines == COMPOSER_PROBE_LINES and self.unframed_probes > 0:
+            self.unframed_probes -= 1
+            self.composer_modes.append(mode)
+            return "✻ Conversation compacted (ctrl+o for history)\n"
+        return await super().snapshot_lines(pane_id, lines, mode=mode)
+
+
+@pytest.mark.asyncio
+async def test_pull_prompt_reprobes_a_composer_still_redrawing_after_compaction() -> None:
+    """SessionStart(compact) can arrive before Claude redraws its composer frame.
+
+    A single unframed probe used to refuse the pull prompt and queue it with no
+    wake, stranding the seat until an unrelated message arrived (#23727).
+    """
+    tmux = _RedrawingTmux(unframed_probes=2)
+    tmux.composer_text = _claude_frame("❯\xa0")
+    assert _CLAUDE_READ("✻ Conversation compacted (ctrl+o for history)\n").state == "unknown"
+    failures: list[int] = []
+
+    assert await _send_pull_prompt(tmux, on_send_failure=lambda: failures.append(0)) is True
+
+    assert failures == []
+    assert tmux.unframed_probes == 0
+    assert any(
+        text.startswith(_PULL_PROMPT[:12]) for _pane, text, literal in tmux.sent_keys if literal
+    )
+
+
+@pytest.mark.asyncio
+async def test_pull_prompt_composer_refusal_logs_session_and_reason(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tmux = _FakeTmux()
+    tmux.composer_text = _claude_frame("❯ half-typed operator note")
+    assert _CLAUDE_READ(tmux.composer_text).state == "draft"
+    failures: list[int] = []
+
+    with caplog.at_level(logging.WARNING, logger="gobby.sessions.compact_continuation"):
+        sent = await _send_pull_prompt(tmux, on_send_failure=lambda: failures.append(0))
+
+    assert sent is False
+    assert failures == [0]
+    assert tmux.sent_keys == []
+    assert any(
+        SESSION_ID in record.getMessage()
+        and "composer holds an operator draft" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_pull_prompt_write_gate_refusal_logs_session_and_reason(
+    session_db: HubDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
+    SessionManager(session_db).update_session_status(SESSION_ID, "awaiting_input")
+    tmux = _FakeTmux()
+    tmux.composer_text = _claude_frame("❯\xa0")
+
+    with caplog.at_level(logging.WARNING, logger="gobby.sessions.compact_continuation"):
+        sent = await _send_handoff_compact_continuation(
+            TmuxPaneIO(tmux, "%12"),
+            _PULL_PROMPT,
+            SESSION_ID,
+            delay_seconds=0,
+            cli_source="claude",
+            composer_read=_CLAUDE_READ,
+            db=session_db,
+        )
+
+    assert sent is False
+    assert tmux.sent_keys == []
+    assert any(
+        SESSION_ID in record.getMessage() and "awaiting_input" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio

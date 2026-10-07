@@ -183,4 +183,3 @@ Proposed files absent from both pinned Git tree and working checkout:
 - `src/gobby/workflows/engine/core_overrides.py`.
 
 The proposed tests named in 1.1.5, 1.1.6, 2.1.5 and 3.1.7 were also checked by exact scoped gcode search (N03). Source and test paths for those searches have no diff against the requested pin.
-

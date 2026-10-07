@@ -17,7 +17,7 @@ fn gcode_bin() -> &'static str {
 
 fn write_home(home: &Path) {
     std::fs::write(home.join("machine_id"), "machine-test").expect("machine_id");
-    std::fs::write(home.join("local_cli_token"), "operator-token").expect("token");
+    std::fs::write(home.join("bootstrap.yaml"), "api_key: operator-token\n").expect("API key");
 }
 
 fn write_project(root: &Path, project_id: &str) {

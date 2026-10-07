@@ -4,7 +4,7 @@ import logging
 import os
 import subprocess
 import tempfile
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,6 +15,28 @@ import pytest
 # postgres_db). Tests that don't use them pay no runtime cost; the session
 # fixtures only fire on first request.
 pytest_plugins = ["tests.fixtures.postgres", "tests.review_coverage_helpers"]
+
+
+@pytest.fixture
+def route_hook_replay_to_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> "Callable[[FastAPI], None]":
+    """Bind replay HTTP to the test app without dialing the operator daemon."""
+    import httpx
+
+    real_client = httpx.AsyncClient
+
+    def route(app: "FastAPI") -> None:
+        def replay_client(**kwargs: Any) -> httpx.AsyncClient:
+            kwargs["transport"] = httpx.ASGITransport(app=app)
+            return real_client(**kwargs)
+
+        monkeypatch.setattr("gobby.hooks.inbox.httpx.AsyncClient", replay_client)
+        monkeypatch.setattr(
+            "gobby.utils.daemon_url.resolve_daemon_url", lambda *args, **kwargs: "http://test"
+        )
+
+    return route
 
 
 def _ensure_isolated_bootstrap() -> None:
@@ -200,6 +222,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 if TYPE_CHECKING:
+    from fastapi import FastAPI
+
     from gobby.config.app import DaemonConfig
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.mcp import LocalMCPManager

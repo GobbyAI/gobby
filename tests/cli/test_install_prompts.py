@@ -481,11 +481,9 @@ class TestInstallCommandSharedStores:
         db.fetchone.return_value = None
         secret_store = MagicMock()
         config_store = MagicMock()
-        auth_store = MagicMock()
         mock_store_cls = MagicMock(return_value=secret_store)
         mock_config_cls = MagicMock(return_value=config_store)
-        mock_auth_cls = MagicMock(return_value=auth_store)
-        mock_provision_token = MagicMock()
+        mock_local_api_key = MagicMock()
         runtime = MagicMock()
         runtime.require_database.return_value = db
         runtime.require_config.return_value = config
@@ -506,8 +504,7 @@ class TestInstallCommandSharedStores:
                 "gobby.cli.install",
                 SecretStore=mock_store_cls,
                 ConfigStore=mock_config_cls,
-                AuthStore=mock_auth_cls,
-                _provision_local_api_token=mock_provision_token,
+                ensure_local_api_key=mock_local_api_key,
                 install_postgres=MagicMock(return_value={"success": True}),
                 apply_managed_service_restart_policy=MagicMock(return_value={"success": True}),
                 _run_qdrant_install=lambda _installer, results: results.update(
@@ -560,8 +557,8 @@ class TestInstallCommandSharedStores:
         runtime.require_config.assert_called_once_with()
         mock_store_cls.assert_called_once_with(db)
         mock_config_cls.assert_called_once_with(db)
-        mock_auth_cls.assert_called_once_with(db)
-        mock_provision_token.assert_called_once_with(auth_store)
+        mock_local_api_key.assert_called_once()
+        assert mock_local_api_key.call_args.args[0] is db
         assert mock_standard_install.call_args.kwargs["hook_timeout_seconds"] == 150
         assert mock_voice_install.call_args.kwargs["db"] is db
         assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
@@ -646,11 +643,9 @@ class TestInstallCommandSharedStores:
         db.fetchone.return_value = None
         secret_store = MagicMock()
         config_store = MagicMock()
-        auth_store = MagicMock()
         mock_store_cls = MagicMock(return_value=secret_store)
         mock_config_cls = MagicMock(return_value=config_store)
-        mock_auth_cls = MagicMock(return_value=auth_store)
-        mock_provision_token = MagicMock()
+        mock_local_api_key = MagicMock()
         runtime = MagicMock()
         runtime.require_database.return_value = db
         runtime.require_config.return_value = config
@@ -671,8 +666,7 @@ class TestInstallCommandSharedStores:
                 "gobby.cli.install",
                 SecretStore=mock_store_cls,
                 ConfigStore=mock_config_cls,
-                AuthStore=mock_auth_cls,
-                _provision_local_api_token=mock_provision_token,
+                ensure_local_api_key=mock_local_api_key,
                 install_postgres=MagicMock(return_value={"success": True}),
                 apply_managed_service_restart_policy=MagicMock(return_value={"success": True}),
             ),
@@ -734,8 +728,8 @@ class TestInstallCommandSharedStores:
         runtime.require_config.assert_called_once_with()
         mock_store_cls.assert_called_once_with(db)
         mock_config_cls.assert_called_once_with(db)
-        mock_auth_cls.assert_called_once_with(db)
-        mock_provision_token.assert_called_once_with(auth_store)
+        mock_local_api_key.assert_called_once()
+        assert mock_local_api_key.call_args.args[0] is db
         assert mock_embedding.call_args.kwargs["api_base_override"] == "http://lan:1234/v1"
         assert "embedding_api_key" not in mock_embedding.call_args.kwargs
         assert mock_embedding.call_args.kwargs["provider_override"] == "lmstudio"

@@ -50,6 +50,7 @@ from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
     MCPTestClient,
+    copy_daemon_api_key,
     daemon_health_unavailable,
     daemon_token,
     prepare_daemon_env,
@@ -171,11 +172,9 @@ def rig(
     srt = stage_real_srt(home)
     # Each resource is owned the moment it exists, so a failed setup still frees it.
     with host_socket_dir() as socket_dir:
-        token = uuid4().hex
         for directory in (home, home / ".gobby", socket_dir):
             directory.mkdir(exist_ok=True)
-            (directory / "local_cli_token").write_text(token)
-            (directory / "local_cli_token").chmod(0o600)
+            copy_daemon_api_key(home, directory)
         control_token_path(socket_dir).write_text(uuid4().hex)
         control_token_path(socket_dir).chmod(0o600)
         # Two three-seat pods are live at once in scenarios A and D.
@@ -290,6 +289,16 @@ def live(
         {"test": request.node.name, "srt": rig.srt, "native_sha256": rig.binaries},
     )
     try:
+        # Auth liveness precedes recovery; a new runbook must not be resumed by it.
+        def startup_ready() -> bool:
+            response = client.get("/api/admin/startup-progress")
+            response.raise_for_status()
+            progress = response.json()
+            return (
+                progress.get("done") is True and progress.get("restart_recovery_pending") is False
+            )
+
+        _until(startup_ready, 120, "initial daemon recovery")
         state.evidence["checkout_mode"] = _assert_isolated(state)
         state.evidence["host"] = _assert_adopted(state)
         yield state

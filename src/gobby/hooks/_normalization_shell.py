@@ -598,6 +598,10 @@ def _scan_unquoted_shell_operator(command: str, index: int) -> str | None:
     char = command[index]
     if char == "\n":
         return "\n"
+    # Every operator opens with one of these or a digit; the scanner probes
+    # each character, so skip the regex and prefix checks for the rest.
+    if char not in ";&|<>" and not char.isdigit():
+        return None
     # Like the ``N>`` branch below, this fires on digits adjacent to a word
     # (``src2>&1`` scans as ``src`` + ``2>&1`` where bash reads ``src2`` + ``>&1``);
     # fd duplication is classification-neutral either way.
@@ -654,10 +658,8 @@ def _strip_shell_wrappers(parts: list[str]) -> list[str]:
     while stripped:
         while stripped and _is_env_assignment(stripped[0]):
             stripped = stripped[1:]
-        if stripped[:1] == ["command"]:
-            stripped = stripped[1:]
-            continue
-        if stripped[:1] == ["env"]:
+        # A wrapper with options stays whole, or an option would read as the command.
+        if stripped[:1] in (["command"], ["env"]) and not "".join(stripped[1:2]).startswith("-"):
             stripped = stripped[1:]
             continue
         # Loop/conditional body keywords prefix the real command after a

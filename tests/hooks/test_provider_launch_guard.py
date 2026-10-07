@@ -22,6 +22,207 @@ RULE = SHARED / "workflows/rules/worker-safety/block-direct-provider-launch.yaml
 SESSION = "abababab-0000-4000-8000-000000000001"
 
 
+@pytest.mark.parametrize("error", [MemoryError, RecursionError])
+@pytest.mark.parametrize("target", ["ast.parse", "_python_skeleton"])
+def test_python_parse_resource_limit_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, error: type[Exception], target: str
+) -> None:
+    def fail_parse(source: object, *args: object, **kwargs: object) -> None:
+        raise error("parser resource limit")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(f"gobby.hooks.provider_launch_guard.{target}", fail_parse)
+        blocked = blocks_direct_provider_launch(
+            "exec_command", {"cmd": "python3 -c 'import os; os.system(\"true\")'"}
+        )
+    assert blocked
+
+
+@pytest.mark.parametrize(
+    "command,blocked",
+    [
+        pytest.param(
+            "uv run python - <<'MM23659_CLOSE_REPORT'\n"
+            "from pathlib import Path\n"
+            "Path('/tmp/provider-report.json').write_text("
+            + repr("codex exec --sandbox danger-full-access " + "x" * 131_072)
+            + ")\nMM23659_CLOSE_REPORT\n",
+            False,
+            id="large-report-data",
+        ),
+        pytest.param(
+            "uv run python -c 'from pathlib import Path; "
+            'Path("/tmp/provider-report.txt").write_text("codex exec ' + "x" * 131_072 + '")'
+            "'",
+            False,
+            id="large-inline-report-data",
+        ),
+        ("uv run python report.py -c 'import subprocess; subprocess.run([\"codex\"])'", False),
+        *[
+            pytest.param(
+                "uv run python - <<'PY'\n"
+                f"{imports}\nfrom pathlib import Path\n"
+                "Path('/tmp/report.txt').write_text('codex exec hi')\nPY\n",
+                False,
+                id=f"dotted-report-{index}",
+            )
+            for index, imports in enumerate(
+                (
+                    "import os\nimport os.path",
+                    "import urllib.request\nimport urllib.parse",
+                    "import xml.etree.ElementTree\nimport xml.dom.minidom",
+                )
+            )
+        ],
+        *[
+            pytest.param(
+                f"uv run python - <<'PY'\n{body}\nPY\n",
+                True,
+                id=f"round2-launch-{index}",
+            )
+            for index, body in enumerate(
+                (
+                    "import os.path\nos.system('codex exec hi')",
+                    "import asyncio.subprocess\nasyncio.create_subprocess_shell('codex exec hi')",
+                    "import os\nos.system('codex exec %s' % x)",
+                    "import os\nos.system('codex exec {}'.format(x))",
+                    "import os\nos.system(' '.join(['codex', 'exec', x]))",
+                    "import os, shlex\nos.system(shlex.join(['codex', 'exec', x]))",
+                )
+            )
+        ],
+        *[
+            pytest.param(
+                f"uv run python {option} <<'PY'\n"
+                "import subprocess\nsubprocess.run(['codex'])\nPY\n",
+                False,
+                id=f"query-{option}",
+            )
+            for option in ("-V", "-h", "--version", "--help", "-IV")
+        ],
+        pytest.param(
+            "uv run python -Ic 'import subprocess; subprocess.run([\"codex\"])'",
+            True,
+            id="clustered-inline-code",
+        ),
+        *[
+            pytest.param(
+                f"uv run python - <<'PY'\nimport subprocess, os, sys\n{body}\nPY\n",
+                True,
+                id=f"review-{index}",
+            )
+            for index, body in enumerate(
+                (
+                    'subprocess.run(["claude", "-p", p])',
+                    'subprocess.run(["codex", "exec", *sys.argv])',
+                    'subprocess.run(f"codex exec {p}", shell=True)',
+                    'subprocess.run("codex exec " + p, shell=True)',
+                    'os.system(f"claude -p {p}")',
+                    "import json as j; import sys as j; "
+                    'from subprocess import run; run(["codex", "exec", "hi"])',
+                    'subprocess.run("codex exec hi", shell=1)',
+                    'subprocess.run("codex exec hi", shell=use_shell)',
+                )
+            )
+        ],
+        *[
+            pytest.param(command, True, id=f"python-channel-{index}")
+            for index, command in enumerate(
+                (
+                    "echo 'import subprocess; subprocess.run([\"codex\"])' | python3",
+                    "python3 <<< 'import subprocess; subprocess.run([\"codex\"])'",
+                    "python3 --check-hash-based-pycs always - <<'PY'\n"
+                    'import subprocess; subprocess.run(["codex"])\nPY\n',
+                    "uv run python3.13 <<'PY'\n"
+                    'import subprocess; subprocess.run(["codex"])\nPY\n',
+                )
+            )
+        ],
+        ("python3 -c 'import subprocess; subprocess.run([cmd, \"exec\"])'", False),
+        ("python3 -c 'import subprocess; subprocess.run(\"codex exec\", shell=False)'", False),
+        ("uv run python -c 'from subprocess import run as launch; launch([\"claude\"])'", True),
+        ("uv run python -c 'import subprocess; subprocess.run(args=[\"codex\"])'", True),
+        (
+            'uv run python -c \'import subprocess; subprocess.run(["data"], executable="codex")\'',
+            True,
+        ),
+        ("uv run python -c 'import subprocess; subprocess.run(\"true; codex\", shell=True)'", True),
+        pytest.param(
+            "uv run python -c 'import subprocess; "
+            'subprocess.run("codex", shell=True, executable="/bin/bash")\'',
+            True,
+            id="shell-executable-override",
+        ),
+        pytest.param(
+            "uv run python -c 'import subprocess; "
+            'subprocess.run(["codex exec", "unused"], shell=True)\'',
+            True,
+            id="shell-list-command",
+        ),
+        pytest.param(
+            "uv run python -c 'import subprocess; "
+            'subprocess.run(["printf", "codex"], shell=True)\'',
+            False,
+            id="shell-list-data",
+        ),
+        ('uv run python -c \'import subprocess; subprocess.run(["printf", "codex exec"])\'', False),
+        ('uv run python -c \'import subprocess; subprocess.run(["codex", "--help"])\'', False),
+        (
+            'uv run python -c \'import asyncio; asyncio.create_subprocess_exec("codex", "--help")\'',
+            False,
+        ),
+        (
+            "uv run python <<'PY'\n"
+            "from pathlib import Path\n"
+            "Path('/tmp/provider-report.json').write_text("
+            '\'{"command": "codex exec --sandbox danger-full-access"}\')\n'
+            "PY\n",
+            False,
+        ),
+        (
+            "uv run python -c 'from pathlib import Path; "
+            'Path("/tmp/provider-report.txt").write_text("claude -p hi")'
+            "'",
+            False,
+        ),
+        ("codex exec hi", True),
+        ("true && claude -p hi", True),
+        ("true; codex exec hi", True),
+        (
+            "uv run python <<'PY'\n"
+            "import subprocess\n"
+            "subprocess.run(['codex', 'exec', 'hi'])\n"
+            "PY\n",
+            True,
+        ),
+        ("uv run python -c 'import subprocess; subprocess.run([\"codex\"])'", True),
+    ],
+)
+@pytest.mark.asyncio
+async def test_interpreter_provider_launch_rule(
+    hub_db: HubDatabase, command: str, blocked: bool
+) -> None:
+    synced = sync_rule_file(hub_db, RULE, tag="gobby")
+    assert synced["success"]
+    row = RuleDefinitionManager(hub_db).get_by_name("block-direct-provider-launch")
+    assert row is not None and row.enabled
+    template = yaml.safe_load(RULE.read_text())["rules"]["block-direct-provider-launch"]
+    assert row.description == template["description"]
+    for field in ("event", "when", "effects"):
+        assert row.definition_json[field] == template[field]
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=SESSION,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={"tool_name": "exec_command", "tool_input": {"cmd": command}},
+    )
+    result = await RuleEngine(hub_db).evaluate(event, session_id=SESSION, variables={})
+    assert (result.decision == "block") is blocked
+    if blocked:
+        assert result.reason is not None and "block-direct-provider-launch" in result.reason
+
+
 @pytest.mark.parametrize(
     ("command", "blocked"),
     [("codex exec smoke", True), ("codex --help", False), ("git status --short", False)],
@@ -123,7 +324,6 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "cat <<EOF\ncodex exec\nEOF\n",
         "cat <<EOF\n<(codex)\nEOF\n",
         "bash script.sh <<'EOF'\ncodex exec\nEOF\n",
-        "uv run python -c 'import subprocess; subprocess.run([\"codex\"])'",
         "cat <<'EOF' |\n tee docs\n$(codex exec)\nEOF\n",
         "echo hello | sh",
         "bash -c 'printf hello' <<'EOF'\ncodex\nEOF\n",
@@ -227,6 +427,7 @@ def test_help_does_not_exempt_launch_operands(command: str) -> None:
         "cat <<'EOF' | sh\ncodex exec\nEOF\n",
         "cat <<'EOF' |\n sh\ncodex\nEOF\n",
         "sh <<< 'codex exec'",
+        "uv run python -c 'import subprocess; subprocess.run([\"codex\"])'",
         "printf '%s' 'codex exec' | sh",
         "codex --help; codex exec hi",
         "codex login status --unknown",
@@ -350,7 +551,7 @@ def test_bounded_and_malformed_input() -> None:
     assert not blocks_direct_provider_launch("spawn_agent", {"command": "codex exec hi"})
 
 
-@pytest.mark.parametrize("agent", ["default", "backend-developer", "merge-worker"])
+@pytest.mark.parametrize("agent", ["default", "developer", "merge-worker"])
 @pytest.mark.parametrize(
     "source",
     [

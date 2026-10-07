@@ -35,6 +35,7 @@ from gobby.utils.project_context import get_workflow_project_path
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.worktrees.deletion import probe_missing_worktree_git_state
 from gobby.worktrees.git import WorktreeGitManager
+from gobby.worktrees.occupancy import refuse_occupied_worktree
 
 MAX_PROVIDER_ERROR_RESUMES = 3
 PROVIDER_ERROR_BACKOFF_SECONDS = (1.0, 2.0, 4.0)
@@ -613,6 +614,18 @@ class MiscEventHandlerMixin(EventHandlersBase):
             if git_already_deleted:
                 git_delete_succeeded = True
             else:
+                if self._worktree_manager:
+                    # The session leaving its own worktree fires this hook.
+                    occupied = await asyncio.to_thread(
+                        refuse_occupied_worktree,
+                        self._worktree_manager.db,
+                        worktree_path,
+                        worktree_id=existing.id if existing else None,
+                        exclude_session_id=event.metadata.get("_platform_session_id"),
+                    )
+                    if occupied is not None:
+                        self.logger.warning("WORKTREE_REMOVE refused: %s", occupied)
+                        return HookResponse(decision="allow")
                 result = await git_manager.delete_worktree(
                     worktree_path=worktree_path,
                     force=True,

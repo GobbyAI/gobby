@@ -25,7 +25,7 @@ from gobby.hooks.envelope_dedupe import (
     mark_envelope_processed,
     prune_processed_envelope_markers,
 )
-from gobby.hooks.inbox import prune_hook_inbox
+from gobby.hooks.inbox_maintenance import prune_hook_inbox
 
 pytestmark = pytest.mark.unit
 
@@ -213,7 +213,7 @@ async def test_the_prune_never_runs_on_the_event_loop_thread(
     the marker growth caused in the first place, just moved one frame out."""
     inbox_dir = tmp_path / "inbox"
     _marker(inbox_dir / "processed", "stale", age_seconds=2 * _DAY)
-    monkeypatch.setattr("gobby.hooks.inbox.get_hook_inbox_dir", lambda: inbox_dir)
+    monkeypatch.setattr("gobby.hooks.inbox_maintenance.get_hook_inbox_dir", lambda: inbox_dir)
 
     prune_threads: list[int] = []
     real_prune = prune_processed_envelope_markers
@@ -222,7 +222,9 @@ async def test_the_prune_never_runs_on_the_event_loop_thread(
         prune_threads.append(threading.get_ident())
         return real_prune(processed_dir)
 
-    monkeypatch.setattr("gobby.hooks.inbox.prune_processed_envelope_markers", _recording_prune)
+    monkeypatch.setattr(
+        "gobby.hooks.inbox_maintenance.prune_processed_envelope_markers", _recording_prune
+    )
     loop_thread = threading.get_ident()
 
     deleted = await prune_hook_inbox()

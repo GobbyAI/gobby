@@ -327,7 +327,8 @@ fn windows_background_and_server_daemon_commands_do_not_have_consoles() {
 
     let parent_pid = std::process::id().to_string();
     let test_exe = std::env::current_exe().expect("resolve test executable");
-    let configurations: [(&str, fn(&mut Command)); 2] = [
+    type Configure = fn(&mut Command);
+    let configurations: [(&str, Configure); 2] = [
         ("background", super::configure_background_command_platform),
         ("server daemon", super::detach_server_daemon_command),
     ];
@@ -374,7 +375,7 @@ fn windows_background_and_server_daemon_commands_do_not_have_consoles() {
 }
 
 fn argv_strings(argv: &[std::ffi::OsString]) -> Vec<String> {
-    argv.into_iter()
+    argv.iter()
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect()
 }
@@ -987,6 +988,7 @@ fn pane_runtime_markers_are_distinct() {
     assert_ne!(first, second);
 }
 
+#[cfg(feature = "vt-engine")]
 #[test]
 fn pane_runtime_marker_is_added_only_to_git_bash_environment() {
     let root = std::env::temp_dir().join(format!(

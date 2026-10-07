@@ -1,11 +1,11 @@
 header:
   plan_id: provider-usage-spend
-  plan_hash: 0925f146686921d86996841ede6e76d2fb78da89031041c1c9fa7514f7b33316
+  plan_hash: a0b95b35e97dc5d9249afa046319440b723ff47dcb65c6f7d807461b5385c457
   root_task_ref: '23591'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-05T22:44:21Z'
+  generated_at: '2026-10-07T04:51:05Z'
   task_tree_source: db
-  task_tree_source_hash: 72fa7e92aa462403aedde5c412a0bfbc9a97553774e913b8f0e87b1ea14f5476
+  task_tree_source_hash: 53f8c7991f19cdb25d03f6f796770efe63f0dd2c2eab90efa494ba4821671a8b
   evidence_summary: []
   evidence: []
 rows:
@@ -431,91 +431,138 @@ rows:
   detail: ''
 - section_id: '4.1'
   item_id: 4.1.1
-  plan_node_hash: cc04b2fc4c264f90436c250861aadb39069d999370ff245242e376a213afcda7
-  status: covered
+  plan_node_hash: 375a41617c2e2e3f31006615d732c599f8cf05246a2478c7c161eb743277af77
+  status: invalid
   leaves:
   - leaf_task_ref: '#23603'
     validation_criteria_snippet: '4.1.1: `observation_from_rate_limits` maps the live
       sample to one `weekly` window (80/100 percent, ISO reset) with credits and plan
       in `details`, and returns N...'
-    matched_artifact_ref: tests/providers/test_codex_quota_observation.py::test_rate_limits_map_to_windows_and_details
+    matched_artifact_ref: tests/providers/test_provider_quota_observation.py::test_claude_quota_signals
   deferral_target: null
   detail: ''
 - section_id: '4.1'
   item_id: 4.1.2
-  plan_node_hash: 15670b6cd422f889a24193c6a00125539f95726c221e7d15d1f64492a8b48945
-  status: covered
+  plan_node_hash: bc64f420b3df692e9fc95b88f3d71eaaa862fa46c4527b450e3a3df006809973
+  status: invalid
   leaves:
   - leaf_task_ref: '#23603'
     validation_criteria_snippet: '4.1.1: `observation_from_rate_limits` maps the live
       sample to one `weekly` window (80/100 percent, ISO reset) with credits and plan
       in `details`, and returns N...'
-    matched_artifact_ref: tests/providers/test_codex_quota_observation.py::test_live_caught_up_batch_observes_newest_reading
+    matched_artifact_ref: tests/providers/test_provider_quota_observation.py::test_codex_quota_signals
   deferral_target: null
   detail: ''
 - section_id: '4.1'
   item_id: 4.1.3
-  plan_node_hash: 4ea40af1023c024847f37d2f43419fb26736a84bd5f5fb7e4989009e566a2978
-  status: covered
+  plan_node_hash: c40e4a1a2ce1c35a7a20a3ee965632889e452e6e1768873b926574d66234d137
+  status: invalid
   leaves:
   - leaf_task_ref: '#23603'
     validation_criteria_snippet: '4.1.1: `observation_from_rate_limits` maps the live
       sample to one `weekly` window (80/100 percent, ISO reset) with credits and plan
       in `details`, and returns N...'
-    matched_artifact_ref: tests/providers/test_codex_quota_observation.py::test_stale_readings_are_rejected
+    matched_artifact_ref: tests/providers/test_provider_quota_observation.py::test_grok_quota_signals
   deferral_target: null
   detail: ''
 - section_id: '4.1'
   item_id: 4.1.4
-  plan_node_hash: 41411ca1e5d696b78382b017337197fddc69edc69d45414188181e1802df698d
-  status: covered
+  plan_node_hash: 4e12ef6ef6b923df623614c2fc1941f0b753e9269c4e7081d1bdb0d405f3717d
+  status: invalid
   leaves:
   - leaf_task_ref: '#23603'
     validation_criteria_snippet: '4.1.1: `observation_from_rate_limits` maps the live
       sample to one `weekly` window (80/100 percent, ISO reset) with credits and plan
       in `details`, and returns N...'
-    matched_artifact_ref: tests/providers/test_codex_quota_observation.py::test_observed_provider_freshness_and_reasons
+    matched_artifact_ref: tests/providers/test_provider_quota_observation.py::test_droid_quota_signals
   deferral_target: null
   detail: ''
 - section_id: '4.1'
   item_id: 4.1.5
-  plan_node_hash: 7f9023ef1f06debea1ed7b25177a2a0eff42ca2e2f59e91cc1dee8fdf437c8d7
-  status: covered
+  plan_node_hash: 0c58ab593a1cb49c9139468013d674dce2c50796d82b2fff97908d90dcee618e
+  status: invalid
   leaves:
   - leaf_task_ref: '#23603'
     validation_criteria_snippet: '4.1.1: `observation_from_rate_limits` maps the live
       sample to one `weekly` window (80/100 percent, ISO reset) with credits and plan
       in `details`, and returns N...'
-    matched_artifact_ref: tests/providers/test_codex_quota_observation.py::test_rebuilt_processor_keeps_capacity_service
+    matched_artifact_ref: tests/providers/test_provider_quota_observation.py::test_qwen_quota_signals
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.6
+  plan_node_hash: 93ebcbd9a10ef36909a4cebc91070be73a1370063a43bc98dcf94ef2527f636f
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.7
+  plan_node_hash: 5cb95037742a9666e833a55b7f0bf2b76cb6a7a20a487583ea5e610866b88b56
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.8
+  plan_node_hash: 8c94d668b5f5d933a98d7437d1ef66af0dbcca2addc1a1fcf0cba846ab9a8854
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.9
+  plan_node_hash: 6c9126116b0a05c317d94ecac592344f99179783fb3cff8a8f31072b18391720
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.10
+  plan_node_hash: f61f4e64b8cccb07087e0345aafb238000eecaf4ea59be2e9221d31aa56ec031
+  status: missing
+  leaves: []
   deferral_target: null
   detail: ''
 - section_id: '4.2'
   item_id: 4.2.1
-  plan_node_hash: e3ef470eb776cd3739950fb1021fe1b862bc4fb02d98b8909356ea2cd1f2c0e3
+  plan_node_hash: 53629ba19770f0127b5536ee606d125f275257cb7ec001f6c9e950d3035cc3f5
   status: covered
   leaves:
   - leaf_task_ref: '#23604'
     validation_criteria_snippet: '4.2.1: Replaying the incident readings (a weekly
       window only) sends exactly three alerts: weekly warn at 95%, weekly exhausted
       at 100%, and drawing_credits whe...'
-    matched_artifact_ref: tests/providers/test_quota_alerts.py::test_incident_replay_alerts_on_edges_only
+    matched_artifact_ref: tests/providers/test_quota_alerts.py::test_windows_alert_independently
   deferral_target: null
   detail: ''
 - section_id: '4.2'
   item_id: 4.2.2
-  plan_node_hash: ec67e60be57a0d840a8d0bbf528b5a4af1df681c92b911dca66d47d7efc3cff0
-  status: covered
+  plan_node_hash: 355ebca9ad00e3601a25f6e5d28353f087baee0fee28d4c5e258238c3dff1017
+  status: invalid
   leaves:
   - leaf_task_ref: '#23604'
     validation_criteria_snippet: '4.2.1: Replaying the incident readings (a weekly
       window only) sends exactly three alerts: weekly warn at 95%, weekly exhausted
       at 100%, and drawing_credits whe...'
-    matched_artifact_ref: tests/providers/test_quota_alerts.py::test_level_is_monotonic_within_window
+    matched_artifact_ref: tests/providers/test_quota_alerts.py::test_provider_signal_edges
   deferral_target: null
   detail: ''
 - section_id: '4.2'
   item_id: 4.2.3
-  plan_node_hash: 0a53e897196a04e4a438cb84d726d2b6e49da7bb84231f681a8dcaf30f07d498
+  plan_node_hash: f3e22ca78d125675887889ac325679d492f87b916cce4c760a8e5809120d26a9
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#23604'
+    validation_criteria_snippet: '4.2.1: Replaying the incident readings (a weekly
+      window only) sends exactly three alerts: weekly warn at 95%, weekly exhausted
+      at 100%, and drawing_credits whe...'
+    matched_artifact_ref: tests/providers/test_quota_alerts.py::test_no_inferred_recovery
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.4
+  plan_node_hash: feb23d1c677b14599f8187431a5e470ccb5a45091afec43b6100dd939540e4e2
   status: covered
   leaves:
   - leaf_task_ref: '#23604'
@@ -526,8 +573,8 @@ rows:
   deferral_target: null
   detail: ''
 - section_id: '4.2'
-  item_id: 4.2.4
-  plan_node_hash: dc43b27d182befb8a40a9213b352a418d1ae2ecd4cf6dac6ca95b5f3bad4f4a1
+  item_id: 4.2.5
+  plan_node_hash: 604c699f890058fafcaffdc1a99e2a0b6140a849c75386b60257f6f739c5e846
   status: covered
   leaves:
   - leaf_task_ref: '#23604'
@@ -538,15 +585,101 @@ rows:
   deferral_target: null
   detail: ''
 - section_id: '4.2'
-  item_id: 4.2.5
-  plan_node_hash: 869e5b9a0068bc851ec0cadcce01ceddb1b9cd8569f5ddc0e7fedc2d0bbd2cd6
-  status: covered
-  leaves:
-  - leaf_task_ref: '#23604'
-    validation_criteria_snippet: '4.2.1: Replaying the incident readings (a weekly
-      window only) sends exactly three alerts: weekly warn at 95%, weekly exhausted
-      at 100%, and drawing_credits whe...'
-    matched_artifact_ref: tests/providers/test_quota_alerts.py::test_windows_alert_independently
+  item_id: 4.2.6
+  plan_node_hash: 918e47ec48008759f307ae06d9719a18e13f189a28c831b1e92bb11b94c01304
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.7
+  plan_node_hash: 233f4ae7600e66adfe76c1cd952093d41072c9010b782d23881c3668385231c0
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.8
+  plan_node_hash: c6d610c3b4ae0161278159819eb439bdcd0994f03eb6532040374aebc87e6965
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.1
+  plan_node_hash: ea3213006fb5af60558157f36fa261d778e4c80f33db621c187df9d0d01ebd33
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.2
+  plan_node_hash: 065bec2ce1b09ee2474c49addc6e41e2772184bd7955a01abcf34ffadf5e4eb6
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.3
+  plan_node_hash: c2f74b83f6463cf892cfc3e0f6ac8d4007cc888ca9fc74b87003acbbd4fbec17
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.1
+  plan_node_hash: 14b8a9bafefd0dd08b62de8f19baba19a47ccf487e149f3dd8ddbe954f6adccf
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.2
+  plan_node_hash: f9abe986d942e3540a511dc233fa255177ff6a794ad624398825823b3ce426e8
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.3
+  plan_node_hash: e95b2fe21150cdddc3250b919909d570f7c0d28f7f829992c3fd680061a9ca90
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.4
+  plan_node_hash: ae1d6b0edb097be88574edbe312e5c4a15f9ab91a512e99ba08772cde31627be
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.5
+  plan_node_hash: 1d7c3c8b7c119345d3c99d9eb39bb61f82d1063cb4e677456681c2f0563e52f4
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.1
+  plan_node_hash: 8a12c95235b2864c28ea46a0dbaf9af275893e544497c8e7a1263134647426a4
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.2
+  plan_node_hash: 163a335d8195a01acffca2dbac622765da9b1f336cc920274cd903c90e02ebc5
+  status: missing
+  leaves: []
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.3
+  plan_node_hash: 9d93ba8e2e41edd06bf98cabd59db664fec692a796c968c46ad5c3668c39a29c
+  status: missing
+  leaves: []
   deferral_target: null
   detail: ''
 - section_id: '5.1'

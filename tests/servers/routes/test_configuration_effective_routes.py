@@ -13,14 +13,16 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime import ConfigRuntime, ConfigSnapshot, RuntimeSecretBinding
 from gobby.servers.auth_service import AuthService
-from gobby.storage.auth import AuthStore, hash_token
+from gobby.storage.auth import AuthStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.fixtures.postgres import TEST_USER_ID
-from tests.servers.conftest import create_http_server
-
-LOCAL_RUNTIME_TOKEN = "effective-config-test-token"
+from tests.servers.conftest import (
+    TEST_FRONT_DOOR_IDENTITY,
+    TEST_FRONT_DOOR_SECRET,
+    create_http_server,
+)
 
 LOCAL_MACHINE_ID = "22000000-0000-4000-8000-000000000001"
 
@@ -112,19 +114,23 @@ def server(
     runtime_config: DaemonConfig,
     tmp_path: Path,
 ) -> Any:
-    AuthStore(hub_db).set_local_api_token_hash(
-        hash_token(LOCAL_RUNTIME_TOKEN),
-    )
     http_server = create_http_server(
         config=runtime_config,
         database=hub_db,
         task_manager=LocalTaskManager(hub_db),
     )
-    token_file = tmp_path / "local-cli-token"
-    token_file.write_text(LOCAL_RUNTIME_TOKEN, encoding="utf-8")
     http_server.auth_service = AuthService(
         lambda: hub_db,
-        token_file=token_file,
+        bootstrap_file=tmp_path / "bootstrap.yaml",
+        break_glass_file=tmp_path / "absent-break-glass",
+    )
+    http_server.auth_service.bind_runtime(
+        grant_service=None,
+        lease_live=None,
+        local_machine_id=LOCAL_MACHINE_ID,
+        effect_fence=None,
+        clock=None,
+        front_door_secret=TEST_FRONT_DOOR_SECRET,
     )
     runtime = MagicMock(spec=ConfigRuntime)
     runtime.snapshot = _snapshot(
@@ -140,7 +146,7 @@ def server(
 def client(server: Any) -> TestClient:
     return TestClient(
         server.app,
-        headers={"X-Gobby-Local-Token": LOCAL_RUNTIME_TOKEN},
+        headers={**TEST_FRONT_DOOR_IDENTITY, "X-Gobby-Key-Id": "another-restricted-key"},
     )
 
 
@@ -202,7 +208,7 @@ def test_effective_config_uses_machine_visibility(
         active_values={
             "ai.embeddings.model": "machine-visible",
             "websocket.ping_interval": 17.0,
-            "auth.api_token_hash": "restricted-value",
+            "databases.qdrant.api_key": "restricted-value",
         },
     )
 
@@ -284,22 +290,50 @@ def test_effective_config_auth_and_cache_contract(
         "/api/config/effective",
         headers={"Authorization": "Bearer invalid-token"},
     )
-    bearer = unauthenticated.get(
+    native_identity = unauthenticated.get(
         "/api/config/effective",
-        headers={"Authorization": f"Bearer {LOCAL_RUNTIME_TOKEN}"},
+        headers=TEST_FRONT_DOOR_IDENTITY,
     )
-    local_header = unauthenticated.get(
+    other_key = unauthenticated.get(
         "/api/config/effective",
-        headers={"X-Gobby-Local-Token": LOCAL_RUNTIME_TOKEN},
+        headers={**TEST_FRONT_DOOR_IDENTITY, "X-Gobby-Key-Id": "another-restricted-key"},
     )
 
     assert no_credentials.status_code == 401
     assert cookie_only.status_code == 401
     assert invalid_bearer.status_code == 401
-    assert bearer.status_code == 200
-    assert local_header.status_code == 200
-    assert bearer.headers["Cache-Control"] == "no-store"
-    assert local_header.headers["Cache-Control"] == "no-store"
+    assert native_identity.status_code == 200
+    assert other_key.status_code == 200
+    assert native_identity.headers["Cache-Control"] == "no-store"
+    assert other_key.headers["Cache-Control"] == "no-store"
+
+    for invalid in (
+        {**TEST_FRONT_DOOR_IDENTITY, "X-Gobby-Front-Door": "wrong-secret"},
+        {
+            key: value
+            for key, value in TEST_FRONT_DOOR_IDENTITY.items()
+            if key != "X-Gobby-Front-Door"
+        },
+        {"X-Gobby-Local-Token": "retired-token"},
+    ):
+        assert unauthenticated.get("/api/config/effective", headers=invalid).status_code == 401
+
+
+def test_effective_config_accepts_only_loopback_break_glass(server: Any, tmp_path: Path) -> None:
+    credential = tmp_path / "absent-break-glass"
+    credential.touch(mode=0o600)
+    credential.write_text("recovery-value")
+    headers = {"X-Gobby-Break-Glass": "recovery-value"}
+    loopback = TestClient(server.app, client=("127.0.0.1", 50000))
+    remote = TestClient(server.app, client=("203.0.113.2", 50000))
+    response = loopback.get("/api/config/effective", headers=headers)
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    assert remote.get("/api/config/effective", headers=headers).status_code == 401
+    assert (
+        loopback.get("/api/config/effective", headers={"X-Gobby-Break-Glass": "wrong"}).status_code
+        == 401
+    )
 
 
 @pytest.mark.integration

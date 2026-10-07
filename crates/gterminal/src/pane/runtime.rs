@@ -517,8 +517,11 @@ impl PaneRuntime {
                 }
                 if let Some(delay) = result.render_delay {
                     let render_notify = render_notify.clone();
+                    // A settled render can differ with no new bytes (cursor settle).
+                    let terminal = terminal.clone();
                     rt.spawn(async move {
                         tokio::time::sleep(delay).await;
+                        terminal.mark_content_changed();
                         render_notify.notify_one();
                     });
                 }
@@ -667,8 +670,11 @@ impl PaneRuntime {
                 }
                 if let Some(delay) = result.render_delay {
                     let render_notify = render_notify.clone();
+                    // A settled render can differ with no new bytes (cursor settle).
+                    let terminal = terminal.clone();
                     rt.spawn(async move {
                         tokio::time::sleep(delay).await;
+                        terminal.mark_content_changed();
                         render_notify.notify_one();
                     });
                 }

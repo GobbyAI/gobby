@@ -17,9 +17,8 @@ _SESSION_ID = "08e60e7e-1f89-4e30-b37e-db276d81a6b6"
 _CLOSE_ARGUMENTS = {"task_id": "#1"}
 _FULL_RESULT = {"success": True, "closed": True, "task_id": "#1"}
 _BOUND_RESULT = f"project/{_SESSION_ID}/tool-results/mcp-gobby-call_tool-1789424128611.txt"
-_BACKEND_DEVELOPER = (
-    Path(__file__).resolve().parents[2]
-    / "src/gobby/install/shared/workflows/agents/backend-developer.yaml"
+_DEVELOPER = (
+    Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents/developer.yaml"
 )
 
 
@@ -89,13 +88,11 @@ def test_missing_saved_result_keeps_the_pointer(tmp_path: Path) -> None:
 def test_recovered_close_task_result_satisfies_developer_close_condition(
     tmp_path: Path,
 ) -> None:
-    agent = yaml.safe_load(_BACKEND_DEVELOPER.read_text(encoding="utf-8"))
-    implement = next(
-        step for step in agent["step_workflow"]["steps"] if step["name"] == "implement"
-    )
+    agent = yaml.safe_load(_DEVELOPER.read_text(encoding="utf-8"))
+    submit = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "submit")
     close_hook = next(
         handler
-        for handler in implement["on_mcp_success"]
+        for handler in submit["on_mcp_success"]
         if handler["server"] == "gobby-tasks" and handler["tool"] == "close_task"
     )
     evaluator = SafeExpressionEvaluator(

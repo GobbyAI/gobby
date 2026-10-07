@@ -41,6 +41,15 @@ def _isolate_gobby_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     return home
 
 
+@pytest.fixture(autouse=True)
+def mock_gdaemon_provisioning(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Install command coverage must never build or promote the live native set."""
+    provisioning = MagicMock()
+    monkeypatch.setattr("gobby.cli.install._provision_gdaemon_for_services", provisioning)
+    monkeypatch.setattr("gobby.cli.install_setup.ensure_gdaemon", MagicMock())
+    return provisioning
+
+
 @pytest.fixture
 def runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     import importlib
@@ -58,9 +67,7 @@ def runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     )
     monkeypatch.setattr(install_module, "SecretStore", MagicMock())
     monkeypatch.setattr(install_module, "ConfigStore", MagicMock())
-    monkeypatch.setattr(install_module, "AuthStore", MagicMock())
-    monkeypatch.setattr(install_module, "_provision_local_api_token", MagicMock())
-    monkeypatch.setattr(install_module, "_provision_gdaemon_for_services", MagicMock())
+    monkeypatch.setattr(install_module, "ensure_local_api_key", MagicMock())
     monkeypatch.setattr(install_module, "require_installed", lambda: None)
     monkeypatch.setattr(
         importlib.import_module("gobby.cli.install_components"),
@@ -260,7 +267,7 @@ class TestInstallCommand:
             ),
             patch("gobby.cli.install.peek_install_bootstrap", return_value={}),
         ):
-            # ``ensure_install_identity`` and ``_provision_local_api_token`` are
+            # ``ensure_install_identity`` and ``ensure_local_api_key`` are
             # patched by the ``runner`` fixture's monkeypatch; patching them here
             # too leaks the stubs, because the module-level ``monkeypatch`` undo
             # runs after this ``patch`` block exits.
@@ -297,7 +304,7 @@ class TestInstallCommand:
             patch("gobby.cli.install._install_required_stack") as required_stack,
             patch("gobby.cli.install.run_daemon_setup") as daemon_setup,
             patch("gobby.cli.install.ensure_install_identity") as identity,
-            patch("gobby.cli.install._provision_local_api_token") as local_token,
+            patch("gobby.cli.install.ensure_local_api_key") as local_api_key,
             patch("gobby.cli.install._maybe_start_daemon_after_install") as start_daemon,
             runner.isolated_filesystem(),
         ):
@@ -315,7 +322,7 @@ class TestInstallCommand:
             required_stack,
             daemon_setup,
             identity,
-            local_token,
+            local_api_key,
             start_daemon,
         ):
             untouched.assert_not_called()
@@ -718,7 +725,7 @@ class TestInstallCommand:
                 _is_droid_cli_installed=MagicMock(return_value=False),
             ),
             patch("gobby.cli.install.prepare_install_state", return_value=empty_install_state()),
-            patch("gobby.cli.install._provision_local_api_token"),
+            patch("gobby.cli.install.ensure_local_api_key"),
             patch("gobby.cli.install._run_git_hooks_install") as git_hooks,
             patch("gobby.cli.install._run_embedding_install"),
             patch("gobby.cli.install._run_voice_install"),
@@ -1341,7 +1348,7 @@ class TestUninstallCommand:
 
 class TestInstallFilesHomeLifecycle:
     def test_local_install_persists_files_home_before_identity_and_services(
-        self, tmp_path: Path
+        self, tmp_path: Path, mock_gdaemon_provisioning: MagicMock
     ) -> None:
         files_home = tmp_path / "files"
         files_home.mkdir()
@@ -1386,6 +1393,7 @@ class TestInstallFilesHomeLifecycle:
         assert result.exit_code != 0 or "publish" in order
         assert order[:2] == ["publish", "identity"]
         assert "services" not in order or order.index("identity") < order.index("services")
+        mock_gdaemon_provisioning.assert_called_once()
 
     def test_bootstrap_write_failure_skips_identity_and_services(self, tmp_path: Path) -> None:
         files_home = tmp_path / "files"
@@ -1435,7 +1443,7 @@ class TestInstallFilesHomeLifecycle:
         inject_local_files_home(path, files_home)
         assert str(files_home.resolve()) in path.read_text()
 
-    def test_remote_install_missing_token_starts_no_services(self, tmp_path: Path) -> None:
+    def test_remote_install_missing_api_key_starts_no_services(self, tmp_path: Path) -> None:
         from gobby.cli.installers.remote_preflight import run_remote_preflight
 
         home = tmp_path / "gobby-home"
@@ -1446,7 +1454,7 @@ class TestInstallFilesHomeLifecycle:
             gobby_home=home,
             hub_daemon_url="http://hub.example.test:60887",
         )
-        assert any("local_cli_token" in error for error in errors)
+        assert any("api_key" in error for error in errors)
         stack.assert_not_called()
 
     def test_remote_owner_probe_failures_are_typed(
@@ -1456,7 +1464,7 @@ class TestInstallFilesHomeLifecycle:
 
         home = tmp_path / "home"
         home.mkdir()
-        (home / "local_cli_token").write_text("token\n", encoding="utf-8")
+        (home / "bootstrap.yaml").write_text("api_key: test-key\n", encoding="utf-8")
         (home / ".secret_kek").write_text("kek\n", encoding="utf-8")
 
         class FakeResponse:

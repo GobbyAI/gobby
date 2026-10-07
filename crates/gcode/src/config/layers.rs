@@ -633,11 +633,10 @@ mod tests {
 
         let home = tempfile::tempdir().expect("temporary gobby home");
         fs::write(
-            home.path()
-                .join(gobby_core::local_token::LOCAL_CLI_TOKEN_FILENAME),
-            "served-config-token",
+            home.path().join("bootstrap.yaml"),
+            "api_key: served-config-token\n",
         )
-        .expect("write local CLI token");
+        .expect("write API key");
         let (daemon_url, daemon) = spawn_served_config();
         // Fetch through the explicit-argument seam: read_config_layers()
         // consults gcore's process-global runtime-mode and effective-config

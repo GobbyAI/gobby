@@ -2258,7 +2258,9 @@ def _arguments() -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("wrong_review_id", ["not-a-uuid", str(uuid4())])
+@pytest.mark.parametrize(
+    "wrong_review_id", ["not-a-uuid", str(uuid4())], ids=["not-a-uuid", "well-formed-uuid"]
+)
 async def test_corrected_submission_preserves_review_after_wrong_id_and_malformed_verdict(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

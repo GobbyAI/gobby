@@ -452,7 +452,11 @@ mod serial_db {
         std::fs::create_dir_all(&home).expect("create isolated Gobby home");
         std::fs::write(home.join("machine_id"), local_machine_uuid().to_string())
             .expect("write isolated machine id");
-        std::fs::write(home.join("local_cli_token"), CLI_TOKEN).expect("write cli token");
+        std::fs::write(
+            home.join("bootstrap.yaml"),
+            format!("api_key: {CLI_TOKEN}\n"),
+        )
+        .expect("write API key");
         home
     }
 

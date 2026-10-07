@@ -508,6 +508,7 @@ fn parse_host_color_scheme_report(buffer: &[u8]) -> Option<HostAppearance> {
 
 /// Parses an XTWINOPS cell size report (`CSI 6 ; height ; width t`) into
 /// `(width_px, height_px)`; note the reply orders height first.
+#[cfg(any(unix, test))]
 fn parse_host_cell_size_report(buffer: &[u8]) -> Option<(u32, u32)> {
     let body = buffer.strip_prefix(b"\x1b[")?.strip_suffix(b"t")?;
     let text = std::str::from_utf8(body).ok()?;

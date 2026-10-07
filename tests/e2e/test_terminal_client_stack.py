@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -26,9 +27,16 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.datastructures import Headers
 from websockets.http11 import Request, Response
 
+from gobby.agents.detection.registry import DetectionManifestRegistry
+from gobby.agents.idle_detector import (
+    COMPOSER_PROBE_LINES,
+    ComposerRead,
+    IdleDetector,
+    composer_text,
+)
 from gobby.servers.websocket.terminal_ws import WRITE_FAULT_NAME
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
-from gobby.storage.terminals import AttachLocator
+from gobby.storage.terminals import AttachLocator, TerminalManager
 from gobby.terminals.frame_client import FrameClient
 from gobby.terminals.host_client import CommitTransportError, HostClient, encode_control_line
 from gobby.terminals.host_protocol import (
@@ -42,6 +50,7 @@ from tests._timing import wait_for_awaited_condition, wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
+    copy_daemon_api_key,
     create_host_socket_dir,
     daemon_token,
     link_operator_srt,
@@ -149,15 +158,12 @@ def e2e_pre_daemon_setup(
     stub_dir = Path(tempfile.mkdtemp(prefix="gs-"))
     # A relocated host reads its frame credential from the socket directory.
     # Seed the same isolated credential for the daemon and the host before startup.
-    token = uuid.uuid4().hex
     daemon_home = e2e_config[0].parent
     # FrameClient resolves HOME/.gobby; the isolated daemon fixture sets HOME to
     # daemon_home while Rust resolves GOBBY_HOME directly.
     for directory in (daemon_home, daemon_home / ".gobby", socket_dir):
         directory.mkdir(exist_ok=True)
-        token_path = directory / "local_cli_token"
-        token_path.write_text(token)
-        token_path.chmod(0o600)
+        copy_daemon_api_key(daemon_home, directory)
     link_operator_srt(daemon_home)
     claude = stub_dir / "claude"
     claude.write_text(_STUB)
@@ -391,7 +397,6 @@ def _spawn_agent(client: httpx.Client) -> dict[str, Any]:
             "agent_name": "default",
             "provider": "claude",
             "checkout_mode": "none",
-            "terminal_backend": backend,
             "prompt": f"stack {backend}",
             # No run timeout: the agents must outlive both daemon restarts
             # until the test cancels them.
@@ -822,10 +827,9 @@ async def test_terminal_client_stack_end_to_end(
         host_socket=str(frames_socket_path(socket_dir)),
         host_terminal_id=host_terminal_id,
     )
-    frame_token_path = socket_dir / "local_cli_token"
-    frame_token = (
-        frame_token_path.read_text(encoding="utf-8").strip() if frame_token_path.is_file() else ""
-    )
+    from gobby.utils.local_token import read_local_api_token
+
+    frame_token = read_local_api_token(socket_dir / "bootstrap.yaml") or ""
     reader, writer = await asyncio.open_unix_connection(str(frames_socket_path(socket_dir)))
     reserved_viewer = FrameClient(reader, writer)
     await reserved_viewer.handshake(
@@ -1026,7 +1030,10 @@ def _gclient(
     args = ["--project", str(daemon.project_dir)]
     if remote_url is not None:
         args += ["--daemon-url", remote_url]
-    args += ["--token-file", str(daemon.gobby_home / "local_cli_token")]
+        key_file = daemon.gobby_home / "explicit-client-api-key"
+        key_file.write_text(daemon_token(daemon.gobby_home))
+        key_file.chmod(0o600)
+        args += ["--token-file", str(key_file)]
     return GclientDriver(args, env=env, cwd=daemon.project_dir)
 
 
@@ -1193,6 +1200,167 @@ async def test_gclient_reorders_tabs_and_moves_a_running_pane(
     )
 
 
+_SEAT_DRAFT = "[Gobby] Check messages"
+# Longer than gclient's old 5 s request deadline, so held retries run past it.
+_SEAT_BUSY_SECONDS = 6.0
+# A Claude-framed seat holding a wake that was typed and never submitted. Like a
+# CLI mid-turn, it ignores Enter until it has been busy for _SEAT_BUSY_SECONDS.
+_SEAT_STUB = f"""\
+import os
+import sys
+import time
+import tty
+
+RULE = "\\u2500" * 40
+fd = sys.stdin.fileno()
+tty.setraw(fd)
+history = []
+draft = {_SEAT_DRAFT!r}
+first_input = None
+
+
+def draw():
+    rows = history[-12:] + [RULE, "\\u276f " + draft, RULE]
+    sys.stdout.write("\\x1b[H\\x1b[2J" + "\\r\\n".join(rows))
+    sys.stdout.flush()
+
+
+draw()
+while True:
+    chunk = os.read(fd, 1024).decode(errors="replace")
+    if not chunk:
+        break
+    now = time.monotonic()
+    if first_input is None:
+        first_input = now
+    for char in chunk:
+        if char not in "\\r\\n":
+            draft += char if char.isprintable() else ""
+        elif draft.strip() and now - first_input >= {_SEAT_BUSY_SECONDS!r}:
+            history.append("SUBMITTED:" + draft.strip())
+            draft = ""
+    draw()
+"""
+
+
+@pytest.fixture(scope="session")
+def tree_gclient() -> Path:
+    """Build ``gclient`` from this tree; the installed one may predate the change."""
+    repo = Path(__file__).resolve().parents[2]
+    build = subprocess.run(
+        ["cargo", "build", "-p", "gobby-client", "--bin", "gclient"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=2400.0,
+    )
+    if build.returncode != 0:
+        pytest.fail(f"building gclient from the tree failed:\n{build.stdout}\n{build.stderr}")
+    metadata = subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=600.0,
+    )
+    if metadata.returncode != 0:
+        pytest.fail(f"cargo metadata failed:\n{metadata.stderr}")
+    binary = Path(str(json.loads(metadata.stdout)["target_directory"])) / "debug" / "gclient"
+    if not binary.is_file():
+        pytest.fail(f"cargo build left no gclient at {binary}")
+    return binary
+
+
+@pytest.mark.asyncio
+async def test_gclient_send_keys_enter_submits_the_draft_a_busy_seat_held(
+    daemon_instance: DaemonInstance,
+    cli_events: CLIEventSimulator,
+    postgres_db: Any,
+    tree_gclient: Path,
+    tmp_path: Path,
+) -> None:
+    """``send-keys --enter`` submits a seat's stuck draft and answers with the proof.
+
+    The seat ignores Enter past gclient's old 5 s deadline, so the daemon's held
+    retries outlive it; the reply waits for the read that shows the draft left
+    (#23730).
+    """
+    with _http(daemon_instance) as http:
+        await asyncio.to_thread(_wait_for_host, http, daemon_instance)
+    script = tmp_path / "seat.py"
+    script.write_text(_SEAT_STUB)
+    created = await _ws_create(daemon_instance, [sys.executable, str(script)])
+    assert created.get("success") is True, created
+    terminal_id = str(created["terminal_id"])
+    terminals = TerminalManager(postgres_db)
+    terminal = terminals.get(terminal_id)
+    assert terminal is not None and terminal.locator is not None
+    host_terminal_id = str(terminal.locator["host_terminal_id"])
+    seat = cli_events.register_session(
+        external_id=f"send-keys-seat-{uuid.uuid4().hex}",
+        source="claude",
+        project_id=E2E_PROJECT_ID,
+        cwd=str(daemon_instance.project_dir),
+    )["id"]
+    assert terminals.bind_session(terminal_id, seat, E2E_PROJECT_ID) is not None
+    pane_ref = await _adopt(daemon_instance, terminal_id)
+    detector = IdleDetector(DetectionManifestRegistry(postgres_db), "claude")
+    token_file = tmp_path / "gclient-token"
+    token_file.write_text(daemon_token(daemon_instance.gobby_home))
+    token_file.chmod(0o600)
+    env = dict(daemon_instance.env)
+    for name in ("GOBBY_AGENT_API_TOKEN", "GOBBY_PANE_REF", "GOBBY_WORKSPACE_ID", "GOBBY_TAB_ID"):
+        env.pop(name, None)
+    control = await _open_control(Path(os.environ["GOBBY_E2E_HOST_SOCKET_DIR"]))
+
+    async def composer() -> ComposerRead:
+        snapshot = await control.snapshot(
+            host_terminal_id, mode="ansi", max_lines=COMPOSER_PROBE_LINES
+        )
+        return detector.composer_read(composer_text(str(snapshot.get("text", ""))))
+
+    async def drafted() -> bool:
+        read = await composer()
+        return read.state == "draft" and read.line == _SEAT_DRAFT
+
+    try:
+        await wait_for_awaited_condition(
+            drafted, timeout=10.0, interval=0.1, description="the seat's held draft"
+        )
+        started = time.monotonic()
+        sent = await asyncio.to_thread(
+            subprocess.run,
+            [
+                str(tree_gclient),
+                "send-keys",
+                "--daemon-url",
+                daemon_instance.http_url,
+                "--token-file",
+                str(token_file),
+                pane_ref,
+                " ",
+                "--enter",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=90.0,
+        )
+        elapsed = time.monotonic() - started
+        assert sent.returncode == 0, sent.stderr
+        assert json.loads(sent.stdout)["indeterminate"] is False
+        # The seat only takes Enter once busy, so the reply cannot beat it.
+        assert elapsed >= _SEAT_BUSY_SECONDS
+        screen = await control.snapshot(host_terminal_id, mode="text", max_lines=40)
+        assert f"SUBMITTED:{_SEAT_DRAFT}" in str(screen.get("text", ""))
+        assert (await composer()).state == "empty"
+    finally:
+        await control.close()
+
+
 class ClientWire:
     """Forward real daemon traffic, observing messages and injecting boundary faults."""
 
@@ -1210,10 +1378,11 @@ class ClientWire:
         self.paths.append(request.path)
         if request.path == "/ws":
             return None
+        authorization = request.headers.get("Authorization")
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 self.daemon.http_url + request.path,
-                headers={"Authorization": request.headers.get("Authorization", "")},
+                headers={"Authorization": authorization} if authorization is not None else {},
             )
         body = response.content
         self.responses[request.path] = response.text[:3000]

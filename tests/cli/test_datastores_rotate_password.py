@@ -19,6 +19,7 @@ import click
 import psycopg
 import pytest
 from click.testing import CliRunner
+from psycopg.pq import TransactionStatus
 
 import gobby.cli.datastores as datastores
 import gobby.cli.installers.falkor as falkor
@@ -89,7 +90,13 @@ class _FakeConnection:
         self.closed = False
         self._fail_close = fail_close
         self.pgconn = _FakePGConn(verifier.encode("ascii"))
-        self.info = SimpleNamespace(user="gobby", dbname="gobby_fixture", host="localhost", port=1)
+        self.info = SimpleNamespace(
+            user="gobby",
+            dbname="gobby_fixture",
+            host="localhost",
+            port=1,
+            transaction_status=TransactionStatus.INTRANS,
+        )
 
     async def execute(self, query: Any) -> None:
         self.statements.append(query.as_string(None))
@@ -598,7 +605,6 @@ def test_startup_never_mutates_credentials(
     """A connect failure during startup leaves the bootstrap byte-identical."""
     import logging
 
-    import gobby.storage.maintenance_epoch as maintenance_epoch
     from gobby.config.postgres_pool import DEFAULT_POSTGRES_POOL_CONFIG
     from gobby.runner_init import helpers
 
@@ -618,7 +624,7 @@ def test_startup_never_mutates_credentials(
     def _fail(*_args: object, **_kwargs: object) -> None:
         raise psycopg.OperationalError("connection refused")
 
-    monkeypatch.setattr(maintenance_epoch, "_connect", _fail)
+    monkeypatch.setattr(psycopg, "connect", _fail)
     config = SimpleNamespace(database_url=_CURRENT_DSN, postgres_pool=DEFAULT_POSTGRES_POOL_CONFIG)
     with caplog.at_level(logging.ERROR):
         with pytest.raises(psycopg.OperationalError, match="connection refused"):

@@ -25,7 +25,7 @@ from gobby.identity import hash_password, verify_password_hash
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
-from gobby.storage.auth import AuthStore, hash_token
+from gobby.storage.auth import AuthStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.users import LocalUserManager
 from gobby.utils.local_token import issue_agent_api_token, issue_tool_api_token
@@ -34,6 +34,55 @@ from tests.fixtures.postgres import TEST_USER_EMAIL, TEST_USER_ID
 pytestmark = pytest.mark.unit
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+async def test_front_door_identity_requires_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    database = MagicMock(spec=HubDatabase)
+    service = AuthService(lambda: database, break_glass_file=tmp_path / "absent-break-glass")
+    secret = "front-door-test-secret"
+    service.bind_runtime(
+        grant_service=None,
+        lease_live=None,
+        local_machine_id=LOCAL_MACHINE_ID,
+        effect_fence=None,
+        clock=None,
+        front_door_secret=secret,
+    )
+    identity = {
+        "X-Gobby-User-Id": "user-1",
+        "X-Gobby-Machine-Id": "node-machine-1",
+        "X-Gobby-Key-Id": "key-1",
+        "X-Gobby-Front-Door": secret,
+    }
+    decision = service.authenticate(_request(identity, path="/api/mcp/servers"))
+    assert decision.allowed
+    assert (decision.user_id, decision.machine_id, decision.key_id) == (
+        "user-1",
+        "node-machine-1",
+        "key-1",
+    )
+    assert await service.verify_ws_identity(identity) == "user-1"
+    for header in identity:
+        missing = {key: value for key, value in identity.items() if key != header}
+        empty = {**identity, header: ""}
+        for invalid in (missing, empty):
+            assert not service.authenticate(_request(invalid, path="/api/mcp/servers")).allowed
+            assert await service.verify_ws_identity(invalid) is None
+    forged = {**identity, "X-Gobby-Front-Door": "wrong-secret"}
+    assert not service.authenticate(_request(forged, path="/api/mcp/servers")).allowed
+    assert await service.verify_ws_identity(forged) is None
+    for retired in (
+        {"Authorization": "Bearer retired-token"},
+        {"X-Gobby-Local-Token": "retired-token"},
+    ):
+        assert not service.authenticate(_request(retired, path="/api/mcp/servers")).allowed
+    unbound = AuthService(lambda: database, break_glass_file=tmp_path / "absent-break-glass")
+    assert not unbound.authenticate(_request(identity, path="/api/mcp/servers")).allowed
+    assert await unbound.verify_ws_identity(identity) is None
+    database.fetchone.assert_not_called()
 
 
 def _bootstrap_request(api_key: str, run_id: str) -> Request:
@@ -84,7 +133,6 @@ def test_managed_token_survives_restart_and_new_lease(
         )
         service = AuthService(
             lambda: temp_db,
-            token_file=tmp_path / "absent-token",
             bootstrap_file=bootstrap,
             grant_service=grants,
             lease_live=lambda: True,
@@ -99,9 +147,7 @@ def test_rotated_bootstrap_key_invalidates_managed_tokens(
 ) -> None:
     bootstrap = tmp_path / "bootstrap.yaml"
     bootstrap.write_text("api_key: first-key\n")
-    service = AuthService(
-        lambda: temp_db, token_file=tmp_path / "absent-token", bootstrap_file=bootstrap
-    )
+    service = AuthService(lambda: temp_db, bootstrap_file=bootstrap)
     old_request = _bootstrap_request("first-key", live_agent_run.id)
     assert service.authenticate(old_request).allowed
     replacement = tmp_path / "replacement.yaml"
@@ -119,9 +165,7 @@ def test_managed_signing_key_cache_observes_file_identity(tmp_path: Path) -> Non
     bootstrap = tmp_path / "bootstrap.yaml"
     bootstrap.write_text("api_key: first-key\n")
     database = MagicMock(spec=HubDatabase)
-    service = AuthService(
-        lambda: database, token_file=tmp_path / "absent-token", bootstrap_file=bootstrap
-    )
+    service = AuthService(lambda: database, bootstrap_file=bootstrap)
     with patch(
         "gobby.servers.auth_service.read_managed_signing_key", wraps=read_managed_signing_key
     ) as read_key:
@@ -195,10 +239,6 @@ def _request(
     )
 
 
-def _set_api_token(db: HubDatabase, token: str) -> None:
-    AuthStore(db).set_local_api_token_hash(hash_token(token))
-
-
 @pytest.fixture
 def live_agent_run(
     temp_db: HubDatabase,
@@ -234,49 +274,15 @@ def test_password_hash_is_salted_argon2id() -> None:
     assert verify_password_hash("wrong-password", first_hash) is False
 
 
-def test_verify_bearer_rotation_refresh(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    clock = [100.0]
-    monkeypatch.setattr("gobby.servers.auth_service.time.monotonic", lambda: clock[0])
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text("old-token")
-    _set_api_token(temp_db, "old-token")
-    service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
-    )
-
-    assert service.verify_bearer("old-token") is True
-
-    token_file.write_text("new-token")
-    _set_api_token(temp_db, "new-token")
-    assert service.verify_bearer("new-token") is False
-    assert service.verify_bearer("old-token") is True
-
-    clock[0] += service.MIN_REFRESH_INTERVAL
-    assert service.verify_bearer("old-token") is False
-    assert service.verify_bearer("new-token") is True
-
-
-def test_is_request_authenticated_precedence(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-) -> None:
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text("api-token")
-    _set_api_token(temp_db, "api-token")
+def test_is_request_authenticated_precedence(temp_db: HubDatabase, tmp_path: Path) -> None:
+    bootstrap_file = _write_bootstrap(tmp_path / "bootstrap.yaml", "api-key")
     session_token, _ = AuthStore(temp_db).create_session(TEST_USER_ID)
-    service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
-    )
-
+    service = _operator_service(temp_db, bootstrap_file=bootstrap_file)
     assert service.is_request_authenticated(
         _request(
             {
-                "Authorization": "Bearer api-token",
-                "X-Gobby-Local-Token": "wrong-token",
+                **_OPERATOR_IDENTITY,
+                "Authorization": "Bearer rejected-operator-token",
                 "Cookie": "gobby_session=wrong-session",
             }
         )
@@ -284,29 +290,13 @@ def test_is_request_authenticated_precedence(
     assert not service.is_request_authenticated(
         _request(
             {
-                "Authorization": "Bearer wrong-token",
-                "X-Gobby-Local-Token": "api-token",
-                "Cookie": f"gobby_session={session_token}",
-            }
-        )
-    )
-    assert service.is_request_authenticated(
-        _request(
-            {
-                "X-Gobby-Local-Token": "api-token",
-                "Cookie": "gobby_session=wrong-session",
-            }
-        )
-    )
-    assert not service.is_request_authenticated(
-        _request(
-            {
-                "X-Gobby-Local-Token": "wrong-token",
+                "Authorization": "Bearer rejected-operator-token",
                 "Cookie": f"gobby_session={session_token}",
             }
         )
     )
     assert service.is_request_authenticated(_request({"Cookie": f"gobby_session={session_token}"}))
+    assert not service.is_request_authenticated(_request({"Cookie": "gobby_session=wrong-session"}))
 
 
 def test_agent_bearer_is_bound_to_run_identity_and_routes(
@@ -314,12 +304,9 @@ def test_agent_bearer_is_bound_to_run_identity_and_routes(
     tmp_path: Path,
     live_agent_run: AgentRun,
 ) -> None:
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text("operator-token")
-    _set_api_token(temp_db, "operator-token")
-    service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
-    )
+    bootstrap_file = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_file, "operator-token")
+    service = AuthService(lambda: temp_db, bootstrap_file=bootstrap_file)
     token = issue_agent_api_token(
         derive_managed_signing_key("operator-token"),
         agent_run_id=live_agent_run.id,
@@ -364,12 +351,9 @@ def test_projects_listing_operator_only(
     tmp_path: Path,
     live_agent_run: AgentRun,
 ) -> None:
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text("operator-token")
-    _set_api_token(temp_db, "operator-token")
-    service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
-    )
+    bootstrap_file = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_file, "operator-token")
+    service = _operator_service(temp_db, bootstrap_file=bootstrap_file)
     capability = issue_agent_api_token(
         derive_managed_signing_key("operator-token"),
         agent_run_id=live_agent_run.id,
@@ -384,7 +368,7 @@ def test_projects_listing_operator_only(
     }
 
     assert service.is_request_authenticated(
-        _request({"Authorization": "Bearer operator-token"}, method="GET", path="/api/projects")
+        _request(_OPERATOR_IDENTITY, method="GET", path="/api/projects")
     )
     assert not service.is_request_authenticated(_request({}, method="GET", path="/api/projects"))
     assert not service.is_request_authenticated(
@@ -392,7 +376,7 @@ def test_projects_listing_operator_only(
     )
     prune = service.authenticate(
         _request(
-            {"Authorization": "Bearer operator-token"},
+            _OPERATOR_IDENTITY,
             method="POST",
             path="/api/code-index/prune",
         )
@@ -402,30 +386,6 @@ def test_projects_listing_operator_only(
     assert not service.is_request_authenticated(
         _request(capability_headers, method="POST", path="/api/code-index/prune")
     )
-
-
-def test_local_token_refreshes_after_rotation(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    clock = [200.0]
-    monkeypatch.setattr("gobby.servers.auth_service.time.monotonic", lambda: clock[0])
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text("old-token")
-    _set_api_token(temp_db, "old-token")
-    service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
-    )
-
-    assert service.local_token() == "old-token"
-
-    token_file.write_text("new-token")
-    _set_api_token(temp_db, "new-token")
-    assert service.local_token() == "old-token"
-
-    clock[0] += service.MIN_REFRESH_INTERVAL
-    assert service.local_token() == "new-token"
 
 
 def test_server_installs_auth_service(temp_db: HubDatabase) -> None:
@@ -448,8 +408,7 @@ def test_verify_password_uses_argon2id_hash(temp_db: HubDatabase, tmp_path: Path
     LocalUserManager(temp_db).update_password(TEST_USER_ID, _password_hash("correct-password"))
     service = AuthService(
         lambda: temp_db,
-        token_file=tmp_path / "missing-local-token",
-        bootstrap_file=_managed_bootstrap(tmp_path / "missing-local-token"),
+        bootstrap_file=_write_bootstrap(tmp_path / "bootstrap.yaml", None),
     )
 
     user = service.verify_password(TEST_USER_EMAIL.upper(), "correct-password")
@@ -461,18 +420,13 @@ def test_verify_password_uses_argon2id_hash(temp_db: HubDatabase, tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_session_and_ws_verifiers(temp_db: HubDatabase, tmp_path: Path) -> None:
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text("api-token")
-    _set_api_token(temp_db, "api-token")
+    bootstrap_file = _write_bootstrap(tmp_path / "bootstrap.yaml", "api-key")
     session_token, _ = AuthStore(temp_db).create_session(TEST_USER_ID)
-    service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
-    )
-
+    service = _operator_service(temp_db, bootstrap_file=bootstrap_file)
     assert service.validate_session(session_token) is True
     assert service.validate_session("wrong-session") is False
-    assert await service.verify_ws_token("api-token") == "local-cli"
-    assert await service.verify_ws_token("wrong-token") is None
+    assert await service.verify_ws_identity(_OPERATOR_IDENTITY) == TEST_USER_ID
+    assert await service.verify_ws_identity({"Authorization": "Bearer api-key"}) is None
 
 
 def test_agent_capability_matrix(
@@ -481,12 +435,9 @@ def test_agent_capability_matrix(
     monkeypatch: pytest.MonkeyPatch,
     live_agent_run: AgentRun,
 ) -> None:
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text("operator-token")
-    _set_api_token(temp_db, "operator-token")
-    service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
-    )
+    bootstrap_file = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_file, "operator-token")
+    service = AuthService(lambda: temp_db, bootstrap_file=bootstrap_file)
     session_uuid = "11111111-2222-3333-4444-555555555555"
     token = issue_agent_api_token(
         derive_managed_signing_key("operator-token"),
@@ -604,12 +555,9 @@ def test_agent_capability_survives_ref_spelled_path_segment(
     re-parses the URL string and drops everything after it as a fragment, so
     capability matching must read the scope path.
     """
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text("operator-token")
-    _set_api_token(temp_db, "operator-token")
-    service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
-    )
+    bootstrap_file = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_file, "operator-token")
+    service = AuthService(lambda: temp_db, bootstrap_file=bootstrap_file)
     session_uuid = "11111111-2222-3333-4444-555555555555"
     token = issue_agent_api_token(
         derive_managed_signing_key("operator-token"),
@@ -668,9 +616,8 @@ def test_tool_capability_is_bound_to_live_managed_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text("operator-token")
-    _set_api_token(temp_db, "operator-token")
+    bootstrap_file = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_file, "operator-token")
     live = [True]
     original_fetchone = temp_db.fetchone
 
@@ -683,9 +630,7 @@ def test_tool_capability_is_bound_to_live_managed_execution(
         return original_fetchone(query, params)
 
     monkeypatch.setattr(temp_db, "fetchone", fetchone)
-    service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
-    )
+    service = AuthService(lambda: temp_db, bootstrap_file=bootstrap_file)
     execution_id = "11111111-2222-4333-8444-555555555555"
     session_id = "22222222-3333-4444-8555-666666666666"
     token = issue_tool_api_token(
@@ -728,12 +673,9 @@ def _agent_service_and_headers(
     minted_at: float | None = None,
 ) -> tuple[AuthService, dict[str, str]]:
     tmp_path.mkdir(parents=True, exist_ok=True)
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text("operator-token")
-    _set_api_token(temp_db, "operator-token")
-    service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
-    )
+    bootstrap_file = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_file, "operator-token")
+    service = AuthService(lambda: temp_db, bootstrap_file=bootstrap_file)
 
     def mint() -> str:
         return issue_agent_api_token(
@@ -856,7 +798,7 @@ def test_rejections_name_why_each_credential_was_refused(
     assert {case: (d.allowed, d.code, d.status_code) for case, d in observed.items()} == {
         "no credentials": (False, "missing_auth", 401),
         "unknown bearer": (False, "invalid_token", 401),
-        "unknown local token": (False, "invalid_token", 401),
+        "unknown local token": (False, "missing_auth", 401),
         "stale cookie": (False, "session_invalid", 401),
         "rotated signing key": (False, "capability_invalid", 401),
         "expired capability": (False, "capability_expired", 401),
@@ -867,8 +809,7 @@ def test_rejections_name_why_each_credential_was_refused(
     assert service.authenticate(live).allowed
     unkeyed = AuthService(
         lambda: temp_db,
-        token_file=tmp_path / "absent_token",
-        bootstrap_file=_managed_bootstrap(tmp_path / "absent_token"),
+        bootstrap_file=_write_bootstrap(tmp_path / "bootstrap.yaml", None),
     )
     assert unkeyed.authenticate(live).code == "signing_key_unavailable"
     LocalAgentRunManager(temp_db).complete(live_agent_run.id, result="done")
@@ -1052,14 +993,12 @@ def _grant_auth_service(
     from gobby.runtime_grants import encode_grant_header
     from gobby.servers.lease_fence import EffectFence
 
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text("operator-token")
-    _set_api_token(temp_db, "operator-token")
+    bootstrap_file = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_file, "operator-token")
     grant = _signed_presentation_grant()
-    service = AuthService(
-        lambda: temp_db,
-        token_file=token_file,
-        bootstrap_file=_managed_bootstrap(token_file),
+    service = _operator_service(
+        temp_db,
+        bootstrap_file=bootstrap_file,
         grant_service=_grant_service(),
         lease_live=lambda: lease_live,
         local_machine_id="machine-1",
@@ -1067,7 +1006,7 @@ def _grant_auth_service(
         clock=lambda: _GRANT_NOW + 10,
     )
     headers = {
-        "Authorization": "Bearer operator-token",
+        **_OPERATOR_IDENTITY,
         _GRANT_HEADER: encode_grant_header(grant),
         "X-Gobby-Caller-Project-Id": grant.principal.project_id,
         "X-Gobby-Project-Id": grant.principal.project_id,
@@ -1079,7 +1018,7 @@ def _grant_auth_service(
 
 def test_ai_routes_require_identity(temp_db: HubDatabase, tmp_path: Path) -> None:
     service, headers = _grant_auth_service(temp_db, tmp_path)
-    operator_only = {"Authorization": "Bearer operator-token"}
+    operator_only = _OPERATOR_IDENTITY
 
     for method, path in _AI_BROKER_ROUTES:
         anonymous = service.authenticate(_request({}, method=method, path=path))
@@ -1156,7 +1095,7 @@ def test_operator_prune_requires_live_lease(temp_db: HubDatabase, tmp_path: Path
     dead_dir = tmp_path / "prune-dead"
     dead_dir.mkdir()
     dead, _ = _grant_auth_service(temp_db, dead_dir, lease_live=False)
-    operator = {"Authorization": "Bearer operator-token"}
+    operator = _OPERATOR_IDENTITY
     assert (
         live.authenticate(_request(operator, method="POST", path="/api/code-index/prune")).allowed
         is True
@@ -1168,13 +1107,10 @@ def test_operator_prune_requires_live_lease(temp_db: HubDatabase, tmp_path: Path
 
 
 def test_unbound_auth_service_denies_effectful(temp_db: HubDatabase, tmp_path: Path) -> None:
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text("operator-token")
-    _set_api_token(temp_db, "operator-token")
-    service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
-    )
-    operator = {"Authorization": "Bearer operator-token"}
+    bootstrap_file = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_file, "operator-token")
+    service = _operator_service(temp_db, bootstrap_file=bootstrap_file)
+    operator = _OPERATOR_IDENTITY
     lost = service.authenticate(_request(operator, method="POST", path="/api/code-index/prune"))
     assert lost.allowed is False
     assert lost.code == "lease_not_held"
@@ -1351,11 +1287,10 @@ def test_revoked_grant_cannot_be_reused_across_requests(
 
     store = GrantRevocationStore()
     grant = _signed_presentation_grant()
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text("operator-token")
-    _set_api_token(temp_db, "operator-token")
+    bootstrap_file = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_file, "operator-token")
     headers = {
-        "Authorization": "Bearer operator-token",
+        **_OPERATOR_IDENTITY,
         _GRANT_HEADER: encode_grant_header(grant),
         "X-Gobby-Caller-Project-Id": grant.principal.project_id,
         "X-Gobby-Project-Id": grant.principal.project_id,
@@ -1363,10 +1298,9 @@ def test_revoked_grant_cannot_be_reused_across_requests(
         _MACHINE_HEADER: grant.principal.machine_id,
     }
 
-    first = AuthService(
-        lambda: temp_db,
-        token_file=token_file,
-        bootstrap_file=_managed_bootstrap(token_file),
+    first = _operator_service(
+        temp_db,
+        bootstrap_file=bootstrap_file,
         grant_service=_grant_service(store),
         lease_live=lambda: True,
         local_machine_id="machine-1",
@@ -1377,10 +1311,9 @@ def test_revoked_grant_cannot_be_reused_across_requests(
     assert allowed.allowed is True
 
     store.revoke_grant(grant)
-    second = AuthService(
-        lambda: temp_db,
-        token_file=token_file,
-        bootstrap_file=_managed_bootstrap(token_file),
+    second = _operator_service(
+        temp_db,
+        bootstrap_file=bootstrap_file,
         grant_service=_grant_service(store),
         lease_live=lambda: True,
         local_machine_id="machine-1",
@@ -1453,8 +1386,34 @@ def test_grant_presentations_probe_each_installed_gdaemon_once(
     assert probes == [gdaemon, gdaemon]
 
 
-def _managed_bootstrap(token_file: Path) -> Path:
-    bootstrap = token_file.with_name(token_file.name + ".bootstrap.yaml")
-    api_key = token_file.read_text().strip() if token_file.exists() else None
-    bootstrap.write_text(json.dumps({"api_key": api_key}))
-    return bootstrap
+def _write_bootstrap(path: Path, api_key: str | None) -> Path:
+    path.write_text(json.dumps({"api_key": api_key}))
+    return path
+
+
+_FRONT_DOOR_SECRET = "auth-service-test-front-door"
+_OPERATOR_IDENTITY = {
+    "X-Gobby-Front-Door": _FRONT_DOOR_SECRET,
+    "X-Gobby-User-Id": TEST_USER_ID,
+    "X-Gobby-Machine-Id": "machine-1",
+    "X-Gobby-Key-Id": "operator-key",
+}
+
+
+def _operator_service(
+    database: HubDatabase, *, bootstrap_file: Path, **runtime: Any
+) -> AuthService:
+    service = AuthService(
+        lambda: database,
+        bootstrap_file=bootstrap_file,
+        break_glass_file=bootstrap_file.with_name("absent-break-glass"),
+    )
+    service.bind_runtime(
+        grant_service=runtime.get("grant_service"),
+        lease_live=runtime.get("lease_live"),
+        local_machine_id=runtime.get("local_machine_id"),
+        effect_fence=runtime.get("effect_fence"),
+        clock=runtime.get("clock"),
+        front_door_secret=_FRONT_DOOR_SECRET,
+    )
+    return service

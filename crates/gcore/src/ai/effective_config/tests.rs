@@ -14,7 +14,7 @@ use crate::config::{
     AiCapability, ConfigSource, DaemonOrPrimary, DaemonServedConfig, is_machine_config_key,
     resolve_capability_binding, resolve_embedding_config_from_binding, secret_marker_prefix,
 };
-use crate::local_token::{AUTHORIZATION_HEADER, LOCAL_CLI_TOKEN_FILENAME};
+use crate::local_token::AUTHORIZATION_HEADER;
 use crate::test_http::{
     RequestHandle, read_http_request, spawn_json_response, spawn_json_response_with_status,
 };
@@ -156,10 +156,10 @@ fn fetch_carries_bearer_and_parses_effective_config_envelope() {
     ]);
     let home = temp_home();
     fs::write(
-        home.path().join(LOCAL_CLI_TOKEN_FILENAME),
-        "effective-token",
+        home.path().join("bootstrap.yaml"),
+        "api_key: effective-token\n",
     )
-    .expect("write local CLI token");
+    .expect("write API key");
     let (base_url, request) = spawn_json_response(
         r#"{"revision":7,"config":{"ai.embeddings.model":"nomic-embed-text","databases.postgres.dsn":"postgresql://daemon/gobby"}}"#,
     )

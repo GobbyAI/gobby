@@ -53,7 +53,6 @@ HUB_BACKUP_MANIFEST_SCHEMA_V3: dict[str, Any] = {
         "manifest_version",
         "created_at",
         "gobby_version",
-        "epoch_id",
         "source_identity",
         "backup_starting_head",
         "row_count_probes",
@@ -65,6 +64,7 @@ HUB_BACKUP_MANIFEST_SCHEMA_V3: dict[str, Any] = {
         "manifest_version": {"const": MANIFEST_VERSION},
         "created_at": {"type": "string"},
         "gobby_version": {"type": "string"},
+        # Written by retired maintenance epochs; kept so existing backups still validate.
         "epoch_id": {"type": ["string", "null"]},
         "source_identity": {
             "type": "object",
@@ -165,7 +165,6 @@ class HubBackupManifest:
 
     created_at: str
     gobby_version: str
-    epoch_id: str | None
     source_identity: SourceIdentity
     backup_starting_head: int
     row_count_probes: dict[str, int]
@@ -180,7 +179,6 @@ class HubBackupManifest:
             "manifest_version": self.manifest_version,
             "created_at": self.created_at,
             "gobby_version": self.gobby_version,
-            "epoch_id": self.epoch_id,
             "source_identity": asdict(self.source_identity),
             "backup_starting_head": self.backup_starting_head,
             "row_count_probes": dict(self.row_count_probes),
@@ -194,7 +192,6 @@ class HubBackupManifest:
         return cls(
             created_at=data["created_at"],
             gobby_version=data["gobby_version"],
-            epoch_id=data["epoch_id"],
             source_identity=SourceIdentity(**data["source_identity"]),
             backup_starting_head=data["backup_starting_head"],
             row_count_probes=dict(data["row_count_probes"]),

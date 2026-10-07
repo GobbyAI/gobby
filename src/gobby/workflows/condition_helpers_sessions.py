@@ -83,7 +83,7 @@ def send_message_target_allowed(
 
 
 # The ``agent`` defaults of the gobby-agents spawn tools, for calls that omit it.
-_SPAWN_TOOL_DEFAULT_AGENT = {"spawn_agent": "default", "dispatch_batch": "backend-developer"}
+_SPAWN_TOOL_DEFAULT_AGENT = {"spawn_agent": "default", "dispatch_batch": "developer"}
 # spawn_agent walks at most this many fallback_agent hops (spawn_agent/_factory.py).
 _FALLBACK_CHAIN_MAX_HOPS = 5
 

@@ -102,15 +102,15 @@ def _developer_workflow() -> dict[str, Any]:
     }
 
 
-def _bundled_backend_workflow() -> dict[str, Any]:
-    agent = yaml.safe_load((AGENTS_DIR / "backend-developer.yaml").read_text())
+def _bundled_developer_workflow() -> dict[str, Any]:
+    agent = yaml.safe_load((AGENTS_DIR / "developer.yaml").read_text())
     assert isinstance(agent, dict)
     step_workflow = agent["step_workflow"]
     return {
         "name": agent["name"],
         "variables": step_workflow["variables"],
         "steps": step_workflow["steps"],
-        "exit_condition": step_workflow["exit_condition"],
+        "exit_condition": step_workflow.get("exit_condition"),
     }
 
 
@@ -312,11 +312,11 @@ async def test_required_additional_skills_gate_exact_loaded_skill_names(
     ("current_step", "skill_list", "gate_variable", "skill", "released_step"),
     [
         (
-            "load_required_skills",
+            "load_skills",
             "required_skills",
             "required_skills_loaded",
             "restraint",
-            "load_additional_skills",
+            "claim",
         ),
         (
             "load_additional_skills",
@@ -335,12 +335,10 @@ async def test_bundled_skill_gate_holds_until_skill_is_loaded(
     skill: str,
     released_step: str,
 ) -> None:
-    workflow = _bundled_backend_workflow()
+    workflow = _bundled_developer_workflow()
     step_variables = dict(workflow["variables"])
     step_variables[skill_list] = [skill]
     step_variables[gate_variable] = False
-    if current_step == "load_required_skills":
-        step_variables["additional_skills"] = ["still-pending"]
 
     instance_manager = _setup_workflow(
         db,

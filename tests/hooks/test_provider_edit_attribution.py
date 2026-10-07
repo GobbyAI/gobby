@@ -60,6 +60,22 @@ def test_structured_mutation_without_path_preserves_empty_canonical_sentinel() -
     assert data["canonical_structured_mutation"] is True
 
 
+def test_multiedit_is_a_structured_write() -> None:
+    data: dict[str, Any] = {
+        "tool_name": "MultiEdit",
+        "tool_input": {
+            "file_path": "src/claude.py",
+            "edits": [{"old_string": "claude", "new_string": "updated"}],
+        },
+    }
+
+    normalize_tool_fields(data)
+
+    assert data.get("canonical_tool_kind") == "write"
+    assert data["canonical_structured_mutation"] is True
+    assert data["canonical_file_paths"] == ["src/claude.py"]
+
+
 @pytest.mark.parametrize("leaf_name", ["create", "edit", "replace"])
 def test_generic_mcp_leaf_names_are_not_file_mutations(leaf_name: str) -> None:
     data: dict[str, Any] = {

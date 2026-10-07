@@ -470,12 +470,62 @@ impl PaneRuntime {
     pub fn render_notify(&self) -> Arc<Notify> {
         self.render_notify.clone()
     }
+
+    /// Equal values mean an equal `frame_data` for an equal viewport.
+    pub fn content_generation(&self) -> u64 {
+        self.terminal.content_generation()
+    }
+
+    /// Feed child output through the production PTY-read path.
+    #[cfg(test)]
+    pub(crate) fn test_feed_output(&self, bytes: &[u8]) {
+        let (responses, _rx) = mpsc::channel(4);
+        self.terminal
+            .process_pty_bytes(self.pane_id, 0, bytes, &responses);
+    }
+
+    /// Change the screen without advancing the content generation, so a test
+    /// can tell a skipped frame build from a rebuilt one.
+    #[cfg(test)]
+    pub(crate) fn test_write_without_generation(&self, bytes: &[u8]) {
+        self.terminal
+            .ghostty
+            .core
+            .lock()
+            .unwrap()
+            .terminal
+            .write(bytes);
+    }
 }
 
 #[cfg(test)]
 mod frame_modes_tests {
     use super::PaneRuntime;
     use crate::protocol::{MouseTracking, PaneModes};
+
+    #[test]
+    fn content_generation_advances_only_on_frame_inputs() {
+        let (pane, _rx) = PaneRuntime::test_with_channel(4, 2);
+        let (other, _other_rx) = PaneRuntime::test_with_channel(4, 2);
+        assert_ne!(pane.content_generation(), other.content_generation());
+
+        let idle = pane.content_generation();
+        let _ = pane.frame_data(4, 2);
+        pane.set_scroll_offset_from_bottom(1);
+        pane.scroll_reset();
+        assert_eq!(pane.content_generation(), idle);
+
+        pane.test_feed_output(b"x");
+        let after_output = pane.content_generation();
+        assert_ne!(after_output, idle);
+
+        pane.resize(3, 6, 0, 0);
+        let after_resize = pane.content_generation();
+        assert_ne!(after_resize, after_output);
+
+        pane.apply_host_terminal_theme(pane.host_terminal_theme());
+        assert_ne!(pane.content_generation(), after_resize);
+    }
 
     #[test]
     fn frame_data_reports_kitty_keyboard_flags() {

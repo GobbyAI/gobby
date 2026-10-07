@@ -1,11 +1,11 @@
 header:
   plan_id: gclient-daemon-resilience
-  plan_hash: 1dc647585b5b73229d689aea05cd48f44bd5afa293d1ec50d962e069b0256fd6
+  plan_hash: 1b4c8e0373908d3877aa39ffc978ac1c1e2212628655a79a8aaf364d58fddff6
   root_task_ref: '23220'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-01T13:23:09Z'
+  generated_at: '2026-10-07T15:46:43Z'
   task_tree_source: db
-  task_tree_source_hash: 84a5c5691764afeba25ed847745e62c243c7a556154a7a032158e628dcb192b0
+  task_tree_source_hash: 334f677017b95a1e8e42d121d551d280817e4cb39677a8d7b198de92f9143fe0
   evidence_summary: []
   evidence: []
 rows:
@@ -368,6 +368,54 @@ rows:
     matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::old_generation_write_uncertainty_is_reported_after_reconnect
   deferral_target: null
   detail: ''
+- section_id: A2
+  item_id: A2.16
+  plan_node_hash: b057e80c1a0637c2345b936c972401af2bea9b11e0dc22b8e4d0166e98a9044e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_second_release_behind_a_full_backlog_is_never_lost
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.17
+  plan_node_hash: 82e684c504d95eafffe85f02721d40e6ef12cb9265d0f35eaf8d40f1fe5cbe37
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::closing_a_direct_pane_kills_after_its_typed_bytes_flush
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.18
+  plan_node_hash: b17c263dedd677f9856d4228e220aaa29e54d664047b2340bed008b9f2364b26
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_stalled_direct_release_is_bounded_and_never_blocks_the_next_take
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.19
+  plan_node_hash: 245f32421f3008f0e5fc873693e7f953d3f240d45ddc725e703fab906ebba70d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/client_loop.rs::a_reattach_abandons_writes_queued_for_the_old_attachment
+  deferral_target: null
+  detail: ''
 - section_id: A3
   item_id: A3.1
   plan_node_hash: f22a1ede535adcec81523446631e97887f65dbaaeab4d794826a1b0918b31917
@@ -462,18 +510,6 @@ rows:
       ticks and direct input progressing, installs the terminal once after release,
       and coalesces repeated works...'
     matched_artifact_ref: open_unresolved_terminals
-  deferral_target: null
-  detail: ''
-- section_id: A3b
-  item_id: A3b.3
-  plan_node_hash: b1e5038fd60ba71a69e0daf483c54e2d10ecc8f215e4d80e99a65fb0bb50c2c8
-  status: covered
-  leaves:
-  - leaf_task_ref: '#23230'
-    validation_criteria_snippet: 'A3b.1: A held unresolved-terminal open keeps frames,
-      ticks and direct input progressing, installs the terminal once after release,
-      and coalesces repeated works...'
-    matched_artifact_ref: crates/gclient/src/app/live_loop/unresolved.rs
   deferral_target: null
   detail: ''
 - section_id: A3b
@@ -607,6 +643,17 @@ rows:
     validation_criteria_snippet: 'A4b.1: A held `terminal_create` keeps the window
       interactive and places the pane after the create lands (was A4.1). test: `crates/gclient/tests/loop_liveness.r...'
     matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_stale_create_is_disposed_once_in_either_order_and_a_failed_disposal_stays_owned
+  deferral_target: null
+  detail: ''
+- section_id: A4b
+  item_id: A4b.9
+  plan_node_hash: 010dcd2cd96392df530b5cf1be6bd26367cd0a9aee37ebfc90e0c6061ffc0413
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23232'
+    validation_criteria_snippet: 'A4b.1: A held `terminal_create` keeps the window
+      interactive and places the pane after the create lands (was A4.1). test: `crates/gclient/tests/loop_liveness.r...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_held_arrange_or_grid_op_keeps_frames_flowing_and_places_from_returned_ids
   deferral_target: null
   detail: ''
 - section_id: A4c
@@ -1067,14 +1114,14 @@ rows:
   detail: ''
 - section_id: C3
   item_id: C3.1
-  plan_node_hash: 6b5cd764bd999254a783d808eaa7ee5ac5f03143673650a0bb73347fb138f943
+  plan_node_hash: 1f45ea8e51eb5876425731bceefd4a693223203a1cd063986c20b0c3635d6121
   status: covered
   leaves:
   - leaf_task_ref: '#23242'
-    validation_criteria_snippet: 'C3.1: A direct source error followed by a successful
-      direct reconnect records `AttachTerminal` plus `BindAttachment` and no `terminal_attach`
-      daemon request. t...'
-    matched_artifact_ref: crates/gclient/tests/frame_source_live.rs::a_direct_source_error_reattaches_directly_before_asking_the_daemon
+    validation_criteria_snippet: 'C3.1: A host-local re-attach keeps the pane Held
+      and typing on the new stream, sets `lease_unconfirmed` and shows `Reconnected;
+      input authority unconfirmed.` i...'
+    matched_artifact_ref: crates/gclient/tests/host_upgrade_recovery.rs::a_host_local_reattach_marks_input_authority_unconfirmed
   deferral_target: null
   detail: ''
 - section_id: C3
@@ -1083,9 +1130,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23242'
-    validation_criteria_snippet: 'C3.1: A direct source error followed by a successful
-      direct reconnect records `AttachTerminal` plus `BindAttachment` and no `terminal_attach`
-      daemon request. t...'
+    validation_criteria_snippet: 'C3.1: A host-local re-attach keeps the pane Held
+      and typing on the new stream, sets `lease_unconfirmed` and shows `Reconnected;
+      input authority unconfirmed.` i...'
     matched_artifact_ref: direct re-attach
   deferral_target: null
   detail: ''
@@ -1095,9 +1142,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23242'
-    validation_criteria_snippet: 'C3.1: A direct source error followed by a successful
-      direct reconnect records `AttachTerminal` plus `BindAttachment` and no `terminal_attach`
-      daemon request. t...'
+    validation_criteria_snippet: 'C3.1: A host-local re-attach keeps the pane Held
+      and typing on the new stream, sets `lease_unconfirmed` and shows `Reconnected;
+      input authority unconfirmed.` i...'
     matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_lost_fallback_stream_reclaims_only_when_no_peer_holds_input
   deferral_target: null
   detail: ''
@@ -1107,10 +1154,22 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23242'
-    validation_criteria_snippet: 'C3.1: A direct source error followed by a successful
-      direct reconnect records `AttachTerminal` plus `BindAttachment` and no `terminal_attach`
-      daemon request. t...'
+    validation_criteria_snippet: 'C3.1: A host-local re-attach keeps the pane Held
+      and typing on the new stream, sets `lease_unconfirmed` and shows `Reconnected;
+      input authority unconfirmed.` i...'
     matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_fallback_stream_lost_during_daemon_return_types_only_after_the_retake
+  deferral_target: null
+  detail: ''
+- section_id: C3
+  item_id: C3.5
+  plan_node_hash: 5e9a561284b4b896c12f5417fd9fda8d1f6c78fe0c9bf81d6aa0f40982d73d6b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23242'
+    validation_criteria_snippet: 'C3.1: A host-local re-attach keeps the pane Held
+      and typing on the new stream, sets `lease_unconfirmed` and shows `Reconnected;
+      input authority unconfirmed.` i...'
+    matched_artifact_ref: crates/gclient/tests/host_upgrade_recovery.rs::every_unconfirmed_host_recovered_pane_retakes_after_reregister
   deferral_target: null
   detail: ''
 - section_id: D1a
@@ -1127,14 +1186,14 @@ rows:
   detail: ''
 - section_id: D1a
   item_id: D1a.2
-  plan_node_hash: 41003360fbb4140a1b21daca7a89a9fb385ef93cb017c85a659bbdd5332090d0
+  plan_node_hash: 05a372dbb8aff6ff6449c284c7156a40ab63b171494cbaf18780409158d3fe9c
   status: covered
   leaves:
   - leaf_task_ref: '#23243'
     validation_criteria_snippet: 'D1a.1: Attach resolves its row on the executor.
       test: `tests/servers/test_terminal_ws_attach_honesty.py::test_attach_resolves_the_row_on_the_db_executor`.
       D1a....'
-    matched_artifact_ref: tests/servers/test_terminal_ws_resize.py::test_sizing_runs_get_and_set_dims_as_one_executor_hop
+    matched_artifact_ref: tests/servers/test_terminal_ws_resize.py::test_sizing_runs_get_and_set_dims_on_the_executor
   deferral_target: null
   detail: ''
 - section_id: D1a

@@ -325,12 +325,16 @@ async def test_wake_replay_gate_opens_after_reconciliation(
         recover_agent_completion_subscribers=AsyncMock(return_value=0),
     )
 
+    assert runner.http_server.services.startup_ready is True
+    mocks["_run_agent_hook_replay_barrier"].assert_not_awaited()
+    await runner._startup_recovery_task
+
     assert order == [
         "_start_terminal_host",
+        "_connect_mcp_servers",
         "_run_agent_hook_replay_barrier",
         "session_reconcile",
         "wake_replay_open",
-        "_connect_mcp_servers",
     ]
     mocks["_start_terminal_host"].assert_awaited_once_with(runner, tracker)
     runner.wake_dispatcher.reconcile_restart_active_sessions.assert_awaited_once_with(
@@ -339,7 +343,7 @@ async def test_wake_replay_gate_opens_after_reconciliation(
         recovery_safe=True,
     )
     terminal_write.assert_awaited_once_with(recipient.id, priority="normal")
-    assert runner.http_server.services.startup_ready is True
+    assert runner.http_server.services.restart_recovery_ready is True
 
 
 HUB_ONLY_PHASES = {
@@ -404,6 +408,8 @@ async def _run_init_recording_steps(
         recover_agent_completion_subscribers=AsyncMock(return_value=0),
     )
     assert runner.http_server.services.startup_ready is True
+    await runner._startup_recovery_task
+    assert runner.http_server.services.restart_recovery_ready is True
     return called
 
 
@@ -427,7 +433,8 @@ async def test_node_mode_skips_hub_only_phases(
 
     assert called == {*EVERY_MODE_STEPS, NODE_ONLY_STEP}
     assert _phase_skips(caplog) == sorted(
-        f"skipping hub-only {phase} in node mode" for phase in HUB_ONLY_PHASES
+        f"skipping hub-only {phase} in node mode"
+        for phase in {*HUB_ONLY_PHASES, "communications_start"}
     )
 
 

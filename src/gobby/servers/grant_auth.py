@@ -52,6 +52,9 @@ class AuthDecision:
     principal: GrantPrincipal | None = None
     grant: GrantBundle | None = None
     bearer_claims: AgentApiTokenClaims | None = None
+    user_id: str | None = None
+    machine_id: str | None = None
+    key_id: str | None = None
 
 
 class GrantPresenter(Protocol):

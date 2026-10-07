@@ -7,8 +7,12 @@ asynchronous reachability probes, health checks, and cached generation.
 
 from __future__ import annotations
 
+import array
 import asyncio
+import base64
+import binascii
 import hashlib
+import json
 import logging
 import random
 import time
@@ -378,6 +382,33 @@ def _validate_embeddings_dim(
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _EmbeddingRow:
+    index: int
+    embedding: list[float]
+
+
+def _decode_embedding_vector(value: object) -> list[float]:
+    if isinstance(value, str):
+        return array.array("f", base64.b64decode(value, validate=True)).tolist()
+    if isinstance(value, list):
+        return value
+    raise TypeError(f"unsupported embedding payload type {type(value).__name__}")
+
+
+def _decode_embedding_rows(body: bytes, *, model: str, api_base: str | None) -> list[_EmbeddingRow]:
+    """Decode float-list or base64 vectors from an OpenAI-compatible response body."""
+    try:
+        return [
+            _EmbeddingRow(item["index"], _decode_embedding_vector(item["embedding"]))
+            for item in json.loads(body)["data"]
+        ]
+    except (KeyError, TypeError, ValueError, binascii.Error) as e:
+        raise EmbeddingGenerationError(
+            f"Embedding API returned malformed result for model={model}, api_base={api_base}"
+        ) from e
+
+
 def _parse_embeddings_response(
     raw_response: Any,
     *,
@@ -388,14 +419,13 @@ def _parse_embeddings_response(
 ) -> list[list[float]]:
     """Deserialize and validate a raw embeddings response.
 
-    CPU-bound: ``raw_response.parse()`` decodes the body and constructs a
-    pydantic model per embedding (tens of thousands of floats for a batch),
-    and the ordering/dimension checks walk every vector again. Callers must
-    run this via ``asyncio.to_thread`` so it stays off the event loop.
+    Decodes the body directly instead of ``raw_response.parse()``: when an
+    endpoint ignores the SDK's base64 request and returns float lists, the SDK's
+    pure-Python model construction visits every float (about 10x ``json.loads``).
+    Still CPU-bound for large batches; callers run it via ``asyncio.to_thread``.
     """
-    response = raw_response.parse()
     embeddings = _extract_ordered_embeddings(
-        response.data,
+        _decode_embedding_rows(raw_response.content, model=model, api_base=api_base),
         requested_count=requested_count,
         model=model,
         api_base=api_base,

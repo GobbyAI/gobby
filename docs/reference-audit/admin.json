@@ -593,21 +593,6 @@
     },
     {
       "surface": "cli",
-      "command": "gobby auth token",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/authentication.md",
-      "implementation": {
-        "path": "src/gobby/cli/auth.py",
-        "symbol": "token"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-auth-files"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
       "command": "gobby secrets set",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/secrets.md",
       "implementation": {
@@ -703,66 +688,6 @@
       "implementation": {
         "path": "src/gobby/cli/hub_backup/cli.py",
         "symbol": "restore_hub_backup"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-install-recovery"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby hub-maintenance run",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
-      "implementation": {
-        "path": "src/gobby/cli/hub_maintenance.py",
-        "symbol": "run_campaign"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-install-recovery"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby hub-maintenance resume",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
-      "implementation": {
-        "path": "src/gobby/cli/hub_maintenance.py",
-        "symbol": "resume_campaign"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-install-recovery"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby hub-maintenance status",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
-      "implementation": {
-        "path": "src/gobby/cli/hub_maintenance.py",
-        "symbol": "maintenance_status"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-install-recovery"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby hub-maintenance abort",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
-      "implementation": {
-        "path": "src/gobby/cli/hub_maintenance.py",
-        "symbol": "abort_campaign"
       },
       "verification": [
         "source-inventory",

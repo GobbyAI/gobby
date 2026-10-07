@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from gobby.runtime_grants import RequiredCapability
 from gobby.runtime_grants.schema import GrantBundle, GrantPrincipal
 from gobby.servers.grant_auth import AuthDecision, bearer_matches_grant, present_or_reject
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.local_token import AgentApiTokenClaims
 
 pytestmark = pytest.mark.unit
@@ -102,3 +104,42 @@ def test_present_or_reject_does_not_leak_decode_errors() -> None:
     assert decision.code == "invalid_signature"
     assert decision.message == "invalid grant"
     assert raw not in (decision.message or "")
+
+
+def test_interactive_grant_matches_forwarded_machine(temp_db: HubDatabase, tmp_path: Path) -> None:
+    from gobby.runtime_grants import encode_grant_header
+    from tests.servers.test_auth_service import (
+        _GRANT_NOW,
+        _OPERATOR_IDENTITY,
+        _grant_auth_service,
+        _grant_service,
+        _request,
+        _signed_presentation_grant,
+    )
+
+    service, headers = _grant_auth_service(temp_db, tmp_path)
+    service.bind_runtime(
+        grant_service=_grant_service(),
+        lease_live=lambda: True,
+        local_machine_id="hub-machine",
+        effect_fence=None,
+        clock=lambda: _GRANT_NOW + 10,
+        front_door_secret=_OPERATOR_IDENTITY["X-Gobby-Front-Door"],
+    )
+    grant = _signed_presentation_grant(machine_id="node-machine")
+    headers.update(
+        {
+            "X-Gobby-Machine-Id": "node-machine",
+            "X-Gobby-Runtime-Grant": encode_grant_header(grant),
+        }
+    )
+    admitted = service.authenticate(_request(headers, path="/api/llm/status"))
+    assert admitted.allowed is True
+    assert admitted.principal is not None
+    assert admitted.principal.machine_id == "node-machine"
+    assert admitted.machine_id == "node-machine"
+    forged = service.authenticate(
+        _request(headers | {"X-Gobby-Machine-Id": "hub-machine"}, path="/api/llm/status")
+    )
+    assert forged.allowed is False
+    assert forged.code == "forged_identity"
