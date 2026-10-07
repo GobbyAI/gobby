@@ -228,7 +228,6 @@ def _server(
     server.terminal_manager = manager
     server.terminal_runtime_registry = SimpleNamespace(resolve=lambda _backend: runtime)
     server.write_coordinator = SimpleNamespace(write=AsyncMock(return_value=runtime.write_result))
-    server.terminal_config = SimpleNamespace(default_backend=backend)
     return server, manager, runtime
 
 

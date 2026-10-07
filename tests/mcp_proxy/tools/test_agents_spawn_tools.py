@@ -144,7 +144,6 @@ async def test_supplied_model_without_provider_is_rejected_before_allocation() -
             prompt="work",
             runner=runner,
             model="grok-4.6",
-            terminal_backend="native",
             parent_session_id="parent",
             checkout_mode="worktree",
         )
@@ -177,7 +176,6 @@ async def test_supplied_model_does_not_use_agent_or_session_provider() -> None:
             runner=runner,
             agent_body=agent_body,
             model="grok-4.6",
-            terminal_backend="native",
             parent_session_id="parent",
             caller_session_id="caller",
             session_manager=session_manager,
@@ -213,7 +211,6 @@ async def test_incompatible_pair_does_not_create_worktree(
             checkout_mode="worktree",
             worktree_storage=worktree_storage,
             project_path=str(repo),
-            terminal_backend="native",
             parent_session_id="parent",
         )
 

@@ -16,6 +16,15 @@ from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.session_context import get_current_session_id
 
+PROJECT_FORMS = (
+    "project name, UUID, or absolute path of a registered project's checkout "
+    "(main checkout or linked worktree)"
+)
+PROJECT_PROPERTY: dict[str, object] = {
+    "type": "string",
+    "description": f"Accepts a {PROJECT_FORMS}.",
+}
+
 _BINDING_PROPERTIES: dict[str, dict[str, object]] = {
     "session_id": {
         "type": "string",
@@ -91,7 +100,7 @@ def register_review_evidence_tools(
             "properties": {
                 "plan_path": {"type": "string"},
                 "round_number": {"type": "integer", "minimum": 1},
-                "project": {"type": "string"},
+                "project": PROJECT_PROPERTY,
                 **_BINDING_PROPERTIES,
             },
             "required": ["plan_path", "round_number"],
@@ -334,7 +343,7 @@ def register_review_evidence_tools(
             "properties": {
                 "plan_path": {"type": "string"},
                 "routing_decisions": {"type": "object"},
-                "project": {"type": "string"},
+                "project": PROJECT_PROPERTY,
             },
             "required": ["plan_path", "routing_decisions"],
         },
@@ -375,7 +384,7 @@ def register_review_evidence_tools(
                 "source_plan_hash": {"type": "string"},
                 "rendered_plan_hash": {"type": "string"},
                 "manifest_digest": {"type": "string"},
-                "project": {"type": "string"},
+                "project": PROJECT_PROPERTY,
             },
             "required": [
                 "plan_path",

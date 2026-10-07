@@ -244,8 +244,7 @@ class PlanReviewEvidenceService:
         document = parse_plan_bytes(plan_path.name, snapshot)
         context = get_project_context(root)
         with self.db.transaction() as transaction:
-            # Symbol validation reports code-index read errors as findings, so an
-            # aborted read must not poison the evidence transaction (#23296).
+            # Roll back failed index reads so they cannot poison evidence writes (#23296).
             savepoint = transaction.savepoint("plan_review_snapshot_validation")
             result = validate_plan_file(
                 None,
@@ -254,6 +253,7 @@ class PlanReviewEvidenceService:
                 project_context=context,
                 expected_project_id=project_id,
                 code_index=CodeIndexStorage(self.db),
+                task_manager=self.tasks,
                 require_symbol_validation=bool(document.manifest_entries),
             )
             try:

@@ -648,6 +648,7 @@ async def _recover_after_restart(
 
     async def hub_only_phase[T](name: str, start: Callable[[], Awaitable[T]]) -> T | None:
         if node_mode and name in HUB_ONLY_STARTUP_PHASES:
+            logger.info("skipping hub-only %s in node mode", name)
             return None
         return await timed_startup_phase(name, start())
 

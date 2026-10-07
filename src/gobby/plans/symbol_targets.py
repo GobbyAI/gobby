@@ -480,7 +480,7 @@ def _validate_file_targets(
             )
         ]
     if indexed_file is None:
-        return _validate_unindexed_targets(targets)
+        return _validate_unindexed_targets(targets, completed_section_ids)
 
     current_path = scope.filesystem_root / file_path
     current_hash = _file_sha256(current_path)
@@ -569,9 +569,13 @@ def _validate_file_targets(
     return issues
 
 
-def _validate_unindexed_targets(targets: list[SymbolTarget]) -> list[SymbolValidationIssue]:
+def _validate_unindexed_targets(
+    targets: list[SymbolTarget], completed_section_ids: frozenset[str]
+) -> list[SymbolValidationIssue]:
     issues: list[SymbolValidationIssue] = []
     for target in targets:
+        if target.section_id in completed_section_ids:
+            continue
         if target.symbol is not None or target.wildcard:
             issues.append(
                 SymbolValidationIssue(

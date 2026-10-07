@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, NoReturn, cast
+from typing import Any, NoReturn, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -366,7 +366,6 @@ async def _spawn(h: _Harness, placement: dict[str, Any] | None, **overrides: Any
         "target_project_id": h.project_id,
         "session_manager": h.sessions,
         "db": h.db,
-        "terminal_backend": "native",
         "placement": placement,
         "agent_pane_reserver": h.reserver,
         "project_context_authoritative": True,
@@ -941,7 +940,6 @@ async def test_concurrent_placed_spawns_share_one_reserver(
         "provider": "claude",
         "checkout_mode": "worktree",
         "parent_session_id": h.parent_id,
-        "terminal_backend": "native",
         "placement": _tab(h),
     }
 
@@ -1061,7 +1059,6 @@ async def test_duplicate_placed_request_precedence(placed: _Harness) -> None:
         "checkout_mode": "worktree",
         "task_id": task.id,
         "parent_session_id": h.parent_id,
-        "terminal_backend": "native",
     }
 
     free_seat = await tool.call("spawn_agent", {**arguments, "placement": _tab(h)})
@@ -1225,13 +1222,11 @@ class _TmuxCommandRecorder:
 
 
 @pytest.mark.parametrize("kind", ["unplaced", "tab", "split"])
-@pytest.mark.parametrize("terminal_backend", [None, "native"])
 async def test_public_spawn_creates_native_terminals_and_never_runs_tmux(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    terminal_backend: Literal["native"] | None,
     kind: str,
 ) -> None:
     native = FakeRuntime(backend="native")
@@ -1255,7 +1250,7 @@ async def test_public_spawn_creates_native_terminals_and_never_runs_tmux(
     elif kind == "split":
         placement = _split(_held_seat(h, "beside", state="exited").id)
 
-    result = await _spawn(h, placement, terminal_backend=terminal_backend)
+    result = await _spawn(h, placement)
     background = [
         task
         for key, task in impl._spawn_background_tasks.items()
@@ -1265,7 +1260,7 @@ async def test_public_spawn_creates_native_terminals_and_never_runs_tmux(
 
     assert result["success"] is True, result
     [launch] = h.launches
-    assert launch.terminal_backend == "native"
+    assert launch.terminal_lifetime == "run"
     assert native.create_calls == 1
     assert native.last_request is not None
     terminal = h.terminals.get(str(native.last_request.terminal_id))

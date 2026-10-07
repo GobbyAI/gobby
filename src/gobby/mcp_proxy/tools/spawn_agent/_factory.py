@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.project_context import get_project_context
+from gobby.workflows.agent_resolver import AgentResolutionError
 from gobby.workflows.definitions import AgentDefinitionBody
 
 from ._implementation import spawn_agent_impl
@@ -273,6 +274,9 @@ def _load_agent_body(
 
     Returns:
         AgentDefinitionBody if found, None otherwise.
+
+    Raises:
+        AgentResolutionError: The stored definition names ``terminal_backend``.
     """
     if db is None:
         return None
@@ -360,7 +364,6 @@ def create_spawn_agent_registry(
         parent_session_id: str | None = None,
         project_path: str | None = None,
         notify_parent_on_completion: bool = True,
-        terminal_backend: Literal["native"] | None = None,
         droid_mode: Literal["exec", "interactive"] = "exec",
         extra_write_paths: list[str] | None = None,
         write_paths_reason: str | None = None,
@@ -445,13 +448,16 @@ def create_spawn_agent_registry(
                 parent_session_id=resolved_parent_session_id,
             )
         )
-        agent_body = await asyncio.to_thread(
-            _load_agent_body,
-            agent,
-            db,
-            project_id=project_id,
-            cli_source=default_provider,
-        )
+        try:
+            agent_body = await asyncio.to_thread(
+                _load_agent_body,
+                agent,
+                db,
+                project_id=project_id,
+                cli_source=default_provider,
+            )
+        except AgentResolutionError as e:
+            return {"success": False, "error": str(e)}
         if agent_body is None and agent != "default":
             return {"success": False, "error": f"Agent '{agent}' not found"}
 
@@ -580,13 +586,16 @@ def create_spawn_agent_registry(
                             break
                         skipped_candidate = candidate_name
                         visited.add(candidate_name)
-                        candidate = await asyncio.to_thread(
-                            _load_agent_body,
-                            candidate_name,
-                            db,
-                            project_id=project_id,
-                            cli_source=default_provider,
-                        )
+                        try:
+                            candidate = await asyncio.to_thread(
+                                _load_agent_body,
+                                candidate_name,
+                                db,
+                                project_id=project_id,
+                                cli_source=default_provider,
+                            )
+                        except AgentResolutionError as e:
+                            return {"success": False, "error": str(e)}
                         if not candidate:
                             skip_reason = "definition_missing"
                             break
@@ -664,7 +673,6 @@ def create_spawn_agent_registry(
             notify_parent_on_completion=notify_parent_on_completion,
             daemon_config=config_resolver() if config_resolver is not None else None,
             code_index=code_index,
-            terminal_backend=terminal_backend,
             droid_mode=droid_mode,
             extra_write_paths=extra_write_paths,
             write_paths_reason=write_paths_reason,
