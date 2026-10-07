@@ -1673,6 +1673,51 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout
 
 
+@pytest.mark.parametrize("location", ["workdir", "absolute-cd", "nested-cd", "main"])
+@pytest.mark.parametrize("different", [False, True])
+def test_vitest_lane_credit_requires_all_changed_candidate_bytes(
+    tmp_path: Path, location: str, different: bool
+) -> None:
+    repo, lane = tmp_path / "repo", tmp_path / "lane"
+    web_path = "web/src/widget.ts"
+    for tree in (repo, lane):
+        (tree / "web/src").mkdir(parents=True)
+        (tree / web_path).write_text("export const widget = 1;\n")
+        (tree / "config.json").write_text('{"enabled": true}\n')
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "c")
+    candidate = _git(repo, "rev-parse", "HEAD").strip()
+    # The candidate, rather than foreign edits in the main checkout, is authoritative.
+    (repo / "config.json").write_text('{"enabled": false}\n')
+    if different:
+        (lane / "config.json").write_text('{"enabled": false}\n')
+    command = "node_modules/.bin/vitest related src/widget.ts --run"
+    workdir: str | None = str(lane / "web")
+    if location == "absolute-cd":
+        command = f"cd {lane}/web && {command}"
+        workdir = None
+    elif location == "nested-cd":
+        command = f"cd {lane} && cd web && {command}"
+        workdir = str(repo)
+    elif location == "main":
+        workdir = str(repo / "web")
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1, command=command, workdir=workdir),)),
+        has_attributed_edits=True,
+        changed_paths=(web_path, "config.json"),
+        close_root=str(repo),
+        candidate_commit_sha=candidate,
+    )
+
+    rejected = different and location != "main"
+    assert gate.status == ("failed" if rejected else "passed"), gate.message
+    assert gate.details["vitest_related_uncovered_paths"] == ([web_path] if rejected else [])
+    if rejected:
+        assert f"cd {repo}/web && node_modules/.bin/vitest" in gate.message
+
+
 @pytest.mark.parametrize(
     ("export_log", "candidate", "differing"),
     [
