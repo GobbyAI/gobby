@@ -33,12 +33,16 @@ function target(name: string) {
       .split(");")[0]
       .matchAll(/([0-9A-F]{24}) \/\* ([^*]+) \*\//g),
   ].map(([, id, label]) => ({ id, label }));
+  return { phases, configs: configs(body) };
+}
+
+// Build configuration IDs of the target or project body's configuration list.
+function configs(body: string) {
   const list = body.match(/buildConfigurationList = ([0-9A-F]{24})/)![1];
-  const configs = object(list)
+  return object(list)
     .split("buildConfigurations = (")[1]
     .split(");")[0]
     .match(/[0-9A-F]{24}/g)!;
-  return { phases, configs };
 }
 
 describe("Safari Xcode project", () => {
@@ -62,4 +66,23 @@ describe("Safari Xcode project", () => {
         expect(object(id)).toContain("ENABLE_USER_SCRIPT_SANDBOXING = NO;");
     },
   );
+
+  // Signing teams are personal: each developer supplies one through the
+  // gitignored Signing.local.xcconfig that the project base config includes.
+  it("commits no signing team and reads it from the local xcconfig", () => {
+    expect(project).not.toContain("DEVELOPMENT_TEAM");
+    const ids = configs(object("0381B5D53054E7B300E7B608"));
+    expect(ids).toHaveLength(2);
+    for (const id of ids)
+      expect(object(id)).toMatch(
+        /baseConfigurationReference = [0-9A-F]{24} \/\* Signing\.xcconfig \*\/;/,
+      );
+    const base = readFileSync(
+      fileURLToPath(
+        new URL("../../../safari/Signing.xcconfig", import.meta.url),
+      ),
+      "utf8",
+    );
+    expect(base).toContain('#include? "Signing.local.xcconfig"');
+  });
 });
