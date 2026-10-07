@@ -2109,6 +2109,56 @@ async def test_codex_authoritative_exec_supersedes_successful_outer_wrapper(
     ]
 
 
+@pytest.mark.asyncio
+async def test_codex_completed_cell_alone_is_not_a_command_pass(tmp_path: Path) -> None:
+    """A completed cell that printed only prose never credits its exec (#23724)."""
+    command = "uv run pytest tests/tasks/test_example.py -q"
+    transcript = tmp_path / "codex-wrapper-only.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "outer-exec",
+                    "name": "exec",
+                    "input": (
+                        f"const r = await tools.exec_command({{cmd:{json.dumps(command)}}}); "
+                        "text(r.output);"
+                    ),
+                },
+                BASE_TIME,
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "outer-exec",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": "Script completed\nWall time 0.8 seconds\nOutput:\n",
+                        },
+                        {"type": "input_text", "text": "5 passed in 0.4s\n"},
+                    ],
+                },
+                BASE_TIME + timedelta(seconds=2),
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
+        (command, "unknown", None)
+    ]
+
+
 async def test_codex_tdd_gate_accepts_targeted_test_body_exception_before_production_edit(
     tmp_path: Path,
 ) -> None:
