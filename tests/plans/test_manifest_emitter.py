@@ -531,11 +531,11 @@ def test_default_assignment_and_tdd_by_category(tmp_path: Path) -> None:
     assert by_section["1.1"].assigned_agent is None
     assert by_section["1.1"].implementation_domain == "backend"
     assert by_section["1.2"].assigned_agent == "tech-writer"
-    assert by_section["1.3"].assigned_agent == "backend-developer"
-    assert by_section["1.4"].assigned_agent == "backend-developer"
+    assert by_section["1.3"].assigned_agent == "developer"
+    assert by_section["1.4"].assigned_agent == "developer"
     assert by_section["1.5"].assigned_agent is None
     assert by_section["1.5"].implementation_domain == "backend"
-    assert by_section["1.6"].assigned_agent == "backend-developer"
+    assert by_section["1.6"].assigned_agent == "developer"
     assert by_section["1.7"].assigned_agent is None
     assert by_section["1.7"].implementation_domain == "backend"
 
@@ -566,7 +566,7 @@ def test_synthesized_test_entry_uses_category_default_agent(
 
     assert outcome == "fresh"
     document = parse_plan(plan, parse_mode="expansion")
-    assert document.manifest_entries[0].assigned_agent == "backend-developer"
+    assert document.manifest_entries[0].assigned_agent == "developer"
 
 
 def test_synthesized_entry_preserves_section_depends_on(tmp_path: Path) -> None:

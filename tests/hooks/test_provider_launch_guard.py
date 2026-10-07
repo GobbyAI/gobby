@@ -551,7 +551,7 @@ def test_bounded_and_malformed_input() -> None:
     assert not blocks_direct_provider_launch("spawn_agent", {"command": "codex exec hi"})
 
 
-@pytest.mark.parametrize("agent", ["default", "backend-developer", "merge-worker"])
+@pytest.mark.parametrize("agent", ["default", "developer", "merge-worker"])
 @pytest.mark.parametrize(
     "source",
     [

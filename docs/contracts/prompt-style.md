@@ -127,7 +127,7 @@ in one session each.
 The persona line bought nothing; the JSON field table below it is the
 load-bearing contract and stays byte-identical (rule 6).
 
-### 4. A prohibition that keeps its emphasis (`agents/backend-developer.yaml`)
+### 4. A prohibition that keeps its emphasis (the retired `agents/backend-developer.yaml`)
 
 Before and after — this one survives, with its reason attached:
 

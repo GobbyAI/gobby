@@ -179,7 +179,7 @@ def _development_agent(task: object, stage: object, context: object) -> str:
             )
     if _field(task, "category") == "docs" and _agent_dispatchable(context, "tech-writer"):
         return "tech-writer"
-    return _default_agent(stage, context) or "backend-developer"
+    return _default_agent(stage, context) or "developer"
 
 
 def _registry_entry(

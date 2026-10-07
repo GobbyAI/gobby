@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from mcp.server.mcpserver import Context, MCPServer
 
@@ -333,19 +333,21 @@ def register_proxy_tools(
         name: str,
         value: str | int | float | bool | list[Any] | dict[str, Any] | None,
         session_id: str,
+        scope: Literal["session", "step"] = "session",
     ) -> dict[str, Any]:
         """
-        Set a session-scoped variable. Top-level shortcut — no progressive discovery needed.
+        Set a session or step variable. Top-level shortcut — no progressive discovery needed.
 
         Args:
             name: Variable name
             value: JSON-compatible variable value
             session_id: Session ID (accepts #N, N, UUID, or prefix)
+            scope: "session" (default), or "step" to write the agent's step workflow instance
 
         Returns:
             Dict with ok status and stored value
         """
-        return await proxy.set_variable(name=name, value=value, session_id=session_id)
+        return await proxy.set_variable(name=name, value=value, session_id=session_id, scope=scope)
 
     @mcp.tool()
     async def get_variable(

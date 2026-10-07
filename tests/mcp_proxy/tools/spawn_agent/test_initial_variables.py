@@ -848,7 +848,7 @@ class TestSpawnAgentStepVariables:
         mock_runner: MagicMock,
         repo_root: Path,
     ) -> None:
-        agent_name = "backend-developer"
+        agent_name = "tech-writer"
         (
             result,
             task_manager,
@@ -899,13 +899,13 @@ class TestSpawnAgentStepVariables:
             db=db,
             mock_runner=mock_runner,
             repo_root=repo_root,
-            agent_name="backend-developer",
+            agent_name="tech-writer",
         )
 
         assert result["success"] is True
         assert task_manager.get_task(task.id).claimed_by_session_id is not None
         assert instance is not None
-        assert instance.current_step == "load_required_skills"
+        assert instance.current_step == "load_skills"
         assert (
             f"Task #{task.seq_num} is already claimed by this session at spawn; "
             "do not call claim_task; read it with "
@@ -927,7 +927,7 @@ class TestSpawnAgentStepVariables:
             db=db,
             mock_runner=mock_runner,
             repo_root=repo_root,
-            agent_name="backend-developer",
+            agent_name="developer",
             task_assignment=task_assignment,
         )
 
@@ -944,7 +944,7 @@ class TestSpawnAgentStepVariables:
         mock_runner: MagicMock,
         repo_root: Path,
     ) -> None:
-        agent_name = "backend-developer"
+        agent_name = "developer"
         (
             result,
             task_manager,
@@ -964,7 +964,7 @@ class TestSpawnAgentStepVariables:
         assert result["success"] is True
         assert task_manager.get_task(task.id).claimed_by_session_id is None
         assert instance is not None
-        assert instance.current_step == "claim"
+        assert instance.current_step == "load_skills"
         assert instance.variables["task_claimed"] is False
         assert initial_variables is not None
         assert initial_variables["assigned_task_id"] == f"#{task.seq_num}"
@@ -976,14 +976,12 @@ class TestSpawnAgentStepVariables:
         assert "parent_session_ref" not in initial_variables
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])
     async def test_auto_claimed_developer_agent_without_additional_skills_loads_required_skill(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
         repo_root: Path,
-        agent_name: str,
     ) -> None:
         (
             result,
@@ -996,14 +994,16 @@ class TestSpawnAgentStepVariables:
             db=db,
             mock_runner=mock_runner,
             repo_root=repo_root,
-            agent_name=agent_name,
+            agent_name="developer",
         )
 
         assert result["success"] is True
         assert instance is not None
         assert task_manager.get_task(task.id).claimed_by_session_id == instance.session_id
-        assert instance.current_step == "load_required_skills"
-        assert instance.variables["task_claimed"] is True
+        # The seat loads skills before its claim step binds the spawn-claimed task.
+        assert instance.current_step == "load_skills"
+        assert instance.variables["task_claimed"] is False
+        assert "do not call claim_task" not in spawn_request.prompt
         assert instance.variables["required_skills"] == [
             "gobby:references/development/obligations.md",
             "restraint",
@@ -1019,14 +1019,12 @@ class TestSpawnAgentStepVariables:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])
     async def test_auto_claimed_developer_agent_with_optional_skill_still_loads_required_first(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
         repo_root: Path,
-        agent_name: str,
     ) -> None:
         (
             result,
@@ -1039,14 +1037,14 @@ class TestSpawnAgentStepVariables:
             db=db,
             mock_runner=mock_runner,
             repo_root=repo_root,
-            agent_name=agent_name,
+            agent_name="developer",
             additional_skills=["code-index"],
         )
 
         assert result["success"] is True
         assert instance is not None
-        assert instance.current_step == "load_required_skills"
-        assert instance.variables["task_claimed"] is True
+        assert instance.current_step == "load_skills"
+        assert instance.variables["task_claimed"] is False
         assert instance.variables["required_skills"] == [
             "gobby:references/development/obligations.md",
             "restraint",

@@ -31,7 +31,7 @@ from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 from gobby.utils.git import git_subprocess_env
 from gobby.utils.machine_id import require_machine_id
 
-__all__ = ["LandingResult", "land_candidate"]
+__all__ = ["LandingResult", "land_candidate", "main_checkout_target"]
 
 _FULL_SHA = re.compile(r"[0-9a-f]{40}")
 _LANDING_ACTION = re.compile(
@@ -117,6 +117,15 @@ async def _branch(main: Path) -> str | None:
         raise LandingGitError(f"could not read main checkout branch: {result.stderr}")
     ref = result.stdout.strip()
     return ref.removeprefix("refs/heads/") if ref.startswith("refs/heads/") else None
+
+
+async def main_checkout_target(db: HubDatabase, project_id: str) -> tuple[Path, str] | None:
+    """Read the registered main checkout and the branch protected by landing."""
+    repo = Path(await asyncio.to_thread(require_root, db, project_id, require_machine_id()))
+    common = Path(await _git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    main = common.parent
+    branch = await _branch(main)
+    return (main, branch) if branch is not None else None
 
 
 async def _tip(main: Path, branch: str) -> str:

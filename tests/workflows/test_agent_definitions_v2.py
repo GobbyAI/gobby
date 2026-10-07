@@ -585,9 +585,9 @@ def test_version_is_stored_in_body(db: HubDatabase) -> None:
 
     result = sync_bundled_agents(db)
     assert result["errors"] == []
-    row = AgentDefinitionManager(db).get_by_name("backend-developer")
+    row = AgentDefinitionManager(db).get_by_name("developer")
     assert row is not None
-    assert row.definition_json["version"] == "1.1"
+    assert row.definition_json["version"] == "1.0"
 
 
 def test_bundled_agents_carry_no_skills_map() -> None:
