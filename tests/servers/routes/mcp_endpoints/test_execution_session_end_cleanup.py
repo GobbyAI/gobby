@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -277,6 +277,7 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
+    route_hook_replay_to_app: Callable[[FastAPI], None],
     db: HubDatabase,
     checkout: IsolatedCheckoutProject,
     workflow_runtime: WorkflowEvaluationRuntime,
@@ -323,6 +324,7 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
     server = MagicMock()
     server.config = DaemonConfig()
     app = FastAPI()
+    route_hook_replay_to_app(app)
     app.state.hook_manager = hook_manager
     app.include_router(create_hooks_router(server))
 

@@ -22,6 +22,7 @@ from gobby.storage import schema_contract
 from gobby.storage.concurrency import BOOTSTRAP_POOL_SIZE, PostgresCapacity
 from gobby.storage.hub import postgres_pool as _postgres_pool
 from gobby.storage.hub._ambient import ambient_transaction
+from gobby.storage.hub.operation_deadline import current_database_operation_deadline
 from gobby.storage.hub.protocol import (
     AgentCapAdmission as AgentCapAdmission,
 )
@@ -332,6 +333,9 @@ class PostgresHubDatabase:
         ambient = ambient_transaction(self)
         if ambient is not None:
             return ambient.execute(sql, params)
+        read = self._autocommit_read(sql, params)
+        if read is not None:
+            return read
         with self.transaction() as txn:
             cursor = cast(_postgres_pool.PostgresCursor, txn.execute(sql, params))
             return cursor.materialize()
@@ -355,6 +359,9 @@ class PostgresHubDatabase:
         sql: str,
         params: Sequence[Any] | Mapping[str, Any] = (),
     ) -> Row | None:
+        read = self._autocommit_read(sql, params)
+        if read is not None:
+            return read.fetchone()
         with self.transaction() as txn:
             return txn.execute(sql, params).fetchone()
 
@@ -363,8 +370,29 @@ class PostgresHubDatabase:
         sql: str,
         params: Sequence[Any] | Mapping[str, Any] = (),
     ) -> list[Row]:
+        read = self._autocommit_read(sql, params)
+        if read is not None:
+            return read.fetchall()
         with self.transaction() as txn:
             return txn.execute(sql, params).fetchall()
+
+    def _autocommit_read(
+        self,
+        sql: str,
+        params: Sequence[Any] | Mapping[str, Any],
+    ) -> Cursor | None:
+        """Run a lone read in autocommit, or return None when it needs a transaction.
+
+        Reads inside an ambient transaction must see its uncommitted writes, and
+        deadline bounds are SET LOCAL, which only a transaction block honors.
+        """
+        if (
+            ambient_transaction(self) is not None
+            or current_database_operation_deadline() is not None
+            or not _postgres_pool.is_autocommit_read(sql)
+        ):
+            return None
+        return _postgres_pool.autocommit_read(self.open, self._pool_connection, sql, params)
 
     def safe_update(
         self,
