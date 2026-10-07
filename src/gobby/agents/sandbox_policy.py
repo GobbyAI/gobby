@@ -317,6 +317,29 @@ def sensitive_write_roots() -> list[str]:
     return deny_paths([str(path) for path in roots])
 
 
+def credential_read_roots() -> list[str]:
+    """Deny user and provider credentials; only the active provider gets exceptions."""
+    from gobby.agents.sandbox_control_paths import user_credential_read_paths
+
+    return deny_paths(
+        [
+            *user_credential_read_paths(),
+            *(path for paths in _PROVIDER_AUTH_PATHS.values() for path in paths),
+            *(path for paths in _PROVIDER_AUTH_READ_ONLY_PATHS.values() for path in paths),
+        ]
+    )
+
+
+def provider_credential_read_exceptions(provider: str) -> list[str]:
+    """Declared active-provider necessities; executable/package discovery is separate."""
+    return canonical_paths(
+        [
+            *_PROVIDER_AUTH_PATHS.get(provider, ()),
+            *_PROVIDER_AUTH_READ_ONLY_PATHS.get(provider, ()),
+        ]
+    )
+
+
 def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
     """Return Gobby state, runtime, and prompt resources needed by agents."""
     # Gobby home stays readable apart from sensitive_roots(), which deny
@@ -432,6 +455,13 @@ def provider_write_exceptions(provider: str) -> list[str]:
     the provider exit at bootstrap. Sensitive roots stay protected because
     seatbelt deny rules (sensitive_write_roots) take precedence over allows.
     """
+    if provider == "grok":
+        from gobby.agents.sandbox_control_paths import GROK_RUNTIME_DIRECTORIES
+
+        # Grok's config caches and auth refreshes live in its per-run GROK_HOME.
+        # Shared session/log directories preserve resume without a writable host
+        # config root (which also contains the installed Grok executable).
+        return canonical_paths([f"~/.grok/{name}" for name in GROK_RUNTIME_DIRECTORIES])
     return canonical_paths(list(_PROVIDER_AUTH_PATHS.get(provider, ())))
 
 

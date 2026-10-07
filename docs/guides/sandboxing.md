@@ -212,23 +212,87 @@ and before per-run cache paths, with stable-order deduplication.
 SRT read access is broad unless denied, so Gobby uses SRT's deny-then-allow
 model:
 
-1. Deny the user's home and the configured Gobby home.
-2. Re-allow the canonical workspace, declared writable/readable roots, provider
-   authentication directories, the selected provider and Node installations,
-   Git configuration, and only these Gobby resources: `machine_id`, `bin`,
-   `hooks`, and an explicit `GOBBY_PROMPT_FILE`.
+1. Deny Gobby's protected credentials and runtime roots, user credential stores,
+   toolchain credentials, and provider authentication roots.
+2. Re-allow the canonical workspace, declared safe writable/readable roots,
+   the active provider's required authentication and runtime roots, provider and
+   Node installations, Git configuration, and explicit Gobby run resources.
 3. Allow writes to the workspace, linked Git metadata, the exact Gobby hook
    inbox, explicit extra roots, and package caches only when the package
    capability is enabled. SRT provides its own isolated runtime temporary path.
-4. Deny writes to SSH/AWS/GPG/Kubernetes/Google Cloud credential roots and
-   `extra_deny_write_paths` after write grants. SRT write denials win over
+4. Deny writes to credential roots, provider hook configuration and trust files,
+   and `extra_deny_write_paths` after write grants. SRT write denials win over
    overlapping allowances and symlink paths.
 
 Gobby does not grant blanket read or write access to `~/.gobby`. The exact
 `hooks/inbox` write exception preserves spool-first lifecycle delivery. Provider
-authentication directories are readable because browser/file-based login must
-continue to work; API-key environment variables use the credential handling
-described below.
+authentication directories are readable only for the active provider because
+its login and runtime state must continue to work. This exception also permits
+its child processes to read that provider's authentication files. API-key
+environment variables use the credential handling described below.
+
+Managed reads deny `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`,
+`~/.config/gcloud`, `~/.config/gh`, `~/.netrc`, `~/.docker/config.json`,
+the keychain directory, and provider authentication roots. The SSH exception is
+`~/.ssh/known_hosts`; Claude and AGY retain their existing exact login-keychain
+exception. Other providers' authentication roots stay denied. Parent read
+allowances override SRT read denials, so policy assembly rejects grants that
+would expose credentials beyond those explicit necessities, including provider
+roots resolving into a user credential store.
+
+SSH identity files, SSH configuration and file-backed GitHub CLI tokens have no
+default read grant. SSH Git and `gh` authentication requiring those files
+therefore fail inside a managed run. These grants are omitted because the same
+filesystem access would expose their credentials to the agent's tools. Existing
+explicit network/socket and environment-token policies are separate boundaries.
+
+Hook and trust write denials cover Claude `settings.json`,
+`settings.local.json` and `~/.claude.json`; Codex `hooks.json` and
+`config.toml`; Qwen `settings.json` and `trustedFolders.json`; Droid
+`hooks.json` and fallback settings files; Grok's `hooks`, `hooks-paths`,
+`config.toml`, `managed_config.toml`, `requirements.toml`, `trusted_folders.toml`,
+legacy trust registries, `sandbox.toml`, and installed `bin` directory;
+Grok's Cursor compatibility hooks; AGY `.gemini/config/hooks.json`; and legacy Gemini settings
+and trusted-folder files. Project and inherited settings paths and supported
+alternate configuration homes are protected too. Runtime directories retain
+their provider write grants; persistent preference and trust changes require an
+operator outside the managed run. Legacy Gemini paths do not enable Gemini as a
+Gobby provider.
+
+Executable configuration is protected even when its directory does not exist:
+Codex `rules`; Claude `agents`, `skills`, `commands` and project `.mcp.json`;
+Qwen `agents`, `skills` and `commands`; Droid `droids`, `commands` and `mcp.json`;
+and legacy Gemini `agents`, `commands` and `policies`. These surfaces can install
+hooks, start MCP commands, run shell preprocessing or grant tool approvals.
+Claude and Qwen skill directories carry executable frontmatter. Droid and Gemini
+native skills carry model instructions and supporting scripts, without automatic
+hook registration or shell preprocessing; their settings and plugin/extension
+controls remain protected. Ordinary skill execution still uses the managed sandbox.
+
+Plugin installation and activation surfaces are also immutable: Claude's
+`plugins/{cache,marketplaces,synced}` and installed/known marketplace registries;
+Codex's `plugins/cache` and portable marketplace manifests; Qwen's `extensions`
+and `extension-store`; Droid's plugin cache, marketplaces and registries; and
+legacy Gemini extensions. Claude's plugin data, directory-cache and install-count
+cache remain writable. Provider settings already protect plugin enablement and
+MCP commands. Installation and marketplace updates require an operator outside
+the managed run.
+
+On macOS, managed Grok launches use a per-run `GROK_HOME`: hook and trust configuration
+is copied into protected files, while server-refreshed policy caches can change
+inside the private run home. Authentication files are linked without copying
+their contents. `GROK_AUTH_PATH` points at the private auth link, whose target and
+advisory lock remain shared with the host. Grok's atomic writer follows that link;
+the auth target, lock and sibling `.*.*.tmp` files have explicit write grants so
+single-use refresh tokens persist for subsequent sessions. The host home itself
+stays unwritable. Sessions, memory,
+logs, crashes, traces and worktrees remain shared writable runtime directories.
+The original home is recorded in read-only run assets for resumed launches.
+Linux SRT Grok launches fail closed before preparing run state or launching the
+CLI. The pinned SRT runtime drops glob write grants on Linux, and a single-file
+auth bind mount cannot be atomically replaced. This prevents a refresh from
+consuming a single-use token without persisting its replacement. Linux support
+requires a verified atomic persistence mechanism; other SRT providers are unaffected.
 
 ## Network And Credentials
 
@@ -371,6 +435,10 @@ and Antigravity stream-json transports keep session-owned lifetimes and policy-h
 checks regardless of the selected backend.
 
 ## Security Boundary
+
+Gobby-launched interactive sessions are an operator-trust surface outside SRT.
+Other processes running as the same operating-system user are outside every
+Gobby boundary; Gobby does not isolate the user's account from itself.
 
 SRT uses Seatbelt on macOS and bubblewrap on Linux. It is a pre-1.0 runtime and
 reduces host exposure for managed agents, but it is not the future microVM

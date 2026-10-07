@@ -9,7 +9,7 @@ use crate::app::viewer_state::{local_tab_id, ViewerState, LOCAL_TAB_PREFIX};
 use crate::app::workspace_ops::WorkspaceModel;
 use crate::app::{ClickRun, ContextMenuState, MouseGesture, Pane, PaneId, Workspace};
 use crate::daemon::{DaemonError, LayoutAxis, LayoutNode};
-use crate::theme::{Palette, Theme, ThemeKind, ThemeName};
+use crate::theme::{Palette, Theme, ThemeKind};
 use crate::ui::chrome_render::ChromeHits;
 use crate::ui::dialogs::Dialog;
 use crate::ui::hit::Hit;
@@ -255,6 +255,10 @@ pub struct ViewState {
     /// The furthest keybinding-help scroll the frame drew; the scroll keys
     /// stop there, so the first key back always moves the view.
     pub help_last_scroll: usize,
+    /// The open keybinding help, navigator, Alerts, Open worktree or Destroy
+    /// orphaned terminals popup, border included: the popup a wheel notch
+    /// scrolls.
+    pub dialog_area: Option<Rect>,
 }
 
 impl ViewState {
@@ -273,9 +277,11 @@ impl ViewState {
             menu_rows: _,
             dialog_buttons,
             help_last_scroll,
+            dialog,
         } = hits;
         self.dialog_button_hit_areas = dialog_buttons;
         self.help_last_scroll = help_last_scroll;
+        self.dialog_area = dialog;
         self.menu_title_hit_areas = menu_bar.titles;
         self.tab_hit_areas = tab_bar.tabs;
         self.tab_scroll_left_hit_area = tab_bar.scroll_left;
@@ -347,8 +353,9 @@ pub struct Chrome {
     pub pending_mouse_capture: Option<bool>,
     /// The open right-click menu while `mode` is `ContextMenu`.
     pub menu: Option<ContextMenuState>,
-    /// Render ticks so far; the sidebar's ticker scrolls the selected
-    /// over-long row by it (`sidebar_rows::ticker_window`).
+    /// Render ticks so far; the shared ticker scrolls every over-long
+    /// title by it, sidebar rows and pane headers alike
+    /// (`sidebar_rows::ticker_window`).
     pub ticker: u64,
     /// The hosting terminal's own foreground and background, from its answer
     /// to gclient's OSC 10/11 query; System mode leaves them as the ground.
@@ -427,12 +434,13 @@ impl Chrome {
     }
 
     /// Record the hosting terminal's answer to gclient's OSC 10/11 query.
-    /// Host-matched takes its hue from the host's background, so a new
-    /// background redraws it.
+    /// A System theme sets its menu bar off the host's background, and
+    /// Host-matched takes its hue from it too, so a new background redraws
+    /// the theme.
     pub fn record_host_color(&mut self, kind: DefaultColorKind, color: RgbColor) {
         let background = self.host_colors.background;
         self.host_colors = self.host_colors.with_color(kind, color);
-        if self.theme.name == ThemeName::HostMatched && self.host_colors.background != background {
+        if self.theme.hosted && self.host_colors.background != background {
             self.set_theme(self.theme.kind);
         }
     }

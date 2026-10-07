@@ -10,7 +10,7 @@ import os
 import tempfile
 import threading
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from time import monotonic, sleep
@@ -65,17 +65,19 @@ def _get_pool() -> ProcessPoolExecutor:
 
 
 async def prewarm_transcript_evidence_pool() -> None:
-    """Finish all worker imports before the daemon admits Stop hooks."""
+    """Warm worker imports during background daemon initialization."""
     with tempfile.TemporaryDirectory(prefix="gobby-transcript-pool-") as marker_directory:
-        try:
+
+        def submit_probes() -> list[Future[None]]:
             pool = _get_pool()
-            loop = asyncio.get_running_loop()
-            probes = [
-                loop.run_in_executor(pool, _prewarm_probe, marker_directory)
-                for _ in range(_POOL_WORKERS)
-            ]
+            return [pool.submit(_prewarm_probe, marker_directory) for _ in range(_POOL_WORKERS)]
+
+        try:
+            # Process creation and spawn submission are synchronous too.
+            probes = await asyncio.to_thread(submit_probes)
             await asyncio.wait_for(
-                asyncio.gather(*probes), timeout=_POOL_PREWARM_TIMEOUT_SECONDS + 5
+                asyncio.gather(*(asyncio.wrap_future(probe) for probe in probes)),
+                timeout=_POOL_PREWARM_TIMEOUT_SECONDS + 5,
             )
         except BaseException:
             shutdown_transcript_evidence_pool()

@@ -1,0 +1,23 @@
+tags: [tool-hygiene, enforcement, gobby, default]
+
+rules:
+  limit-spawn-network-override:
+    description: "Block an explicit spawn network profile from a caller without override authority"
+    event: before_tool
+    enabled: true
+    priority: 10
+    # The tool guard comes first so an evaluation error, which fails closed,
+    # can only refuse a spawn that names a network profile.
+    when: >
+      tool_input.get('server_name') == 'gobby-agents'
+      and tool_input.get('tool_name') == 'spawn_agent'
+      and tool_input.get('network') is not None
+      and not network_override_allowed(event.metadata.get('_platform_session_id'))
+    effects:
+      - type: block
+        mcp_tools: ["gobby-agents:spawn_agent"]
+        reason: >-
+          Only a root session or a spawned default or orchestrator agent chooses
+          a spawn's network profile. Authority comes from the calling session's
+          own agent run; a parent_session_id argument grants none. Omit network
+          to spawn with the profile the agent definition sets.
