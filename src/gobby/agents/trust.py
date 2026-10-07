@@ -489,18 +489,8 @@ def _prune_stale_codex_projects(
     *,
     keep_paths: set[str],
 ) -> str:
-    generated_roots = (
-        _realpath(str(Path.home() / ".gobby" / "worktrees")),
-        _realpath(tempfile.gettempdir()),
-        _realpath("/private/tmp/gobby-clones"),
-    )
     stale_paths = {
-        path
-        for path in projects
-        if path not in keep_paths
-        and not _is_windows_absolute_path(path)
-        and not Path(path).exists()
-        and any(_path_is_within(_realpath(path), root) for root in generated_roots)
+        path for path in projects if path not in keep_paths and is_stale_generated_path(path)
     }
     if not stale_paths:
         return content
@@ -518,6 +508,31 @@ def _prune_stale_codex_projects(
         if not skipping:
             retained.append(line)
     return "".join(retained)
+
+
+def is_stale_generated_path(path: str) -> bool:
+    """Return whether ``path`` is a deleted Gobby-generated workspace path.
+
+    Generated paths live under ``~/.gobby/worktrees``, ``~/.gobby/clones``, the
+    process temp dir, or a ``gobby-*`` directory directly under ``/tmp``.
+    """
+    if _is_windows_absolute_path(path) or Path(path).exists():
+        return False
+    resolved = _realpath(path)
+    gobby_home = Path.home() / ".gobby"
+    roots = (
+        _realpath(str(gobby_home / "worktrees")),
+        _realpath(str(gobby_home / "clones")),
+        _realpath(tempfile.gettempdir()),
+    )
+    if any(_path_is_within(resolved, root) for root in roots):
+        return True
+    for tmp_root in {_realpath("/tmp"), "/private/tmp"}:
+        if _path_is_within(resolved, tmp_root) and resolved != tmp_root:
+            first = os.path.relpath(resolved, tmp_root).split(os.sep, 1)[0]
+            if first.startswith("gobby-"):
+                return True
+    return False
 
 
 def _path_is_within(path: str, root: str) -> bool:

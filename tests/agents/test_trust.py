@@ -473,6 +473,44 @@ class TestCodexTrust:
         assert str(stale_workspace) not in parsed["projects"]
         assert parsed["projects"][str(workspace)]["trust_level"] == "trusted"
 
+    def test_new_codex_trust_prunes_stale_clones_and_tmp_gobby_projects(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        workspace = tmp_path / ".gobby" / "clones" / "gobby" / "active"
+        workspace.mkdir(parents=True)
+        unique = os.urandom(6).hex()
+        stale = [
+            str(tmp_path / ".gobby" / "clones" / "gobby" / "stale"),
+            f"/tmp/gobby-review-{unique}",
+            f"/tmp/gobby-close-{unique}/checkout",
+        ]
+        kept = [f"/tmp/user-scratch-{unique}", f"/opt/user-project-{unique}"]
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        config_file = codex_home / "config.toml"
+        config_file.write_text(
+            "".join(
+                f'[projects.{json.dumps(path)}]\ntrust_level = "trusted"\n\n'
+                for path in [*stale, *kept]
+            ),
+            encoding="utf-8",
+        )
+
+        with (
+            patch("gobby.agents.trust.Path.home", return_value=tmp_path),
+            patch(
+                "gobby.agents.trust.tempfile.gettempdir",
+                return_value=str(tmp_path / "unrelated-tempdir"),
+            ),
+        ):
+            pre_approve_directory("codex", workspace)
+
+        projects = tomllib.loads(config_file.read_text(encoding="utf-8"))["projects"]
+        assert all(path not in projects for path in stale)
+        assert all(projects[path]["trust_level"] == "trusted" for path in kept)
+        assert projects[str(workspace)]["trust_level"] == "trusted"
+
 
 class TestDroidNoop:
     def test_droid_is_noop_with_debug_log(self, tmp_path: Path, caplog) -> None:

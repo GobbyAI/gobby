@@ -918,6 +918,48 @@ class TestInstallCodexProjectHooks:
         assert "mcp_servers" not in config_data
         mock_mcp.assert_not_called()
 
+    def test_project_install_prunes_hook_state_of_deleted_generated_worktrees(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+    ) -> None:
+        """Hook trust state for deleted Gobby worktrees is pruned; live and user keys stay."""
+        from gobby.cli.installers.codex import install_codex_project_hooks
+
+        worktrees = mock_home / ".gobby" / "worktrees" / "gobby"
+        live_hooks = worktrees / "live" / ".codex" / "hooks.json"
+        live_hooks.parent.mkdir(parents=True)
+        live_hooks.write_text("{}", encoding="utf-8")
+        live_key = f"{live_hooks.resolve()}:pre_tool_use:0:0"
+        dead_hooks = worktrees / "deleted" / ".codex" / "hooks.json"
+        dead_keys = [
+            f"{dead_hooks}:pre_tool_use:0:0",
+            f"{dead_hooks}:session_start:1:0",
+        ]
+        user_key = "/opt/user-project-not-generated/.codex/hooks.json:pre_tool_use:0:0"
+        codex_home = mock_home / ".codex"
+        codex_home.mkdir()
+        (codex_home / "config.toml").write_text(
+            "".join(
+                f'[hooks.state.{json.dumps(key)}]\ntrusted_hash = "sha256:x"\n\n'
+                for key in [live_key, *dead_keys, user_key]
+            ),
+            encoding="utf-8",
+        )
+        project_path = worktrees / "new"
+        project_path.mkdir()
+
+        with patch("gobby.cli.installers.codex.install_global_hooks", return_value=[]):
+            result = install_codex_project_hooks(project_path)
+
+        assert result["success"] is True
+        config_data = _load_toml_file(codex_home / "config.toml")
+        state = config_data["hooks"]["state"]
+        assert all(key not in state for key in dead_keys)
+        assert state[live_key]["trusted_hash"] == "sha256:x"
+        assert state[user_key]["trusted_hash"] == "sha256:x"
+        _assert_gobby_trust_state(config_data, project_path / ".codex" / "hooks.json")
+
 
 class TestUninstallCodex:
     """Tests for uninstall_codex function."""
