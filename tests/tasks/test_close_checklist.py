@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import subprocess
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -1662,6 +1663,53 @@ def test_symlink_into_close_root_credits_only_an_identical_tree(
 
     assert gate.status == ("failed" if differing else "passed"), gate.message
     assert gate.details["pytest_uncovered_paths"] == (["tests/test_widget.py"] if differing else [])
+    assert gate.details.get("pytest_copy_differing_paths", []) == differing
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(["git", *args], cwd=repo, text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+@pytest.mark.parametrize(
+    ("export_log", "candidate", "differing"),
+    [
+        pytest.param("clean\n", "head", [], id="candidate-bytes-despite-foreign-dirt"),
+        pytest.param("clean\n", None, ["regen.log"], id="no-candidate-compares-the-checkout"),
+        pytest.param("dirty\n", "missing", [], id="unlisted-candidate-compares-the-checkout"),
+        pytest.param("dirty\n", "head", ["regen.log"], id="checkout-bytes-are-not-the-candidate"),
+    ],
+)
+def test_copy_credit_compares_against_the_close_candidate_commit(
+    tmp_path: Path, export_log: str, candidate: str | None, differing: list[str]
+) -> None:
+    # Another session's uncommitted edit to a changed path is not the candidate's code.
+    repo, export = tmp_path / "repo", tmp_path / "export"
+    for tree in (repo, export):
+        (tree / "tests").mkdir(parents=True)
+        (tree / "tests/test_widget.py").write_text("def test_widget(): pass\n")
+    (repo / "regen.log").write_text("clean\n")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "c")
+    shas = {"head": _git(repo, "rev-parse", "HEAD").strip(), "missing": "0" * 40}
+    (repo / "regen.log").write_text("dirty\n")
+    (export / "regen.log").write_text(export_log)
+    run = _run(2, command="uv run pytest tests/test_widget.py -q", workdir=str(export))
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_scoped_audit_run(1, "tests/test_widget.py"), run)
+        ),
+        has_attributed_edits=True,
+        changed_paths=("regen.log", "src/gone.py", "tests/test_widget.py"),
+        close_root=str(repo),
+        candidate_commit_sha=shas[candidate] if candidate else None,
+    )
+
+    assert gate.status == ("failed" if differing else "passed"), gate.message
     assert gate.details.get("pytest_copy_differing_paths", []) == differing
 
 

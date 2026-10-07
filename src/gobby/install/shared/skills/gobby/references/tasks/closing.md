@@ -16,8 +16,8 @@ Finish in this order:
    direct rerun of each validation as its own call. Pytest and `vitest related`
    targets resolve from the recorded working directory, any leading `cd`, and
    `uv --directory`; a pytest target in another tree is credited only when that
-   tree holds the close checkout's exact bytes for the test and every changed
-   path. Changed Python tests also
+   tree holds the close candidate commit's exact bytes (the close checkout's
+   without a candidate) for the test and every changed path. Changed Python tests also
    require a clean `gobby test-types audit` against the test-types baseline with
    `--fail-on-new`, credited from one invocation whose explicit targets lexically
    cover every changed test: a file target covers itself, a directory target covers

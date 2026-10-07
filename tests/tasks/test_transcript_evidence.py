@@ -34,6 +34,7 @@ from gobby.tasks import (
 )
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
 from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.close_test_coverage import uncovered_pytest_paths
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence import (
     WINDOW_LOOKBACK,
@@ -2105,6 +2106,48 @@ async def test_claude_shell_runs_record_the_calling_entry_cwd(tmp_path: Path) ->
     assert [(run.command, run.outcome, run.workdir) for run in evidence.validation_runs] == [
         (command, "success", "/repo dir/web")
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tree", "uncovered"), [("export", ()), ("unrelated", ("tests/test_a.py",))]
+)
+async def test_claude_cd_into_an_identical_export_credits_the_close(
+    tmp_path: Path, tree: str, uncovered: tuple[str, ...]
+) -> None:
+    # A Claude Bash call keeps its leading `cd`, so the close resolves the target there.
+    test = "tests/test_a.py"
+    for checkout in ("repo", "export", "unrelated"):
+        (tmp_path / checkout / "tests").mkdir(parents=True)
+    for checkout in ("repo", "export"):
+        (tmp_path / checkout / test).write_text("def test_a(): pass\n")
+    command = f"cd {tmp_path / tree} && uv run pytest {test} -q"
+    records = _claude_tool_pair(
+        command=command, call_id="toolu_1", start=BASE_TIME, result="1 passed in 0.01s"
+    )
+    for record in records:
+        record["cwd"] = str(tmp_path / "repo")
+    transcript = tmp_path / "claude.jsonl"
+    _write_jsonl(transcript, records)
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path / "repo"),
+    )
+
+    assert [run.command for run in evidence.validation_runs] == [command]
+    assert (
+        uncovered_pytest_paths(
+            evidence.validation_runs,
+            (test,),
+            close_root=str(tmp_path / "repo"),
+            changed_paths=(test,),
+        )
+        == uncovered
+    )
 
 
 @pytest.mark.asyncio
