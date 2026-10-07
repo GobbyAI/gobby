@@ -85,6 +85,29 @@ def test_customizations_are_shared_and_extension_store_is_private(
     assert str(prepared.home / "extensions") not in protected
 
 
+def test_global_context_and_memory_stay_the_operators(qwen_source: Path, tmp_path: Path) -> None:
+    (qwen_source / "QWEN.md").write_text("synthetic global context")
+    (qwen_source / "team.md").write_text("synthetic renamed context")
+
+    prepared = prepare_qwen_sandbox_home(tmp_path / "run-cache", {}, assets=tmp_path / "assets")
+
+    assert (prepared.home / "QWEN.md").read_text() == "synthetic global context"
+    assert (prepared.home / "team.md").resolve() == qwen_source / "team.md"
+    for absent in ("AGENTS.md", "memory.md"):
+        assert (prepared.home / absent).readlink() == qwen_source / absent
+        assert not (prepared.home / absent).exists()
+
+
+def test_reuse_rejects_a_redirected_auth_link(qwen_source: Path, tmp_path: Path) -> None:
+    cache = tmp_path / "run-cache"
+    prepared = prepare_qwen_sandbox_home(cache, {}, assets=tmp_path / "assets")
+    (prepared.home / "oauth_creds.json").unlink()
+    (prepared.home / "oauth_creds.json").symlink_to(tmp_path / "elsewhere.json")
+
+    with pytest.raises(ValueError, match="auth target changed"):
+        prepare_qwen_sandbox_home(cache, {}, assets=tmp_path / "assets")
+
+
 def test_symlinked_settings_are_rejected(qwen_source: Path, tmp_path: Path) -> None:
     (qwen_source / "settings.json").unlink()
     (qwen_source / "settings.json").symlink_to(tmp_path / "elsewhere.json")
@@ -209,6 +232,6 @@ async def test_operator_qwen_home_is_the_protected_source(
     private = Path(launch.provider_env["QWEN_HOME"])
     assert private != custom
     assert (private / "settings.json").read_text() == '{"synthetic": "custom"}'
-    assert str(custom / "settings.json") in policy["denyWrite"]
-    assert str(custom / "extension-store") in policy["denyWrite"]
+    # No grant reaches the operator's home, so default-deny protects its controls.
+    assert not any(custom.is_relative_to(grant) for grant in map(Path, policy["allowWrite"]))
     assert str(private / "extension-store") not in policy["denyWrite"]

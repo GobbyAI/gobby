@@ -211,7 +211,7 @@ async def test_provider_state_roots_are_writable(
 
         assert state_path in filesystem["allowWrite"]
         assert state_path in filesystem["allowRead"]
-        assert str((home / ".ssh").resolve()) in filesystem["denyWrite"]
+        assert str((home / ".ssh").resolve()) in paths.deny_write_paths
 
         gobby_home = (home / ".gobby").resolve()
         assert str(gobby_home) not in filesystem["allowRead"]
@@ -221,6 +221,45 @@ async def test_provider_state_roots_are_writable(
         uv_root = str((home / ".local" / "share" / "uv").resolve())
         assert uv_root in filesystem["allowRead"]
         assert uv_root not in filesystem["allowWrite"]
+
+
+async def test_rendered_write_denies_are_the_ones_a_grant_can_reach(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    home.mkdir()
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GOBBY_HOME", str(home / ".gobby"))
+    srt_debug_deny = home / ".claude" / "debug" / "synthetic"
+
+    paths = await compute_sandbox_paths(
+        SandboxConfig(
+            enabled=True,
+            backend="srt",
+            allow_network=False,
+            extra_deny_write_paths=[str(srt_debug_deny)],
+        ),
+        str(workspace),
+        provider="grok",
+        env={"PATH": ""},
+    )
+    deny_write = render_srt_settings(paths)["filesystem"]["denyWrite"]
+
+    root = workspace.resolve()
+    assert str(root / ".codex" / "hooks.json") in deny_write
+    assert str(root / ".grok" / "hooks") in deny_write
+    # SRT always grants its own debug directory, so a deny inside it still counts.
+    assert str(srt_debug_deny) in deny_write
+    # Nothing grants the workspace's parent; default-deny already covers its controls.
+    parent_hooks = str(tmp_path / ".codex" / "hooks.json")
+    assert parent_hooks in paths.deny_write_paths
+    assert parent_hooks not in deny_write
+    # Each deny costs Seatbelt compile time, superlinearly: 1978 took 13.7 s of CPU.
+    # This workspace renders 55.
+    assert len(deny_write) < 100 < len(paths.deny_write_paths)
 
 
 async def test_claude_account_auth_files_are_read_only_sandbox_exceptions(

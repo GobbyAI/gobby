@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -501,6 +502,50 @@ def verify_srt_installation(
         return installation
 
 
+# sandbox-runtime's getDefaultWritePaths() (dist/sandbox/sandbox-utils.js) joins
+# every policy's allowWrite, so a deny beneath one still decides a write.
+_SRT_DEFAULT_WRITE_PATHS = (
+    "/dev/stdout",
+    "/dev/stderr",
+    "/dev/null",
+    "/dev/tty",
+    "/dev/dtracehelper",
+    "/dev/autofs_nowait",
+    "/tmp/claude",
+    "/private/tmp/claude",
+    "~/.npm/_logs",
+    "~/.claude/debug",
+)
+_GLOB_START = re.compile(r"[*?\[{]")
+
+
+def _subtree_prefix(entry: str) -> str:
+    """Return the slash-terminated directory a policy path or glob can match within."""
+    match = _GLOB_START.search(entry)
+    if match:
+        entry = entry[: match.start()].rpartition("/")[0]
+    return entry.rstrip("/") + "/"
+
+
+def _effective_deny_write(allow_write: list[str], deny_write: list[str]) -> list[str]:
+    """Keep the write denies that share a subtree with a write grant.
+
+    Writes outside every grant are already denied by default. Seatbelt's compile
+    cost grows faster than the deny count: 1978 entries, most of them under
+    unwritable ancestors, cost 13.7 s of CPU per launch.
+    """
+    grants = [
+        _subtree_prefix(os.path.expanduser(path))
+        for path in (*_SRT_DEFAULT_WRITE_PATHS, *allow_write)
+    ]
+    kept = []
+    for deny in deny_write:
+        prefix = _subtree_prefix(deny)
+        if any(prefix.startswith(grant) or grant.startswith(prefix) for grant in grants):
+            kept.append(deny)
+    return kept
+
+
 def render_srt_settings(paths: ResolvedSandboxPaths) -> dict[str, Any]:
     """Render canonical resolved policy to SRT's validated settings schema."""
     credentials = [
@@ -531,7 +576,7 @@ def render_srt_settings(paths: ResolvedSandboxPaths) -> dict[str, Any]:
             "denyRead": paths.deny_read_paths,
             "allowRead": paths.read_paths,
             "allowWrite": paths.write_paths,
-            "denyWrite": paths.deny_write_paths,
+            "denyWrite": _effective_deny_write(paths.write_paths, paths.deny_write_paths),
             "allowGitConfig": False,
         },
         "allowPty": True,

@@ -11,6 +11,10 @@ from gobby.paths import get_gobby_home
 
 # Qwen rewrites these under a lock at startup, so each run gets empty ones.
 _PRIVATE_STORES = ("extensions", "extension-store")
+# Qwen reads global context (QWEN.md and AGENTS.md unless settings rename them) and
+# memory.md from its home. Defaults are linked even when absent, so files the
+# operator adds later are seen.
+_GLOBAL_MEMORY_FILES = ("QWEN.md", "AGENTS.md", "memory.md")
 
 
 @dataclass(frozen=True)
@@ -84,6 +88,8 @@ def prepare_qwen_sandbox_home(
         completed = json.loads(receipt_path.read_text())
         if not isinstance(completed, dict) or completed.get("source") != str(source):
             raise ValueError("Qwen managed home source changed")
+        if auth.resolve() != (source / "oauth_creds.json").resolve():
+            raise ValueError("Qwen managed home auth target changed")
         return prepared
     home.mkdir(mode=0o700, parents=True)
     assets.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -94,6 +100,8 @@ def prepare_qwen_sandbox_home(
     for name in ("agents", "skills", "commands"):
         if (source / name).is_dir():
             (home / name).symlink_to(source / name, target_is_directory=True)
+    for name in {*_GLOBAL_MEMORY_FILES, *(path.name for path in source.glob("*.md"))}:
+        (home / name).symlink_to(source / name)
     receipt_path.write_text(json.dumps({"source": str(source)}))
     receipt_path.chmod(0o600)
     return prepared
