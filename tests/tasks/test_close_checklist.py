@@ -16,6 +16,7 @@ import pytest
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
 import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle_validation
+import gobby.tasks.close_test_coverage as close_test_coverage
 from gobby.config.validation_detection import is_validation_command
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
@@ -1677,7 +1678,12 @@ def _git(repo: Path, *args: str) -> str:
     [
         pytest.param("clean\n", "head", [], id="candidate-bytes-despite-foreign-dirt"),
         pytest.param("clean\n", None, ["regen.log"], id="no-candidate-compares-the-checkout"),
-        pytest.param("dirty\n", "missing", [], id="unlisted-candidate-compares-the-checkout"),
+        pytest.param(
+            "dirty\n",
+            "missing",
+            ["regen.log", "src/gone.py", "tests/test_widget.py"],
+            id="unlisted-candidate-fails-closed",
+        ),
         pytest.param("dirty\n", "head", ["regen.log"], id="checkout-bytes-are-not-the-candidate"),
     ],
 )
@@ -1711,6 +1717,39 @@ def test_copy_credit_compares_against_the_close_candidate_commit(
 
     assert gate.status == ("failed" if differing else "passed"), gate.message
     assert gate.details.get("pytest_copy_differing_paths", []) == differing
+
+
+def test_unlistable_candidate_costs_one_git_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A hung git must not cost one timeout per compared path.
+    reads: list[list[str]] = []
+
+    def unanswered(command: list[str], cwd: str | Path, timeout: int = 5) -> str | None:
+        reads.append(command)
+        return None
+
+    monkeypatch.setattr(close_test_coverage, "run_git_command", unanswered)
+    changed = ("src/a.py", "src/b.py", "tests/test_widget.py")
+    for tree in ("repo", "export"):
+        for path in changed:
+            (tmp_path / tree / path).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / tree / path).write_text("def test_widget(): pass\n")
+    run = _run(2, command="uv run pytest tests/test_widget.py -q", workdir=str(tmp_path / "export"))
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_scoped_audit_run(1, "tests/test_widget.py"), run)
+        ),
+        has_attributed_edits=True,
+        changed_paths=changed,
+        close_root=str(tmp_path / "repo"),
+        candidate_commit_sha="1" * 40,
+    )
+
+    assert gate.status == "failed", gate.message
+    assert len(reads) == 1
 
 
 def _scoped_pytest_gate(tmp_path: Path, failing_command: str) -> CloseGateResult:

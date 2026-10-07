@@ -448,20 +448,21 @@ def _same_bytes(tree: str, root: str, path: str, candidate: str | None) -> bool:
     """Whether ``tree`` holds ``path`` as the close candidate commit does, or both lack it.
 
     The candidate is the reference, so another session's uncommitted edit in ``root``
-    does not void a copy. Without a candidate, or when git cannot list it, ``root``'s
-    working tree is. Equal bytes are git blob identity for an unfiltered file.
+    does not void a copy, and a candidate git cannot list matches nothing. Without a
+    candidate ``root``'s working tree is the reference. Equal bytes are git blob
+    identity for an unfiltered file; a path committed as a symlink or submodule never
+    matches, which refuses credit and never grants it.
     """
     copy = os.path.join(tree, path)
-    try:
-        blobs = _candidate_blobs(root, candidate) if candidate else None
-    except LookupError:
-        blobs = None
-    if blobs is None:
+    if not candidate:
         original = os.path.join(root, path)
         try:
             return filecmp.cmp(copy, original, shallow=False)
         except OSError:
             return not os.path.exists(copy) and not os.path.exists(original)
+    blobs = _candidate_blobs(root, candidate)
+    if blobs is None:
+        return False
     blob = blobs.get(path)
     try:
         data = Path(copy).read_bytes()
@@ -473,16 +474,17 @@ def _same_bytes(tree: str, root: str, path: str, candidate: str | None) -> bool:
 
 
 @lru_cache(maxsize=4)
-def _candidate_blobs(root: str, candidate: str) -> Mapping[str, str]:
-    """Return blob ids by repo path in ``candidate``'s tree.
+def _candidate_blobs(root: str, candidate: str) -> Mapping[str, str] | None:
+    """Return blob ids by repo path in ``candidate``'s tree, or None when git cannot list it.
 
-    Raises ``LookupError`` when git cannot list it, so a failed read is never cached.
+    A failure is cached like a success, so a hung git costs one timeout per close, not
+    one per compared path.
     """
     listing = run_git_command(
         ["git", "ls-tree", "-r", "-z", "--full-tree", candidate], cwd=root, timeout=30
     )
     if listing is None:
-        raise LookupError(candidate)
+        return None
     blobs: dict[str, str] = {}
     for entry in listing.split("\0"):
         meta, tab, path = entry.partition("\t")
