@@ -1527,18 +1527,22 @@ class TestPullPromptFallback:
         assert tmux.typed == [f"{_PULL_PROMPT}\n"]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "composer_text",
-        [
-            _claude_frame("❯ the operator typed this"),
-            _claude_frame("\x1b[39m❯\xa0\x1b[2mrun\x1b[0m \x1b[2mthe tests\x1b[0m"),
-        ],
-    )
-    async def test_a_composer_that_is_not_our_prompt_counts_as_submitted(
-        self, composer_text: str
-    ) -> None:
-        """A foreign draft is a positive read that our prompt went in: no retype."""
-        tmux = _ForeignDraftTmux(composer_text)
+    async def test_a_different_operator_draft_falls_back_without_another_enter(self) -> None:
+        """A different draft proves neither submission nor permission to retry Enter."""
+        tmux = _ForeignDraftTmux(_claude_frame("❯ the operator typed this"))
+        failures: list[int] = []
+
+        assert await _send_pull_prompt(tmux, on_send_failure=lambda: failures.append(0)) is False
+        assert failures == [0]
+        assert [text for _p, text, literal in tmux.sent_keys if literal] == [f"{_PULL_PROMPT}\n"]
+        assert sum(1 for _p, key, literal in tmux.sent_keys if key == "Enter" and not literal) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_faint_suggestion_is_empty_and_proves_submission(self) -> None:
+        """An unaccepted suggestion is not an operator draft."""
+        tmux = _ForeignDraftTmux(
+            _claude_frame("\x1b[39m❯\xa0\x1b[2mrun\x1b[0m \x1b[2mthe tests\x1b[0m")
+        )
 
         assert await _send_pull_prompt(tmux) is True
         assert [text for _p, text, literal in tmux.sent_keys if literal] == [f"{_PULL_PROMPT}\n"]
