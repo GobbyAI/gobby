@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Iterator
 from pathlib import Path
 from types import MappingProxyType
@@ -260,7 +261,11 @@ def http_server(
     token_file = tmp_path / "local_cli_token"
     token_file.write_text(TEST_LOCAL_TOKEN)
     AuthStore(session_storage.db).set_local_api_token_hash(hash_token(TEST_LOCAL_TOKEN))
-    server.auth_service = AuthService(lambda: session_storage.db, token_file=token_file)
+    server.auth_service = AuthService(
+        lambda: session_storage.db,
+        token_file=token_file,
+        bootstrap_file=_managed_bootstrap(token_file),
+    )
     return server
 
 
@@ -283,3 +288,10 @@ def client(http_server: HTTPServer) -> Iterator[TestClient]:
             headers={"X-Gobby-Local-Token": TEST_LOCAL_TOKEN},
         ) as client:
             yield client
+
+
+def _managed_bootstrap(token_file: Path) -> Path:
+    bootstrap = token_file.with_name(token_file.name + ".bootstrap.yaml")
+    api_key = token_file.read_text().strip() if token_file.exists() else None
+    bootstrap.write_text(json.dumps({"api_key": api_key}))
+    return bootstrap

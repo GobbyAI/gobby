@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -32,7 +33,7 @@ from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.utils.local_token import issue_agent_api_token
+from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.engine.core import RuleEngine
@@ -222,11 +223,16 @@ def boundary(
     token_file = tmp_path / "api-token"
     token_file.write_text("boundary-operator-token")
     AuthStore(temp_db).set_local_api_token_hash(hash_token("boundary-operator-token"))
-    server.auth_service = AuthService(lambda: temp_db, token_file=token_file)
+    server.auth_service = AuthService(
+        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
+    )
     token = "boundary-operator-token"
     if request.param == "agent":
         token = issue_agent_api_token(
-            token, agent_run_id=run.id, session_id=session.id, project_id=project_id
+            derive_managed_signing_key(token),
+            agent_run_id=run.id,
+            session_id=session.id,
+            project_id=project_id,
         )
     headers = {
         "Authorization": f"Bearer {token}",
@@ -593,3 +599,10 @@ async def test_pipeline_calls_need_no_discovery_and_keep_session(boundary: Bound
     listed = await boundary.proxy.list_tools(SERVER, session_id=boundary.session_id)
     assert listed["tools"][0]["name"] == "echo"
     assert boundary.variables.get_variables(boundary.session_id) == before
+
+
+def _managed_bootstrap(token_file: Path) -> Path:
+    bootstrap = token_file.with_name(token_file.name + ".bootstrap.yaml")
+    api_key = token_file.read_text().strip() if token_file.exists() else None
+    bootstrap.write_text(json.dumps({"api_key": api_key}))
+    return bootstrap

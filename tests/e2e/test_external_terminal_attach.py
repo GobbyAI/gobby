@@ -68,7 +68,7 @@ attrs[3] &= ~termios.ECHO
 termios.tcsetattr(fd, termios.TCSADRAIN, attrs)
 sys.stdout.write("GOBBY-EXT-BOOT\\n")
 if "--codex-idle" in sys.argv:
-    sys.stdout.write("› \\n  GPT-6.1-Sol · 80% context left\\n")
+    sys.stdout.write("› \\n  GPT-6.1-Sol · 80% context left\\n  ? for shortcuts\\n")
 sys.stdout.flush()
 while True:
     cmd = sys.stdin.readline()
@@ -84,7 +84,7 @@ while True:
         sys.stdout.write("\\033[?25l")
         sys.stdout.flush()
     elif text == "SHOW_CODEX_IDLE":
-        sys.stdout.write("\\n" * 80 + "› \\n  GPT-6.1-Sol · 80% context left\\n")
+        sys.stdout.write("\\n" * 80 + "› \\n  GPT-6.1-Sol · 80% context left\\n  ? for shortcuts\\n")
         sys.stdout.flush()
     elif text == "APP_CURSOR":
         sys.stdout.write("\\033[?1h")
@@ -629,6 +629,8 @@ async def test_codex_reply_wait_reaches_terminal_after_isolated_restart(
 ) -> None:
     # Import locally because the stack helpers also import this module's
     # external-terminal helpers.
+    from gobby.agents.detection.registry import DetectionManifestRegistry
+    from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector, composer_text
     from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
     from tests.e2e.test_terminal_client_stack import _open_control, _ws_create
 
@@ -679,6 +681,15 @@ async def test_codex_reply_wait_reaches_terminal_after_isolated_restart(
             interval=0.1,
             description="isolated native Codex idle prompt",
         )
+        idle_snapshot = await control.snapshot(
+            host_terminal_id, mode="ansi", max_lines=COMPOSER_PROBE_LINES
+        )
+        idle_text = composer_text(str(idle_snapshot.get("text", "")))
+        registry = DetectionManifestRegistry(postgres_db)
+        assert registry.for_provider("codex") is not None, "Isolated install lacks Codex manifest"
+        detector = IdleDetector(registry, "codex")
+        assert detector.composer_read(idle_text).state == "empty"
+        assert detector.turn_in_flight_fingerprint(idle_text) is None
     finally:
         await control.close()
     mcp_client.session_id = waiter

@@ -9,7 +9,7 @@ import os
 import weakref
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import partial
 from typing import Literal, Protocol
@@ -102,6 +102,7 @@ class NativeWakeBatchRequest:
     clear_action_key: str
     wake_action_key: str
     operations: tuple[NativeBatchOperation, ...]
+    on_submit_dispatch: Callable[[], None] | None = None
 
 
 class StaleTerminalLeaseError(RuntimeError):
@@ -255,6 +256,7 @@ class WriteCoordinator:
         attachment_id: str | None = None,
         expected_lease_generation: int | None = None,
         latch: bool = True,
+        on_step_dispatch: Callable[[WriteRequest], None] | None = None,
     ) -> WriteOutcome:
         """Write one logical action as an ordered sequence under the terminal lock.
 
@@ -293,6 +295,8 @@ class WriteCoordinator:
                         if expected_lease_generation is not None
                         else step.expected_lease_generation,
                     )
+                    if on_step_dispatch is not None:
+                        on_step_dispatch(step)
                     in_flight = asyncio.create_task(self._dispatch(step))
                     outcome = await in_flight
                     in_flight = None
@@ -459,7 +463,60 @@ class WriteCoordinator:
                 )
 
             if prepared and runtime is not None:
-                in_flight = asyncio.create_task(runtime.write_batch(prepared))
+                request_by_result = {request.result_id: request for request in requests}
+
+                async def dispatch_phases() -> list[NativeBatchResult]:
+                    assert runtime is not None
+                    prelude: list[NativeBatchTarget] = []
+                    enter: list[NativeBatchTarget] = []
+                    has_prelude: set[str] = set()
+                    for target in prepared:
+                        last = target.operations[-1] if target.operations else None
+                        if last is None or last.kind != "key" or last.payload != "enter":
+                            prelude.append(target)
+                            continue
+                        enter.append(replace(target, operations=(last,)))
+                        if len(target.operations) > 1:
+                            has_prelude.add(target.result_id)
+                            prelude.append(replace(target, operations=target.operations[:-1]))
+                    phase_results = await runtime.write_batch(prelude) if prelude else []
+                    by_id = {result.result_id: result for result in phase_results}
+                    ready = [
+                        target
+                        for target in enter
+                        if target.result_id not in has_prelude
+                        or isinstance(by_id[target.result_id].outcome, Delivered)
+                    ]
+                    if ready:
+                        # Pace before marking submit, so an old hook read during
+                        # the text/Enter gap cannot acknowledge the new prompt.
+                        await asyncio.sleep(
+                            max(target.operations[0].delay_ms for target in ready) / 1000
+                        )
+                        ready = [
+                            replace(target, operations=(replace(target.operations[0], delay_ms=0),))
+                            for target in ready
+                        ]
+                    for target in ready:
+                        callback = request_by_result[target.result_id].on_submit_dispatch
+                        if callback is not None:
+                            callback()
+                    if ready:
+                        for result in await runtime.write_batch(ready):
+                            # A refused Enter is still a partial logical wake if
+                            # its text already reached the composer. Retain the latch.
+                            if (
+                                result.result_id in has_prelude
+                                and isinstance(result.outcome, NativeBatchFailure)
+                                and result.outcome.stage == "none"
+                            ):
+                                result = replace(
+                                    result, outcome=replace(result.outcome, stage="partial")
+                                )
+                            by_id[result.result_id] = result
+                    return [by_id[target.result_id] for target in prepared]
+
+                in_flight = asyncio.create_task(dispatch_phases())
                 try:
                     batch_results = await in_flight
                 except asyncio.CancelledError:
@@ -470,7 +527,6 @@ class WriteCoordinator:
                         NativeBatchResult(target.result_id, IndeterminateWrite(detail=str(exc)))
                         for target in prepared
                     ]
-                request_by_result = {request.result_id: request for request in requests}
 
                 def settle_results() -> None:
                     for result in batch_results:

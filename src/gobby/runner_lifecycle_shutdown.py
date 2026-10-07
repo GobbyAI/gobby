@@ -161,17 +161,63 @@ async def _shutdown_websocket_server(runner: GobbyRunner, timeout: float = 5.0) 
 
 
 async def _cancel_runner_task(runner: GobbyRunner, attr: str, timeout: float = 2.0) -> None:
+    global _expiry_exit_backstop_required
     task = getattr(runner, attr, None)
     if task and not task.done():
         task.cancel()
         try:
-            await asyncio.wait_for(task, timeout=timeout)
+            done, _ = await asyncio.wait((task,), timeout=timeout)
+            if not done:
+                _expiry_exit_backstop_required = True
+                logger.warning("Runner task %s did not stop within %.1fs", attr, timeout)
+                task.add_done_callback(
+                    lambda finished: None if finished.cancelled() else finished.exception()
+                )
+                return
+            await task
         except asyncio.CancelledError:
             current_task = asyncio.current_task()
             if current_task is not None and current_task.cancelling():
+                task.cancel()
+                _, pending = await asyncio.wait((task,), timeout=timeout)
+                if pending:
+                    _expiry_exit_backstop_required = True
+                    task.add_done_callback(
+                        lambda finished: None if finished.cancelled() else finished.exception()
+                    )
                 raise
         except TimeoutError:
             pass
+
+
+async def stop_restart_recovery(runner: GobbyRunner) -> None:
+    """Revoke ordered recovery and its replay producers before teardown or rollback."""
+    global _expiry_exit_backstop_required
+    services = getattr(getattr(runner, "http_server", None), "services", None)
+    if services is not None:
+        services.shutdown_in_progress = True
+    for attr in ("_subsystem_init_task", "_startup_recovery_task", "_hook_inbox_task"):
+
+        async def cancel_owned_task(attr: str = attr) -> None:
+            await _cancel_runner_task(runner, attr)
+
+        await _best_effort(cancel_owned_task, f"{attr} cancellation")
+    wake_replay = getattr(runner, "wake_replay_coordinator", None)
+    app = getattr(getattr(runner, "http_server", None), "app", None)
+    from gobby.hooks.inbox_lifecycle import stop_hook_inbox_replays
+
+    if wake_replay is not None:
+        try:
+            await wake_replay.close()
+        except TimeoutError:
+            _expiry_exit_backstop_required = True
+            logger.exception("Wake replay cancellation exceeded its deadline")
+    if app is not None:
+        try:
+            await stop_hook_inbox_replays(app)
+        except TimeoutError:
+            _expiry_exit_backstop_required = True
+            logger.exception("Hook inbox replay cancellation exceeded its deadline")
 
 
 async def _stop_code_index_workers(runner: GobbyRunner) -> None:
@@ -402,6 +448,9 @@ async def _run_terminal_delivery_finalizers(runner: GobbyRunner) -> None:
     """Settle delivery scopes and revoke/join their owned executor."""
     from gobby.sessions.compact_continuation import shutdown_compact_continuations
 
+    websocket_server = getattr(runner, "websocket_server", None)
+    if websocket_server is not None:
+        await websocket_server.lease_registry.finalize_shutdown_attachments()
     await _best_effort(
         shutdown_agent_event_broadcasting,
         "Agent output reader drain",
@@ -736,10 +785,7 @@ async def shutdown_daemon_services(
     try:
         try:
             async with overall_timeout:
-                await _best_effort(
-                    lambda: _cancel_runner_task(runner, "_subsystem_init_task"),
-                    "Subsystem initialization task cancellation",
-                )
+                await stop_restart_recovery(runner)
                 # gcode obtains effective config through this daemon. Cancel and
                 # await its workers before readiness begins returning HTTP 503.
                 await _stop_code_index_workers(runner)
@@ -813,10 +859,15 @@ async def shutdown_daemon_services(
             "Pre-commit store spare cleanup",
         )
 
-        try:
-            runner.database.close()
-        except Exception as e:
-            logger.warning("Database close failed: %s", e)
+        if finalizer_expiry_backstop_required():
+            logger.warning(
+                "Leaving database pool open for outstanding finalizers until process exit"
+            )
+        else:
+            try:
+                runner.database.close()
+            except Exception as e:
+                logger.warning("Database close failed: %s", e)
 
         try:
             cleanup_pid_file()

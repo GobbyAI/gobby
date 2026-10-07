@@ -48,6 +48,11 @@ from tests.runner_helpers import create_base_patches
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
 
 
+@pytest.fixture(autouse=True)
+def _isolate_daemon_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gobby.utils.local_token._daemon_bootstrap", None)
+
+
 def _daemon_probe(pid: int = 4242) -> SingletonProbe:
     return SingletonProbe(state=ProbeState.DAEMON, pid=pid, role="daemon")
 

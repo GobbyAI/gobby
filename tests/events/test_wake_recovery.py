@@ -658,6 +658,50 @@ class _CancelableDispatcher:
 
 
 @pytest.mark.asyncio
+async def test_shutdown_cancels_shielded_wake_replay_and_retains_durable_intent(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    sender = _session(session_manager, sample_project["id"], "shutdown-sender")
+    recipient = _session(session_manager, sample_project["id"], "shutdown-recipient")
+    messages = InterSessionMessageManager(temp_db)
+    message_id = _pending_wake(messages, sender, recipient)
+    dispatcher = _CancelableDispatcher()
+    coordinator = WakeReplayCoordinator(
+        message_manager=messages,
+        session_manager=session_manager,
+        dispatcher=dispatcher,
+        run_db=_run_db,
+    )
+    coordinator.bind_owner_loop(asyncio.get_running_loop())
+    opening = asyncio.create_task(coordinator.open())
+    try:
+        async with asyncio.timeout(2):
+            await dispatcher.started.wait()
+        opening.cancel()
+        await asyncio.gather(opening, return_exceptions=True)
+        assert coordinator._tasks
+        async with asyncio.timeout(2):
+            await coordinator.close()
+        assert not coordinator._tasks
+        assert dispatcher.injections == 0
+        assert await coordinator.request_replay(recipient) is None
+        await coordinator.open()
+        session_manager.update_status(recipient, "paused")
+        await drain_asyncio_tasks()
+        assert dispatcher.attempts == 1
+        retained = messages.get_message(message_id)
+        assert retained is not None
+        assert retained.delivered_at is None
+    finally:
+        dispatcher.release.set()
+        opening.cancel()
+        await asyncio.gather(opening, return_exceptions=True)
+        await coordinator.close()
+
+
+@pytest.mark.asyncio
 async def test_committed_reconciliation_survives_callback_and_task_failure(
     temp_db: HubDatabase,
     session_manager: SessionManager,

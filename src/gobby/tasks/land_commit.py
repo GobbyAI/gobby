@@ -9,9 +9,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
 
+import psycopg
+
+from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.project_checkouts import require_root
+from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.close_receipts import (
     CLOSE_RECEIPT_AUTHOR_TYPE,
@@ -23,7 +27,7 @@ from gobby.tasks.close_receipts import (
     record_close_receipt,
 )
 from gobby.tasks.landing_policy import ACTIVATION_CLASSES, classify_paths, read_freeze
-from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 from gobby.utils.git import git_subprocess_env
 from gobby.utils.machine_id import require_machine_id
 
@@ -33,6 +37,14 @@ _FULL_SHA = re.compile(r"[0-9a-f]{40}")
 _LANDING_ACTION = re.compile(
     r"gobby-land candidate=(?P<candidate>[0-9a-f]{40}) "
     rf"mode=(?P<mode>ff|merge) class=(?P<class>{'|'.join(ACTIVATION_CLASSES)})(?:: .*)?"
+)
+_ATTEMPTS = 3
+_LANDING_TIMEOUT = 120.0
+_RETEST_PROCEDURE = (
+    "Retest on the landed tree: take the focused verification commands from the task's "
+    "validation evidence, run them in the main checkout, and report each command and its "
+    "result, this landing's landed_tip, the HEAD you tested and any unrelated checkout "
+    "changes to the developer and the Orchestrator."
 )
 
 
@@ -49,6 +61,7 @@ class LandingResult(TypedDict, total=False):
     blockers: list[str]
     missing_approvals: list[str]
     overlaps: list[Overlap]
+    shared_paths: list[str]
     commit_sha: str
     branch: str
     landed_tip: str
@@ -56,9 +69,12 @@ class LandingResult(TypedDict, total=False):
     mode: str
     activation_class: str
     retest_required: bool
+    retest_procedure: str
     provenance: str
     merge_commit: str
     receipt_id: str
+    receipt_pending: bool
+    notification_pending: list[str]
 
 
 class LandingGitError(RuntimeError):
@@ -110,6 +126,10 @@ async def main_checkout_target(db: HubDatabase, project_id: str) -> tuple[Path, 
     main = common.parent
     branch = await _branch(main)
     return (main, branch) if branch is not None else None
+
+
+async def _tip(main: Path, branch: str) -> str:
+    return await _git(main, "rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}")
 
 
 async def _paths(main: Path, base: str, sha: str) -> set[str]:
@@ -228,12 +248,10 @@ async def _recover_landing(
     return unknown
 
 
-def _receipt_result(receipt: CloseReceipt) -> LandingResult:
-    facts = receipt.facts
+def _facts_result(sha: str, facts: dict[str, str | int | bool]) -> LandingResult:
     result: LandingResult = {
         "landed": True,
-        "receipt_id": receipt.id,
-        "commit_sha": receipt.commit_sha,
+        "commit_sha": sha,
         "branch": str(facts["branch"]),
         "landed_tip": str(facts["landed_tip"]),
         "observed_tip": str(facts["observed_tip"]),
@@ -244,15 +262,26 @@ def _receipt_result(receipt: CloseReceipt) -> LandingResult:
     }
     if "merge_commit" in facts:
         result["merge_commit"] = str(facts["merge_commit"])
+    if result["retest_required"]:
+        result["retest_procedure"] = _RETEST_PROCEDURE
     return result
+
+
+def _receipt_result(receipt: CloseReceipt) -> LandingResult:
+    return {**_facts_result(receipt.commit_sha, receipt.facts), "receipt_id": receipt.id}
 
 
 async def _record_and_notify(
     db: HubDatabase, task: Task, caller: str, sha: str, facts: dict[str, str | int | bool]
 ) -> LandingResult:
-    receipt, created = record_close_receipt(
-        db, task=task, author_session_id=caller, kind=LANDING, commit_sha=sha, facts=facts
-    )
+    try:
+        receipt, created = record_close_receipt(
+            db, task=task, author_session_id=caller, kind=LANDING, commit_sha=sha, facts=facts
+        )
+    except (psycopg.Error, IndeterminateCommitError):
+        # The ref already moved; a later call replays the receipt or records it from the reflog.
+        return {**_facts_result(sha, facts), "receipt_pending": True}
+    result = _receipt_result(receipt)
     if created:
         recipients = {
             recipient
@@ -268,15 +297,32 @@ async def _record_and_notify(
             f"at {str(facts['landed_tip'])[:10]}; activation {facts['activation_class']}"
         )
         manager = InterSessionMessageManager(db)
+        unreached: list[str] = []
         for recipient in sorted(recipients):
-            manager.create_message(caller, recipient, content)
-    return _receipt_result(receipt)
+            try:
+                manager.create_message(caller, recipient, content)
+            except (psycopg.Error, IndeterminateCommitError):
+                unreached.append(recipient)
+        if unreached:
+            result["notification_pending"] = unreached
+    return result
+
+
+def _refused(refusal: LandingResult, error: str, message: str | None = None) -> LandingResult:
+    result: LandingResult = {**refusal, "error": error, "blockers": [error]}
+    if message is not None:
+        result["message"] = message
+    return result
 
 
 async def land_candidate(
     db: HubDatabase, *, task: Task, caller_session_id: str, commit_sha: str
 ) -> LandingResult:
-    """Land a linked candidate approved by this caller, serialized with project freezes."""
+    """Land a linked candidate approved by this caller, serialized with project freezes.
+
+    A tip that moved by paths disjoint from the candidate's lands a generated merge;
+    a tip that moves during the call is re-read and every policy check repeats.
+    """
     if not caller_session_id:
         return {"landed": False, "error": "session_required"}
     sha = commit_sha.strip().lower()
@@ -293,98 +339,142 @@ async def land_candidate(
             branch = await _branch(main)
             if branch is None:
                 return {"landed": False, "error": "main_checkout_detached"}
-            tip = await _git(main, "rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}")
-            receipts = list_close_receipts(db, task.id)
-            blockers: list[str] = []
-            if current_task.claimed_by_session_id == caller_session_id:
-                blockers.append("caller_is_claimant")
-            if not any(
-                receipt.kind == INDEPENDENT_REVIEW_APPROVAL
-                and receipt.author_session_id == caller_session_id
-                and receipt.commit_sha == sha
-                for receipt in receipts
-            ):
-                blockers.append("review_receipt_missing")
             linked = False
             for candidate in current_task.commits or []:
                 if await _resolve(main, candidate) == sha:
                     linked = True
                     break
-            if not linked:
-                blockers.append("candidate_not_linked")
-            if await _ancestor(main, sha, tip):
-                if blockers:
-                    return {
-                        "landed": False,
-                        "error": blockers[0],
-                        "blockers": blockers,
-                        "commit_sha": sha,
-                    }
+            refusal: LandingResult = {"landed": False, "commit_sha": sha}
+            for _attempt in range(_ATTEMPTS):
+                # Every attempt re-reads the tip, so a candidate already landed counts.
+                tip = await _tip(main, branch)
+                receipts = list_close_receipts(db, task.id)
+                with db.transaction() as conn:
+                    claimants = claimant_sessions(conn, task.id)
+                blockers: list[str] = []
+                if current_task.claimed_by_session_id == caller_session_id:
+                    blockers.append("caller_is_claimant")
+                elif caller_session_id in claimants:
+                    blockers.append("caller_was_claimant")
+                if not any(
+                    receipt.kind == INDEPENDENT_REVIEW_APPROVAL
+                    and receipt.author_session_id == caller_session_id
+                    and receipt.commit_sha == sha
+                    for receipt in receipts
+                ):
+                    blockers.append("review_receipt_missing")
+                if not linked:
+                    blockers.append("candidate_not_linked")
+                if await _ancestor(main, sha, tip):
+                    if blockers:
+                        return {
+                            "landed": False,
+                            "error": blockers[0],
+                            "blockers": blockers,
+                            "commit_sha": sha,
+                        }
+                    for receipt in receipts:
+                        if (
+                            receipt.kind == LANDING
+                            and receipt.author_session_id == caller_session_id
+                            and receipt.commit_sha == sha
+                        ):
+                            return _receipt_result(receipt)
+                    facts = await _recover_landing(main, common, branch, tip, sha)
+                    return await _record_and_notify(db, current_task, caller_session_id, sha, facts)
+                base = await _git(main, "merge-base", tip, sha)
+                paths = await _paths(main, base, sha)
+                shared = sorted(paths & await _paths(main, base, tip))
+                activation_class = classify_paths(paths)
+                freeze = await asyncio.to_thread(read_freeze, common)
+                overlaps = await _overlaps(db, current_task, main, tip, sha, paths)
+                required: set[str] = set()
+                if freeze.on:
+                    required.add("freeze")
+                if activation_class in {"restart", "cutover"}:
+                    required.add("restart")
+                if overlaps:
+                    required.add("overlap")
+                granted: set[str] = set()
                 for receipt in receipts:
-                    if (
-                        receipt.kind == LANDING
-                        and receipt.author_session_id == caller_session_id
-                        and receipt.commit_sha == sha
-                    ):
-                        return _receipt_result(receipt)
-                facts = await _recover_landing(main, common, branch, tip, sha)
-                return await _record_and_notify(db, current_task, caller_session_id, sha, facts)
-            base = await _git(main, "merge-base", tip, sha)
-            paths = await _paths(main, base, sha)
-            activation_class = classify_paths(paths)
-            freeze = await asyncio.to_thread(read_freeze, common)
-            overlaps = await _overlaps(db, current_task, main, tip, sha, paths)
-            required: set[str] = set()
-            if freeze.on:
-                required.add("freeze")
-            if activation_class in {"restart", "cutover"}:
-                required.add("restart")
-            if overlaps:
-                required.add("overlap")
-            granted: set[str] = set()
-            for receipt in receipts:
-                if receipt.kind == LANDING_APPROVAL and receipt.commit_sha == sha:
-                    granted.update(part.strip() for part in str(receipt.facts["reason"]).split(","))
-            missing = sorted(required - granted)
-            if missing:
-                blockers.append("landing_approval_missing")
-            if not await _ancestor(main, tip, sha):
-                blockers.append("tip_moved")
-            refusal: LandingResult = {
-                "landed": False,
-                "commit_sha": sha,
-                "activation_class": activation_class,
-                "missing_approvals": missing,
-                "overlaps": overlaps,
-                "blockers": blockers,
-            }
-            if blockers:
-                refusal["error"] = blockers[0]
-                return refusal
-            if await _branch(main) != branch:
-                refusal["error"] = "main_checkout_branch_changed"
-                refusal["blockers"] = ["main_checkout_branch_changed"]
-                return refusal
-            env = {
-                **(git_subprocess_env() or os.environ),
-                "GOBBY_LAND_COMMIT": "1",
-                "GIT_REFLOG_ACTION": f"gobby-land candidate={sha} mode=ff class={activation_class}",
-            }
-            result = await daemon_git.run(("merge", "--ff-only", sha), cwd=main, env=env)
-            observed_tip = await _git(
-                main, "rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}"
-            )
-            if not await _ancestor(main, sha, observed_tip):
-                return {**refusal, "error": "git_failed", "message": result.stderr}
-            facts = {
-                "branch": branch,
-                "landed_tip": sha,
-                "observed_tip": observed_tip,
-                "mode": "ff",
-                "activation_class": activation_class,
-                "retest_required": False,
-                "provenance": "recorded",
-            }
-            return await _record_and_notify(db, current_task, caller_session_id, sha, facts)
+                    if receipt.kind == LANDING_APPROVAL and receipt.commit_sha == sha:
+                        reasons = str(receipt.facts["reason"]).split(",")
+                        granted.update(part.strip() for part in reasons)
+                missing = sorted(required - granted)
+                if missing:
+                    blockers.append("landing_approval_missing")
+                if shared:
+                    blockers.append("base_update_required")
+                refusal = {
+                    "landed": False,
+                    "commit_sha": sha,
+                    "activation_class": activation_class,
+                    "missing_approvals": missing,
+                    "overlaps": overlaps,
+                    "shared_paths": shared,
+                    "blockers": blockers,
+                }
+                if blockers:
+                    refusal["error"] = blockers[0]
+                    return refusal
+                if await _branch(main) != branch:
+                    return _refused(refusal, "main_checkout_branch_changed")
+                # Decision Record item 1: a tip moved by disjoint paths lands a generated
+                # two-parent merge, which neither the ref nor the checkout sees until the
+                # fast-forward below.
+                target, mode = sha, "ff"
+                if not await _ancestor(main, tip, sha):
+                    merged = await daemon_git.run(
+                        ("merge-tree", "--write-tree", tip, sha), cwd=main
+                    )
+                    if isinstance(merged, GitFailed) and merged.returncode == 1:
+                        return _refused(refusal, "merge_conflict", merged.stdout)
+                    if not isinstance(merged, GitOk):
+                        return _refused(refusal, "git_failed", merged.stderr)
+                    tree = merged.stdout.split("\n", 1)[0]
+                    subject = f"chore: land reviewed {sha[:10]} for #{current_task.seq_num}"
+                    target = await _git(
+                        main, "commit-tree", tree, "-p", tip, "-p", sha, "-m", subject
+                    )
+                    mode = "merge"
+                env = {
+                    **(git_subprocess_env() or os.environ),
+                    # The refusal classes below match git's English stderr.
+                    "LC_ALL": "C",
+                    "GOBBY_LAND_COMMIT": "1",
+                    "GIT_REFLOG_ACTION": (
+                        f"gobby-land candidate={sha} mode={mode} class={activation_class}"
+                    ),
+                }
+                result = await daemon_git.run(
+                    ("merge", "--ff-only", target), cwd=main, env=env, timeout=_LANDING_TIMEOUT
+                )
+                # Read once, whatever git returned: it can move the ref before failing.
+                observed_tip = await _tip(main, branch)
+                if await _ancestor(main, target, observed_tip):
+                    facts = {
+                        "branch": branch,
+                        "landed_tip": target,
+                        "observed_tip": observed_tip,
+                        "mode": mode,
+                        "activation_class": activation_class,
+                        "retest_required": mode == "merge",
+                        "provenance": "recorded",
+                    }
+                    if mode == "merge":
+                        facts["merge_commit"] = target
+                    return await _record_and_notify(db, current_task, caller_session_id, sha, facts)
+                if observed_tip != tip:
+                    continue
+                # Nothing below resets the shared checkout to compensate.
+                if isinstance(result, GitTimeout) or (result.returncode or 0) < 0:
+                    status = await daemon_git.run(("status", "--porcelain"), cwd=main)
+                    return _refused(refusal, "git_interrupted", status.stdout)
+                if "would be overwritten" in result.stderr:
+                    return _refused(refusal, "checkout_dirty", result.stderr)
+                if "index.lock" in result.stderr:
+                    return _refused(refusal, "checkout_busy", result.stderr)
+                return _refused(refusal, "git_failed", result.stderr)
+            return _refused(refusal, "tip_contention")
     except LandingGitError as exc:
         return {"landed": False, "error": "git_failed", "message": str(exc)}

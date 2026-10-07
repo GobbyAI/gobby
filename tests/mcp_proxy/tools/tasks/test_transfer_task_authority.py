@@ -99,6 +99,8 @@ def test_transfer_refused_while_creator_still_live(
     temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
 ) -> None:
     manager, task, fixtures = authority_task
+    # No delegator, so only the live creator, which is not the claimant, holds authority.
+    _set_authority(temp_db, task, fixtures.filer.id, None)
     with pytest.raises(ValueError, match="still live"):
         _transfer(manager, task, fixtures.successor)
 
@@ -126,12 +128,9 @@ def test_transfer_refused_for_claimant(
         _transfer(manager, task, fixtures.claimant)
 
 
-def test_transfer_refused_for_task_close_reviewer(
-    temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
-) -> None:
-    manager, task, fixtures = authority_task
+def _close_reviewer(db: HubDatabase, fixtures: _Fixtures, parent: Session) -> Session:
     reviewer = fixtures._add("Close reviewer")
-    temp_db.execute(
+    db.execute(
         """
         INSERT INTO agent_runs (
             id, parent_session_id, child_session_id, machine_id, status, provider,
@@ -139,14 +138,16 @@ def test_transfer_refused_for_task_close_reviewer(
         )
         VALUES (%s, %s, %s, %s, 'running', 'codex', 'review', %s)
         """,
-        (
-            str(uuid4()),
-            fixtures.claimant.id,
-            reviewer.id,
-            require_machine_id(),
-            TASK_CLOSE_REVIEWER_AGENT,
-        ),
+        (str(uuid4()), parent.id, reviewer.id, require_machine_id(), TASK_CLOSE_REVIEWER_AGENT),
     )
+    return reviewer
+
+
+def test_transfer_refused_for_task_close_reviewer(
+    temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
+) -> None:
+    manager, task, fixtures = authority_task
+    reviewer = _close_reviewer(temp_db, fixtures, fixtures.claimant)
     temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (fixtures.filer.id,))
     with pytest.raises(ValueError, match="reviewer"):
         _transfer(manager, task, reviewer)
@@ -341,3 +342,53 @@ def test_transfer_note_records_a_task_with_no_recorded_authority(
         "authority transferred from no recorded session "
         f"to {_seq_ref(temp_db, fixtures.successor.id)}: operator-filed task"
     )
+
+
+def _self_claim(db: HubDatabase, task: Task, fixtures: _Fixtures) -> None:
+    """The live filer created and claimed the task, and nothing delegated it."""
+    db.execute(
+        "UPDATE tasks SET claimed_by_session_id = %s, delegated_by_session_id = NULL WHERE id = %s",
+        (fixtures.filer.id, task.id),
+    )
+
+
+def test_transfer_from_a_live_creator_that_claimed_its_own_task(
+    temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
+) -> None:
+    manager, task, fixtures = authority_task
+    _self_claim(temp_db, task, fixtures)
+
+    updated = _transfer(manager, task, fixtures.successor, reason="self-filed claim")
+
+    assert updated.delegated_by_session_id == fixtures.successor.id
+    assert updated.created_in_session_id == updated.claimed_by_session_id == fixtures.filer.id
+    assert updated.delegation_reason == (
+        f"authority transferred from {_seq_ref(temp_db, fixtures.filer.id)} "
+        f"(status=active, claimant) to {_seq_ref(temp_db, fixtures.successor.id)}: "
+        "self-filed claim"
+    )
+    assert _activation(temp_db, updated, fixtures.successor.id).author_session_id == (
+        fixtures.successor.id
+    )
+    with pytest.raises(CloseReceiptError, match="claimant"):
+        _activation(temp_db, updated, fixtures.filer.id)
+
+
+def test_self_claimed_task_keeps_every_transfer_refusal(
+    temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
+) -> None:
+    manager, task, fixtures = authority_task
+    _self_claim(temp_db, task, fixtures)
+    reviewer = _close_reviewer(temp_db, fixtures, fixtures.filer)
+
+    with pytest.raises(ValueError, match="claimant"):
+        _transfer(manager, task, fixtures.filer)
+    with pytest.raises(ValueError, match="reviewer"):
+        _transfer(manager, task, reviewer)
+    live = fixtures._add("Live delegator")
+    temp_db.execute(
+        "UPDATE tasks SET delegated_by_session_id = %s WHERE id = %s", (live.id, task.id)
+    )
+    with pytest.raises(ValueError, match="still live"):
+        _transfer(manager, task, fixtures.successor)
+    assert manager.get_task(task.id).delegated_by_session_id == live.id

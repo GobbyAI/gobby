@@ -15,7 +15,7 @@ from gobby.storage.managed_credentials import (
     CredentialAuthorizationError,
     ManagedCredentialManager,
 )
-from gobby.utils.local_token import read_local_api_token
+from gobby.utils.local_token import read_managed_signing_key
 from gobby.utils.machine_id import get_machine_id
 
 _MAX_TOOL_ROLE_LIFETIME_SECONDS = 3540.0
@@ -75,9 +75,9 @@ def build_managed_tool_chat_lease_factory(
             )
             from gobby.runtime_grants.launch import materialize_managed_launch
 
-            operator_token = read_local_api_token()
-            if operator_token is None:
-                raise CredentialAuthorizationError("daemon operator capability is unavailable")
+            signing_key = read_managed_signing_key()
+            if signing_key is None:
+                raise CredentialAuthorizationError("signing_key_unavailable")
             try:
                 context = _active_deployment_grant_context()
             except IndexInventoryError as exc:
@@ -96,7 +96,7 @@ def build_managed_tool_chat_lease_factory(
             launch = materialize_managed_launch(
                 grant,
                 dest_dir=tool_credential.credential.bootstrap_path.parent,
-                operator_token=operator_token,
+                signing_key=signing_key,
                 deadline_seconds=max(1.0, remaining_seconds),
             )
             scoped_request = replace(

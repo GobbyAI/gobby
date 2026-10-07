@@ -389,6 +389,7 @@ def create_health_router(server: "HTTPServer") -> APIRouter:
             "degraded_services": degraded_services,
             "hook_runtime": hook_runtime.to_dict(),
             "install_dir": install_dir,
+            "restart_recovery_pending": not server.services.restart_recovery_ready,
         }
         gterm_host = _gterm_host_status(server)
         if gterm_host is not None:
@@ -413,7 +414,9 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "done": True,
                 "elapsed_seconds": 0,
             }
-        return tracker.to_dict()
+        progress = tracker.to_dict()
+        progress["restart_recovery_pending"] = not server.services.restart_recovery_ready
+        return progress
 
     @router.get("/status")
     async def status_check() -> dict[str, Any]:

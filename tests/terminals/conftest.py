@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Iterator
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,26 @@ def pytest_report_header(config: pytest.Config) -> list[str]:
     except NativeBinarySelectionError as exc:
         raise pytest.UsageError(f"terminal binary selection failed: {exc}") from exc
     return [selected.header()] if selected is not None else []
+
+
+@pytest.fixture
+def managed_composer_tmpdir(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Exercise composer sockets under a sandbox-sized permitted temp root."""
+    managed_length = len(
+        os.fsencode("/private/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-56rk012x")
+    )
+    parent = Path(tempfile.gettempdir()).resolve()
+    prefix = "m" * max(1, managed_length - len(os.fsencode(parent)) - 9)
+    directory_context = (
+        tempfile.TemporaryDirectory(prefix=prefix)
+        if len(os.fsencode(parent)) < managed_length
+        else nullcontext(str(parent))
+    )
+    with directory_context as directory:
+        root = Path(directory).resolve()
+        monkeypatch.setenv("TMPDIR", str(root))
+        monkeypatch.setattr(tempfile, "tempdir", str(root))
+        yield root
 
 
 @pytest.fixture(scope="session", autouse=True)

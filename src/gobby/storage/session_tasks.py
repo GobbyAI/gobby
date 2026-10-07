@@ -1,10 +1,34 @@
 import logging
 from typing import Any, Literal
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.tasks import Task
 
 logger = logging.getLogger(__name__)
+
+
+def record_claim(conn: Transaction, session_id: str, task_id: str) -> None:
+    """Record a claim in the claiming write's transaction; the history outlives the claim."""
+    conn.execute(
+        """
+        INSERT INTO session_tasks (session_id, task_id, action) VALUES (%s, %s, 'claimed')
+        ON CONFLICT (session_id, task_id, action) DO NOTHING
+        """,
+        (session_id, task_id),
+    )
+
+
+def claimant_sessions(conn: Transaction, task_id: str) -> set[str]:
+    """Every session that has claimed the task, including one whose claim was released."""
+    rows = conn.execute(
+        """
+        SELECT session_id::text AS session_id FROM session_tasks
+        WHERE task_id = %s AND action = 'claimed'
+        """,
+        (task_id,),
+    ).fetchall()
+    return {row["session_id"] for row in rows}
+
 
 SessionTaskAction = Literal[
     "worked_on",

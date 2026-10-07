@@ -81,6 +81,31 @@ POST /api/auth/logout
 GET  /api/auth/status
 ```
 
+### Break-glass access
+
+Daemon startup creates an owner-only `break_glass` credential beside its bound
+bootstrap file (default `~/.gobby/break_glass`), with mode `0600`. An existing
+credential is never rewritten. This provides HTTP operator access when the hub
+cannot validate ordinary credentials. Send it from a loopback peer:
+
+```bash
+curl -H "X-Gobby-Break-Glass: $(cat ~/.gobby/break_glass)" \
+  http://127.0.0.1:60887/api/projects
+```
+
+The daemon checks the observed peer address, file ownership and permissions.
+Remote peers and WebSocket connections cannot use this credential. Managed-grant
+routes still require a valid grant. The credential is never logged or copied to
+clients, and managed sandboxes are denied read and write access. If startup cannot
+create it, the daemon warns with its path and continues without this recovery aid.
+
+Temporary credential files live in the owner-only `.break_glass-staging` directory
+beside the bootstrap. Managed sandboxes cannot read or write that directory.
+
+If an existing credential is empty or partial, startup reports its path and a
+repair hint. Remove the damaged file at that path and restart the daemon to
+recreate it. Valid existing credentials remain unchanged.
+
 ### Rotate The Local Token
 
 1. Check the current state with `gobby auth token`.

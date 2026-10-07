@@ -8,14 +8,16 @@ rules:
     priority: 31
     when: >
       variables.get('require_task_before_edit')
-      and not variables.get('task_claimed')
+      and (not variables.get('task_claimed') or claims_without_edit_target(variables))
       and event.data.get('canonical_repo_mutation')
       and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'), event.data)
     effects:
       - type: block
         reason: |
           Use create_task(title, category, claim=True) or claim_task(task_id) to
-          unlock file edits — then retry this edit.
+          unlock file edits — then retry this edit. If you already hold claims
+          that wait on review, landing or close and none is active, reclaim the
+          one this edit belongs to with claim_task(task_id), then retry.
 
           Scratchpad and temp paths are exempt, but only when the command names
           them literally. A shell variable or substitution in the operand
