@@ -312,14 +312,8 @@ class ServiceContainer:
             if self.tool_proxy_getter:
                 pe.tool_proxy_getter = self.tool_proxy_getter
 
-            # Lazily created per-project executors are the only sweep point
-            # for projects outside the runner's home project: the runner's
-            # startup recovery is scoped to its own project_id, so restart
-            # orphans here would otherwise stay RUNNING forever.
-            try:
-                pe.startup_sweep()
-            except Exception:
-                _logger.warning("Pipeline startup sweep failed for project %r", pid, exc_info=True)
+            # The runner recovers every project using its fixed startup cutoff.
+            # Lazy construction must preserve admitted and resumable executions.
 
             self._project_infra_cache.setdefault(pid, {})["pipeline_executor"] = pe
             _logger.debug("Lazily created PipelineExecutor for project %r", pid)

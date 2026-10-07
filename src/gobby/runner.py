@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
+from gobby.utils.datetime import utc_now
 from gobby.utils.git import disable_optional_git_locks
 from gobby.utils.logging import silence_http_client_loggers
 
@@ -312,6 +313,8 @@ class GobbyRunner:
         return self
 
     def _prepare_base_state(self) -> None:
+        # Freeze recovery eligibility before initialization or HTTP admission.
+        self.started_at = utc_now()
         self.degraded_services = set()
         self.code_index_bm25_verification = None
         # Captured by run_daemon once the daemon's long-lived loop is running;

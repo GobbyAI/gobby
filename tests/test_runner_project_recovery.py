@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
@@ -15,13 +17,129 @@ from gobby.runner_lifecycle_subsystems import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.projects import Project
-from gobby.workflows.pipeline_state import ExecutionStatus
+from gobby.utils.datetime import utc_now
+from gobby.workflows.definitions import PipelineDefinition, PipelineStep
+from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 from tests.fixtures.isolated_checkout import (
     install_isolated_checkout_project,
 )
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admitted_seconds", [0, 1], ids=["at-start", "after-start"])
+@pytest.mark.parametrize(
+    ("status", "resumable"),
+    [
+        (ExecutionStatus.RUNNING, True),
+        (ExecutionStatus.RUNNING, False),
+        (ExecutionStatus.PENDING, False),
+        (ExecutionStatus.INTERRUPTED, False),
+    ],
+    ids=["replay", "interrupt", "pending-cleanup", "notifications"],
+)
+async def test_recovery_preserves_runs_admitted_after_start(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: ExecutionStatus,
+    resumable: bool,
+    admitted_seconds: int,
+) -> None:
+    project = _create_projects(temp_db, tmp_path, monkeypatch)[0]
+    manager = LocalPipelineExecutionManager(temp_db, project.id)
+    # Simulate a recovery backlog longer than the stale-PENDING threshold.
+    started_at = utc_now() - timedelta(minutes=10)
+    definition = PipelineDefinition(
+        name="admitted",
+        resume_on_restart=resumable,
+        steps=[PipelineStep(id="work", exec="echo recovered")],
+    )
+    admitted = manager.create_execution(
+        pipeline_name=definition.name, definition_json=definition.model_dump_json()
+    )
+    manager.update_execution_status(admitted.id, status)
+    admitted_at = started_at + timedelta(seconds=admitted_seconds)
+    temp_db.execute(
+        "UPDATE pipeline_executions SET created_at = %s, updated_at = %s WHERE id = %s",
+        (admitted_at, admitted_at, admitted.id),
+    )
+    step = manager.create_step_execution(execution_id=admitted.id, step_id="work")
+    manager.update_step_execution(step_execution_id=step.id, status=StepStatus.RUNNING)
+    orphan = manager.create_execution(
+        pipeline_name=definition.name, definition_json=definition.model_dump_json()
+    )
+    manager.update_execution_status(orphan.id, status)
+    orphan_at = started_at - timedelta(seconds=1)
+    temp_db.execute(
+        "UPDATE pipeline_executions SET created_at = %s, updated_at = %s WHERE id = %s",
+        (orphan_at, orphan_at, orphan.id),
+    )
+    subscriber_id = str(uuid4())
+    manager.add_completion_subscribers(admitted.id, [subscriber_id])
+    manager.add_completion_subscribers(orphan.id, [subscriber_id])
+    completion_registry = MagicMock()
+    completion_registry.notify = AsyncMock()
+    loader = AsyncMock()
+    loader.load_pipeline.return_value = definition
+    replay = AsyncMock()
+    replay_tasks: list[asyncio.Task[None]] = []
+
+    def register_replay(execution_id: str, task: asyncio.Task[None]) -> None:
+        replay_tasks.append(task)
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.workflows._pipeline_execution._register_background_task",
+        register_replay,
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.workflows._pipeline_execution._execute_pipeline_background",
+        replay,
+    )
+    runner = SimpleNamespace(
+        database=temp_db,
+        workflow_loader=loader,
+        project_id=project.id,
+        pipeline_execution_manager=manager,
+        pipeline_executor=MagicMock(),
+        completion_registry=completion_registry,
+        _shutdown_requested=False,
+        started_at=started_at,
+        services=SimpleNamespace(restart_recovery_ready=False),
+        db_executor=SimpleNamespace(
+            run=AsyncMock(side_effect=lambda operation, *args, **kwargs: operation(*args, **kwargs))
+        ),
+    )
+
+    await _recover_pipelines(cast("GobbyRunner", runner), None)
+    await asyncio.gather(*replay_tasks)
+
+    stored = manager.get_execution(admitted.id)
+    assert stored is not None
+    assert stored.status is status
+    assert stored.updated_at == admitted_at
+    assert manager.get_steps_for_execution(admitted.id)[0].status is StepStatus.RUNNING
+    assert manager.get_completion_subscribers(admitted.id) == [subscriber_id]
+    stored_orphan = manager.get_execution(orphan.id)
+    assert stored_orphan is not None
+    if resumable:
+        assert stored_orphan.status is ExecutionStatus.RUNNING
+        replay.assert_awaited_once()
+        assert replay.await_args is not None
+        assert replay.await_args.args[4] == orphan.id
+    else:
+        assert stored_orphan.status is ExecutionStatus.INTERRUPTED
+        replay.assert_not_called()
+        completion_registry.notify.assert_awaited_once()
+        assert completion_registry.notify.await_args is not None
+        assert completion_registry.notify.await_args.args[0] == orphan.id
+    if status is ExecutionStatus.RUNNING:
+        loader.load_pipeline.assert_awaited_once_with(definition.name, project_path=project.id)
+    else:
+        loader.load_pipeline.assert_not_awaited()
+    assert runner.services.restart_recovery_ready is False
 
 
 def _create_projects(
@@ -77,6 +195,7 @@ async def test_pipeline_recovery_covers_multiple_projects_outside_startup_projec
         llm_service=MagicMock(),
         session_manager=MagicMock(),
         db_executor=SimpleNamespace(run=db_run),
+        started_at=utc_now(),
     )
     tracker = StartupTracker()
     monkeypatch.setattr(
