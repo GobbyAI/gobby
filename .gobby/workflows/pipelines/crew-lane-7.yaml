@@ -1,0 +1,239 @@
+name: crew-lane-7
+type: pipeline
+version: "1.0"
+description: |
+  Relaunch Lane 7 seats from the current project roster.
+  Workspace must already exist. This launches fresh sessions; use seats to
+  relaunch only missing seats, because another run duplicates live seats.
+  First selected seat opens a tab; later seats split the previous selected pane.
+tags: [runbook]
+resume_on_restart: true
+
+inputs:
+  workspace:
+    type: string
+    required: true
+    description: "Existing target workspace"
+  seats:
+    type: string
+    default: "seat_15389,seat_15396,seat_15434,seat_15401,seat_15577,seat_15414,seat_15468,seat_15470,seat_15528,seat_15471"
+    description: "Comma-separated seat IDs; any nonempty subset"
+  main_checkout:
+    type: string
+    default: "/Users/josh/Projects/gobby"
+  codex_model:
+    type: string
+    default: null
+  codex_effort:
+    type: string
+    default: null
+
+steps:
+  - id: guard
+    mcp:
+      server: gobby-agents
+      tool: check_runbook_seats
+      arguments:
+        workspace: "${{ inputs.workspace }}"
+        requested: "${{ inputs.seats }}"
+        catalogue:
+          - name: seat_15389
+            title: "Lane 7 manager"
+            agent: developer
+          - name: seat_15396
+            title: "Lane 7 code reviewer"
+            agent: developer
+          - name: seat_15434
+            title: "Plan Writer W1"
+            agent: developer
+          - name: seat_15401
+            title: "Plan Adversary A1"
+            agent: developer
+          - name: seat_15577
+            title: "Plan Writer W2"
+            agent: developer
+          - name: seat_15414
+            title: "Plan Adversary A2"
+            agent: developer
+          - name: seat_15468
+            title: "Plan Writer W3"
+            agent: developer
+          - name: seat_15470
+            title: "Plan Adversary A3"
+            agent: developer
+          - name: seat_15528
+            title: "Plan Writer W4"
+            agent: developer
+          - name: seat_15471
+            title: "Plan Adversary A4"
+            agent: developer
+
+  - id: seat_15389
+    condition: "${{ 'seat_15389' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: claude
+        model: "claude-sonnet-5-5"
+        reasoning_effort: "medium"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.main_checkout }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Lane 7 manager. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/lane-manager.md and follow that role. Explicit lane assignment: Lane 7; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and any SRT denial. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'tab': {'workspace': inputs.workspace, 'title': \"Lane 7\"}} }}"
+
+  - id: seat_15396
+    condition: "${{ 'seat_15396' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: claude
+        model: "claude-opus-5-5"
+        reasoning_effort: "xhigh"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.main_checkout }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Lane 7 code reviewer. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/code-reviewer.md and follow that role. Explicit lane assignment: Lane 7; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and any SRT denial. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'split': {'pane': steps.seat_15389.output.pane_ref, 'axis': 'right', 'title': \"Lane 7 code reviewer\"}} if 'seat_15389' in inputs.seats.split(',') else ({'tab': {'workspace': inputs.workspace, 'title': \"Lane 7\"}}) }}"
+
+  - id: seat_15434
+    condition: "${{ 'seat_15434' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: claude
+        model: "claude-opus-5-5"
+        reasoning_effort: "xhigh"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.main_checkout }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Plan Writer W1. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/plan-writer.md and follow that role. Explicit lane assignment: Lane 7; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and any SRT denial. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'split': {'pane': steps.seat_15396.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W1\"}} if 'seat_15396' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15389.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W1\"}} if 'seat_15389' in inputs.seats.split(',') else ({'tab': {'workspace': inputs.workspace, 'title': \"Lane 7\"}})) }}"
+
+  - id: seat_15401
+    condition: "${{ 'seat_15401' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: codex
+        model: "${{ inputs.codex_model }}"
+        reasoning_effort: "${{ inputs.codex_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.main_checkout }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Plan Adversary A1. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/plan-adversary.md and follow that role. Explicit lane assignment: Lane 7; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and any SRT denial. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'split': {'pane': steps.seat_15434.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A1\"}} if 'seat_15434' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15396.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A1\"}} if 'seat_15396' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15389.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A1\"}} if 'seat_15389' in inputs.seats.split(',') else ({'tab': {'workspace': inputs.workspace, 'title': \"Lane 7\"}}))) }}"
+
+  - id: seat_15577
+    condition: "${{ 'seat_15577' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: claude
+        model: "claude-opus-5-5"
+        reasoning_effort: "xhigh"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.main_checkout }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Plan Writer W2. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/plan-writer.md and follow that role. Explicit lane assignment: Lane 7; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and any SRT denial. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'split': {'pane': steps.seat_15401.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W2\"}} if 'seat_15401' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15434.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W2\"}} if 'seat_15434' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15396.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W2\"}} if 'seat_15396' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15389.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W2\"}} if 'seat_15389' in inputs.seats.split(',') else ({'tab': {'workspace': inputs.workspace, 'title': \"Lane 7\"}})))) }}"
+
+  - id: seat_15414
+    condition: "${{ 'seat_15414' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: codex
+        model: "${{ inputs.codex_model }}"
+        reasoning_effort: "${{ inputs.codex_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.main_checkout }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Plan Adversary A2. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/plan-adversary.md and follow that role. Explicit lane assignment: Lane 7; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and any SRT denial. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'split': {'pane': steps.seat_15577.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A2\"}} if 'seat_15577' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15401.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A2\"}} if 'seat_15401' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15434.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A2\"}} if 'seat_15434' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15396.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A2\"}} if 'seat_15396' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15389.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A2\"}} if 'seat_15389' in inputs.seats.split(',') else ({'tab': {'workspace': inputs.workspace, 'title': \"Lane 7\"}}))))) }}"
+
+  - id: seat_15468
+    condition: "${{ 'seat_15468' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: claude
+        model: "claude-opus-5-5"
+        reasoning_effort: "xhigh"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.main_checkout }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Plan Writer W3. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/plan-writer.md and follow that role. Explicit lane assignment: Lane 7; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and any SRT denial. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'split': {'pane': steps.seat_15414.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W3\"}} if 'seat_15414' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15577.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W3\"}} if 'seat_15577' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15401.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W3\"}} if 'seat_15401' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15434.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W3\"}} if 'seat_15434' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15396.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W3\"}} if 'seat_15396' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15389.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W3\"}} if 'seat_15389' in inputs.seats.split(',') else ({'tab': {'workspace': inputs.workspace, 'title': \"Lane 7\"}})))))) }}"
+
+  - id: seat_15470
+    condition: "${{ 'seat_15470' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: codex
+        model: "${{ inputs.codex_model }}"
+        reasoning_effort: "${{ inputs.codex_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.main_checkout }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Plan Adversary A3. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/plan-adversary.md and follow that role. Explicit lane assignment: Lane 7; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and any SRT denial. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'split': {'pane': steps.seat_15468.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A3\"}} if 'seat_15468' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15414.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A3\"}} if 'seat_15414' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15577.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A3\"}} if 'seat_15577' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15401.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A3\"}} if 'seat_15401' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15434.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A3\"}} if 'seat_15434' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15396.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A3\"}} if 'seat_15396' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15389.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A3\"}} if 'seat_15389' in inputs.seats.split(',') else ({'tab': {'workspace': inputs.workspace, 'title': \"Lane 7\"}}))))))) }}"
+
+  - id: seat_15528
+    condition: "${{ 'seat_15528' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: claude
+        model: "claude-opus-5-5"
+        reasoning_effort: "xhigh"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.main_checkout }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Plan Writer W4. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/plan-writer.md and follow that role. Explicit lane assignment: Lane 7; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and any SRT denial. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'split': {'pane': steps.seat_15470.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W4\"}} if 'seat_15470' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15468.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W4\"}} if 'seat_15468' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15414.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W4\"}} if 'seat_15414' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15577.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W4\"}} if 'seat_15577' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15401.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W4\"}} if 'seat_15401' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15434.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W4\"}} if 'seat_15434' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15396.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W4\"}} if 'seat_15396' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15389.output.pane_ref, 'axis': 'down', 'title': \"Plan Writer W4\"}} if 'seat_15389' in inputs.seats.split(',') else ({'tab': {'workspace': inputs.workspace, 'title': \"Lane 7\"}})))))))) }}"
+
+  - id: seat_15471
+    condition: "${{ 'seat_15471' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: codex
+        model: "${{ inputs.codex_model }}"
+        reasoning_effort: "${{ inputs.codex_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.main_checkout }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Plan Adversary A4. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/plan-adversary.md and follow that role. Explicit lane assignment: Lane 7; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and any SRT denial. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'split': {'pane': steps.seat_15528.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A4\"}} if 'seat_15528' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15470.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A4\"}} if 'seat_15470' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15468.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A4\"}} if 'seat_15468' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15414.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A4\"}} if 'seat_15414' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15577.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A4\"}} if 'seat_15577' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15401.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A4\"}} if 'seat_15401' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15434.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A4\"}} if 'seat_15434' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15396.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A4\"}} if 'seat_15396' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15389.output.pane_ref, 'axis': 'right', 'title': \"Plan Adversary A4\"}} if 'seat_15389' in inputs.seats.split(',') else ({'tab': {'workspace': inputs.workspace, 'title': \"Lane 7\"}}))))))))) }}"

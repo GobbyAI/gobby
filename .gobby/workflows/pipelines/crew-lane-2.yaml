@@ -1,0 +1,94 @@
+name: crew-lane-2
+type: pipeline
+version: "1.0"
+description: |
+  Relaunch Lane 2 seats from the current project roster.
+  Workspace must already exist. This launches fresh sessions; use seats to
+  relaunch only missing seats, because another run duplicates live seats.
+  First selected seat opens a tab; later seats split the previous selected pane.
+tags: [runbook]
+resume_on_restart: true
+
+inputs:
+  workspace:
+    type: string
+    required: true
+    description: "Existing target workspace"
+  seats:
+    type: string
+    default: "seat_15384,seat_15707,seat_15391"
+    description: "Comma-separated seat IDs; any nonempty subset"
+  worktree_id:
+    type: string
+    default: "6d6986d8-733d-496c-a094-eac5d6881d51"
+    description: "Existing Lane 2 worktree; override for replacement seats"
+
+steps:
+  - id: guard
+    mcp:
+      server: gobby-agents
+      tool: check_runbook_seats
+      arguments:
+        workspace: "${{ inputs.workspace }}"
+        requested: "${{ inputs.seats }}"
+        catalogue:
+          - name: seat_15384
+            title: "Lane 2 manager"
+            agent: developer
+          - name: seat_15707
+            title: "Lane 2 developer (gClient chrome)"
+            agent: developer
+          - name: seat_15391
+            title: "Lane 2 code reviewer"
+            agent: developer
+
+  - id: seat_15384
+    condition: "${{ 'seat_15384' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: claude
+        model: "claude-sonnet-5-5"
+        reasoning_effort: "medium"
+        execution_mode: interactive
+        checkout_mode: none
+        worktree_id: "${{ inputs.worktree_id }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Lane 2 manager. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/lane-manager.md and follow that role. Explicit lane assignment: Lane 2; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and any SRT denial. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'tab': {'workspace': inputs.workspace, 'title': \"Lane 2\"}} }}"
+
+  - id: seat_15707
+    condition: "${{ 'seat_15707' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: codex
+        model: "gpt-6.1-sol"
+        reasoning_effort: "medium"
+        execution_mode: interactive
+        checkout_mode: none
+        worktree_id: "${{ inputs.worktree_id }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Lane 2 developer (gClient chrome). Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/lane-1-gclient.md and follow that role. Explicit lane assignment: Lane 2; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and any SRT denial. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'split': {'pane': steps.seat_15384.output.pane_ref, 'axis': 'right', 'title': \"Lane 2 developer (gClient chrome)\"}} if 'seat_15384' in inputs.seats.split(',') else ({'tab': {'workspace': inputs.workspace, 'title': \"Lane 2\"}}) }}"
+
+  - id: seat_15391
+    condition: "${{ 'seat_15391' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: claude
+        model: "claude-opus-5-5"
+        reasoning_effort: "xhigh"
+        execution_mode: interactive
+        checkout_mode: none
+        worktree_id: "${{ inputs.worktree_id }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Lane 2 code reviewer. Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/code-reviewer.md and follow that role. Explicit lane assignment: Lane 2; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and any SRT denial. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'split': {'pane': steps.seat_15707.output.pane_ref, 'axis': 'down', 'title': \"Lane 2 code reviewer\"}} if 'seat_15707' in inputs.seats.split(',') else ({'split': {'pane': steps.seat_15384.output.pane_ref, 'axis': 'down', 'title': \"Lane 2 code reviewer\"}} if 'seat_15384' in inputs.seats.split(',') else ({'tab': {'workspace': inputs.workspace, 'title': \"Lane 2\"}})) }}"

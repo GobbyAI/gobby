@@ -1,0 +1,54 @@
+name: crew-lane-8
+type: pipeline
+version: "1.0"
+description: |
+  Relaunch Lane 8 seats from the current project roster.
+  Workspace must already exist. This launches fresh sessions; use seats to
+  relaunch only missing seats, because another run duplicates live seats.
+  First selected seat opens a tab; later seats split the previous selected pane.
+tags: [runbook]
+resume_on_restart: true
+
+inputs:
+  workspace:
+    type: string
+    required: true
+    description: "Existing target workspace"
+  seats:
+    type: string
+    default: "seat_15708"
+    description: "Comma-separated seat IDs; any nonempty subset"
+  worktree_id:
+    type: string
+    default: "e7e22eab-beb1-4ba0-8503-cfa0f0fa9919"
+    description: "Existing Lane 8 worktree; override for replacement seats"
+
+steps:
+  - id: guard
+    mcp:
+      server: gobby-agents
+      tool: check_runbook_seats
+      arguments:
+        workspace: "${{ inputs.workspace }}"
+        requested: "${{ inputs.seats }}"
+        catalogue:
+          - name: seat_15708
+            title: "Lane 8 developer (Terminal port)"
+            agent: developer
+
+  - id: seat_15708
+    condition: "${{ 'seat_15708' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: codex
+        model: "gpt-6.1-sol"
+        reasoning_effort: "medium"
+        execution_mode: interactive
+        checkout_mode: none
+        worktree_id: "${{ inputs.worktree_id }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are Lane 8 developer (Terminal port). Your current session ref is fresh; read /Users/josh/Projects/gobby/.gobby/roles/_common.md first, then /Users/josh/Projects/gobby/.gobby/roles/rust-migration.md and follow that role. Explicit lane assignment: Lane 8; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and any SRT denial. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        placement: "${{ {'tab': {'workspace': inputs.workspace, 'title': \"Lane 8\"}} }}"
