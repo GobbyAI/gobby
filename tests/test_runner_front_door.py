@@ -320,6 +320,8 @@ async def test_runner_spawns_child_for_either_launch_path(
             child = self.front_door_child
             observed["pid"] = child.pid if child is not None else None
             observed["serving"] = fake_gdaemon.serving()
+            if child is not None:
+                observed["front_door_secret"] = child.secret
 
         def request_shutdown(self) -> None:
             pass
@@ -347,6 +349,7 @@ async def test_runner_spawns_child_for_either_launch_path(
             "home": str(child_home),
             "parent_fd_open": True,
             "probe_fds_open": [],
+            "front_door_secret": observed["front_door_secret"],
         }
     ]
     # run_gobby stops the child before it releases the claim.
