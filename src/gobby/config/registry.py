@@ -592,12 +592,9 @@ _REMOVED_TMUX_SPAWN_KEYS = (
     "wsl_distribution",
     "registration_timeout_seconds",
 )
-# terminals.default_backend was removed (#23212): backends are not selectable,
-# so a stored row is dropped rather than refusing startup.
 _REMOVED_STORED_KEYS = frozenset(
     {f"memory.{key}" for key in REMOVED_MEMORY_CONFIG_KEYS}
     | {f"tmux.{key}" for key in _REMOVED_TMUX_SPAWN_KEYS}
-    | {"terminals.default_backend"}
 )
 _REMOVED_STORED_SECTIONS = ("memory_usefulness",)
 
