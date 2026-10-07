@@ -59,6 +59,15 @@ describe("Textarea", () => {
     expect(wrapper!.className).toContain("pointer-coarse:before:min-h-11");
   });
 
+  it("stacks the control above the wrapper's absolute hit-area so touches reach it", () => {
+    render(<Textarea aria-label="Notes" />);
+    // A positioned control paints after the label's earlier ::before; an
+    // unpositioned one sits beneath it and never receives direct touches.
+    expect(screen.getByRole("textbox", { name: "Notes" }).classList).toContain(
+      "relative",
+    );
+  });
+
   it("lets a caller className win conflicting utilities via twMerge", () => {
     render(<Textarea aria-label="Notes" className="px-1" />);
     const textarea = screen.getByRole("textbox", { name: "Notes" });

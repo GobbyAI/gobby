@@ -1,0 +1,4 @@
+// Project base configuration for every GobbyAnnotate target. Signing teams are
+// personal, so none is committed: put `DEVELOPMENT_TEAM = <team ID>` in the
+// gitignored Signing.local.xcconfig next to this file (see docs/safari.md).
+#include? "Signing.local.xcconfig"

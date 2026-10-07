@@ -333,12 +333,12 @@ Targets:
 - `crates/gclient/src/app/live_loop.rs::*` — scope-reason: the `mod local_adoption;` and `mod lifecycle;` lines come in
 - `crates/gclient/src/app/live_loop/signals.rs::*` — scope-reason: no edit; #23076 (`8c4e25c52c`) already moved the signal helpers here, and R1.1's file evidence names it
 - `crates/gclient/src/app/live_loop/workspace_actions.rs::*` — scope-reason: the local-tab adoption group moves out
-- `crates/gclient/src/app/live_loop/local_adoption.rs`
+- `crates/gclient/src/app/live_loop/local_adoption.rs::*` — scope-reason: R1 creates this module from the local-tab adoption group of workspace_actions.rs
 - `crates/gclient/src/app/live_loop/actions.rs::*` — scope-reason: the terminal lifecycle actions move out
-- `crates/gclient/src/app/live_loop/lifecycle.rs`
+- `crates/gclient/src/app/live_loop/lifecycle.rs::*` — scope-reason: R1 creates this module from the terminal lifecycle actions of actions.rs
 - `crates/gclient/src/app/live_loop/projects.rs::*` — scope-reason: imports `close_live_pane`, `spawn_live_shell` and `terminate_live_terminal` from the lifecycle module
 - `crates/gclient/src/app/mod.rs::*` — scope-reason: `observe_daemon_disconnect`, `retire_indeterminate_control` and `submit_expired_detaches` move out and one `mod` line comes in
-- `crates/gclient/src/app/disconnect.rs`
+- `crates/gclient/src/app/disconnect.rs::*` — scope-reason: R1 creates this module from the disconnect and control-retirement `Workspace` methods of mod.rs
 
 Consumers unchanged:
 - `crates/gclient/tests/client_loop.rs` — no-edit-reason: calls `observe_daemon_disconnect` and `retire_indeterminate_control` as `Workspace` methods, unchanged.
@@ -596,7 +596,7 @@ Targets:
 - `crates/gclient/src/app/live_loop/daemon_ops.rs::*` — scope-reason: A2 creates this module: the small op senders issue `WorkspaceOp` jobs here
 - `crates/gclient/src/app/attention.rs::submit_response`
 - `crates/gclient/src/app/live_loop/actions.rs::*` — scope-reason: the remaining callers of the control, scroll and op senders drop their awaits
-- `crates/gclient/src/app/live_loop/lifecycle.rs`
+- `crates/gclient/src/app/live_loop/lifecycle.rs::*` — scope-reason: `close_live_pane` and `close_live_tab` drop their release awaits
 - `crates/gclient/src/app/live_loop/projects.rs::*` — scope-reason: callers of the release and op senders drop their awaits
 - `crates/gclient/src/app/live_loop/jobs.rs::*` — scope-reason: `JobKey` and `JobResult` gain the write, respond and op keys and outcomes; `Pending`, `LoopJobs::outcomes` and `LoopJobs::dispatch` carry them, and `issue_response` and `issue_workspace_op` come in
 - `crates/gclient/src/app/live_loop/jobs_apply.rs::*` — scope-reason: `apply_job_outcome` gains the write, response and op arms and the refusal toast
@@ -1132,8 +1132,8 @@ points; add no second action queue.
 `kind: deliverable`
 
 Targets:
-- `crates/gclient/src/app/live_loop/lifecycle.rs`
-- `crates/gclient/src/app/live_loop/local_adoption.rs`
+- `crates/gclient/src/app/live_loop/lifecycle.rs::*` — scope-reason: the spawn-shell and close-tab actions issue their `terminal_create`, kill, placement and `TabClose` steps as chained jobs
+- `crates/gclient/src/app/live_loop/local_adoption.rs::*` — scope-reason: `adopt_local_tab`, `spawn_in_adopted_local_tab` and `rollback_adopted_tab` issue each `workspace_op` step as a chained job
 - `crates/gclient/src/app/live_loop/workspace_actions.rs::*` — scope-reason: `spawn_owned_live_shell` issues its create, adoption and attach steps as chained jobs
 - `crates/gclient/src/app/live_loop/terminal_location.rs::*` — scope-reason: the location move marks its pane due instead of awaiting the attach
 - `crates/gclient/src/app/live_loop/arrange.rs::*` — scope-reason: `apply_arrange` and `create_grid` issue their `workspace_op` chains as jobs; `create_grid` places each pane from the previous step's returned ids. #23228 (A2) deleted `send_workspace_op` and left both awaiting `daemon.workspace_op` inline (Orchestrator ruling 2026-10-04 04:48 CT: a plan gap, since the plan named arrange.rs nowhere)
@@ -1830,7 +1830,7 @@ loop_liveness --test reconciliation`; docs link check.
 `kind: deliverable`
 
 Targets:
-- `crates/gclient/src/app/disconnect.rs`
+- `crates/gclient/src/app/disconnect.rs::*` — scope-reason: `observe_daemon_disconnect` keeps direct-granted panes Held with `lease_unconfirmed` set
 - `crates/gclient/src/app/live.rs::*` — scope-reason: `reconnect_daemon_ws` keeps direct-granted panes Held instead of clearing every pane before reconcile
 - `crates/gclient/src/app/pane.rs::*` — scope-reason: preserve direct control and record unconfirmed lease state across construction, disconnect and input admission
 - `crates/gclient/src/app/live_loop/control.rs::*` — scope-reason: `send_live_input` tests `direct_input` before `daemon_ready`
@@ -2646,6 +2646,7 @@ Targets:
 Consumers unchanged:
 - `src/gobby/runner_init/storage.py` — no-edit-reason: calls `setup_file_logging` with an unchanged signature.
 - `src/gobby/telemetry/__init__.py` — no-edit-reason: re-exports `setup_file_logging`, unchanged.
+- `tests/code_index/test_orphan_cleanup_logging.py` — no-edit-reason: calls `setup_file_logging` with an unchanged signature.
 - `tests/sessions/test_parser_error_log.py` — no-edit-reason: calls `setup_file_logging` with an unchanged signature.
 - `tests/telemetry/test_health_metrics.py` — no-edit-reason: calls `setup_file_logging` with an unchanged signature.
 
@@ -3065,6 +3066,18 @@ F02 resolution direction: keep direct typing uninterrupted across a daemon resta
   leaves exempted those sections. Each Target becomes `::*` with a scope-reason
   naming what its section creates or adds, so validation no longer depends on
   completion lookup. Acceptance items are unchanged.
+- 2026-10-07: Target-scope and consumer repair (Plan Writer gobby#15677, Adversary
+  gobby#15401, task #23620) on 0.5.0 `271d216f5d`. A main-checkout validation run
+  reported `Target contains indexed symbols` for `local_adoption.rs`,
+  `lifecycle.rs` and `disconnect.rs`, which #23225 (`5eebb79728`) created under
+  R1. The repair covers every bare occurrence of those paths, seven Targets: R1's
+  three, A2's `lifecycle.rs`, A4b's `lifecycle.rs` and `local_adoption.rs`, and
+  C1's `disconnect.rs`. Each becomes `::*` with a scope-reason naming what its
+  section creates or changes, so validation no longer depends on completion
+  lookup. The same run reported a D4 consumer-coverage error, so D4's Consumers
+  unchanged inventory gains `tests/code_index/test_orphan_cleanup_logging.py`,
+  which #23610 (`7062c7075b`) added as a `setup_file_logging` caller. Acceptance
+  items are unchanged.
 
 ## M1 Task Manifest
 `kind: manifest`

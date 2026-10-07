@@ -498,10 +498,15 @@ class _UnlistedCommitError(Exception):
     """Git could not list the close candidate commit's tree."""
 
 
+_REGULAR_FILE_MODES = frozenset({"100644", "100755"})
+
+
 @lru_cache(maxsize=4)
 def _candidate_blobs(root: str, commit: str) -> Mapping[str, str]:
     """Return blob ids by repo path in ``commit``'s tree.
 
+    A symlink's blob is its target text and a submodule's id names a commit, so any
+    entry that is not a regular file maps to ``""``, which no file digest equals.
     A failure raises, which ``lru_cache`` never stores.
     """
     listing = run_git_command(
@@ -513,7 +518,8 @@ def _candidate_blobs(root: str, commit: str) -> Mapping[str, str]:
     for entry in listing.split("\0"):
         meta, tab, path = entry.partition("\t")
         if tab:
-            blobs[path] = meta.rsplit(" ", 1)[-1]
+            mode, _kind, object_id = meta.split(" ")
+            blobs[path] = object_id if mode in _REGULAR_FILE_MODES else ""
     return blobs
 
 
