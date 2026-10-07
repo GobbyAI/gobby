@@ -7,6 +7,7 @@ agent-definition-profiles P3 and differ only in their role contracts.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -226,7 +227,7 @@ def test_coordination_seats_sync_as_installed_rows(definition_db: PostgresHubDat
         assert AgentDefinitionBody.model_validate(row.definition_json) == _load(name), name
 
 
-def test_merge_manager_carries_landing_authority_and_preserves_foreign_work() -> None:
+def test_merge_manager_tracks_activation_and_preserves_foreign_work() -> None:
     body = _load("merge-manager")
     prompt = _prompt("merge-manager")
 
@@ -234,14 +235,17 @@ def test_merge_manager_carries_landing_authority_and_preserves_foreign_work() ->
     assert body.network == "none"
     assert body.spawnable_agents == []
     assert "# Merge Manager" in prompt
-    assert "Confirm the LAND before editing" in prompt
-    assert "Create or claim a manual landing task" in prompt
-    assert "Merge approved candidates into `0.5.0`" in prompt
-    assert "Return semantic changes to an independent source reviewer" in prompt
+    assert "the reviewer calls `land_commit` immediately" in prompt
+    assert "Keep the landed-but-unactivated ledger" in prompt
+    assert "Only activation is batched" in prompt
+    assert "Never batch landings under reservations" in prompt
+    assert "create landing tasks or merge candidates into `0.5.0`" in prompt
     assert "Do not remove dirty worktrees or branches" in prompt
     assert "perform it only when explicitly assigned" in prompt
     assert "This seat never restarts, cuts over or promotes live binaries" in prompt
     assert "Never push or merge into `main`" in prompt
+    role = Path(__file__).resolve().parents[2] / ".gobby/roles/merge-manager.md"
+    assert flat(role.read_text()) in prompt
 
 
 def test_inbox_manager_is_read_only_and_routes_urgent_messages() -> None:
