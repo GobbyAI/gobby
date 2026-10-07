@@ -5,6 +5,7 @@ import json
 import os
 import threading
 from contextlib import ExitStack
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -282,6 +283,7 @@ class TestGobbyRunnerInit:
 
     def test_secret_envelope_initialization_failure_aborts_startup(self) -> None:
         mock_db = MagicMock()
+        mock_db.fetchone.return_value = {"started_at": datetime(2026, 1, 1, tzinfo=UTC)}
         mock_store = MagicMock()
         mock_store.ensure_ready.side_effect = RuntimeError("secret envelope initialization failed")
         mock_config_store = MagicMock()
