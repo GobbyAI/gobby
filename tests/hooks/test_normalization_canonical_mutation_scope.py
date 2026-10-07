@@ -61,18 +61,32 @@ def test_clustered_shell_option_value_preserves_inline_writes(tmp_path: Path, op
     assert not data.get("canonical_script_execution")
 
 
-@pytest.mark.parametrize("prefix", [b"#!/bin/sh\ntouch x", b"\x7fELF", b"\xcf\xfa\xed\xfe"])
+@pytest.mark.parametrize(
+    ("prefix", "gated"),
+    [
+        (b"#!/bin/sh\ntouch x", True),
+        # A shell runs executable text without `#!` as a script once execve fails.
+        (b"touch x\n", True),
+        (b"", True),
+        # Magic alone is not native: a first line without a NUL still runs as a script.
+        (b"\x7fELF\ntouch x\n", True),
+        (b"\xcf\xfa\xed\xfe\ntouch x\n", True),
+        (b"\x7fELF\x02\x01\x01\x00", False),
+        (b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01", False),
+        (b"\xca\xfe\xba\xbe\x00\x00\x00\x02", False),
+    ],
+)
 @pytest.mark.parametrize("relative", [False, True])
-def test_direct_path_execution_checks_only_the_shebang(
-    tmp_path: Path, prefix: bytes, relative: bool
+def test_direct_path_execution_gates_all_but_native_executables(
+    tmp_path: Path, prefix: bytes, gated: bool, relative: bool
 ) -> None:
     executable = tmp_path / "scratchpad" / "bash"
     executable.parent.mkdir()
     executable.write_bytes(prefix)
-    command = f"cd {tmp_path} && ./scratchpad/bash" if relative else str(executable)
+    command = "./scratchpad/bash" if relative else str(executable)
     data = _shell_write_metadata(command, tmp_path)
 
-    assert bool(data.get("canonical_script_execution")) is prefix.startswith(b"#!")
+    assert bool(data.get("canonical_script_execution")) is gated
     assert not data.get("canonical_repo_mutation")
 
 
@@ -108,7 +122,7 @@ def _invocation_metadata(
 
 def _signature_fixture(directory: Path) -> None:
     directory.mkdir(parents=True)
-    (directory / "tool").write_bytes(b"\xcf\xfa\xed\xfe")
+    (directory / "tool").write_bytes(b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01")
     (directory / "script").write_bytes(b"#!/bin/sh\n")
 
 
@@ -117,8 +131,8 @@ def _signature_fixture(directory: Path) -> None:
     [
         ("./bin/tool --version", "event", False),
         ("bin/tool", "tool_input", False),
-        ("cd bin && ./tool", "event", False),
         ("bash -c './bin/tool'", "event", False),
+        ("./bin/tool || true; ./bin/tool", "event", False),
         ("./bin/script", "event", True),
         ("./bin/tool", None, True),
     ],
@@ -134,6 +148,38 @@ def test_relative_command_paths_resolve_against_the_tool_cwd(
     )
 
     assert bool(data.get("canonical_script_execution")) is gated
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd bin && ./tool",
+        "cd sub || exit 1; ./bin/tool",
+        "false || cd sub; ./bin/tool",
+        'cd "$D" && ./bin/tool',
+        "cd; ./bin/tool",
+        "pushd sub && ./bin/tool",
+        "eval 'cd sub'; ./bin/tool",
+        "bash -c 'cd sub || exit; ./bin/tool'",
+        "cd sub && bash -c './bin/tool'",
+    ],
+)
+def test_relative_command_paths_after_a_directory_change_fail_closed(
+    tmp_path: Path, command: str
+) -> None:
+    _signature_fixture(tmp_path / "bin")
+    data = _invocation_metadata(command, event_cwd=tmp_path)
+
+    assert data.get("canonical_script_execution") is True
+
+
+def test_absolute_command_paths_after_a_directory_change_keep_their_signature(
+    tmp_path: Path,
+) -> None:
+    _signature_fixture(tmp_path / "bin")
+    data = _invocation_metadata(f"cd sub || exit 1; {tmp_path}/bin/tool", event_cwd=tmp_path)
+
+    assert not data.get("canonical_script_execution")
 
 
 @pytest.mark.parametrize(("name", "gated"), [("tool", False), ("script", True)])

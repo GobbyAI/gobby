@@ -8,6 +8,24 @@ from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import _SHELLS, _unwrap
 
 SHELL_WRAPPER_DEPTH = 8
+# ELF, then thin Mach-O (32/64-bit, both byte orders), then universal Mach-O (32/64-bit
+# fat headers, both byte orders). When execve reports ENOEXEC, which a truncated or
+# foreign binary also gets, a shell runs the file as a script unless its first line
+# holds a NUL byte. Real headers reach a NUL within a few bytes.
+_NATIVE_EXECUTABLE_MAGIC = frozenset(
+    {
+        b"\x7fELF",
+        b"\xfe\xed\xfa\xce",
+        b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf",
+        b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe",
+        b"\xbe\xba\xfe\xca",
+        b"\xca\xfe\xba\xbf",
+        b"\xbf\xba\xfe\xca",
+    }
+)
+_DIRECTORY_COMMANDS = frozenset({"cd", "pushd", "popd"})
 
 
 @dataclass(frozen=True)
@@ -16,21 +34,34 @@ class ShellExecution:
     script_file: bool = False
 
 
-def path_invokes_script(words: list[str], cwd: str | None, base: Path | None) -> bool:
-    """Gate path-invoked shebang scripts; unresolvable or unreadable paths fail closed.
+def changes_directory(words: list[str]) -> bool:
+    """Whether a segment may change this shell's directory.
 
-    ``cwd`` is the command's own ``cd`` state and ``base`` the tool call's working
-    directory. Only the two-byte executable signature is read, never the program body.
+    Any ``eval`` word counts, since its string runs in this shell behind any wrapper.
+    """
+    if any(shell_command_name(word) == "eval" for word in words):
+        return True
+    words = _unwrap(words)
+    return bool(words) and shell_command_name(words[0]) in _DIRECTORY_COMMANDS
+
+
+def path_invokes_script(words: list[str], base: Path | None) -> bool:
+    """Gate path-invoked programs other than native executables; fail closed when unsure.
+
+    ``base`` resolves a relative command word, and is ``None`` once the command may have
+    changed directory. Only a 16-byte executable header is read, never the body.
     """
     words = _unwrap(words)
     if not words or "/" not in words[0]:
         return False
     try:
-        path = resolve_tool_path(words[0], resolve_tool_path(cwd, base) if cwd else base)
+        path = resolve_tool_path(words[0], base)
         if path is None or not path.is_file():
             return True
         with path.open("rb") as executable:
-            return executable.read(2) == b"#!"
+            header = executable.read(16)
+        first_line = header.split(b"\n", 1)[0]
+        return header[:4] not in _NATIVE_EXECUTABLE_MAGIC or b"\x00" not in first_line
     except (OSError, RuntimeError):
         return True
 

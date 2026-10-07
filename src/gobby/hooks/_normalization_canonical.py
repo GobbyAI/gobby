@@ -95,7 +95,12 @@ from gobby.hooks.code_navigation_recovery import (
     gcode_targets,
 )
 from gobby.hooks.provider_launch_guard import _unwrap
-from gobby.hooks.shell_execution import SHELL_WRAPPER_DEPTH, path_invokes_script, shell_execution
+from gobby.hooks.shell_execution import (
+    SHELL_WRAPPER_DEPTH,
+    changes_directory,
+    path_invokes_script,
+    shell_execution,
+)
 
 _CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
 _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
@@ -149,7 +154,11 @@ def _is_neutral_echo_segment(tokens: list[ShellToken], parts: list[str]) -> bool
 def _normalize_shell_tool_metadata(
     command: str, *, cwd: str | None = None, depth: int = 0, base_cwd: Path | None = None
 ) -> dict[str, Any]:
-    """Infer canonical semantics from visible shell command segments."""
+    """Infer canonical semantics from visible shell command segments.
+
+    ``base_cwd`` resolves relative command words only until a segment may change the
+    shell's directory; after that they fail closed.
+    """
     try:
         scan = scan_shell_command(command)
     except ValueError:
@@ -169,6 +178,7 @@ def _normalize_shell_tool_metadata(
         for token, (start, end) in zip(scan.tokens, scan.spans, strict=True)
     }
     persistent_cwd = cwd
+    directory_changed = False
     metadata: list[_ShellSegmentMetadata] = []
     segments = _split_shell_segments(tokens)
     # Only the bare assignments that open a command always run in this shell.
@@ -189,6 +199,8 @@ def _normalize_shell_tool_metadata(
         )
         leading_assignments = assignment_bindings is not None
         parts = _strip_shell_wrappers(raw_parts)
+        segment_base = None if directory_changed else base_cwd
+        directory_changed = directory_changed or changes_directory(parts)
         if not parts:
             metadata.append(
                 _ShellSegmentMetadata(
@@ -238,7 +250,7 @@ def _normalize_shell_tool_metadata(
                     persistent_cwd,
                     depth=depth,
                     piped_stdin=segment.separator_before == "|",
-                    base_cwd=base_cwd,
+                    base_cwd=segment_base,
                 ),
                 shell_words=tuple(raw_parts),
                 shell_raw_words=source_parts,
@@ -460,7 +472,7 @@ def _classify_shell_segment_without_redirection(
                 "execute", confidence="low", extra={"canonical_script_execution": True}
             )
 
-    if path_invokes_script(parts, cwd, base_cwd):
+    if path_invokes_script(parts, base_cwd):
         return _ShellSegmentMetadata("execute", extra={"canonical_script_execution": True})
 
     execution = shell_execution(parts, stdin=shell_stdin)
