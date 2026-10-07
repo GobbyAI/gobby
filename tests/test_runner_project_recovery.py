@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+import os
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
+from gobby.config.bootstrap import BootstrapConfig
+from gobby.runner import GobbyRunner
+from gobby.runner_init.storage import open_storage_and_config
 from gobby.runner_lifecycle_startup import StartupTracker
 from gobby.runner_lifecycle_subsystems import (
     _recover_pipelines,
 )
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Row
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.projects import Project
 from gobby.utils.datetime import utc_now
@@ -24,11 +29,9 @@ from tests.fixtures.isolated_checkout import (
     install_isolated_checkout_project,
 )
 
-if TYPE_CHECKING:
-    from gobby.runner import GobbyRunner
-
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("daemon_skew", [-86400, 86400], ids=["db-ahead", "db-behind"])
 @pytest.mark.parametrize("admitted_seconds", [0, 1], ids=["at-start", "after-start"])
 @pytest.mark.parametrize(
     ("status", "resumable"),
@@ -47,11 +50,13 @@ async def test_recovery_preserves_runs_admitted_after_start(
     status: ExecutionStatus,
     resumable: bool,
     admitted_seconds: int,
+    daemon_skew: int,
 ) -> None:
     project = _create_projects(temp_db, tmp_path, monkeypatch)[0]
     manager = LocalPipelineExecutionManager(temp_db, project.id)
     # Simulate a recovery backlog longer than the stale-PENDING threshold.
-    started_at = utc_now() - timedelta(minutes=10)
+    db_started_at = utc_now() - timedelta(minutes=10)
+    started_at = _initialize_recovery_clock(temp_db, monkeypatch, db_started_at, daemon_skew)
     definition = PipelineDefinition(
         name="admitted",
         resume_on_restart=resumable,
@@ -61,7 +66,7 @@ async def test_recovery_preserves_runs_admitted_after_start(
         pipeline_name=definition.name, definition_json=definition.model_dump_json()
     )
     manager.update_execution_status(admitted.id, status)
-    admitted_at = started_at + timedelta(seconds=admitted_seconds)
+    admitted_at = db_started_at + timedelta(seconds=admitted_seconds)
     temp_db.execute(
         "UPDATE pipeline_executions SET created_at = %s, updated_at = %s WHERE id = %s",
         (admitted_at, admitted_at, admitted.id),
@@ -72,7 +77,7 @@ async def test_recovery_preserves_runs_admitted_after_start(
         pipeline_name=definition.name, definition_json=definition.model_dump_json()
     )
     manager.update_execution_status(orphan.id, status)
-    orphan_at = started_at - timedelta(seconds=1)
+    orphan_at = db_started_at - timedelta(seconds=1)
     temp_db.execute(
         "UPDATE pipeline_executions SET created_at = %s, updated_at = %s WHERE id = %s",
         (orphan_at, orphan_at, orphan.id),
@@ -140,6 +145,53 @@ async def test_recovery_preserves_runs_admitted_after_start(
     else:
         loader.load_pipeline.assert_not_awaited()
     assert runner.services.restart_recovery_ready is False
+
+
+def _initialize_recovery_clock(
+    database: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    database_time: datetime | None,
+    daemon_skew: int,
+) -> datetime:
+    """Exercise shared startup storage with independent daemon and database clocks."""
+    import gobby.runner_init.storage as storage
+
+    daemon_time = (database_time or utc_now()) + timedelta(seconds=daemon_skew)
+    monkeypatch.setattr("gobby.runner.utc_now", lambda: daemon_time, raising=False)
+    monkeypatch.setattr("gobby.utils.datetime.utc_now", lambda: daemon_time)
+    fetchone = database.fetchone
+
+    def fetch_with_clock(sql: str, params: Sequence[Any] | Mapping[str, Any] = ()) -> Row | None:
+        if "clock_timestamp()" in sql:
+            if database_time is None:
+                return None
+            return {"started_at": database_time}
+        return fetchone(sql, params)
+
+    monkeypatch.setattr(database, "fetchone", fetch_with_clock)
+    monkeypatch.setattr(
+        storage,
+        "load_bootstrap",
+        lambda *args, **kwargs: BootstrapConfig(database_url=os.environ["DATABASE_URL"]),
+    )
+    monkeypatch.setattr(storage, "init_hub_database", lambda _config: database)
+    monkeypatch.setattr(storage, "setup_file_logging", lambda *args, **kwargs: None)
+    monkeypatch.setattr(storage, "_ensure_headless_settings", lambda: None)
+    monkeypatch.setattr(storage, "ensure_local_api_key", lambda *args: None)
+    monkeypatch.setattr(
+        "gobby.storage.model_metadata.ModelMetadataStore.populate", lambda self: None
+    )
+    runner = GobbyRunner.__new__(GobbyRunner)
+    runner._prepare_base_state()
+    open_storage_and_config(runner, None, False)
+    return runner.started_at
+
+
+def test_startup_refuses_missing_database_clock(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(RuntimeError, match="database startup clock is unavailable"):
+        _initialize_recovery_clock(temp_db, monkeypatch, None, 0)
 
 
 def _create_projects(
