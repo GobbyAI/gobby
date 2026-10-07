@@ -216,6 +216,25 @@ async def test_refuses_without_callers_land_receipt(case: LandingCase) -> None:
     assert all(receipt.kind != LANDING for receipt in list_close_receipts(case.db, task.id))
 
 
+@pytest.mark.parametrize("release", ["escalation", "transfer"])
+async def test_former_claimant_cannot_land_its_own_task(case: LandingCase, release: str) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "review me"})
+    task = case.task()
+    case.link(task, sha)
+    manager = LocalTaskManager(case.db)
+    if release == "escalation":
+        manager.escalate_task(task.id, "Handed off: review pending")
+    else:
+        manager.claim_task(task.id, case.delegator, force=True)
+    case.approve(task, sha)
+    refused = await case.land(task, sha, caller=case.claimant)
+    assert refused["error"] == "caller_was_claimant"
+    assert case.git("rev-parse", "trunk") == case.base
+    landed = await case.land(task, sha)
+    assert landed["landed"] is True
+    assert case.git("rev-parse", "trunk") == sha
+
+
 async def test_fast_forward_lands_exact_candidate(case: LandingCase) -> None:
     sha = case.candidate("lane", {"docs/change.md": "land me"})
     task = case.task()
@@ -689,6 +708,131 @@ async def test_moved_tip_with_shared_paths_requires_base_update(case: LandingCas
         ["restart"],
     )
     assert case.git("rev-parse", "trunk") == moved
+
+
+def _criss_cross_candidate(case: LandingCase) -> str:
+    left = case.candidate("left", {"src/gobby/left.py": "left = 1\n"})
+    right = case.candidate("right", {"src/gobby/right.py": "right = 1\n"})
+    case.git("merge", "--ff-only", left)
+    case.git("merge", "--no-ff", right, "-m", "tip merges right")
+    case.git("switch", "-c", "lane", right)
+    case.git("merge", "--no-ff", left, "-m", "lane merges left")
+    lane_base = case.git("rev-parse", "HEAD")
+    case.git("switch", "trunk")
+    sha = case.candidate("docs-lane", {"docs/lane.md": "lane\n"}, base=lane_base)
+    tip = case.git("rev-parse", "trunk")
+    assert len(case.git("merge-base", "--all", tip, sha).splitlines()) == 2
+    arbitrary_base = case.git("merge-base", tip, sha)
+    assert "src/gobby/" in case.git("diff", "--name-only", arbitrary_base, sha)
+    return sha
+
+
+async def test_clean_merge_of_moved_shared_path_still_requires_base_update(
+    case: LandingCase,
+) -> None:
+    lines = [f"line {index}\n" for index in range(20)]
+    base = case.direct({"docs/shared.md": "".join(lines)})
+    sha = case.candidate("lane", {"docs/shared.md": "lane\n" + "".join(lines[1:])}, base=base)
+    tip = case.direct({"docs/shared.md": "".join(lines[:-1]) + "moved\n"})
+    assert case.git("merge-tree", "--write-tree", tip, sha)
+
+    result = await case.land(case.reviewed(sha), sha)
+
+    assert result["landed"] is False
+    assert result["blockers"] == ["base_update_required"]
+    assert result["shared_paths"] == ["docs/shared.md"]
+    assert case.git("rev-parse", "trunk") == tip
+
+
+async def test_criss_cross_merge_paths_equal_to_tip_are_not_shared(case: LandingCase) -> None:
+    sha = _criss_cross_candidate(case)
+    other = case.candidate(
+        "other",
+        {"src/gobby/left.py": "left = 2\n", "src/gobby/right.py": "right = 2\n"},
+        base=case.git("rev-parse", "trunk"),
+    )
+    case.reviewed(other, "Pending source changes")
+
+    result = await case.land(case.reviewed(sha), sha)
+
+    assert result["landed"] is True, result
+    assert result["mode"] == "merge"
+    assert result["activation_class"] == "none"
+    assert case.git("diff", "--name-only", "trunk^1", "trunk") == "docs/lane.md"
+    assert (case.repo / "src/gobby/left.py").read_text() == "left = 1\n"
+    assert (case.repo / "src/gobby/right.py").read_text() == "right = 1\n"
+
+
+async def test_criss_cross_genuine_overlap_still_names_changed_path(case: LandingCase) -> None:
+    docs = _criss_cross_candidate(case)
+    sha = case.candidate("changed-lane", {"src/gobby/left.py": "left = 2\n"}, base=docs)
+    other = case.candidate(
+        "other", {"src/gobby/left.py": "left = 3\n"}, base=case.git("rev-parse", "trunk")
+    )
+    other_task = case.reviewed(other, "Pending source change")
+
+    result = await case.land(case.reviewed(sha), sha)
+
+    assert result["landed"] is False
+    assert result["overlaps"] == [
+        {
+            "task_ref": f"#{other_task.seq_num}",
+            "commit_sha": other,
+            "shared_paths": ["src/gobby/left.py"],
+        }
+    ]
+    assert result["missing_approvals"] == ["overlap", "restart"]
+
+
+async def test_criss_cross_pending_candidate_does_not_own_carried_source(case: LandingCase) -> None:
+    docs = _criss_cross_candidate(case)
+    case.reviewed(docs, "Pending docs")
+    sha = case.candidate(
+        "source-lane",
+        {"src/gobby/left.py": "left = 2\n", "src/gobby/right.py": "right = 2\n"},
+        base=case.git("rev-parse", "trunk"),
+    )
+    task = case.reviewed(sha)
+    record_close_receipt(
+        case.db,
+        task=task,
+        author_session_id=case.creator,
+        kind=LANDING_APPROVAL,
+        commit_sha=sha,
+        facts={"reason": "restart"},
+    )
+
+    result = await case.land(task, sha)
+
+    assert result["landed"] is True, result
+    assert result["activation_class"] == "restart"
+    assert not (case.repo / "docs/lane.md").exists()
+    assert (case.repo / "src/gobby/left.py").read_text() == "left = 2\n"
+    assert (case.repo / "src/gobby/right.py").read_text() == "right = 2\n"
+
+
+async def test_criss_cross_recovery_classifies_only_candidate_contribution(
+    case: LandingCase,
+) -> None:
+    sha = _criss_cross_candidate(case)
+    stacked = case.candidate("stacked", {"src/gobby/stacked.py": "stacked = 1\n"}, base=sha)
+    tip = case.git("rev-parse", "trunk")
+    tree = case.git("merge-tree", "--write-tree", tip, stacked).splitlines()[0]
+    merged = case.git("commit-tree", tree, "-p", tip, "-p", stacked, "-m", "land stack")
+    case.git(
+        "merge",
+        "--ff-only",
+        merged,
+        env={"GIT_REFLOG_ACTION": f"gobby-land candidate={stacked} mode=merge class=restart"},
+    )
+
+    result = await case.land(case.reviewed(sha), sha)
+
+    assert result["landed"] is True, result
+    assert result["provenance"] == "reflog"
+    assert result["activation_class"] == "none"
+    assert result["retest_required"] is True
+    assert result["merge_commit"] == merged
 
 
 async def test_tip_race_recomputes_and_lands(case: LandingCase) -> None:

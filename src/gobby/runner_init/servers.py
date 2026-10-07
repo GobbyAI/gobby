@@ -182,7 +182,6 @@ def init_servers(runner: GobbyRunner) -> None:
         detection_registry=runner.detection_registry,
         terminal_manager=getattr(runner, "terminal_manager", None),
         terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
-        terminal_config=getattr(runner, "terminal_config", None),
         terminal_services=getattr(runner, "terminal_services", None),
         terminal_host_config=getattr(runner, "terminal_host_config", None),
         terminal_host_manager=getattr(runner, "terminal_host_manager", None),
@@ -326,7 +325,6 @@ def init_servers(runner: GobbyRunner) -> None:
             runner.websocket_server.configure_terminals(
                 services.terminal_manager,
                 services.terminal_runtime_registry,
-                services.terminal_config,
                 terminal_services=services.terminal_services,
                 host_manager=services.terminal_host_manager,
                 lease_registry=services.lease_registry,
@@ -637,11 +635,9 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
             clock=lambda: int(time.time()),
             revocations=revocations,
         )
-        operator_token = server.auth_service.local_token() or ""
         return HandshakeService(
             grants=grants,
             local_machine_id=str(lease.machine_id),
-            operator_token=operator_token,
             issue_postgres=_issue_postgres,
             admitted_projects=_project_admitted,
             admitted_maintenance_targets=_indexed_project_admitted,
@@ -658,7 +654,6 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
             indexer.launch_factory = HandshakeMaintenanceLaunchFactory(
                 handshake=server.handshake_service,
                 credentials=credentials,
-                operator_token=server.auth_service.local_token() or "",
                 machine_id=str(lease.machine_id),
             )
     except Exception:

@@ -23,6 +23,7 @@ from typing import Any, Protocol, cast
 import psycopg
 from psycopg import sql as psycopg_sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from psycopg.postgres import types as pg_types
 from psycopg.pq import TransactionStatus
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool, PoolTimeout
@@ -69,6 +70,9 @@ logger = logging.getLogger(__name__)
 
 POOL_TIMEOUT_RETRY_BACKOFF_SECONDS: tuple[float, ...] = (0.5, 1.0, 2.0)
 POOL_TIMEOUT_RETRY_JITTER_RATIO = 0.25
+
+# psycopg parses json/jsonb into plain JSON values, which need no datetime walk.
+_JSON_TYPE_OIDS = frozenset(pg_types[name].oid for name in ("json", "jsonb"))
 
 _SQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -448,7 +452,7 @@ class PostgresCursor:
             return row
         if self._cursor is None:
             return None
-        return _normalize_row(cast(Row | None, self._cursor.fetchone()))
+        return _normalize_row(cast(Row | None, self._cursor.fetchone()), self._json_columns())
 
     def fetchall(self) -> list[Row]:
         if self._rows is not None:
@@ -457,11 +461,23 @@ class PostgresCursor:
             return rows
         if self._cursor is None:
             return []
+        json_columns = self._json_columns()
         return [
             row
-            for row in (_normalize_row(row) for row in cast(Sequence[Row], self._cursor.fetchall()))
+            for row in (
+                _normalize_row(row, json_columns)
+                for row in cast(Sequence[Row], self._cursor.fetchall())
+            )
             if row is not None
         ]
+
+    def _json_columns(self) -> frozenset[str]:
+        description = getattr(self._cursor, "description", None)
+        if not isinstance(description, list):
+            return frozenset()
+        # dict_row keeps the last column of a repeated name, so classify the same one.
+        is_json = {column.name: column.type_code in _JSON_TYPE_OIDS for column in description}
+        return frozenset(name for name, json_typed in is_json.items() if json_typed)
 
     @property
     def rowcount(self) -> int:
@@ -489,12 +505,28 @@ class _PostgresSavepoint:
         self._txn._deadline.restore_savepoint_state(self._deadline_state)
 
 
-def _normalize_row(row: Row | None) -> Row | None:
+def _normalize_row(row: Row | None, json_columns: frozenset[str] = frozenset()) -> Row | None:
     if row is None:
         return None
     if isinstance(row, Mapping):
-        return cast(Row, {str(key): _normalize_value(value) for key, value in row.items()})
+        return cast(
+            Row,
+            {
+                str(key): _dump_json_container(value)
+                if key in json_columns
+                else _normalize_value(value)
+                for key, value in row.items()
+            },
+        )
     return row
+
+
+def _dump_json_container(value: Any) -> Any:
+    # Storage model decoders consume serialized JSON for both JSONB and text columns.
+    # Keep that row boundary uniform rather than exposing driver-specific value types.
+    if isinstance(value, dict | list):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return value
 
 
 def _normalize_value(value: Any) -> Any:
@@ -505,9 +537,7 @@ def _normalize_value(value: Any) -> Any:
     if isinstance(value, date):
         return value
     if isinstance(value, dict | list):
-        # Storage model decoders consume serialized JSON for both JSONB and text columns.
-        # Keep that row boundary uniform rather than exposing driver-specific value types.
-        return json.dumps(to_json_safe(value), sort_keys=True, separators=(",", ":"))
+        return _dump_json_container(to_json_safe(value))
     return value
 
 

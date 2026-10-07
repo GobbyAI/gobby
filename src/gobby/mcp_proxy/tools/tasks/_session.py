@@ -4,6 +4,7 @@ Provides tools for linking tasks to sessions and querying task-session
 relationships.
 """
 
+from datetime import datetime
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -13,6 +14,7 @@ from gobby.mcp_proxy.tools.tasks._authorization import (
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
+from gobby.mcp_proxy.tools.tasks._formatters import brief_task_card
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
 
@@ -225,7 +227,19 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return {"error": f"Invalid session_id '{effective_session_id}': {e}"}
 
         tasks = ctx.session_task_manager.get_session_tasks(resolved_session_id)
-        return {"session_id": resolved_session_id, "tasks": tasks}
+        rows = [
+            {
+                **row,
+                "task": brief_task_card(ctx, row["task"]),
+                "link_created_at": (
+                    row["link_created_at"].isoformat()
+                    if isinstance(row["link_created_at"], datetime)
+                    else row["link_created_at"]
+                ),
+            }
+            for row in tasks
+        ]
+        return {"session_id": resolved_session_id, "tasks": rows}
 
     registry.register(
         name="get_session_tasks",

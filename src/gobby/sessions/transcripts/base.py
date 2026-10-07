@@ -247,6 +247,8 @@ class ParseEvent:
     records: list[ParsedMessage | ParsedToolEvent] = field(default_factory=list)
     parser_safe: bool = True
     codex_exec_outcomes: list[CodexNestedExecOutcome] = field(default_factory=list)
+    # Completed Codex MCP items, the only record of a call made inside functions.exec.
+    codex_mcp_calls: list[ParsedToolEvent] = field(default_factory=list)
 
 
 @dataclass

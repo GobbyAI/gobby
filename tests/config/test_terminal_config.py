@@ -23,25 +23,19 @@ _P2_CONSUMERS = (
 
 def test_shared_terminal_config_precedes_host_config() -> None:
     config = TerminalConfig()
-    assert config.default_backend == "native"
     assert config.spawn_in_doubt_seconds > 0
 
     daemon = DaemonConfig()
-    assert daemon.terminals.default_backend == "native"
     assert daemon.terminals.spawn_in_doubt_seconds == config.spawn_in_doubt_seconds
     assert type(daemon.terminals) is TerminalConfig
     assert type(daemon.tmux) is TmuxConfig
 
     overridden = DaemonConfig.model_validate({"terminals": {"spawn_in_doubt_seconds": 90.0}})
-    assert overridden.terminals.default_backend == "native"
     assert overridden.terminals.spawn_in_doubt_seconds == 90.0
 
-    # tmux is a spawn-less adapter for external panes; it cannot be the spawn default.
-    with pytest.raises(ValidationError):
+    # No backend is selectable: the removed key is an unknown field (#23212).
+    with pytest.raises(ValidationError, match="default_backend"):
         DaemonConfig.model_validate({"terminals": {"default_backend": "tmux"}})
-
-    with pytest.raises(ValidationError):
-        DaemonConfig.model_validate({"terminals": {"default_backend": "ssh"}})
 
     imported_host = False
     for root in _P2_CONSUMERS:

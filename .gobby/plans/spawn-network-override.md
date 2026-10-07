@@ -39,7 +39,7 @@ limit-spawnable-agents, so a spawned agent can spawn any agent through a
 pipeline**; and 2.2 adds the `network` parameter while extending that guard with
 the 1.2 predicate, so no build advertises `network` without enforcement. Four of
 the orderings and mechanisms below are Orchestrator rulings recorded in the V1
-Plan Changelog for Josh's review before implementation.
+Plan Changelog; Josh approved all four on 2026-10-06.
 
 ## P1: Effective profile and override authority
 `kind: framing`
@@ -302,13 +302,16 @@ Batch retirement waits on an external prerequisite: the separate removal of the
 enabled global row (`source: installed`), and its prompt dispatches `merge-worker`
 through `dispatch_batch`. #23460, **Plan the merge-orchestrator removal with no
 replacement merge orchestration**, owns planning that removal and names this D1 as
-its downstream dependent; it is the prerequisite, not the owner of D1.1-D1.3. The
-contract forbids a prose blocker for that wait, so this work is deferred.
+its downstream dependent; it is the prerequisite, not the owner of D1.1-D1.3. D1
+also waits on #23341, **Remove gobby build**: an Orchestrator ruling of 2026-10-06
+has #23341 supersede #23460's P1, **Agentless PR and merge stages**, by removing the
+stage subsystem those stages belong to. The contract forbids a prose blocker for
+these waits, so this work is deferred.
 Expansion creates its `planning` task under this plan's epic with the
 `needs-planning` hold label and `blocked-by` edges to the 1.2, 2.1, and 2.2
 leaves only; expansion cannot add edges to tasks outside this plan. At finalization the
-Orchestrator adds `blocked-by` #23460 and, once #23460's plan is expanded, each
-removal implementation task, and verifies those edges. The hold label keeps
+Orchestrator adds `blocked-by` #23460 and #23341 and, once their plans are expanded,
+each removal implementation task, and verifies those edges. The hold label keeps
 automated dispatch from selecting the task even after its blockers close; it
 stays on until the installed removal is evidenced, and only then is the spec
 written. Do not move merge orchestration to another path.
@@ -367,8 +370,8 @@ replacement merge orchestration.
 
 ```yaml
 deferral:
-  task_ref: "TBD-batch-retirement"
-  reason: "External prerequisite: the merge-orchestrator removal planned under #23460 must be installed in the DB registry first."
+  task_ref: "#23678"
+  reason: "External prerequisites: the merge-orchestrator removal planned under #23460 must be installed in the DB registry first, and #23341 (Remove gobby build) must land."
   owner: "orchestrator"
   original_acceptance_items:
     - D1.1
@@ -473,6 +476,16 @@ remain unchanged.
   wrappers: 2.1 as a bug fix, and 1.1, 1.2, and 2.2 as features. D1 remains a
   typed planning deferral. Expansion waits for Josh's review of the four
   Orchestrator rulings and his approval.
+- 2026-10-06, Lane 7 plan writer W4 (gobby#15528), approval before expansion:
+  Josh approved all four Orchestrator rulings, verbatim as relayed by Lane 7
+  manager LM7 (gobby#15389): "23436 approve all four rulings". They are E01,
+  authority before exposure; E02, dropping the `orchestrator.yaml` edit; E03, the
+  factory and HTTP guard; and the fold of #23463 into 2.1. The Context line now
+  records the approval. The Orchestrator's 2026-10-06 ruling on #23341, **Remove
+  gobby build**, has #23341 supersede #23460's P1, so D1 now names #23341 as a
+  second prerequisite, in its prose, finalization edges and deferral reason. No
+  deliverable, acceptance item or M1 entry changed. Expansion proceeds with the
+  implementation root under Lane 3 epic #22691, **Lane 3 - Runbooks**.
 
 ## M1 Task Manifest
 `kind: manifest`

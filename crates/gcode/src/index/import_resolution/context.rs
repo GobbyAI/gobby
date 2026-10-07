@@ -12,10 +12,13 @@ mod apple;
 mod bindings;
 mod dotnet;
 mod elixir;
+mod input_digest;
 mod jvm;
 mod package_metadata;
 mod python;
 mod scripting;
+
+pub(crate) use input_digest::import_resolution_input_digest;
 
 pub(super) use bindings::JS_BUILTIN_MODULES;
 pub(crate) use bindings::{

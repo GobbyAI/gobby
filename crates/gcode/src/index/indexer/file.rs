@@ -7,6 +7,7 @@ use crate::index::semantic::{self, SemanticCallResolver};
 use crate::index::{chunker, hasher, languages, parser, walker};
 use crate::models::{CallTargetKind, IndexedFile, ParseResult};
 
+use super::IndexTimings;
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
 use super::types::{FileIndexCounts, IndexTarget};
 use super::util::{epoch_secs_str, relative_path};
@@ -20,6 +21,7 @@ pub(super) fn index_file(
     import_context: &parser::ImportResolutionContext,
     semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
 ) -> anyhow::Result<Option<FileIndexCounts>> {
+    let mut timings = IndexTimings::new("file.parse");
     let rel = match relative_path(file_path, target.root_path) {
         Ok(rel) => rel,
         Err(_) => return Ok(None),
@@ -45,12 +47,15 @@ pub(super) fn index_file(
     let size = parse_result.source.len();
 
     // PostgreSQL hub writes (transactional).
+    timings.phase("file.transaction");
     let mut tx = conn
         .transaction()
         .context("start indexed file transaction")?;
 
+    timings.phase("file.sink");
     let mut sink =
         PostgresCodeFactSink::new(&mut tx, target.project_id, target.root_path, target.mode)?;
+    timings.phase("file.facts");
     let counts = write_parsed_file_facts(
         &mut sink,
         target.project_id,
@@ -61,6 +66,7 @@ pub(super) fn index_file(
         &parse_result,
     )?;
 
+    timings.phase("file.commit");
     tx.commit().context("commit indexed file transaction")?;
 
     Ok(Some(counts))
@@ -164,6 +170,7 @@ pub(super) fn write_parsed_file_facts(
     byte_size: usize,
     parse_result: &ParseResult,
 ) -> anyhow::Result<FileIndexCounts> {
+    let mut timings = IndexTimings::new("facts.file");
     sink.upsert_file(&IndexedFile {
         id: IndexedFile::make_id(project_id, rel, content_hash),
         project_id: project_id.to_string(),
@@ -174,17 +181,23 @@ pub(super) fn write_parsed_file_facts(
         byte_size,
         indexed_at: epoch_secs_str(),
     })?;
+    timings.phase("facts.symbols");
     let symbols_indexed = sink.upsert_symbols(&parse_result.symbols)?;
     let current_symbol_ids = parse_result
         .symbols
         .iter()
         .map(|symbol| symbol.id.clone())
         .collect::<Vec<_>>();
+    timings.phase("facts.prune_symbols");
     sink.delete_stale_file_symbols(project_id, rel, content_hash, &current_symbol_ids)?;
+    timings.phase("facts.prune_other");
     sink.delete_file_non_symbol_facts(project_id, rel, content_hash)?;
+    timings.phase("facts.imports");
     let imports_indexed =
         sink.upsert_imports(project_id, rel, content_hash, &parse_result.imports)?;
+    timings.phase("facts.calls");
     let calls_indexed = sink.upsert_calls(project_id, rel, content_hash, &parse_result.calls)?;
+    timings.phase("facts.inheritance");
     let _inheritance_indexed =
         sink.upsert_inheritance(project_id, rel, content_hash, &parse_result.inheritance)?;
     let unresolved_targets_indexed = parse_result
@@ -192,6 +205,7 @@ pub(super) fn write_parsed_file_facts(
         .iter()
         .filter(|call| call.callee_target_kind == CallTargetKind::Unresolved)
         .count();
+    timings.phase("facts.chunk");
     let chunks = chunker::chunk_file_content(
         &parse_result.source,
         rel,
@@ -199,6 +213,7 @@ pub(super) fn write_parsed_file_facts(
         content_hash,
         Some(language),
     );
+    timings.phase("facts.write_chunks");
     let chunks_indexed = if chunks.is_empty() {
         0
     } else {

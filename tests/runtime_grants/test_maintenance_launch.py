@@ -17,7 +17,75 @@ from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.fixture(autouse=True)
+def _maintenance_bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from gobby.utils import local_token
+
+    bootstrap = tmp_path / "daemon-bootstrap.yaml"
+    bootstrap.write_text("api_key: maintenance-test-key\n")
+    monkeypatch.setattr(local_token, "_daemon_bootstrap", None)
+    local_token.bind_daemon_bootstrap(bootstrap)
+
+
 _GOLDEN = Path(__file__).resolve().parent / "golden" / "direct_datastores.json"
+
+
+def test_launch_signs_with_current_bootstrap_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    from starlette.requests import Request
+
+    from gobby.runtime_grants.handshake import HandshakeRejection
+    from gobby.servers.auth_service import AuthService
+    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.utils import local_token
+
+    bootstrap = tmp_path / "bootstrap.yaml"
+    bootstrap.write_text("api_key: first-key\n")
+    monkeypatch.setattr(local_token, "_daemon_bootstrap", None)
+    local_token.bind_daemon_bootstrap(bootstrap)
+    handshake = _Handshake()
+    credentials = _RecordingCredentials()
+    factory = HandshakeMaintenanceLaunchFactory(
+        handshake=cast(HandshakeService, handshake),
+        credentials=cast(ManagedCredentialManager, credentials),
+        machine_id="machine-1",
+    )
+    database = MagicMock(spec=HubDatabase)
+    database.fetchone.return_value = {"login_capable": True}
+    monkeypatch.setattr("gobby.servers.auth_service.resolve_auth_schema", lambda _: "auth")
+    service = AuthService(
+        lambda: database, token_file=tmp_path / "absent-token", bootstrap_file=bootstrap
+    )
+    tokens: list[str] = []
+    for key in ("first-key", "second-key"):
+        replacement = tmp_path / "replacement.yaml"
+        replacement.write_text(f"api_key: {key}\n")
+        replacement.replace(bootstrap)
+        with factory.open("project-1", timeout_seconds=30) as launch:
+            token = launch.env["GOBBY_AGENT_API_TOKEN"]
+            tokens.append(token)
+            request = Request(
+                {
+                    "type": "http",
+                    "method": "GET",
+                    "path": "/api/providers/models",
+                    "headers": [(b"authorization", f"Bearer {token}".encode())],
+                    "query_string": b"",
+                }
+            )
+            assert service.authenticate(request).allowed
+    assert tokens[0] != tokens[1]
+    assert local_token.verify_agent_api_token(tokens[0], service.managed_signing_key()) is None
+    bootstrap.unlink()
+    with pytest.raises(HandshakeRejection, match="signing_key_unavailable") as error:
+        with factory.open("project-1", timeout_seconds=30):
+            pytest.fail("missing key admitted a maintenance launch")
+    assert error.value.code == "signing_key_unavailable"
+    assert handshake.calls == 2
 
 
 class _RecordingCredentials:
@@ -42,7 +110,17 @@ class _Handshake:
         self.issued_kwargs.append(kwargs)
         if self.error is not None:
             raise self.error
-        return GrantBundle.model_validate_json(_GOLDEN.read_bytes())
+        grant = GrantBundle.model_validate_json(_GOLDEN.read_bytes())
+        principal = grant.principal.model_copy(
+            update={
+                "kind": "maintenance",
+                "session_id": None,
+                "execution_id": kwargs["execution_id"],
+                "machine_id": kwargs["machine_id"],
+                "project_id": kwargs["project_id"],
+            }
+        )
+        return grant.model_copy(update={"principal": principal})
 
 
 def _factory(
@@ -52,7 +130,6 @@ def _factory(
     return HandshakeMaintenanceLaunchFactory(
         handshake=cast(HandshakeService, handshake),
         credentials=cast(ManagedCredentialManager, credentials),
-        operator_token="operator",
         machine_id="machine-1",
     )
 

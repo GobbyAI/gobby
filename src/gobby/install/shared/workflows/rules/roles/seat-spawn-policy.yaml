@@ -1,7 +1,8 @@
 tags: [roles, seat, enforcement, gobby, default]
 
-# Seat identity matches persona (`_persona_name`) and spawned (`_agent_type`)
-# seats alike, with the catalogue inline as in inject-seat-common.
+# Activation and spawn both set `_agent_type`, so seat identity matches it alone,
+# with the catalogue inline as in inject-seat-common. A persona overlay
+# (`apply_persona`) never matches a seat rule.
 rules:
   seat-no-spawn:
     description: "Seats do not spawn agents; the Plan Writer's enhancer pass has its own rule"
@@ -9,13 +10,10 @@ rules:
     enabled: true
     priority: 10
     when: >
-      (variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
+      variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary']
-      or variables.get('_persona_name') in ['assistant', 'orchestrator', 'lane-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary'])
-      and 'plan-writer' not in [variables.get('_agent_type'), variables.get('_persona_name')]
+      and variables.get('_agent_type') != 'plan-writer'
     effects:
       - type: block
         mcp_tools: ["gobby-agents:spawn_agent", "gobby-agents:dispatch_batch"]
@@ -31,12 +29,9 @@ rules:
     # `block` mcp_tools matching is exact or `server:*`, and exposed pipelines are
     # named `pipeline:<name>`, so the condition alone selects the call.
     when: >
-      (variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
+      variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary']
-      or variables.get('_persona_name') in ['assistant', 'orchestrator', 'lane-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary'])
       and tool_input.get('server_name') == 'gobby-workflows'
       and (tool_input.get('tool_name') == 'run_pipeline'
         or str(tool_input.get('tool_name') or '').startswith('pipeline:'))
@@ -56,9 +51,6 @@ rules:
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary']
-      or variables.get('_persona_name') in ['assistant', 'orchestrator', 'lane-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary']
     effects:
       - type: block
         tools: [Bash]
@@ -74,7 +66,7 @@ rules:
     enabled: true
     priority: 10
     when: >
-      'plan-writer' in [variables.get('_agent_type'), variables.get('_persona_name')]
+      variables.get('_agent_type') == 'plan-writer'
       and not (
         tool_input.get('tool_name') == 'spawn_agent'
         and tool_input.get('agent') == 'plan-enhancer-taskless-old'
@@ -101,7 +93,7 @@ rules:
     priority: 95
     when: >
       event.metadata.get('_mcp_proxy_dispatch')
-      and 'plan-writer' in [variables.get('_agent_type'), variables.get('_persona_name')]
+      and variables.get('_agent_type') == 'plan-writer'
       and tool_input.get('server_name') == 'gobby-agents'
       and tool_input.get('tool_name') == 'spawn_agent'
       and tool_input.get('agent') == 'plan-enhancer-taskless-old'
@@ -124,13 +116,10 @@ rules:
     enabled: true
     priority: 10
     when: >
-      (variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
+      variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary']
-      or variables.get('_persona_name') in ['assistant', 'orchestrator', 'lane-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary'])
-      and 'orchestrator' not in [variables.get('_agent_type'), variables.get('_persona_name')]
+      and variables.get('_agent_type') != 'orchestrator'
       and tool_input.get('server_name') == 'gobby-tasks'
       and (
         (tool_input.get('tool_name') == 'remove_label'

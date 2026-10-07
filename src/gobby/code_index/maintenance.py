@@ -20,6 +20,7 @@ from gobby.code_index.gcode_gateway import (
     _classify_gcode_command_error,
 )
 from gobby.code_index.maintenance_launch import open_launch_async
+from gobby.code_index.maintenance_log import log_gcode_maintenance_exception
 
 if TYPE_CHECKING:
     from gobby.code_index.community_labeler import CommunityLabeler
@@ -300,11 +301,17 @@ async def _sweep_orphaned_index_projects(context: CodeIndexContext) -> int:
                 )
                 if vectors.get("success", True) is False:
                     raise RuntimeError(vectors.get("error", "gcode vector clear failed"))
-        except Exception:
+        except Exception as error:
             logger.warning(
                 "Orphaned code-index project %s projection cleanup failed; retaining for retry",
                 project_id,
                 exc_info=True,
+            )
+            log_gcode_maintenance_exception(
+                log_file=context.config.maintenance_log_file,
+                event="orphan_projection_cleanup",
+                project_id=project_id,
+                error=error,
             )
             continue
         counts = await context.run_db(context.storage.purge_index_project, project_id)

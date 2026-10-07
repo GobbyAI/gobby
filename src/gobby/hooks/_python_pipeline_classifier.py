@@ -287,9 +287,10 @@ def _imported_bindings(tree: ast.AST) -> Mapping[str, str] | None:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 bound_name = alias.asname or alias.name.partition(".")[0]
-                if bindings.get(bound_name, alias.name) != alias.name:
+                canonical_name = alias.name if alias.asname else bound_name
+                if bindings.get(bound_name, canonical_name) != canonical_name:
                     return None
-                bindings[bound_name] = alias.name
+                bindings[bound_name] = canonical_name
         elif isinstance(node, ast.ImportFrom) and node.module:
             for alias in node.names:
                 bound_name = alias.asname or alias.name

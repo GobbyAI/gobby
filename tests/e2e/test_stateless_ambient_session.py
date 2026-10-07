@@ -388,11 +388,14 @@ async def test_daemon_binds_schema_lease_to_child_identity_env(
     monkeypatch.setenv("GOBBY_PROJECT_ID", PROJECT_ID)
     monkeypatch.setenv("GOBBY_SESSION_ID", child.id)
     monkeypatch.setenv("GOBBY_AGENT_RUN_ID", run.id)
-    operator_token = (daemon_instance.gobby_home / "local_cli_token").read_text().strip()
+    from gobby.utils.local_token import read_managed_signing_key
+
+    signing_key = read_managed_signing_key(daemon_instance.gobby_home / "bootstrap.yaml")
+    assert signing_key is not None
     monkeypatch.setenv(
         GOBBY_AGENT_API_TOKEN_ENV,
         issue_agent_api_token(
-            operator_token,
+            signing_key,
             agent_run_id=run.id,
             session_id=child.id,
             project_id=PROJECT_ID,

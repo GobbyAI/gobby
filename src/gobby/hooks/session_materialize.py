@@ -16,6 +16,7 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd, hook_cwd
 from gobby.skills.capability_routing import gobby_help_prefix
+from gobby.workflows.agent_resolver import AgentResolutionError
 from gobby.workflows.state_manager import SessionVariableManager
 
 _HELP_DEFERRED_ACTIVATION = "_help_deferred_activation"
@@ -194,7 +195,10 @@ def activate_deferred_session(
         terminal_context=terminal_context,
     )
     if event.event_type != HookEventType.BEFORE_AGENT:
-        handlers._inject_agent_instructions_if_needed(event, session_id, startup_response)
+        try:
+            handlers._inject_agent_instructions_if_needed(event, session_id, startup_response)
+        except AgentResolutionError as exc:
+            handlers.logger.warning("Agent instructions refused during activation: %s", exc)
 
     manager._dispatch_webhooks_async(synthetic, startup_response)
     event.metadata["_startup_context"] = startup_response.context_contributors()

@@ -111,7 +111,10 @@ def create_landing_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     registry.register(
         name="land_commit",
-        description="Land a linked full commit SHA approved by the calling independent reviewer.",
+        description=(
+            "Land a linked full commit SHA approved by the calling independent reviewer. "
+            "A session that has ever claimed the task is refused."
+        ),
         input_schema={
             "type": "object",
             "properties": {

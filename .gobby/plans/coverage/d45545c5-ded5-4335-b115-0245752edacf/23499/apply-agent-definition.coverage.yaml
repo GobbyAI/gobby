@@ -1,11 +1,11 @@
 header:
   plan_id: apply-agent-definition
-  plan_hash: fc944cf6ceed12a7e98c46e79d853ae8ca2c33acf42987377062bc723766605e
+  plan_hash: 9c1bc56a46148d657b71c23dff35576ec18f2795cda8e60307882a74b9c49c92
   root_task_ref: '23499'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-06T10:06:25Z'
+  generated_at: '2026-10-06T15:47:16Z'
   task_tree_source: db
-  task_tree_source_hash: 9324cafa94706f93d73921d73b918f2c87d8bda1a20d069cae41c7e57e10cc0a
+  task_tree_source_hash: 17fa9882a94394e536bb9240d8a2861ce259b049875be8d60510dd540238f7a8
   evidence_summary: []
   evidence: []
 rows:
@@ -463,6 +463,10 @@ rows:
   plan_node_hash: 4996446f2ea8f7bc51bf169b1ec21b4c2ad45d58bb6aa2bc74a74cf48b38cfae
   status: covered
   leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/servers/test_managed_clear_identity.py::test_successor_tool_call_is_attributed_to_successor
   - leaf_task_ref: '#23508'
     validation_criteria_snippet: '1.6.1: After a staged clear, a wrapper `call_tool`
       for a session-scoped tool that carries the pane''s frozen headers and token
@@ -475,6 +479,10 @@ rows:
   plan_node_hash: 036c4ee4c3da8d9c7f1efa3774d0fba7b8edd0a76ef6cf582401ce8f21e1e865
   status: covered
   leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/servers/test_managed_clear_identity.py::test_successor_hook_and_variables_follow_run
   - leaf_task_ref: '#23508'
     validation_criteria_snippet: '1.6.1: After a staged clear, a wrapper `call_tool`
       for a session-scoped tool that carries the pane''s frozen headers and token
@@ -487,6 +495,10 @@ rows:
   plan_node_hash: 2e88e1d9cc80ae447901cb78bc24ef7fecb3e9806501816413a3aa1c8c2c9aa9
   status: covered
   leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/servers/test_managed_clear_identity.py::test_no_forwarding_without_live_run_binding
   - leaf_task_ref: '#23508'
     validation_criteria_snippet: '1.6.1: After a staged clear, a wrapper `call_tool`
       for a session-scoped tool that carries the pane''s frozen headers and token
@@ -499,6 +511,10 @@ rows:
   plan_node_hash: 96120636aef56839f7b5da7ad4898b0575a739e014ee29cffce3063268edd129
   status: covered
   leaves:
+  - leaf_task_ref: '#23506'
+    validation_criteria_snippet: '1.4.1: A `/clear` successor of an activated seat
+      carries `_agent_type` and the pin and re-activates as that seat. test: `tests/hooks/test_clear_successor_seat....'
+    matched_artifact_ref: tests/servers/test_managed_clear_identity.py::test_successor_chat_completion_keeps_issued_grant
   - leaf_task_ref: '#23508'
     validation_criteria_snippet: '1.6.1: After a staged clear, a wrapper `call_tool`
       for a session-scoped tool that carries the pane''s frozen headers and token
@@ -595,7 +611,7 @@ rows:
   plan_node_hash: 355c27fc205b29ab47298483ecf5edf30e8a4497fc88001b8ee7acf1375368a4
   status: deferred
   leaves: []
-  deferral_target: '#23511'
+  deferral_target: '#23509'
   detail: deferral is valid
 - section_id: D2
   item_id: D2.1
@@ -616,14 +632,14 @@ rows:
   plan_node_hash: f60578f22f0e13a79cac42f3ac77fd46fd2f1b45541a973dc3606975d9733385
   status: deferred
   leaves: []
-  deferral_target: '#23497'
+  deferral_target: '#23509'
   detail: deferral is valid
 - section_id: D3
   item_id: D3.2
   plan_node_hash: df7ad1bc7f16119677686a033e33988d0e83b4680f777bc798b818b30a764650
   status: deferred
   leaves: []
-  deferral_target: '#23497'
+  deferral_target: '#23509'
   detail: deferral is valid
 - section_id: '1.1'
   item_id: 1.1.7

@@ -497,17 +497,15 @@ async def _assert_terminate_with_grace(backend: str) -> None:
         await hang.close()
 
 
-def _patch_daemon_backend(
+def _patch_daemon_host(
     postgres_db: HubDatabase,
     *,
-    backend: str,
     socket_dir: Path,
     binary: Path | None,
 ) -> None:
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 
     values: dict[str, object] = {
-        "terminals.default_backend": backend,
         "terminal_host.socket_dir": str(socket_dir),
         "terminal_host.enabled": True,
     }
@@ -526,7 +524,6 @@ def _start_isolated_daemon(
     postgres_db: HubDatabase,
     postgres_database_url: str,
     postgres_schema: str,
-    backend: str,
 ) -> tuple[DaemonInstance, Path]:
     """Start a daemon whose gterm host lives in the returned socket dir.
 
@@ -547,7 +544,7 @@ def _start_isolated_daemon(
         cleanup.callback(_stop_host, socket_dir)
         binary = gterm_binary()
         _seed_e2e_runtime_state(postgres_db, home)
-        _patch_daemon_backend(postgres_db, backend=backend, socket_dir=socket_dir, binary=binary)
+        _patch_daemon_host(postgres_db, socket_dir=socket_dir, binary=binary)
         (home / "machine_id").write_text(MACHINE_ID)
         http_port = find_free_port()
         ws_port = find_free_port()
@@ -769,7 +766,6 @@ async def test_daemon_restart_continuity(
         postgres_db=postgres_db,
         postgres_database_url=postgres_database_url,
         postgres_schema=postgres_schema,
-        backend=contract_backend,
     )
     script = daemon.project_dir / "probe.py"
     script.write_text(_PROBE)

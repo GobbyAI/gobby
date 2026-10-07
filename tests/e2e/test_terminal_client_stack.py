@@ -391,7 +391,6 @@ def _spawn_agent(client: httpx.Client) -> dict[str, Any]:
             "agent_name": "default",
             "provider": "claude",
             "checkout_mode": "none",
-            "terminal_backend": backend,
             "prompt": f"stack {backend}",
             # No run timeout: the agents must outlive both daemon restarts
             # until the test cancels them.
@@ -1551,6 +1550,7 @@ async def test_gclient_survives_daemon_stop_during_startup_response(
     address = await _adopt(daemon_instance, terminal_id)
     wire = ClientWire(daemon_instance)
     original_http = wire.http
+    stopping = asyncio.Event()
     cut = asyncio.Event()
 
     async def truncate_after_stop(
@@ -1560,6 +1560,7 @@ async def test_gclient_survives_daemon_stop_during_startup_response(
         if request.path != "/api/admin/config" or cut.is_set():
             return response
         assert response is not None and response.status_code == 200
+        stopping.set()
         await asyncio.to_thread(_stop_daemon_for_client_outage, daemon_instance)
         cut.set()
         # Preserve the real response's successful status and Content-Length,
@@ -1575,10 +1576,13 @@ async def test_gclient_survives_daemon_stop_during_startup_response(
                     # waiting only on the server event leaves the client parked.
                     await asyncio.to_thread(
                         client.wait_for,
-                        lambda _screen: cut.is_set(),
-                        description="interrupted startup HTTP response",
+                        lambda _screen: stopping.is_set(),
+                        description="startup HTTP request reached outage",
                         timeout=15.0,
                     )
+                    # The isolated shutdown has its own 20s contract; it must
+                    # not consume the client's 15s startup-request budget.
+                    await asyncio.wait_for(cut.wait(), timeout=25.0)
                     await asyncio.to_thread(daemon_instance.restart)
                     await _activate_terminal(client, address)
                     await _screen(client, "GCLIENT-STARTUP-READY")

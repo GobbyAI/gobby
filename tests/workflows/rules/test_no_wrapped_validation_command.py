@@ -180,9 +180,9 @@ class TestWrappedValidationBlocking:
             ("Read", {"tool_input": {"file_path": "src/gobby/app.py"}}),
             ("Read", {}),
             ("Bash", {"tool_input": None}),
-            ("Bash", {"tool_input": "uv run mypy src/ | tail -3"}),
+            ("Bash", {"tool_input": '{"command": "ls -la"}'}),
         ],
-        ids=["other-tool", "no-tool-input", "null-tool-input", "string-tool-input"],
+        ids=["other-tool", "no-tool-input", "null-tool-input", "json-string-tool-input"],
     )
     async def test_condition_never_fails_closed_on_foreign_tool_input(
         self, db: HubDatabase, tool_name: str, data: dict[str, object]
@@ -195,6 +195,18 @@ class TestWrappedValidationBlocking:
         )
 
         assert response.decision != "block"
+
+    async def test_undecodable_shell_input_fails_closed(self, db: HubDatabase) -> None:
+        """An unreadable command can't be judged bare, so the block stands (#23168)."""
+        engine = _isolated_engine(db)
+
+        response = await engine.evaluate(
+            _tool_event("Bash", {"tool_input": "uv run mypy src/ | tail -3"}),
+            session_id=SESSION_ID,
+            variables={},
+        )
+
+        assert response.decision == "block"
 
     async def test_block_reason_reaches_the_agent(self, db: HubDatabase) -> None:
         engine = _isolated_engine(db)

@@ -21,7 +21,7 @@ from tomlkit.exceptions import TOMLKitError
 from tomlkit.items import Table
 from tomlkit.toml_document import TOMLDocument
 
-from gobby.agents.trust import seed_cli_trust, seed_gobby_home_trust
+from gobby.agents.trust import is_stale_generated_path, seed_cli_trust, seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
 
 from .hook_commands import (
@@ -356,12 +356,47 @@ def _remove_stale_gobby_hook_trust_state(
             del state_table[key]
 
 
+def _remove_dead_generated_hook_trust_state(config: TOMLDocument) -> None:
+    """Remove hook trust state whose hooks file was a deleted Gobby-generated path.
+
+    Codex never forgets a hooks file, so without this sweep every deleted worktree
+    leaves its trust tables behind and config.toml grows with each worktree created.
+    """
+    # Interleaved tables parse as OutOfOrderTableProxy (a dict), not Table.
+    hooks_table = config.get("hooks")
+    if not isinstance(hooks_table, (dict, Table)):
+        return
+    state_table = hooks_table.get("state")
+    if not isinstance(state_table, (dict, Table)):
+        return
+
+    event_labels = set(CODEX_HOOK_EVENT_KEY_LABELS.values())
+    stale_by_file: dict[str, bool] = {}
+    for key in list(state_table.keys()):
+        parts = key.rsplit(":", 3)
+        if len(parts) != 4 or parts[1] not in event_labels:
+            continue
+        if not (parts[2].isdigit() and parts[3].isdigit()):
+            continue
+        hooks_file = parts[0]
+        if hooks_file not in stale_by_file:
+            stale_by_file[hooks_file] = is_stale_generated_path(hooks_file)
+        if stale_by_file[hooks_file]:
+            del state_table[key]
+
+    if not state_table:
+        del hooks_table["state"]
+    if not hooks_table:
+        del config["hooks"]
+
+
 def _ensure_codex_hook_trust_state(
     config: TOMLDocument,
     hooks_file: Path,
     previous_entries: list[HookTrustEntry] | None = None,
 ) -> set[str]:
     """Mark installed Gobby hooks as trusted in Codex config.toml."""
+    _remove_dead_generated_hook_trust_state(config)
     hooks_config = json.loads(hooks_file.read_text(encoding="utf-8"))
     entries = list(_iter_gobby_hook_trust_entries(hooks_file, hooks_config))
     if not entries:

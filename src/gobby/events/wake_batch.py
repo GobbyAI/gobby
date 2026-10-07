@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import AsyncExitStack
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.events.live_wake import wake_debounced_result, wake_failure
@@ -119,7 +120,6 @@ async def dispatch_live_wakes(
                 )
             )
 
-        attempted_at = utc_now()
         async with asyncio.TaskGroup() as group:
             native_task = (
                 group.create_task(_send_native(dispatcher, native_targets))
@@ -135,8 +135,6 @@ async def dispatch_live_wakes(
         if native_task is not None:
             for result in native_task.result():
                 session_id = str(result["session_id"])
-                if result.get("delivered") is True:
-                    await dispatcher._record_live_wake(session_id, attempted_at)
                 results[session_id] = result
         for session_id, task in fallback_tasks.items():
             results[session_id] = task.result()
@@ -166,6 +164,7 @@ async def _send_native(
             for target in targets
         ]
 
+    completed_at = utc_now()
     by_session = {
         str(result.get("session_id")): result
         for result in raw_results
@@ -180,6 +179,14 @@ async def _send_native(
                 method="terminal",
                 error_code="native_wake_result_missing",
                 error_message="Native wake batch returned no result for the recipient",
+            )
+        if result.get("delivered") is True:
+            submitted_at = result.get("submit_dispatched_at")
+            await dispatcher._record_live_wake(
+                target.session_id,
+                datetime.fromisoformat(submitted_at)
+                if isinstance(submitted_at, str)
+                else completed_at,
             )
         normalized.append(result)
     return normalized

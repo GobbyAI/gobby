@@ -8,8 +8,8 @@ use crate::ui::chrome::{Chrome, RowState};
 use crate::ui::keymap::{HelpEntry, Keymap};
 use crate::ui::status::{state_dot, state_label};
 use crate::ui::widgets::{
-    action_button_width, modal_stack_areas, panel_contrast_fg, render_action_button,
-    render_modal_header, render_modal_shell,
+    action_button_width, centered_popup_rect, modal_stack_areas, panel_contrast_fg,
+    render_action_button, render_modal_header, render_panel_shell,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -298,13 +298,22 @@ pub fn legend_groups(chrome: &Chrome, width: u16) -> Vec<Vec<Line<'static>>> {
     groups
 }
 
+/// The help's popup over `area`, border included.
+pub fn popup_area(area: Rect) -> Option<Rect> {
+    centered_popup_rect(
+        area,
+        area.width.saturating_sub(4).min(HELP_MAX_WIDTH),
+        area.height.saturating_sub(2).min(HELP_MAX_HEIGHT),
+    )
+}
+
 /// Draw the help over `area`. Returns the close button, and the furthest
 /// scroll the drawn body shows, which bounds the scroll keys.
 pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) -> (Vec<Rect>, usize) {
     let p = &chrome.palette;
-    let popup_w = area.width.saturating_sub(4).min(HELP_MAX_WIDTH);
-    let popup_h = area.height.saturating_sub(2).min(HELP_MAX_HEIGHT);
-    let Some(inner) = render_modal_shell(frame, area, popup_w, popup_h, p) else {
+    let Some(inner) =
+        popup_area(area).and_then(|popup| render_panel_shell(frame, popup, p.accent, p.panel_bg))
+    else {
         return (Vec::new(), 0);
     };
     if inner.height < 6 || inner.width < 20 {
