@@ -1719,6 +1719,34 @@ def test_copy_credit_compares_against_the_close_candidate_commit(
     assert gate.details.get("pytest_copy_differing_paths", []) == differing
 
 
+def test_copy_credit_never_matches_a_candidate_symlink(tmp_path: Path) -> None:
+    # A symlink's blob is its target text, so a regular file holding that text is not it.
+    repo, export = tmp_path / "repo", tmp_path / "export"
+    for tree in (repo, export):
+        (tree / "tests").mkdir(parents=True)
+        (tree / "tests/test_widget.py").write_text("def test_widget(): pass\n")
+    (repo / "link").symlink_to("tests/test_widget.py")
+    (export / "link").write_text("tests/test_widget.py")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "c")
+    run = _run(2, command="uv run pytest tests/test_widget.py -q", workdir=str(export))
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_scoped_audit_run(1, "tests/test_widget.py"), run)
+        ),
+        has_attributed_edits=True,
+        changed_paths=("link", "tests/test_widget.py"),
+        close_root=str(repo),
+        candidate_commit_sha=_git(repo, "rev-parse", "HEAD").strip(),
+    )
+
+    assert gate.status == "failed", gate.message
+    assert gate.details.get("pytest_copy_differing_paths", []) == ["link"]
+
+
 @pytest.mark.parametrize(
     ("answered", "reads_after_two"),
     [
