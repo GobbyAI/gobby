@@ -8,7 +8,6 @@ import threading
 import uuid
 from types import SimpleNamespace
 from typing import Any, Literal, cast
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -93,7 +92,6 @@ async def test_attach_before_placed_spawn_commit_is_not_reported_stale(
     server.configure_terminals(
         manager,
         registry,
-        MagicMock(),
         lease_registry=leases,
         write_coordinator=WriteCoordinator(manager, registry, lease_registry=leases),
     )
@@ -246,7 +244,6 @@ def _configure(
     server.configure_terminals(
         manager,
         registry,
-        MagicMock(),
         lease_registry=leases,
         write_coordinator=WriteCoordinator(manager, registry, lease_registry=leases),
     )
@@ -461,7 +458,6 @@ async def test_direct_attach_refuses_exited_row(
     server.configure_terminals(
         manager,
         registry,
-        MagicMock(),
         host_manager=host,
         lease_registry=leases,
         write_coordinator=WriteCoordinator(manager, registry, lease_registry=leases),
@@ -559,7 +555,6 @@ async def _attach_reply(
     server.configure_terminals(
         manager,
         registry,
-        MagicMock(),
         lease_registry=leases,
         write_coordinator=WriteCoordinator(manager, registry, lease_registry=leases),
     )
@@ -590,7 +585,6 @@ async def test_proxy_attach_waits_for_terminal_host_startup(
     server.configure_terminals(
         manager,
         registry,
-        MagicMock(),
         host_manager=host,
         lease_registry=leases,
         write_coordinator=WriteCoordinator(manager, registry, lease_registry=leases),
@@ -646,7 +640,6 @@ async def test_attach_resolves_the_row_on_the_db_executor(
     server.configure_terminals(
         manager,
         registry,
-        MagicMock(),
         lease_registry=leases,
         write_coordinator=WriteCoordinator(manager, registry, lease_registry=leases),
     )

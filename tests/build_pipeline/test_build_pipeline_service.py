@@ -2120,7 +2120,7 @@ async def test_build_leaf_with_services_creates_agent_run_by_completion(
 
     result = await build(
         f"#{leaf.seq_num}",
-        _options(checkout_mode="none", assigned_agent="backend-developer"),
+        _options(checkout_mode="none", assigned_agent="developer"),
         db=temp_db,
         project_id=sample_project["id"],
         services=services,
@@ -2128,7 +2128,7 @@ async def test_build_leaf_with_services_creates_agent_run_by_completion(
 
     run = LocalAgentRunManager(temp_db).get("1b777bbd-8f4f-515e-8b86-417fb05afba2")
     assert run is not None
-    assert run.agent_name == "backend-developer"
+    assert run.agent_name == "developer"
     assert run.task_id == leaf.id
     assert result.dispatcher_tick.ticks >= 2
     assert result.dispatcher_tick.executed >= 2

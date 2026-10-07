@@ -49,12 +49,7 @@ def _local_machine_identity() -> Iterator[None]:
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_PATH = PROJECT_ROOT / "src/gobby/install/shared/workflows/agents"
-DEVELOPER_AGENT_NAMES = (
-    "backend-developer",
-    "frontend-developer",
-    "fullstack-developer",
-    "tech-writer",
-)
+LEAF_AGENT_NAMES = ("tech-writer",)
 
 
 @pytest.fixture
@@ -262,7 +257,7 @@ def _after_tool_event(
     )
 
 
-@pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+@pytest.mark.parametrize("agent_name", LEAF_AGENT_NAMES)
 @pytest.mark.parametrize("task_id", ("#21617", ASSIGNED_TASK_UUID))
 @pytest.mark.parametrize("wrapped", (False, True))
 @pytest.mark.asyncio
@@ -311,7 +306,7 @@ async def test_task_blocker_for_assigned_task_terminates(
     assert variables["step_workflow_complete"] is True
 
 
-@pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+@pytest.mark.parametrize("agent_name", LEAF_AGENT_NAMES)
 @pytest.mark.asyncio
 async def test_task_blocker_omitted_target_defaults_to_parent(
     db: HubDatabase,
@@ -350,7 +345,7 @@ async def test_task_blocker_omitted_target_defaults_to_parent(
     assert instance.variables["blocker_handed_off"] is True
 
 
-@pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+@pytest.mark.parametrize("agent_name", LEAF_AGENT_NAMES)
 @pytest.mark.parametrize("metadata", ({"task_id": "#21618"}, None))
 @pytest.mark.asyncio
 async def test_task_blocker_for_other_task_does_not_terminate(
@@ -400,7 +395,7 @@ async def test_assigned_task_blocker_terminalizes_with_blocked_payload(
 ) -> None:
     instance_manager = _register_bundled_agent_workflow(
         db,
-        agent_name="backend-developer",
+        agent_name="tech-writer",
         current_step="implement",
     )
     run_id = "33333333-3333-4333-8333-333333333333"
@@ -1120,7 +1115,7 @@ class TestAgentWorkflowCompletion:
         assert instance is None
         assert variables["review_complete"] is True
 
-    @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+    @pytest.mark.parametrize("agent_name", LEAF_AGENT_NAMES)
     @pytest.mark.asyncio
     async def test_developer_close_task_completion_requires_assigned_task(
         self,
@@ -1170,7 +1165,7 @@ class TestAgentWorkflowCompletion:
         assert instance.variables["implementation_complete"] is True
         assert variables["step_workflow_complete"] is True
 
-    @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+    @pytest.mark.parametrize("agent_name", LEAF_AGENT_NAMES)
     @pytest.mark.parametrize("task_id", ("#21617", ASSIGNED_TASK_UUID))
     @pytest.mark.asyncio
     async def test_escalate_assigned_task_exits_implement(
@@ -1206,7 +1201,7 @@ class TestAgentWorkflowCompletion:
         assert instance.variables["implementation_complete"] is True
         assert variables["step_workflow_complete"] is True
 
-    @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+    @pytest.mark.parametrize("agent_name", LEAF_AGENT_NAMES)
     @pytest.mark.asyncio
     async def test_escalate_other_task_stays_in_implement(
         self,
@@ -1240,7 +1235,7 @@ class TestAgentWorkflowCompletion:
         assert instance.variables["implementation_complete"] is False
         assert "step_workflow_complete" not in variables
 
-    @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+    @pytest.mark.parametrize("agent_name", LEAF_AGENT_NAMES)
     @pytest.mark.asyncio
     async def test_developer_non_blocker_messages_do_not_terminate(
         self,
@@ -1291,3 +1286,313 @@ class TestAgentWorkflowCompletion:
             assert instance.current_step == "implement"
             assert instance.variables["blocker_handed_off"] is False
             assert "step_workflow_complete" not in variables
+
+
+ASSIGNED_TASK_REF = "#22997"
+# The per-task state a developer seat clears before it claims its next task.
+_DEVELOPER_RESET_STATE: dict[str, object] = {
+    "task_claimed": False,
+    "implementation_complete": False,
+    "additional_skills_loaded": False,
+    "skills_routed": False,
+    "candidate_sent": False,
+    "bounced": False,
+    "assigned_task_id": None,
+    "assigned_task_ref": None,
+}
+
+
+def _step_scoped_set_variable_event(name: str, value: object) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id=AGENT_SESSION_ID,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__set_variable",
+            "tool_input": {
+                "name": name,
+                "value": value,
+                "session_id": AGENT_SESSION_ID,
+                "scope": "step",
+            },
+            "tool_output": {"success": True},
+        },
+        metadata={},
+    )
+
+
+class TestDeveloperSeatLoop:
+    """agent-definition-profiles 3.2: the developer seat loops task to task."""
+
+    @staticmethod
+    async def _set_step_variable(
+        engine: RuleEngine,
+        instance_manager: AgentStepInstanceManager,
+        variables: dict[str, object],
+        name: str,
+        value: object,
+    ) -> None:
+        # The variables route writes the step instance; the hook then reports the call.
+        instance_manager.merge_variables(AGENT_SESSION_ID, {name: value})
+        await engine.evaluate(
+            _step_scoped_set_variable_event(name, value),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+
+    @staticmethod
+    def _state(
+        instance_manager: AgentStepInstanceManager,
+    ) -> tuple[str | None, dict[str, object]]:
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+        assert instance is not None
+        return instance.current_step, instance.variables
+
+    async def _reach_submit(
+        self,
+        engine: RuleEngine,
+        instance_manager: AgentStepInstanceManager,
+        variables: dict[str, object],
+    ) -> None:
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-tasks",
+                mcp_tool="claim_task",
+                tool_arguments={"task_id": ASSIGNED_TASK_REF},
+                tool_output={
+                    "success": True,
+                    "result": {"success": True, "task_id": ASSIGNED_TASK_UUID, "title": "t"},
+                },
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        step, state = self._state(instance_manager)
+        assert step == "route_skills"
+        assert state["assigned_task_id"] == ASSIGNED_TASK_UUID
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-tasks",
+                mcp_tool="get_task",
+                tool_arguments={"task_id": ASSIGNED_TASK_UUID},
+                tool_output={
+                    "success": True,
+                    "result": {"ref": ASSIGNED_TASK_REF, "id": ASSIGNED_TASK_UUID},
+                },
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        step, state = self._state(instance_manager)
+        assert (step, state["assigned_task_ref"]) == ("route_skills", ASSIGNED_TASK_REF)
+
+        # No routed skills, so the additional-skills gate passes straight through.
+        await self._set_step_variable(engine, instance_manager, variables, "skills_routed", True)
+        assert self._state(instance_manager)[0] == "implement"
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-tasks",
+                mcp_tool="link_commit",
+                tool_arguments={"task_id": ASSIGNED_TASK_REF, "commit_sha": "abc1234"},
+                tool_output={"success": True, "result": {"linked": True}},
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        assert self._state(instance_manager)[0] == "submit"
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-agents",
+                mcp_tool="send_message",
+                tool_arguments={
+                    "target": "session",
+                    "target_id": "#2",
+                    "content": (
+                        f"LANE=3 EVENT=CANDIDATE TASK={ASSIGNED_TASK_REF} TASK_TITLE=t "
+                        "RUN= WT=lane-3 COMMIT=abc1234 NOTE=focused tests pass"
+                    ),
+                },
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        step, state = self._state(instance_manager)
+        assert (step, state["candidate_sent"]) == ("submit", True)
+
+    def _assert_reset_for_next_claim(self, instance_manager: AgentStepInstanceManager) -> None:
+        step, state = self._state(instance_manager)
+        assert step == "claim"
+        assert {name: state[name] for name in _DEVELOPER_RESET_STATE} == _DEVELOPER_RESET_STATE
+
+    @pytest.mark.asyncio
+    async def test_developer_loop_returns_to_claim_after_its_task_closes(
+        self, db: HubDatabase
+    ) -> None:
+        instance_manager = _register_bundled_agent_workflow(
+            db, agent_name="developer", current_step="claim"
+        )
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {}
+        await self._reach_submit(engine, instance_manager, variables)
+
+        closed_output = {"success": True, "result": {"closed": True}}
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-tasks",
+                mcp_tool="close_task",
+                tool_arguments={"task_id": "#21595"},
+                tool_output=closed_output,
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        step, state = self._state(instance_manager)
+        assert (step, state["task_claimed"]) == ("submit", True)
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-tasks",
+                mcp_tool="close_task",
+                tool_arguments={"task_id": ASSIGNED_TASK_REF},
+                tool_output=closed_output,
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        self._assert_reset_for_next_claim(instance_manager)
+        assert "step_workflow_complete" not in variables
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "closed_card",
+        [
+            pytest.param(
+                {"ref": ASSIGNED_TASK_REF, "description": "d"},
+                id="inline-card",
+            ),
+            pytest.param(
+                {
+                    "offloaded": True,
+                    "result_id": "result-1",
+                    "ref": ASSIGNED_TASK_REF,
+                },
+                id="offloaded-card",
+            ),
+        ],
+    )
+    async def test_developer_loop_returns_to_claim_after_a_reviewed_close(
+        self, db: HubDatabase, closed_card: dict[str, object]
+    ) -> None:
+        instance_manager = _register_bundled_agent_workflow(
+            db, agent_name="developer", current_step="claim"
+        )
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {}
+        await self._reach_submit(engine, instance_manager, variables)
+
+        # A close with complete evidence hands off to the daemon-managed reviewer
+        # (_lifecycle_close_orchestration.py); the reviewer closes the task out of band.
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-tasks",
+                mcp_tool="close_task",
+                tool_arguments={"task_id": ASSIGNED_TASK_REF, "commit_sha": "abc1234"},
+                tool_output={
+                    "success": True,
+                    "result": {
+                        "success": True,
+                        "preview": False,
+                        "can_close": False,
+                        "closed": False,
+                        "task_id": ASSIGNED_TASK_UUID,
+                        "error": "close_review_required",
+                        "blocking_reasons": [],
+                        "required_actions": [],
+                        "review_id": "review-1",
+                        "reviewer_run_id": "run-1",
+                    },
+                },
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        step, state = self._state(instance_manager)
+        assert (step, state["task_claimed"]) == ("submit", True)
+
+        def card(task_id: str, *, is_closed: bool) -> dict[str, object]:
+            state_payload = {"is_closed": is_closed, "is_claimed": not is_closed}
+            return {
+                "success": True,
+                "result": {**closed_card, "id": task_id, "state": state_payload},
+            }
+
+        for other_read in (
+            card(ASSIGNED_TASK_UUID, is_closed=False),
+            card("other", is_closed=True),
+        ):
+            await engine.evaluate(
+                _after_tool_event(
+                    mcp_server="gobby-tasks",
+                    mcp_tool="get_task",
+                    tool_arguments={"task_id": ASSIGNED_TASK_REF},
+                    tool_output=other_read,
+                ),
+                session_id=AGENT_SESSION_ID,
+                variables=variables,
+            )
+            step, state = self._state(instance_manager)
+            assert (step, state["task_claimed"]) == ("submit", True)
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-tasks",
+                mcp_tool="get_task",
+                tool_arguments={"task_id": ASSIGNED_TASK_REF},
+                tool_output=card(ASSIGNED_TASK_UUID, is_closed=True),
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        self._assert_reset_for_next_claim(instance_manager)
+
+    @pytest.mark.asyncio
+    async def test_developer_bounce_reopens_implement_until_the_rework_commit(
+        self, db: HubDatabase
+    ) -> None:
+        instance_manager = _register_bundled_agent_workflow(
+            db, agent_name="developer", current_step="submit"
+        )
+        instance_manager.merge_variables(
+            AGENT_SESSION_ID,
+            {
+                "task_claimed": True,
+                "assigned_task_id": ASSIGNED_TASK_UUID,
+                "assigned_task_ref": ASSIGNED_TASK_REF,
+                "skills_routed": True,
+                "implementation_complete": True,
+                "candidate_sent": True,
+            },
+        )
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {}
+
+        await self._set_step_variable(engine, instance_manager, variables, "bounced", True)
+        assert self._state(instance_manager)[0] == "implement"
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-tasks",
+                mcp_tool="link_commit",
+                tool_arguments={"task_id": ASSIGNED_TASK_UUID, "commit_sha": "def5678"},
+                tool_output={"success": True, "result": {"linked": True}},
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        step, state = self._state(instance_manager)
+        assert step == "submit"
+        assert (state["bounced"], state["candidate_sent"]) == (False, False)

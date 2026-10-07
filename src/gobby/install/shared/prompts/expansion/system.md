@@ -39,7 +39,7 @@ Return ONLY valid JSON. No prose, no markdown, no code fences.
       "affected_files": ["src/..."],
       "execution_group": "optional-parallel-lane",
       "implementation_domain": "backend",
-      "assigned_agent": "backend-developer",
+      "assigned_agent": "developer",
       "additional_skills": []
     }
   ],
@@ -69,12 +69,12 @@ Return ONLY valid JSON. No prose, no markdown, no code fences.
 5. Put only real dependencies in `dependencies`.
 6. Include `affected_files` when you can infer them from the current repo.
 7. `implementation_domain` is required for every `category: "code"` task and must be one of `backend`, `frontend`, or `fullstack`.
-8. Derive code task routing from `implementation_domain`: backend -> backend-developer, frontend -> frontend-developer, fullstack -> fullstack-developer. Do not set a different code `assigned_agent` unless the caller explicitly requested a privileged manual override.
+8. Derive code task routing from `implementation_domain`: every domain routes to `developer`, which reads the domain to pick its skills. Do not set a different code `assigned_agent` unless the caller explicitly requested a privileged manual override.
 9. For TDD-required code/config work, emit one implementation task with `additional_skills: ["test-driven-development"]`, a `tdd:required` label if labels are present, and validation criteria requiring red, green, refactor/final-green, exact test command, test-quality audit evidence, and test-types audit (mypy ratchet) evidence for Python test changes.
 10. Do not create separate `[TEST]`, `[IMPL]`, or `[REF]` tasks yourself.
 11. Do not invent optional scope or extra features.
 12. Assign every `config`, `docs`, `refactor`, or `test` leaf to an available agent using
-    the agent-selection heuristics in `gobby:references/plan/expansion.md`. Use `backend-developer` as the default
+    the agent-selection heuristics in `gobby:references/plan/expansion.md`. Use `developer` as the default
     fallback and include `additional_skills` as an array.
 13. Do not emit discovery-stage leaves from an approved plan.
 14. When repository context includes `Related existing test files`, use those exact

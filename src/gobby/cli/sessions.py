@@ -252,6 +252,7 @@ def list_sessions(
             limit=limit,
         )
         attention_by_session = _blocked_attention_by_session(manager)
+        manager.load_task_refs(sessions_list)
 
     if json_format:
         click.echo(json_dumps([s.to_dict() for s in sessions_list], indent=2, default=str))
@@ -308,6 +309,8 @@ def show_session(session_id: str, json_format: bool) -> None:
         if not session:
             click.echo(f"Session not found: {session_id}", err=True)
             raise SystemExit(1)
+
+        manager.load_task_refs([session])
 
     if json_format:
         click.echo(json_dumps(session.to_dict(), indent=2, default=str))

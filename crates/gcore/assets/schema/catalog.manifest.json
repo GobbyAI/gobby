@@ -1157,6 +1157,10 @@
       "definition": "integer|int4|NO|0|NEVER"
     },
     {
+      "name": "code_indexed_project_states.community_input_digest",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "code_indexed_project_states.created_at",
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },

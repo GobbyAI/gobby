@@ -1,4 +1,4 @@
-"""Backend selection under the native default (#22104; was the tmux default)."""
+"""Fixed native-first backend selection (#22104, #23212; no configurable backend)."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from uuid import UUID
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
-from gobby.agents.spawn_models import resolve_terminal_backend
 from gobby.config.app import DaemonConfig
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.hub.protocol import HubDatabase
@@ -30,6 +30,25 @@ _REPO = Path(__file__).resolve().parents[2]
 _CONFIG_YAML = _REPO / "src" / "gobby" / "install" / "shared" / "config" / "config.yaml"
 _GUIDE = _REPO / "docs" / "guides" / "gterminal-development-guide.md"
 _TERMINAL_CREATE_WS = _REPO / "src" / "gobby" / "servers" / "websocket" / "terminal_ws_create.py"
+_RUNTIME_CONTRACT = (
+    _REPO / "crates" / "gcore" / "assets" / "config" / "runtime_config_contract.json"
+)
+
+
+def test_default_backend_config_is_removed() -> None:
+    assert "default_backend" not in TerminalConfig.model_fields
+    with pytest.raises(ValidationError, match="default_backend"):
+        TerminalConfig.model_validate({"default_backend": "native"})
+    with pytest.raises(ValidationError, match="default_backend"):
+        DaemonConfig.model_validate({"terminals": {"default_backend": "native"}})
+    loaded = yaml.safe_load(_CONFIG_YAML.read_text(encoding="utf-8"))
+    assert "default_backend" not in (loaded.get("terminals") or {})
+    contract_text = _RUNTIME_CONTRACT.read_text(encoding="utf-8")
+    assert '"terminals.spawn_in_doubt_seconds"' in contract_text
+    assert "default_backend" not in contract_text
+    guide = _GUIDE.read_text(encoding="utf-8")
+    assert "default_backend" not in guide
+    assert "native gterm is always attempted first" in guide
 
 
 @pytest.mark.asyncio
@@ -38,23 +57,11 @@ async def test_explicit_and_external_selection_under_native_default(
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    daemon = DaemonConfig()
-    assert TerminalConfig().default_backend == "native"
-    assert daemon.terminals.default_backend == "native"
-    loaded = yaml.safe_load(_CONFIG_YAML.read_text(encoding="utf-8"))
-    assert loaded["terminals"]["default_backend"] == "native"
     guide = _GUIDE.read_text(encoding="utf-8")
     assert "## Backend status" in guide
     assert "`native` is the only spawn backend" in guide
     assert "spawn-less adapter for externally discovered sessions" in guide
     assert "`host_unavailable`" in guide
-
-    assert resolve_terminal_backend(None, daemon) == "native"
-    assert resolve_terminal_backend(None, None) == "native"
-    assert resolve_terminal_backend("native", daemon) == "native"
-    for refused_backend in ("tmux", "ssh"):
-        with pytest.raises(ValueError, match="invalid terminal_backend"):
-            resolve_terminal_backend(refused_backend, daemon)
 
     monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID)
     manager = _manager(temp_db)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import subprocess
 import textwrap
 import threading
 import time
@@ -14,12 +15,14 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from gobby.code_index.models import (
     CODE_INDEX_UUID_NAMESPACE,
     IndexedFile,
     IndexedProject,
     IndexWriteMode,
+    Symbol,
 )
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.server import GobbyDaemonTools
@@ -611,6 +614,157 @@ async def test_delete_plan_with_unresolvable_project_does_not_delete_unscoped_pl
     assert preserved.plan_id == "task-100-demo"
 
 
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("form", ["main_checkout", "linked_worktree", "name", "uuid"])
+async def test_plan_tools_resolve_project_from_checkout_path_name_or_uuid(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    form: str,
+) -> None:
+    main = tmp_path / "main"
+    linked = tmp_path / "linked"
+    project_id = _create_project(temp_db, main, "plans-checkout")
+    _write_plan(main)
+    _git(main, "init", "-q")
+    _git(main, "add", ".")
+    _git(main, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "x")
+    _git(main, "worktree", "add", "-q", "--detach", str(linked))
+    root_task = LocalTaskManager(temp_db).create_task(
+        project_id, "Plan root", validation_criteria="Checkout paths resolve to the project."
+    )
+    LocalPlanManager(temp_db).create_plan_record(
+        project_id=project_id,
+        plan_id="task-100-demo",
+        plan_path=".gobby/plans/task-100-demo.md",
+        root_task_ref=f"#{root_task.seq_num}",
+    )
+    project = {
+        "main_checkout": str(main),
+        "linked_worktree": str(linked),
+        "name": "plans-checkout",
+        "uuid": project_id,
+    }[form]
+
+    result = await create_plan_registry(temp_db).call(
+        "get_plan", {"plan_id_or_ref": "task-100-demo", "project": project}
+    )
+
+    assert result["ok"] is True
+    assert result["plan"]["project_id"] == project_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("registered_marker", [False, True], ids=["plain-dir", "unregistered"])
+async def test_plan_tools_reject_path_outside_registered_checkouts(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    registered_marker: bool,
+) -> None:
+    if registered_marker:
+        write_project_marker(tmp_path, project_id=str(uuid.uuid4()), name="unregistered")
+
+    result = await create_plan_registry(temp_db).call("list_plans", {"project": str(tmp_path)})
+
+    assert result["ok"] is False
+    assert result["error"] == "invalid_project"
+    assert (
+        "project name, UUID, or absolute path of a registered project's checkout"
+        in (result["message"])
+    )
+
+
+def test_plan_tool_project_parameters_state_accepted_forms(temp_db: HubDatabase) -> None:
+    registry = create_plan_registry(temp_db)
+
+    descriptions: dict[str, str] = {}
+    for tool in registry.list_tools():
+        schema = registry.get_schema(tool["name"])
+        assert schema is not None
+        project = schema["inputSchema"]["properties"].get("project")
+        if project is not None:
+            descriptions[tool["name"]] = project["description"]
+
+    assert set(descriptions) == {
+        "create_plan",
+        "get_plan",
+        "list_plans",
+        "archive_plan",
+        "update_plan_hash",
+        "regenerate_coverage_manifest",
+        "delete_plan",
+        "prepare_plan_review_round",
+        "derive_plan_handoff_manifest",
+        "apply_plan_handoff_manifest",
+    }
+    assert {
+        "Accepts a project name, UUID, or absolute path of a registered project's checkout "
+        "(main checkout or linked worktree)."
+    } == set(descriptions.values())
+
+
+@pytest.mark.asyncio
+async def test_regenerate_coverage_counts_leaves_reparented_under_another_epic(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    coverage_executor: CoverageExecutor,
+) -> None:
+    project_id = _create_project(temp_db, tmp_path, "plans")
+    tasks = LocalTaskManager(temp_db)
+    root = tasks.create_task(project_id, "Plan root", validation_criteria="Root owns P1.")
+    section = tasks.create_task(
+        project_id, "P1 Phase", parent_task_id=root.id, validation_criteria="P1 is done."
+    )
+    leaf = tasks.create_task(
+        project_id,
+        "1.1 Work",
+        parent_task_id=section.id,
+        labels=["covers:task-100-demo:1.1:1.1.1"],
+        validation_criteria="Docs exist in docs/demo.md.",
+    )
+    lane_epic = tasks.create_task(project_id, "Lane epic", validation_criteria="Lane is done.")
+    plan_path = _write_plan(tmp_path)
+    registry = create_plan_registry(
+        temp_db,
+        default_project_id=project_id,
+        coverage_executor=coverage_executor,
+    )
+    created = await registry.call(
+        "create_plan",
+        {
+            "plan_id": "task-100-demo",
+            "plan_path": str(plan_path),
+            "root_task_ref": f"#{root.seq_num}",
+        },
+    )
+    assert created["ok"] is True
+
+    async def regenerated_rows() -> list[tuple[str, str, str, list[str]]]:
+        result = await registry.call("regenerate_coverage_manifest", {"plan_id": "task-100-demo"})
+        manifest = yaml.safe_load(Path(result["manifest_path"]).read_text(encoding="utf-8"))
+        return [
+            (
+                row["section_id"],
+                row["item_id"],
+                row["status"],
+                [row_leaf["leaf_task_ref"] for row_leaf in row["leaves"]],
+            )
+            for row in manifest["rows"]
+        ]
+
+    expected = [("1.1", "1.1.1", "covered", [f"#{leaf.seq_num}"])]
+    assert await regenerated_rows() == expected
+
+    tasks.update_task(section.id, parent_task_id=lane_epic.id)
+    moved = tasks.get_task(leaf.id)
+    assert moved.path_cache == f"{lane_epic.seq_num}.{section.seq_num}.{leaf.seq_num}"
+
+    assert await regenerated_rows() == expected
+
+
 @pytest.mark.asyncio
 async def test_create_plan_rejects_invalid_plan_kind(temp_db: HubDatabase, tmp_path: Path) -> None:
     project_id = _create_project(temp_db, tmp_path, "plans")
@@ -659,6 +813,71 @@ async def test_validate_plan_returns_valid_for_canonical_plan(
         "checked_targets": ["docs/demo.md"],
         "checked_symbols": [],
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("completed", [False, True])
+async def test_validate_plan_resolves_completed_section_targets(
+    temp_db: HubDatabase, tmp_path: Path, completed: bool
+) -> None:
+    project_id = _create_indexed_project(temp_db, tmp_path)
+    target = "src/demo.py"
+    source = tmp_path / target
+    source.parent.mkdir()
+    source.write_text("def run():\n    return 1\n", encoding="utf-8")
+    content_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    code_index = CodeIndexStorage(temp_db)
+    code_index.upsert_file(
+        IndexedFile(
+            id=IndexedFile.make_id(project_id, target, content_hash),
+            project_id=project_id,
+            file_path=target,
+            language="python",
+            content_hash=content_hash,
+            symbol_count=1,
+            byte_size=source.stat().st_size,
+        ),
+        root_path=str(tmp_path),
+        mode=IndexWriteMode.OVERLAY,
+    )
+    code_index.upsert_symbols(
+        [
+            Symbol(
+                id=str(uuid.uuid4()),
+                project_id=project_id,
+                file_path=target,
+                name="run",
+                qualified_name="run",
+                kind="function",
+                language="python",
+                byte_start=0,
+                byte_end=source.stat().st_size,
+                line_start=1,
+                line_end=2,
+                file_content_hash=content_hash,
+                content_hash=content_hash,
+            )
+        ]
+    )
+    plan_path = _write_plan(tmp_path, target=target)
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=project_id,
+        title="Deliver section",
+        labels=["covers:task-100-demo:1.1:1.1.1"],
+        validation_criteria="Source target exists.",
+    )
+    if completed:
+        manager.close_task(task.id, reason="completed")
+    registry = create_plan_registry(temp_db)
+    token = set_project_context({"id": project_id, "project_path": str(tmp_path)})
+    try:
+        result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
+    finally:
+        reset_project_context(token)
+
+    assert result["valid"] is completed, result
+    assert result["symbol_validation"]["status"] == ("passed" if completed else "failed")
 
 
 @pytest.mark.asyncio
@@ -799,10 +1018,11 @@ async def test_validate_plan_fails_closed_without_project_context(
     result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
 
     assert result["valid"] is False
-    assert result["symbol_validation"]["status"] == "failed"
-    assert {issue["code"] for issue in result["symbol_validation"]["issues"]} == {
-        "symbol_index_unavailable",
-    }
+    assert result["condition"] == "completed_section_exemptions_unavailable"
+    assert result["errors"] == [
+        "completed-section exemptions unavailable: no project or plan identity"
+    ]
+    assert result["symbol_validation"]["status"] == "skipped"
 
 
 @pytest.mark.asyncio

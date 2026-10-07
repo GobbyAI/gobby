@@ -8,7 +8,17 @@ from pathlib import Path
 import pytest
 
 from gobby.plans.parser import parse_plan
-from gobby.plans.semantic_lint import SemanticLintResult, lint_plan_document
+from gobby.plans.production_size import git_blob_id
+from gobby.plans.semantic_lint import (
+    SemanticLintIssue,
+    SemanticLintResult,
+    collect_strict_target_inventory,
+    collect_target_inventory,
+    is_delete_lines_entry,
+    iter_description_target_lines,
+    lint_plan_document,
+)
+from gobby.plans.symbol_targets import parse_target_line
 
 pytestmark = pytest.mark.unit
 
@@ -1260,3 +1270,261 @@ def test_phase_heading_dependency_applies_to_every_deliverable(tmp_path: Path) -
 
     assert not any(issue.code == "shared-target-ordering" for issue in result.issues)
     assert not any(issue.code == "unresolved-dependency" for issue in result.issues)
+
+
+PANE_RS = "crates/gclient/src/app/mod.rs"
+BIG_PROOF = (
+    "`src/app/big.py::*` — operation: delete-lines — base-blob: {big} — lines: 1"
+    " — scope-reason: shrink"
+)
+SHRINK = "Shrink the module."
+SPLIT_BODY = "Split `src/app/big.py` and move helpers into `src/app/big_helpers.py`."
+
+
+def _write_source(root: Path, relative: str, text: str) -> str:
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return git_blob_id(path.read_bytes())
+
+
+def _size_plan(targets: list[str], body: str = SHRINK) -> str:
+    target_lines = "\n".join(f"- {target}" for target in targets)
+    return (
+        "> **Plan ID:** delete-lines-proof\n\n# Delete Lines Proof\n\n"
+        "## P1: Work\n`kind: framing`\n\n"
+        "### 1.1 Shrink module [category: code]\n`kind: deliverable`\n\n"
+        f"Targets:\n{target_lines}\n\n{body}\n\n"
+        "**Acceptance:**\n- 1.1.1 - The module shrinks. file: `src/app/big.py`.\n"
+    )
+
+
+def _size_issues(tmp_path: Path, plan_text: str) -> list[SemanticLintIssue]:
+    result = _lint_plan_text(tmp_path, plan_text, project_root=tmp_path)
+    return [issue for issue in result.issues if issue.code == "production-size-growth"]
+
+
+def test_production_size_growth_accepts_delete_lines_proof(tmp_path: Path) -> None:
+    lines = "".join(f"pub fn item_{index}() {{}}\n" for index in range(926))
+    blob = _write_source(tmp_path, PANE_RS, "pub use pane::UNNAMED_PANE;\n" + lines)
+    reason = "scope-reason: remove the UNNAMED_PANE re-export"
+    proof = f"`{PANE_RS}::*` — operation: delete-lines — base-blob: {blob} — lines: 1 — {reason}"
+
+    assert _size_issues(tmp_path, _size_plan([proof])) == []
+    (issue,) = _size_issues(tmp_path, _size_plan([f"`{PANE_RS}::*` — {reason}"]))
+    assert issue.details["line_count"] == 927
+    assert "proof_error" not in issue.details
+
+
+@pytest.fixture
+def proof_blobs(tmp_path: Path) -> dict[str, str]:
+    blobs = {
+        "big": _write_source(tmp_path, "src/app/big.py", "value = 1\n" * 900),
+        "small": _write_source(tmp_path, "src/app/small.py", "value = 1\n" * 10),
+        "tests": _write_source(tmp_path, "tests/test_big.py", "value = 1\n" * 900),
+        "gen": _write_source(tmp_path, "src/gen.py", "# @generated\n" + "value = 1\n" * 900),
+    }
+    _write_source(tmp_path, "src/delete-lines.py", "value = 1\n" * 900)
+    (tmp_path / "src" / "link").symlink_to(tmp_path / "src" / "app", target_is_directory=True)
+    (tmp_path / "src" / "alias.py").symlink_to(tmp_path / "src" / "app" / "big.py")
+    return blobs
+
+
+@pytest.mark.parametrize(
+    ("entries", "body", "expected"),
+    [
+        pytest.param(
+            [BIG_PROOF, "`src/app/big.py::run` — scope-reason: edit run"],
+            SHRINK,
+            [("src/app/big.py", True)],
+            id="mixed-second-entry",
+        ),
+        pytest.param(
+            [BIG_PROOF, "`src/app/big.py::*` — operation: delete"],
+            SHRINK,
+            [("src/app/big.py", True)],
+            id="mixed-whole-file-delete",
+        ),
+        pytest.param(
+            [BIG_PROOF.replace("lines: 1", "lines: 01")],
+            SHRINK,
+            [("src/app/big.py", True)],
+            id="malformed",
+        ),
+        pytest.param(
+            ["`src/app/big.py::*` — scope-reason: shrink — operation: delete-lines"],
+            SHRINK,
+            [("src/app/big.py", True)],
+            id="operation-after-scope-reason",
+        ),
+        pytest.param(
+            [BIG_PROOF.replace("`src/app/big.py::*`", "``")],
+            SHRINK,
+            [(None, True)],
+            id="empty-backticks",
+        ),
+        pytest.param(
+            [BIG_PROOF.replace("`src/app/big.py::*` — ", "")],
+            SHRINK,
+            [(None, True)],
+            id="operation-in-target-slot",
+        ),
+        pytest.param(
+            [BIG_PROOF.replace("`src/app/big.py::*` ", "")],
+            SHRINK,
+            [("-", True)],
+            id="em-dash-after-marker",
+        ),
+        pytest.param(
+            [
+                BIG_PROOF.replace("big.py", "small.py")
+                .replace("{big}", "{small}")
+                .replace("lines: 1", "lines: 01")
+            ],
+            SHRINK,
+            [("src/app/small.py", True)],
+            id="malformed-below-threshold",
+        ),
+        pytest.param(
+            [BIG_PROOF.replace("lines: 1", "lines: 0"), "`src/app/big_helpers.py`"],
+            SPLIT_BODY,
+            [("src/app/big.py", True)],
+            id="malformed-beside-split",
+        ),
+        pytest.param(
+            [BIG_PROOF.replace("src/app/big.py", "tests/test_big.py").replace("{big}", "{tests}")],
+            SHRINK,
+            [("tests/test_big.py", True)],
+            id="tests-path",
+        ),
+        pytest.param(
+            [BIG_PROOF.replace("src/app/big.py", "src/gen.py").replace("{big}", "{gen}")],
+            SHRINK,
+            [("src/gen.py", True)],
+            id="generated-file",
+        ),
+        pytest.param(
+            [BIG_PROOF.replace("src/app/big.py", "src/link/big.py")],
+            SHRINK,
+            [("src/link/big.py", True)],
+            id="symlinked-parent",
+        ),
+        pytest.param(
+            [BIG_PROOF.replace("src/app/big.py", "src/alias.py")],
+            SHRINK,
+            [("src/alias.py", True)],
+            id="symlinked-file",
+        ),
+        pytest.param(
+            ["`src/app/big.py::*` — scope-reason: no delete-lines proof needed"],
+            SHRINK,
+            [("src/app/big.py", False)],
+            id="prose-mention-is-ordinary",
+        ),
+        pytest.param(
+            ["`src/delete-lines.py::*`"],
+            SHRINK,
+            [("src/delete-lines.py", False)],
+            id="delete-lines-file-is-ordinary",
+        ),
+    ],
+)
+def test_production_size_growth_delete_lines_proof_fails_closed(
+    tmp_path: Path,
+    proof_blobs: dict[str, str],
+    entries: list[str],
+    body: str,
+    expected: list[tuple[str | None, bool]],
+) -> None:
+    targets = [entry.format(**proof_blobs) for entry in entries]
+    issues = _size_issues(tmp_path, _size_plan(targets, body))
+
+    assert [(issue.details["file_path"], "proof_error" in issue.details) for issue in issues] == (
+        expected
+    )
+
+
+def test_production_size_growth_stale_proof_has_no_fallback(tmp_path: Path) -> None:
+    _write_source(tmp_path, "src/app/big.py", "value = 1\n" * 900)
+    stale = git_blob_id(b"value = 1\n" * 899)
+    helper = "`src/app/big_helpers.py`"
+    assert _size_issues(tmp_path, _size_plan(["`src/app/big.py::run`", helper], SPLIT_BODY)) == []
+
+    plan_path = tmp_path / "stale-plan.md"
+    plan_path.write_text(
+        _size_plan([BIG_PROOF.format(big=stale), helper], SPLIT_BODY), encoding="utf-8"
+    )
+    plan_doc = parse_plan(plan_path, parse_mode="draft")
+    current = lint_plan_document(plan_doc, project_root=tmp_path)
+    completed = lint_plan_document(
+        plan_doc, project_root=tmp_path, completed_section_ids=frozenset({"1.1"})
+    )
+
+    (issue,) = [issue for issue in current.issues if issue.code == "production-size-growth"]
+    assert stale in issue.details["proof_error"]
+    assert not any(issue.code == "production-size-growth" for issue in completed.issues)
+
+
+def _ordering_plan(first_depends: str, second_depends: str) -> str:
+    proof = BIG_PROOF.format(big="a" * 40)
+    return (
+        "> **Plan ID:** proof-ordering\n\n# Proof Ordering\n\n## P1: Work\n`kind: framing`\n\n"
+        f"### 1.1 Shrink module [category: code]{first_depends}\n`kind: deliverable`\n\n"
+        f"Targets:\n- {proof}\n\nShrink the module.\n\n"
+        "**Acceptance:**\n- 1.1.1 - The module shrinks. file: `src/app/big.py`.\n\n"
+        f"### 1.2 Extend module [category: code]{second_depends}\n`kind: deliverable`\n\n"
+        "Target: `src/app/big.py::run`\n\nExtend the module.\n\n"
+        "**Acceptance:**\n- 1.2.1 - The module grows. file: `src/app/big.py`.\n"
+    )
+
+
+PROOF_FIRST = (
+    "section 1.2 targets src/app/big.py before the delete-lines proof in section 1.1 binds its base"
+)
+
+
+@pytest.mark.parametrize(
+    ("first_depends", "second_depends", "expected"),
+    [
+        pytest.param("", "", [PROOF_FIRST], id="unordered"),
+        pytest.param(" (depends: 1.2)", "", [PROOF_FIRST], id="proof-last"),
+        pytest.param("", " (depends: 1.1)", [], id="proof-first"),
+    ],
+)
+def test_shared_target_ordering_requires_proof_owner_first(
+    tmp_path: Path, first_depends: str, second_depends: str, expected: list[str]
+) -> None:
+    result = _lint_plan_text(tmp_path, _ordering_plan(first_depends, second_depends))
+
+    messages = [issue.message for issue in result.issues if issue.code == "shared-target-ordering"]
+    assert messages == expected
+
+
+def test_delete_lines_proof_entry_is_one_target(tmp_path: Path) -> None:
+    entry = "- " + BIG_PROOF.format(big="b" * 40).replace("lines: 1", "lines: 2-3, 7")
+    plan_doc = parse_plan(
+        _write_plan(
+            tmp_path,
+            f"Targets:\n{entry}\n\nShrink `src/app/big.py`.\n\n"
+            "**Acceptance:**\n- 1.1.1 - Done. file: `src/app/big.py`.",
+        ),
+        parse_mode="draft",
+    )
+    (section,) = [section for section in plan_doc.sections if section.section_id == "1.1"]
+    targets, issues = parse_target_line(entry, "1.1")
+
+    assert is_delete_lines_entry(entry)
+    assert collect_strict_target_inventory(plan_doc, section) == {"src/app/big.py"}
+    assert collect_target_inventory(plan_doc, section) == {"src/app/big.py"}
+    assert [(target.file_path, target.wildcard) for target in targets] == [("src/app/big.py", True)]
+    assert issues == []
+
+
+def test_iter_description_target_lines_skips_fenced_blocks() -> None:
+    entry = "- " + BIG_PROOF.format(big="c" * 40)
+    example = entry.replace("src/app/big.py", "src/app/example.py")
+    description = "\n".join(
+        ["Targets:", entry, "", "Example:", "```text", "Targets:", example, "```", ""]
+    )
+
+    assert list(iter_description_target_lines(description)) == [entry]

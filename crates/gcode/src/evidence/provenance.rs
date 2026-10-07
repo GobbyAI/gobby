@@ -1,5 +1,7 @@
 //! Recorded Git provenance; never constructs a source checkout or index.
-use super::contracts::{ChangeStatus, ChangedPath, CommitBinding, ComparisonKind, ExclusionReason};
+use super::contracts::{
+    ChangeStatus, ChangedPath, CommitBinding, ComparisonKind, ExclusionReason, RepositoryBinding,
+};
 use super::source::{canonical_hash, validate_repo_path};
 use super::{EvidenceError, Result};
 use std::io::{Read as _, Write as _};
@@ -7,6 +9,63 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use wait_timeout::ChildExt;
+
+pub(super) fn read_bound_blob(
+    repo_root: &Path,
+    binding: &RepositoryBinding,
+    path: &str,
+) -> Result<Vec<u8>> {
+    let unavailable = |detail: String| EvidenceError::BindingMismatch {
+        detail: format!(
+            "cannot read {path} at binding commit {} tree {}: {detail}",
+            binding.commit_oid, binding.tree_oid
+        ),
+    };
+    let text =
+        |args: &[&str]| git_text(repo_root, args).map_err(|error| unavailable(error.to_string()));
+    if text(&["cat-file", "-t", &binding.commit_oid])? != "commit" {
+        return Err(unavailable("bound object is not a commit".into()));
+    }
+    let tree = text(&["rev-parse", &format!("{}^{{tree}}", binding.commit_oid)])?;
+    if tree != binding.tree_oid {
+        return Err(unavailable(format!("commit has tree {tree}")));
+    }
+    let listing = git(
+        repo_root,
+        &["ls-tree", "-z", &binding.commit_oid, "--", path],
+        None,
+    )
+    .map_err(|error| unavailable(error.to_string()))?;
+    let record = listing
+        .strip_suffix(&[0])
+        .ok_or_else(|| unavailable("path is absent from the bound commit".into()))?;
+    let separator = record
+        .iter()
+        .position(|byte| *byte == b'\t')
+        .ok_or_else(|| unavailable("invalid Git tree entry".into()))?;
+    let metadata = &record[..separator];
+    let listed_path = &record[separator + 1..];
+    if listed_path != path.as_bytes() {
+        return Err(unavailable("path is absent from the bound commit".into()));
+    }
+    let metadata = std::str::from_utf8(metadata).map_err(|error| unavailable(error.to_string()))?;
+    let fields = metadata.split_whitespace().collect::<Vec<_>>();
+    if fields.len() != 3 || !matches!(fields[0], "100644" | "100755") || fields[1] != "blob" {
+        return Err(unavailable("bound path is not a regular file".into()));
+    }
+    let size = text(&["cat-file", "-s", fields[2]])?
+        .parse::<usize>()
+        .map_err(|error| unavailable(error.to_string()))?;
+    if size > 10 * 1024 * 1024 {
+        return Err(unavailable("bound blob exceeds 10 MiB".into()));
+    }
+    let bytes = git(repo_root, &["cat-file", "blob", fields[2]], None)
+        .map_err(|error| unavailable(error.to_string()))?;
+    if bytes.len() != size {
+        return Err(unavailable("bound blob size changed".into()));
+    }
+    Ok(bytes)
+}
 
 pub(super) fn read_patch(
     repo_root: &Path,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,19 +10,28 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException, Request
 from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
-from gobby.servers.auth_service import _agent_capability_allows
+from gobby.mcp_proxy.wait_tools import (
+    MCP_WRAPPER_PROTOCOL_VERSION,
+    MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
+)
+from gobby.servers.auth_service import AuthService, _agent_capability_allows
 from gobby.servers.routes.mcp.endpoints import request_context
 from gobby.servers.routes.mcp.endpoints.bridge import (
     get_bridge_tool_timeouts,
     report_bridge_ready,
 )
 from gobby.servers.routes.mcp.tools import create_mcp_router
+from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
 from gobby.utils.session_context import SeededContextTokens
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.servers.conftest import _managed_bootstrap, create_http_server
 
 pytestmark = pytest.mark.unit
 
@@ -130,3 +140,93 @@ async def test_bridge_ready_without_a_session_propagates_session_required(
     assert raised.value.status_code == 409
     assert cast(dict[str, Any], raised.value.detail)["error_code"] == "SESSION_REQUIRED"
     assert "_mcp_proxy_ready" not in SessionVariableManager(temp_db).get_variables(SESSION_ID)
+
+
+def _agent_bridge_client(
+    temp_db: HubDatabase, sessions: SessionManager, project_id: str, tmp_path: Path
+) -> tuple[TestClient, dict[str, str], str, str]:
+    """Serve the app behind a real AuthService; return a managed run's wrapper headers."""
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        own, other = [
+            sessions.register(
+                external_id=f"bridge-ready-{name}",
+                machine_id=LOCAL_MACHINE_ID,
+                source="codex",
+                project_id=project_id,
+            )
+            for name in ("own", "other")
+        ]
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=own.id, child_session_id=own.id, provider="codex", prompt="bridge"
+    )
+    token_file = tmp_path / "operator-token"
+    token_file.write_text("bridge-operator-token")
+    AuthStore(temp_db).set_local_api_token_hash(hash_token("bridge-operator-token"))
+    server = create_http_server(
+        database=temp_db,
+        session_manager=sessions,
+        project_id=project_id,
+        authenticated_requests=False,
+    )
+    server.app.state.server = server
+    server.auth_service = AuthService(
+        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
+    )
+    token = issue_agent_api_token(
+        derive_managed_signing_key("bridge-operator-token"),
+        agent_run_id=run.id,
+        session_id=own.id,
+        project_id=project_id,
+    )
+    # What DaemonProxy._request sends for a managed run's bridge.
+    headers = {
+        "Authorization": f"Bearer {token}",
+        MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
+        "X-Gobby-Project-Id": project_id,
+        "X-Gobby-Caller-Project-Id": project_id,
+        "X-Gobby-Session-Id": own.id,
+        "X-Gobby-Agent-Run-Id": run.id,
+    }
+    return TestClient(server.app), headers, own.id, other.id
+
+
+def test_agent_token_marks_its_own_session_ready(
+    temp_db: HubDatabase,
+    session_storage: SessionManager,
+    test_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    client, headers, own_id, _ = _agent_bridge_client(
+        temp_db, session_storage, test_project["id"], tmp_path
+    )
+
+    response = client.post("/api/mcp/bridge/ready", json={}, headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"success": True, "session_id": own_id}
+    assert SessionVariableManager(temp_db).get_variables(own_id)["_mcp_proxy_ready"] is True
+
+
+@pytest.mark.parametrize("session_header", ["other", "absent"])
+def test_agent_token_cannot_mark_another_or_unnamed_session_ready(
+    temp_db: HubDatabase,
+    session_storage: SessionManager,
+    test_project: dict[str, Any],
+    tmp_path: Path,
+    session_header: str,
+) -> None:
+    client, headers, own_id, other_id = _agent_bridge_client(
+        temp_db, session_storage, test_project["id"], tmp_path
+    )
+    if session_header == "other":
+        headers["X-Gobby-Session-Id"] = other_id
+    else:
+        del headers["X-Gobby-Session-Id"]
+
+    response = client.post("/api/mcp/bridge/ready", json={}, headers=headers)
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "identity_mismatch"
+    variables = SessionVariableManager(temp_db)
+    assert "_mcp_proxy_ready" not in variables.get_variables(own_id)
+    assert "_mcp_proxy_ready" not in variables.get_variables(other_id)

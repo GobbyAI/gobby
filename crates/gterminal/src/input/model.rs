@@ -141,7 +141,7 @@ impl TerminalKey {
         self
     }
 
-    #[cfg(windows)]
+    #[cfg(all(windows, any(test, feature = "vt-engine")))]
     pub(crate) fn vt_bytes(&self) -> Option<&[u8]> {
         match &self.source {
             KeySource::Vt { bytes } => Some(bytes),
@@ -149,7 +149,7 @@ impl TerminalKey {
         }
     }
 
-    #[cfg(any(windows, test))]
+    #[cfg(any(test, all(windows, feature = "vt-engine")))]
     pub(crate) fn windows_record(&self) -> Option<WindowsKeyRecord> {
         match self.source {
             KeySource::WindowsConsole { record, .. } => Some(record),

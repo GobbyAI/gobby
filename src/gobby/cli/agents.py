@@ -173,11 +173,6 @@ def agents() -> None:
 @click.option("--session", "-s", "parent_session_id", required=True, help="Parent session ID")
 @click.option("--workflow", "-w", help="Workflow name to execute")
 @click.option("--task", "-t", help="Task ID or reference")
-@click.option(
-    "--terminal-backend",
-    type=click.Choice(["native"]),
-    help="Terminal backend override",
-)
 @click.option("--provider", "-p", default="claude", help="LLM provider (claude, qwen, etc.)")
 @click.option("--model", help="Model override")
 @click.option(
@@ -195,7 +190,6 @@ def spawn_agent_cmd(
     parent_session_id: str,
     workflow: str | None,
     task: str | None,
-    terminal_backend: str | None,
     provider: str,
     model: str | None,
     reasoning_effort: str | None,
@@ -239,8 +233,6 @@ def spawn_agent_cmd(
         arguments["workflow"] = workflow
     if task:
         arguments["task_id"] = task
-    if terminal_backend:
-        arguments["terminal_backend"] = terminal_backend
     if model:
         arguments["model"] = model
     if reasoning_effort:

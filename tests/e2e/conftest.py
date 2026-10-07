@@ -10,7 +10,6 @@ Provides fixtures for:
 - MCP client connections
 """
 
-import errno
 import json
 import math
 import os
@@ -354,42 +353,24 @@ class DaemonInstance:
             )
 
 
-def _checkout_gdaemon_bin_dir(
-    checkout_gdaemon: Path, pinned_bin_dir: Path, home_dir: str | Path | None
+def _isolated_native_bin_dir(
+    checkout_gdaemon: Path | None, pinned_bin_dir: Path, home_dir: str | Path | None
 ) -> Path:
-    """Link the pinned dir's binaries beside the checkout gdaemon in a fresh dir.
+    """Copy the native set so test provisioning and locks cannot mutate its source.
 
-    The runner resolves every native binary from one dir, so a test pinning its
-    gterm dir would otherwise run that dir's gdaemon. The pinned identity stamp
-    stays out: it describes the gdaemon this dir replaces.
-
-    Pinned files are hard links, never symlinks: gterm pins its own executable
-    and refuses to host when that executable is a symlink. A sandbox that cannot
-    write the pinned dir refuses the link with EPERM, so those files are copied
-    into this temp dir; the installed set itself is never touched. The checkout
-    gdaemon stays a symlink so a rebuild that replaces its inode is still followed.
+    gterm refuses a symlinked executable. Copies also isolate in-place writes,
+    unlike hard links. A checkout gdaemon stays a symlink to follow rebuilds;
+    only that replacement invalidates the pinned set's identity stamp.
     """
     from gobby.utils.native_bin import IDENTITY_STAMP_NAME, native_bin_name
 
     composite = Path(tempfile.mkdtemp(prefix="native-bin-", dir=home_dir))
-    skipped = {native_bin_name("gdaemon"), IDENTITY_STAMP_NAME}
+    skipped = {native_bin_name("gdaemon"), IDENTITY_STAMP_NAME} if checkout_gdaemon else set()
     for entry in pinned_bin_dir.iterdir():
         if entry.is_file() and entry.name not in skipped:
-            try:
-                os.link(entry.resolve(), composite / entry.name)
-            except OSError as exc:
-                if exc.errno == errno.EPERM:
-                    # A sandbox without write access to the pinned dir refuses every link.
-                    shutil.copy2(entry, composite / entry.name)
-                    continue
-                if exc.errno != errno.EXDEV:
-                    raise
-                # No symlink fallback: a symlinked gterm refuses to host.
-                raise RuntimeError(
-                    f"cannot hard-link {entry} into {composite}: {exc}. The pinned native "
-                    "bin dir and the e2e home must share a filesystem."
-                ) from exc
-    (composite / checkout_gdaemon.name).symlink_to(checkout_gdaemon.resolve())
+            shutil.copy2(entry, composite / entry.name)
+    if checkout_gdaemon is not None:
+        (composite / checkout_gdaemon.name).symlink_to(checkout_gdaemon.resolve())
     return composite
 
 
@@ -462,18 +443,17 @@ def prepare_daemon_env(
     from tests.fixtures.gdaemon_binary import select_test_gdaemon
 
     checkout_gdaemon = select_test_gdaemon(root_dir, env, native_bin_name("gdaemon"))
-    pinned_bin_dir = env.get(NATIVE_BIN_DIR_ENV)
-    if (
+    pinned_bin_dir = Path(env.get(NATIVE_BIN_DIR_ENV) or native_bin_dir())
+    if home_dir is not None or (
         checkout_gdaemon is not None
-        and pinned_bin_dir is not None
-        and Path(pinned_bin_dir).resolve() != checkout_gdaemon.parent.resolve()
+        and pinned_bin_dir.resolve() != checkout_gdaemon.parent.resolve()
     ):
         env[NATIVE_BIN_DIR_ENV] = str(
-            _checkout_gdaemon_bin_dir(checkout_gdaemon, Path(pinned_bin_dir), home_dir)
+            _isolated_native_bin_dir(checkout_gdaemon, pinned_bin_dir, home_dir)
         )
     env.setdefault(
         NATIVE_BIN_DIR_ENV,
-        str(checkout_gdaemon.parent if checkout_gdaemon is not None else native_bin_dir()),
+        str(checkout_gdaemon.parent if checkout_gdaemon is not None else pinned_bin_dir),
     )
 
     # Override HOME so that ~/.gobby resolves to <temp>/.gobby instead of

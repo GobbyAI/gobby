@@ -42,6 +42,7 @@ from gobby.storage.workspaces import (
     mint_pane_id,
 )
 from gobby.telemetry.query_timing import observe_queries
+from gobby.terminals.lifetime import lifetime_for_role
 from gobby.terminals.runtime import (
     TerminalRuntimeRegistry,
 )
@@ -746,6 +747,7 @@ class WorkspaceOps(WorkspacePaneIOMixin):
                     # in flight (and every close of its workspace busy) forever.
                     timeout_seconds=PANE_SPAWN_TIMEOUT_SECONDS,
                     terminal_theme=terminal_theme,
+                    lifetime=lifetime_for_role(pane.role),
                 )
             except Exception as exc:
                 await self._roll_back(pane.id)

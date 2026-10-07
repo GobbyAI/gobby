@@ -133,6 +133,22 @@ def _spawned(
     return updated
 
 
+def _run_holder(session_manager: SessionManager, owner: Session) -> Session:
+    """Another session at ``owner``'s depth that points at ``owner``'s agent run."""
+    holder = session_manager.register(
+        "spawn-scope-run-holder",
+        owner.machine_id,
+        owner.source,
+        project_id=owner.project_id,
+        agent_depth=owner.agent_depth,
+    )
+    updated = session_manager.update_terminal_pickup_metadata(
+        holder.id, agent_run_id=owner.agent_run_id
+    )
+    assert updated is not None and updated.agent_run_id == owner.agent_run_id
+    return updated
+
+
 class TestLimitSpawnableAgents:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("cleared", ["root", "coordinator", "caller"])
@@ -494,6 +510,61 @@ class TestLimitSpawnNetworkOverride:
         assert response.decision == "block"
         assert response.reason is not None
         assert LIMIT_SPAWN_NETWORK_OVERRIDE in response.reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("owner", ["default", "orchestrator"])
+    async def test_borrowed_run_never_gains_authority(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        callers: dict[str, Session],
+        owner: str,
+    ) -> None:
+        _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE)
+        holder = _run_holder(session_manager, callers[owner])
+
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            _spawn_event(holder.id, "spawn_agent", "spawn-scope-worker", network="trusted"),
+            session_id=holder.id,
+            variables={},
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert LIMIT_SPAWN_NETWORK_OVERRIDE in response.reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("owner", ["default", "orchestrator"])
+    async def test_clear_successor_keeps_the_runs_authority(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        callers: dict[str, Session],
+        owner: str,
+    ) -> None:
+        _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE)
+        predecessor = callers[owner]
+        successor = _run_holder(session_manager, predecessor)
+        attempt = uuid4().hex
+        stage_clear_attempt(
+            temp_db,
+            predecessor.id,
+            attempt_id=attempt,
+            handoff=build_handoff_payload(current_state="Continue.", next_steps=["Continue."]),
+            terminal_context=None,
+            chat_context=None,
+        )
+        assert take_clear_handoff_marker(
+            temp_db, predecessor.id, attempt_id=attempt, successor_id=successor.id
+        )
+
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            _spawn_event(successor.id, "spawn_agent", "spawn-scope-worker", network="trusted"),
+            session_id=successor.id,
+            variables={},
+        )
+
+        assert response.decision == "allow"
 
     @pytest.mark.asyncio
     async def test_missing_caller_identity_refuses_an_override(

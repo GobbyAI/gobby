@@ -27,6 +27,10 @@ from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 logger = logging.getLogger(__name__)
 
+# The observe effect's log lives in the session_variables blob, which every hook
+# event reads several times, so it keeps only the newest entries (#23721).
+MAX_OBSERVATIONS = 20
+
 
 class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
     """Mixin providing effect handling methods for RuleEngine."""
@@ -131,7 +135,7 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                     "rule": row.name,
                 }
             )
-            variables["_observations"] = obs_list
+            variables["_observations"] = obs_list[-MAX_OBSERVATIONS:]
 
         elif effect.type == "mcp_call":
             raw_args = effect.arguments or {}

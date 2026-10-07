@@ -32,7 +32,10 @@ those findings into review rules.
 4. **Keep prompt surfaces independent.** `prompts.persona` carries concise
    interactive domain guidance and working style. `prompts.agent` carries
    automated-run instructions, assigned-task lifecycle, stage transitions,
-   messaging, and `end_agent_run`. Experience flattery ("you are a senior X
+   messaging, and `end_agent_run`. Exception: a `seat`-tagged definition uses
+   one prompt for both surfaces, because a seat runs the same role in a pane
+   or as a spawn, so its persona names `gobby-agents:send_message`.
+   Experience flattery ("you are a senior X
    with 10 years…") contributes no capability on either surface. The Gobby
    product voice is deliberate identity and lives only in the `default` and
    `comms-agent` definitions and the chat assembly path.
@@ -124,7 +127,7 @@ in one session each.
 The persona line bought nothing; the JSON field table below it is the
 load-bearing contract and stays byte-identical (rule 6).
 
-### 4. A prohibition that keeps its emphasis (`agents/backend-developer.yaml`)
+### 4. A prohibition that keeps its emphasis (the retired `agents/backend-developer.yaml`)
 
 Before and after — this one survives, with its reason attached:
 

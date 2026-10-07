@@ -404,40 +404,31 @@ def _validate_plan_for_cli(
         project_context=project_context,
         parse_mode=parse_mode,
     )
-    if not structural_result.get("valid"):
-        # Size growth is the one structural lint that needs landed-task evidence.
-        # Preserve offline parse/contract diagnostics for every other failure.
-        issues = structural_result.get("semantic_lint", {}).get("issues", [])
-        if (
-            project_context is None
-            or not issues
-            or any(issue.get("code") != "production-size-growth" for issue in issues)
-        ):
-            return structural_result
+    if not structural_result.get("valid") and (
+        project_context is None
+        or structural_result.get("condition") != "completed_section_exemptions_unavailable"
+    ):
+        return structural_result
 
     require_symbol_validation = project_ref is not None or mode == "expansion"
-    if project_context is None:
-        result = validate_plan_file(
-            None,
-            plan_path,
-            expected_project_id=expected_project_id,
-            require_symbol_validation=require_symbol_validation,
-            consumer_coverage_blocking=mode == "expansion",
-            parse_mode=parse_mode,
-        )
-    else:
+    try:
         db = _open_db()
-        result = validate_plan_file(
-            None,
-            plan_path,
-            project_context=project_context,
-            expected_project_id=expected_project_id,
-            code_index=CodeIndexStorage(db),
-            task_manager=LocalTaskManager(db),
-            require_symbol_validation=require_symbol_validation,
-            consumer_coverage_blocking=mode == "expansion",
-            parse_mode=parse_mode,
-        )
+    except (OSError, psycopg.Error, RuntimeError) as exc:
+        return {
+            **structural_result,
+            "errors": [f"completed-section exemptions unavailable: task database: {exc}"],
+        }
+    result = validate_plan_file(
+        None,
+        plan_path,
+        project_context=project_context,
+        expected_project_id=expected_project_id,
+        code_index=CodeIndexStorage(db),
+        task_manager=LocalTaskManager(db),
+        require_symbol_validation=require_symbol_validation,
+        consumer_coverage_blocking=mode == "expansion",
+        parse_mode=parse_mode,
+    )
     return _with_symbol_validation_warnings(result)
 
 

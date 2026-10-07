@@ -7,6 +7,7 @@ import textwrap
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import psycopg
 import pytest
@@ -15,6 +16,7 @@ from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
 from gobby.plans.parser import PlanDocument, parse_plan
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.symbol_targets import SymbolValidationResult, validate_symbol_targets
+from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.expansion._validate import validate_plan_file
 
 pytestmark = pytest.mark.unit
@@ -261,12 +263,15 @@ def test_plan_validation_surfaces_consumer_coverage_by_mode(
 ) -> None:
     _write_source(tmp_path, "tests/test_consumer.py")
     plan_doc = _plan(tmp_path)
+    tasks = MagicMock(spec=LocalTaskManager)
+    tasks.list_tasks.return_value = []
 
     result = validate_plan_file(
         None,
         plan_doc.source_path,
         project_context=_project_context(tmp_path),
         code_index=_Index(tmp_path, usages=["tests/test_consumer.py"]),
+        task_manager=tasks,
         require_symbol_validation=True,
         consumer_coverage_blocking=blocking,
     )
@@ -275,15 +280,16 @@ def test_plan_validation_surfaces_consumer_coverage_by_mode(
     assert any("consumer-coverage" in message for message in result[result_key])
 
 
-def test_plan_validation_surfaces_semantic_lint_warnings_without_project_root(
+def test_plan_validation_reports_completion_lookup_unavailable_without_project_root(
     tmp_path: Path,
 ) -> None:
     plan_doc = _plan(tmp_path)
 
     result = validate_plan_file(None, plan_doc.source_path)
 
-    assert result["valid"] is True
-    assert "production-size-growth skipped: no project root" in result["warnings"]
+    assert result["valid"] is False
+    assert result["condition"] == "completed_section_exemptions_unavailable"
+    assert result["symbol_validation"]["status"] == "skipped"
 
 
 def test_consumer_coverage_unions_overlay_and_parent_usages(tmp_path: Path) -> None:
@@ -551,6 +557,7 @@ async def test_review_and_cli_use_manifest_consumer_policy(
         path,
         project_context={"id": project_id, "project_path": str(root)},
         code_index=index,
+        task_manager=service.tasks,
         require_symbol_validation=True,
         consumer_coverage_blocking=True,
     )
