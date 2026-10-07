@@ -52,7 +52,7 @@ from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.lifetime import NATIVE_FIRST_BACKEND
-from gobby.terminals.runtime import Delivered
+from gobby.terminals.runtime import Delivered, SnapshotMode, SnapshotResult
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.terminals.fakes import (
@@ -2779,6 +2779,7 @@ def _fast_codex_delivery(**overrides: float) -> Iterator[None]:
     values = {
         "_CODEX_COMPOSER_POLL_SECONDS": 0.0,
         "_CODEX_COMPOSER_SETTLE_SECONDS": 0.0,
+        "_CODEX_COMPOSER_RETRY_TIMEOUT_SECONDS": 0.0,
         "_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS": 0.0,
         **overrides,
     }
@@ -2790,6 +2791,90 @@ def _fast_codex_delivery(**overrides: float) -> Iterator[None]:
 
 class TestCodexPromptDelivery:
     """The spawn prompt is typed into the Codex composer, never passed in argv."""
+
+    @pytest.mark.asyncio
+    async def test_live_slow_start_retries_before_delivering(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        runtime = FakeRuntime()
+        runtime.snapshot_effects = ["", "› Ask Codex anything"]
+        coordinator, terminal = _codex_delivery_target(runtime)
+        run_manager = MagicMock()
+
+        with _fast_codex_delivery(
+            _CODEX_COMPOSER_READY_TIMEOUT_SECONDS=0.0,
+            _CODEX_COMPOSER_RETRY_TIMEOUT_SECONDS=1.0,
+        ):
+            await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1", run_manager)
+
+        assert runtime.write_log == [("text", "Do the task"), ("key", "enter")]
+        run_manager.fail_uninitialized_prompt_delivery.assert_not_called()
+        assert not runtime.killed_ids
+        assert "retrying live terminal" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_live_seat_without_composer_exhausts_retry_budget(self) -> None:
+        runtime = FakeRuntime()
+        runtime.snapshot_text = ""
+        coordinator, terminal = _codex_delivery_target(runtime)
+        run_manager = MagicMock()
+
+        with _fast_codex_delivery(
+            _CODEX_COMPOSER_READY_TIMEOUT_SECONDS=0.0,
+            _CODEX_COMPOSER_RETRY_TIMEOUT_SECONDS=0.01,
+        ):
+            await _deliver_codex_prompt(
+                coordinator, terminal, "private-prompt", "run-1", run_manager
+            )
+
+        run_manager.fail_uninitialized_prompt_delivery.assert_called_once()
+        error = run_manager.fail_uninitialized_prompt_delivery.call_args.kwargs["error"]
+        assert "snapshot_errors=0" in error
+        assert "liveness_errors=0" in error
+        assert "Pane output:\n<unavailable>" in error
+        assert "private-prompt" not in error
+        assert runtime.write_log == []
+        assert terminal.id in runtime.killed_ids
+
+    @pytest.mark.asyncio
+    async def test_stalled_probe_can_retry_and_keeps_safe_diagnostics(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        runtime = FakeRuntime()
+        runtime.snapshot_text = "› Ask Codex anything"
+        coordinator, terminal = _codex_delivery_target(runtime)
+        run_manager = MagicMock()
+        original_snapshot = runtime.snapshot
+        calls = 0
+
+        async def snapshot(
+            target: Terminal, lines: int = 50, *, mode: SnapshotMode = "text"
+        ) -> SnapshotResult:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                await asyncio.Event().wait()
+            return await original_snapshot(target, lines, mode=mode)
+
+        with (
+            _fast_codex_delivery(
+                _CODEX_COMPOSER_READY_TIMEOUT_SECONDS=0.0,
+                _CODEX_COMPOSER_RETRY_TIMEOUT_SECONDS=1.0,
+                _CODEX_COMPOSER_PROBE_TIMEOUT_SECONDS=0.01,
+            ),
+            patch.object(runtime, "snapshot", side_effect=snapshot),
+        ):
+            await _deliver_codex_prompt(
+                coordinator, terminal, "private-prompt", "run-1", run_manager
+            )
+
+        assert calls == 2
+        assert runtime.write_log == [("text", "private-prompt"), ("key", "enter")]
+        assert "snapshot_errors=1" in caplog.text
+        assert "last_snapshot_error=TimeoutError" in caplog.text
+        assert "private-prompt" not in caplog.text
+        run_manager.fail_uninitialized_prompt_delivery.assert_not_called()
+        assert not runtime.killed_ids
 
     @pytest.mark.asyncio
     async def test_delivers_prompt_once_composer_renders(

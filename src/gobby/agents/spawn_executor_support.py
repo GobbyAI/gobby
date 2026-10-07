@@ -235,11 +235,14 @@ def _record_actual_sandbox_enforcement(
 # gobby MCP server from registering (the CLI starts that turn at process
 # launch). A prompt typed into the composer does not interrupt startup, so
 # spawned and resumed Codex terminals receive their prompt as a post-launch
-# paste. Delivery must land well inside the session-init watchdog window.
+# paste. A live slow-starting seat gets one retry window, bounded by the
+# default 120-second session-init watchdog budget.
 _CODEX_COMPOSER_MARKER = "›"
 _CODEX_COMPOSER_CAPTURE_LINES = 40
 _CODEX_COMPOSER_POLL_SECONDS = 1.0
 _CODEX_COMPOSER_READY_TIMEOUT_SECONDS = 60.0
+_CODEX_COMPOSER_RETRY_TIMEOUT_SECONDS = 60.0
+_CODEX_COMPOSER_PROBE_TIMEOUT_SECONDS = 5.0
 _CODEX_COMPOSER_SETTLE_SECONDS = 1.0
 _CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS = 3.0
 _CODEX_PROMPT_DELIVERY_TASKS: set[asyncio.Task[None]] = set()
@@ -372,17 +375,29 @@ async def _deliver_codex_prompt(
 
     runtime = coordinator.runtime_for(terminal)
     last_pane: str | None = None
+    captures = 0
+    snapshot_errors = 0
+    last_snapshot_error: str | None = None
+    liveness_errors = 0
+    last_liveness_error: str | None = None
+    retry_announced = False
     try:
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + _CODEX_COMPOSER_READY_TIMEOUT_SECONDS
+        retry_at = loop.time() + _CODEX_COMPOSER_READY_TIMEOUT_SECONDS
+        deadline = retry_at + _CODEX_COMPOSER_RETRY_TIMEOUT_SECONDS
         while True:
             try:
-                async with asyncio.timeout_at(deadline):
+                async with asyncio.timeout_at(
+                    min(deadline, loop.time() + _CODEX_COMPOSER_PROBE_TIMEOUT_SECONDS)
+                ):
                     snapshot = await runtime.snapshot(terminal, _CODEX_COMPOSER_CAPTURE_LINES)
                 pane = snapshot.text
+                captures += 1
                 if pane:
                     last_pane = pane
             except Exception as exc:
+                snapshot_errors += 1
+                last_snapshot_error = type(exc).__name__
                 logger.debug(
                     "Failed to inspect Codex composer readiness for run %s: %s",
                     run_id,
@@ -399,14 +414,27 @@ async def _deliver_codex_prompt(
                     terminal,
                     run_id,
                     run_manager,
-                    _codex_prompt_failure_reason(last_pane),
+                    _codex_prompt_failure_reason(
+                        last_pane,
+                        detail=(
+                            "Codex composer did not render before prompt-delivery timeout; "
+                            f"captures={captures} snapshot_errors={snapshot_errors} "
+                            f"last_snapshot_error={last_snapshot_error} "
+                            f"liveness_errors={liveness_errors} "
+                            f"last_liveness_error={last_liveness_error}"
+                        ),
+                    ),
                     cleanup_agent=cleanup_agent,
                 )
                 return
             try:
-                async with asyncio.timeout_at(deadline):
+                async with asyncio.timeout_at(
+                    min(deadline, loop.time() + _CODEX_COMPOSER_PROBE_TIMEOUT_SECONDS)
+                ):
                     live = await runtime.is_live(terminal)
             except Exception as exc:
+                liveness_errors += 1
+                last_liveness_error = type(exc).__name__
                 logger.debug(
                     "Failed to inspect Codex terminal liveness for run %s: %s",
                     run_id,
@@ -432,6 +460,22 @@ async def _deliver_codex_prompt(
                         cleanup_agent=cleanup_agent,
                     )
                     return
+                if not retry_announced and loop.time() >= retry_at:
+                    retry_announced = True
+                    logger.warning(
+                        "Codex composer not ready for run %s terminal %s; retrying live terminal "
+                        "within %.0fs startup budget: captures=%s snapshot_errors=%s "
+                        "last_snapshot_error=%s liveness_errors=%s last_liveness_error=%s",
+                        run_id,
+                        terminal.id,
+                        _CODEX_COMPOSER_READY_TIMEOUT_SECONDS
+                        + _CODEX_COMPOSER_RETRY_TIMEOUT_SECONDS,
+                        captures,
+                        snapshot_errors,
+                        last_snapshot_error,
+                        liveness_errors,
+                        last_liveness_error,
+                    )
             await asyncio.sleep(_CODEX_COMPOSER_POLL_SECONDS)
         await asyncio.sleep(_CODEX_COMPOSER_SETTLE_SECONDS)
         # A composer still settling the bracketed paste can swallow the
