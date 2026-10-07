@@ -1765,62 +1765,6 @@
       "definition": "text|text|NO||NEVER"
     },
     {
-      "name": "destructive_batches.abort_disposition",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "destructive_batches.aborted_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "destructive_batches.backup_manifest_path",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "destructive_batches.backup_manifest_sha256",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "destructive_batches.campaign",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "destructive_batches.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "destructive_batches.id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "destructive_batches.intent",
-      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
-    },
-    {
-      "name": "destructive_batches.maintenance_epoch_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "destructive_batches.migration_plan",
-      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
-    },
-    {
-      "name": "destructive_batches.status",
-      "definition": "text|text|NO|'pending'::text|NEVER"
-    },
-    {
-      "name": "destructive_batches.target_receipts",
-      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
-    },
-    {
-      "name": "destructive_batches.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "destructive_batches.verified_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
       "name": "detection_manifests.content",
       "definition": "text|text|NO||NEVER"
     },
@@ -2203,34 +2147,6 @@
     {
       "name": "machines.tailscale_name",
       "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "maintenance_epochs.campaign",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "maintenance_epochs.id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "maintenance_epochs.opened_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "maintenance_epochs.opened_by",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "maintenance_epochs.released_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "maintenance_epochs.released_by_command",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "maintenance_epochs.scope_note",
-      "definition": "text|text|NO||NEVER"
     },
     {
       "name": "mcp_server_templates.created_at",
@@ -6375,50 +6291,6 @@
       "definition": "PRIMARY KEY (deployment_token)"
     },
     {
-      "name": "destructive_batches.destructive_batches_backup_manifest_sha256_check",
-      "definition": "CHECK (backup_manifest_sha256 IS NULL OR backup_manifest_sha256 ~ '^[0-9a-f]{64}$'::text)"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_campaign_check",
-      "definition": "CHECK (campaign = ANY (ARRAY['account-identity-cutover'::text, 'project-checkout-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_check",
-      "definition": "CHECK (status = 'verified'::text AND verified_at IS NOT NULL OR status <> 'verified'::text AND verified_at IS NULL)"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_check1",
-      "definition": "CHECK (status = 'aborted'::text AND aborted_at IS NOT NULL AND abort_disposition IS NOT NULL OR status <> 'aborted'::text AND aborted_at IS NULL AND abort_disposition IS NULL)"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_intent_check",
-      "definition": "CHECK (jsonb_typeof(intent) = 'object'::text)"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_maintenance_epoch_id_fkey",
-      "definition": "FOREIGN KEY (maintenance_epoch_id) REFERENCES maintenance_epochs(id) DEFERRABLE INITIALLY DEFERRED"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_maintenance_epoch_id_key",
-      "definition": "UNIQUE (maintenance_epoch_id)"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_migration_plan_check",
-      "definition": "CHECK (jsonb_typeof(migration_plan) = 'array'::text)"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_status_check",
-      "definition": "CHECK (status = ANY (ARRAY['pending'::text, 'applied'::text, 'verified'::text, 'aborted'::text]))"
-    },
-    {
-      "name": "destructive_batches.destructive_batches_target_receipts_check",
-      "definition": "CHECK (jsonb_typeof(target_receipts) = 'object'::text)"
-    },
-    {
       "name": "detection_manifests.detection_manifests_engine_check",
       "definition": "CHECK (engine > 0)"
     },
@@ -6532,18 +6404,6 @@
     },
     {
       "name": "machines.machines_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "maintenance_epochs.maintenance_epochs_campaign_check",
-      "definition": "CHECK (campaign = ANY (ARRAY['account-identity-cutover'::text, 'project-checkout-cutover'::text, 'schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))"
-    },
-    {
-      "name": "maintenance_epochs.maintenance_epochs_check",
-      "definition": "CHECK (released_at IS NULL AND released_by_command IS NULL OR released_at IS NOT NULL AND released_by_command IS NOT NULL)"
-    },
-    {
-      "name": "maintenance_epochs.maintenance_epochs_pkey",
       "definition": "PRIMARY KEY (id)"
     },
     {
@@ -7901,10 +7761,6 @@
       "definition": "CREATE OR REPLACE FUNCTION $schema.enforce_chat_attachments_bound_at_write_once()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\nIF OLD.bound_at IS NOT NULL AND NEW.bound_at IS DISTINCT FROM OLD.bound_at THEN\nRAISE EXCEPTION 'chat_attachments.bound_at is write-once';\nEND IF;\nRETURN NEW;\nEND;\n$function$"
     },
     {
-      "name": "$schema.gobby_maintenance_epoch_login_guard()",
-      "definition": "CREATE OR REPLACE FUNCTION $schema.gobby_maintenance_epoch_login_guard()\n RETURNS event_trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog'\nAS $function$\nDECLARE\nactive_epoch UUID;\nsupplied_epoch TEXT;\nBEGIN\nIF pg_catalog.pg_is_in_recovery() THEN\nRETURN;\nEND IF;\n\nBEGIN\nSELECT id\nINTO active_epoch\nFROM $schema.maintenance_epochs\nWHERE released_at IS NULL;\nEXCEPTION\nWHEN undefined_table OR invalid_schema_name THEN\nRETURN;\nEND;\n\nIF active_epoch IS NULL THEN\nRETURN;\nEND IF;\n\nsupplied_epoch :=\npg_catalog.current_setting('gobby.maintenance_epoch', TRUE);\nIF supplied_epoch IS DISTINCT FROM active_epoch::TEXT THEN\nRAISE EXCEPTION USING\nERRCODE = '55000',\nMESSAGE =\n'Gobby hub maintenance is active; use '\n'`gobby hub-maintenance status` to inspect it or '\n'`gobby hub-maintenance resume` from the operator shell.';\nEND IF;\nEND;\n$function$"
-    },
-    {
       "name": "$schema.memories_tags_to_text(tags jsonb)",
       "definition": "CREATE OR REPLACE FUNCTION $schema.memories_tags_to_text(tags jsonb)\n RETURNS text\n LANGUAGE sql\n IMMUTABLE PARALLEL SAFE STRICT\nAS $function$\nSELECT COALESCE(string_agg(value, ' ' ORDER BY ord), '')\nFROM jsonb_array_elements_text(tags) WITH ORDINALITY AS t(value, ord);\n$function$"
     },
@@ -8165,18 +8021,6 @@
     {
       "name": "deployment_runtime_pkey",
       "definition": "CREATE UNIQUE INDEX deployment_runtime_pkey ON $schema.deployment_runtime USING btree (deployment_token)"
-    },
-    {
-      "name": "destructive_batches_epoch_lookup",
-      "definition": "CREATE INDEX destructive_batches_epoch_lookup ON $schema.destructive_batches USING btree (maintenance_epoch_id, created_at)"
-    },
-    {
-      "name": "destructive_batches_maintenance_epoch_id_key",
-      "definition": "CREATE UNIQUE INDEX destructive_batches_maintenance_epoch_id_key ON $schema.destructive_batches USING btree (maintenance_epoch_id)"
-    },
-    {
-      "name": "destructive_batches_pkey",
-      "definition": "CREATE UNIQUE INDEX destructive_batches_pkey ON $schema.destructive_batches USING btree (id)"
     },
     {
       "name": "detection_manifests_pkey",
@@ -9289,18 +9133,6 @@
     {
       "name": "machines_pkey",
       "definition": "CREATE UNIQUE INDEX machines_pkey ON $schema.machines USING btree (id)"
-    },
-    {
-      "name": "maintenance_epochs_one_open",
-      "definition": "CREATE UNIQUE INDEX maintenance_epochs_one_open ON $schema.maintenance_epochs USING btree ((true)) WHERE (released_at IS NULL)"
-    },
-    {
-      "name": "maintenance_epochs_open_lookup",
-      "definition": "CREATE INDEX maintenance_epochs_open_lookup ON $schema.maintenance_epochs USING btree (opened_at, id) WHERE (released_at IS NULL)"
-    },
-    {
-      "name": "maintenance_epochs_pkey",
-      "definition": "CREATE UNIQUE INDEX maintenance_epochs_pkey ON $schema.maintenance_epochs USING btree (id)"
     },
     {
       "name": "mcp_server_templates_pkey",
