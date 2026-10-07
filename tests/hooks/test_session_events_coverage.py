@@ -728,6 +728,7 @@ class TestSessionMoreCoverage:
         expected_skills: list[str],
     ) -> None:
         handler = _TestHandler()
+        stored_variables: dict[str, Any] = {}
 
         with (
             patch.object(handler, "_resolve_agent_name", return_value="test-agent"),
@@ -743,9 +744,12 @@ class TestSessionMoreCoverage:
             patch.object(handler, "_build_agent_changes") as mock_build,
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.get_variables",
-                return_value={},
+                return_value=stored_variables,
             ),
-            patch("gobby.workflows.state_manager.SessionVariableManager.merge_variables"),
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
+                side_effect=lambda _session_id, changes: stored_variables.update(changes),
+            ),
         ):
             mock_agent = MagicMock()
             mock_agent.name = "test-agent"
@@ -758,6 +762,9 @@ class TestSessionMoreCoverage:
                     "var1": "val1",
                     "_agent_definition_hash": "fixed-pin",
                     "_agent_definition_keys": ["var1"],
+                    "_active_skill_names": (
+                        sorted(active_skills) if active_skills is not None else None
+                    ),
                 },
                 {"rule1"},
                 active_skills,
