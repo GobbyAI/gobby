@@ -308,7 +308,12 @@ def decoded_exec_results(
             for result in decoded_exec_results(item["text"])
             if exec_session_id(result) is not None or definitive_exit_code(result) is not None
         ]
-        return printed or [terminal_result]
+        if printed:
+            return printed
+        if terminal_result["success"]:
+            # Completion proves the script ran, never that its command passed.
+            terminal_result["success"] = None
+        return [terminal_result]
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -592,7 +597,14 @@ class ExecutionChainCorrelator:
                 output,
                 expects_serialized_result=execution.expects_serialized_result,
             )
-        terminal_results = tuple(result for result in results if _has_structured_outcome(result))
+        # The cell wrapper stays terminal even when unknown, so evidence can drop it as a
+        # duplicate of the command's own CommandExecution item.
+        terminal_results = tuple(
+            result
+            for result in results
+            if _has_structured_outcome(result)
+            or result.get("outcome_provenance") == "codex.functions_exec.wrapper"
+        )
         if terminal_results:
             self._clear_execution(execution)
             return ExecutionResolution(
