@@ -234,6 +234,61 @@ def test_builtin_validation_detection_rejects_non_validation_commands(command: s
     assert is_validation_command(command) is False
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pip-audit",
+        "uv run pip-audit",
+        "python -m pip_audit",
+        "uv run python -m pip_audit",
+        "python3 -m pip_audit",
+        "uv run pip-audit --cache-dir .cache/pip-audit --format json",
+        "uv run pip-audit -fcolumns",
+        "uv run pip-audit -voaudit.json",
+    ],
+)
+def test_pip_audit_is_recognized_as_dependency_validation(command: str) -> None:
+    match = classify_validation_command(command)
+
+    assert match is not None
+    assert match.matcher_id == "python-dependency-audit"
+    assert match.categories == ("lint",)
+    assert not match.bounded_inputs
+    assert not match.evidence_requires_confirmation
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        "--help",
+        "-h",
+        "--version",
+        "-V",
+        "--dry-run",
+        "-d",
+        "--fix",
+        "--ignore-vuln CVE-2026-104851",
+        "--ignore-vuln=CVE-2026-104851",
+        "--skip-editable",
+        "--no-deps",
+        "--disable-pip",
+        "--local",
+        "-l",
+        "-dl",
+        "-vd",
+        "-lS",
+        "-vh",
+        "-vV",
+        "--dry",
+        "--ignore-v=CVE-2026-104851",
+        "--skip-e",
+        "--vers",
+    ],
+)
+def test_pip_audit_does_not_credit_incomplete_or_nonchecking_runs(args: str) -> None:
+    assert classify_validation_command(f"uv run pip-audit {args}") is None
+
+
 @pytest.mark.parametrize("command", ["actionlint", "actionlint .github/workflows/ci.yml"])
 def test_actionlint_records_lint_category(command: str) -> None:
     match = classify_validation_command(command)
