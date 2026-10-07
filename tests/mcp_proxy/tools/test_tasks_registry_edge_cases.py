@@ -1,6 +1,7 @@
 """Focused coverage tests for task MCP tools."""
 
 from collections.abc import Generator
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -8,6 +9,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.tasks import SKIP_REASONS, create_task_registry
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
+from gobby.storage.tasks import Task
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
@@ -199,8 +201,20 @@ class TestSessionIntegrationTools:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
         ):
             mock_st_instance = MagicMock()
+            linked_at = datetime(2026, 10, 6, tzinfo=UTC)
+            task = Task(
+                id="t1",
+                project_id="proj-123",
+                title="Linked task",
+                priority=2,
+                task_type="task",
+                created_at=linked_at,
+                updated_at=linked_at,
+                seq_num=1,
+                claimed_by_session_id="sess-123",
+            )
             mock_st_instance.get_session_tasks.return_value = [
-                {"task_id": "t1", "action": "worked_on"}
+                {"task": task, "action": "worked_on", "link_created_at": linked_at}
             ]
             MockSessionTaskManager.return_value = mock_st_instance
 
@@ -215,6 +229,13 @@ class TestSessionIntegrationTools:
 
             assert result["session_id"] == "sess-123"
             assert len(result["tasks"]) == 1
+            row = result["tasks"][0]
+            assert row["action"] == "worked_on"
+            assert row["link_created_at"] == linked_at.isoformat()
+            assert row["task"]["id"] == task.id
+            assert row["task"]["ref"] == "#1"
+            assert row["task"]["title"] == task.title
+            assert row["task"]["state"]["claimed_by_session_id"] == "sess-123"
 
     @pytest.mark.asyncio
     async def test_get_task_sessions(self, mock_task_manager: Any) -> None:

@@ -124,6 +124,10 @@ def mock_server():
     server = MagicMock()
     server.session_manager = MagicMock()
     server.session_manager.db = MagicMock()
+    server.session_manager.fetch_task_refs_by_session.return_value = {}
+    server.session_manager.load_task_refs.side_effect = lambda rows: SessionManager.load_task_refs(
+        server.session_manager, rows
+    )
     server.transcript_reader = AsyncMock()
     server.llm_service = MagicMock()
     server.resolve_project_id = MagicMock(return_value="proj-123")
@@ -1196,6 +1200,25 @@ class TestListSessions:
 
 class TestGetSession:
     """Test GET /sessions/{session_id} endpoint."""
+
+    @pytest.mark.parametrize("claimed", [[10, 11], []])
+    def test_get_hydrates_task_refs(
+        self, client: TestClient, mock_server: MagicMock, claimed: list[int]
+    ) -> None:
+        session = _make_session()
+        mock_server.session_manager.get.return_value = session
+        mock_server.session_manager.fetch_task_refs_by_session.return_value = {
+            session.id: {"claimed": claimed, "created": [20], "closed": [99]}
+        }
+
+        response = client.get(f"/api/sessions/{session.id}")
+
+        assert response.status_code == 200
+        row = response.json()["session"]
+        assert row["claimed_task_refs"] == claimed
+        assert row["created_task_refs"] == [20]
+        assert row["closed_task_refs"] == [99]
+        mock_server.session_manager.fetch_task_refs_by_session.assert_called_once_with([session.id])
 
     def test_get_found(self, client, mock_server) -> None:
         """Returns session data when found."""

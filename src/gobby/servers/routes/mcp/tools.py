@@ -11,7 +11,10 @@ Thin router aggregation layer that composes endpoints from:
 
 from fastapi import APIRouter
 
-from gobby.servers.routes.mcp.endpoints.bridge import report_bridge_ready
+from gobby.servers.routes.mcp.endpoints.bridge import (
+    get_bridge_tool_timeouts,
+    report_bridge_ready,
+)
 from gobby.servers.routes.mcp.endpoints.discovery import (
     list_all_mcp_tools,
     recommend_mcp_tools,
@@ -56,6 +59,7 @@ def create_mcp_router() -> APIRouter:
 
     # Stdio bridge lifecycle from endpoints/bridge.py
     router.post("/bridge/ready")(report_bridge_ready)
+    router.get("/bridge/tool-timeouts")(get_bridge_tool_timeouts)
 
     # Server management endpoints from endpoints/server.py
     router.get("/servers")(list_mcp_servers)

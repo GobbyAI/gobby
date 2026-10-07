@@ -315,8 +315,8 @@ const SOURCE: &str = concat!(
 fn database_contract() -> anyhow::Result<()> {
     use gobby_code::evidence::{
         DEFAULT_GRAPH_DEPTH, DEFAULT_MAX_BYTES, DEFAULT_RESULT_LIMIT, EVIDENCE_SCHEMA_VERSION,
-        EntitySelector, EvidenceItem, EvidenceOperation, EvidenceRequest, GraphQuery,
-        GraphSelector, ReadSelector, RepositoryBinding, SearchLane, SearchSelector,
+        EntitySelector, EvidenceItem, EvidenceOperation, EvidenceRequest, EvidenceResponse,
+        GraphQuery, GraphSelector, ReadSelector, RepositoryBinding, SearchLane, SearchSelector,
     };
     use postgres::{Client, NoTls};
 
@@ -713,9 +713,25 @@ fn database_contract() -> anyhow::Result<()> {
         },
         ..range_request.clone()
     };
-    // Ordinary CLI freshness refreshes the existing index before admission.
-    // Dirty source is cited by its observed hash, not by HEAD bytes.
-    let refreshed = run_success(&project, &home, &connections, &stale_request)?;
+    // An omitted binding uses freshly indexed working-tree bytes.
+    let mut unbound_request = serde_json::to_value(&stale_request)?;
+    unbound_request
+        .as_object_mut()
+        .expect("request object")
+        .remove("binding");
+    let output = run_raw_evidence(
+        &project,
+        &home,
+        &connections,
+        &unbound_request.to_string(),
+        false,
+    )?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let refreshed: EvidenceResponse = serde_json::from_slice(&output.stdout)?;
     assert_eq!(refreshed.binding.commit_oid, commit_oid);
     assert_eq!(refreshed.items.len(), 2);
     for item in &refreshed.items {
@@ -1095,6 +1111,10 @@ fn attach_audited_hybrid_grant(
     let machine = std::fs::read_to_string(home.join("machine_id"))?;
     let mut grant =
         gobby_core::grant::managed_direct_grant(project_id, machine.trim(), connections);
+    grant.principal.kind = gobby_core::grant::PrincipalKind::Interactive;
+    grant.principal.execution_id = None;
+    grant.principal.session_id = None;
+    grant.deployment.token = gobby_core::grant::deployment_token(home);
     grant.capabilities.embed = gobby_core::grant::AiCapability::Daemon {};
     grant = grant.with_checksum();
     let settings = gobby_core::grant::CachedSettings {
@@ -1120,15 +1140,21 @@ fn attach_audited_hybrid_grant(
             ("ai.embeddings.dim".to_string(), "3".to_string()),
         ]),
     };
-    let grant_dir = home.join("grants/audited-hybrid");
-    std::fs::create_dir_all(&grant_dir)?;
-    let path = grant_dir.join("grant.json");
+    let path =
+        gobby_core::grant::interactive_cache_path(home, &grant.deployment.token, project_id, None);
+    gobby_core::grant::write_binding(
+        home,
+        &gobby_core::grant::TrustedBinding {
+            endpoint: daemon_url.to_owned(),
+            deployment_token: grant.deployment.token.clone(),
+        },
+    )?;
     gobby_core::grant::write_coherent_pair(&path, &grant, &settings)?;
     std::fs::write(home.join("local_cli_token"), "audited-test-token\n")?;
     command
         .env("GOBBY_HOME", home)
         .env("GOBBY_DAEMON_URL", daemon_url)
-        .env("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", path)
+        .env_remove("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
         .env_remove("GOBBY_AGENT_API_TOKEN")
         .env_remove("GOBBY_AGENT_RUN_ID")
         .env_remove("GOBBY_MANAGED_EXECUTION_ID");
@@ -1235,11 +1261,36 @@ fn attach_managed_grant(
     connections: &gobby_core::grant::DirectConnections,
 ) -> anyhow::Result<()> {
     let machine = std::fs::read_to_string(home.join("machine_id"))?;
-    let grant = gobby_core::grant::managed_direct_grant(project_id, machine.trim(), connections);
-    let path = gobby_core::grant::write_managed_bootstrap(&home.join("grants"), &grant)?;
+    let mut grant =
+        gobby_core::grant::managed_direct_grant(project_id, machine.trim(), connections);
+    grant.principal.kind = gobby_core::grant::PrincipalKind::Interactive;
+    grant.principal.execution_id = None;
+    grant.principal.session_id = None;
+    grant.deployment.token = gobby_core::grant::deployment_token(home);
+    let grant = grant.with_checksum();
+    let daemon_url = "http://127.0.0.1:1";
+    let path =
+        gobby_core::grant::interactive_cache_path(home, &grant.deployment.token, project_id, None);
+    gobby_core::grant::write_binding(
+        home,
+        &gobby_core::grant::TrustedBinding {
+            endpoint: daemon_url.to_owned(),
+            deployment_token: grant.deployment.token.clone(),
+        },
+    )?;
+    gobby_core::grant::write_coherent_pair(
+        &path,
+        &grant,
+        &gobby_core::grant::CachedSettings {
+            config_revision: grant.config_revision,
+            settings: std::collections::BTreeMap::new(),
+        },
+    )?;
     command
         .env("GOBBY_HOME", home)
-        .env("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", path)
+        .env("GOBBY_DAEMON_URL", daemon_url)
+        .env_remove("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
+        .env_remove("GOBBY_AGENT_API_TOKEN")
         .env_remove("GOBBY_AGENT_RUN_ID")
         .env_remove("GOBBY_MANAGED_EXECUTION_ID");
     Ok(())

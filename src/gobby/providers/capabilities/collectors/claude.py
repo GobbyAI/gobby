@@ -80,7 +80,9 @@ class _EffortSupport:
 
 
 async def _fetch_public_markdown(url: str) -> str:
-    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+    # Loading the CA bundle is synchronous, even for an AsyncClient.
+    context = await asyncio.to_thread(httpx.create_ssl_context)
+    async with httpx.AsyncClient(verify=context, timeout=20.0, follow_redirects=True) as client:
         response = await client.get(url)
         response.raise_for_status()
         return response.text

@@ -6,11 +6,47 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from gobby.storage.build_profiles import BuildProfileError, BuildProfileLoader, BuildProfileManager
 from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("legacy_mode", ["none", "worktree", "clone", None])
+@pytest.mark.parametrize("include_checkout_mode", [False, True])
+def test_yaml_rejects_removed_isolation_key(
+    tmp_path: Path, legacy_mode: str | None, include_checkout_mode: bool
+) -> None:
+    profile: dict[str, Any] = {
+        "name": "custom",
+        "display_label": "Custom",
+        "description": "Custom build profile",
+        "isolation": legacy_mode,
+    }
+    if include_checkout_mode:
+        profile["checkout_mode"] = "none"
+    path = tmp_path / "profiles.yaml"
+    path.write_text(yaml.safe_dump({"version": 1, "profiles": [profile]}))
+
+    with pytest.raises(BuildProfileError, match="isolation.*use checkout_mode"):
+        BuildProfileLoader(path).load()
+
+
+@pytest.mark.parametrize("checkout_mode", ["none", "worktree", "clone", None])
+def test_yaml_checkout_mode_and_default(tmp_path: Path, checkout_mode: str | None) -> None:
+    profile: dict[str, Any] = {
+        "name": "custom",
+        "display_label": "Custom",
+        "description": "Custom build profile",
+    }
+    if checkout_mode is not None:
+        profile["checkout_mode"] = checkout_mode
+    path = tmp_path / "profiles.yaml"
+    path.write_text(yaml.safe_dump({"version": 1, "profiles": [profile]}))
+
+    assert BuildProfileLoader(path).load()[0].checkout_mode == (checkout_mode or "worktree")
 
 
 def test_bundled_build_profiles_sync_and_resolve(

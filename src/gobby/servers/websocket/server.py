@@ -228,7 +228,6 @@ class WebSocketServer(
         self.web_chat_runtime_manager: Any | None = None
         self.terminal_manager: Any | None = None
         self.terminal_runtime_registry: Any | None = None
-        self.terminal_config: Any | None = None
         self.terminal_host_manager: Any | None = None
         self.workspace_manager: WorkspaceManager | None = None
         self.workspace_ops: WorkspaceOps | None = None
@@ -302,7 +301,6 @@ class WebSocketServer(
         self,
         terminal_manager: Any,
         runtime_registry: Any,
-        terminal_config: Any | None = None,
         terminal_services: Any | None = None,
         host_manager: Any | None = None,
         *,
@@ -313,7 +311,6 @@ class WebSocketServer(
         """Attach composition-root terminal services after construction."""
         self.terminal_manager = terminal_manager
         self.terminal_runtime_registry = runtime_registry
-        self.terminal_config = terminal_config
         self.terminal_services = terminal_services
         self.terminal_host_manager = host_manager
         self.lease_registry = lease_registry

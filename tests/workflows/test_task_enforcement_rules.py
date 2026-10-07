@@ -75,6 +75,7 @@ TASK_REVIEW_OPERATIONS = (
     "reject_review",
     "submit_for_review",
 )
+LANDING_OPERATIONS = ("set_landing_freeze", "land_commit")
 READ_ONLY_TASK_TOOLS = (
     "check_dependency_cycles",
     "explain_dispatch",
@@ -139,7 +140,7 @@ NON_INTERACTIVE_TASK_OPS = (
 )
 TASK_MUTATION_CASES = tuple(
     [("gobby-tasks", name) for name in INTERACTIVE_TASK_MUTATIONS]
-    + [("gobby-tasks-ops", name) for name in TASK_REVIEW_OPERATIONS]
+    + [("gobby-tasks-ops", name) for name in TASK_REVIEW_OPERATIONS + LANDING_OPERATIONS]
 )
 
 
@@ -785,6 +786,75 @@ class TestNativeTrackerClaimNudge:
 
 class TestRequireTaskBeforeEdit:
     """Verify require-task-before-edit blocks edits without claimed task."""
+
+    @pytest.mark.parametrize(
+        ("command", "claimed", "blocked"),
+        [
+            ("bash /project/probe.sh", False, True),
+            ("bash /tmp/scratchpad/probe.sh", False, True),
+            ("bash /project/probe.sh", True, False),
+            ("source /tmp/scratchpad/probe.sh", False, True),
+            (". /tmp/scratchpad/probe.sh", True, False),
+            ("bash < /tmp/scratchpad/probe.sh", False, True),
+            ("bash -s < /tmp/scratchpad/probe.sh", True, False),
+            ("cat /tmp/scratchpad/probe.sh | bash", False, True),
+            ("bash <<'EOF'\ntouch /project/owned.py\nEOF", False, True),
+            ("/tmp/scratchpad/missing-script", False, True),
+            ("/tmp/scratchpad/missing-script", True, False),
+            ("bash -euo pipefail -c 'touch /project/owned.py'", False, True),
+            ("bash -euo pipefail -c 'touch /tmp/scratchpad/probe.py'", False, False),
+            ('sh -c "$PROGRAM"', False, True),
+            ('sh -c "$PROGRAM"', True, False),
+            ("bash -c 'touch /project/owned.py\nprintf \"'", False, True),
+            ("sh -c 'touch /project/owned.py'", False, True),
+            ("bash -c 'touch /tmp/scratchpad/probe.py'", False, False),
+            ("sh -c 'cat /project/source.py'", False, False),
+        ],
+    )
+    def test_script_execution_claim_gate(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        command: str,
+        claimed: bool,
+        blocked: bool,
+    ) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+        _sync_bundled(db)
+        row = manager.get_by_name("require-task-before-edit")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.when is not None
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": command, "cwd": "/project"},
+            "project_root": "/project",
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+        context = {
+            "variables": {
+                "require_task_before_edit": True,
+                "task_claimed": claimed,
+                "plan_mode": False,
+            },
+            "event": event,
+            "tool_input": data["tool_input"],
+            "source": "codex",
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+
+        assert bool(evaluator.evaluate(body.when)) is blocked
 
     def test_block_effect_is_not_tied_to_native_tool_names(self, db, manager) -> None:
         """The block effect should rely on canonical mutation semantics."""
@@ -1569,8 +1639,8 @@ class TestRequireTasksSkillForMutations:
         assert registered["gobby-tasks"] == set(INTERACTIVE_TASK_MUTATIONS) | set(
             READ_ONLY_TASK_TOOLS
         )
-        assert registered["gobby-tasks-ops"] == set(TASK_REVIEW_OPERATIONS) | set(
-            NON_INTERACTIVE_TASK_OPS
+        assert registered["gobby-tasks-ops"] == (
+            set(TASK_REVIEW_OPERATIONS) | set(LANDING_OPERATIONS) | set(NON_INTERACTIVE_TASK_OPS)
         )
 
     @staticmethod
@@ -3101,3 +3171,59 @@ async def test_reference_contract_4_1_2(db: HubDatabase, route: str) -> None:
                 required = overview if overview not in references else closing
                 assert response.reason is not None
                 assert skill_fetch_directive(required) in response.reason
+
+
+@pytest.mark.parametrize(
+    ("claim_state", "blocked"),
+    [
+        ({"task_claimed": False, "claimed_tasks": {}}, True),
+        ({"task_claimed": True, "claimed_tasks": {"a": "#1"}, "active_task_id": None}, False),
+        (
+            {"task_claimed": True, "claimed_tasks": {"a": "#1", "b": "#2"}, "active_task_id": "b"},
+            False,
+        ),
+        (
+            {"task_claimed": True, "claimed_tasks": {"a": "#1", "b": "#2"}, "active_task_id": None},
+            True,
+        ),
+    ],
+    ids=["no-claim", "sole-claim", "active-claim", "handed-off-claims-none-active"],
+)
+def test_edits_need_a_claim_that_receives_them(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    claim_state: dict[str, object],
+    blocked: bool,
+) -> None:
+    """#23665: claims that all wait on review, landing or close refuse edits until a reclaim."""
+    from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+    from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+    _sync_bundled(db)
+    row = manager.get_by_name("require-task-before-edit")
+    assert row is not None
+    body = RuleDefinitionBody.model_validate(row.definition_json)
+    assert body.when is not None
+    data: dict[str, object] = {
+        "tool_name": "Edit",
+        "tool_input": {"file_path": "/project/src/app.py", "old_string": "a", "new_string": "b"},
+        "cwd": "/project",
+        "project_root": "/project",
+    }
+    normalize_tool_fields(data)
+    context = {
+        "variables": {"require_task_before_edit": True, "plan_mode": False, **claim_state},
+        "event": type("Event", (), {"data": data})(),
+        "tool_input": data["tool_input"],
+        "source": "claude_code",
+    }
+    allowed_funcs = build_condition_helpers(context=context)
+    allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
+
+    decision = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs).evaluate(
+        body.when
+    )
+
+    assert bool(decision) is blocked
+    assert body.effects
+    assert "claim_task(task_id)" in str(body.effects[0].reason)

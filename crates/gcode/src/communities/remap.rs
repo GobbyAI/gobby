@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 
@@ -117,13 +117,33 @@ pub(crate) fn assign_ids(
 }
 
 fn match_candidates(partition: &ProjectPartition, prior: &[PriorCommunity]) -> Vec<MatchCandidate> {
+    let mut prior_by_member: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (prior_index, previous) in prior.iter().enumerate() {
+        // A previous member counted once in the old set-based overlap calculation.
+        for member in previous
+            .members
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>()
+        {
+            prior_by_member.entry(member).or_default().push(prior_index);
+        }
+    }
     let mut candidates = Vec::new();
     for (new_index, current) in partition.communities.iter().enumerate() {
-        for (prior_index, previous) in prior.iter().enumerate() {
-            let overlap = overlap(&current.members, &previous.members);
-            if overlap == 0 {
-                continue;
+        let mut overlaps: HashMap<usize, usize> = HashMap::new();
+        for member in &current.members {
+            if let Some(indices) = prior_by_member.get(member.as_str()) {
+                for &prior_index in indices {
+                    *overlaps.entry(prior_index).or_default() += 1;
+                }
             }
+        }
+        let mut overlaps: Vec<_> = overlaps.into_iter().collect();
+        // Preserve the original stable order even when candidate scores tie.
+        overlaps.sort_unstable_by_key(|&(prior_index, _)| prior_index);
+        for (prior_index, overlap) in overlaps {
+            let previous = &prior[prior_index];
             candidates.push(MatchCandidate {
                 new_index,
                 prior_index,
@@ -134,14 +154,6 @@ fn match_candidates(partition: &ProjectPartition, prior: &[PriorCommunity]) -> V
         }
     }
     candidates
-}
-
-fn overlap(current: &[String], previous: &[String]) -> usize {
-    let previous: HashSet<&str> = previous.iter().map(String::as_str).collect();
-    current
-        .iter()
-        .filter(|member| previous.contains(member.as_str()))
-        .count()
 }
 
 fn compare_candidates(left: &MatchCandidate, right: &MatchCandidate) -> Ordering {

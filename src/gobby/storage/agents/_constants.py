@@ -7,6 +7,7 @@ from typing import Literal
 
 AgentRunStatus = Literal["queued", "pending", "running", "success", "error", "timeout", "cancelled"]
 AgentRunTerminalReason = Literal[
+    "review_verdict_missing",
     "user_cancelled",
     "daemon_stop",
     "task_completed",

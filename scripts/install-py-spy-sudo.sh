@@ -50,6 +50,8 @@ cat >"$tmpdir/py-spy-record" <<'EOF'
 #!/bin/sh
 # Root-owned: accepts only a numeric PID and duration; output goes to a fresh
 # mktemp dir under root-owned /var/tmp/py-spy so no caller-chosen path is written.
+# Raw collapsed stacks only: on macOS py-spy runs `open` on a flamegraph SVG,
+# which launches a GUI viewer on the user's screen after every recording.
 set -eu
 [ $# -le 2 ] || { echo "usage: py-spy-record PID [SECONDS]" >&2; exit 2; }
 pid="${1:?usage: py-spy-record PID [SECONDS]}"
@@ -61,10 +63,11 @@ if [ "$secs" -lt 1 ] || [ "$secs" -gt 300 ]; then
 	exit 2
 fi
 dir=$(mktemp -d /var/tmp/py-spy/run-XXXXXX)
-/usr/local/sbin/py-spy record --pid "$pid" --duration "$secs" --rate 100 --gil -o "$dir/profile.svg" >&2
+/usr/local/sbin/py-spy record --pid "$pid" --duration "$secs" --rate 100 --gil \
+	--format raw -o "$dir/profile.txt" >&2
 chmod 755 "$dir"
-chmod 644 "$dir/profile.svg"
-echo "$dir/profile.svg"
+chmod 644 "$dir/profile.txt"
+echo "$dir/profile.txt"
 EOF
 install -o root -g wheel -m 755 "$tmpdir/py-spy-record" /usr/local/sbin/py-spy-record
 

@@ -235,7 +235,6 @@ async def test_create_without_a_project_lands_in_global_and_names_the_failure(
     runtime = MagicMock()
     runtime.backend = "native"
     server.terminal_runtime_registry = MagicMock(resolve=MagicMock(return_value=runtime))
-    server.terminal_config = MagicMock(default_backend="native")
     created_id = str(uuid.uuid4())
     _create_pending(server.terminal_manager, GLOBAL_PROJECT_ID, terminal_id=created_id)
     spawn = AsyncMock(
@@ -303,7 +302,6 @@ def _create_server(temp_db: HubDatabase) -> tuple[WebSocketServer, MagicMock]:
     server.terminal_manager = _manager(temp_db)
     runtime = MagicMock(backend="native")
     server.terminal_runtime_registry = MagicMock(resolve=MagicMock(return_value=runtime))
-    server.terminal_config = MagicMock(default_backend="native")
     return server, runtime
 
 

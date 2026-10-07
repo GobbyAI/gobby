@@ -46,7 +46,6 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
     client.request = AsyncMock(return_value=response)
     client.aclose = AsyncMock()
     deps = DaemonProxyDependencies(
-        runtime_factory=MagicMock(),
         check_daemon_http_health=AsyncMock(return_value=True),
         read_project_id=lambda: "project-1",
         http_client_factory=lambda: client,

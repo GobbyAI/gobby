@@ -245,6 +245,22 @@ def test_actionlint_records_lint_category(command: str) -> None:
     assert not match.evidence_requires_confirmation
 
 
+@pytest.mark.parametrize("mode", ["standard", "expansion"])
+def test_plan_validation_is_credited_as_unbounded_lint(mode: str) -> None:
+    command = f"uv run gobby plans validate .gobby/plans/demo.md -p /project --mode {mode}"
+    match = classify_validation_command(command)
+    assert match is not None
+    assert match.categories == ("lint",)
+    assert match.normalized_command == command.removeprefix("uv run ")
+    assert not match.bounded_inputs
+    assert not match.evidence_requires_confirmation
+
+
+@pytest.mark.parametrize("command", ["gobby plans validate --help", "gobby plans register plan.md"])
+def test_nonvalidating_plan_commands_are_not_credited(command: str) -> None:
+    assert classify_validation_command(command) is None
+
+
 @pytest.mark.parametrize(
     "options",
     [

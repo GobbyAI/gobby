@@ -114,7 +114,6 @@ def _configure(
     server.configure_terminals(
         manager,
         runtimes,
-        MagicMock(),
         lease_registry=leases,
         write_coordinator=WriteCoordinator(manager, runtimes, lease_registry=leases),
     )

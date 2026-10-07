@@ -12,6 +12,7 @@ pub(crate) const UNPARSED_IMPORT_PREFIX: &str = "UNPARSED:";
 
 #[cfg(test)]
 use context::build_import_resolution_context_with_overrides;
+pub(crate) use context::import_resolution_input_digest;
 pub(crate) use context::{ExtractedImports, ImportBindings};
 pub use context::{ImportResolutionContext, build_import_resolution_context};
 pub(crate) use parser::{

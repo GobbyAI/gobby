@@ -39,6 +39,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager, native_locator_key
+from gobby.workflows.agent_resolver import AgentResolutionError
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import (
     IsolatedCheckoutFactory,
@@ -169,6 +170,28 @@ def test_deferred_grok_session_derives_and_persists_transcript_path() -> None:
     activate = manager._event_handlers._activate_materialized_session.call_args.kwargs
     assert activate["transcript_path"] == _DERIVED
     assert activate["session_obj"] is updated
+
+
+def test_refused_agent_definition_still_stages_startup_and_commits_claim() -> None:
+    session = SimpleNamespace(
+        id="platform-session",
+        project_id="project-1",
+        parent_session_id=None,
+        transcript_path="/repo/t.jsonl",
+    )
+    manager = _manager(session, None)
+    manager._event_handlers._inject_agent_instructions_if_needed.side_effect = AgentResolutionError(
+        "terminal_backend is no longer agent-authored"
+    )
+    event = _event({"cwd": "/repo", "transcript_path": "/repo/t.jsonl"})
+    event.event_type = HookEventType.AFTER_TOOL
+    event.metadata["_session_start_context_mode"] = "full"
+
+    with patch("gobby.hooks.session_materialize.commit_stashed_startup_claim") as commit:
+        assert activate_deferred_session(manager, event, BlockingEffectDeadline(123.0)) is None
+
+    assert event.metadata["_startup_system_message"] == "Gobby Session ID: #7"
+    commit.assert_called_once_with(manager._event_handlers, "platform-session", event.metadata)
 
 
 def test_native_transcript_path_is_classified_before_use() -> None:
