@@ -315,8 +315,8 @@ const SOURCE: &str = concat!(
 fn database_contract() -> anyhow::Result<()> {
     use gobby_code::evidence::{
         DEFAULT_GRAPH_DEPTH, DEFAULT_MAX_BYTES, DEFAULT_RESULT_LIMIT, EVIDENCE_SCHEMA_VERSION,
-        EntitySelector, EvidenceItem, EvidenceOperation, EvidenceRequest, GraphQuery,
-        GraphSelector, ReadSelector, RepositoryBinding, SearchLane, SearchSelector,
+        EntitySelector, EvidenceItem, EvidenceOperation, EvidenceRequest, EvidenceResponse,
+        GraphQuery, GraphSelector, ReadSelector, RepositoryBinding, SearchLane, SearchSelector,
     };
     use postgres::{Client, NoTls};
 
@@ -713,9 +713,25 @@ fn database_contract() -> anyhow::Result<()> {
         },
         ..range_request.clone()
     };
-    // Ordinary CLI freshness refreshes the existing index before admission.
-    // Dirty source is cited by its observed hash, not by HEAD bytes.
-    let refreshed = run_success(&project, &home, &connections, &stale_request)?;
+    // An omitted binding uses freshly indexed working-tree bytes.
+    let mut unbound_request = serde_json::to_value(&stale_request)?;
+    unbound_request
+        .as_object_mut()
+        .expect("request object")
+        .remove("binding");
+    let output = run_raw_evidence(
+        &project,
+        &home,
+        &connections,
+        &unbound_request.to_string(),
+        false,
+    )?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let refreshed: EvidenceResponse = serde_json::from_slice(&output.stdout)?;
     assert_eq!(refreshed.binding.commit_oid, commit_oid);
     assert_eq!(refreshed.items.len(), 2);
     for item in &refreshed.items {

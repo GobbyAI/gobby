@@ -12,10 +12,19 @@ use crate::evidence::{
 use crate::output::{self, Format};
 use crate::vector::code_symbols::{audited_semantic_search, collection_name};
 
+#[cfg(test)]
+#[path = "evidence_tests.rs"]
+mod tests;
+
 fn request_recovery(action: &str) -> String {
     format!(
         r#"{action} with --request-json, for example {{"schema_version":1,"operation":"search","search":{{"lane":"symbol","query":"NAME"}}}}; run gcode evidence --help for more examples"#
     )
+}
+
+pub(crate) struct PreparedEvidenceRequest {
+    pub request: EvidenceRequest,
+    commit_bound: bool,
 }
 
 pub(crate) fn preflight(
@@ -23,7 +32,7 @@ pub(crate) fn preflight(
     format: Format,
     allow_stale: bool,
     project_override: Option<&str>,
-) -> anyhow::Result<EvidenceRequest> {
+) -> anyhow::Result<PreparedEvidenceRequest> {
     let mut document: serde_json::Value =
         serde_json::from_str(request_json).map_err(|error| CliError {
             code: "invalid_evidence_request",
@@ -32,7 +41,8 @@ pub(crate) fn preflight(
             exit_status: 2,
         })?;
 
-    if document.get("binding").is_none() {
+    let commit_bound = document.get("binding").is_some();
+    if !commit_bound {
         let root = match project_override {
             Some(value) => {
                 let path = std::path::PathBuf::from(value);
@@ -90,7 +100,10 @@ pub(crate) fn preflight(
 
     validate_request_shape(&request).map_err(cli_error)?;
 
-    Ok(request)
+    Ok(PreparedEvidenceRequest {
+        request,
+        commit_bound,
+    })
 }
 
 pub(crate) fn service_config_selection(request: &EvidenceRequest) -> ServiceConfigSelection {
@@ -126,13 +139,17 @@ pub(crate) fn classify_context_error(error: anyhow::Error) -> anyhow::Error {
 
 pub(crate) fn run(
     ctx: &Context,
-    request: EvidenceRequest,
+    prepared: PreparedEvidenceRequest,
     output_debug_files: bool,
 ) -> anyhow::Result<()> {
+    let request = prepared.request;
     crate::freshness::ensure_fresh(ctx, crate::freshness::FreshnessScope::Project)?;
     let facts = Arc::new(CodewikiFacts::from_context(ctx.clone()));
     let mut library = EvidenceLibrary::new(&ctx.project_root, request.binding.clone(), facts)
         .map_err(cli_error)?;
+    if !prepared.commit_bound {
+        library = library.with_working_tree();
+    }
     if matches!(
         request.operation,
         EvidenceOperation::Search {
