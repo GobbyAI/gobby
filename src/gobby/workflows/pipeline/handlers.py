@@ -60,6 +60,13 @@ async def execute_mcp_step(
         tokens.resolved_session_id if session_manager is not None else pipeline_session_id
     )
     try:
+        if (
+            mcp_config.server == "gobby-agents"
+            and mcp_config.tool in {"spawn_agent", "dispatch_batch"}
+            and pipeline_session_id
+            and tokens.resolved_session_id is None
+        ):
+            raise RuntimeError("spawnable_agents: pipeline caller session cannot be resolved")
         if pipeline_session_id:
             # Pipeline dispatch follows the same progressive-discovery contract
             # as an agent call.
