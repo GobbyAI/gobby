@@ -29,7 +29,6 @@ from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
-from gobby.agents.spawn_models import resolve_terminal_backend
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
 from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
@@ -124,7 +123,6 @@ async def spawn_agent_impl(
     daemon_config: Any | None = None,  # DaemonConfig
     code_index: Any | None = None,  # CodeIndexContext
     held_task_mutex: Any | None = None,
-    terminal_backend: Literal["native"] | None = None,
     droid_mode: Literal["exec", "interactive"] = "exec",
     extra_write_paths: list[str] | None = None,
     write_paths_reason: str | None = None,
@@ -157,10 +155,6 @@ async def spawn_agent_impl(
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
 
-    try:
-        resolved_terminal_backend = resolve_terminal_backend(terminal_backend, daemon_config)
-    except ValueError as exc:
-        return {"success": False, "error": str(exc)}
     # Structural failures block planning roles. Authoring roles may continue
     # past symbol-only failures with repair diagnostics appended to the prompt.
     from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
@@ -831,7 +825,6 @@ async def spawn_agent_impl(
                 code_index_api_token=await run_thread_to_completion(read_local_api_token),
                 phase_timings_ms=phase_timings_ms,
                 prewarm_pre_commit_store=prewarm_pre_commit_store,
-                terminal_backend=resolved_terminal_backend,
                 droid_mode=droid_mode,
             )
 

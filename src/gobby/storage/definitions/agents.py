@@ -98,7 +98,26 @@ def _decode_json_array(value: Any) -> list[Any]:
     return []
 
 
+TERMINAL_BACKEND_REJECTED = (
+    "terminal_backend is not accepted: terminal backends are not selectable; "
+    "remove it from the agent definition"
+)
+
+
+def reject_terminal_backend(body: Mapping[str, Any]) -> None:
+    """Refuse an agent definition that names a terminal backend."""
+    if "terminal_backend" in body:
+        raise ValueError(TERMINAL_BACKEND_REJECTED)
+
+
 def parent_body(body_json: Mapping[str, Any] | str) -> dict[str, Any]:
+    """Normalize a parent body for storage, refusing a legacy ``terminal_backend``."""
+    body = _stored_parent_body(body_json)
+    reject_terminal_backend(body)
+    return body
+
+
+def _stored_parent_body(body_json: Mapping[str, Any] | str) -> dict[str, Any]:
     if isinstance(body_json, str):
         parsed = json.loads(body_json)
         if not isinstance(parsed, dict):
@@ -233,7 +252,8 @@ class AgentDefinitionRow:
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> AgentDefinitionRow:
-        definition = parent_body(decode_json_object(row["definition_json"]) or {})
+        # Reads keep a legacy terminal_backend so resolution can refuse it by name.
+        definition = _stored_parent_body(decode_json_object(row["definition_json"]) or {})
         raw_child_id = row["step_workflow_id"] if "step_workflow_id" in row.keys() else None
         step_workflow_id = str(raw_child_id) if raw_child_id is not None else None
         if step_workflow_id is not None:

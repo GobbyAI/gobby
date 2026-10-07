@@ -63,6 +63,7 @@ from gobby.terminals.runtime import (
     TerminalRuntimeRegistry,
     TerminalSpawnRequest,
 )
+from gobby.terminals.web_spawn import spawn_web_terminal
 from gobby.terminals.workspace_contract import WorkspaceEvent, WorkspaceOpError
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.terminals.write_coordinator import WriteCoordinator
@@ -1951,3 +1952,37 @@ async def test_select_emits_focus_requested_where_hints_stay_passive(harness: _H
     reselected = h.events[-1]
     assert reselected is not requested and reselected["kind"] == "focus_requested"
     assert [row.focused_pane_id for row in h.workspaces.list_tabs(workspace.id)] == [pane.id]
+
+
+async def test_role_bound_pane_is_persistent_and_bare_pane_is_run(harness: _Harness) -> None:
+    h = harness
+    real_spawn = spawn_web_terminal
+    lifetimes: list[object] = []
+
+    async def recording_spawn(**kwargs: Any) -> Any:
+        lifetimes.append(kwargs.get("lifetime"))
+        return await real_spawn(**kwargs)
+
+    workspace = await h.ops.workspace_create(OPERATOR)
+    with patch("gobby.terminals.workspace_ops.spawn_web_terminal", side_effect=recording_spawn):
+        bare = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).panes[0]
+        role = "persistent-reviewer"
+        bound = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id, role=role)).panes[0]
+        bound_split = (await h.ops.pane_split(OPERATOR, bound.id, "horizontal", role=role)).panes[0]
+        bare_split = (await h.ops.pane_split(OPERATOR, bare.id, "vertical")).panes[0]
+    assert lifetimes == ["run", "persistent_role", "persistent_role", "run"]
+
+    # Lifetime governs only fallback legality: every pane is still a native terminal.
+    for pane in (bare, bound, bound_split, bare_split):
+        assert pane.terminal_id is not None
+        terminal = h.terminals.get(pane.terminal_id)
+        assert terminal is not None and terminal.backend == "native"
+    assert h.tmux.create_calls == 0
+
+    from gobby.terminals.lifetime import lifetime_for_role
+
+    assert [lifetime_for_role(value) for value in (None, "", role)] == [
+        "run",
+        "run",
+        "persistent_role",
+    ]

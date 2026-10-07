@@ -34,7 +34,6 @@ async def test_invalid_external_grant_rejects_before_allocation() -> None:
             prompt="work",
             runner=runner,
             parent_session_id="parent",
-            terminal_backend="native",
             extra_write_paths=["/"],
             write_paths_reason="authorized",
         )
@@ -95,7 +94,6 @@ class TestProviderResolution:
                 surfaces=["persona"],
                 prompts={"persona": "Coordinate interactively."},
             ),
-            terminal_backend="native",
         )
         await asyncio.gather(*_spawn_background_tasks.values())
 
@@ -142,7 +140,6 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -196,7 +193,6 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -247,7 +243,6 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -285,7 +280,6 @@ class TestProviderResolution:
             mock_ctx.return_value = {"id": "proj-abc", "project_path": "/repo"}
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -336,7 +330,6 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -389,7 +382,6 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -440,7 +432,6 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -491,7 +482,6 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -547,7 +537,6 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 provider="codex",
@@ -638,7 +627,6 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -698,7 +686,6 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -760,7 +747,6 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -820,7 +806,6 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
-                terminal_backend="native",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,

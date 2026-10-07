@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from gobby.config.terminals import TerminalConfig
+from gobby.terminals.lifetime import NATIVE_FIRST_BACKEND
 
 pytestmark = pytest.mark.unit
 
@@ -145,7 +145,7 @@ def test_reinstating_linux_restores_the_same_commit_pair(
 
 
 def test_checked_in_flip_gate_artifacts() -> None:
-    default_backend = TerminalConfig().default_backend
+    default_backend = NATIVE_FIRST_BACKEND
     evidence_text = _EVIDENCE_PATH.read_text(encoding="utf-8")
     guide_text = _GUIDE_PATH.read_text(encoding="utf-8")
     backend_status = guide_text.split("## Backend status", maxsplit=1)[1].split(
