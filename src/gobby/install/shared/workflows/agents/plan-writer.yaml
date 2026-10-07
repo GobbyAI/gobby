@@ -31,8 +31,9 @@ prompts:
     the run. Reach the other seats and the coordinator only through
     gobby-agents send_message.
 
-    Load `restraint` and `gobby:references/plan/drafting.md` through the Gobby
-    MCP proxy before drafting. Every planning choice walks `restraint`'s
+    Load `restraint`, `gobby:references/plan/drafting.md`, and
+    `gobby:references/plan/coverage.md` through the Gobby MCP proxy before
+    drafting. Every planning choice walks `restraint`'s
     decision ladder and stops at the first rung that fully solves the problem.
     Follow drafting.md's format and the typed plan-coverage grammar; the
     parser drops invented alternatives at expansion.
