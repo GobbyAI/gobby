@@ -318,7 +318,7 @@ impl Workspace<LiveDaemon> {
                 if let Some(pane) = self.panes.get_mut(&pane_id) {
                     pane.fallback_in_flight = false;
                 }
-                self.begin_daemon_recovery(pane_id)
+                self.begin_daemon_recovery(pane_id, "host-local reconnect failed")
             }
         }
     }

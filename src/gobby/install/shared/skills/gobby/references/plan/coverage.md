@@ -10,7 +10,7 @@ The [Plan-Coverage Contract](../../../../../../../../docs/contracts/plan-coverag
 - Targets form a contiguous block without a blank line after `Targets:`. Existing indexed symbol-bearing files use exact `path::qualified_name` or justified `path::*` with same-line scope-reason. Bare paths are for new or zero-symbol files. UUIDs, line numbers, module-qualified guesses, and mixed exact/wildcard scopes are invalid.
 - Resolve exact symbols in their file with gcode. Sweep usages and literal consumers, including tests, imports and indirect string/re-export sites. Target every owned consumer and required derived carrier; record bounded literal-sweep evidence when the index does not cover the checkout.
 - Shared Target paths require dependency ordering even when symbol scopes differ. Heading dependencies can name deliverables or phases; manifest depends_on names sibling source_section IDs only. Reject unknown refs and cycles.
-- At 850 lines, targeted production files trigger the contract's decomposition heuristic; the production ceiling stays below 1,000 lines. Whole-file deletion needs its explicit annotation. Do not suppress a missing-index or skipped check and claim success.
+- At 850 lines, targeted production files trigger the contract's decomposition heuristic; the production ceiling stays below 1,000 lines. Whole-file deletion needs its explicit annotation, and a pure partial deletion can carry a typed `operation: delete-lines` proof instead of a split. Do not suppress a missing-index or skipped check and claim success.
 
 ## Manifest and deferrals
 Draft narrative first. The coordinator applies server-derived M1 only through [approval](approval.md). Preserve 1:1 deliverable/entry/leaf mapping and one `covers:<plan-id>:<section-id>:<item-id>` label per acceptance item.
@@ -23,4 +23,4 @@ Check exact plan hash, root/project identity, structured labels and artifact evi
 
 See [Coverage CLI](../../../../../../../../docs/contracts/plan-coverage.md#coverage-cli).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-06_
