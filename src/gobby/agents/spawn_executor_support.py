@@ -235,13 +235,14 @@ def _record_actual_sandbox_enforcement(
 # gobby MCP server from registering (the CLI starts that turn at process
 # launch). A prompt typed into the composer does not interrupt startup, so
 # spawned and resumed Codex terminals receive their prompt as a post-launch
-# paste. A live slow-starting seat gets one retry window, bounded by the
-# default 120-second session-init watchdog budget.
+# paste. A live slow-starting seat gets one retry window. Delivery must land
+# well inside the session-init watchdog window, leaving margin for runtime
+# spawn latency before delivery starts (the default watchdog budget is 120 s).
 _CODEX_COMPOSER_MARKER = "›"
 _CODEX_COMPOSER_CAPTURE_LINES = 40
 _CODEX_COMPOSER_POLL_SECONDS = 1.0
 _CODEX_COMPOSER_READY_TIMEOUT_SECONDS = 60.0
-_CODEX_COMPOSER_RETRY_TIMEOUT_SECONDS = 60.0
+_CODEX_COMPOSER_RETRY_TIMEOUT_SECONDS = 45.0
 _CODEX_COMPOSER_PROBE_TIMEOUT_SECONDS = 5.0
 _CODEX_COMPOSER_SETTLE_SECONDS = 1.0
 _CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS = 3.0
