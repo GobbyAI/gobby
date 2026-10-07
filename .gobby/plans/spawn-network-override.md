@@ -234,7 +234,8 @@ cases that deny a forbidden actual fallback and permit an allowed one.
 
 Targets:
 - `src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py::*` — scope-reason: add the network-authority check to the 2.1 caller guard
-- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: add the MCP parameter and apply the override after fallback resolution
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: wire the MCP `network` parameter into `spawn_agent` through `_network_override.py`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_network_override.py`
 - `src/gobby/servers/routes/agent_spawn.py::*` — scope-reason: validate and apply the HTTP single-spawn field
 - `src/gobby/cli/agents.py::*` — scope-reason: parse and forward the CLI flag
 - `src/gobby/install/shared/skills/gobby/references/agents/spawning.md`
@@ -257,6 +258,14 @@ and a daemon-internal caller is refused because no daemon path needs an
 override. The 1.2 `before_tool` rule stays; the guard covers pipeline MCP steps
 as well. After the guard passes and fallback has chosen the final definition,
 the surface applies the 1.1 helper and calls `spawn_agent_impl` with the copy.
+
+`src/gobby/mcp_proxy/tools/spawn_agent/_factory.py` is at 858 lines, so this
+change does not grow it with override logic: move the MCP `network` parameter's
+validation and the override application (the guard's network check and the 1.1
+helper call after fallback) into the new
+`src/gobby/mcp_proxy/tools/spawn_agent/_network_override.py`. `_factory.py` only
+adds the parameter to `spawn_agent` and calls that module.
+
 HTTP creates or reuses its per-project `web_launcher` parent session before
 resolving the body; that reused row is not a launch allocation, so a refusal
 after it is acceptable. Update the existing spawning reference, agents guide,
@@ -277,8 +286,8 @@ to `/api/mcp/gobby-agents/tools/spawn_agent` with `daemon_auth_headers`, which
 prefers a managed run token, and such calls get daemon-side `before_tool`
 enforcement (`_enforce_workflow_for_request`). Pipeline MCP steps run with
 `enforce_workflow=False`, so only the 2.1 guard sees their override. Observed:
-none of these three surfaces has a network parameter; `_factory.py` has 844
-lines and stays under the production ceiling after 2.1 and this change.
+none of these three surfaces has a network parameter; `_factory.py` has 858
+lines after 2.1, so the override logic moves to `_network_override.py`.
 Planned: focused MCP, HTTP, Click, and pipeline-step tests for valid and invalid
 values, null, fallback in both directions, explicit `none` on a trusted final
 definition, a later omitted launch inheriting the original profile, `web_chat`,
@@ -486,112 +495,14 @@ remain unchanged.
   second prerequisite, in its prose, finalization edges and deferral reason. No
   deliverable, acceptance item or M1 entry changed. Expansion proceeds with the
   implementation root under Lane 3 epic #22691, **Lane 3 - Runbooks**.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Resolve the effective SRT profile for one launch
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: Null inherits the final definition''s profile; explicit
-    `none` and `trusted` take precedence for one launch, and an explicit value without
-    a resolved definition refuses. behavior: "effective per-spawn SRT network profile".
-
-    1.1.2: The override is a launch-local copy: the loaded body and stored definition
-    keep their profile. behavior: "one-launch override lifetime".
-
-    1.1.3: Resume reuses the saved effective sandbox config, so an overridden profile
-    survives resume without new resume code. behavior: "resume retains selected network
-    profile".'
-  labels:
-  - covers:spawn-network-override:1.1:1.1.1
-  - covers:spawn-network-override:1.1:1.1.2
-  - covers:spawn-network-override:1.1:1.1.3
-  tdd: false
-  source_section: '1.1'
-  implementation_domain: backend
-- title: Deny unauthorized overrides
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: '1.2.1: Root and named spawned callers may select either profile;
-    all other spawned callers may spawn only without an override. behavior: "network
-    override authority".
-
-    1.2.2: A forged parent session ID or a run-less non-root session never gains override
-    authority. behavior: "verified caller identity".
-
-    1.2.3: Bundled default permits child spawning, and override authority leaves seat-spawn
-    policy in force. behavior: "definition and seat spawn policy".'
-  labels:
-  - covers:spawn-network-override:1.2:1.2.1
-  - covers:spawn-network-override:1.2:1.2.2
-  - covers:spawn-network-override:1.2:1.2.3
-  tdd: false
-  source_section: '1.2'
-  implementation_domain: backend
-- title: Enforce spawnable_agents for every spawn caller
-  category: code
-  task_type: bug
-  depends_on:
-  - '1.2'
-  validation_criteria: '2.1.1: A spawned agent whose `spawnable_agents` excludes an
-    agent cannot spawn it through a pipeline MCP step, and the refusal names `spawnable_agents`;
-    a regression test fails before the fix. behavior: "spawnable_agents on every entry
-    path".
-
-    2.1.2: The same caller can still spawn an allowed agent through a pipeline MCP
-    step, and the root, operator, and daemon-internal paths are unchanged. behavior:
-    "allowed spawns unchanged".
-
-    2.1.3: A spawned caller with unresolved or forged identity is refused. behavior:
-    "spawn caller identity fails closed".
-
-    2.1.4: Rejected credentials are refused even when the request carries an otherwise
-    authorized session. behavior: "rejected principal refused".
-
-    2.1.5: The fallback chain checked is the one the launch would use: in the target
-    project from an explicit `project_path` or the parent session, a forbidden actual
-    fallback is refused and an allowed one is permitted. behavior: "target-project
-    fallback authority".'
-  labels:
-  - covers:spawn-network-override:2.1:2.1.1
-  - covers:spawn-network-override:2.1:2.1.2
-  - covers:spawn-network-override:2.1:2.1.3
-  - covers:spawn-network-override:2.1:2.1.4
-  - covers:spawn-network-override:2.1:2.1.5
-  tdd: false
-  source_section: '2.1'
-  implementation_domain: backend
-- title: Expose the choice on single-spawn surfaces
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  - '1.2'
-  - '2.1'
-  validation_criteria: '2.2.1: MCP, HTTP, and CLI expose only `none|trusted`, with
-    omission/null inheriting the final definition, including after fallback in both
-    directions. behavior: "single-spawn network input".
-
-    2.2.2: HTTP `web_chat` rejects explicit network and managed credentials cannot
-    call the direct HTTP spawn route. behavior: "HTTP spawn boundary".
-
-    2.2.3: An explicit override from an unauthorized caller, including through a pipeline
-    MCP step, refuses before placement, checkout, child session, or launch. behavior:
-    "override authority at the spawn boundary".
-
-    2.2.4: The spawning reference, agents guide, and sandboxing guide document the
-    parameter, flag, inheritance, lifetime, and authority limits. file: `docs/guides/sandboxing.md`.'
-  labels:
-  - covers:spawn-network-override:2.2:2.2.1
-  - covers:spawn-network-override:2.2:2.2.2
-  - covers:spawn-network-override:2.2:2.2.3
-  - covers:spawn-network-override:2.2:2.2.4
-  tdd: false
-  source_section: '2.2'
-  implementation_domain: backend
-```
+- 2026-10-07, Lane 7 plan writer W4 (gobby#15528), repair under #23671 by the
+  Orchestrator gobby#14972's 02:05 CT ruling (b), relayed by Lane 7 manager LM7
+  (gobby#15389): after 2.1 landed, `_factory.py` has 858 lines, past the
+  850-line growth threshold, so base validation failed 2.2 on
+  production-size-growth. 2.2 now targets the new bare path
+  `src/gobby/mcp_proxy/tools/spawn_agent/_network_override.py`, which holds the
+  MCP `network` parameter's validation and the override application. The
+  `_factory.py` scope-reason narrows to wiring, a body paragraph names the move,
+  and 2.2's research note now reads 858 lines. Completed 2.1 keeps its
+  delivered bytes, including its own 844-line observation. No acceptance item
+  changed. The M1 block was withdrawn for re-derivation (memory f5577ae0).
