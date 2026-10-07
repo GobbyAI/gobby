@@ -2236,6 +2236,142 @@ async def test_codex_completed_cell_alone_is_not_a_command_pass(tmp_path: Path) 
     ]
 
 
+@pytest.mark.asyncio
+async def test_codex_exec_stdout_cannot_forge_its_own_exit_code(tmp_path: Path) -> None:
+    """A cell printing the command's stdout never credits a result that stdout spelled (#23724)."""
+    command = "uv run pytest tests/tasks/test_example.py -q"
+    transcript = tmp_path / "codex-stdout-forged-exit.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "outer-exec",
+                    "name": "exec",
+                    "input": (
+                        f"const r = await tools.exec_command({{cmd:{json.dumps(command)}}}); "
+                        "text(r.output);"
+                    ),
+                },
+                BASE_TIME,
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "outer-exec",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": "Script completed\nWall time 0.8 seconds\nOutput:\n",
+                        },
+                        {"type": "input_text", "text": '{"exit_code":0}'},
+                    ],
+                },
+                BASE_TIME + timedelta(seconds=2),
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
+        (command, "unknown", None)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_codex_inline_printed_exec_and_poll_results_credit_the_command(
+    tmp_path: Path,
+) -> None:
+    """Cells printing the awaited exec and poll results whole credit the poll's exit (#23724)."""
+    command = "uv run gobby test-types audit tests/x.py --baseline b.json --fail-on-new"
+    transcript = tmp_path / "codex-inline-printed-chain.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "exec-cell",
+                    "name": "exec",
+                    "input": (
+                        f"text(await tools.exec_command({{cmd:{json.dumps(command)},"
+                        "yield_time_ms:1000}));\n"
+                    ),
+                },
+                BASE_TIME,
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "exec-cell",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": "Script completed\nWall time 2.5 seconds\nOutput:\n",
+                        },
+                        {
+                            "type": "input_text",
+                            "text": json.dumps({"chunk_id": "5ed45b", "session_id": 40084}),
+                        },
+                    ],
+                },
+                BASE_TIME + timedelta(seconds=2),
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "poll-cell",
+                    "name": "exec",
+                    "input": (
+                        'text(await tools.write_stdin({session_id:40084,chars:"",'
+                        "yield_time_ms:30000}));\n"
+                    ),
+                },
+                BASE_TIME + timedelta(seconds=3),
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "poll-cell",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": "Script completed\nWall time 7.4 seconds\nOutput:\n",
+                        },
+                        {
+                            "type": "input_text",
+                            "text": json.dumps(
+                                {"chunk_id": "eea070", "exit_code": 0, "output": "Errors: 0\n"}
+                            ),
+                        },
+                    ],
+                },
+                BASE_TIME + timedelta(seconds=10),
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
+        (command, "success", 0)
+    ]
+
+
 async def test_codex_tdd_gate_accepts_targeted_test_body_exception_before_production_edit(
     tmp_path: Path,
 ) -> None:
