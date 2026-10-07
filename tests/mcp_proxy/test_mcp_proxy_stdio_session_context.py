@@ -62,12 +62,6 @@ def _mock_response(payload: dict[str, Any] | None = None) -> MagicMock:
     return response
 
 
-def _runtime_with_timeout_config() -> MagicMock:
-    runtime = MagicMock()
-    runtime.require_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
-    return runtime
-
-
 def _mock_http_client(
     mock_client_cls: MagicMock, payload: dict[str, Any] | None = None
 ) -> AsyncMock:
@@ -114,24 +108,21 @@ async def test_request_body_session_id_does_not_update_context_header() -> None:
 async def test_call_tool_session_id_override_does_not_mutate_proxy_state() -> None:
     proxy = DaemonProxy(60887)
 
+    proxy._tool_timeouts = {}
     with patch(
-        "gobby.mcp_proxy.stdio.CliRuntime",
-        return_value=_runtime_with_timeout_config(),
-    ):
-        with patch(
-            "gobby.mcp_proxy.stdio.check_daemon_http_health",
-            new_callable=AsyncMock,
-        ) as mock_health:
-            mock_health.return_value = True
-            with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
-                client = _mock_http_client(mock_client_cls)
+        "gobby.mcp_proxy.stdio.check_daemon_http_health",
+        new_callable=AsyncMock,
+    ) as mock_health:
+        mock_health.return_value = True
+        with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
+            client = _mock_http_client(mock_client_cls)
 
-                await proxy.call_tool(
-                    "gobby-tasks",
-                    "list_tasks",
-                    {"status": "open"},
-                    session_id="new-session",
-                )
+            await proxy.call_tool(
+                "gobby-tasks",
+                "list_tasks",
+                {"status": "open"},
+                session_id="new-session",
+            )
 
     _, kwargs = client.request.call_args
     assert kwargs["headers"]["X-Gobby-Session-Id"] == "new-session"
@@ -144,25 +135,22 @@ async def test_call_tool_sends_caller_project_header_with_target_project_overrid
     proxy = DaemonProxy(60887)
     proxy._project_id = "caller-project"
 
+    proxy._tool_timeouts = {}
     with patch(
-        "gobby.mcp_proxy.stdio.CliRuntime",
-        return_value=_runtime_with_timeout_config(),
-    ):
-        with patch(
-            "gobby.mcp_proxy.stdio.check_daemon_http_health",
-            new_callable=AsyncMock,
-        ) as mock_health:
-            mock_health.return_value = True
-            with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
-                client = _mock_http_client(mock_client_cls)
+        "gobby.mcp_proxy.stdio.check_daemon_http_health",
+        new_callable=AsyncMock,
+    ) as mock_health:
+        mock_health.return_value = True
+        with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
+            client = _mock_http_client(mock_client_cls)
 
-                await proxy.call_tool(
-                    "gobby-tasks",
-                    "list_tasks",
-                    {},
-                    project_id="target-project",
-                    session_id="#7",
-                )
+            await proxy.call_tool(
+                "gobby-tasks",
+                "list_tasks",
+                {},
+                project_id="target-project",
+                session_id="#7",
+            )
 
     _, kwargs = client.request.call_args
     assert kwargs["headers"]["X-Gobby-Project-Id"] == "target-project"

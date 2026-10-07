@@ -19,7 +19,7 @@ from gobby.utils.local_token import derive_managed_signing_key
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
 
-from gobby.agents import spawn_executor_support
+from gobby.agents import spawn_executor, spawn_executor_support
 from gobby.agents.constants import (
     CARGO_HOME,
     CARGO_TARGET_DIR,
@@ -75,6 +75,14 @@ def _manager_of(request: SpawnRequest) -> MemoryTerminalStore:
     manager = request.terminal_manager
     assert isinstance(manager, MemoryTerminalStore)
     return manager
+
+
+async def _finish_timeout_cleanups() -> None:
+    """Wait for this loop's late timeout cleanups to finish their guarded row writes."""
+    loop = asyncio.get_running_loop()
+    await asyncio.gather(
+        *(task for task in spawn_executor._TIMEOUT_CLEANUP_TASKS if task.get_loop() is loop)
+    )
 
 
 class _SpawnKwargs(TypedDict):
@@ -2771,7 +2779,7 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
         monkeypatch.setenv(variable, value)
 
     response = MagicMock(status_code=200)
-    response.json.return_value = {"success": True}
+    response.json.return_value = {"success": True, "tool_timeouts": {}}
     client = MagicMock()
     client.request = AsyncMock(return_value=response)
     deps = MagicMock()
@@ -2789,7 +2797,8 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
     await proxy.get_tool_schema("gobby-tasks", "list_tasks")
     await proxy.call_tool("gobby-tasks", "list_tasks", {}, preflight_enabled=False)
 
-    assert client.request.await_count == 2
+    # The schema read, the first call's tool-timeout read, and the call itself.
+    assert client.request.await_count == 3
     for request_call in client.request.await_args_list:
         assert request_call.args[1].startswith("http://127.0.0.1:31579/api/mcp/")
         headers = request_call.kwargs["headers"]
@@ -3436,7 +3445,7 @@ async def test_timed_out_attempt_is_settled_after_delayed_cleanup() -> None:
     assert row.state == "pending"
     assert runtime.killed_host_ids == []
     runtime.spawn_hold.set()
-    await runtime.terminate_host_started.wait()
+    await manager.attempt_settled.wait()  # the row settles after the kill returns
     assert runtime.killed_host_ids  # the done callback killed the late effect
     reaped = await reap_stale_pending_terminals(
         cast(TerminalManager, manager), runtime_registry(runtime), in_doubt_seconds=150.0
@@ -4124,6 +4133,7 @@ async def test_timeout_callback_is_owned_by_attempt_generation() -> None:
     assert newer is not None
     runtime.spawn_hold.set()
     await runtime.terminate_host_started.wait()
+    await _finish_timeout_cleanups()
     assert row.state == "pending"
     assert row.attempt_generation == newer.attempt_generation
 
@@ -4147,6 +4157,7 @@ async def test_timeout_callback_is_owned_by_attempt_generation() -> None:
     assert web_runtime.spawn_hold is not None
     web_runtime.spawn_hold.set()
     await web_runtime.terminate_host_started.wait()
+    await _finish_timeout_cleanups()
     assert web_row.state == "pending"
     assert web_row.attempt_generation == web_newer.attempt_generation
 

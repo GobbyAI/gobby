@@ -145,14 +145,15 @@ async def test_request_refreshes_project_id_after_late_project_init(
 async def test_call_tool_sends_intent_on_each_http_shape() -> None:
     deps = MagicMock()
     deps.read_project_id.return_value = None
-    runtime = MagicMock()
-    runtime.require_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
-    deps.runtime_factory.return_value = runtime
     proxy = DaemonProxy(60887, deps_factory=lambda: deps)
     long_intent = "wrapper-summary" * 200
 
     with patch.object(proxy, "_request", new_callable=AsyncMock) as request:
-        request.return_value = {"success": True}
+        request.side_effect = [
+            {"success": True, "tool_timeouts": {}},
+            {"success": True},
+            {"success": True},
+        ]
         await proxy.call_tool(
             "example",
             "ordinary",
@@ -168,11 +169,12 @@ async def test_call_tool_sends_intent_on_each_http_shape() -> None:
             intent=long_intent,
         )
 
-    direct = request.await_args_list[0]
+    assert request.await_args_list[0].args == ("GET", "/api/mcp/bridge/tool-timeouts")
+    direct = request.await_args_list[1]
     assert direct.args[:2] == ("POST", "/api/mcp/example/tools/ordinary")
     assert direct.kwargs["json"] == {"intent": "target-value"}
     assert direct.kwargs["params"] == {"intent": long_intent[:1_024]}
-    structured = request.await_args_list[1]
+    structured = request.await_args_list[2]
     assert structured.args[:2] == ("POST", "/api/mcp/tools/call")
     assert structured.kwargs["json"]["intent"] == long_intent
     assert structured.kwargs["json"]["arguments"]["intent"] == "target-value"
@@ -181,18 +183,20 @@ async def test_call_tool_sends_intent_on_each_http_shape() -> None:
 @pytest.mark.asyncio
 async def test_tool_timeout_read_failure_is_retried() -> None:
     deps = MagicMock()
-    failed_runtime = MagicMock()
-    failed_runtime.require_config.side_effect = RuntimeError("hub unavailable")
-    recovered_runtime = MagicMock()
-    recovered_runtime.require_config.return_value = MagicMock(
-        mcp_client_proxy=MagicMock(tool_timeouts={"gobby-tasks:close_task": 47.0})
-    )
-    deps.runtime_factory.side_effect = [failed_runtime, recovered_runtime]
     proxy = DaemonProxy(60887, deps_factory=lambda: deps)
+    request = AsyncMock(
+        side_effect=[
+            {"success": False, "error": "Daemon not available"},
+            {"success": True, "tool_timeouts": {"gobby-tasks:close_task": 47.0}},
+        ]
+    )
 
-    assert await proxy._get_tool_timeouts() == {}
-    assert await proxy._get_tool_timeouts() == {"gobby-tasks:close_task": 47.0}
-    assert deps.runtime_factory.call_count == 2
+    with patch.object(proxy, "_request", new=request):
+        assert await proxy._get_tool_timeouts() == {}
+        assert await proxy._get_tool_timeouts() == {"gobby-tasks:close_task": 47.0}
+        assert await proxy._get_tool_timeouts() == {"gobby-tasks:close_task": 47.0}
+
+    assert request.await_count == 2
 
 
 @pytest.mark.asyncio
