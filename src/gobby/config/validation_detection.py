@@ -690,6 +690,11 @@ def _matcher_matches_segment(matcher: ValidationCommandMatcher, tokens: list[str
             continue
         if any(_tokens_include_arg(tokens, arg) for arg in matcher.non_executing_args_any):
             continue
+        if matcher.id == "python-dependency-audit" and _pip_audit_has_nonchecking_option(
+            tokens[len(prefix_tokens) :],
+            [*matcher.forbidden_args_any, *matcher.non_executing_args_any],
+        ):
+            continue
         if matcher.required_args_all and not all(
             _tokens_include_arg(tokens, arg) for arg in matcher.required_args_all
         ):
@@ -742,6 +747,25 @@ def _strip_wrapper_options(tokens: list[str], options_with_values: set[str]) -> 
             return tokens[index:]
         index += 2 if token in options_with_values else 1
     return []
+
+
+def _pip_audit_has_nonchecking_option(args: list[str], forbidden: list[str]) -> bool:
+    """Reject abbreviated long options and bundles without inspecting attached values."""
+    for token in args:
+        if token.startswith("--"):
+            option = token.partition("=")[0]
+            if option != "--" and any(arg.startswith(option) for arg in forbidden):
+                return True
+            continue
+        if not token.startswith("-"):
+            continue
+        for option in token[1:]:
+            if option in "dVlh":
+                return True
+            if option in "fsor":
+                # These options consume the remaining characters as their value.
+                break
+    return False
 
 
 def _tokens_include_arg(tokens: list[str], arg: str) -> bool:
