@@ -7,9 +7,9 @@ only documentation has nothing for that review to read: OCR excludes every such
 path as ``unsupported_ext``, so the pass costs a skill load and two subprocesses
 and reviews nothing.
 
-This module answers one question for those rules: will the commit record a path
-OCR would review? Every ambiguity answers yes. A missed gate lets an unreviewed
-code change land; a redundant one costs one review pass.
+The gates also exempt a clean, explicit fast-forward whose incoming commits
+are already reachable from the registered main checkout's protected branch.
+Every ambiguity stays gated: a missed gate lets unreviewed code land.
 """
 
 from __future__ import annotations
@@ -18,8 +18,10 @@ import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
+
+import psycopg
 
 from gobby.config.shell_lexing import parse_shell_command
 from gobby.utils.daemon_git import GitOk, daemon_git
@@ -30,6 +32,7 @@ from gobby.workflows.observer_utils import _extract_shell_command
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -228,14 +231,16 @@ def _chained_add_paths(segments: Sequence[tuple[str, ...]]) -> tuple[str, ...] |
     return tuple(paths)
 
 
-def _parse_git_global_options(tokens: Sequence[str]) -> tuple[int, str | None] | None:
-    """Return the index past ``commit`` and git's ``-C`` directory, if any."""
+def _parse_git_global_options(
+    tokens: Sequence[str], *, subcommand: str = "commit"
+) -> tuple[int, str | None] | None:
+    """Return the index past the subcommand and git's ``-C`` directory, if any."""
     chdir: str | None = None
     index = 0
     while index < len(tokens):
         token = tokens[index]
         index += 1
-        if token == "commit":
+        if token == subcommand:
             return index, chdir
         if token == "-C" and chdir is None and index < len(tokens):
             chdir = tokens[index]
@@ -330,6 +335,9 @@ async def inspect_commit_review_scope(
     event: HookEvent,
     project_path: str,
     variables: Mapping[str, object] | None = None,
+    *,
+    integration_branch: str | None = None,
+    db: HubDatabase | None = None,
 ) -> CommitReviewScope:
     """Return reviewability and only the current session's review target paths.
 
@@ -337,8 +345,26 @@ async def inspect_commit_review_scope(
     conservative gate from ever directing one session to review another
     session's staged work.
     """
-    scope = parse_commit_scope(_extract_shell_command(event))
+    command = _extract_shell_command(event)
+    scope = parse_commit_scope(command)
     if scope is None:
+        if _parse_fast_forward(command) is not None:
+            main: Path | None = None
+            if db is not None and event.project_id:
+                from gobby.tasks.land_commit import main_checkout_target
+
+                try:
+                    target = await main_checkout_target(db, event.project_id)
+                except (RuntimeError, ValueError, OSError, psycopg.Error) as exc:
+                    logger.debug("Code-review scope could not read the main checkout: %s", exc)
+                    return CommitReviewScope(True, None)
+                if target is None:
+                    return CommitReviewScope(True, None)
+                main, integration_branch = target
+            if integration_branch and await _is_reviewed_fast_forward(
+                event, project_path, integration_branch, main=main
+            ):
+                return CommitReviewScope(False, () if variables is not None else None)
         return CommitReviewScope(True, None)
 
     inspect_cwd = resolve_commit_inspect_cwd(
@@ -366,6 +392,78 @@ async def inspect_commit_review_scope(
         bool(reviewable),
         tuple(sorted(reviewable & owned)),
     )
+
+
+def _parse_fast_forward(command: str | None) -> tuple[str, str | None] | None:
+    """Recognize only an explicit, unchained fast-forward with one literal target."""
+    if not command or any(char in command for char in ";|&<>$`\\*?[]{}()\n\r"):
+        return None
+    parsed = parse_shell_command(command)
+    if len(parsed.segments) != 1 or parsed.operators:
+        return None
+    tokens = parsed.segments[0]
+    if not tokens or tokens[0].rsplit("/", maxsplit=1)[-1] != "git":
+        return None
+    globals_ = _parse_git_global_options(tokens[1:], subcommand="merge")
+    if globals_ is None:
+        return None
+    index, chdir = globals_
+    arguments = tokens[index + 1 :]
+    if "--ff-only" not in arguments:
+        return None
+    flags = {"--ff-only", "--quiet", "-q", "--no-edit", "--"}
+    targets = [argument for argument in arguments if argument not in flags]
+    if len(targets) != 1 or targets[0].startswith(("-", "~")):
+        return None
+    return targets[0], chdir
+
+
+async def _is_reviewed_fast_forward(
+    event: HookEvent, project_path: str, integration_branch: str, *, main: Path | None = None
+) -> bool:
+    """Prove a lone fast-forward imports no commits outside the integration tip."""
+    parsed = _parse_fast_forward(_extract_shell_command(event))
+    if parsed is None:
+        return False
+    target_ref, chdir = parsed
+    cwd = resolve_commit_inspect_cwd(
+        GitCommitInvocation(pathspecs=(), chdir=chdir),
+        event_cwd=event.cwd if isinstance(event.cwd, str) else None,
+        project_path=project_path,
+    )
+    if main is not None:
+        common = await daemon_git.run(
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=cwd, timeout=10.0
+        )
+        if (
+            not isinstance(common, GitOk)
+            or Path(common.stdout.strip()).parent.resolve() != main.resolve()
+        ):
+            return False
+    staged = await _diff_paths(cwd, ("--cached", "HEAD"), ())
+    if staged is None or staged:
+        return False
+    commits: list[str] = []
+    for ref in ("HEAD", f"{target_ref}^{{commit}}", f"refs/heads/{integration_branch}^{{commit}}"):
+        resolved = await daemon_git.run(
+            ["rev-parse", "--verify", "--end-of-options", ref], cwd=cwd, timeout=10.0
+        )
+        if not isinstance(resolved, GitOk):
+            return False
+        commit = resolved.stdout.strip()
+        if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) is None:
+            return False
+        commits.append(commit)
+    head, target, integration = commits
+    ancestor = await daemon_git.run(
+        ["merge-base", "--is-ancestor", head, target], cwd=cwd, timeout=10.0
+    )
+    if not isinstance(ancestor, GitOk):
+        return False
+    incoming = await daemon_git.run(
+        ["rev-list", target, f"^{head}", f"^{integration}", "--"], cwd=cwd, timeout=10.0
+    )
+    return isinstance(incoming, GitOk) and not incoming.stdout.strip()
 
 
 async def _recorded_paths(scope: CommitScope, cwd: str) -> set[str] | None:
