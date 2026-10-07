@@ -187,6 +187,24 @@ class FrontDoorIdentity(NamedTuple):
     key_id: str
 
 
+def verified_front_door_identity(
+    request: HTTPConnection | Mapping[str, str], secret: str | None
+) -> FrontDoorIdentity | None:
+    """Resolve identity only from the configured front door's complete headers."""
+    headers = request.headers if isinstance(request, HTTPConnection) else request
+    supplied = headers.get("X-Gobby-Front-Door")
+    if not secret or not supplied:
+        return None
+    if not secrets.compare_digest(supplied.encode(), secret.encode()):
+        return None
+    user_id = headers.get("X-Gobby-User-Id")
+    machine_id = headers.get("X-Gobby-Machine-Id")
+    key_id = headers.get("X-Gobby-Key-Id")
+    if not user_id or not machine_id or not key_id:
+        return None
+    return FrontDoorIdentity(user_id, machine_id, key_id)
+
+
 class AuthService:
     """Cache and verify all daemon authentication credentials."""
 
@@ -252,18 +270,7 @@ class AuthService:
     def verified_front_door_identity(
         self, request: HTTPConnection | Mapping[str, str]
     ) -> FrontDoorIdentity | None:
-        headers = request.headers if isinstance(request, HTTPConnection) else request
-        supplied = headers.get("X-Gobby-Front-Door")
-        if not self._front_door_secret or not supplied:
-            return None
-        if not secrets.compare_digest(supplied.encode(), self._front_door_secret.encode()):
-            return None
-        user_id = headers.get("X-Gobby-User-Id")
-        machine_id = headers.get("X-Gobby-Machine-Id")
-        key_id = headers.get("X-Gobby-Key-Id")
-        if not user_id or not machine_id or not key_id:
-            return None
-        return FrontDoorIdentity(user_id, machine_id, key_id)
+        return verified_front_door_identity(request, self._front_door_secret)
 
     async def verify_ws_identity(self, headers: Mapping[str, str]) -> str | None:
         identity = self.verified_front_door_identity(headers)
