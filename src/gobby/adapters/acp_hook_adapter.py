@@ -204,7 +204,8 @@ class ACPHookAdapter(BaseAdapter):
         session_id = input_data.get("session_id") or input_data.get("sessionId") or ""
 
         # Parse timestamp if present.
-        timestamp_str = input_data.get("timestamp")
+        # Replay ordering shares ghook's clock, even if the provider clock is ahead.
+        timestamp_str = native_event.get("_enqueued_at") or input_data.get("timestamp")
         if timestamp_str:
             try:
                 timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))

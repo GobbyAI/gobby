@@ -158,6 +158,7 @@ class ServiceContainer:
     project_id: str | None = None
     websocket_server: Any | None = None  # GobbyWebSocketServer
     startup_ready: bool = False
+    restart_recovery_ready: bool = False
     shutdown_in_progress: bool = False
     http_admission_closed: bool = False
     # The daemon's long-lived event loop, captured at run_daemon startup.

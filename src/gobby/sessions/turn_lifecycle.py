@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import Any, Literal, Protocol, cast
 
 from gobby.storage.attention import (
@@ -14,6 +15,7 @@ from gobby.storage.attention import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import TERMINAL_SESSION_STATUSES
+from gobby.utils.datetime import datetime_to_iso, parse_stored_datetime, to_aware_utc, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,7 @@ class TurnEvidence:
     provider_turn_key: str | None = None
     request_id: str | None = None
     cursor: str | int | None = None
+    event_time: datetime = field(default_factory=utc_now)
 
 
 @dataclass(frozen=True)
@@ -146,6 +149,7 @@ class TurnLifecycleState:
     evidence_source: str | None = None
     cursor: str | int | None = None
     provider_error: ProviderErrorState | None = None
+    started_at: datetime | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -158,6 +162,7 @@ class TurnLifecycleState:
             "evidence_source": self.evidence_source,
             "cursor": self.cursor,
             "provider_error": self.provider_error.to_dict() if self.provider_error else None,
+            "started_at": datetime_to_iso(self.started_at),
         }
 
     @classmethod
@@ -181,6 +186,10 @@ class TurnLifecycleState:
             else ()
         )
         turn_state = raw.get("turn_state")
+        try:
+            started_at = parse_stored_datetime(raw.get("started_at"))
+        except ValueError:
+            started_at = None
         return cls(
             generation=generation if isinstance(generation, int) and generation >= 0 else 0,
             provider_turn_key=_optional_str(raw.get("provider_turn_key")),
@@ -191,6 +200,7 @@ class TurnLifecycleState:
             evidence_source=_optional_str(raw.get("evidence_source")),
             cursor=_cursor(raw.get("cursor")),
             provider_error=ProviderErrorState.from_value(raw.get("provider_error")),
+            started_at=started_at,
         )
 
 
@@ -262,6 +272,8 @@ class TurnLifecycleReducer:
             ):
                 return current, status
             request_ids = (evidence.request_id,) if evidence.request_id else ()
+            event_time = to_aware_utc(evidence.event_time)
+            started_at = max(current.started_at, event_time) if current.started_at else event_time
             return (
                 TurnLifecycleState(
                     generation=current.generation + 1,
@@ -273,6 +285,7 @@ class TurnLifecycleReducer:
                     evidence_source=evidence.source,
                     cursor=evidence.cursor,
                     provider_error=current.provider_error,
+                    started_at=started_at,
                 ),
                 "active",
             )
@@ -629,4 +642,5 @@ class TurnLifecycleReducer:
             evidence_source=evidence.source,
             cursor=evidence.cursor if evidence.cursor is not None else current.cursor,
             provider_error=current.provider_error,
+            started_at=current.started_at,
         )
