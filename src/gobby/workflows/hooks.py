@@ -562,7 +562,9 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 if event.event_type == HookEventType.BEFORE_TOOL and project_path:
                     from gobby.workflows.code_review_scope import inspect_commit_review_scope
 
-                    review_scope = await inspect_commit_review_scope(event, project_path, variables)
+                    review_scope = await inspect_commit_review_scope(
+                        event, project_path, variables, db=self.rule_engine.db
+                    )
                     eval_context["commit_has_reviewable_paths"] = review_scope.has_reviewable_paths
                     owned_paths = review_scope.session_owned_reviewable_paths
                     eval_context["session_owned_reviewable_paths"] = (

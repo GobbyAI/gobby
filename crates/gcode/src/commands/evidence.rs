@@ -12,10 +12,6 @@ use crate::evidence::{
 use crate::output::{self, Format};
 use crate::vector::code_symbols::{audited_semantic_search, collection_name};
 
-#[cfg(test)]
-#[path = "evidence_tests.rs"]
-mod tests;
-
 fn request_recovery(action: &str) -> String {
     format!(
         r#"{action} with --request-json, for example {{"schema_version":1,"operation":"search","search":{{"lane":"symbol","query":"NAME"}}}}; run gcode evidence --help for more examples"#
@@ -295,3 +291,7 @@ fn cli_error(error: EvidenceError) -> CliError {
         exit_status: 2,
     }
 }
+
+#[cfg(test)]
+#[path = "evidence_tests.rs"]
+mod tests;

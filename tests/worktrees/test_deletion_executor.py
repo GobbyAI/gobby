@@ -31,6 +31,8 @@ class _Storage:
         self.rows = rows
         self.thread_ids: set[int] = set()
         self._lock = threading.Lock()
+        # No live session occupies these worktrees.
+        self.db = SimpleNamespace(fetchall=lambda _sql, _params: [])
 
     def get(self, worktree_id: str) -> Worktree | None:
         with self._lock:
@@ -275,3 +277,42 @@ async def test_shutdown_cancels_queue_drains_active_and_closes_admission() -> No
         await asyncio.gather(active_task, queued_task, return_exceptions=True)
         executor.shutdown()
         await asyncio.to_thread(executor.join)
+
+
+@pytest.mark.asyncio
+async def test_live_session_inside_refuses_before_git_or_storage_mutate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree = _worktree("wt-live", tmp_path / "wt-live")
+    Path(worktree.worktree_path).mkdir()
+    storage = _Storage({worktree.id: worktree})
+    asked: list[tuple[object, str, str | None]] = []
+
+    def occupied(db: object, path: str, *, worktree_id: str | None = None) -> str:
+        asked.append((db, path, worktree_id))
+        return f"Live session gobby#15411 working in {path}; it was not deleted"
+
+    def no_git(_worktree: Worktree) -> WorktreeGitManager:
+        raise AssertionError("an occupied worktree must not reach git")
+
+    monkeypatch.setattr("gobby.worktrees.deletion.refuse_occupied_worktree", occupied)
+    boundary = DestructiveBoundary()
+
+    result = await delete_worktree_transaction(
+        boundary,
+        request=WorktreeDeletionRequest(worktree.id, DeletionSurface.MCP, force=True),
+        worktree_storage=cast(LocalWorktreeManager, storage),
+        resolve_git_manager=no_git,
+        task_manager=cast(LocalTaskManager, _TaskManager({worktree.id})),
+    )
+
+    assert result.success is False
+    assert result.git_deleted is False
+    assert result.error_code == "worktree_in_use"
+    assert result.error == (
+        f"Live session gobby#15411 working in {worktree.worktree_path}; it was not deleted"
+    )
+    assert asked == [(storage.db, worktree.worktree_path, worktree.id)]
+    assert boundary.mutation_started is False
+    assert storage.rows == {worktree.id: worktree}
+    assert Path(worktree.worktree_path).is_dir()

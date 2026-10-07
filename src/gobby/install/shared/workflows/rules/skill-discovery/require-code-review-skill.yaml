@@ -6,10 +6,10 @@ rules:
     event: before_tool
     enabled: true
     priority: 30
-    # commit_has_reviewable_paths is false only when every path the commit
-    # records is documentation OCR excludes as unsupported_ext, so the review
-    # this gate buys would read nothing. It stays true for every other gated
-    # operation and for any commit whose paths are undeterminable. Computed in
+    # commit_has_reviewable_paths is false for documentation-only commits and
+    # clean --ff-only merges proven to import only commits already reachable
+    # from the registered main checkout's protected branch. Every ambiguity
+    # stays gated. Computed in
     # src/gobby/workflows/code_review_scope.py.
     when: >
       not skill_loaded('code-review')

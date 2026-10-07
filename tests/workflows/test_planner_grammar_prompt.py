@@ -67,7 +67,7 @@ def test_reference_contract_4_2_2() -> None:
         "plan-enhancer-taskless-old": ("plan/enhancement", "You are advisory only"),
         "merge-orchestrator": ("build/coordination", "merge"),
         "epic-reviewer": ("review/epic", "Discovery Brief"),
-        "backend-developer": ("development/obligations", "test-driven-development"),
+        "developer": ("development/obligations", "test-driven-development"),
         "default": ("skills/loading", "gobby-skills"),
     }
     for name, (topic, obligation) in expected.items():

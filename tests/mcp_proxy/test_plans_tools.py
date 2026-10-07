@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import subprocess
 import textwrap
 import threading
 import time
@@ -14,6 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from gobby.code_index.models import (
     CODE_INDEX_UUID_NAMESPACE,
@@ -610,6 +612,157 @@ async def test_delete_plan_with_unresolvable_project_does_not_delete_unscoped_pl
     assert result["error"] == "invalid_project"
     preserved = LocalPlanManager(temp_db).get_plan("task-100-demo", project_id=project_id)
     assert preserved.plan_id == "task-100-demo"
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("form", ["main_checkout", "linked_worktree", "name", "uuid"])
+async def test_plan_tools_resolve_project_from_checkout_path_name_or_uuid(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    form: str,
+) -> None:
+    main = tmp_path / "main"
+    linked = tmp_path / "linked"
+    project_id = _create_project(temp_db, main, "plans-checkout")
+    _write_plan(main)
+    _git(main, "init", "-q")
+    _git(main, "add", ".")
+    _git(main, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "x")
+    _git(main, "worktree", "add", "-q", "--detach", str(linked))
+    root_task = LocalTaskManager(temp_db).create_task(
+        project_id, "Plan root", validation_criteria="Checkout paths resolve to the project."
+    )
+    LocalPlanManager(temp_db).create_plan_record(
+        project_id=project_id,
+        plan_id="task-100-demo",
+        plan_path=".gobby/plans/task-100-demo.md",
+        root_task_ref=f"#{root_task.seq_num}",
+    )
+    project = {
+        "main_checkout": str(main),
+        "linked_worktree": str(linked),
+        "name": "plans-checkout",
+        "uuid": project_id,
+    }[form]
+
+    result = await create_plan_registry(temp_db).call(
+        "get_plan", {"plan_id_or_ref": "task-100-demo", "project": project}
+    )
+
+    assert result["ok"] is True
+    assert result["plan"]["project_id"] == project_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("registered_marker", [False, True], ids=["plain-dir", "unregistered"])
+async def test_plan_tools_reject_path_outside_registered_checkouts(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    registered_marker: bool,
+) -> None:
+    if registered_marker:
+        write_project_marker(tmp_path, project_id=str(uuid.uuid4()), name="unregistered")
+
+    result = await create_plan_registry(temp_db).call("list_plans", {"project": str(tmp_path)})
+
+    assert result["ok"] is False
+    assert result["error"] == "invalid_project"
+    assert (
+        "project name, UUID, or absolute path of a registered project's checkout"
+        in (result["message"])
+    )
+
+
+def test_plan_tool_project_parameters_state_accepted_forms(temp_db: HubDatabase) -> None:
+    registry = create_plan_registry(temp_db)
+
+    descriptions: dict[str, str] = {}
+    for tool in registry.list_tools():
+        schema = registry.get_schema(tool["name"])
+        assert schema is not None
+        project = schema["inputSchema"]["properties"].get("project")
+        if project is not None:
+            descriptions[tool["name"]] = project["description"]
+
+    assert set(descriptions) == {
+        "create_plan",
+        "get_plan",
+        "list_plans",
+        "archive_plan",
+        "update_plan_hash",
+        "regenerate_coverage_manifest",
+        "delete_plan",
+        "prepare_plan_review_round",
+        "derive_plan_handoff_manifest",
+        "apply_plan_handoff_manifest",
+    }
+    assert {
+        "Accepts a project name, UUID, or absolute path of a registered project's checkout "
+        "(main checkout or linked worktree)."
+    } == set(descriptions.values())
+
+
+@pytest.mark.asyncio
+async def test_regenerate_coverage_counts_leaves_reparented_under_another_epic(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    coverage_executor: CoverageExecutor,
+) -> None:
+    project_id = _create_project(temp_db, tmp_path, "plans")
+    tasks = LocalTaskManager(temp_db)
+    root = tasks.create_task(project_id, "Plan root", validation_criteria="Root owns P1.")
+    section = tasks.create_task(
+        project_id, "P1 Phase", parent_task_id=root.id, validation_criteria="P1 is done."
+    )
+    leaf = tasks.create_task(
+        project_id,
+        "1.1 Work",
+        parent_task_id=section.id,
+        labels=["covers:task-100-demo:1.1:1.1.1"],
+        validation_criteria="Docs exist in docs/demo.md.",
+    )
+    lane_epic = tasks.create_task(project_id, "Lane epic", validation_criteria="Lane is done.")
+    plan_path = _write_plan(tmp_path)
+    registry = create_plan_registry(
+        temp_db,
+        default_project_id=project_id,
+        coverage_executor=coverage_executor,
+    )
+    created = await registry.call(
+        "create_plan",
+        {
+            "plan_id": "task-100-demo",
+            "plan_path": str(plan_path),
+            "root_task_ref": f"#{root.seq_num}",
+        },
+    )
+    assert created["ok"] is True
+
+    async def regenerated_rows() -> list[tuple[str, str, str, list[str]]]:
+        result = await registry.call("regenerate_coverage_manifest", {"plan_id": "task-100-demo"})
+        manifest = yaml.safe_load(Path(result["manifest_path"]).read_text(encoding="utf-8"))
+        return [
+            (
+                row["section_id"],
+                row["item_id"],
+                row["status"],
+                [row_leaf["leaf_task_ref"] for row_leaf in row["leaves"]],
+            )
+            for row in manifest["rows"]
+        ]
+
+    expected = [("1.1", "1.1.1", "covered", [f"#{leaf.seq_num}"])]
+    assert await regenerated_rows() == expected
+
+    tasks.update_task(section.id, parent_task_id=lane_epic.id)
+    moved = tasks.get_task(leaf.id)
+    assert moved.path_cache == f"{lane_epic.seq_num}.{section.seq_num}.{leaf.seq_num}"
+
+    assert await regenerated_rows() == expected
 
 
 @pytest.mark.asyncio
