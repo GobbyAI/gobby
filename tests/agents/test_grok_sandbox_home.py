@@ -1,6 +1,7 @@
 """Synthetic configuration only: no operator auth or hook files are accessed."""
 
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from gobby.agents import srt_runtime
 from gobby.agents.grok_sandbox_home import prepare_grok_sandbox_home
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.srt_runtime import SandboxLaunch, SrtInstallation, prepare_sandbox_launch
+from gobby.cli.installers.mcp_config_shared import _resolved_gobby_mcp_command
 
 pytestmark = pytest.mark.unit
 
@@ -36,12 +38,7 @@ def test_config_caches_are_independent_and_auth_is_linked(
 ) -> None:
     prepared = prepare_grok_sandbox_home(tmp_path / "run-cache", {}, assets=tmp_path / "assets")
     assert prepared.home != grok_source
-    for name in (
-        "config.toml",
-        "managed_config.toml",
-        "requirements.toml",
-        "managed_config.sig.json",
-    ):
+    for name in ("managed_config.toml", "requirements.toml", "managed_config.sig.json"):
         target = prepared.home / name
         assert not target.is_symlink()
         assert target.read_bytes() == (grok_source / name).read_bytes()
@@ -50,6 +47,44 @@ def test_config_caches_are_independent_and_auth_is_linked(
     assert (prepared.home / "auth.json").resolve() == grok_source / "auth.json"
     (prepared.home / "managed_config.toml").write_text("# synthetic runtime refresh\n")
     assert (grok_source / "managed_config.toml").read_text() == "# synthetic policy cache\n"
+
+
+def test_managed_config_declares_gobby_mcp_server(grok_source: Path, tmp_path: Path) -> None:
+    # Grok inherited this server from ~/.claude.json, which the policy now denies (#23554).
+    host_config = (grok_source / "config.toml").read_bytes()
+
+    prepared = prepare_grok_sandbox_home(tmp_path / "run-cache", {}, assets=tmp_path / "assets")
+
+    config = tomllib.loads((prepared.home / "config.toml").read_text())
+    assert config["compat"] == {"claude": {"hooks": False}}
+    assert config["mcp_servers"] == {
+        "gobby": {"command": _resolved_gobby_mcp_command(), "args": ["mcp-server"]}
+    }
+    assert (grok_source / "config.toml").read_bytes() == host_config
+
+
+def test_operator_gobby_mcp_server_is_replaced_and_others_kept(
+    grok_source: Path, tmp_path: Path
+) -> None:
+    (grok_source / "config.toml").write_text(
+        '[mcp_servers.gobby]\ncommand = "stale"\nenv = { STALE = "1" }\n\n'
+        '[mcp_servers.other]\ncommand = "other"\n'
+    )
+
+    prepared = prepare_grok_sandbox_home(tmp_path / "run-cache", {}, assets=tmp_path / "assets")
+
+    servers = tomllib.loads((prepared.home / "config.toml").read_text())["mcp_servers"]
+    assert servers == {
+        "gobby": {"command": _resolved_gobby_mcp_command(), "args": ["mcp-server"]},
+        "other": {"command": "other"},
+    }
+
+
+def test_unparseable_operator_config_fails_before_launch(grok_source: Path, tmp_path: Path) -> None:
+    (grok_source / "config.toml").write_text("[mcp_servers\n")
+
+    with pytest.raises(ValueError, match="Grok config is not valid TOML"):
+        prepare_grok_sandbox_home(tmp_path / "run-cache", {}, assets=tmp_path / "assets")
 
 
 def test_existing_run_configuration_is_retained(grok_source: Path, tmp_path: Path) -> None:
@@ -134,7 +169,7 @@ async def test_launch_uses_private_grok_home_and_protects_host_controls(
     policy = json.loads(Path(launch.policy_path or "").read_text())["filesystem"]
     private = Path(launch.provider_env["GROK_HOME"])
     assert private != grok_source
-    assert (private / "config.toml").read_text() == (grok_source / "config.toml").read_text()
+    assert tomllib.loads((private / "config.toml").read_text())["mcp_servers"]["gobby"]
     assert str(grok_source) not in policy["allowWrite"]
     assert str(grok_source / "config.toml") in policy["denyWrite"]
     assert str(private / "hooks") in policy["denyWrite"]

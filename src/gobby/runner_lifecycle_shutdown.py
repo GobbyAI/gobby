@@ -773,6 +773,9 @@ async def shutdown_daemon_services(
     cleanup_pid_file: Callable[[], None],
 ) -> None:
     """Run graceful shutdown within the CLI's process-termination deadline."""
+    host = getattr(runner, "terminal_host_manager", None)
+    if host is not None:
+        host.begin_shutdown()
     shutdown_intent = coerce_shutdown_intent(getattr(runner, "_shutdown_intent", None))
     services = getattr(getattr(runner, "http_server", None), "services", None)
     loop = asyncio.get_running_loop()

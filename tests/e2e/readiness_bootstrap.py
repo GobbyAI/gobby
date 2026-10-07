@@ -19,6 +19,46 @@ from types import FrameType
 from typing import Any, TextIO
 from unittest.mock import patch
 
+import psutil
+
+
+@contextmanager
+def watch_pytest_parent() -> Iterator[None]:
+    """Stop this detached runner when its identity-bound fixture owner dies."""
+    owner_pid = int(os.environ["GOBBY_E2E_OWNER_PID"])
+    owner_created = float(os.environ["GOBBY_E2E_OWNER_CREATE_TIME"])
+    stopped = threading.Event()
+
+    def owner_alive() -> bool:
+        try:
+            owner = psutil.Process(owner_pid)
+            return bool(
+                owner.create_time() == owner_created
+                and owner.is_running()
+                and owner.status() != psutil.STATUS_ZOMBIE
+            )
+        except psutil.Error:
+            return False
+
+    def watch() -> None:
+        while owner_alive():
+            if stopped.wait(0.1):
+                return
+        if stopped.is_set():
+            return
+        os.kill(os.getpid(), signal.SIGTERM)
+        # Allow the runner's bounded shutdown before enforcing parent death.
+        if not stopped.wait(20):
+            os._exit(1)
+
+    watcher = threading.Thread(target=watch, name="pytest-parent-watch", daemon=True)
+    watcher.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        watcher.join(timeout=1)
+
 
 @contextmanager
 def stage_timings(stream: TextIO) -> Iterator[Callable[[str], AbstractContextManager[None]]]:
@@ -156,6 +196,7 @@ def main() -> None:
     module = sys.argv.pop(1)
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     with (
+        watch_pytest_parent(),
         (log_dir / "startup-threads.log").open("w") as threads,
         (log_dir / "startup-tasks.log").open("w") as tasks,
         (log_dir / "startup-timings.jsonl").open("w") as timings,

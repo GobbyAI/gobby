@@ -113,6 +113,26 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
             bounded_inputs=True,
         ),
         _matcher(
+            "python-dependency-audit",
+            "Python dependency vulnerability audit",
+            ["python"],
+            ["lint"],
+            ["pip-audit", "python -m pip_audit", "python3 -m pip_audit"],
+            # A clean result must audit dependencies without repair, simulation, or exclusions.
+            forbidden_args_any=[
+                "--fix",
+                "--dry-run",
+                "-d",
+                "-V",
+                "--ignore-vuln",
+                "--skip-editable",
+                "--no-deps",
+                "--disable-pip",
+                "--local",
+                "-l",
+            ],
+        ),
+        _matcher(
             "python-task-runners",
             "Python task runner checks",
             ["python"],

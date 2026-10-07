@@ -1,11 +1,11 @@
 header:
   plan_id: agent-definition-profiles
-  plan_hash: 44b041d2a198254b907d25fae069dd6731d07105081cd6bb89aff46001c029c2
+  plan_hash: 51076275f60aacbbe1503ad79c9800ac04bb492487b11ace8304ec3380a7b862
   root_task_ref: '22988'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-06T20:32:50Z'
+  generated_at: '2026-10-07T19:10:49Z'
   task_tree_source: db
-  task_tree_source_hash: 0373a536d73e83b57d83567e127bca0635ad3bfaecf75762bc3544ffd3d0f197
+  task_tree_source_hash: 8e6d056a2116873c1315d553534b6680b819133d7f4aeb95f347fe69ebc7f338
   evidence_summary: []
   evidence: []
 rows:
@@ -336,6 +336,30 @@ rows:
     matched_artifact_ref: cutover verified
   deferral_target: null
   detail: ''
+- section_id: '3.3'
+  item_id: 3.3.6
+  plan_node_hash: 1e4c4da51b99dc9f1dad960fef207616cc75d2042e01ea5e3f5cebff5c8ae982
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22998'
+    validation_criteria_snippet: "3.3.1: `code-reviewer` validates, is `seat`-tagged,\
+      \ read-only, names only bundled skills (`code-review`, `restraint`), and declares\
+      \ the await \u2192 review \u2192 verdic..."
+    matched_artifact_ref: EVENT=LANDED
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.7
+  plan_node_hash: 5ff2a46b20d0d904051247f9321cf612f7168f68835663573ea718817d6dfa61
+  status: covered
+  leaves:
+  - leaf_task_ref: '#22998'
+    validation_criteria_snippet: "3.3.1: `code-reviewer` validates, is `seat`-tagged,\
+      \ read-only, names only bundled skills (`code-review`, `restraint`), and declares\
+      \ the await \u2192 review \u2192 verdic..."
+    matched_artifact_ref: EVENT=LANDED
+  deferral_target: null
+  detail: ''
 - section_id: '3.4'
   item_id: 3.4.1
   plan_node_hash: 77fdfb6b86c24becc9e0860fa26a84f49382245d545c50165365374430eb686b
@@ -491,6 +515,11 @@ rows:
       `skills`, and lists the seat catalogue with its shared shape. behavior: "Seats"
       section in `docs/guides/agen...'
     matched_artifact_ref: Seats
+  - leaf_task_ref: '#23510'
+    validation_criteria_snippet: '3.1.1: The persona reference keeps `apply_persona`
+      for the live persona switch, and routes whole-definition activation to `apply_agent_definition`
+      with its rel...'
+    matched_artifact_ref: Seats
   deferral_target: null
   detail: ''
 - section_id: '4.2'
@@ -502,6 +531,11 @@ rows:
     validation_criteria_snippet: '4.2.1: The agents guide documents `version`, omits
       `skills`, and lists the seat catalogue with its shared shape. behavior: "Seats"
       section in `docs/guides/agen...'
+    matched_artifact_ref: '`prompts.persona`'
+  - leaf_task_ref: '#23510'
+    validation_criteria_snippet: '3.1.1: The persona reference keeps `apply_persona`
+      for the live persona switch, and routes whole-definition activation to `apply_agent_definition`
+      with its rel...'
     matched_artifact_ref: '`prompts.persona`'
   deferral_target: null
   detail: ''

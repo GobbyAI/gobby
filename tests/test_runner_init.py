@@ -5,10 +5,11 @@ import json
 import os
 import threading
 from contextlib import ExitStack
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, DEFAULT, AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -36,6 +37,22 @@ from tests.runner_helpers import (
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
+
+
+def test_runner_database_mock_honours_fetchone_override() -> None:
+    with ExitStack() as stack:
+        for base_patch in create_base_patches():
+            stack.enter_context(base_patch)
+        from gobby.storage.hub.postgres import PostgresHubDatabase
+
+        database = cast(MagicMock, PostgresHubDatabase(FAKE_DATABASE_URL))
+        assert database.fetchone("SELECT value FROM config_store") is None
+        row = {"value": "configured"}
+        database.fetchone.return_value = row
+        assert database.fetchone("SELECT value FROM config_store") is row
+        assert database.fetchone("SELECT clock_timestamp() AS started_at") == {
+            "started_at": datetime(2026, 1, 1, tzinfo=UTC)
+        }
 
 
 def test_daemon_process_disables_optional_git_locks() -> None:
@@ -282,6 +299,12 @@ class TestGobbyRunnerInit:
 
     def test_secret_envelope_initialization_failure_aborts_startup(self) -> None:
         mock_db = MagicMock()
+        mock_db.fetchone.return_value = None
+        mock_db.fetchone.side_effect = lambda query, *_args, **_kwargs: (
+            {"started_at": datetime(2026, 1, 1, tzinfo=UTC)}
+            if query == "SELECT clock_timestamp() AS started_at"
+            else DEFAULT
+        )
         mock_store = MagicMock()
         mock_store.ensure_ready.side_effect = RuntimeError("secret envelope initialization failed")
         mock_config_store = MagicMock()

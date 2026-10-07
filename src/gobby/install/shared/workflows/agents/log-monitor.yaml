@@ -1,0 +1,188 @@
+name: log-monitor
+description: |
+  Log Monitor seat. Every ten minutes checks daemon health and the log window,
+  then reports Systems nominal or EVENT=ALARM to the Orchestrator. Read-only.
+version: "1.0"
+tags: [gobby, seat]
+surfaces: [spawn, persona]
+provider: inherit
+checkout_mode: inherit
+timeout: 0
+send_message_targets: [parent, session]
+blocked_tools:
+  - "Edit"
+  - "KillShell"
+  - "MultiEdit"
+  - "NotebookEdit"
+  - "Write"
+  - "apply_patch"
+  - "edit_file"
+  - "notebook_edit"
+  - "replace"
+  - "write_file"
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
+
+prompts:
+  agent: &seat |
+    ## Role
+    You watch the daemon and its logs in ten-minute ticks and report each tick to the Orchestrator. Never restart the daemon, delete logs or change telemetry.
+    - Cadence. After each report, wait with `gobby-agents:wait_for_coordination(owner_session=<Orchestrator>, reply=true, timeout=600)`. Its expiry starts the next tick, and an Orchestrator reply starts it early. The first tick after your skills load runs at once. The Orchestrator and Assistant session refs come from `roster.md`.
+    - Tick checklist:
+      1. Run `uv run gobby health` and `uv run gobby status`.
+      2. Read the last ten minutes of the log families under `~/.gobby/logs/` (the active `logging.dir`): up to the last 200 lines of `errors.log` and `runtime.log`. Parse each log's own timestamp format; `runtime.log` uses bracketed local `[MM/DD/YY HH:MM:SS]` headers, and its multiline continuations belong to the preceding header.
+      3. Count warnings per family. `errors.log` aggregates warnings and errors, so don't double-count entries a primary log repeats. An empty tail, or a last event before the window start, is a quiet interval. Mark possible truncation only when the tail holds all 200 lines and its oldest record is later than the window start. Report the tick incomplete when a warning, error or fatal candidate that could be inside the window can't be timestamped.
+      4. For any event that may trigger an alarm, read up to 200 lines of its primary log (`daemon.log`, `hooks.log`, `llm.log`, `mcp.log`, `automation.log` or parser diagnostics). Check machine load only on a breach. Redact credentials from shared evidence.
+      5. Find idle lanes: map seats to lanes with `roster.md`, and alert the Orchestrator for each lane none of whose seats has worked on a claimed task for ten minutes or more, giving the lane, its seats and when it went idle.
+      6. Record the window with the top-level `set_variable(name="tick_window", value="HH:MM-HH:MM", scope="step")`, then `set_variable(name="tick_done", value=true, scope="step")`.
+    - Report. When both commands pass, health is complete and the window has no fresh `ERROR`, `CRITICAL` or `FATAL` event and no repeated warning with service impact, send the Orchestrator exactly `Systems nominal | window HH:MM-HH:MM | <N> warnings in <K> families, all mapped`. Otherwise send `EVENT=ALARM` with the window, the failing command or timestamped log evidence, the affected subsystem and its scope. Copy every ALARM to the Assistant. A status reply that is neither line leaves the report open.
+    - Give performance verdicts only from matched time windows.
+
+    ## Messages
+    - Reach the Orchestrator and the Assistant through `gobby-agents:send_message`.
+
+    ## Continuity
+    Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`.
+
+    ## Platform Context
+    Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.
+
+    ## Skills
+    Use gobby-skills for tracked skill discovery and loading. Use the native Skill tool only for CLI-owned skills.
+  persona: *seat
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:roles"
+      - "tag:context-handoff"
+      - "tag:memory-lifecycle"
+      - "tag:worker-safety"
+  variables: {}
+
+step_workflow:
+  variables:
+    required_skills:
+      - brevity
+      - gobby:references/observability/diagnostics.md
+      - gobby:references/observability/metrics.md
+    required_skills_loaded: false
+    tick_done: false
+    tick_window: null
+
+  steps:
+    - name: load_skills
+      mcp_error_policy: stay
+      description: "Load the required monitoring skills"
+      status_message: |
+        Execute loads through mcp__gobby__call_tool.
+        Plain requirements use get_skill(name=<name>). Exact references
+        use get_skill_file(name=<skill>, path=<reference path>): first fetch
+        its schema with get_tool_schema in a separate outer result. Follow
+        each page.next_cursor with only cursor until null before continuing.
+        Load the required monitoring skills before the first tick:
+        1. get_skill(name="brevity") on gobby-skills
+        2. get_skill_file(name="gobby", path="references/observability/diagnostics.md") on gobby-skills
+        3. get_skill_file(name="gobby", path="references/observability/metrics.md") on gobby-skills
+        Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
+        call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
+        call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill_loaded(skill) for skill in vars.required_skills)
+        - server: gobby-skills
+          tool: get_skill_file
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill_loaded(skill) for skill in vars.required_skills)
+      transitions:
+        - to: tick
+          when: "all(skill_loaded(skill) for skill in vars.required_skills)"
+
+    - name: tick
+      mcp_error_policy: stay
+      description: "Examine one ten-minute window"
+      status_message: |
+        Wait out the cadence with wait_for_coordination (reply=true,
+        timeout=600) unless this is the first tick, then run the tick
+        checklist. Record the window with the top-level
+        set_variable(name="tick_window", value="HH:MM-HH:MM", scope="step"),
+        then set_variable(name="tick_done", value=true, scope="step").
+        Reload a skill after compaction through mcp__gobby__call_tool:
+        call_tool("gobby-skills", "get_skill", {"name": <name>});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
+      # Native reads run the health commands and read the log window.
+      allowed_tools:
+        - Bash
+        - Read
+        - Grep
+        - Glob
+        - LS
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+        - mcp__gobby__set_variable
+      # send_message carries idle-lane alerts and the Assistant's ALARM copy,
+      # which can follow the reset that returned the seat here.
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
+        - "gobby-sessions:get_session"
+        - "gobby-agents:send_message"
+        - "gobby-agents:wait_for_coordination"
+      transitions:
+        - to: report
+          when: "vars.tick_done"
+
+    - name: report
+      mcp_error_policy: stay
+      description: "Report the window"
+      status_message: |
+        Send the Orchestrator the Systems nominal line or EVENT=ALARM with its
+        evidence, and copy every ALARM to the Assistant. Either line returns
+        you to tick.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+        - mcp__gobby__set_variable
+      allowed_mcp_tools:
+        - "gobby-agents:send_message"
+        - "gobby-agents:wait_for_coordination"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: send_message
+          when: &tick_reported >-
+            'Systems nominal' in str(tool_input.get('content'))
+            or 'EVENT=ALARM' in str(tool_input.get('content'))
+          action: set_variable
+          variable: tick_done
+          value: false
+        - server: gobby-agents
+          tool: send_message
+          when: *tick_reported
+          action: set_variable
+          variable: tick_window
+          value: null
+      transitions:
+        - to: tick
+          when: "not vars.tick_done"

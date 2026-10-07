@@ -213,12 +213,13 @@ async def test_health_loop_wakes_for_handoff_deadline(
         nonlocal now
         delays.append(delay)
         now += delay
-        host._stop_requested = True
 
     host._sleep = sleep
     with patch("gobby.terminals.host_manager.require_machine_id", return_value=MACHINE_ID):
         await host.reconcile()
-        await host._health_loop()
+        # Stop after the deadline's health tick, not while that tick is sleeping.
+        with patch.object(host, "_record_healthy_ping", side_effect=host.begin_shutdown):
+            await host._health_loop()
 
     assert delays == [30.0]
     assert client.revoke_calls == [("ht-1", "old-attachment")]

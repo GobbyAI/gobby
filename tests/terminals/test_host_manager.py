@@ -1883,6 +1883,120 @@ async def test_waiter_cancellation_does_not_cancel_shared_restart(
 
 
 @pytest.mark.asyncio
+async def test_shutdown_start_stops_host_respawn(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+) -> None:
+    from gobby import runner_lifecycle_shutdown as shutdown
+
+    client = FakeControlClient()
+    manager = _host(tmp_path, TerminalManager(temp_db), client)
+    manager._client = client
+    manager.host_epoch = client.host_epoch
+    manager.host_pid = client.host_pid
+    manager.running = True
+    manager._sleep = AsyncMock()
+    spawner = MagicMock(return_value=FakeHostProcess(pid=client.host_pid))
+    manager._spawner = spawner
+    runner = MagicMock(terminal_host_manager=manager, http_server=None)
+
+    async def host_dies_at_first_shutdown_await(_runner: object) -> None:
+        # The host connection must survive the early fence until cleanup.
+        assert manager._client is client
+        await manager.handle_host_death()
+        assert spawner.call_count == 0
+        with pytest.raises(HostManagerStopped):
+            await manager.ensure_restart()
+
+    server_task = asyncio.create_task(asyncio.sleep(0))
+    try:
+        with (
+            patch.object(shutdown, "stop_restart_recovery", host_dies_at_first_shutdown_await),
+            patch.object(shutdown, "_stop_code_index_workers", AsyncMock()),
+            patch.object(shutdown, "_run_graceful_shutdown_sequence", AsyncMock()),
+            patch.object(shutdown, "_run_async_shutdown_cleanup", AsyncMock()),
+            patch.object(
+                shutdown,
+                "force_terminate_uvicorn_http_server_under_cancellation",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                shutdown, "_settle_finalizers_under_cancellation", AsyncMock(return_value=None)
+            ),
+            patch.object(
+                shutdown, "_drain_worktree_deletes_under_cancellation", AsyncMock(return_value=None)
+            ),
+            patch.object(
+                shutdown,
+                "_shutdown_database_concurrency_under_cancellation",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(shutdown, "get_shutdown_marker_path", return_value=tmp_path / "shutdown"),
+            patch("gobby.agents.sandbox_policy.shutdown_pre_commit_store_spare"),
+        ):
+            await shutdown.shutdown_daemon_services(
+                runner,
+                MagicMock(),
+                server_task,
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                reap_remaining_child_processes=AsyncMock(),
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=MagicMock(),
+            )
+    finally:
+        await manager.stop()
+        await server_task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("producer", ["health", "restart"])
+async def test_shutdown_fences_sleeping_host_producers(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    producer: str,
+) -> None:
+    manager = _host(tmp_path, TerminalManager(temp_db), FakeControlClient())
+    controlled = _ControlledSleep()
+    manager._sleep = controlled
+    spawner = MagicMock(return_value=FakeHostProcess(pid=42))
+    manager._spawner = spawner
+    task = asyncio.create_task(
+        manager._health_loop() if producer == "health" else manager.ensure_restart()
+    )
+    try:
+        await controlled.started.wait()
+        manager.begin_shutdown()
+        controlled.release.set()
+        if producer == "restart":
+            with pytest.raises(HostManagerStopped):
+                await task
+        else:
+            await task
+        assert spawner.call_count == 0
+        assert manager._client is None
+    finally:
+        task.cancel()
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_fences_candidate_before_token_rotation(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+) -> None:
+    manager = _host(tmp_path, TerminalManager(temp_db), FakeControlClient())
+    manager.rotate_control_token = MagicMock()
+    manager._spawner = MagicMock()
+    manager.begin_shutdown()
+    with pytest.raises(HostManagerStopped):
+        await manager._spawn_candidate()
+    manager.rotate_control_token.assert_not_called()
+    manager._spawner.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_stop_fences_restart_creation_and_publication(
     tmp_path: Path,
     temp_db: HubDatabase,

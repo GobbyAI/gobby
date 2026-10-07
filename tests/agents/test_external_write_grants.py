@@ -38,7 +38,13 @@ async def test_rendered_policy_preserves_workspace_and_sensitive_denials(
     assert str(workspace.resolve()) in filesystem["allowWrite"]
     assert str(external.resolve()) in filesystem["allowWrite"]
     assert str(sibling.resolve()) not in filesystem["allowWrite"]
-    assert set(sensitive_write_roots()).issubset(filesystem["denyWrite"])
+    assert set(sensitive_write_roots()).issubset(paths.deny_write_paths)
+    # Rendering drops a deny only where no grant reaches; default-deny covers it.
+    granted = [Path(path) for path in filesystem["allowWrite"]]
+    for root in sensitive_write_roots():
+        assert root in filesystem["denyWrite"] or not any(
+            Path(root).is_relative_to(path) or path.is_relative_to(root) for path in granted
+        )
 
 
 @pytest.fixture
