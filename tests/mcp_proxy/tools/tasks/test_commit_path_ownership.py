@@ -13,10 +13,64 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.commit_ownership import assert_task_commit_paths_available
+from gobby.tasks.commits import auto_link_commits_async
+from gobby.utils.daemon_git import GitOk
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("targeted", [True, False])
+@pytest.mark.parametrize("explicit_cwd", [True, False])
+async def test_auto_link_admission_preserves_other_claim_paths(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    canonical_task_session: Session,
+    tmp_path: Path,
+    targeted: bool,
+    explicit_cwd: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    tasks = LocalTaskManager(temp_db)
+    first = tasks.create_task(
+        sample_project["id"], "First", validation_criteria="Auto-link preserves ownership."
+    )
+    second = tasks.create_task(
+        sample_project["id"], "Second", validation_criteria="Auto-link preserves ownership."
+    )
+    tasks.claim_task_for_agent(first.id, canonical_task_session.id)
+    SessionVariableManager(temp_db).record_edited_files(
+        canonical_task_session.id, ["src/first.py"], checkout_root=str(tmp_path)
+    )
+    tasks.claim_task_for_agent(second.id, canonical_task_session.id)
+    sha = "b" * 40
+    history = GitOk("ok", (), f"{sha}|[gobby-#{second.seq_num}] fix: candidate", "")
+    with patch("gobby.tasks.commits.daemon_git.run", new_callable=AsyncMock) as run:
+        run.side_effect = [history, GitOk("ok", (), "src/first.py\0", "")]
+        refused = await auto_link_commits_async(
+            tasks,
+            task_id=second.id if targeted else None,
+            cwd=tmp_path if explicit_cwd else None,
+            project_name="gobby",
+            project_id=sample_project["id"],
+        )
+        assert refused.total_linked == 0
+        assert refused.skipped == 1
+        assert tasks.get_task(second.id).commits in (None, [])
+
+        run.side_effect = [history, GitOk("ok", (), "src/second.py\0", "")]
+        accepted = await auto_link_commits_async(
+            tasks,
+            task_id=second.id if targeted else None,
+            cwd=tmp_path if explicit_cwd else None,
+            project_name="gobby",
+            project_id=sample_project["id"],
+        )
+        assert accepted.total_linked == 1
+        assert tasks.get_task(second.id).commits == [sha]
 
 
 @pytest.mark.asyncio

@@ -353,6 +353,15 @@ def test_own_switch_waits_for_the_selected_tasks_running_call(
 
     with pytest.raises(ValueError, match="running-call.*wait.*stop"):
         tasks.claim_task_for_agent(second.id, canonical_task_session.id)
+    count = tasks.count_tasks(project_id=sample_project["id"])
+    with pytest.raises(ValueError, match="running-call.*wait.*stop"):
+        tasks.create_task_for_agent(
+            canonical_task_session.id,
+            project_id=sample_project["id"],
+            title="Must roll back",
+            validation_criteria="A fenced create-and-claim creates no task.",
+        )
+    assert tasks.count_tasks(project_id=sample_project["id"]) == count
 
     assert tasks.get_task(second.id).claimed_by_session_id is None
     assert variables.get_variables(canonical_task_session.id)["active_task_id"] == first.id

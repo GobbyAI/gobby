@@ -39,6 +39,7 @@ from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as no
 from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths, TaskScopeEvaluation
 from gobby.sessions.machine_scope import RemoteSessionOwnershipError
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task, TaskHasOpenChildrenError
@@ -234,6 +235,43 @@ async def _evaluate_named_test_close(
         )
 
     return evaluation, tdd_check
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deleted", [False, True])
+async def test_close_refuses_another_active_claims_net_paths(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    canonical_task_session: Session,
+    tmp_path: Path,
+    deleted: bool,
+) -> None:
+    tasks = LocalTaskManager(temp_db)
+    first = tasks.create_task(
+        sample_project["id"], "First", validation_criteria="Close isolates paths."
+    )
+    second = tasks.create_task(
+        sample_project["id"], "Second", validation_criteria="Close isolates paths."
+    )
+    tasks.claim_task_for_agent(first.id, canonical_task_session.id)
+    variables = SessionVariableManager(temp_db)
+    variables.record_edited_files(
+        canonical_task_session.id, ["src/first.py"], checkout_root=str(tmp_path)
+    )
+    tasks.claim_task_for_agent(second.id, canonical_task_session.id)
+    paths = frozenset({"src/first.py"})
+    net = NetCommitPaths(deleted=paths) if deleted else NetCommitPaths(changed=paths)
+    with patch("gobby.tasks.commit_ownership.SessionVariableManager", return_value=variables):
+        evaluation, tdd_check = await _evaluate_named_test_close(
+            tasks.get_task(second.id),
+            tdd_result=TddEvidenceResult(passed=True, skipped=False, findings=()),
+            net_paths=net,
+            repo_path=str(tmp_path),
+        )
+    assert evaluation.error == "commit_task_path_conflict"
+    assert f"#{first.seq_num}" in str(evaluation.message)
+    tdd_check.assert_not_called()
+    assert not evaluation.ready
 
 
 @pytest.mark.asyncio
