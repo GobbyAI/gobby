@@ -65,23 +65,31 @@ def test_clustered_shell_option_value_preserves_inline_writes(tmp_path: Path, op
 
 
 @pytest.mark.parametrize(
-    ("prefix", "gated"),
+    ("prefix", "outcome"),
     [
-        (b"#!/bin/sh\ntouch x", True),
+        (b"#!/bin/sh\ntouch x", "write"),
+        (b"#!/usr/bin/env -S bash -e\ntouch x", "write"),
         # A shell runs executable text without `#!` as a script once execve fails.
-        (b"touch x\n", True),
-        (b"", True),
+        (b"touch x\n", "write"),
+        (b"", "clean"),
         # Magic alone is not native: a first line without a NUL still runs as a script.
-        (b"\x7fELF\ntouch x\n", True),
-        (b"\xcf\xfa\xed\xfe\ntouch x\n", True),
-        (b"\x7fELF\x02\x01\x01\x00", False),
-        (b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01", False),
-        (b"\xca\xfe\xba\xbe\x00\x00\x00\x02", False),
+        (b"\x7fELF\ntouch x\n", "write"),
+        # That script is not UTF-8, so its body stays opaque.
+        (b"\xcf\xfa\xed\xfe\ntouch x\n", "gated"),
+        (b"\x7fELF\x02\x01\x01\x00", "clean"),
+        (b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01", "clean"),
+        (b"\xca\xfe\xba\xbe\x00\x00\x00\x02", "clean"),
+        # A non-shell interpreter runs the file like `python3 script.py`.
+        (b"#!/usr/bin/env python3\nopen('x', 'w')\n", "clean"),
+        (b"#!/opt/venv/bin/python\nimport sys\n", "clean"),
+        # An env option with a value hides which interpreter runs.
+        (b"#!/usr/bin/env -u HOME python3\n", "gated"),
+        (b"#!\ntouch x\n", "gated"),
     ],
 )
 @pytest.mark.parametrize("relative", [False, True])
-def test_direct_path_execution_gates_all_but_native_executables(
-    tmp_path: Path, prefix: bytes, gated: bool, relative: bool
+def test_direct_path_execution_classifies_shell_script_bodies(
+    tmp_path: Path, prefix: bytes, outcome: str, relative: bool
 ) -> None:
     executable = tmp_path / "scratchpad" / "bash"
     executable.parent.mkdir()
@@ -89,8 +97,8 @@ def test_direct_path_execution_gates_all_but_native_executables(
     command = "./scratchpad/bash" if relative else str(executable)
     data = _shell_write_metadata(command, tmp_path)
 
-    assert bool(data.get("canonical_script_execution")) is gated
-    assert not data.get("canonical_repo_mutation")
+    assert bool(data.get("canonical_script_execution")) is (outcome == "gated")
+    assert bool(data.get("canonical_repo_mutation")) is (outcome == "write")
 
 
 def test_missing_direct_execution_path_requires_a_claim(tmp_path: Path) -> None:
@@ -126,7 +134,8 @@ def _invocation_metadata(
 def _signature_fixture(directory: Path) -> None:
     directory.mkdir(parents=True)
     (directory / "tool").write_bytes(b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01")
-    (directory / "script").write_bytes(b"#!/bin/sh\n")
+    # Runs its arguments, a program unknown until it runs.
+    (directory / "script").write_bytes(b'#!/bin/sh\n"$@"\n')
 
 
 @pytest.mark.parametrize(
@@ -251,10 +260,149 @@ def test_nested_shell_string_uses_parent_cwd_without_changing_it(tmp_path: Path)
         'sh -c "$PROGRAM"',
         "sh -c 'exec \"$PROGRAM\"'",
         "bash -c 'touch /project/owned.py\nprintf \"'",
+        # Redirecting a navigation read's output must not drop the opaque program.
+        "bash -c 'cat /project/source.py; /project/missing.sh' > /tmp/scratchpad/out.txt",
     ],
 )
 def test_unresolved_shell_program_requires_a_claim(tmp_path: Path, command: str) -> None:
     data = _shell_write_metadata(command, tmp_path)
+
+    assert data.get("canonical_script_execution") is True
+
+
+def _script(path: Path, body: str | bytes) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body.encode() if isinstance(body, str) else body)
+    return path.resolve()
+
+
+@pytest.mark.parametrize("invocation", ["zsh {script}", "bash -e {script} --once", "{script}"])
+def test_scratch_only_script_body_is_not_a_repo_write(tmp_path: Path, invocation: str) -> None:
+    scratch = tmp_path / "scratchpad"
+    script = _script(
+        scratch / "idle.sh",
+        f"#!/bin/zsh\n# poll\ndate > {scratch}/state.txt\nsed -i '' 's/a/b/' {scratch}/state.txt\n",
+    )
+    data = _shell_write_metadata(invocation.format(script=script), tmp_path / "repo")
+
+    assert data["canonical_file_paths"] == [str(scratch / "state.txt")]
+    assert data["canonical_repo_mutation"] is False
+    assert data["canonical_script_bodies"] == [str(script)]
+    assert not data.get("canonical_script_execution")
+
+
+def test_script_body_repo_write_is_a_repo_mutation(tmp_path: Path) -> None:
+    target = tmp_path / "owned.py"
+    script = _script(tmp_path / "scratchpad" / "edit.sh", f"#!/bin/sh\ntouch {target}\n")
+    nested = _script(tmp_path / "scratchpad" / "outer.sh", f"bash {script}\n")
+    data = _shell_write_metadata(f"sh {nested}", tmp_path)
+
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_write_file_paths"] == [str(target)]
+    assert data["canonical_script_bodies"] == sorted([str(script), str(nested)])
+    assert not data.get("canonical_script_execution")
+
+
+def test_read_only_script_with_arguments_is_not_gated(tmp_path: Path) -> None:
+    script = _script(tmp_path / "scratchpad" / "q.sh", '#!/bin/zsh\npsql "$DB_URL" -c "$1"\n')
+    data = _shell_write_metadata(f'{script} "select count(*) from tasks"', tmp_path)
+
+    assert data["canonical_tool_kind"] == "execute"
+    assert not data.get("canonical_repo_mutation")
+    assert not data.get("canonical_script_execution")
+
+
+def test_virtualenv_entry_point_runs_like_its_interpreter(tmp_path: Path) -> None:
+    pytest_entry = _script(
+        tmp_path / "repo" / ".venv" / "bin" / "pytest",
+        f"#!{tmp_path}/repo/.venv/bin/python\n# -*- coding: utf-8 -*-\nimport sys\n"
+        "from pytest import console_main\n",
+    )
+    export = tmp_path / "scratchpad" / "c23451"
+    # A reviewer's export retest, blocked after cutover 1.
+    data = _shell_write_metadata(
+        "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test "
+        f"GOBBY_TEST_PROTECT=1 PYTHONPATH={export}/src {pytest_entry} "
+        f"-c {export}/pyproject.toml --rootdir={export} {export}/tests/agents/test_x.py "
+        f"-q -p no:cacheprovider --basetemp={tmp_path}/scratchpad/pt",
+        tmp_path / "repo",
+    )
+
+    assert not data.get("canonical_script_execution")
+    assert not data.get("canonical_repo_mutation")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "printf 'touch {project}/owned.py' > {script} && {script}",
+        "zsh {script} | tee {scratch}/out.txt",
+        "bash -c 'echo > {script}; zsh {script}'",
+        "bash -c 'zsh {script}' && cp {scratch}/next.sh {script}",
+        "bash {script} >> {script}",
+        "bash {script} 2>> {script}",
+        "sh -c 'zsh {script}' >> {script}",
+    ],
+)
+def test_script_run_beside_another_write_requires_a_claim(tmp_path: Path, command: str) -> None:
+    scratch = tmp_path / "scratchpad"
+    script = _script(scratch / "q.sh", "#!/bin/zsh\necho ready\n")
+    data = _shell_write_metadata(
+        command.format(project=tmp_path, scratch=scratch, script=script), tmp_path
+    )
+
+    assert data.get("canonical_script_execution") is True
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "#!/bin/sh\necho 'touch {project}/owned.py' >> {script}\n",
+        "#!/bin/sh\ncp {scratch}/next.sh {scratch}\n",
+        # A program unknown until it runs.
+        '#!/bin/sh\n"$@"\n',
+        "#!/bin/sh\n" + "echo ready\n" * 6000,
+        b"#!/bin/sh\necho \xff\n",
+    ],
+)
+def test_unclassifiable_or_self_rewriting_script_requires_a_claim(
+    tmp_path: Path, body: str | bytes
+) -> None:
+    scratch = tmp_path / "scratchpad"
+    script = scratch / "s.sh"
+    if isinstance(body, str):
+        body = body.format(project=tmp_path, scratch=scratch, script=script)
+    data = _shell_write_metadata(f"bash {_script(script, body)}", tmp_path)
+
+    assert data.get("canonical_script_execution") is True
+
+
+def test_variable_write_in_script_body_has_unknown_scope(tmp_path: Path) -> None:
+    script = _script(tmp_path / "scratchpad" / "mk.sh", '#!/bin/sh\nmkdir -p "$1"\n')
+    data = _shell_write_metadata(f"bash {script} {tmp_path}/generated", tmp_path)
+
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert not data.get("canonical_script_execution")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash -s < {script}",
+        "cat {script} | bash",
+        "source {script}",
+        ". {script}",
+        # Relative script paths fail closed once the directory may have changed.
+        "cd {scratch} && zsh q.sh",
+    ],
+)
+def test_readable_script_read_from_stdin_or_sourced_stays_opaque(
+    tmp_path: Path, command: str
+) -> None:
+    scratch = tmp_path / "scratchpad"
+    script = _script(scratch / "q.sh", "#!/bin/zsh\necho ready\n")
+    data = _shell_write_metadata(command.format(scratch=scratch, script=script), tmp_path)
 
     assert data.get("canonical_script_execution") is True
 
