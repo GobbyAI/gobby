@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from gobby.config.shell_lexing import parse_shell_command
 from gobby.tasks.close_test_coverage import (
+    CloseCandidate,
     changed_python_source_paths,
     changed_web_source_paths,
     copy_differing_paths,
@@ -154,10 +155,12 @@ def evaluate_validation_commands(
     paths = tuple(changed_paths)
     changed_tests = _changed_python_test_paths(paths)
     foreign: list[str] = []
+    candidate: CloseCandidate | None = None
     if close_root is not None:
-        evidence, foreign = drop_foreign_runs(
-            evidence, changed_tests, close_root, paths, candidate_commit_sha
+        candidate = (
+            CloseCandidate(close_root, candidate_commit_sha) if candidate_commit_sha else None
         )
+        evidence, foreign = drop_foreign_runs(evidence, changed_tests, close_root, paths, candidate)
     gate = _evaluate_validation_commands(
         task_category=task_category,
         evidence=evidence,
@@ -166,7 +169,7 @@ def evaluate_validation_commands(
         changed_paths=paths,
         deleted_paths=deleted_paths,
         close_root=close_root,
-        candidate=candidate_commit_sha,
+        candidate=candidate,
     )
 
     def uncovered(run: TranscriptValidationRun) -> tuple[str, ...] | None:
@@ -274,7 +277,7 @@ def _evaluate_validation_commands(
     changed_paths: Iterable[str] = (),
     deleted_paths: Iterable[str] = (),
     close_root: str | None = None,
-    candidate: str | None = None,
+    candidate: CloseCandidate | None = None,
 ) -> CloseGateResult:
     """Evaluate checklist item 9 from transcript-derived validation commands.
 

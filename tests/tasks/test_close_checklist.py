@@ -1719,37 +1719,50 @@ def test_copy_credit_compares_against_the_close_candidate_commit(
     assert gate.details.get("pytest_copy_differing_paths", []) == differing
 
 
-def test_unlistable_candidate_costs_one_git_read(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("answered", "reads_after_two"),
+    [
+        pytest.param(False, 2, id="failed-listing-retried-by-the-next-evaluation"),
+        pytest.param(True, 1, id="listing-reused-across-evaluations"),
+    ],
+)
+def test_candidate_listing_costs_one_git_read_per_evaluation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answered: bool, reads_after_two: int
 ) -> None:
-    # A hung git must not cost one timeout per compared path.
+    # A hung git must not cost one timeout per compared path, nor outlive the evaluation.
     reads: list[list[str]] = []
-
-    def unanswered(command: list[str], cwd: str | Path, timeout: int = 5) -> str | None:
-        reads.append(command)
-        return None
-
-    monkeypatch.setattr(close_test_coverage, "run_git_command", unanswered)
     changed = ("src/a.py", "src/b.py", "tests/test_widget.py")
+    listing = "".join(f"100644 blob {'0' * 40}\t{path}\0" for path in changed)
+
+    def answer(command: list[str], cwd: str | Path, timeout: int = 5) -> str | None:
+        reads.append(command)
+        return listing if answered else None
+
+    monkeypatch.setattr(close_test_coverage, "run_git_command", answer)
     for tree in ("repo", "export"):
         for path in changed:
             (tmp_path / tree / path).parent.mkdir(parents=True, exist_ok=True)
             (tmp_path / tree / path).write_text("def test_widget(): pass\n")
     run = _run(2, command="uv run pytest tests/test_widget.py -q", workdir=str(tmp_path / "export"))
 
-    gate = evaluate_validation_commands(
-        task_category="code",
-        evidence=TranscriptEvidence(
-            validation_runs=(_scoped_audit_run(1, "tests/test_widget.py"), run)
-        ),
-        has_attributed_edits=True,
-        changed_paths=changed,
-        close_root=str(tmp_path / "repo"),
-        candidate_commit_sha="1" * 40,
-    )
+    def evaluate() -> CloseGateResult:
+        return evaluate_validation_commands(
+            task_category="code",
+            evidence=TranscriptEvidence(
+                validation_runs=(_scoped_audit_run(1, "tests/test_widget.py"), run)
+            ),
+            has_attributed_edits=True,
+            changed_paths=changed,
+            close_root=str(tmp_path / "repo"),
+            candidate_commit_sha="1" * 40,
+        )
 
-    assert gate.status == "failed", gate.message
+    first = evaluate()
+    assert first.status == "failed", first.message
     assert len(reads) == 1
+    second = evaluate()
+    assert second.status == "failed", second.message
+    assert len(reads) == reads_after_two
 
 
 def _scoped_pytest_gate(tmp_path: Path, failing_command: str) -> CloseGateResult:

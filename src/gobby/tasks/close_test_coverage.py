@@ -12,9 +12,9 @@ import re
 import threading
 from collections import OrderedDict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from fnmatch import fnmatchcase
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from pathlib import Path, PurePosixPath
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
@@ -299,7 +299,7 @@ def uncovered_pytest_paths(
     *,
     close_root: str | None = None,
     changed_paths: Sequence[str] = (),
-    candidate: str | None = None,
+    candidate: CloseCandidate | None = None,
 ) -> tuple[str, ...]:
     """Return changed tests no successful pytest run targets.
 
@@ -327,7 +327,7 @@ def drop_foreign_runs(
     changed_python_tests: tuple[str, ...],
     close_root: str,
     changed_paths: Sequence[str],
-    candidate: str | None = None,
+    candidate: CloseCandidate | None = None,
 ) -> tuple[TranscriptEvidence, list[str]]:
     """Drop runs that validated another checkout and return their commands.
 
@@ -357,7 +357,7 @@ def identical_copy_run(
     changed_python_tests: tuple[str, ...],
     close_root: str,
     changed_paths: Sequence[str],
-    candidate: str | None = None,
+    candidate: CloseCandidate | None = None,
 ) -> bool:
     """Whether a passing pytest run targets only identical copies of changed tests.
 
@@ -380,7 +380,7 @@ def copy_differing_paths(
     tests: Sequence[str],
     close_root: str | None,
     changed_paths: Sequence[str],
-    candidate: str | None = None,
+    candidate: CloseCandidate | None = None,
 ) -> tuple[str, ...]:
     """Return the paths whose bytes kept another tree's run of ``tests`` from crediting.
 
@@ -418,7 +418,7 @@ def _runs_test(
     test: str,
     root: str,
     changed_paths: Sequence[str],
-    candidate: str | None,
+    candidate: CloseCandidate | None,
     *,
     copy_only: bool = False,
 ) -> bool:
@@ -444,7 +444,7 @@ def _target_trees(target: str, test: str) -> Iterator[str]:
             yield target.removesuffix(f"/{prefix}")
 
 
-def _same_bytes(tree: str, root: str, path: str, candidate: str | None) -> bool:
+def _same_bytes(tree: str, root: str, path: str, candidate: CloseCandidate | None) -> bool:
     """Whether ``tree`` holds ``path`` as the close candidate commit does, or both lack it.
 
     The candidate is the reference, so another session's uncommitted edit in ``root``
@@ -460,7 +460,7 @@ def _same_bytes(tree: str, root: str, path: str, candidate: str | None) -> bool:
             return filecmp.cmp(copy, original, shallow=False)
         except OSError:
             return not os.path.exists(copy) and not os.path.exists(original)
-    blobs = _candidate_blobs(root, candidate)
+    blobs = candidate.blobs
     if blobs is None:
         return False
     blob = blobs.get(path)
@@ -473,18 +473,42 @@ def _same_bytes(tree: str, root: str, path: str, candidate: str | None) -> bool:
     return object_id.hexdigest() == blob
 
 
-@lru_cache(maxsize=4)
-def _candidate_blobs(root: str, candidate: str) -> Mapping[str, str] | None:
-    """Return blob ids by repo path in ``candidate``'s tree, or None when git cannot list it.
+@dataclass
+class CloseCandidate:
+    """The close candidate commit as one gate evaluation compares copies against it.
 
-    A failure is cached like a success, so a hung git costs one timeout per close, not
-    one per compared path.
+    A listed commit is immutable, so its listing is shared across evaluations. A failed
+    listing is remembered only by this evaluation: its paths fail closed after one git
+    timeout, and the next evaluation asks git again.
+    """
+
+    root: str
+    commit: str
+
+    @cached_property
+    def blobs(self) -> Mapping[str, str] | None:
+        """Blob ids by repo path in the commit's tree, or None when git cannot list it."""
+        try:
+            return _candidate_blobs(self.root, self.commit)
+        except _UnlistedCommitError:
+            return None
+
+
+class _UnlistedCommitError(Exception):
+    """Git could not list the close candidate commit's tree."""
+
+
+@lru_cache(maxsize=4)
+def _candidate_blobs(root: str, commit: str) -> Mapping[str, str]:
+    """Return blob ids by repo path in ``commit``'s tree.
+
+    A failure raises, which ``lru_cache`` never stores.
     """
     listing = run_git_command(
-        ["git", "ls-tree", "-r", "-z", "--full-tree", candidate], cwd=root, timeout=30
+        ["git", "ls-tree", "-r", "-z", "--full-tree", commit], cwd=root, timeout=30
     )
     if listing is None:
-        return None
+        raise _UnlistedCommitError(commit)
     blobs: dict[str, str] = {}
     for entry in listing.split("\0"):
         meta, tab, path = entry.partition("\t")
