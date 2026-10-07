@@ -36,7 +36,7 @@ Build state is resolved before dispatch:
   Profile skip stages only shape a new lifecycle. Existing manifests must be
   cleaned or restarted before their stage shape changes.
 - `assigned_agent` and `additional_skills` route leaf work. Missing leaf assignment
-  falls back to `backend-developer` with an audit marker.
+  falls back to `developer` with an audit marker.
 
 `gobby build` is the single entry point for turning a plan, epic, or leaf task into
 dispatchable state. The CLI command, MCP tool (`gobby-tasks-ops:build_task`), and HTTP
@@ -74,7 +74,7 @@ Retired orchestration templates are removed from bundled workflow, agent, and sk
 Workflow and agent sync reads top-level YAML, while skill sync reads one directory per skill;
 all three soft-delete Gobby-owned installed rows for definitions missing from disk. Therefore
 `orchestrator.yaml`, `front-half-orchestrator.yaml`, `dev-orchestrator.yaml`,
-`delivery-orchestrator.yaml`, the conductor pipeline, retired `conductor`, `developer`, and
-`pipeline-worker` agents, and retired `dev` and `qa` launcher skills must stay out of bundled
-install roots. PR/merge stages use the merge-orchestrator and local git merge tools.
+`delivery-orchestrator.yaml`, the conductor pipeline, retired `conductor`, `pipeline-worker`,
+`backend-developer`, `frontend-developer` and `fullstack-developer` agents, and retired
+`dev` and `qa` launcher skills must stay out of bundled install roots. PR/merge stages use the merge-orchestrator and local git merge tools.
 Merge results remain evidence-backed lifecycle transitions.

@@ -148,7 +148,7 @@ def list_tasks(
     stage_state: str | None = None,
     limit: int = 50,
     offset: int = 0,
-    sort_by: str = "hierarchy",
+    sort_by: str | None = None,
     sort_order: str = "asc",
 ) -> list[Task]:
     """List tasks with filtering.
@@ -169,11 +169,13 @@ def list_tasks(
         limit: Maximum tasks to return
         offset: Pagination offset
         sort_by: Ordering strategy. "hierarchy" preserves parent/child ordering;
-            "updated_at" and "created_at" sort chronologically; "priority"
-            sorts by task priority (lower value = higher priority).
-        sort_order: "asc" or "desc" for non-hierarchical sorts.
+            "updated_at", "created_at" and "closed_at" sort chronologically;
+            "priority" sorts by task priority (lower value = higher priority).
+            None picks the default: "closed_at" newest first when ``closed`` is
+            True, ignoring ``sort_order``, and "hierarchy" otherwise.
+        sort_order: "asc" or "desc" for an explicit non-hierarchical sort.
 
-    Results are ordered hierarchically: parents appear before their children;
+    The hierarchy order puts parents before their children;
     roots and siblings are ordered by priority ASC then created_at ASC; and
     siblings that block one another are ordered topologically first, so a
     blocker precedes what it blocks even when its own key sorts it later. That
@@ -242,12 +244,17 @@ def list_tasks(
             params.append(stage_state)
         where += ")"
 
-    if sort_by == "hierarchy":
+    if sort_by is None and closed is True:
+        # A hierarchy page of closed tasks is the oldest closures, so a limited
+        # recent-close query would miss recent work (#23687).
+        sort_by, sort_order = "closed_at", "desc"
+    if sort_by is None or sort_by == "hierarchy":
         return _hierarchy_page(db, where, params, limit=limit, offset=offset)
 
     valid_sorts = {
         "updated_at": "updated_at",
         "created_at": "created_at",
+        "closed_at": "closed_at",
         "priority": "priority",
     }
     if sort_by not in valid_sorts:

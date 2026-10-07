@@ -10,7 +10,6 @@ Provides fixtures for:
 - MCP client connections
 """
 
-import errno
 import json
 import math
 import os
@@ -354,42 +353,24 @@ class DaemonInstance:
             )
 
 
-def _checkout_gdaemon_bin_dir(
-    checkout_gdaemon: Path, pinned_bin_dir: Path, home_dir: str | Path | None
+def _isolated_native_bin_dir(
+    checkout_gdaemon: Path | None, pinned_bin_dir: Path, home_dir: str | Path | None
 ) -> Path:
-    """Link the pinned dir's binaries beside the checkout gdaemon in a fresh dir.
+    """Copy the native set so test provisioning and locks cannot mutate its source.
 
-    The runner resolves every native binary from one dir, so a test pinning its
-    gterm dir would otherwise run that dir's gdaemon. The pinned identity stamp
-    stays out: it describes the gdaemon this dir replaces.
-
-    Pinned files are hard links, never symlinks: gterm pins its own executable
-    and refuses to host when that executable is a symlink. A sandbox that cannot
-    write the pinned dir refuses the link with EPERM, so those files are copied
-    into this temp dir; the installed set itself is never touched. The checkout
-    gdaemon stays a symlink so a rebuild that replaces its inode is still followed.
+    gterm refuses a symlinked executable. Copies also isolate in-place writes,
+    unlike hard links. A checkout gdaemon stays a symlink to follow rebuilds;
+    only that replacement invalidates the pinned set's identity stamp.
     """
     from gobby.utils.native_bin import IDENTITY_STAMP_NAME, native_bin_name
 
     composite = Path(tempfile.mkdtemp(prefix="native-bin-", dir=home_dir))
-    skipped = {native_bin_name("gdaemon"), IDENTITY_STAMP_NAME}
+    skipped = {native_bin_name("gdaemon"), IDENTITY_STAMP_NAME} if checkout_gdaemon else set()
     for entry in pinned_bin_dir.iterdir():
         if entry.is_file() and entry.name not in skipped:
-            try:
-                os.link(entry.resolve(), composite / entry.name)
-            except OSError as exc:
-                if exc.errno == errno.EPERM:
-                    # A sandbox without write access to the pinned dir refuses every link.
-                    shutil.copy2(entry, composite / entry.name)
-                    continue
-                if exc.errno != errno.EXDEV:
-                    raise
-                # No symlink fallback: a symlinked gterm refuses to host.
-                raise RuntimeError(
-                    f"cannot hard-link {entry} into {composite}: {exc}. The pinned native "
-                    "bin dir and the e2e home must share a filesystem."
-                ) from exc
-    (composite / checkout_gdaemon.name).symlink_to(checkout_gdaemon.resolve())
+            shutil.copy2(entry, composite / entry.name)
+    if checkout_gdaemon is not None:
+        (composite / checkout_gdaemon.name).symlink_to(checkout_gdaemon.resolve())
     return composite
 
 
@@ -462,18 +443,17 @@ def prepare_daemon_env(
     from tests.fixtures.gdaemon_binary import select_test_gdaemon
 
     checkout_gdaemon = select_test_gdaemon(root_dir, env, native_bin_name("gdaemon"))
-    pinned_bin_dir = env.get(NATIVE_BIN_DIR_ENV)
-    if (
+    pinned_bin_dir = Path(env.get(NATIVE_BIN_DIR_ENV) or native_bin_dir())
+    if home_dir is not None or (
         checkout_gdaemon is not None
-        and pinned_bin_dir is not None
-        and Path(pinned_bin_dir).resolve() != checkout_gdaemon.parent.resolve()
+        and pinned_bin_dir.resolve() != checkout_gdaemon.parent.resolve()
     ):
         env[NATIVE_BIN_DIR_ENV] = str(
-            _checkout_gdaemon_bin_dir(checkout_gdaemon, Path(pinned_bin_dir), home_dir)
+            _isolated_native_bin_dir(checkout_gdaemon, pinned_bin_dir, home_dir)
         )
     env.setdefault(
         NATIVE_BIN_DIR_ENV,
-        str(checkout_gdaemon.parent if checkout_gdaemon is not None else native_bin_dir()),
+        str(checkout_gdaemon.parent if checkout_gdaemon is not None else pinned_bin_dir),
     )
 
     # Override HOME so that ~/.gobby resolves to <temp>/.gobby instead of
@@ -725,7 +705,7 @@ def wait_for_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> b
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            token = (home / "local_cli_token").read_text().strip()
+            token = daemon_token(home)
             with connect_websocket(
                 f"ws://localhost:{port}",
                 additional_headers={"Authorization": f"Bearer {token}"},
@@ -734,7 +714,7 @@ def wait_for_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> b
                 proxy=None,
             ):
                 return True
-        except (OSError, TimeoutError, WebSocketException):
+        except (OSError, RuntimeError, TimeoutError, WebSocketException):
             time.sleep(0.1)
     return False
 
@@ -967,7 +947,7 @@ def e2e_srt_spawn_home() -> Generator[Path]:
 
     The sensitive-path contract (``assert_sensitive_path_contract``) refuses a
     sandbox allow path containing ``GOBBY_HOME`` credentials such as
-    ``bootstrap.yaml`` or ``local_cli_token``. A spawn whose workspace is the
+    ``bootstrap.yaml`` or ``.secret_kek``. A spawn whose workspace is the
     project directory must therefore run against a home outside that directory.
     """
     home = Path(tempfile.mkdtemp(prefix="gobby_e2e_home_")).resolve()
@@ -1088,6 +1068,9 @@ front_door:
 """
     bootstrap_path.write_text(bootstrap_content)
     bootstrap_path.chmod(0o600)
+    from gobby.storage.api_keys import ensure_local_api_key
+
+    ensure_local_api_key(postgres_db, "21000000-0000-4000-8000-000000000002", bootstrap_path)
 
     yield config_path, http_port, ws_port
 
@@ -1255,11 +1238,33 @@ async def async_daemon_client(
 
 
 def daemon_token(gobby_home: Path) -> str:
-    """Read the isolated daemon's CLI bearer token."""
-    token = (gobby_home / "local_cli_token").read_text().strip()
+    """Read the isolated daemon's current bootstrap API key."""
+    from gobby.utils.local_token import read_local_api_token
+
+    token = read_local_api_token(gobby_home / "bootstrap.yaml")
     if not token:
-        raise RuntimeError(f"Daemon token is empty: {gobby_home / 'local_cli_token'}")
+        raise RuntimeError(f"Daemon API key is missing: {gobby_home / 'bootstrap.yaml'}")
     return token
+
+
+def copy_daemon_api_key(source_home: Path, target_home: Path) -> None:
+    """Share an isolated fixture key while preserving the target's bootstrap fields."""
+    from gobby.config.bootstrap_io import read_bootstrap_yaml, update_bootstrap_yaml
+
+    source = read_bootstrap_yaml(source_home / "bootstrap.yaml")
+    key = daemon_token(source_home)
+    target_home.mkdir(exist_ok=True)
+
+    def copy_key(data: dict[str, Any]) -> None:
+        for field in ("datastore_mode", "files_home", "hub_daemon_url"):
+            if field in source:
+                data.setdefault(field, source[field])
+        data.update(api_key=key, api_key_id=source.get("api_key_id"))
+
+    update_bootstrap_yaml(
+        target_home / "bootstrap.yaml",
+        copy_key,
+    )
 
 
 def daemon_auth_headers(gobby_home: Path) -> dict[str, str]:

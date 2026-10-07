@@ -27,11 +27,9 @@ def test_dispatch_prompt_builder_keys_present() -> None:
     assert {
         "analyst",
         "architect",
-        "backend-developer",
         "developer",
         "doc-reviewer",
         "expansion-qa",
-        "fullstack-developer",
         "epic-reviewer",
         "merge-orchestrator",
         "plan-adversary",

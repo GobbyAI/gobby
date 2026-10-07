@@ -83,7 +83,7 @@ def send_message_target_allowed(
 
 
 # The ``agent`` defaults of the gobby-agents spawn tools, for calls that omit it.
-_SPAWN_TOOL_DEFAULT_AGENT = {"spawn_agent": "default", "dispatch_batch": "backend-developer"}
+_SPAWN_TOOL_DEFAULT_AGENT = {"spawn_agent": "default", "dispatch_batch": "developer"}
 # spawn_agent walks at most this many fallback_agent hops (spawn_agent/_factory.py).
 _FALLBACK_CHAIN_MAX_HOPS = 5
 
@@ -140,6 +140,16 @@ def _spawn_caller(session_manager: SessionManager, caller_ref: Any) -> tuple[Ses
     run = LocalAgentRunManager(session_manager.db).get(caller.agent_run_id)
     if run is None or not run.agent_name:
         raise ValueError(f"Agent run {caller.agent_run_id} names no agent definition")
+    if run.child_session_id != caller.id:
+        from gobby.sessions.clear_continuation import resolve_clear_successor
+
+        if (
+            run.child_session_id is None
+            or resolve_clear_successor(session_manager.db, run.child_session_id) != caller.id
+        ):
+            raise ValueError(
+                f"Agent run {caller.agent_run_id} does not belong to caller {caller.id}"
+            )
     return caller, run.agent_name
 
 
@@ -149,15 +159,17 @@ def spawn_target_allowed(
     tool_name: Any,
     agent: Any,
     suggestions: Any = None,
+    *,
+    target_project_id: str | None = None,
 ) -> bool:
     """Whether the caller may start every agent the gobby-agents ``tool_name`` call can.
 
     A root session (no agent run, depth 0) spawns anything. A spawned caller's
     definition comes from its agent run record, and its ``spawnable_agents``
     decides: any agent, the listed agents, or none. Every effective target must
-    be allowed: each dispatch_batch suggestion's agent and every agent in a
-    target's fallback_agent chain. Anything unresolvable raises, and a raising
-    block condition fails closed.
+    be allowed. Without a resolved target project, a before_tool rule checks
+    only requested names. Admission passes the launch's target project to check
+    its fallback chain as well. Anything unresolvable raises and fails closed.
     """
     if session_manager is None:
         raise RuntimeError("spawn target scope needs a session manager")
@@ -170,7 +182,11 @@ def spawn_target_allowed(
     return all(
         body.may_spawn(name)
         for target in _spawn_targets(tool_name, agent, suggestions)
-        for name in _fallback_chain(target, session_manager.db, caller.project_id)
+        for name in (
+            [target]
+            if target_project_id is None
+            else _fallback_chain(target, session_manager.db, target_project_id)
+        )
     )
 
 

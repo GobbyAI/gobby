@@ -77,12 +77,13 @@ from gobby.tasks.transcript_output_retention import (
     _drop_settled_command_output,
     _retained_output,
 )
-from gobby.tasks.transcript_task_claims import task_claim
+from gobby.tasks.transcript_task_claims import codex_item_claim, task_claim
 from gobby.tasks.transcript_tool_arguments import (
     edited_source,
     python_added_source,
     python_edit_tokens,
     python_keyword_stub,
+    tool_workdir,
 )
 from gobby.tasks.transcript_tool_arguments import (
     extract_command as _extract_command,
@@ -171,7 +172,7 @@ def _derivation_fingerprint(
     """Fingerprint every input the derived records are a function of."""
     payload = json.dumps(
         {
-            "derivation_version": 13,
+            "derivation_version": 17,
             "session": session.id,
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,
@@ -475,6 +476,9 @@ def _derive_transcript_path_evidence(
     for event in parser.iter_parse_events(select_window_raw_lines(lines, window_start)):
         for outcome in event.codex_exec_outcomes:
             _consume_codex_outcome(state, outcome)
+        for item in event.codex_mcp_calls:
+            if claim := codex_item_claim(item, state.window_start, state.pending):
+                state.claims.append(claim)
         for record in event.records:
             if isinstance(record, ParsedMessage):
                 _observe_record_time(state, record.timestamp)
@@ -583,7 +587,9 @@ def _consume_message(state: _DerivationState, message: ParsedMessage) -> None:
         name = message.tool_name or ""
         arguments = message.tool_input or {}
         if call_id:
-            state.pending[call_id] = PendingTool(name, arguments, timestamp, order, call_id)
+            state.pending[call_id] = PendingTool(
+                name, arguments, timestamp, order, call_id, workdir=tool_workdir(message.raw_json)
+            )
         _record_edit(state, name, arguments, timestamp, order)
         return
     if message.content_type != "tool_result" or not call_id:
@@ -648,8 +654,14 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
     match = matches[0] if matches else None
     segments = _validation_segments(matches)
     output, output_truncated = _extract_output(outcome.result)
+    provenance = outcome.result.get("outcome_provenance")
+    outcome_fields = outcome.result
+    if provenance == "codex.functions_exec.wrapper":
+        # The wrapper's output is whatever the cell printed, which can be command
+        # stdout spelling an exit code, so only the wrapper's own fields count (#23724).
+        outcome_fields = {key: value for key, value in outcome.result.items() if key != "output"}
     status, exit_code, unknown_reason = _extract_outcome(
-        outcome.result,
+        outcome_fields,
         output,
         aggregate_status_is_trustworthy=(
             not match.is_compound
@@ -658,7 +670,6 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
         ),
     )
     output, output_truncated = _retained_output(outcome.command, segments, output, output_truncated)
-    provenance = outcome.result.get("outcome_provenance")
     if provenance == "codex.functions_exec.wrapper" and state.runs:
         prior = state.runs[-1]
         elapsed = (completed_at - prior.completed_at).total_seconds()
@@ -708,6 +719,7 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             unknown_reason=unknown_reason,
             output=output,
             output_truncated=output_truncated,
+            workdir=outcome.workdir,
             validation_segments=segments,
         )
     )
@@ -828,6 +840,7 @@ def _record_validation_run(
             unknown_reason=unknown_reason,
             output=output,
             output_truncated=output_truncated,
+            workdir=tool_workdir(pending.arguments) or pending.workdir,
             validation_segments=segments,
         )
     )

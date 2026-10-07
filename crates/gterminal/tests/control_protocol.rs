@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::time::Duration;
 
-const LOCAL_CLI_TOKEN: &str = "local-cli-token-must-not-authenticate-control";
+const FRAMES_API_KEY: &str = "frames-api-key-must-not-authenticate-control";
 const MAX_CONTROL_LINE: usize = 2 * 1024 * 1024;
 
 #[test]
@@ -79,7 +79,7 @@ fn hello_required_before_any_verb() {
             &json!({
                 "method": "hello",
                 "protocol_version": 1,
-                "control_token": LOCAL_CLI_TOKEN,
+                "control_token": FRAMES_API_KEY,
             }),
         );
         let reply = recv_json(&mut stream);
@@ -919,7 +919,11 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
     let dir = temp_socket_dir();
     let token = "control-token-input-grant";
     write_token(dir.path(), token);
-    std::fs::write(dir.path().join("local_cli_token"), embed_support::LOCAL).unwrap();
+    std::fs::write(
+        dir.path().join("bootstrap.yaml"),
+        format!("api_key: {}\n", embed_support::LOCAL),
+    )
+    .unwrap();
     let (mut child, mut requests) = authed(dir.path(), token);
     let mut events = connect(&dir.path().join(CONTROL_SOCKET));
     send_json(
@@ -2320,7 +2324,7 @@ fn ping_reports_generation_and_attempt() {
         );
     }
 
-    let candidate = candidate_script(dir.path(), "slow-refusal", "sleep 1\nexit 3");
+    let (candidate, release_probe) = held_probe(dir.path(), "held-refusal", 3);
     let mut upgrader = control(dir.path(), token);
     send_upgrade(
         &mut upgrader,
@@ -2357,6 +2361,7 @@ fn ping_reports_generation_and_attempt() {
         "{probing}"
     );
 
+    std::fs::write(&release_probe, "release\n").expect("release the held probe");
     let refused = recv_json(&mut upgrader);
     assert_eq!(refused["ok"], false, "{refused}");
     assert_eq!(refused["error"], "upgrade_refused", "{refused}");
@@ -2451,7 +2456,7 @@ fn host_upgrade_admission_is_serialized_and_rechecked() {
 
     // A committed pane admits the attempt, so each probe reaches the recheck.
     let pane = committed_pane(&mut child, &mut stream, 1, "admitted", "exec sleep 60");
-    let (held, fifo) = held_probe(dir.path(), "held-accept");
+    let (held, fifo) = held_probe(dir.path(), "held-accept", 0);
     let mut upgrader = control(dir.path(), token);
 
     // A reservation made during the probe.
@@ -2535,7 +2540,11 @@ fn mutation_gate_blocks_and_refuses_during_upgrade() {
     let dir = temp_socket_dir();
     let token = "control-token-upgrade-gate";
     write_token(dir.path(), token);
-    std::fs::write(dir.path().join("local_cli_token"), embed_support::LOCAL).unwrap();
+    std::fs::write(
+        dir.path().join("bootstrap.yaml"),
+        format!("api_key: {}\n", embed_support::LOCAL),
+    )
+    .unwrap();
     let (mut child, mut stream) = authed(dir.path(), token);
     let pane = committed_pane(&mut child, &mut stream, 1, "gated", ECHO_LINES);
     let id = pane.host_terminal_id.clone();
@@ -2546,7 +2555,7 @@ fn mutation_gate_blocks_and_refuses_during_upgrade() {
     // A delayed write_batch operation holds the gate, so the upgrade defers.
     // The probe waits for the batch to start, and the batch outlasts the
     // gate wait after it.
-    let (held, fifo) = held_probe(dir.path(), "held-accept");
+    let (held, fifo) = held_probe(dir.path(), "held-accept", 0);
     let mut upgrader = control(dir.path(), token);
     let release = send_held_upgrade(&mut upgrader, &held, &fifo, "attempt-batch");
     let mut batcher = control(dir.path(), token);

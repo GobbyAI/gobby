@@ -9,15 +9,20 @@ The host binds two Unix sockets in `~/.gobby` (mode `0600`):
 
 | Socket | Speaks | Credential | Can write a PTY |
 | --- | --- | --- | --- |
-| `gterm-frames.sock` | length-prefixed bincode | `~/.gobby/local_cli_token` | yes, for the attachment the daemon granted |
+| `gterm-frames.sock` | length-prefixed bincode | startup bootstrap `api_key` | yes, for the attachment the daemon granted |
 | `gterm-control.sock` | newline-delimited JSON | `~/.gobby/gterm-control.token` | yes |
 
-`local_token` alone still reaches nothing writable: a frame stream is read-only
+The API key alone still reaches nothing writable: a frame stream is read-only
 until the daemon names one daemon attachment id in `grant_input` over the
 control socket and the client binds that id. The credential proves who may
 watch; the grant decides who may type. If the daemon's control connection
 drops, frames keep arriving and standing grants keep working — only
 `revoke_input` or removing the terminal clears one.
+
+The host reads `api_key` from its startup bootstrap on every frames `Hello`.
+Replacing the bootstrap key applies to the next hello immediately: the new key
+is accepted, the old key receives `invalid_token`, and existing attached streams
+keep receiving frames. An empty or unreadable bootstrap key fails closed.
 
 ## Frame protocol
 
@@ -175,7 +180,7 @@ nothing. The request uses the existing connection-wide round-trip lock.
 ## Daemon WebSocket messages
 
 Clients authenticate to the daemon's public `/ws` endpoint with
-`Authorization: Bearer <local_cli_token>`. This JSON protocol coordinates
+`Authorization: Bearer <api_key>` through gdaemon's key resolver. This JSON protocol coordinates
 attachments and writes; it also relays frames when direct host access is
 unavailable. Golden messages live in `tests/fixtures/terminal_ws_golden/`.
 

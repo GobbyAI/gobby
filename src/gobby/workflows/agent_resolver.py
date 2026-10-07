@@ -3,7 +3,11 @@ import logging
 
 from pydantic import ValidationError
 
-from gobby.storage.definitions.agents import AgentDefinitionManager, AgentDefinitionRow
+from gobby.storage.definitions.agents import (
+    AgentDefinitionManager,
+    AgentDefinitionRow,
+    reject_terminal_backend,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody, AgentSelector, AgentWorkflows
 
@@ -40,10 +44,18 @@ def resolve_agent_with_row(
     cli_source: str | None = None,
     project_id: str | None = None,
 ) -> tuple[AgentDefinitionBody, AgentDefinitionRow] | None:
-    """Resolve an agent and its hydrated row via the typed manager."""
+    """Resolve an agent and its hydrated row via the typed manager.
+
+    Raises:
+        AgentResolutionError: The stored row names a terminal backend (#23212).
+    """
     row = AgentDefinitionManager(db).get_by_name(name, project_id=project_id)
     if row is None:
         return None
+    try:
+        reject_terminal_backend(row.definition_json)
+    except ValueError as e:
+        raise AgentResolutionError(str(e)) from e
     try:
         body = _resolve_inherit(_body_from_row(row, name), cli_source)
     except (json.JSONDecodeError, TypeError, ValidationError) as e:

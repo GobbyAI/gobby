@@ -58,7 +58,7 @@ def test_launch_signs_with_current_bootstrap_key(
     database.fetchone.return_value = {"login_capable": True}
     monkeypatch.setattr("gobby.servers.auth_service.resolve_auth_schema", lambda _: "auth")
     service = AuthService(
-        lambda: database, token_file=tmp_path / "absent-token", bootstrap_file=bootstrap
+        lambda: database, bootstrap_file=bootstrap, break_glass_file=tmp_path / "absent-break-glass"
     )
     tokens: list[str] = []
     for key in ("first-key", "second-key"):

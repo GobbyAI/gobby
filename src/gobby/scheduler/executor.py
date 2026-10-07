@@ -371,9 +371,6 @@ class CronExecutor:
         daemon_config = getattr(self.services, "config", None) or getattr(
             self.agent_runner, "config", None
         )
-        from gobby.agents.spawn_models import resolve_terminal_backend
-
-        scheduled_backend = resolve_terminal_backend(None, daemon_config)
         git_manager_getter = getattr(self.services, "get_git_manager", None)
         project_git_manager = (
             git_manager_getter(job.project_id) if callable(git_manager_getter) else None
@@ -414,7 +411,6 @@ class CronExecutor:
             db=self.storage.db,
             completion_registry=getattr(self.services, "completion_registry", None),
             daemon_config=daemon_config,
-            terminal_backend=scheduled_backend,
         )
 
         if result.get("success") is True:

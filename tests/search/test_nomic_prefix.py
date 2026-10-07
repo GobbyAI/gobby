@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterator
-from types import SimpleNamespace
 from typing import Never
 from unittest.mock import AsyncMock, patch
 
@@ -22,6 +21,7 @@ from gobby.ai.embeddings import (
     _generate_embedding as generate_embedding,
 )
 from gobby.config.persistence import EmbeddingsConfig
+from tests.search.fakes import RawEmbeddingsResponse
 
 pytestmark = pytest.mark.unit
 LOCAL_API_BASE = "http://localhost:1234/v1"
@@ -89,7 +89,7 @@ def _make_mock_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
     mock_client = AsyncMock()
     captured: list[list[str]] = []
 
-    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def fake_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         captured.append(input)
 
         class FakeItem:
@@ -103,7 +103,7 @@ def _make_mock_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
         response = FakeResponse(items)
-        return SimpleNamespace(parse=lambda: response)
+        return RawEmbeddingsResponse(response.data)
 
     mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client, captured
@@ -173,7 +173,7 @@ def _make_evicting_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
     captured: list[list[str]] = []
     call_count = 0
 
-    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def fake_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         nonlocal call_count
         call_count += 1
         captured.append(input)
@@ -196,7 +196,7 @@ def _make_evicting_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
         response = FakeResponse(items)
-        return SimpleNamespace(parse=lambda: response)
+        return RawEmbeddingsResponse(response.data)
 
     mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client, captured
@@ -210,7 +210,7 @@ def _make_missing_model_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
     captured: list[list[str]] = []
     call_count = 0
 
-    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def fake_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         nonlocal call_count
         call_count += 1
         captured.append(input)
@@ -238,7 +238,7 @@ def _make_missing_model_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
         response = FakeResponse(items)
-        return SimpleNamespace(parse=lambda: response)
+        return RawEmbeddingsResponse(response.data)
 
     mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client, captured
@@ -250,7 +250,7 @@ def _make_connect_error_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
     captured: list[list[str]] = []
     call_count = 0
 
-    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def fake_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         nonlocal call_count
         call_count += 1
         captured.append(input)
@@ -269,7 +269,7 @@ def _make_connect_error_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
         response = FakeResponse(items)
-        return SimpleNamespace(parse=lambda: response)
+        return RawEmbeddingsResponse(response.data)
 
     mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client, captured

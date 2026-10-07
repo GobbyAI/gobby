@@ -78,7 +78,7 @@ pub fn daemon_mode_layers_at(
     base_url: &str,
     gobby_home: &Path,
 ) -> Result<EffectiveConfigLayers, EffectiveConfigError> {
-    let token = crate::local_token::read_local_cli_token_for(gobby_home).ok();
+    let token = crate::local_token::read_api_key_for(gobby_home).ok();
     if let Some(path) = std::env::var_os(MANAGED_EXECUTION_BOOTSTRAP_ENV) {
         let grant = crate::grant::load_grant_file(Path::new(&path)).map_err(|error| {
             log::warn!("managed grant file could not be loaded: {error}");
@@ -161,7 +161,7 @@ fn shared_effective_config(
     if let Some(config) = read_fresh_effective_cache(gobby_home) {
         return Ok(config);
     }
-    let token = crate::local_token::read_local_cli_token_for(gobby_home).ok();
+    let token = crate::local_token::read_api_key_for(gobby_home).ok();
     let (status, body) = fetch_config_body(
         base_url,
         EFFECTIVE_CONFIG_PATH,

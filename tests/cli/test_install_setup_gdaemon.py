@@ -21,6 +21,45 @@ from gobby.storage import schema_contract
 _GDAEMON_PIN = MANAGED_BIN_VERSION_PINS["gdaemon"]
 
 
+@pytest.mark.parametrize("existing", [False, True])
+def test_default_bin_dir_follows_gobby_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, existing: bool
+) -> None:
+    home = tmp_path / "gobby-home"
+    operator_home = tmp_path / "operator-home"
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    monkeypatch.setattr(Path, "home", lambda: operator_home)
+    expected = schema_contract.expected_schema_identity()
+    probed: list[Path] = []
+    installed: list[Path] = []
+
+    def probe_version(binary: Path) -> str:
+        probed.append(binary)
+        return _GDAEMON_PIN
+
+    def install_binary(binary: Path, _pin: str) -> str:
+        installed.append(binary)
+        binary.write_bytes(b"test binary")
+        return "test"
+
+    binary = home / "bin" / install_setup_gdaemon._BINARY_NAME
+    if existing:
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(b"existing test binary")
+    monkeypatch.setattr(install_setup_gdaemon, "_probe_version", probe_version)
+    monkeypatch.setattr(install_setup_gdaemon, "_probe_identity", lambda _path: expected)
+    monkeypatch.setattr(install_setup_gdaemon, "_install_gdaemon", install_binary)
+
+    result = install_setup_gdaemon.ensure_gdaemon()
+
+    assert result["installed"] is not existing
+    assert probed == [binary]
+    assert installed == ([] if existing else [binary])
+    assert (binary.parent / ".gdaemon-version").read_text().strip() == _GDAEMON_PIN
+    assert json.loads((binary.parent / ".gdaemon-schema-identity.json").read_text()) == expected
+    assert not operator_home.exists()
+
+
 def _stub_non_schema_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from gobby import sync_registry
     from gobby.cli import install_setup_impeccable, install_setup_srt

@@ -14,7 +14,6 @@ from gobby.terminals.frame_client import (
     FrameClient,
     FrameLagError,
     FrameProtocolError,
-    _read_local_cli_token,
     decode_frame,
     encode_frame,
 )
@@ -248,15 +247,53 @@ def test_frame_client_has_no_write_method() -> None:
     _unused: Any = FrameClient
 
 
-def test_read_local_cli_token_reads_the_configured_gobby_home(
+async def test_default_handshake_reads_bootstrap_key_fresh(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     gobby_home = tmp_path / "gobby-home"
     gobby_home.mkdir()
-    (gobby_home / "local_cli_token").write_text("isolated-token\n", encoding="utf-8")
+    bootstrap = gobby_home / "bootstrap.yaml"
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", "managed-capability")
+    monkeypatch.setattr("gobby.utils.local_token._daemon_bootstrap", None)
+    welcome = _golden("welcome.bin")
+    locator = AttachLocator(
+        backend="native",
+        frame_host_epoch=str(decode_frame(welcome)["host_epoch"]),
+        host_terminal_id="ht-1",
+    )
 
-    assert _read_local_cli_token() == "isolated-token"
+    for document, expected in (
+        ("api_key: ' first-key '\n", "first-key"),
+        ("api_key: rotated-key\n", "rotated-key"),
+        ("api_key: ''\n", ""),
+        ("api_key: 123\n", ""),
+        ("api_key: [broken\n", ""),
+        (None, ""),
+    ):
+        if document is None:
+            bootstrap.unlink()
+        else:
+            bootstrap.write_text(document, encoding="utf-8")
+        incoming = asyncio.StreamReader()
+        incoming.feed_data(welcome)
+        writer = _RecordingWriter()
+        client = FrameClient(incoming, writer)
+        await client.handshake(locator)
+        assert writer.writes == [
+            encode_frame(
+                {
+                    "type": "hello",
+                    "version": 1,
+                    "encoding": "semantic_frame",
+                    "local_token": expected,
+                    "cols": 80,
+                    "rows": 24,
+                    "tmux_identity": None,
+                }
+            )
+        ]
+        await client.close()
 
 
 async def test_handshake_failure_names_the_host_error_code() -> None:

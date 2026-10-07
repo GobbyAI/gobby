@@ -289,7 +289,7 @@ def surviving_path_failure(
     files = [path.split("::", 1)[0] for path in missing]
     if any(os.path.lexists(os.path.join(directory, path)) for path in files):
         return None
-    if _tracked_at_head(directory, files):
+    if _tracked_at_head(directory, files, project_path):
         return None
     segments = tuple(
         TranscriptValidationSegment(
@@ -306,19 +306,26 @@ def surviving_path_failure(
     )
 
 
-def _tracked_at_head(directory: str, paths: Sequence[str]) -> bool:
-    """Whether HEAD tracks any of ``paths``; an unanswered lookup counts as tracked."""
-    try:
-        result = spawn.run(
-            ["git", "ls-tree", "--name-only", "HEAD", "--", *paths],
-            cwd=directory,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return True
-    return result.returncode != 0 or bool(result.stdout.strip())
+def _tracked_at_head(directory: str, paths: Sequence[str], project_path: str | None) -> bool:
+    """Whether HEAD tracks any of ``paths``; an unanswered lookup counts as tracked.
+
+    A tree that is not a repository, such as a ``git archive`` export, cannot answer,
+    so ``project_path``'s HEAD does.
+    """
+    for cwd in dict.fromkeys(filter(None, (directory, project_path))):
+        try:
+            result = spawn.run(
+                ["git", "ls-tree", "--name-only", "HEAD", "--", *paths],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if result.returncode == 0:
+            return bool(result.stdout.strip())
+    return True
 
 
 def _drop_targets(command: str, targets: set[str]) -> str:

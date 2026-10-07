@@ -368,16 +368,15 @@ def _actionable_error(error: RemotePreflightError) -> str:
 
 def probe_hub_user_md(hub_daemon_url: str, *, gobby_home: Path) -> list[str]:
     """Authenticated owner probe. Success is 200 JSON from a local files owner."""
-    token_path = gobby_home / "local_cli_token"
-    try:
-        token = token_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        token = ""
+    from gobby.utils.local_token import read_local_api_token
+
+    token_path = gobby_home / "bootstrap.yaml"
+    token = read_local_api_token(token_path)
     if not token:
         return [
-            f"Remote datastore install requires {token_path}. Copy it from the hub to "
-            f"{token_path} to authenticate to the shared hub; the client installer "
-            "will never generate or rotate it."
+            f"Remote datastore install requires a usable api_key in {token_path}. "
+            "Run 'gobby auth login' to provision this machine's hub API key; "
+            "the client installer will never generate or rotate it."
         ]
     origin = hub_daemon_url.rstrip("/")
     url = f"{origin}{USER_MD_PROBE_PATH}"
@@ -399,8 +398,8 @@ def probe_hub_user_md(hub_daemon_url: str, *, gobby_home: Path) -> list[str]:
 
     if response.status_code in {401, 403}:
         return [
-            "Hub USER.md probe authentication failed. Copy the hub local_cli_token "
-            "and retry; the installer does not generate or rotate it."
+            "Hub USER.md probe authentication failed. Check the api_key in bootstrap.yaml "
+            "or run 'gobby auth login' and retry; the installer does not generate or rotate it."
         ]
     if response.status_code == 404:
         return ["Hub USER.md probe found no owner files_home root."]
@@ -444,17 +443,23 @@ def _probe_error_code(response: httpx.Response) -> str:
 
 
 def _credential_errors(gobby_home: Path) -> list[str]:
+    from gobby.utils.local_token import read_local_api_token
+
     errors: list[str] = []
-    for filename, purpose in (
-        (".secret_kek", "unwrap shared FalkorDB secrets"),
-        ("local_cli_token", "authenticate to the shared hub"),
-    ):
-        path = gobby_home / filename
-        if not path.is_file():
-            errors.append(
-                f"Remote datastore install requires {path}. Copy it from the hub to {path} "
-                f"to {purpose}; the client installer will never generate or rotate it."
-            )
+    path = gobby_home / ".secret_kek"
+    if not path.is_file():
+        errors.append(
+            f"Remote datastore install requires {path}. Copy it from the hub to {path} "
+            "to unwrap shared FalkorDB secrets; the client installer will never generate "
+            "or rotate it."
+        )
+    bootstrap = gobby_home / "bootstrap.yaml"
+    if read_local_api_token(bootstrap) is None:
+        errors.append(
+            f"Remote datastore install requires a usable api_key in {bootstrap}. "
+            "Run 'gobby auth login' to provision this machine's hub API key; "
+            "the client installer will never generate or rotate it."
+        )
     return errors
 
 

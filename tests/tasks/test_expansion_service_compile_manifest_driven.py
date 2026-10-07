@@ -428,16 +428,28 @@ def test_cross_tdd_mode_dependencies(
     assert "2.2::single" in _deps_for(spec, "3.1::single")
 
 
-def test_phase_nesting_p1_p2_p3(
+@pytest.mark.parametrize("first_phase", [0, 1])
+def test_phase_nesting_p0_or_p1_p2_p3(
     service: ExpansionService,
     sample_project: dict[str, Any],
     tmp_path: Path,
+    first_phase: int,
 ) -> None:
     parent = _parent(service, sample_project)
-    spec = service.compile_plan_to_spec(_parse_manifest_plan(tmp_path), parent)
+    text = _MANIFEST_PLAN.replace("## P1 Foundation", f"## P{first_phase} Foundation")
+    first_section = "T1" if first_phase == 0 else "1.1"
+    if first_phase == 0:
+        text = (
+            text.replace("### 1.1 ", "### T1 ")
+            .replace("- 1.1.1 -", "- T1.1 -")
+            .replace("covers:manifest-driven:1.1:1.1.1", "covers:manifest-driven:T1:T1.1")
+            .replace('"1.1"', '"T1"')
+        )
+    document = parse_plan(_write_plan(tmp_path, text))
+    spec = service.compile_plan_to_spec(document, parent)
 
     assert {phase["id"]: phase["task_ids"] for phase in spec["phases"]} == {
-        "phase-p1": ["1.1::single", "1.2::single", "1.3::single"],
+        f"phase-p{first_phase}": [f"{first_section}::single", "1.2::single", "1.3::single"],
         "phase-p2": ["2.1::single", "2.2::single"],
         "phase-p3": ["3.1::single"],
     }

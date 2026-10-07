@@ -561,16 +561,7 @@ def register_core_routes(
             # claimed_task_refs / created_task_refs / closed_task_refs on each
             # session before serialization. Empty lists when the session never
             # touched a task.
-            task_refs_by_session = await server.run_db(
-                server.session_manager.fetch_task_refs_by_session, [s.id for s in sessions]
-            )
-            for session in sessions:
-                refs = task_refs_by_session.get(session.id)
-                if refs is None:
-                    continue
-                session.claimed_task_refs = refs["claimed"]
-                session.created_task_refs = refs["created"]
-                session.closed_task_refs = refs["closed"]
+            await server.run_db(server.session_manager.load_task_refs, sessions)
 
             # Enrich sessions with counts
             acp_runtime_manager = getattr(server.services, "web_chat_runtime_manager", None)

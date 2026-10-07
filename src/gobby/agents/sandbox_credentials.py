@@ -13,7 +13,6 @@ def credential_roots() -> list[Path]:
     return [
         home / "bootstrap.yaml",
         home / ".secret_kek",
-        home / "local_cli_token",
         home / "tools" / "srt",
         daemon_bootstrap_path(),
         break_glass_path(),

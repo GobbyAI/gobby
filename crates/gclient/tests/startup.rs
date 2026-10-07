@@ -96,8 +96,11 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
 
     let controlled_home = root.path().join("controlled-gobby-home");
     std::fs::create_dir(&controlled_home).expect("create controlled home");
-    std::fs::write(controlled_home.join("local_cli_token"), "home-token\n")
-        .expect("write home token");
+    std::fs::write(
+        controlled_home.join("bootstrap.yaml"),
+        "api_key: home-token\n",
+    )
+    .expect("write home API key");
     let output = detached_gclient()
         .args(["--daemon-url", &url])
         .env("GOBBY_HOME", &controlled_home)
@@ -120,7 +123,7 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
         .expect("run gclient with missing default token");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("local_cli_token"),
+        stderr.contains("bootstrap.yaml"),
         "missing token path: {stderr}"
     );
     assert!(
@@ -134,11 +137,9 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
 
     let bootstrap_home = root.path().join("bootstrap-gobby-home");
     std::fs::create_dir(&bootstrap_home).expect("create bootstrap home");
-    std::fs::write(bootstrap_home.join("local_cli_token"), "bootstrap-token\n")
-        .expect("write bootstrap token");
     std::fs::write(
         bootstrap_home.join("bootstrap.yaml"),
-        format!("daemon_url: '{url}/'\n"),
+        format!("daemon_url: '{url}/'\napi_key: bootstrap-token\n"),
     )
     .expect("write bootstrap");
     let output = detached_gclient()
@@ -175,13 +176,16 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
     assert_eq!(env.daemon_url, url);
     assert_eq!(env.token.as_deref(), Some("task-token"));
 
-    let default_token = root.path().join("local_cli_token");
-    std::fs::write(&default_token, "default-token\n").expect("write default token");
+    std::fs::write(
+        root.path().join("bootstrap.yaml"),
+        "api_key: default-token\n",
+    )
+    .expect("write default API key");
     let args = parse_args(["gclient"]).expect("parse defaults");
     let env = resolve_probe_env_at(
         &args,
         "http://bootstrap.test:60887",
-        &default_token,
+        root.path(),
         false,
         false,
     )
@@ -462,11 +466,10 @@ fn prefs_carry_sidebar_and_project_preferences() {
 async fn nested_pane_launch_shifts_prefix_and_opens_nothing() {
     let home = tempfile::tempdir().expect("temp gobby home");
     let cwd = tempfile::tempdir().expect("temp current dir");
-    let token_file = home.path().join("local_cli_token");
-    fs::write(&token_file, "token\n").expect("write token");
+    fs::write(home.path().join("bootstrap.yaml"), "api_key: token\n").expect("write API key");
     let args = parse_args(["gclient"]).expect("parse args");
     let probe = |in_pane: bool| {
-        resolve_probe_env_at(&args, "http://unused", &token_file, false, in_pane)
+        resolve_probe_env_at(&args, "http://unused", home.path(), false, in_pane)
             .expect("probe env resolves")
     };
     let outside = probe(false);
@@ -919,8 +922,8 @@ fn unreachable_daemon_launches_with_a_notice_and_waits() {
 #[test]
 fn test_reports_degraded_host_state() {
     let root = tempfile::tempdir().expect("temp token home");
-    let token_file = root.path().join("local_cli_token");
-    std::fs::write(&token_file, "host-token").expect("write host token");
+    std::fs::write(root.path().join("bootstrap.yaml"), "api_key: host-token\n")
+        .expect("write host API key");
     let usable = format!(
         r#"{{
             "status": "degraded",
@@ -946,7 +949,7 @@ fn test_reports_degraded_host_state() {
         } else {
             &url
         };
-        let env = resolve_probe_env_at(&args, fallback, &token_file, false, false)
+        let env = resolve_probe_env_at(&args, fallback, root.path(), false, false)
             .expect("resolve host env");
         assert_eq!(env.daemon_url, url);
         let (backend, enters) = CountingBackend::new();
@@ -989,7 +992,7 @@ fn test_reports_degraded_host_state() {
             } else {
                 &url
             };
-            let env = resolve_probe_env_at(&args, fallback, &token_file, false, false)
+            let env = resolve_probe_env_at(&args, fallback, root.path(), false, false)
                 .expect("resolve host env");
             let (backend, enters) = CountingBackend::new();
             let error = match start_session(args, env, &HttpHealthClient::new(), backend) {

@@ -172,33 +172,38 @@ uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-r
 `/gobby plan references expansion` loads manual expansion guidance for debugging and
 targeted reruns.
 
-## Plan Council Flow
+## Planning Runbook Flow
 
-Josh's standing seats (Plan Writer, Program Director, Plan Adversary) run one
-interactive flow per plan, set on 2026-09-26, with no numbered review rounds:
+Josh's plans run through the bundled `planning` [runbook](pipelines.md#runbooks),
+one interactive flow per plan with no numbered review rounds. The runbook
+launches three live seats into one workspace: the Plan Writer (`plan-writer`),
+the Plan Enhancer (`plan-enhancer`) and the Plan Adversary (`plan-adversary`).
+No seat spawns another; `plan-writer` blocks `gobby-agents:spawn_agent`. The
+coordinator session that owns the run, the Orchestrator, disposes edits and
+settles disagreements.
 
 1. The Plan Writer drafts the plan and passes base validation.
-2. The Writer spawns `plan-enhancer-taskless-old` once and sends its edits to the
-   Program Director.
-3. The Program Director disposes each enhancer edit, or puts the product
-   decision to Josh through the Assistant.
+2. The Plan Enhancer reads the plan and sends the Writer its ranked
+   suggestions. The Writer presents them to the coordinator.
+3. The coordinator disposes each enhancer edit, or puts the product decision to
+   Josh through the Assistant.
 4. The Writer applies the dispositions and passes the plan to the Plan
    Adversary.
 5. The Plan Adversary reviews it and sends findings to the Writer.
 6. The Writer edits, and the two seats converse through
    `gobby-agents:send_message` until consensus; unresolved disagreements go to
-   the Program Director.
+   the coordinator.
 7. On consensus the Writer records one dated prose consensus entry under
-   `## V1 Plan Changelog` and commits. From those bytes the Adversary derives
-   and applies `## M1 Task Manifest` through `derive_plan_handoff_manifest`
-   and `apply_plan_handoff_manifest`, then expansion-mode validation runs,
-   and the Writer commits the rendered bytes unchanged. Any edit after
-   derivation needs fresh hashes.
-8. The Program Director reviews the stamped plan and presents it to Josh
-   through the Assistant.
+   `## V1 Plan Changelog`, commits, and sends the Adversary the SHA. From those
+   bytes the Adversary derives and applies `## M1 Task Manifest` through
+   `derive_plan_handoff_manifest` and `apply_plan_handoff_manifest`, then
+   expansion-mode validation runs, and the Writer commits the rendered bytes
+   unchanged. Any edit after derivation needs fresh hashes.
+8. The coordinator reviews the stamped plan and presents it to Josh through the
+   Assistant.
 9. Josh approves. Approval is mandatory and precedes expansion.
 
-The council stamps M1 before Josh's approval; approval gates expansion, and
+The Adversary stamps M1 before Josh's approval; approval gates expansion, and
 nothing expands until Josh approves the stamped bytes. The evidence-round
 protocol above stays the contract for spawned taskless reviewers and
 `gobby build` stage reviews. Old plans, and

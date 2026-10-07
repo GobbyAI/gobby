@@ -15,7 +15,6 @@ from gobby.runner_pid_file import SingletonError, held_singleton_claim
 from gobby.runner_pid_record import SingletonRecordError
 from gobby.storage.hub.managed import managed_grant_path, managed_hub_database
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.maintenance_epoch import admitted_database_url
 
 
 @contextmanager
@@ -98,8 +97,7 @@ def runtime_hub_database(
 
     from gobby.storage.hub.postgres import PostgresHubDatabase
 
-    database_url = admitted_database_url(config.database_url)
-    db = PostgresHubDatabase(database_url, pool_config=config.postgres_pool)
+    db = PostgresHubDatabase(config.database_url, pool_config=config.postgres_pool)
     try:
         if apply_migrations:
             # The daemon singleton lives in GOBBY_HOME whatever bootstrap path was given.

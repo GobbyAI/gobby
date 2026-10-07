@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -112,10 +112,10 @@ class Session:
     startup_claim_owner: str | None = None
     startup_claim_state: str = "idle"
     # Task-ref enrichment populated post-load by callers that join the tasks
-    # table. Default empty so unenriched Session instances serialize cleanly.
-    claimed_task_refs: list[int] = field(default_factory=list)
-    created_task_refs: list[int] = field(default_factory=list)
-    closed_task_refs: list[int] = field(default_factory=list)
+    # table. None means unloaded; an empty list means the lookup found no tasks.
+    claimed_task_refs: list[int] | None = None
+    created_task_refs: list[int] | None = None
+    closed_task_refs: list[int] | None = None
     project_name: str | None = None
 
     @staticmethod

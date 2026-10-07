@@ -116,6 +116,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "status: 'str | None' = None, source: 'str | None' = None, limit: 'int' = 100, "
     "from_created_at: 'datetime | None' = None, from_id: 'str | None' = None) "
     "-> '_Sessions'",
+    "load_task_refs": "(self, sessions: 'Sequence[Session]') -> 'None'",
     "lookup_session_id": "(self, external_id: 'str', source: 'str', "
     "project_id: 'str | None', session_type: 'str' = 'terminal') -> 'str | None'",
     "mark_had_edits": "(self, session_id: 'str') -> 'Session | None'",

@@ -342,13 +342,10 @@ def _default(task: object, context: Mapping[str, object]) -> str:
 PROMPT_BUILDERS: dict[str, PromptBuilder] = {
     "analyst": _analyst,
     "architect": _architect,
-    "backend-developer": _developer,
     "default": _default,
     "developer": _developer,
     "doc-reviewer": _doc_reviewer,
     "expansion-qa": _expansion_qa,
-    "frontend-developer": _developer,
-    "fullstack-developer": _developer,
     "epic-reviewer": _epic_reviewer,
     "merge-orchestrator": _merge_runner,
     "merge-worker": _merge_runner,

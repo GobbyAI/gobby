@@ -7,13 +7,14 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import httpx
 import pytest
 
-from gobby.cli.runtime import CliRuntime
-from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.mcp_proxy.stdio_daemon import DaemonStartupDependencies
 from gobby.mcp_proxy.stdio_daemon import ensure_daemon_running as ensure_stdio_daemon_running
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy, DaemonProxyDependencies
-from gobby.mcp_proxy.stdio_results import DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS
+from gobby.mcp_proxy.stdio_results import (
+    DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
+    DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
+)
 from gobby.mcp_proxy.stdio_server import (
     StdioServerDependencies,
     create_stdio_mcp_server,
@@ -40,12 +41,11 @@ def test_stdio_dependencies_use_runtime_access() -> None:
 
     assert "load_config" not in startup_fields | proxy_fields | server_fields
     assert "bootstrap" in startup_fields
-    assert "runtime_factory" in proxy_fields
     assert "load_bootstrap" in server_fields
     # Server construction owns no hub-facing dependency, so it cannot block the
-    # MCP initialize handshake on the control plane (#22032). The proxy keeps
-    # its runtime factory: that read is deferred to the first tool call.
-    assert "runtime_factory" not in server_fields
+    # MCP initialize handshake on the control plane (#22032). The proxy owns none
+    # either: its first tool call reads tool timeouts from the daemon (#23680).
+    assert "runtime_factory" not in proxy_fields | server_fields
     assert "setup_internal_registries" not in server_fields
 
 
@@ -66,11 +66,11 @@ async def test_stdio_daemon_config_boundary(
 ) -> None:
     if runtime_url:
         monkeypatch.setenv("GOBBY_DAEMON_URL", runtime_url)
-    start_calls: list[tuple[int, int]] = []
+    start_calls: list[str] = []
     health_calls: list[tuple[int, float, str | None]] = []
 
-    async def start_daemon(port: int, websocket_port: int) -> dict[str, object]:
-        start_calls.append((port, websocket_port))
+    async def start_daemon() -> dict[str, object]:
+        start_calls.append("start")
         return {"success": True}
 
     async def check_health(
@@ -98,7 +98,7 @@ async def test_stdio_daemon_config_boundary(
 
     await ensure_stdio_daemon_running(deps=deps)
 
-    assert start_calls == ([(expected_port, 61032)] if expected_start else [])
+    assert start_calls == (["start"] if expected_start else [])
     assert health_calls == [
         (
             expected_port,
@@ -110,24 +110,20 @@ async def test_stdio_daemon_config_boundary(
 
 @pytest.mark.asyncio
 async def test_stdio_proxy_caches_tool_timeouts_for_proxy_lifetime() -> None:
-    first = DaemonConfig.model_validate(
-        {"mcp_client_proxy": {"tool_timeouts": {"custom_tool": 12.0}}}
-    )
-    second = DaemonConfig.model_validate(
-        {"mcp_client_proxy": {"tool_timeouts": {"custom_tool": 24.0}}}
-    )
-    proxy_runtime_factory = MagicMock(
-        side_effect=(CliRuntime(None, first), CliRuntime(None, second))
-    )
     proxy_deps = DaemonProxyDependencies(
-        runtime_factory=proxy_runtime_factory,
         check_daemon_http_health=AsyncMock(return_value=True),
         read_project_id=lambda: None,
         http_client_factory=httpx.AsyncClient,
         logger=MagicMock(),
     )
     proxy = DaemonProxy(61041, deps_factory=lambda: proxy_deps)
-    request = AsyncMock(return_value={"success": True})
+    request = AsyncMock(
+        side_effect=[
+            {"success": True, "tool_timeouts": {"custom_tool": 12}},
+            {"success": True},
+            {"success": True},
+        ]
+    )
 
     with patch.object(proxy, "_request", new=request):
         results = [
@@ -136,35 +132,42 @@ async def test_stdio_proxy_caches_tool_timeouts_for_proxy_lifetime() -> None:
         ]
 
     assert results == [{"success": True}, {"success": True}]
-    # One config read per proxy lifetime: the second call reuses the cached
-    # timeout map instead of opening another hub connection.
-    proxy_runtime_factory.assert_called_once_with()
-    expected_request = call(
+    # One daemon read per proxy lifetime, without a preflight of its own: the
+    # tool call that follows still checks daemon health first.
+    timeout_read = call(
+        "GET",
+        "/api/mcp/bridge/tool-timeouts",
+        timeout=DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
+    )
+    tool_call = call(
         "POST",
         "/api/mcp/gobby-tasks/tools/custom_tool",
         json={},
         timeout=12.0,
         preflight=True,
     )
-    assert request.await_args_list == [expected_request, expected_request]
+    assert request.await_args_list == [timeout_read, tool_call, tool_call]
 
 
 @pytest.mark.asyncio
 async def test_stdio_proxy_retries_timeout_read_after_failure() -> None:
-    """A failed timeout read is not cached: the hub may come up later (#20073)."""
+    """A failed timeout read is not cached: the daemon may come up later (#20073)."""
     logger = MagicMock()
-    runtime = MagicMock()
-    runtime.require_config.side_effect = RuntimeError("hub is down")
-    proxy_runtime_factory = MagicMock(return_value=runtime)
     proxy_deps = DaemonProxyDependencies(
-        runtime_factory=proxy_runtime_factory,
         check_daemon_http_health=AsyncMock(return_value=True),
         read_project_id=lambda: None,
         http_client_factory=httpx.AsyncClient,
         logger=logger,
     )
     proxy = DaemonProxy(61041, deps_factory=lambda: proxy_deps)
-    request = AsyncMock(return_value={"success": True})
+    request = AsyncMock(
+        side_effect=[
+            {"success": False, "error": "HTTP 503: Daemon configuration unavailable"},
+            {"success": True},
+            {"success": True, "tool_timeouts": {"custom_tool": 12.0}},
+            {"success": True},
+        ]
+    )
 
     with patch.object(proxy, "_request", new=request):
         first = await proxy.call_tool("gobby-tasks", "custom_tool")
@@ -172,10 +175,17 @@ async def test_stdio_proxy_retries_timeout_read_after_failure() -> None:
 
     assert first == {"success": True}
     assert second == {"success": True}
-    assert proxy_runtime_factory.call_count == 2
-    assert runtime.close.call_count == 2
-    assert request.await_count == 2
-    assert all(item.kwargs["timeout"] == 30.0 for item in request.await_args_list)
+    assert [item.args for item in request.await_args_list] == [
+        ("GET", "/api/mcp/bridge/tool-timeouts"),
+        ("POST", "/api/mcp/gobby-tasks/tools/custom_tool"),
+        ("GET", "/api/mcp/bridge/tool-timeouts"),
+        ("POST", "/api/mcp/gobby-tasks/tools/custom_tool"),
+    ]
+    assert [item.kwargs["timeout"] for item in request.await_args_list[1::2]] == [30.0, 12.0]
+    logger.warning.assert_called_once_with(
+        "Failed to capture MCP tool timeout configuration: %s",
+        "HTTP 503: Daemon configuration unavailable",
+    )
 
 
 @pytest.mark.asyncio

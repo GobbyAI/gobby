@@ -13,7 +13,7 @@ use super::profile::DirectGenerationTarget;
 use super::tool_loop::{
     ChatCompletionRequest, ChatMessage, ChatRole, ToolCall, ToolLoopLimits, ToolSchema,
 };
-use crate::ai::daemon::{daemon_client, daemon_url, read_local_cli_token, with_grant_presentation};
+use crate::ai::daemon::{daemon_client, daemon_url, read_api_key, with_grant_presentation};
 use crate::ai::{
     chat_completion_model, chat_completion_usage, parse_json_response, reqwest_error,
     retry_with_backoff_until,
@@ -117,7 +117,7 @@ pub fn daemon_agentic_chat(
     }
     let url = daemon_url(DAEMON_CHAT_COMPLETIONS_PATH);
     let client = daemon_client()?;
-    let token = read_local_cli_token()?;
+    let token = read_api_key()?;
     let request_id = uuid::Uuid::new_v4().to_string();
     let body = build_daemon_agentic_body(
         caller,

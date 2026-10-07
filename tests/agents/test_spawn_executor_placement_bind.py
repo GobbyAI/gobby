@@ -134,7 +134,6 @@ def _request(
         "session_manager": MagicMock(),
         "machine_id": "21000000-0000-4000-8000-000000000002",
         "prepared_spawn": prepared_spawn(),
-        "terminal_backend": runtime.backend,
         "terminal_manager": cast(TerminalManager, manager),
         "terminal_runtime_registry": runtime_registry(runtime),
         "placement_binder": binder,

@@ -347,7 +347,6 @@ def _fake_verified_manifest(backup: Path, digest: str) -> Any:
     return HubBackupManifest(
         created_at="2026-08-18T00:00:00+00:00",
         gobby_version="0.5.0",
-        epoch_id=None,
         source_identity=SourceIdentity("1", "gobby", 1),
         backup_starting_head=1,
         row_count_probes={},

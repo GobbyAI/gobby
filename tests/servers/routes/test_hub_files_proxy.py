@@ -378,7 +378,7 @@ def test_remote_attachment_download_and_delete_proxy(
 
 @pytest.mark.asyncio
 async def test_daemon_client_origin_join_and_hop(isolated_home: Path) -> None:
-    (isolated_home / "local_cli_token").write_text("token\n", encoding="utf-8")
+    (isolated_home / "bootstrap.yaml").write_text("api_key: test-api-key\n", encoding="utf-8")
     client = DaemonClient.from_url("http://hub.example.test:7443")
 
     def handler(request: httpx.Request) -> httpx.Response:

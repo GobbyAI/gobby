@@ -178,7 +178,6 @@ def test_sensitive_write_roots_exclude_gcode_runtime_parent(
     assert {
         str(gobby_home / "bootstrap.yaml"),
         str(gobby_home / ".secret_kek"),
-        str(gobby_home / "local_cli_token"),
         str(gobby_home / "tools" / "srt"),
     } <= write_roots
     assert str(gobby_home / "gcode-runtime") not in write_roots

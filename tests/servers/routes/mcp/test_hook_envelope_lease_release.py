@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -106,6 +108,117 @@ async def test_cancelled_execution_stops_renewal_and_releases_the_claim(
     # The claim went with the execution: a replay can claim the envelope again.
     assert read_envelope_marker(ENVELOPE_ID, processed_dir=processed_dir) is None
     assert claim_envelope_processing(ENVELOPE_ID, processed_dir=processed_dir) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker_fails", [False, True])
+async def test_cancelled_request_retains_claim_until_worker_finalizes(
+    session_storage: SessionManager,
+    processed_dir: Path,
+    renewal_tasks: list[asyncio.Task[None]],
+    worker_fails: bool,
+) -> None:
+    server = _server(session_storage)
+    started = asyncio.Event()
+    worker: Future[dict[str, Any]] = Future()
+
+    async def stalled_adapter(*args: object, **kwargs: object) -> dict[str, Any]:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError as exc:
+            raise adapter_execution.AdapterHookCancelled(worker) from exc
+        return {"continue": True}
+
+    async with server.app.router.lifespan_context(server.app):
+        with patch.object(hooks_route, "_run_adapter_hook", stalled_adapter):
+            async with AsyncClient(
+                transport=ASGITransport(app=server.app), base_url="http://test"
+            ) as client:
+                request = asyncio.create_task(
+                    client.post(
+                        "/api/hooks/execute",
+                        headers={ENVELOPE_ID_HEADER: ENVELOPE_ID},
+                        json=_envelope(),
+                    )
+                )
+                try:
+                    async with asyncio.timeout(2):
+                        await started.wait()
+                    request.cancel()
+                    await asyncio.gather(request, return_exceptions=True)
+                    assert not worker.done()
+                    assert not renewal_tasks[0].done()
+                    assert (
+                        claim_envelope_processing(ENVELOPE_ID, processed_dir=processed_dir) is None
+                    )
+                    marker = read_envelope_marker(ENVELOPE_ID, processed_dir=processed_dir)
+                    assert marker is not None
+                    assert marker["status"] == "processing"
+                    if worker_fails:
+                        worker.set_exception(RuntimeError("isolated worker failure"))
+                    else:
+                        worker.set_result({"continue": True})
+                    marker = read_envelope_marker(ENVELOPE_ID, processed_dir=processed_dir)
+                    if worker_fails:
+                        assert marker is None
+                        assert (
+                            claim_envelope_processing(ENVELOPE_ID, processed_dir=processed_dir)
+                            is not None
+                        )
+                    else:
+                        assert marker is not None
+                        assert marker["status"] == "processed"
+                        assert marker["response"] == {"continue": True}
+                finally:
+                    if not worker.done():
+                        worker.set_exception(RuntimeError("test cleanup"))
+                    request.cancel()
+                    for renewal in renewal_tasks:
+                        renewal.cancel()
+                    await asyncio.gather(request, *renewal_tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timeout_seconds", [None, 30.0])
+async def test_adapter_cancellation_preserves_running_worker(
+    monkeypatch: pytest.MonkeyPatch, timeout_seconds: float | None
+) -> None:
+    started = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    class Adapter:
+        def handle_native(self, payload: dict[str, Any], hook_manager: object) -> dict[str, Any]:
+            loop.call_soon_threadsafe(started.set)
+            if not release.wait(timeout=5):
+                raise RuntimeError("test worker was not released")
+            return {"continue": True}
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        monkeypatch.setattr(adapter_execution, "_HOOK_ADAPTER_EXECUTOR", executor)
+        request = asyncio.create_task(
+            adapter_execution.run_adapter_hook(
+                Adapter(), {}, object(), timeout_seconds=timeout_seconds
+            )
+        )
+        try:
+            async with asyncio.timeout(2):
+                await started.wait()
+            request.cancel()
+            with pytest.raises(adapter_execution.AdapterHookCancelled) as cancelled:
+                await request
+            worker = cancelled.value.executor_future
+            assert worker is not None
+            assert worker.running()
+            assert not worker.cancelled()
+            release.set()
+            async with asyncio.timeout(2):
+                assert await asyncio.wrap_future(worker) == {"continue": True}
+        finally:
+            release.set()
+            request.cancel()
+            await asyncio.gather(request, return_exceptions=True)
 
 
 def test_finalized_marker_survives_request_teardown(

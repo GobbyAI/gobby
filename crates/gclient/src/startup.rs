@@ -142,7 +142,7 @@ pub enum StartupError {
     Unreachable { url: String, detail: String },
     #[error(
         "failed to read daemon token from {path}: {detail}\n\
-         Pass a readable token file with `--token-file PATH`."
+         Run `gobby auth login` or pass a readable token file with `--token-file PATH`."
     )]
     TokenFile { path: String, detail: String },
     #[error(
@@ -419,7 +419,7 @@ fn parse_frame_delivery(value: &str) -> Result<FrameDelivery, StartupError> {
 pub fn resolve_probe_env_at(
     args: &CliArgs,
     default_daemon_url: &str,
-    default_token_file: &Path,
+    default_gobby_home: &Path,
     nested_tmux: bool,
     in_pane: bool,
 ) -> Result<ProbeEnv, StartupError> {
@@ -427,15 +427,31 @@ pub fn resolve_probe_env_at(
         .daemon_url
         .clone()
         .unwrap_or_else(|| default_daemon_url.to_string());
-    let token_file = args.token_file.as_deref().unwrap_or(default_token_file);
-    let token = std::fs::read_to_string(token_file).map_err(|err| StartupError::TokenFile {
-        path: token_file.display().to_string(),
-        detail: err.to_string(),
-    })?;
+    let (token, credential_path) = match args.token_file.as_deref() {
+        Some(path) => (
+            std::fs::read_to_string(path).map_err(|err| StartupError::TokenFile {
+                path: path.display().to_string(),
+                detail: err.to_string(),
+            })?,
+            path.to_path_buf(),
+        ),
+        None => (
+            gobby_core::local_token::read_api_key_for(default_gobby_home).map_err(|err| {
+                StartupError::TokenFile {
+                    path: default_gobby_home
+                        .join("bootstrap.yaml")
+                        .display()
+                        .to_string(),
+                    detail: err.to_string(),
+                }
+            })?,
+            default_gobby_home.join("bootstrap.yaml"),
+        ),
+    };
     let token = token.trim();
     if token.is_empty() {
         return Err(StartupError::TokenFile {
-            path: token_file.display().to_string(),
+            path: credential_path.display().to_string(),
             detail: "file is empty".into(),
         });
     }
@@ -449,19 +465,18 @@ pub fn resolve_probe_env_at(
 
 fn resolve_probe_env(args: &CliArgs) -> Result<ProbeEnv, StartupError> {
     let default_daemon_url = gobby_core::daemon_url::daemon_url();
-    let default_token_file = match args.token_file.as_ref() {
-        Some(path) => path.clone(),
-        None => gobby_core::gobby_home()
-            .map_err(|err| StartupError::TokenFile {
-                path: "~/.gobby/local_cli_token".into(),
-                detail: err.to_string(),
-            })?
-            .join("local_cli_token"),
+    let default_gobby_home = if args.token_file.is_some() {
+        PathBuf::new()
+    } else {
+        gobby_core::gobby_home().map_err(|err| StartupError::TokenFile {
+            path: "~/.gobby/bootstrap.yaml".into(),
+            detail: err.to_string(),
+        })?
     };
     resolve_probe_env_at(
         args,
         &default_daemon_url,
-        &default_token_file,
+        &default_gobby_home,
         crate::tmux_identity::current().is_some(),
         std::env::var_os("GOBBY_PANE_ID").is_some_and(|id| !id.is_empty()),
     )

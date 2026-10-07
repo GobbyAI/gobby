@@ -42,6 +42,7 @@ from tests._timing import wait_for_awaited_condition, wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
+    copy_daemon_api_key,
     create_host_socket_dir,
     daemon_token,
     link_operator_srt,
@@ -149,15 +150,12 @@ def e2e_pre_daemon_setup(
     stub_dir = Path(tempfile.mkdtemp(prefix="gs-"))
     # A relocated host reads its frame credential from the socket directory.
     # Seed the same isolated credential for the daemon and the host before startup.
-    token = uuid.uuid4().hex
     daemon_home = e2e_config[0].parent
     # FrameClient resolves HOME/.gobby; the isolated daemon fixture sets HOME to
     # daemon_home while Rust resolves GOBBY_HOME directly.
     for directory in (daemon_home, daemon_home / ".gobby", socket_dir):
         directory.mkdir(exist_ok=True)
-        token_path = directory / "local_cli_token"
-        token_path.write_text(token)
-        token_path.chmod(0o600)
+        copy_daemon_api_key(daemon_home, directory)
     link_operator_srt(daemon_home)
     claude = stub_dir / "claude"
     claude.write_text(_STUB)
@@ -391,7 +389,6 @@ def _spawn_agent(client: httpx.Client) -> dict[str, Any]:
             "agent_name": "default",
             "provider": "claude",
             "checkout_mode": "none",
-            "terminal_backend": backend,
             "prompt": f"stack {backend}",
             # No run timeout: the agents must outlive both daemon restarts
             # until the test cancels them.
@@ -822,10 +819,9 @@ async def test_terminal_client_stack_end_to_end(
         host_socket=str(frames_socket_path(socket_dir)),
         host_terminal_id=host_terminal_id,
     )
-    frame_token_path = socket_dir / "local_cli_token"
-    frame_token = (
-        frame_token_path.read_text(encoding="utf-8").strip() if frame_token_path.is_file() else ""
-    )
+    from gobby.utils.local_token import read_local_api_token
+
+    frame_token = read_local_api_token(socket_dir / "bootstrap.yaml") or ""
     reader, writer = await asyncio.open_unix_connection(str(frames_socket_path(socket_dir)))
     reserved_viewer = FrameClient(reader, writer)
     await reserved_viewer.handshake(
@@ -1026,7 +1022,10 @@ def _gclient(
     args = ["--project", str(daemon.project_dir)]
     if remote_url is not None:
         args += ["--daemon-url", remote_url]
-    args += ["--token-file", str(daemon.gobby_home / "local_cli_token")]
+        key_file = daemon.gobby_home / "explicit-client-api-key"
+        key_file.write_text(daemon_token(daemon.gobby_home))
+        key_file.chmod(0o600)
+        args += ["--token-file", str(key_file)]
     return GclientDriver(args, env=env, cwd=daemon.project_dir)
 
 

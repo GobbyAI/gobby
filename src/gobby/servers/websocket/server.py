@@ -12,7 +12,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -173,7 +173,7 @@ class WebSocketServer(
         self,
         config: WebSocketConfig,
         mcp_manager: MCPClientManager,
-        auth_callback: Callable[[str], Coroutine[Any, Any, str | None]],
+        auth_callback: Callable[[Mapping[str, str]], Coroutine[Any, Any, str | None]],
         stop_registry: Any = None,
         session_manager: "SessionManager | None" = None,
         db_executor: "DatabaseExecutor | None" = None,
@@ -192,7 +192,7 @@ class WebSocketServer(
         Args:
             config: WebSocket server configuration
             mcp_manager: MCP client manager for tool routing
-            auth_callback: Async function that validates a token and returns a user ID.
+            auth_callback: Async function that verifies forwarded identity and returns a user ID.
             stop_registry: Optional StopRegistry for handling stop requests from clients.
             session_manager: Optional SessionManager for persisting web-chat sessions.
             db_executor: Optional bounded executor for daemon database work.
@@ -228,7 +228,6 @@ class WebSocketServer(
         self.web_chat_runtime_manager: Any | None = None
         self.terminal_manager: Any | None = None
         self.terminal_runtime_registry: Any | None = None
-        self.terminal_config: Any | None = None
         self.terminal_host_manager: Any | None = None
         self.workspace_manager: WorkspaceManager | None = None
         self.workspace_ops: WorkspaceOps | None = None
@@ -302,7 +301,6 @@ class WebSocketServer(
         self,
         terminal_manager: Any,
         runtime_registry: Any,
-        terminal_config: Any | None = None,
         terminal_services: Any | None = None,
         host_manager: Any | None = None,
         *,
@@ -313,7 +311,6 @@ class WebSocketServer(
         """Attach composition-root terminal services after construction."""
         self.terminal_manager = terminal_manager
         self.terminal_runtime_registry = runtime_registry
-        self.terminal_config = terminal_config
         self.terminal_services = terminal_services
         self.terminal_host_manager = host_manager
         self.lease_registry = lease_registry

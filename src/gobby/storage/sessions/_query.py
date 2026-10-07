@@ -15,6 +15,10 @@ if TYPE_CHECKING:
 class _ManagerState(Protocol):
     db: HubDatabase
 
+    def fetch_task_refs_by_session(
+        self, session_ids: Sequence[str]
+    ) -> dict[str, _TaskRefsByRole]: ...
+
 
 # Type alias defined outside the class so `list` resolves to the builtin
 # rather than _QueryMixin.list (which shadows it inside the class body).
@@ -317,6 +321,17 @@ class _QueryMixin:
             tuple(params),
         )
         return {row["status"]: row["count"] for row in rows}
+
+    def load_task_refs(self: _ManagerState, sessions: Sequence[Session]) -> None:
+        """Hydrate task attribution once for a session reporting page."""
+        refs_by_session = self.fetch_task_refs_by_session([session.id for session in sessions])
+        for session in sessions:
+            refs = refs_by_session.get(session.id)
+            if refs is None:
+                continue
+            session.claimed_task_refs = refs["claimed"]
+            session.created_task_refs = refs["created"]
+            session.closed_task_refs = refs["closed"]
 
     def fetch_task_refs_by_session(
         self: _ManagerState,

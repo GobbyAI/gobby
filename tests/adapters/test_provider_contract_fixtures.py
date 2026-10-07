@@ -212,7 +212,8 @@ def test_codex_functions_exec_contract_correlates_yielded_final_outcome() -> Non
 
 @pytest.mark.parametrize(
     ("wrapper_status", "expected_status"),
-    [("completed", "succeeded"), ("failed", "failed")],
+    # A completed cell never proves its command passed (#23724).
+    [("completed", "unknown"), ("failed", "failed")],
 )
 def test_codex_functions_exec_normalizes_current_terminal_wrapper(
     wrapper_status: str,

@@ -284,7 +284,15 @@ def create_lifespan(
                 session_manager=app.state.hook_manager._session_manager,
                 attention_manager=server.services.attention_manager,
                 registry=runtime_registry,
-                startup_ready=lambda: server.services.startup_ready,
+                startup_ready=lambda: (
+                    server.services.startup_ready and server.services.restart_recovery_ready
+                ),
+                write_coordinator=(
+                    server.services.write_coordinator
+                    if config is not None and config.tmux.idle_check_enabled
+                    else None
+                ),
+                max_reprompt_attempts=config.tmux.max_reprompt_attempts if config else None,
             )
             app.state.interactive_attention_monitor = monitor
             await monitor.start()
@@ -303,7 +311,9 @@ def create_lifespan(
                 ),
                 message_processor_resolver=lambda: server.message_processor,
                 terminal_manager=getattr(server.services, "terminal_manager", None),
-                startup_ready=lambda: server.services.startup_ready,
+                startup_ready=lambda: (
+                    server.services.startup_ready and server.services.restart_recovery_ready
+                ),
                 live_host_epoch=lambda: getattr(
                     getattr(server.services, "terminal_host_manager", None), "host_epoch", None
                 ),

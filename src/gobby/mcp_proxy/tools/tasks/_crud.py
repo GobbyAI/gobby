@@ -13,9 +13,8 @@ from gobby.mcp_proxy.tools.tasks._claim_handoff import handed_off_claim_ids
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._formatters import (
-    dependency_payload,
+    brief_task_card,
     task_discovery_payload,
-    task_summary_payload,
 )
 from gobby.mcp_proxy.tools.tasks._live_session_label import live_session_label_change_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
@@ -502,22 +501,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if not task:
             return {"error": f"Task {task_id} not found", "found": False}
 
-        # Enrich with dependency info
+        if brief:
+            return brief_task_card(ctx, task)
+
         blockers = ctx.dep_manager.get_blockers(resolved_id)
         blocking = ctx.dep_manager.get_blocking(resolved_id)
-
-        if brief:
-
-            def _dep_summary(dep: Any, linked_task_id: str) -> dict[str, Any]:
-                linked = ctx.task_manager.get_task(linked_task_id)
-                return dependency_payload(dep, linked_task_id, linked)
-
-            dependencies = {
-                "blocked_by": [_dep_summary(b, b.depends_on) for b in blockers],
-                "blocking": [_dep_summary(b, b.task_id) for b in blocking],
-            }
-            return task_summary_payload(task, dependencies)
-
         result: dict[str, Any] = task.to_dict()
         result["dependencies"] = {
             "blocked_by": [b.to_dict() for b in blockers],
@@ -763,7 +751,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "assigned_agent": {
                     "type": "string",
-                    "description": "Agent name to assign this task to (e.g. 'backend-developer'). Routes leaf work in dispatch.",
+                    "description": "Agent name to assign this task to (e.g. 'developer'). Routes leaf work in dispatch.",
                     "default": None,
                 },
                 "implementation_domain": {

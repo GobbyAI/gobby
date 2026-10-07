@@ -369,7 +369,10 @@ fn run() -> anyhow::Result<()> {
     let ctx = config::Context::resolve_with_services(
         cli.project.as_deref(),
         cli.quiet,
-        service_config_selection(&cli.command, evidence_request.as_ref()),
+        service_config_selection(
+            &cli.command,
+            evidence_request.as_ref().map(|value| &value.request),
+        ),
     )
     .map_err(|error| {
         if evidence_request.is_some() {

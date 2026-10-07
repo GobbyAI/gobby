@@ -424,7 +424,7 @@ Each definition declares one of three things:
 can start must be allowed, or the whole call is refused:
 
 - An omitted `agent` counts as the tool's default (`default` for `spawn_agent`,
-  `backend-developer` for `dispatch_batch`).
+  `developer` for `dispatch_batch`).
 - A `dispatch_batch` suggestion's own non-blank `agent` replaces the top-level
   one for that suggestion. `suggestions` must be a list of objects.
 - Every agent in a target's `fallback_agent` chain counts, as `spawn_agent`

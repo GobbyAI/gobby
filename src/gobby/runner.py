@@ -163,6 +163,7 @@ class GobbyRunner:
     _sync_worker_shutdown: asyncio.Event | None
     _websocket_task: asyncio.Task[None] | None
     _subsystem_init_task: asyncio.Task[None] | None
+    _startup_recovery_task: asyncio.Task[None] | None
     _sandbox_run_root_sweep_task: asyncio.Task[None] | None
     _provider_capability_refresh_task: asyncio.Task[None] | None
     _generation_endpoint_health_task: asyncio.Task[None] | None
@@ -404,7 +405,6 @@ async def run_gobby(
     from gobby.utils.local_token import (
         bind_daemon_bootstrap,
         daemon_bootstrap_path,
-        read_local_api_token,
     )
     from gobby.utils.machine_id import require_machine_id
 
@@ -478,7 +478,7 @@ async def run_gobby(
             control = StandbyLeaseControl(
                 lease=lease,
                 database_url=database_url,
-                local_token=read_local_api_token(),
+                front_door_secret=front_door.secret if front_door is not None else None,
                 promotion_requested=promotion_requested,
                 schema_verifier=verify_schema,
             )

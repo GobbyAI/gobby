@@ -787,6 +787,89 @@ class TestNativeTrackerClaimNudge:
 class TestRequireTaskBeforeEdit:
     """Verify require-task-before-edit blocks edits without claimed task."""
 
+    @pytest.mark.parametrize(
+        ("command", "claimed", "blocked"),
+        [
+            ("bash /project/probe.sh", False, True),
+            ("bash /tmp/scratchpad/probe.sh", False, True),
+            ("bash /project/probe.sh", True, False),
+            ("source /tmp/scratchpad/probe.sh", False, True),
+            (". /tmp/scratchpad/probe.sh", True, False),
+            ("bash < /tmp/scratchpad/probe.sh", False, True),
+            ("bash -s < /tmp/scratchpad/probe.sh", True, False),
+            ("cat /tmp/scratchpad/probe.sh | bash", False, True),
+            ("bash <<'EOF'\ntouch /project/owned.py\nEOF", False, True),
+            ("/tmp/scratchpad/missing-script", False, True),
+            ("/tmp/scratchpad/missing-script", True, False),
+            ("bash -euo pipefail -c 'touch /project/owned.py'", False, True),
+            ("bash -euo pipefail -c 'touch /tmp/scratchpad/probe.py'", False, False),
+            ('sh -c "$PROGRAM"', False, True),
+            ('sh -c "$PROGRAM"', True, False),
+            ("bash -c 'touch /project/owned.py\nprintf \"'", False, True),
+            ("sh -c 'touch /project/owned.py'", False, True),
+            ("bash -c 'touch /tmp/scratchpad/probe.py'", False, False),
+            ("sh -c 'cat /project/source.py'", False, False),
+            # Readable shell scripts are classified by their bodies.
+            ('{scripts}/q.sh "select 1"', False, False),
+            ("zsh {scripts}/idle.sh", False, False),
+            ("bash {scripts}/edit.sh", False, True),
+            ("bash {scripts}/edit.sh", True, False),
+            ("printf x > {scripts}/q.sh && {scripts}/q.sh", False, True),
+            ("{scripts}/pytest {scripts}/export/tests -q --basetemp={scripts}/pt", False, False),
+        ],
+    )
+    def test_script_execution_claim_gate(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        tmp_path: Path,
+        command: str,
+        claimed: bool,
+        blocked: bool,
+    ) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+        scripts = tmp_path.resolve()
+        (scripts / "q.sh").write_text('#!/bin/zsh\npsql "$DB_URL" -c "$1"\n')
+        (scripts / "idle.sh").write_text(f"#!/bin/zsh\ndate > {scripts}/state.txt\n")
+        (scripts / "edit.sh").write_text("#!/bin/sh\ntouch /project/owned.py\n")
+        (scripts / "pytest").write_text("#!/project/.venv/bin/python\nimport sys\n")
+        command = command.replace("{scripts}", str(scripts))
+        _sync_bundled(db)
+        row = manager.get_by_name("require-task-before-edit")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.when is not None
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": command, "cwd": "/project"},
+            "project_root": "/project",
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+        context = {
+            "variables": {
+                "require_task_before_edit": True,
+                "task_claimed": claimed,
+                "plan_mode": False,
+            },
+            "event": event,
+            "tool_input": data["tool_input"],
+            "source": "codex",
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+
+        assert bool(evaluator.evaluate(body.when)) is blocked
+
     def test_block_effect_is_not_tied_to_native_tool_names(self, db, manager) -> None:
         """The block effect should rely on canonical mutation semantics."""
         _sync_bundled(db)

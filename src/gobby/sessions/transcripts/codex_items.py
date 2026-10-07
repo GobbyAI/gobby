@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 from collections.abc import Mapping
 from typing import Any, NamedTuple
+from urllib.parse import unquote, urlsplit
 
 from gobby.hooks._normalization_mcp import _unwrap_mcp_tool_output
 
@@ -15,6 +17,7 @@ class CommandExecutionOutcome(NamedTuple):
     exit_code: int | None
     success: bool | None
     output: str
+    cwd: str | None = None
 
 
 def normalize_command_execution(item: Any) -> CommandExecutionOutcome | None:
@@ -37,7 +40,16 @@ def normalize_command_execution(item: Any) -> CommandExecutionOutcome | None:
         stdout = item.get("stdout") if isinstance(item.get("stdout"), str) else ""
         stderr = item.get("stderr") if isinstance(item.get("stderr"), str) else ""
         output = f"{stdout}{stderr}"
-    return CommandExecutionOutcome(command, exit_code, success, output)
+    return CommandExecutionOutcome(command, exit_code, success, output, _item_cwd(item.get("cwd")))
+
+
+def _item_cwd(value: Any) -> str | None:
+    """Return the absolute path of an item's ``file://`` working directory URI."""
+    if not isinstance(value, str):
+        return None
+    parts = urlsplit(value)
+    path = unquote(parts.path) if parts.scheme == "file" and not parts.netloc else value
+    return path if os.path.isabs(path) else None
 
 
 def mcp_item_failure(item: Any) -> str | None:

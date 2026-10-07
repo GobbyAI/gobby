@@ -7,12 +7,92 @@ from pathlib import Path
 
 import pytest
 
-from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.leases import HolderChange, TerminalLeaseRegistry
 from gobby.terminals.ws_protocol import TERMINAL_WS_SAFE_INTEGER_MAX
 
 ROOT = Path(__file__).resolve().parents[2]
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_cancelled_holder_cleanup_is_retried_by_shutdown() -> None:
+    registry = TerminalLeaseRegistry()
+    attachment = await registry.attach("cancelled-terminal", websocket=object())
+    await registry.take_control("cancelled-terminal", attachment.attachment_id, takeover=False)
+    entered = asyncio.Event()
+    notifications: list[HolderChange] = []
+
+    async def interrupted(change: HolderChange) -> bool | None:
+        entered.set()
+        await asyncio.Event().wait()
+        return None
+
+    registry.set_holder_observer(interrupted)
+    disconnect = asyncio.create_task(registry.finalize(attachment.attachment_id, "ws_close"))
+    await entered.wait()
+    disconnect.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await disconnect
+    assert registry.holder("cancelled-terminal") == attachment.attachment_id
+    assert not attachment.finalized
+
+    async def persisted(change: HolderChange) -> bool | None:
+        notifications.append(change)
+        return True
+
+    registry.set_holder_observer(persisted)
+    await registry.finalize_shutdown_attachments()
+    assert attachment.finalized
+    assert registry.holder("cancelled-terminal") is None
+    assert len(notifications) == 1
+    assert notifications[0].holder is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_finalization_joins_disconnect_and_fences_new_attachments() -> None:
+    registry = TerminalLeaseRegistry()
+    attachment = await registry.attach("shutdown-terminal", websocket=object())
+    granted = await registry.take_control(
+        "shutdown-terminal", attachment.attachment_id, takeover=False
+    )
+    assert granted.granted
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    recording: list[HolderChange] = []
+
+    async def observe(change: HolderChange) -> bool | None:
+        entered.set()
+        await release.wait()
+        recording.append(change)
+        return True
+
+    registry.set_holder_observer(observe)
+    disconnect = asyncio.create_task(registry.finalize(attachment.attachment_id, "ws_close"))
+    settlement: asyncio.Task[None] | None = None
+    try:
+        async with asyncio.timeout(2):
+            await entered.wait()
+        settlement = asyncio.create_task(registry.finalize_shutdown_attachments())
+        await asyncio.sleep(0)
+        assert not settlement.done()
+        with pytest.raises(RuntimeError, match="admission closed"):
+            await registry.attach("shutdown-terminal")
+        release.set()
+        async with asyncio.timeout(2):
+            await disconnect
+            await settlement
+        assert registry.get(attachment.attachment_id) is None
+        assert registry.holder("shutdown-terminal") is None
+        assert len(recording) == 1
+        assert recording[0].holder is None
+        await registry.finalize_shutdown_attachments()
+        assert len(recording) == 1
+    finally:
+        release.set()
+        await asyncio.gather(disconnect, return_exceptions=True)
+        if settlement is not None:
+            await asyncio.gather(settlement, return_exceptions=True)
 
 
 @pytest.mark.asyncio

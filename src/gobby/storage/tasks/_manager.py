@@ -627,7 +627,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         stage_state: str | None = None,
         limit: int = 50,
         offset: int = 0,
-        sort_by: str = "hierarchy",
+        sort_by: str | None = None,
         sort_order: str = "asc",
     ) -> list[Task]:
         """List tasks with filtering.
@@ -635,9 +635,11 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         Args:
             current_stage_state: Filter by current stage state. Can be a single
                 state string, a list of states, or None to include all stage states.
+            sort_by: None lists closed tasks (``closed=True``) newest closure
+                first and everything else hierarchically.
 
-        Results are ordered hierarchically: parents appear before their children,
-        with siblings sorted by priority ASC, then created_at ASC.
+        Hierarchical results put parents before their children, with siblings
+        sorted by priority ASC, then created_at ASC.
         """
         return _list_tasks(
             self.db,

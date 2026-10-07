@@ -72,7 +72,7 @@ impl DaemonEnvGuard {
             project_id: std::env::var_os("GOBBY_PROJECT_ID"),
             session_id: std::env::var_os("GOBBY_SESSION_ID"),
         };
-        fs::write(home.join("local_cli_token"), format!("{token}\n")).unwrap();
+        fs::write(home.join("bootstrap.yaml"), format!("api_key: {token}\n")).unwrap();
         // SAFETY: env mutation is serialized through TEST_ENV_LOCK, held for the
         // guard's lifetime; Drop restores the originals while still holding it.
         // GOBBY_PORT is cleared so a stray value cannot mask GOBBY_DAEMON_URL.

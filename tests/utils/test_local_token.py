@@ -23,6 +23,89 @@ from gobby.utils.local_token import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("valid_signature", [True, False])
+def test_expiry_diagnostic_contains_only_verified_timestamps(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    valid_signature: bool,
+) -> None:
+    monkeypatch.setattr("gobby.utils.local_token.time.time", lambda: 2000.0)
+    key = derive_managed_signing_key("expiry-diagnostic-fixture")
+    token = _signed_token(
+        {
+            "agent_run_id": "run-1",
+            "session_id": "session-1",
+            "project_id": "project-1",
+            "machine_id": "machine-1",
+            "iat": 1000,
+            "exp": 1660,
+        },
+        key if valid_signature else b"different-fixture-key",
+    )
+
+    result = classify_agent_api_token(token, key)
+
+    messages = [
+        record.getMessage() for record in caplog.records if record.name == local_token.__name__
+    ]
+    if valid_signature:
+        assert result == "capability_expired"
+        assert messages == [
+            "Managed capability rejected code=capability_expired iat=1000 exp=1660 now=2000"
+        ]
+    else:
+        assert result == "capability_invalid"
+        assert messages == []
+    assert token not in caplog.text
+    assert "expiry-diagnostic-fixture" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("elapsed_seconds", "valid"),
+    [(900, True), (1259, True), (1260, False)],
+    ids=["fifteen-minutes", "last-valid-second", "timeout-plus-grace"],
+)
+def test_managed_run_capability_lifetime_matches_timeout(
+    monkeypatch: pytest.MonkeyPatch, elapsed_seconds: int, valid: bool
+) -> None:
+    from gobby.utils.local_token import derive_managed_signing_key
+
+    monkeypatch.setattr("gobby.utils.local_token.time.time", lambda: 1000.0)
+    key = derive_managed_signing_key("synthetic-lifetime-key")
+    token = issue_agent_api_token(
+        key,
+        agent_run_id="run-lifetime",
+        session_id="session-lifetime",
+        project_id="project-lifetime",
+        machine_id="machine-lifetime",
+        timeout_seconds=1200,
+    )
+    initial_claims = verify_agent_api_token(token, key)
+    assert initial_claims is not None
+    assert initial_claims.iat == 1000
+    assert initial_claims.exp == 2260
+
+    monkeypatch.setattr("gobby.utils.local_token.time.time", lambda: 1000.0 + elapsed_seconds)
+    claims = verify_agent_api_token(token, key)
+    assert (claims is not None) is valid
+
+
+def test_operator_key_reads_bootstrap_fresh(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bootstrap = tmp_path / "bootstrap.yaml"
+    monkeypatch.setattr(local_token, "_daemon_bootstrap", bootstrap)
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    assert local_token.read_local_api_token() is None
+    bootstrap.write_text("api_key: first-key\n", encoding="utf-8")
+    assert local_token.read_local_api_token() == "first-key"
+    bootstrap.write_text("api_key: second-key\n", encoding="utf-8")
+    assert local_token.read_local_api_token() == "second-key"
+    for content in ("", "api_key: ''\n", "api_key: 123\n", "api_key: [\n"):
+        bootstrap.write_text(content, encoding="utf-8")
+        assert local_token.read_local_api_token() is None
+
+
 def test_managed_tokens_sign_with_derived_key() -> None:
     from gobby.utils.local_token import derive_managed_signing_key
 
@@ -200,25 +283,15 @@ def test_issued_tokens_carry_signed_machine_id() -> None:
     assert verify_agent_api_token(unsigned, derive_managed_signing_key(operator_token)) is None
 
 
-def test_unreadable_local_token_reads_as_absent(
+def test_unreadable_bootstrap_key_reads_as_absent(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A sandbox denial on the operator token is "no token", not a crash.
-
-    ``local_cli_token`` is one of the credential roots a managed grant may never
-    read, so ``gobby mcp-server`` inside an agent sandbox is answered with
-    ``PermissionError``. Run that command under a real Ask sandbox policy with no
-    run capability in the environment and the error escapes here, exits the
-    process as ``MCP server failed: [Errno 1] Operation not permitted``, and the
-    client registers no server at all. ``daemon_auth_headers`` already prefers
-    the run capability and copes with no operator token, so the denial has to
-    arrive as ``None``.
-    """
-    token_path = tmp_path / "local_cli_token"
-    token_path.write_text("operator-token", encoding="utf-8")
+    """A sandbox denial on bootstrap is an absent credential, not a crash."""
+    token_path = tmp_path / "bootstrap.yaml"
+    token_path.write_text("api_key: operator-token\n", encoding="utf-8")
     token_path.chmod(0o000)
-    monkeypatch.setattr(local_token, "local_token_path", lambda: token_path)
+    monkeypatch.setattr(local_token, "daemon_bootstrap_path", lambda: token_path)
     try:
         assert local_token.read_local_api_token() is None
     finally:
@@ -230,10 +303,10 @@ def test_run_capability_is_preferred_over_an_unreadable_operator_token(
     tmp_path: Path,
 ) -> None:
     """The sandboxed MCP bridge authenticates with its run capability."""
-    token_path = tmp_path / "local_cli_token"
-    token_path.write_text("operator-token", encoding="utf-8")
+    token_path = tmp_path / "bootstrap.yaml"
+    token_path.write_text("api_key: operator-token\n", encoding="utf-8")
     token_path.chmod(0o000)
-    monkeypatch.setattr(local_token, "local_token_path", lambda: token_path)
+    monkeypatch.setattr(local_token, "daemon_bootstrap_path", lambda: token_path)
     monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", "run-capability")
     monkeypatch.setenv("GOBBY_SESSION_ID", "session-1")
     try:

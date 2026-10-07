@@ -38,6 +38,16 @@ module that does not exist).
 - The agent sandbox drops the wrapper's main-repo read grant and its
   `gobby mcp-server` text (1.8).
 
+**Internal servers.** Internal Python servers such as `gobby-tasks` keep
+running in the daemon until they are ported, and their proxy tool calls route
+through `gmcp` the way they route through the Python wrapper today: the agent
+calls `gmcp` over stdio, `gmcp` posts to the daemon's REST route
+(`/api/mcp/{server}/tools/{tool}`, or `/api/mcp/tools/call` for wait tools;
+1.3) through the `gdaemon` front door, and the daemon dispatches the call to
+the internal server. `gmcp` replaces the REST wrapper only (Decision 7). When a
+server is later ported to Rust behind the same REST route, `gmcp` does not
+change.
+
 Live activation, the streamable HTTP transport, OAuth, thin-node use,
 publishing, and the post-switch smoke proof are deferred sections D1 to D6, each
 with an owner.

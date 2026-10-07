@@ -51,10 +51,9 @@ fn write_daemon_files(home: &Path, port: u16, token: &str) {
     fs::create_dir_all(&gobby_home).unwrap();
     fs::write(
         gobby_home.join("bootstrap.yaml"),
-        format!("daemon_port: {port}\nbind_host: 127.0.0.1\n"),
+        format!("daemon_port: {port}\nbind_host: 127.0.0.1\napi_key: {token}\n"),
     )
     .unwrap();
-    fs::write(gobby_home.join("local_cli_token"), format!("{token}\n")).unwrap();
 }
 
 fn fixture_grant() -> crate::grant::GrantBundle {

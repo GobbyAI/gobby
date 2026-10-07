@@ -923,7 +923,7 @@ class TestComputeSandboxPaths:
             for name in (
                 "bootstrap.yaml",
                 ".secret_kek",
-                "local_cli_token",
+                "break_glass",
                 "gcode-runtime",
                 "tools/srt",
             )
@@ -933,12 +933,12 @@ class TestComputeSandboxPaths:
             for name in (
                 "bootstrap.yaml",
                 ".secret_kek",
-                "local_cli_token",
+                "break_glass",
                 "gcode-runtime",
                 "tools/srt",
             )
         }
-        write_protected_names = ("bootstrap.yaml", ".secret_kek", "local_cli_token", "tools/srt")
+        write_protected_names = ("bootstrap.yaml", ".secret_kek", "break_glass", "tools/srt")
         literal_write_protected = {str(gobby_home / name) for name in write_protected_names}
         resolved_write_protected = {
             str((gobby_home / name).resolve()) for name in write_protected_names

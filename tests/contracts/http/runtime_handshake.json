@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "runtime_handshake",
   "family": "runtime_handshake",
   "backend": "up",
@@ -25,7 +25,7 @@
       "grant": {
         "version": 2,
         "api_contract": 1,
-        "config_revision": 3,
+        "config_revision": 2,
         "deployment": {
           "token": "@secret@",
           "fencing_epoch": "@mask@"
@@ -34,9 +34,9 @@
           "runner_protocol": 1,
           "baseline_version": 420,
           "baseline_checksum": "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55",
-          "latest_version": 461,
-          "latest_checksum": "68585b7ebd608359d3c19b70f7fc957beaffbd074878877390a938a72f2a1825",
-          "assets_root_hash": "1b8dfb63c56f528f890823fffc6b79d0f55c7e979a8054794346a1d7944718dc"
+          "latest_version": 462,
+          "latest_checksum": "3b17b11dc740d4861b96ad2f81aabdda92e544601590293f28911b2b02709e01",
+          "assets_root_hash": "92e87b488aaf8efe6a1495c1d62aceab8878ca645d2f949a9c13c30d8b1e67fc"
         },
         "principal": {
           "kind": "interactive",

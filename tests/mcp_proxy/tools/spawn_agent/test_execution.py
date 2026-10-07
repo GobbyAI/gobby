@@ -209,8 +209,6 @@ async def test_auto_claimed_task_titles_child_session(
         pid=None,
         error=None,
     )
-    call_order: list[str] = []
-
     with (
         patch("gobby.mcp_proxy.tools.spawn_agent._execution._persist_spawn_runtime"),
         patch(
@@ -220,12 +218,7 @@ async def test_auto_claimed_task_titles_child_session(
         ),
         patch("gobby.runner_broadcasting.fire_agent_event"),
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._execution._link_auto_claimed_session",
-            side_effect=lambda *_args: call_order.append("link"),
-        ) as link_claim,
-        patch(
-            "gobby.mcp_proxy.tools.spawn_agent._execution.update_title_for_claim",
-            side_effect=lambda *_args: call_order.append("title"),
+            "gobby.mcp_proxy.tools.spawn_agent._execution.update_title_for_claim"
         ) as update_title,
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._execution.build_spawn_response",
@@ -257,8 +250,6 @@ async def test_auto_claimed_task_titles_child_session(
         )
 
         assert result == {"success": True}
-        assert call_order == ["link", "title"]
-        link_claim.assert_called_once_with(task_manager, child_session_id, task_id)
         update_title.assert_called_once_with(
             session_manager,
             child_session_id,
@@ -271,9 +262,7 @@ async def test_auto_claimed_task_titles_child_session(
             escalated_at=None,
         )
         task_manager.claim_task.reset_mock()
-        link_claim.reset_mock()
         update_title.reset_mock()
-        call_order.clear()
 
         result = await finalize_executed_spawn(
             runner=runner,
@@ -301,7 +290,6 @@ async def test_auto_claimed_task_titles_child_session(
 
         assert result == {"success": True}
         task_manager.claim_task.assert_not_called()
-        link_claim.assert_not_called()
         update_title.assert_not_called()
 
 
@@ -353,7 +341,6 @@ async def test_auto_claim_survives_runner_without_session_manager(
             return_value=None,
         ),
         patch("gobby.runner_broadcasting.fire_agent_event"),
-        patch("gobby.mcp_proxy.tools.spawn_agent._execution._link_auto_claimed_session"),
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._execution.update_title_for_claim"
         ) as update_title,
