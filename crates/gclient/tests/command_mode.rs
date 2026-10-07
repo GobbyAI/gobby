@@ -347,3 +347,62 @@ async fn wait_for_output_exit_codes_follow_reason() {
         );
     }
 }
+
+/// The daemon answers a submitted `send-keys` only after it verified the Enter:
+/// the write, a 1.5s gap, then Enters re-sent while the CLI keeps the text in its
+/// composer. The normal 5s request deadline gave up mid-verification (#23730).
+#[tokio::test(flavor = "multi_thread")]
+async fn send_keys_enter_waits_for_the_daemons_verified_submit() {
+    let daemon = MockDaemon::start("command-token").await;
+    let seeded = daemon.seed_workspace(PROJECT, &[(&["terminal-a"], "first")]);
+    let pane = seeded[0].1[0].clone();
+    daemon.enqueue_workspace_result(json!({"idempotency_key": "k", "indeterminate": false}));
+    let release = daemon.hold_ws("workspace_op", |request| request["op"] == "pane.send_text");
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+        release.notify_one();
+    });
+    let output = invoke(&daemon, &["send-keys", &pane, " ", "--enter"]).await;
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(
+        serde_json::from_str::<Value>(&stdout(&output)).unwrap()["indeterminate"],
+        json!(false)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn send_keys_enter_exits_one_when_the_cli_kept_the_text() {
+    let daemon = MockDaemon::start("command-token").await;
+    let seeded = daemon.seed_workspace(PROJECT, &[(&["terminal-a"], "first")]);
+    let pane = seeded[0].1[0].clone();
+    let detail = "Pane text was not submitted: pane text was typed but stayed in the \
+                  composer: the CLI never submitted it";
+    daemon.enqueue_workspace_result(json!({
+        "idempotency_key": "k",
+        "indeterminate": true,
+        "detail": detail,
+        "error_code": "command_not_submitted",
+    }));
+    let output = invoke(&daemon, &["send-keys", &pane, " ", "--enter"]).await;
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output).contains(&format!("command_not_submitted: {detail}")),
+        "{}",
+        stderr(&output)
+    );
+
+    // A submit nobody could read is reported, not refused: the text may be in.
+    daemon.enqueue_workspace_result(json!({
+        "idempotency_key": "k",
+        "indeterminate": true,
+        "detail": "Pane text was not submitted: this CLI has no composer reader",
+        "error_code": "submit_unverified",
+    }));
+    let output = invoke(&daemon, &["send-keys", &pane, "ls", "--enter"]).await;
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(
+        serde_json::from_str::<Value>(&stdout(&output)).unwrap()["error_code"],
+        json!("submit_unverified")
+    );
+}

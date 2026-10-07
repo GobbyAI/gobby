@@ -425,36 +425,21 @@ impl Action {
                 let result = reply.result;
                 if let Some(cmd) = cmd {
                     let new_pane = created_ref(&result, "panes")?;
-                    daemon
-                        .workspace_op(WorkspaceOp::PaneSendText {
+                    run_op(
+                        &daemon,
+                        WorkspaceOp::PaneSendText {
                             pane: new_pane,
                             text: cmd,
                             submit: Some(true),
                             idempotency_key: None,
                             node: None,
-                        })
-                        .await
-                        .map_err(daemon_error)?;
+                        },
+                    )
+                    .await?;
                 }
                 output(result, OutputKind::CreatedPane(prefix))
             }
-            Self::Op { op, kind, .. } => {
-                let reply = if let WorkspaceOp::PaneWaitForOutput {
-                    timeout_seconds, ..
-                } = &op
-                {
-                    daemon
-                        .workspace_op_with_deadline(
-                            op.clone(),
-                            Duration::from_secs_f64(timeout_seconds.min(300.0) + 5.0),
-                        )
-                        .await
-                        .map_err(daemon_error)?
-                } else {
-                    daemon.workspace_op(op).await.map_err(daemon_error)?
-                };
-                output(reply.result, kind)
-            }
+            Self::Op { op, kind, .. } => output(run_op(&daemon, op).await?, kind),
         };
         let _ = daemon.close(Instant::now() + Duration::from_secs(2)).await;
         output
@@ -501,6 +486,54 @@ impl Action {
             other => other,
         })
     }
+}
+
+/// How long a submitted pane text waits for its verdict. The daemon answers only
+/// after it verified the Enter: the write, a 1.5s gap, then Enters re-sent for up
+/// to 30s while the CLI keeps the text in its composer (`SUBMIT_HELD_RETRY_SECONDS`
+/// in src/gobby/terminals/pane_io.py). The normal request deadline gave up
+/// mid-verification and lost the verdict (#23730).
+const VERIFIED_SUBMIT_DEADLINE: Duration = Duration::from_secs(60);
+
+/// The daemon's `TEXT_NOT_SUBMITTED_ERROR_CODE`: the CLI kept the text in its
+/// composer through every Enter.
+const TEXT_NOT_SUBMITTED: &str = "command_not_submitted";
+
+/// Run one workspace op under its deadline and return the reply's result. A
+/// submitted pane text the daemon proved was not submitted is an error, not a
+/// result; one it could not verify is returned for the caller to read.
+async fn run_op(daemon: &LiveDaemon, op: WorkspaceOp) -> Result<Value, CommandError> {
+    let submit = matches!(
+        op,
+        WorkspaceOp::PaneSendText {
+            submit: Some(true),
+            ..
+        }
+    );
+    let deadline = match &op {
+        WorkspaceOp::PaneWaitForOutput {
+            timeout_seconds, ..
+        } => Some(Duration::from_secs_f64(timeout_seconds.min(300.0) + 5.0)),
+        _ if submit => Some(VERIFIED_SUBMIT_DEADLINE),
+        _ => None,
+    };
+    let result = match deadline {
+        Some(deadline) => daemon.workspace_op_with_deadline(op, deadline).await,
+        None => daemon.workspace_op(op).await,
+    }
+    .map_err(daemon_error)?
+    .result;
+    if submit && result.get("error_code").and_then(Value::as_str) == Some(TEXT_NOT_SUBMITTED) {
+        let detail = result
+            .get("detail")
+            .and_then(Value::as_str)
+            .unwrap_or("the CLI never submitted the text");
+        return Err(CommandError {
+            code: 1,
+            message: format!("{TEXT_NOT_SUBMITTED}: {detail}"),
+        });
+    }
+    Ok(result)
 }
 
 fn created_ref(result: &Value, key: &str) -> Result<String, CommandError> {

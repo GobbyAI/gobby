@@ -16,11 +16,17 @@ from gobby.terminals.write_coordinator import WriteCoordinator, WriteRequest
 
 @dataclass(frozen=True, slots=True)
 class PaneWrite:
-    """A pane write the coordinator accepted; indeterminate when it may have landed."""
+    """A pane write the coordinator accepted; indeterminate when it may have landed.
+
+    ``error_code`` carries a verified submit's ``SubmitResult.error_code``, so a
+    client can tell a CLI that kept the text in its composer from one that could
+    not be read.
+    """
 
     idempotency_key: str
     indeterminate: bool
     detail: str | None = None
+    error_code: str | None = None
 
 
 class WorkspacePaneWriteError(RuntimeError):
@@ -69,6 +75,7 @@ async def write_workspace_pane(
             idempotency_key,
             indeterminate=True,
             detail=f"Pane text was not submitted: {detail}",
+            error_code=result.error_code,
         )
 
     outcome = await coordinator.write(
