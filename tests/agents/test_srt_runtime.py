@@ -9,7 +9,7 @@ import os
 import shutil
 import sys
 import threading
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -839,6 +839,17 @@ def test_verify_srt_installation_wraps_missing_lockfile(
     assert vars(record)["policy_hash"] == "policy-hash"
 
 
+@pytest.fixture
+def srt_root(tmp_path: Path) -> Iterator[Path]:
+    root = tmp_path / "runtime"
+    yield root
+    # Installs end read-only. Restore write access so pytest's shared cleanup of
+    # old temp roots, which can run in concurrent sessions, can remove them.
+    for path in (root, *root.rglob("*")) if root.exists() else ():
+        if not path.is_symlink():
+            path.chmod(0o700 if path.is_dir() else 0o600)
+
+
 def _write_valid_srt_install(root: Path, *, helper_mode: int = 0o755) -> None:
     package_dir = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
     package_dir.mkdir(parents=True)
@@ -885,10 +896,10 @@ def _patch_srt_verification_runtime(
 @pytest.mark.parametrize("helper_mode", [0o644, 0o444])
 def test_srt_hardening_restores_seccomp_execute_bits(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    srt_root: Path,
     helper_mode: int,
 ) -> None:
-    root = tmp_path / "runtime"
+    root = srt_root
     _write_valid_srt_install(root, helper_mode=helper_mode)
     _patch_srt_verification_runtime(monkeypatch, root)
 
@@ -909,9 +920,9 @@ def test_srt_hardening_restores_seccomp_execute_bits(
 
 def test_verify_srt_installation_accepts_release_contract(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    srt_root: Path,
 ) -> None:
-    root = tmp_path / "runtime"
+    root = srt_root
     _write_valid_srt_install(root)
     _patch_srt_verification_runtime(monkeypatch, root)
 
@@ -925,9 +936,9 @@ def test_verify_srt_installation_accepts_release_contract(
 
 def test_verify_srt_installation_rejects_unmanifested_package_content(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    srt_root: Path,
 ) -> None:
-    root = tmp_path / "runtime"
+    root = srt_root
     _write_valid_srt_install(root)
     _patch_srt_verification_runtime(monkeypatch, root)
     (root / "node_modules").chmod(0o755)
@@ -950,11 +961,11 @@ def test_verify_srt_installation_rejects_unmanifested_package_content(
 )
 def test_verify_srt_installation_rejects_corruption(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    srt_root: Path,
     corruption: str,
     expected_error: str,
 ) -> None:
-    root = tmp_path / "runtime"
+    root = srt_root
     _write_valid_srt_install(root)
     _patch_srt_verification_runtime(monkeypatch, root)
     if corruption == "receipt":
