@@ -154,7 +154,6 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         "plan-writer": ("codex", "gpt-5.6-sol", "medium"),
         "planner": ("codex", "gpt-5.6-sol", "medium"),
         "product-manager": ("codex", "gpt-5.6-sol", "xhigh"),
-        "researcher": ("codex", "gpt-5.6-sol", "xhigh"),
         "merge-orchestrator": ("codex", "gpt-5.6-sol", "xhigh"),
         "merge-worker": ("claude", "sonnet", "high"),
     }
@@ -167,10 +166,11 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         assert agent["model"] == model
         assert agent["reasoning_effort"] == reasoning_effort
 
-    # Decision 12: the developer seat inherits its provider and model from the launch.
-    developer = _agent("developer")
-    assert developer["provider"] == "inherit"
-    assert "model" not in developer
+    # Decision 12: seats inherit their provider and model from the launch.
+    for seat in ("developer", "researcher"):
+        body = _agent(seat)
+        assert body["provider"] == "inherit", seat
+        assert "model" not in body, seat
 
 
 def test_merge_worker_blocks_native_delegation_tools() -> None:
@@ -224,7 +224,6 @@ def test_claim_guidance_accounts_for_spawn_preclaim() -> None:
         "developer",
         "merge-orchestrator",
         "product-manager",
-        "researcher",
         "tech-writer",
         "trajectory-monitor",
     )
