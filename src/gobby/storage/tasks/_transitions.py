@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime
 from typing import Any, cast
 
@@ -252,10 +253,16 @@ def claim_task_for_agent(
     *,
     force: bool = False,
     expected_owner: str | None = None,
+    handed_off_task_ids: Collection[str] = (),
 ) -> Task:
-    """Atomically claim a task while enforcing one open claim for the session."""
+    """Atomically claim a task while enforcing one active open claim for the session."""
     with db.transaction_immediate(AgentTaskClaimMutation(session_id)) as conn:
-        ensure_agent_claim_available(conn, session_id, target_task_id=task_id)
+        ensure_agent_claim_available(
+            conn,
+            session_id,
+            target_task_id=task_id,
+            handed_off_task_ids=handed_off_task_ids,
+        )
         return claim_task(
             db,
             task_id,

@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections.abc import Collection
 
 import psycopg
 from psycopg.errors import UniqueViolation
@@ -85,10 +86,11 @@ def create_task_for_agent(
     assigned_agent: str | None = None,
     implementation_domain: str | None = None,
     additional_skills: list[str] | None = None,
+    handed_off_task_ids: Collection[str] = (),
 ) -> str:
     """Atomically create and claim a task for an agent session."""
     with db.transaction_immediate(AgentTaskClaimMutation(session_id)) as conn:
-        ensure_agent_claim_available(conn, session_id)
+        ensure_agent_claim_available(conn, session_id, handed_off_task_ids=handed_off_task_ids)
         conn.acquire_additional_lock(TaskSeqAllocation(project_id=project_id))
         return _create_task_in_transaction(
             db,

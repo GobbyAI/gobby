@@ -82,6 +82,10 @@ class DaemonHealthTimeoutError(AssertionError):
         log_tail: str,
         error_log_tail: str,
         mcp_log_tail: str,
+        backend_state: str | None,
+        thread_stack_tail: str,
+        task_stack_tail: str,
+        startup_timing_tail: str,
     ) -> None:
         self.port = port
         self.elapsed_seconds = elapsed_seconds
@@ -94,6 +98,10 @@ class DaemonHealthTimeoutError(AssertionError):
         self.log_tail = log_tail
         self.error_log_tail = error_log_tail
         self.mcp_log_tail = mcp_log_tail
+        self.backend_state = backend_state
+        self.thread_stack_tail = thread_stack_tail
+        self.task_stack_tail = task_stack_tail
+        self.startup_timing_tail = startup_timing_tail
         super().__init__(
             f"Isolated daemon on port {port} did not serve /api/auth/status after "
             f"{elapsed_seconds:.3f}s: attempts={attempts}, connect_refused={connect_refused}, "
@@ -101,7 +109,11 @@ class DaemonHealthTimeoutError(AssertionError):
             f"last_status_code={last_status_code}, process={process_status}\n"
             f"--- daemon log tail ---\n{log_tail}\n"
             f"--- daemon error log tail ---\n{error_log_tail}\n"
-            f"--- mcp log tail ---\n{mcp_log_tail}"
+            f"--- mcp log tail ---\n{mcp_log_tail}\n"
+            f"--- sanitized backend state ---\n{backend_state}\n"
+            f"--- failed-process thread stacks ---\n{thread_stack_tail}\n"
+            f"--- failed-process task stacks ---\n{task_stack_tail}\n"
+            f"--- startup stage timings ---\n{startup_timing_tail}"
         )
 
 
@@ -625,6 +637,8 @@ def wait_for_daemon_health(
     min_attempts: int = DAEMON_HEALTH_MIN_PROBE_ATTEMPTS,
 ) -> None:
     """Wait for isolated daemon health or raise with bounded startup diagnostics."""
+    from tests.e2e.readiness_capture import capture_readiness_timeout, safe_backend_state
+
     start = time.monotonic()
     deadline = start + timeout
     attempts = 0
@@ -632,6 +646,7 @@ def wait_for_daemon_health(
     timed_out = 0
     transport_errors = 0
     last_status_code: int | None = None
+    backend_state: str | None = None
 
     while attempts < min_attempts or time.monotonic() < deadline:
         remaining = max(deadline - time.monotonic(), 0.0)
@@ -643,6 +658,7 @@ def wait_for_daemon_health(
                 timeout=probe_timeout,
             )
             last_status_code = response.status_code
+            backend_state = safe_backend_state(response)
             if response.status_code == 200:
                 return
         except httpx.ConnectError:
@@ -657,6 +673,7 @@ def wait_for_daemon_health(
             time.sleep(min(DAEMON_HEALTH_POLL_INTERVAL_SECONDS, remaining))
 
     elapsed_seconds = time.monotonic() - start
+    capture = capture_readiness_timeout(log_file.parent if log_file is not None else None, process)
 
     def read_tail(path: Path | None, label: str) -> str:
         if path is None:
@@ -696,6 +713,10 @@ def wait_for_daemon_health(
         log_tail=log_tail,
         error_log_tail=error_log_tail,
         mcp_log_tail=mcp_log_tail,
+        backend_state=backend_state,
+        thread_stack_tail=capture.thread_stack_tail,
+        task_stack_tail=capture.task_stack_tail,
+        startup_timing_tail=capture.startup_timing_tail,
     )
 
 
@@ -1137,7 +1158,13 @@ def spawn_daemon_instance(
     env["GOBBY_CONFIG"] = str(config_path)
     env["GOBBY_HOME"] = str(gobby_home)
 
-    command = [sys.executable, "-m", runner_module, "--config", str(config_path)]
+    command = [
+        sys.executable,
+        str(Path(__file__).with_name("readiness_bootstrap.py")),
+        runner_module,
+        "--config",
+        str(config_path),
+    ]
 
     # Start daemon process
     with open(log_file, "w") as log_f, open(error_log_file, "w") as err_f:

@@ -128,10 +128,12 @@ terminal's own background and foreground and only picks the palette from the
 OS appearance.
 
 **Themes.** A theme sets two fills and a model colour. The header fill takes
-the sidebar's section headings, the tab row, and the menu bar. The selection
-fill takes the selected and active sidebar rows, the active tab, and the open
-menu's title. The model colour takes the model line of the Agents rows. In
-Dark and Light a theme also sets its own ground. Restored is the default.
+the sidebar's section headings and the tab row. The menu bar sits on its own
+bar fill, a lightness step off the header fill toward the selection. The
+selection fill takes the selected and active sidebar rows, the active tab,
+and the open menu's title. The model colour takes the model line of the
+Agents rows. In Dark and Light a theme also sets its own ground. Restored is
+the default.
 Each appearance offers its own list under **View › Theme** and the `Theme`
 setting:
 
@@ -818,6 +820,7 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Wheel over a pane | Scroll its scrollback; on an alternate screen the wheel sends arrow keys instead |
 | Wheel over the tab bar | Switch tabs |
 | Wheel over the sidebar | Scroll the section under the pointer |
+| Wheel over the keybinding help, the alert log, the navigator, or the Open worktree or Destroy orphaned terminals list | Do what its arrow keys do: the help and the log scroll three rows a notch, the navigator and the two lists move their selection one row; a notch outside the popup does nothing |
 | Click a tab, the new-tab button, or an edge count | Switch tabs, open one, or page the bar one screen |
 | Drag a tab onto another tab | Reorder tabs, including when the terminal delivers only press and release events |
 | Click a project card / worktree row | Focus the project (expanding its card) / open the worktree |

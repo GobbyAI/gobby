@@ -218,14 +218,17 @@ def test_workflow_completion_notification_includes_terminal_task_state() -> None
 
 
 @pytest.mark.asyncio
-async def test_complete_and_notify_agent_run_offloads_complete_run() -> None:
+@pytest.mark.parametrize("error", [None, "Review review-123 ended without a verdict"])
+async def test_complete_and_notify_agent_run_offloads_complete_run(error: str | None) -> None:
     runner = MagicMock()
     runner.complete_run.return_value = True
-    runner.get_run.return_value = SimpleNamespace(status="success")
+    runner.get_run.return_value = SimpleNamespace(
+        status="error" if error else "success", error=error
+    )
     completion_registry = MagicMock()
     completion_registry.get_result.return_value = None
     completion_registry.notify = AsyncMock(return_value={})
-    to_thread_calls: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+    to_thread_calls: list[tuple[Callable[..., object], tuple[object, ...], dict[str, object]]] = []
 
     async def fake_to_thread(
         func: Callable[..., object], *args: object, **kwargs: object
@@ -235,12 +238,13 @@ async def test_complete_and_notify_agent_run_offloads_complete_run() -> None:
 
     run_completion.configure_terminal_delivery_offload(async_offload=fake_to_thread)
     try:
-        completed = await run_completion.complete_and_notify_agent_run(
-            runner,
-            "run-123",
-            completion_registry=completion_registry,
-            notify_result={"status": "success"},
-        )
+        with patch("gobby.tasks.close_review_delivery.terminal_review_delivery", return_value=None):
+            completed = await run_completion.complete_and_notify_agent_run(
+                runner,
+                "run-123",
+                completion_registry=completion_registry,
+                notify_result={"status": "success"},
+            )
     finally:
         run_completion.reset_terminal_delivery_offload()
 
@@ -257,7 +261,9 @@ async def test_complete_and_notify_agent_run_offloads_complete_run() -> None:
     assert runner.run_storage.db.bounded_transaction.call_count == 2
     completion_registry.notify.assert_awaited_once_with(
         "run-123",
-        result={"status": "success", "run_id": "run-123"},
+        result={"status": "error", "run_id": "run-123", "error": error}
+        if error
+        else {"status": "success", "run_id": "run-123"},
         message="",
         durable_subscriber_count=0,
     )
@@ -348,7 +354,7 @@ async def test_complete_and_notify_settles_delivery_before_cancellation() -> Non
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def offload(func, *args, **kwargs):
+    async def offload(func: Callable[..., object], *args: object, **kwargs: object) -> object:
         if func is runner.complete_run:
             started.set()
             await release.wait()

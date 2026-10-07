@@ -162,8 +162,11 @@ pub struct Theme {
     pub success: Token,
     pub identifier: Token,
     pub neutrals: Neutrals,
-    /// Section header rows, the tab row and the menu bar.
+    /// Section header rows and the tab row.
     pub band: Token,
+    /// The menu bar: band's hue and chroma, stepped in lightness toward the
+    /// selection until it stands apart from the rows below it (`bar_for`).
+    pub bar: Token,
     /// The selected and active sidebar rows, the active tab and the open
     /// menu title.
     pub selection: Token,
@@ -217,6 +220,12 @@ impl Theme {
             _ => {}
         }
         theme.hosted = hosted;
+        // System sits on the host's ground; until the host answers, the
+        // neutral panel_bg stands in for it.
+        let ground = host
+            .flatten()
+            .unwrap_or_else(|| theme.neutrals.panel_bg.rgb());
+        theme.bar = bar_for(&theme, ground).unwrap_or(theme.band);
         theme
     }
 
@@ -255,6 +264,7 @@ impl Theme {
                     text: Token::neutral("text", 0.92),
                 },
                 band,
+                bar: band,
                 selection,
                 model,
                 hosted: false,
@@ -287,6 +297,7 @@ impl Theme {
                     text: Token::neutral("text", 0.20),
                 },
                 band,
+                bar: band,
                 selection,
                 model,
                 hosted: false,
@@ -433,8 +444,10 @@ pub struct Palette {
     pub dim: Color,
     /// Refs and branches: the one non-state hue.
     pub identifier: Color,
-    /// Section header rows, the tab row and the menu bar.
+    /// Section header rows and the tab row.
     pub band: Color,
+    /// The menu bar (`Theme::bar`).
+    pub bar: Color,
     /// The selected and active sidebar rows, the active tab and the open
     /// menu title.
     pub selection: Color,
@@ -442,6 +455,8 @@ pub struct Palette {
     pub model: Color,
     /// What the ground's ink becomes on `band`.
     pub band_ink: FillInk,
+    /// What the ground's ink becomes on `bar`.
+    pub bar_ink: FillInk,
     /// What the ground's ink becomes on `selection`.
     pub selection_ink: FillInk,
     /// Unfocused panes' ground; none in System (`Theme::unfocused`).
@@ -480,7 +495,11 @@ impl Ink {
     /// `kind`'s ink, with `name`'s model colour; states and neutrals are
     /// the design contract's in every theme.
     fn of(name: ThemeName, kind: ThemeKind, paint: &impl Fn(Token) -> Color) -> Self {
-        let side = Theme::new(kind);
+        // The bare contract: a drawn theme computes its bar from these inks.
+        let fills = ThemeName::Restored
+            .fills(kind, false)
+            .expect("Restored has fills in every appearance");
+        let side = Theme::contract(ThemeName::Restored, kind, fills);
         let n = &side.neutrals;
         Self {
             text: paint(n.text),
@@ -594,6 +613,62 @@ fn host_matched(fills: Fills, host: Option<(u8, u8, u8)>) -> Fills {
     }
 }
 
+/// The lightness `bar_for` steps the band by.
+const BAR_STEP: f32 = 0.005;
+/// How far the menu bar stands off the band once it can.
+const BAR_CONTRAST: f64 = 1.4;
+/// The least the bar settles for when a further step would cost its titles AA.
+const BAR_MIN_CONTRAST: f64 = 1.25;
+
+/// The menu bar's fill (#23626 C): band's hue and chroma, its lightness
+/// stepped by `BAR_STEP` toward the selection's until it is `BAR_CONTRAST`
+/// off the band. A step must keep the titles at AA and stay
+/// `UNFOCUSED_CONTRAST` off `ground` and the selection; one that breaks a
+/// floor is skipped, unless the last step that held is already
+/// `BAR_MIN_CONTRAST` off the band, which is then the bar. `None` when no
+/// step holds before the lightness runs out.
+fn bar_for(theme: &Theme, ground: (u8, u8, u8)) -> Option<Token> {
+    let paint = |token: Token| token.color();
+    let dark = Ink::of(theme.name, ThemeKind::Dark, &paint);
+    let light = Ink::of(theme.name, ThemeKind::Light, &paint);
+    let own = match theme.kind {
+        ThemeKind::Dark => &dark,
+        ThemeKind::Light => &light,
+    };
+    let band = theme.band;
+    let selection = theme.selection.rgb();
+    let title = paint(theme.neutrals.subtext0);
+    let toward = if theme.selection.lightness > band.lightness {
+        BAR_STEP
+    } else {
+        -BAR_STEP
+    };
+    let mut held: Option<Token> = None;
+    let mut lightness = band.lightness;
+    loop {
+        lightness = ((lightness + toward) * 1000.0).round() / 1000.0;
+        if !(0.0..=1.0).contains(&lightness) {
+            return None;
+        }
+        let step = Token { lightness, ..band };
+        let fill = step.rgb();
+        let ink = FillInk::on(step.color(), own, &dark, &light).ink(title);
+        if painted_contrast(ink, step.color()) >= TEXT_CONTRAST
+            && contrast_ratio(fill, ground) >= UNFOCUSED_CONTRAST
+            && contrast_ratio(fill, selection) >= UNFOCUSED_CONTRAST
+        {
+            if contrast_ratio(fill, band.rgb()) >= BAR_CONTRAST {
+                return Some(step);
+            }
+            held = Some(step);
+        } else if let Some(last) = held {
+            if contrast_ratio(last.rgb(), band.rgb()) >= BAR_MIN_CONTRAST {
+                return Some(last);
+            }
+        }
+    }
+}
+
 /// The menu bar's underline and tab rule, and the light theme's mark ink.
 const LINE: Token = Token::neutral("line", 0.08);
 
@@ -601,7 +676,7 @@ impl Palette {
     /// Every herdr palette name paired with the token it resolves to.
     /// `mauve` is a neutral (the violet is `identifier`); `red` is the
     /// magenta-pink destructive token; `teal` and `blue` are both info.
-    pub fn entries(theme: &Theme) -> [(&'static str, Token); 23] {
+    pub fn entries(theme: &Theme) -> [(&'static str, Token); 24] {
         let n = &theme.neutrals;
         let (ink, glint) = match theme.kind {
             ThemeKind::Dark => (n.panel_bg, n.text),
@@ -629,6 +704,7 @@ impl Palette {
             ("dim", n.dim),
             ("identifier", theme.identifier),
             ("band", theme.band),
+            ("bar", theme.bar),
             ("selection", theme.selection),
             ("model", theme.model),
         ]
@@ -664,6 +740,7 @@ impl Palette {
             ThemeKind::Light => &light_ink,
         };
         let band = paint(theme.band);
+        let bar = paint(theme.bar);
         let selection = paint(theme.selection);
         let wordmark = match theme.kind {
             ThemeKind::Dark => theme.accent,
@@ -691,9 +768,11 @@ impl Palette {
             dim: paint(n.dim),
             identifier: paint(theme.identifier),
             band,
+            bar,
             selection,
             model: paint(theme.model),
             band_ink: FillInk::on(band, own, &dark_ink, &light_ink),
+            bar_ink: FillInk::on(bar, own, &dark_ink, &light_ink),
             selection_ink: FillInk::on(selection, own, &dark_ink, &light_ink),
             unfocused: theme.unfocused(&paint).map(&paint),
             line: paint(LINE),

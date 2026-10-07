@@ -28,6 +28,41 @@ _SOURCE_KEYS = {
 }
 
 
+async def test_slow_tls_setup_keeps_event_loop_responsive(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+    import ssl
+    import threading
+    from typing import Any
+    from unittest.mock import AsyncMock
+
+    from gobby.providers.capabilities.collectors.claude import _fetch_public_markdown
+
+    entered = threading.Event()
+    release = threading.Event()
+    original = ssl.create_default_context
+
+    def slow_context(*args: Any, **kwargs: Any) -> ssl.SSLContext:
+        entered.set()
+        assert release.wait(1.0), "TLS construction blocked the readiness event loop"
+        return original(*args, **kwargs)
+
+    async def release_from_loop() -> None:
+        assert await asyncio.to_thread(entered.wait, 1.0)
+        release.set()
+
+    url = "https://example.test/docs"
+    response = httpx.Response(200, text="model docs", request=httpx.Request("GET", url))
+    monkeypatch.setattr(ssl, "create_default_context", slow_context)
+    monkeypatch.setattr(httpx.AsyncClient, "get", AsyncMock(return_value=response))
+    loop_task = asyncio.create_task(release_from_loop())
+    try:
+        assert await _fetch_public_markdown(url) == "model docs"
+        await loop_task
+    finally:
+        release.set()
+        await loop_task
+
+
 def _documents() -> dict[str, str]:
     return {
         "models-overview": (_FIXTURES / "models-overview.md").read_text(),

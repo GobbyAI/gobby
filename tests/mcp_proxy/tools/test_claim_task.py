@@ -166,6 +166,7 @@ class TestClaimTaskTool:
                 sample_task.id,
                 session_id="my-session-id",
                 force=False,
+                handed_off_task_ids=frozenset(),
             )
             assert mock_task_manager.claim_task_for_agent.call_count == 1
             assert mock_task_manager.claim_task_for_agent.call_args is not None
@@ -306,6 +307,7 @@ class TestClaimTaskTool:
             sample_task.id,
             session_id="my-session-id",
             force=False,
+            handed_off_task_ids=frozenset(),
         )
 
     @pytest.mark.asyncio
@@ -409,6 +411,7 @@ class TestClaimTaskTool:
                 claimed_task.id,
                 session_id="my-session-id",
                 force=True,
+                handed_off_task_ids=frozenset(),
             )
             assert mock_task_manager.claim_task_for_agent.call_count == 1
             assert mock_task_manager.claim_task_for_agent.call_args is not None
@@ -423,6 +426,10 @@ class TestClaimTaskTool:
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_claim.handed_off_claim_ids",
+                return_value=frozenset({"child-handed-off-task"}),
+            ) as handed_off_claim_ids,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -462,10 +469,17 @@ class TestClaimTaskTool:
                 )
                 for call in mock_task_manager.db.fetchone.call_args_list
             )
+            # The child's own handed-off claims free its capacity for the delegated task.
+            assert handed_off_claim_ids.call_args.args[1:] == (
+                "my-session-id",
+                parent_owned_task.project_id,
+            )
+            assert handed_off_claim_ids.call_args.kwargs == {"target_task_id": parent_owned_task.id}
             mock_task_manager.claim_task_for_agent.assert_called_once_with(
                 parent_owned_task.id,
                 session_id="my-session-id",
                 expected_owner="parent-session-id",
+                handed_off_task_ids=frozenset({"child-handed-off-task"}),
             )
 
     @pytest.mark.asyncio
@@ -516,12 +530,14 @@ class TestClaimTaskTool:
                     parent_owned_task.id,
                     session_id="my-session-id",
                     expected_owner="parent-session-id",
+                    handed_off_task_ids=frozenset(),
                 )
             else:
                 mock_task_manager.claim_task_for_agent.assert_called_once_with(
                     parent_owned_task.id,
                     session_id="my-session-id",
                     force=claim_mode == "forced",
+                    handed_off_task_ids=frozenset(),
                 )
 
     @pytest.mark.asyncio
@@ -923,6 +939,7 @@ class TestClaimTaskVsUpdateTask:
                 sample_task.id,
                 session_id="my-session-id",
                 force=False,
+                handed_off_task_ids=frozenset(),
             )
             assert mock_task_manager.claim_task_for_agent.call_count == 1
             assert mock_task_manager.claim_task_for_agent.call_args is not None

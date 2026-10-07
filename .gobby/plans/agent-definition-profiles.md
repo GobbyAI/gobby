@@ -168,7 +168,7 @@ non-goals.
     phrases. Each role file becomes a pointer: `apply_persona(agent=<seat>)`.
     Roster and `default.yaml` are unchanged.
 12. **Seats inherit provider, model, and isolation.** `provider: inherit`, no
-    `model`, `isolation: inherit`, `timeout: 0`, `surfaces: [spawn, persona]`
+    `model`, `checkout_mode: inherit`, `timeout: 0`, `surfaces: [spawn, persona]`
     with one prompt text under a YAML anchor used by both blocks. A pane gets
     its provider from Josh's launch line; a spawned seat gets the caller's.
 13. **Rollout is a PD-owned cutover restart at the 3.2 boundary, then a
@@ -716,7 +716,7 @@ permitted spawn paths."
 text of record, with rules, skills, tool restrictions, and step workflows
 declared. Common shape for every seat (Decisions 8, 9, 12): `name`, `version:
 "1.0"`, `description`, `tags: [gobby, seat]`, `surfaces: [spawn, persona]`,
-`provider: inherit`, `isolation: inherit`, `timeout: 0`, `prompts:` with
+`provider: inherit`, `checkout_mode: inherit`, `timeout: 0`, `prompts:` with
 `agent: &seat |` and `persona: *seat`, `workflows.rule_selectors.include:
 ["tag:default", "tag:roles", ...]`, `blocked_mcp_tools:
 ["gobby-agents:kill_agent"]`, and `workflows.variables: {}` unless stated. Each
@@ -730,15 +730,19 @@ roster and task state).
 
 Step state: transitions read the merged variables with instance variables
 last (`engine/enforcement_completion.py::_process_step_after_tool`), so a flag
-declared in `step_workflow.variables` can be flipped only by
-`gobby-workflows:set_variable(scope="step")`
-(`mcp_proxy/tools/workflows/_variables.py:84`) or by a step handler; the
-top-level proxy `set_variable` is session-scoped (`stdio_tools.py:338`) and is
-ignored for declared instance names
-(`tests/workflows/test_step_runtime_transitions.py::test_native_set_variable_does_not_shadow_workflow_local_variable`).
-Every seat prompt therefore names `gobby-workflows:set_variable(scope="step")`
+declared in `step_workflow.variables` can be flipped only by the top-level
+`mcp__gobby__set_variable` with `scope="step"` (`mcp_proxy/server.py:546`,
+which writes the step instance through
+`mcp_proxy/tools/workflows/_variables.py:84`) or by a step handler. A
+session-scoped write is ignored for declared instance names
+(`tests/workflows/test_step_runtime_transitions.py::test_native_set_variable_does_not_shadow_workflow_local_variable`),
+and the stdio shortcut (`stdio_tools.py:331`, `stdio_proxy.py:582`) hard-codes
+session scope until #22997 carries `scope` through it. The step gate admits
+the call as an infrastructure tool (`enforcement/blocking.py`
+`INFRASTRUCTURE_TOOLS`), so its `allowed_tools` entry records the step's writes.
+Every seat prompt therefore names `mcp__gobby__set_variable(scope="step")`
 for the flags it sets by hand, every step whose flags the seat sets lists
-`gobby-workflows:set_variable` in its MCP allowlist, and `on_mcp_success`
+`mcp__gobby__set_variable` in its `allowed_tools`, and `on_mcp_success`
 handlers (`WorkflowStep.on_mcp_success`, `definitions.py:586`; entries
 `{server, tool, when?, action: set_variable, variable, value}` evaluated with
 `vars`, `tool_input`, `tool_output`, where `tool_input` carries the MCP
@@ -756,7 +760,7 @@ its flags in the handler of the call that ends the unit of work, so two
 consecutive units run through the loop without a manual reset; 3.5 pins that
 with engine tests.
 
-### 3.1 Coordination seats: assistant, program-director, lane-manager [category: config] (depends: 2.2)
+### 3.1 Coordination seats: assistant, orchestrator, lane-manager [category: config] (depends: 2.2)
 `kind: deliverable`
 
 Targets:
@@ -764,10 +768,26 @@ Targets:
 - `src/gobby/install/shared/workflows/agents/orchestrator.yaml`
 - `src/gobby/install/shared/workflows/agents/lane-manager.yaml`
 
-Amended 2026-10-06 (#23671): 3.1.2 and the second Target take the #22903
-cross-plan seat rename, so the coordination seat ships as `orchestrator`
-in `orchestrator.yaml`, as #22996 states. The rest of this section keeps the
-`program-director` name.
+Amended 2026-10-06 (#23671, #23689): this section carries the #22903
+cross-plan seat rename and the Orchestrator's 13:39 CT rulings on #22996
+(gobby#14972):
+- (a) The coordination seat ships as `orchestrator` in `orchestrator.yaml`,
+  not `program-director.yaml`. The seat rules match `_agent_type`
+  `'orchestrator'`, as the shipped roles rules already do.
+- (b) Selectors: the `orchestrator` seat gets every worker-safety rule except
+  `no-daemon-management`, `no-daemon-management-http` and
+  `block-git-worktree-mutations`, so a spawned orchestrator keeps cutover,
+  restart and worktree-cleanup authority. It also gets
+  `name:no-force-push-interactive` and `name:no-destructive-git-interactive`.
+  `assistant` and `lane-manager` keep `tag:worker-safety`.
+- (c) `send_message_targets`: `assistant` `[parent, session, project]`;
+  `orchestrator` `[parent, session, project, global]`; `lane-manager`
+  `[parent, session, project]`.
+- (d) HOLD text: HOLD after two consecutive 5-minute loads above 30, lifted
+  after two below 24.
+
+Earlier mentions of `program-director` and the PD in this section now mean
+the `orchestrator` seat.
 
 **Research context:** `comms-agent.yaml` (persona only, `blocked_tools` at
 `:46`, `blocked_mcp_tools` at `:62`) is the nearest existing shape for a
@@ -775,9 +795,10 @@ message-routing seat; keep it, the assistant is a distinct definition. Role text
 of record: `.gobby/roles/assistant.md` (routes only; relays Josh's words to the PD
 verbatim; half-hour status per lane; relays each installed watchdog
 `ALARM[load]` (one-minute load above 24) to the PD once; heavy-slot
-admission holds at five-minute load 24; keeps the roster and role files
+admission HOLDs after two consecutive 5-minute loads above 30 and lifts after
+two below 24 (ruling (d)); keeps the roster and role files
 current; read-only DB helper; one-line Telegram confirmation),
-`program-director.md` (coordination only, code only to close gaps in lane
+`orchestrator.md` (coordination only, code only to close gaps in lane
 candidates; files and delegates tasks; reviews candidates with the Code
 Reviewer, lands, restarts and cuts over with notices; +0.0.1 crate patch
 bump with `Cargo.lock` on every binary release; confirms each merge and
@@ -785,21 +806,32 @@ removes only clean, merged, inactive worktrees; updates the Archivist on
 every land, bounce, reroute, park, task, restart; drives the planning queue
 through Josh's plan flow (Decision 14); answers Josh in its own session;
 decisions as buttons via the Assistant), `lane-manager.md` (routes
-PD-assigned work in PD order; heavy-slot admission below five-minute load
-24; ACKs HOLD/RESUME; one `wait_for_coordination` idle subscription per
+PD-assigned work in PD order; heavy-slot admission only while no HOLD
+stands, where HOLD follows two consecutive 5-minute loads above 30 and lifts
+after two below 24 (ruling (d)); ACKs HOLD/RESUME; one `wait_for_coordination` idle subscription per
 active lane; `send_message(wake=true)` for actions; event lines to the
 Assistant `LANE= EVENT=STARTED|CANDIDATE|BOUNCE|CLOSED TASK=#NNNNN
 TASK_TITLE= RUN= WT= COMMIT= NOTE=`; verdict blockers to the PD; no
 review, land, restart, or code).
-Selectors: all three add `tag:worker-safety` exclusions that block interactive
-destructive shell (`no-destructive-shell-interactive`) stay via `tag:default`;
-program-director additionally includes `name:no-force-push-interactive`,
-`name:no-destructive-git-interactive`; lane-manager carries the Decision 8
+Selectors (ruling (b)): all three include `tag:default` and `tag:roles`, and
+interactive destructive-shell blocking (`no-destructive-shell-interactive`)
+stays through `tag:default`. `assistant` and `lane-manager` include
+`tag:worker-safety`. `orchestrator` includes `tag:worker-safety`,
+`name:no-force-push-interactive` and `name:no-destructive-git-interactive`,
+and its `rule_selectors.exclude` lists exactly `name:no-daemon-management`,
+`name:no-daemon-management-http` and `name:block-git-worktree-mutations`.
+Exclusion wins: the selector resolver subtracts exclude matches from the
+whole included set (`gobby.workflows.selectors`). Message scope (ruling (c)):
+`send_message_targets` is `[parent, session, project]` on `assistant` and
+`lane-manager` and `[parent, session, project, global]` on `orchestrator`;
+the field defaults to parent only (`AgentDefinitionBody.send_message_targets`),
+and the `scope-spawned-agent-send-message` rule enforces it for spawned
+seats. lane-manager carries the Decision 8
 read-only `blocked_tools` list; assistant carries no write block, and its
 `docs/` and `.gobby/roles/` scope is enforced by `assistant-write-scope`
 (2.2), which the prompt names. Task edits (2.1, memory 1c5c5469): the
 assistant prompt says it calls `gobby-tasks:update_task` only when Josh
-asks; the program-director prompt says it edits tasks as needed and
+asks; the orchestrator prompt says it edits tasks as needed and
 fields other seats' edit requests; the lane-manager prompt sends edit
 requests to the PD. Continuity: compact, never clear. No
 `step_workflow` and no `required_skills` (Decision 7).
@@ -808,14 +840,25 @@ requests to the PD. Continuity: compact, never clear. No
 
 - 3.1.1 - `assistant` validates, is `seat`-tagged, carries the routing-only
   contract, status cadence, restart alerts, one-line Telegram confirmation,
-  and task edits only when Josh asks.
+  and task edits only when Josh asks. It includes `tag:worker-safety`, its
+  `send_message_targets` is `[parent, session, project]`, and its HOLD text
+  is HOLD after two consecutive 5-minute loads above 30, lifted after two
+  below 24.
   file: `src/gobby/install/shared/workflows/agents/assistant.yaml`.
 - 3.1.2 - `orchestrator` validates, is `seat`-tagged, and carries the
   coordination-only contract, restart authority with notices, Archivist updates,
-  decision routing, and task-edit authority as needed. file:
+  decision routing, and task-edit authority as needed. The seat rules match
+  `_agent_type` `'orchestrator'`. Its selectors include `tag:worker-safety`,
+  `name:no-force-push-interactive` and `name:no-destructive-git-interactive`
+  and exclude exactly `name:no-daemon-management`,
+  `name:no-daemon-management-http` and `name:block-git-worktree-mutations`,
+  and its `send_message_targets` is `[parent, session, project, global]`. file:
   `src/gobby/install/shared/workflows/agents/orchestrator.yaml`.
 - 3.1.3 - `lane-manager` validates, is `seat`-tagged, read-only, and carries the
-  event-line grammar and HOLD/RESUME behavior. file:
+  event-line grammar and HOLD/RESUME behavior, with HOLD after two consecutive
+  5-minute loads above 30, lifted after two below 24. It includes
+  `tag:worker-safety`, and its `send_message_targets` is
+  `[parent, session, project]`. file:
   `src/gobby/install/shared/workflows/agents/lane-manager.yaml`.
 - 3.1.4 - All three select `tag:roles` and carry the `seat` tag. behavior:
   "tag:roles" in `src/gobby/install/shared/workflows/agents/lane-manager.yaml`.
@@ -897,11 +940,11 @@ skills need no new gate. The seat reorders the shared workflow so the
 required gate comes first, as every seat with `required_skills` does
 (3.5): `load_required_skills` becomes the opening `load_skills` step, and
 a `route_skills` step sits between `claim` and `load_additional_skills`
-(allowed MCP: `gobby-tasks:get_task`,
-`gobby-workflows:set_variable`) has the seat read the claimed task, map its
+(allowed MCP: `gobby-tasks:get_task`; allowed tools:
+`mcp__gobby__set_variable`) has the seat read the claimed task, map its
 paths and `implementation_domain` through the prompt's routing table, merge
 any skills the task description names, write `additional_skills` with
-`gobby-workflows:set_variable(scope="step")`, then set `skills_routed`; its
+`mcp__gobby__set_variable(scope="step")`, then set `skills_routed`; its
 `on_mcp_success` for `gobby-tasks:get_task` with `when:
 tool_output.get('id') == vars.assigned_task_id` binds `assigned_task_ref`
 from `tool_output.get('ref')`, the `#NNNNN` form the event line carries
@@ -939,8 +982,8 @@ wiring: `claim` keeps its `gobby-tasks:claim_task` success handler for
 `tool_output.get('task_id')`, and allows
 `gobby-agents:wait_for_coordination` for the idle wait on the PD or Lane
 Manager; `submit` (allowed MCP: `send_message`,
-`gobby-agents:wait_for_coordination`, `close_task`, `link_commit`,
-`gobby-workflows:set_variable`) has an
+`gobby-agents:wait_for_coordination`, `close_task`, `link_commit`; allowed
+tools: `mcp__gobby__set_variable`) has an
 `on_mcp_success` for `gobby-agents:send_message` with `when:
 'EVENT=CANDIDATE' in str(tool_input.get('content')) and
 str(vars.assigned_task_ref) in str(tool_input.get('content'))` that sets
@@ -1042,14 +1085,14 @@ rule stays disabled and pinned, and the plumbing stays untouched);
 `required_skills: [code-review, restraint]`;
 `step_workflow.variables: {candidate_received: false, verdict_ready: false,
 candidate_task: null}`; steps `load_skills` → `await` (allowed MCP:
-`send_message`, `gobby-agents:wait_for_coordination`, sessions read,
-`gobby-workflows:set_variable`; the seat
+`send_message`, `gobby-agents:wait_for_coordination`, sessions read; allowed
+tools: `mcp__gobby__set_variable`; the seat
 records the PD's CANDIDATE line by setting `candidate_task` to its `TASK=`
 value and `candidate_received` at step scope; transition to `review` when
 `vars.candidate_received`) → `review` (read-only tools plus `gcode` and `git
-diff`, `gobby-workflows:set_variable`; transition to `verdict` when
-`vars.verdict_ready`) → `verdict` (allowed MCP: `send_message`,
-`gobby-workflows:set_variable`; the message carries `EVENT=CANDIDATE_VERDICT
+diff`, `mcp__gobby__set_variable`; transition to `verdict` when
+`vars.verdict_ready`) → `verdict` (allowed MCP: `send_message`; allowed tools:
+`mcp__gobby__set_variable`; the message carries `EVENT=CANDIDATE_VERDICT
 TASK=#NNNNN ... VERDICT=LAND|BOUNCE` with HIGH/MEDIUM/LOW findings to PD and
 author lane; `on_mcp_success` for `gobby-agents:send_message` with `when:
 'EVENT=CANDIDATE_VERDICT' in str(tool_input.get('content')) and
@@ -1105,14 +1148,14 @@ family, load only on a breach, matched windows for performance verdicts) with
 no skill reference for it. `log-monitor` step workflow:
 `step_workflow.variables: {tick_done: false, tick_window: null}`;
 `load_skills` → `tick` (allowed MCP: skills, sessions read,
-`gobby-agents:wait_for_coordination`, `gobby-workflows:set_variable`; the
-cadence is `wait_for_coordination(owner_session=<PD>, reply=true,
+`gobby-agents:wait_for_coordination`; allowed tools:
+`mcp__gobby__set_variable`; the cadence is `wait_for_coordination(owner_session=<PD>, reply=true,
 timeout=600)`, whose expiry starts the next tick and whose PD reply starts
 it early; the seat sets `tick_window` to the
 `HH:MM-HH:MM` window it examined and `tick_done`, both at step scope;
 transition to `report` when `vars.tick_done`) → `report` (allowed MCP:
-`send_message`, `gobby-agents:wait_for_coordination`,
-`gobby-workflows:set_variable`; `on_mcp_success` for
+`send_message`, `gobby-agents:wait_for_coordination`; allowed tools:
+`mcp__gobby__set_variable`; `on_mcp_success` for
 `gobby-agents:send_message` with `when: 'Systems nominal' in
 str(tool_input.get('content')) or 'EVENT=ALARM' in
 str(tool_input.get('content'))` resets `tick_done` and `tick_window`;
@@ -1172,6 +1215,12 @@ The rulings contradict several parts of the earlier body, which are dropped:
 - the retargets of the stage-native content tests.
 
 The earlier body is in Git history at 366796ff6a.
+
+Amended 2026-10-06 (#23689, Orchestrator gobby#14972 13:42 CT): this plan's
+side of the re-scope is done. Sections 3.4, 3.5 and M1 are verify-only for
+the implementing leaf, #22999. It changes only the Targets above and never
+edits this plan or re-derives its M1; plan amendments go through the Plan
+Writer.
 
 **Research context:** #23339 "Planning seat agent definitions" closed at
 53a9be0fee (commits 3b7df025f5, 5ad9b42ac3, 53a9be0fee and 290613d7f3; later
@@ -1276,10 +1325,10 @@ The deliverable, in `plan-adversary.yaml` unless named otherwise:
   test: `tests/agents/test_plan_seat_definitions.py::test_seat_instructions_carry_seat_role`.
   test: `tests/agents/test_plan_seat_definitions.py::test_writer_spawns_no_enhancer_enhancer_stays_live`.
   test: `tests/agents/test_plan_seat_definitions.py::test_seat_spawns_admitted_from_pipeline_child`.
-- 3.4.5 - Sections 3.4, 3.5 and M1 of this plan match this scope, M1 is
-  re-derived with fresh hashes, base and expansion-mode plan validation both
-  pass, and `docs/contracts/plan-coverage.md` no longer says the Writer spawns
-  an enhancer pass. file: `docs/contracts/plan-coverage.md`.
+- 3.4.5 - `docs/contracts/plan-coverage.md` no longer says the Writer spawns
+  an enhancer pass. The implementing leaf verifies, without editing this plan
+  or re-deriving its M1, that sections 3.4, 3.5 and M1 match the shipped
+  definitions. file: `docs/contracts/plan-coverage.md`.
 
 ### 3.5 Seat bundle contract test for the eight standing seats [category: test] (depends: 3.1, 3.2, 3.3, 3.4)
 `kind: deliverable`
@@ -1302,6 +1351,11 @@ catalogue is therefore Decision 2's catalogue without `plan-writer` and
 the #22903 rename, which corrects #23000's `program-director`. Item IDs
 3.5.1 to 3.5.5 and their test artifacts are unchanged.
 
+Amended 2026-10-06 (#23689): this section is verify-only for the plan. The
+implementing leaf, #23000, changes only its two test Targets and never edits
+this plan. The coordination-seat invariants below carry the Orchestrator's
+13:39 CT rulings (b) and (c) on #22996, as stated in 3.1.
+
 **Research context:** `tests/workflows/test_workflows_agent_definitions.py`
 already loads every bundled YAML (`AGENTS_DIR = get_bundled_agents_path()`,
 `SKILLS_DIR = get_bundled_skills_path()`, `_load_yaml`, `_agent`, `_step`) and
@@ -1315,13 +1369,20 @@ the grammar).
 
 Seat invariants to pin:
 - `surfaces == [spawn, persona]`, `prompts.persona == prompts.agent`,
-  `provider == inherit`, no `model`, `isolation == inherit` and `timeout == 0`.
+  `provider == inherit`, no `model`, `checkout_mode == inherit` and `timeout == 0`.
 - Every top-level key is either an `AgentDefinitionBody` field or one of the
   sync metadata keys `tags`, `priority` and `type`.
   `validate_workflow_definition_data` strips exactly `priority`, `tags`, `type`
   and `version`, and `version` is a body field after 1.1. The check also
   rejects `terminal_backend`, `backend` and `sandbox`.
 - `rule_selectors.include` contains `tag:roles`.
+- `assistant` and `lane-manager` include `tag:worker-safety`. `orchestrator`
+  includes `tag:worker-safety`, `name:no-force-push-interactive` and
+  `name:no-destructive-git-interactive`, and its `rule_selectors.exclude` is
+  exactly `name:no-daemon-management`, `name:no-daemon-management-http` and
+  `name:block-git-worktree-mutations`.
+- `send_message_targets` is `[parent, session, project]` on `assistant` and
+  `lane-manager` and `[parent, session, project, global]` on `orchestrator`.
 - Every `step_workflow.variables.required_skills` entry resolves.
 - The read-only seats (`lane-manager`, `code-reviewer`, `log-monitor` and
   `researcher`) carry the Decision 8 `blocked_tools` list.
@@ -1333,7 +1394,7 @@ Seat invariants to pin:
 - The seats with a step workflow (`developer`, `code-reviewer`, `log-monitor`
   and `researcher`) declare no `exit_condition`.
 - Every step whose transition reads a flag the seat sets by hand lists
-  `gobby-workflows:set_variable` in its MCP allowlist.
+  `mcp__gobby__set_variable` in its `allowed_tools`.
 - Every step that waits on another session lists
   `gobby-agents:wait_for_coordination`: developer `claim` and `submit`,
   code-reviewer `await`, log-monitor `tick` and `report`, and researcher
@@ -1371,7 +1432,12 @@ One run-scoped `plan-adversary` pass goes through the same engine:
 
 **Acceptance:**
 
-- 3.5.1 - Every `seat`-tagged bundled definition satisfies the invariants above.
+- 3.5.1 - Every `seat`-tagged bundled definition satisfies the invariants
+  above, including the coordination seats' selectors (`orchestrator` excludes
+  exactly `name:no-daemon-management`, `name:no-daemon-management-http` and
+  `name:block-git-worktree-mutations`) and `send_message_targets`
+  (`[parent, session, project, global]` on `orchestrator`,
+  `[parent, session, project]` on `assistant` and `lane-manager`).
   test: `tests/workflows/test_seat_definitions.py::test_seat_definitions_share_the_seat_contract`.
 - 3.5.2 - Every `required_skills` entry in every bundled definition, the
   planning runbook agents included, resolves to a bundled skill or skill file.
@@ -1682,6 +1748,27 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
 
   M1 is re-derived through the handoff-manifest tools. Base and
   expansion-mode validation pass. No implementation tests were run.
+- 2026-10-06: Amendment under #23693 (Lane Manager gobby#15389). It
+  corrects the step-state write tool, which Lane 3 developer gobby#15577
+  found while working #22997. `gobby-workflows` does not register
+  `set_variable`; `set_variable` moved to the top-level proxy in
+  `0aa7440db7` (#9875), and the top-level `mcp__gobby__set_variable` takes
+  `scope="step"` (`mcp_proxy/server.py:546`).
+  - The P3 step-state framing, 3.2 (`route_skills`, `submit`), 3.3
+    (code-reviewer `await`, `review` and `verdict`; log-monitor `tick` and
+    `report`) and the 3.5 invariant name `mcp__gobby__set_variable` with
+    `scope="step"` in `allowed_tools`.
+  - Completed 2.2 keeps its text under the Orchestrator's (gobby#14972)
+    option-3 rule. 2.2.1 and its M1 entry say `gobby-workflows:set_variable`
+    stays allowed; the tool that stays allowed is the top-level
+    `mcp__gobby__set_variable`.
+  - The PA-002 changelog line, the round-1 evidence fence and the negative
+    references in 3.4.1 and its M1 entry keep their bytes, per the
+    Orchestrator's 15:14 CT criterion-2 ruling on the scope finding of the
+    Plan Adversary (gobby#15471).
+
+  M1 is unchanged. Base and expansion-mode validation pass. No
+  implementation tests were run.
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -1789,21 +1876,29 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
   tdd: true
   source_section: '2.2'
   implementation_domain: backend
-- title: 'Coordination seats: assistant, program-director, lane-manager'
+- title: 'Coordination seats: assistant, orchestrator, lane-manager'
   category: config
   task_type: feature
   depends_on:
   - '2.2'
   validation_criteria: '3.1.1: `assistant` validates, is `seat`-tagged, carries the
     routing-only contract, status cadence, restart alerts, one-line Telegram confirmation,
-    and task edits only when Josh asks. file: `src/gobby/install/shared/workflows/agents/assistant.yaml`.
+    and task edits only when Josh asks. It includes `tag:worker-safety`, its `send_message_targets`
+    is `[parent, session, project]`, and its HOLD text is HOLD after two consecutive
+    5-minute loads above 30, lifted after two below 24. file: `src/gobby/install/shared/workflows/agents/assistant.yaml`.
 
     3.1.2: `orchestrator` validates, is `seat`-tagged, and carries the coordination-only
     contract, restart authority with notices, Archivist updates, decision routing,
-    and task-edit authority as needed. file: `src/gobby/install/shared/workflows/agents/orchestrator.yaml`.
+    and task-edit authority as needed. The seat rules match `_agent_type` `''orchestrator''`.
+    Its selectors include `tag:worker-safety`, `name:no-force-push-interactive` and
+    `name:no-destructive-git-interactive` and exclude exactly `name:no-daemon-management`,
+    `name:no-daemon-management-http` and `name:block-git-worktree-mutations`, and
+    its `send_message_targets` is `[parent, session, project, global]`. file: `src/gobby/install/shared/workflows/agents/orchestrator.yaml`.
 
     3.1.3: `lane-manager` validates, is `seat`-tagged, read-only, and carries the
-    event-line grammar and HOLD/RESUME behavior. file: `src/gobby/install/shared/workflows/agents/lane-manager.yaml`.
+    event-line grammar and HOLD/RESUME behavior, with HOLD after two consecutive 5-minute
+    loads above 30, lifted after two below 24. It includes `tag:worker-safety`, and
+    its `send_message_targets` is `[parent, session, project]`. file: `src/gobby/install/shared/workflows/agents/lane-manager.yaml`.
 
     3.1.4: All three select `tag:roles` and carry the `seat` tag. behavior: "tag:roles"
     in `src/gobby/install/shared/workflows/agents/lane-manager.yaml`.'
@@ -1908,9 +2003,9 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
     test: `tests/agents/test_plan_seat_definitions.py::test_writer_spawns_no_enhancer_enhancer_stays_live`.
     test: `tests/agents/test_plan_seat_definitions.py::test_seat_spawns_admitted_from_pipeline_child`.
 
-    3.4.5: Sections 3.4, 3.5 and M1 of this plan match this scope, M1 is re-derived
-    with fresh hashes, base and expansion-mode plan validation both pass, and `docs/contracts/plan-coverage.md`
-    no longer says the Writer spawns an enhancer pass. file: `docs/contracts/plan-coverage.md`.'
+    3.4.5: `docs/contracts/plan-coverage.md` no longer says the Writer spawns an enhancer
+    pass. The implementing leaf verifies, without editing this plan or re-deriving
+    its M1, that sections 3.4, 3.5 and M1 match the shipped definitions. file: `docs/contracts/plan-coverage.md`.'
   labels:
   - covers:agent-definition-profiles:3.4:3.4.1
   - covers:agent-definition-profiles:3.4:3.4.2
@@ -1929,7 +2024,11 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
   - '3.3'
   - '3.4'
   validation_criteria: '3.5.1: Every `seat`-tagged bundled definition satisfies the
-    invariants above. test: `tests/workflows/test_seat_definitions.py::test_seat_definitions_share_the_seat_contract`.
+    invariants above, including the coordination seats'' selectors (`orchestrator`
+    excludes exactly `name:no-daemon-management`, `name:no-daemon-management-http`
+    and `name:block-git-worktree-mutations`) and `send_message_targets` (`[parent,
+    session, project, global]` on `orchestrator`, `[parent, session, project]` on
+    `assistant` and `lane-manager`). test: `tests/workflows/test_seat_definitions.py::test_seat_definitions_share_the_seat_contract`.
 
     3.5.2: Every `required_skills` entry in every bundled definition, the planning
     runbook agents included, resolves to a bundled skill or skill file. test: `tests/workflows/test_seat_definitions.py::test_required_skills_resolve_to_bundled_skills`.

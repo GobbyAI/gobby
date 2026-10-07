@@ -32,6 +32,23 @@ def _postgres_pool_module() -> ModuleType:
     return importlib.import_module("gobby.storage.hub.postgres_pool")
 
 
+def test_main_checkout_landing_lock_key() -> None:
+    from gobby.storage.hub import protocol
+
+    lock = protocol.MainCheckoutLanding(project_id="project-1")
+    assert _postgres_pool_module().advisory_lock_keys(lock) == ("main_checkout_landing:project-1",)
+    priorities: dict[str, object] = {
+        name: getattr(getattr(protocol, name), "PRIORITY", None) for name in protocol.__all__
+    }
+    other_priorities = [
+        priority
+        for name, priority in priorities.items()
+        if name != "MainCheckoutLanding" and isinstance(priority, int)
+    ]
+    assert lock.PRIORITY == 25
+    assert lock.PRIORITY < min(other_priorities)
+
+
 def test_stage_review_approval_lock_key_is_task_scoped() -> None:
     from gobby.storage.hub.protocol import StageReviewApprovalMutation
 

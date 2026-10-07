@@ -42,6 +42,7 @@ from gobby.storage.hub.protocol import (
     IsolationRegistryReconciliation,
     LockAcquisitionOrderError,
     LockTarget,
+    MainCheckoutLanding,
     PlanReviewEvidenceMutation,
     ReviewLearningPatternMutation,
     Row,
@@ -655,6 +656,8 @@ async def _close_advisory_lock_connection(
 
 
 def advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
+    if isinstance(lock, MainCheckoutLanding):
+        return (f"main_checkout_landing:{lock.project_id}",)
     if isinstance(lock, BuildDryRunMutation):
         return (f"build_dry_run:{lock.project_id}",)
     if isinstance(lock, CronRunAdmission):
