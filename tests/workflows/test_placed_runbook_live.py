@@ -289,6 +289,16 @@ def live(
         {"test": request.node.name, "srt": rig.srt, "native_sha256": rig.binaries},
     )
     try:
+        # Auth liveness precedes recovery; a new runbook must not be resumed by it.
+        def startup_ready() -> bool:
+            response = client.get("/api/admin/startup-progress")
+            response.raise_for_status()
+            progress = response.json()
+            return (
+                progress.get("done") is True and progress.get("restart_recovery_pending") is False
+            )
+
+        _until(startup_ready, 120, "initial daemon recovery")
         state.evidence["checkout_mode"] = _assert_isolated(state)
         state.evidence["host"] = _assert_adopted(state)
         yield state
