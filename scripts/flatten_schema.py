@@ -70,7 +70,6 @@ _SEED_TABLES = (
 )
 _ROLE_PREAMBLE_START = "SELECT pg_advisory_xact_lock("
 _ROLE_PREAMBLE_END = "SET check_function_bodies = false;"
-_LOGIN_GUARD = "gobby_maintenance_epoch_login_guard"
 _GDAEMON_TIMEOUT_SECONDS = 600
 _DOLLAR_TAG = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$")
 
@@ -131,7 +130,6 @@ def _is_omitted_dump_statement(statement: str) -> bool:
             and " OWNER TO " in upper
             and not upper.endswith(" OWNER TO GOBBY_AGENT_ISSUER")
         )
-        or _LOGIN_GUARD in compact
     )
 
 
@@ -224,24 +222,6 @@ def _role_preamble(source_baseline: str) -> str:
     return source_baseline[start:end].strip() + "\n"
 
 
-def _login_trigger_sql(source_baseline: str) -> str:
-    statements = [
-        statement.strip() + ";"
-        for statement in _split_sql_statements(source_baseline)
-        if _LOGIN_GUARD in statement and statement.lstrip().upper().startswith("DO ")
-    ]
-    if len(statements) != 2 or not any("CREATE EVENT TRIGGER" in item for item in statements):
-        raise RuntimeError("source baseline login-trigger rendering contract changed")
-    function = f"{_APPLICATION_SCHEMA}.{_LOGIN_GUARD}()"
-    statements.extend(
-        (
-            f"REVOKE ALL ON FUNCTION {function} FROM PUBLIC;",
-            f"GRANT ALL ON FUNCTION {function} TO gobby_daemon_runtime;",
-        )
-    )
-    return "\n\n".join(statements) + "\n"
-
-
 def _pgcrypto_sql(source_baseline: str) -> str:
     statements: list[str] = []
     for raw in _split_sql_statements(source_baseline):
@@ -278,7 +258,7 @@ def assemble_baseline(
     ]
     if seed_sql:
         parts.extend(("", seed_sql.rstrip()))
-    parts.extend(("", _login_trigger_sql(source_baseline).rstrip(), ""))
+    parts.append("")
     return "\n".join(parts)
 
 

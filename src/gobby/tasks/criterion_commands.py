@@ -67,7 +67,7 @@ _CRITERION_COMMAND_PREFIXES = frozenset(
 )
 _GOBBY_CLI_SUBCOMMANDS = frozenset(
     """agents auth build clones comms cron cutover datastores embeddings feedback files
-    health hooks hub-backup hub-maintenance init install lease mcp-proxy mcp-server memory
+    health hooks hub-backup init install lease mcp-proxy mcp-server memory
     merge nodes observations pack panes pipelines plan plans postgres profiles projects qdrant
     restart rules schema secrets service sessions skills stages start status stop sync tasks
     test-quality test-types tokens ui uninstall unpack variables webhooks workspaces worktrees""".split()

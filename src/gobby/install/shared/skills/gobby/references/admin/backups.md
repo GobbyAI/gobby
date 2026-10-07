@@ -28,10 +28,8 @@ reference when rehearsing that archive against an isolated target.
    Retention cleanup requires identifying the exact backup set and preserving
    a usable recovery point; there is no implied permission to prune volumes.
 
-The ordinary command stops the daemon for its maintenance window and restarts
-it when it had been running. `--epoch` is reserved for a matching
-hub-maintenance child invocation and leaves lifecycle ownership with that
-campaign. A manually supplied epoch is not a valid substitute.
+The command stops the daemon for its maintenance window and restarts it when it
+had been running.
 
 `hub-backup restore` requires an explicit PostgreSQL target, verifies the
 manifest and artifacts, and requires the daemon stopped. It restores hub files,

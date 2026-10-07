@@ -12,6 +12,7 @@ pytestmark = pytest.mark.unit
 
 COMPACT_STATE_KEYS = {
     "current_stage",
+    "claimed_by_session_id",
     "is_closed",
     "closed_at",
     "is_claimed",

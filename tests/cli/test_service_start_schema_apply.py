@@ -87,10 +87,6 @@ def gdaemon_apply(
         patch("gobby.storage.schema_contract.apply_schema", side_effect=_apply) as apply_schema,
         patch("gobby.storage.hub.runtime.load_bootstrap", return_value=config),
         patch(
-            "gobby.storage.hub.runtime.admitted_database_url",
-            return_value=FAKE_DATABASE_URL,
-        ),
-        patch(
             "gobby.storage.hub.postgres.PostgresHubDatabase",
             side_effect=lambda *_args, **_kwargs: _Hub(),
         ),

@@ -20,7 +20,6 @@ from gobby.config.bootstrap import (
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.storage.concurrency import BOOTSTRAP_POOL_SIZE
 from gobby.storage.machines import LocalMachineManager
-from gobby.storage.maintenance_epoch import admitted_database_url
 from gobby.storage.users import LocalUserManager
 
 logger = logging.getLogger(__name__)
@@ -87,7 +86,9 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
     from gobby.storage.hub.postgres import PostgresHubDatabase
 
     try:
-        admitted_url = admitted_database_url(database_url)
+        # One plain login before the retrying pool, so a credential failure
+        # reports at once with the guidance below.
+        psycopg.connect(database_url, connect_timeout=5).close()
     except psycopg.Error as exc:
         # Startup never mutates credentials. A pending rotation stays pending, and
         # the operator gets resumable guidance with no DSN or password material.
@@ -104,11 +105,11 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
         max_size=BOOTSTRAP_POOL_SIZE,
     )
     migration_db = _initialize_postgres_with_startup_retry(
-        lambda: PostgresHubDatabase(admitted_url, pool_config=bootstrap_pool)
+        lambda: PostgresHubDatabase(database_url, pool_config=bootstrap_pool)
     )
     migration_db.close()
     postgres_db = PostgresHubDatabase(
-        admitted_url,
+        database_url,
         pool_config=bootstrap_pool,
         runtime_role="gobby_daemon_runtime",
     )
