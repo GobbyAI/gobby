@@ -55,7 +55,7 @@ from gobby.storage.workspaces import (
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.terminals.actor_scope import ActorScope
 from gobby.terminals.leases import TerminalLeaseRegistry
-from gobby.terminals.pane_io import _verified_submits
+from gobby.terminals.pane_io import TEXT_NOT_SUBMITTED_ERROR_CODE, _verified_submits
 from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
@@ -1131,6 +1131,42 @@ async def test_workspace_send_text_unreadable_submit_retries_without_retyping(
 
 
 @pytest.mark.asyncio
+async def test_workspace_send_text_submit_reports_a_stuck_draft_the_enter_left_behind(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``gclient send-keys REF " " --enter`` on a seat holding an unsubmitted wake (#23730).
+
+    The space lands behind the stuck draft, and an ignored Enter leaves the draft
+    where it was. That is not a submit, whatever the typed text was.
+    """
+    h = harness
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_HELD_RETRY_SECONDS", 0.0)
+    sync_bundled_detection_manifests(h.db)
+    session = h.sessions.register(
+        external_id="workspace-ops-stuck-draft",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=h.project_id,
+    )
+    terminal = _live_terminal(h.terminals, h.project_id, "native", session_id=session.id)
+    workspace = await h.ops.workspace_create(OPERATOR, "stuck-draft")
+    pane = (
+        await h.ops.tab_create(OPERATOR, workspace.id, h.project_id, terminal_id=terminal.id)
+    ).panes[0]
+    h.native.snapshot_text = "────────\n❯ [Gobby] Check messages\n────────"
+
+    result = await h.ops.pane_send_text(OPERATOR, pane.id, " ", submit=True)
+
+    assert result.indeterminate is True, (result, h.native.write_log)
+    assert result.error_code == TEXT_NOT_SUBMITTED_ERROR_CODE
+    assert result.detail is not None
+    assert "not submitted" in result.detail
+    assert h.native.write_log == [("text", " \n"), ("key", "enter")]
+
+
+@pytest.mark.asyncio
 async def test_workspace_send_text_submit_success_keeps_no_retry_record(
     harness: _Harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -1157,7 +1193,7 @@ async def test_workspace_send_text_submit_success_keeps_no_retry_record(
         )
     ).panes[0]
     text = "Start the persistent Codex role and report ready."
-    h.native.snapshot_text = "────────\n❯ other prompt\n────────"
+    h.native.snapshot_text = "────────\n❯ \n────────"
     key = "retry-left-draft"
 
     first = await h.ops.pane_send_text(OPERATOR, pane.id, text, submit=True, idempotency_key=key)
