@@ -471,9 +471,10 @@ class DaemonGitService:
             control.expire()
             diagnostic = control.expired_diagnostic() or control.diagnostic(include_cleanup=False)
             logger.warning(
-                "Git command timed out: cwd=%s timeout_seconds=%.3f %s",
+                "Git command timed out: cwd=%s timeout_seconds=%.3f overrun_seconds=%.3f %s",
                 cwd,
                 timeout,
+                time.monotonic() - control.deadline_at,
                 diagnostic,
             )
             control.kill()
