@@ -26,6 +26,7 @@ full = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics",
 
 [dependencies]
 anyhow = "1"
+crc32fast = "1"
 dirs = "6"
 log = "0.4"
 uuid = { version = "1", features = ["v4", "v5"] }

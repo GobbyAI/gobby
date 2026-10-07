@@ -29,7 +29,6 @@ from gobby.mcp_proxy.wait_tools import (
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -220,11 +219,18 @@ def boundary(
     server.app.state.server = server
     server._internal_manager = internal
     server._tools_handler = cast(GobbyDaemonTools, SimpleNamespace(tool_proxy=proxy))
-    token_file = tmp_path / "api-token"
-    token_file.write_text("boundary-operator-token")
-    AuthStore(temp_db).set_local_api_token_hash(hash_token("boundary-operator-token"))
     server.auth_service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
+        lambda: temp_db,
+        bootstrap_file=_managed_bootstrap(tmp_path / "bootstrap.yaml", "boundary-operator-token"),
+        break_glass_file=tmp_path / "missing-break-glass",
+    )
+    server.auth_service.bind_runtime(
+        grant_service=None,
+        lease_live=None,
+        local_machine_id=None,
+        effect_fence=None,
+        clock=None,
+        front_door_secret="boundary-front-door",
     )
     token = "boundary-operator-token"
     if request.param == "agent":
@@ -240,6 +246,15 @@ def boundary(
         "X-Gobby-Project-Id": project_id,
         "X-Gobby-Agent-Run-Id": run.id,
     }
+    if request.param == "operator":
+        headers.update(
+            {
+                "X-Gobby-Front-Door": "boundary-front-door",
+                "X-Gobby-User-Id": "boundary-user",
+                "X-Gobby-Machine-Id": "boundary-machine",
+                "X-Gobby-Key-Id": "boundary-key",
+            }
+        )
     client = TestClient(server.app)
     try:
         yield Boundary(
@@ -546,9 +561,9 @@ def test_programmatic_calls_still_reject_bad_auth_and_identity(
     body: dict[str, Any] = {"value": "hello"}
     if route == "/api/mcp/tools/call":
         body = {"server_name": SERVER, "tool_name": "echo", "arguments": body}
-    invalid_auth = boundary.client.post(
-        route, json=body, headers=boundary.headers | {"Authorization": "Bearer invalid"}
-    )
+    invalid_headers = boundary.headers | {"Authorization": "Bearer invalid"}
+    invalid_headers.pop("X-Gobby-Front-Door", None)
+    invalid_auth = boundary.client.post(route, json=body, headers=invalid_headers)
     assert invalid_auth.status_code == 401
     invalid_run = boundary.client.post(
         route, json=body, headers=boundary.headers | {"X-Gobby-Agent-Run-Id": "invalid"}
@@ -601,8 +616,6 @@ async def test_pipeline_calls_need_no_discovery_and_keep_session(boundary: Bound
     assert boundary.variables.get_variables(boundary.session_id) == before
 
 
-def _managed_bootstrap(token_file: Path) -> Path:
-    bootstrap = token_file.with_name(token_file.name + ".bootstrap.yaml")
-    api_key = token_file.read_text().strip() if token_file.exists() else None
+def _managed_bootstrap(bootstrap: Path, api_key: str) -> Path:
     bootstrap.write_text(json.dumps({"api_key": api_key}))
     return bootstrap

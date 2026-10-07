@@ -24,6 +24,7 @@ use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::ServerConfig;
 
+use crate::front_door::auth::{AuthState, KeyResolver, PostgresKeyResolver};
 use crate::front_door::health::BackendState;
 use crate::front_door::routes::{FAMILIES, RouteTable, unimplemented_families};
 use crate::front_door::{FrontDoor, FrontDoorState, tls};
@@ -43,8 +44,17 @@ pub struct PublicListener {
 
 /// Entry point for `gdaemon serve`. Builds a tokio runtime for this subcommand only.
 pub fn run() -> Result<()> {
+    let secret = std::env::var("GOBBY_FRONT_DOOR_SECRET")
+        .ok()
+        .filter(|secret| !secret.is_empty())
+        .context("GOBBY_FRONT_DOOR_SECRET must be nonempty; launch through the Python runner")?;
     let path = bootstrap_path().context("cannot resolve the Gobby home directory")?;
     let bootstrap = load_enabled_bootstrap(&path)?;
+    let resolver = bootstrap
+        .database_url
+        .as_deref()
+        .map(|url| Arc::new(PostgresKeyResolver::new(url)) as Arc<dyn KeyResolver>);
+    let auth = Arc::new(AuthState::new(secret, resolver, path)?);
     let (backend_http, backend_ws) =
         backend_ports(bootstrap.daemon_port, bootstrap.websocket_port)?;
     for name in unimplemented_families(FAMILIES, &bootstrap.front_door.routes) {
@@ -82,7 +92,7 @@ pub fn run() -> Result<()> {
             }
         };
         let tls = tls.map(|loaded| loaded.config);
-        serve(listeners, &bootstrap.front_door.routes, tls, shutdown).await
+        serve(listeners, &bootstrap.front_door.routes, tls, auth, shutdown).await
     })
 }
 
@@ -148,6 +158,7 @@ pub fn load_enabled_bootstrap(path: &Path) -> Result<HubDatabaseBootstrap> {
     let bootstrap =
         read_hub_database_bootstrap_file(path)?.unwrap_or_else(|| HubDatabaseBootstrap {
             database_url: None,
+            api_key: None,
             daemon_url: None,
             bind_host: DEFAULT_BIND_HOST.to_owned(),
             daemon_port: DEFAULT_DAEMON_PORT,
@@ -226,6 +237,7 @@ pub async fn serve(
     listeners: Vec<PublicListener>,
     routes: &BTreeMap<String, RouteBackend>,
     tls: Option<Arc<ServerConfig>>,
+    auth: Arc<AuthState>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
     // Stage 1 has no timer-driven Rust jobs yet. Strangler ports register here.
@@ -234,7 +246,7 @@ pub async fn serve(
     let acceptor = tls.map(TlsAcceptor::from);
     let mut accept_loops = JoinSet::new();
     for PublicListener { listener, backend } in listeners {
-        let state = FrontDoorState::new(backend, BackendState::Down);
+        let state = FrontDoorState::new(backend, BackendState::Down, auth.clone());
         let table = RouteTable::new(FAMILIES, routes, &state);
         accept_loops.spawn(accept(
             listener,

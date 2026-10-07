@@ -1296,33 +1296,45 @@ class _SocketDirClient:
     socket_dir: Path
 
 
-def test_frame_token_falls_back_to_gobby_home(
+def test_frame_token_reads_bootstrap_key_fresh(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     gobby_home = tmp_path / "gobby-home"
     gobby_home.mkdir()
-    (gobby_home / "local_cli_token").write_text("home-token\n", encoding="utf-8")
+    bootstrap = gobby_home / "bootstrap.yaml"
+    bootstrap.write_text("api_key: home-key\n", encoding="utf-8")
     sockets = tmp_path / "gterm-host"
     sockets.mkdir()
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    monkeypatch.setattr("gobby.utils.local_token._daemon_bootstrap", bootstrap)
+    monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", "managed-capability")
     runtime = NativeTerminalRuntime(_SocketDirClient(socket_dir=sockets))
 
-    assert runtime._frame_token() == "home-token"
+    assert runtime._frame_token() == "home-key"
+    bootstrap.write_text("api_key: rotated-key\n", encoding="utf-8")
+    assert runtime._frame_token() == "rotated-key"
+    for content in ("", "api_key: ''\n", "api_key: 123\n", "api_key: [\n"):
+        bootstrap.write_text(content, encoding="utf-8")
+        assert runtime._frame_token() == ""
+    bootstrap.unlink()
+    assert runtime._frame_token() == ""
 
 
-def test_frame_token_prefers_the_socket_directory(
+def test_frame_token_ignores_the_socket_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     gobby_home = tmp_path / "gobby-home"
     gobby_home.mkdir()
-    (gobby_home / "local_cli_token").write_text("home-token\n", encoding="utf-8")
+    bootstrap = gobby_home / "bootstrap.yaml"
+    bootstrap.write_text("api_key: home-key\n", encoding="utf-8")
     sockets = tmp_path / "gterm-host"
     sockets.mkdir()
-    (sockets / "local_cli_token").write_text("socket-token\n", encoding="utf-8")
+    (sockets / "bootstrap.yaml").write_text("api_key: socket-key\n", encoding="utf-8")
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    monkeypatch.setattr("gobby.utils.local_token._daemon_bootstrap", bootstrap)
     runtime = NativeTerminalRuntime(_SocketDirClient(socket_dir=sockets))
 
-    assert runtime._frame_token() == "socket-token"
+    assert runtime._frame_token() == "home-key"
 
 
 _WIRE_GOLDEN = (
@@ -1390,9 +1402,13 @@ async def _until(predicate: Callable[[], bool]) -> None:
     await asyncio.wait_for(poll(), timeout=2)
 
 
-async def test_each_observer_bind_gets_its_own_frame_stream() -> None:
+async def test_each_observer_bind_gets_its_own_frame_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     socket_dir = _frames_dir()
-    (socket_dir / "local_cli_token").write_text("socket-token\n", encoding="utf-8")
+    bootstrap = socket_dir / "bootstrap.yaml"
+    bootstrap.write_text("api_key: socket-token\n", encoding="utf-8")
+    monkeypatch.setattr("gobby.utils.local_token._daemon_bootstrap", bootstrap)
     frames = _FrameHost()
     server = await asyncio.start_unix_server(
         frames.handle, path=str(frames_socket_path(socket_dir))

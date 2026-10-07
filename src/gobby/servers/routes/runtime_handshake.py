@@ -46,10 +46,7 @@ class HandshakeRequest(BaseModel):
 
 
 def _authorization_present(request: Request) -> bool:
-    authorization = request.headers.get("Authorization")
-    if authorization:
-        return True
-    return bool(request.headers.get("X-Gobby-Local-Token"))
+    return bool(request.headers.get("Authorization"))
 
 
 def _challenge_kind(body: ChallengeRequest) -> str:
@@ -127,17 +124,15 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="invalid nonce") from exc
         kind = _challenge_kind(body)
+        if kind == "interactive":
+            raise HTTPException(status_code=400, detail="interactive_challenge_is_native")
         signing_key = server.auth_service.managed_signing_key() if kind == "managed" else None
-        operator_token = server.auth_service.local_token() if kind == "interactive" else ""
         if kind == "managed" and signing_key is None:
             raise HTTPException(status_code=503, detail="signing_key_unavailable")
-        if operator_token is None:
-            raise HTTPException(status_code=503, detail="operator token unavailable")
         try:
             proof = challenge_proof(
                 nonce,
                 kind=kind,
-                operator_token=operator_token,
                 signing_key=signing_key,
                 claims=_challenge_claims(body),
             )
@@ -174,8 +169,12 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
                     project_id=body.project_id,
                 )
             else:
+                identity = server.auth_service.verified_front_door_identity(request)
                 grant = service.issue_for_operator(
                     machine_id=body.machine_id,
+                    forwarded_machine_id=(
+                        identity.machine_id if identity is not None else service.local_machine_id
+                    ),
                     project_id=body.project_id,
                     session_id=body.session_id,
                     code_overlay_project_id=body.code_overlay_project_id,

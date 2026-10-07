@@ -9,12 +9,14 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 
+from gobby.hooks import inbox_maintenance
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     ENVELOPE_REPLAY_GRACE_SECONDS,
@@ -28,7 +30,6 @@ from gobby.hooks.envelope_dedupe import (
 )
 from gobby.hooks.inbox import (
     HookInboxBarrierResult,
-    _compute_sleep_seconds,
     _get_hook_inbox_drain_lock,
     _load_envelope,
     _post_envelope,
@@ -37,6 +38,7 @@ from gobby.hooks.inbox import (
     drain_hook_inbox_once,
     get_hook_quarantine_dir,
 )
+from gobby.hooks.inbox_maintenance import _compute_sleep_seconds
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 from gobby.storage import workspace_machine_scope
 from gobby.storage.machines import LocalMachineManager
@@ -463,9 +465,11 @@ async def test_missing_required_token_warns_once_per_drain(
     ):
         await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir)
 
-    token_warnings = [record for record in caplog.records if "local_cli_token" in record.message]
+    token_warnings = [
+        record for record in caplog.records if "Daemon API key missing" in record.message
+    ]
     assert len(token_warnings) == 1
-    assert "gobby auth token --rotate" in token_warnings[0].message
+    assert "api_key in bootstrap.yaml" in token_warnings[0].message
 
 
 def test_malformed_nonempty_marker_logs_and_counts_processed(
@@ -813,8 +817,40 @@ def test_quarantine_missing_file_is_handled_as_race(
 
 
 def test_compute_sleep_seconds_clamps_negative_jitter() -> None:
-    with patch("gobby.hooks.inbox._JITTER_RANDOM.uniform", return_value=-10.0):
+    with patch("gobby.hooks.inbox_maintenance._JITTER_RANDOM.uniform", return_value=-10.0):
         assert _compute_sleep_seconds(interval_seconds=5, jitter_seconds=10.0) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_maintenance_replays_and_prunes_on_separate_cadences() -> None:
+    now = 0.0
+
+    async def advance(seconds: float) -> None:
+        nonlocal now
+        now += seconds
+
+    sleep = AsyncMock(side_effect=advance)
+    drain = AsyncMock(return_value=0)
+    prune = AsyncMock(return_value=0)
+    app = object()
+    with (
+        patch.object(inbox_maintenance, "drain_hook_inbox_once", drain),
+        patch.object(inbox_maintenance, "prune_hook_inbox", prune),
+        patch.object(inbox_maintenance, "time", SimpleNamespace(monotonic=lambda: now)),
+        patch("gobby.hooks.inbox_maintenance.asyncio.sleep", sleep),
+    ):
+        await inbox_maintenance.drain_hook_inbox_loop(
+            app,
+            lambda: sleep.await_count >= 4,
+            interval_seconds=5,
+            jitter_seconds=0,
+            prune_interval_seconds=10,
+        )
+    assert drain.await_count == 5
+    assert all(call.args == (app,) for call in drain.await_args_list)
+    assert sleep.await_count == 4
+    assert all(call.args == (5.0,) for call in sleep.await_args_list)
+    assert prune.await_count == 2
 
 
 def test_release_envelope_processing_claim_allows_retry(tmp_path: Path) -> None:
@@ -1322,8 +1358,8 @@ def test_claim_stranded_by_a_crash_is_acknowledged_by_the_next_daemon(
 ) -> None:
     from gobby.hooks.inbox import (
         consume_pending_delivery_receipts,
-        prune_orphaned_inbox_temp_files,
     )
+    from gobby.hooks.inbox_maintenance import prune_orphaned_inbox_temp_files
 
     inbox_dir = tmp_path / "hooks" / "inbox"
     inbox_dir.mkdir(parents=True)

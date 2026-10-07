@@ -10,7 +10,7 @@ from typing import Any, Protocol
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.dimensions import MAX_FRAME_SIZE
 from gobby.terminals.host_client import HostEpochChangedError, HostNotAdoptedError
-from gobby.utils.local_token import local_token_path
+from gobby.utils.local_token import read_local_api_token
 
 PROTOCOL_VERSION = 1
 DELTA_QUEUE_ENTRIES = 64
@@ -559,7 +559,7 @@ class FrameClient:
             # that rather than a change that never happened (#22337).
             await self.close()
             raise HostNotAdoptedError()
-        token = local_token if local_token is not None else _read_local_cli_token()
+        token = local_token if local_token is not None else read_local_api_token() or ""
         await self._send(
             {
                 "type": "hello",
@@ -638,13 +638,6 @@ class FrameClient:
             raise FrameLagError("frame queue overflow")
         self._queue.append(message)
         self._queue_bytes += len(encoded)
-
-
-def _read_local_cli_token() -> str:
-    try:
-        return local_token_path().read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
 
 
 __all__ = [

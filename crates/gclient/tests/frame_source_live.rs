@@ -58,7 +58,11 @@ impl TestHost {
             .permissions();
         permissions.set_mode(0o600);
         std::fs::set_permissions(&control_token, permissions).expect("protect control token");
-        std::fs::write(dir.path().join("local_cli_token"), LOCAL_TOKEN).expect("write local token");
+        std::fs::write(
+            dir.path().join("bootstrap.yaml"),
+            format!("api_key: {LOCAL_TOKEN}\n"),
+        )
+        .expect("write API key");
         let stderr_path = dir.path().join("gterm.stderr");
         let stderr_file = std::fs::File::create(&stderr_path).expect("gterm stderr");
         let private_bin = dir.path().join("gterm");
@@ -81,6 +85,7 @@ impl TestHost {
             .args(extra)
             .env("GTERM_LOG_FILE", dir.path().join("gterm.log"))
             .env("GTERM_TEST_HELPER", "1")
+            .env("GOBBY_HOME", dir.path())
             .env("RUST_LOG", "debug")
             .env_remove("TMUX")
             .stdin(Stdio::null())

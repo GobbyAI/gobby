@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use gobby_core::local_token::{AUTHORIZATION_HEADER, authorization_bearer, read_local_cli_token};
+use gobby_core::local_token::{AUTHORIZATION_HEADER, authorization_bearer, read_api_key};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -305,7 +305,7 @@ fn fetch_daemon_peer(
             return PeerDoctorOutcome::TransportError(format!("build HTTP client: {error}"));
         }
     };
-    let token = match read_local_cli_token() {
+    let token = match read_api_key() {
         Ok(token) => token,
         Err(error) => {
             return PeerDoctorOutcome::TransportError(format!("read local CLI token: {error}"));

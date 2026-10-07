@@ -59,13 +59,12 @@ _MACHINE_ID = "00000000-0000-4000-8000-000000000001"
 
 @contextmanager
 def _full_local_install(
-    files_home: Path, *, real_token: bool = False, real_api_key: bool = False
+    files_home: Path, *, real_api_key: bool = False
 ) -> Iterator[dict[str, MagicMock]]:
     """Patch the full-install steps that need Docker, a hub, or the host filesystem."""
     mocks = {
         "required_stack": MagicMock(),
         "reconcile_rtk": MagicMock(return_value=_RTK_DISABLED),
-        "provision_token": MagicMock(),
         "local_api_key": MagicMock(),
     }
     replacements: dict[str, object] = {
@@ -96,8 +95,6 @@ def _full_local_install(
         "gobby.cli.install.require_machine_id": MagicMock(return_value=_MACHINE_ID),
         "gobby.cli.install.ensure_local_api_key": mocks["local_api_key"],
     }
-    if not real_token:
-        replacements["gobby.cli.install._provision_local_api_token"] = mocks["provision_token"]
     if real_api_key:
         del replacements["gobby.cli.install.ensure_local_api_key"]
     with ExitStack() as stack:
@@ -109,9 +106,6 @@ def _full_local_install(
 @pytest.fixture(autouse=True)
 def _mock_ext_services_and_prompts() -> Iterator[None]:
     """Prevent real Docker service installers and interactive API-key prompts."""
-
-    auth_store = MagicMock()
-    auth_store._read_local_api_token_hash.return_value = (None, False)
 
     def qdrant_success(_installer: object, results: dict[str, dict[str, object]]) -> None:
         results["qdrant"] = {"success": True}
@@ -141,7 +135,6 @@ def _mock_ext_services_and_prompts() -> Iterator[None]:
         patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=MagicMock()),
         patch("gobby.cli.install.SecretStore"),
         patch("gobby.cli.install.ConfigStore"),
-        patch("gobby.cli.install.AuthStore", return_value=auth_store),
         patch(
             "gobby.cli.install.ensure_install_identity",
             return_value=MagicMock(email="owner@example.com"),
@@ -536,32 +529,21 @@ class TestInstallCommand:
         for untouched in (ensure_config, mock_embedding, mock_qdrant, mock_falkordb):
             untouched.assert_not_called()
 
-    def test_install_provisions_api_token(
-        self,
-        runner: CliRunner,
-        temp_dir: Path,
-        monkeypatch: pytest.MonkeyPatch,
+    def test_install_creates_no_operator_token(
+        self, runner: CliRunner, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         gobby_home = temp_dir / "gobby-home"
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
         files_home = temp_dir / "files"
         files_home.mkdir()
-        auth_store = MagicMock()
-        auth_store._read_local_api_token_hash.return_value = (None, False)
-
         with (
-            _full_local_install(files_home, real_token=True),
-            patch("gobby.cli.install.AuthStore", return_value=auth_store),
+            _full_local_install(files_home) as mocks,
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
         ):
             result = runner.invoke(cli, ["install", "--no-interactive"])
-
-        token_path = gobby_home / "local_cli_token"
         assert result.exit_code == 0, result.output
-        assert token_path.exists()
-        token = token_path.read_text().strip()
-        auth_store.set_local_api_token_hash.assert_called_once_with(hash_token(token))
-        assert token_path.stat().st_mode & 0o777 == 0o600
+        mocks["local_api_key"].assert_called_once()
+        assert not (gobby_home / "local_cli_token").exists()
 
     def test_install_mints_local_api_key(
         self,
@@ -584,12 +566,10 @@ class TestInstallCommand:
         )
         bootstrap.chmod(0o600)
         LocalMachineManager(hub_db).upsert_seen(_MACHINE_ID, TEST_USER_ID)
-        auth_store = MagicMock(db=hub_db)
-        auth_store._read_local_api_token_hash.return_value = (None, False)
 
         with (
-            _full_local_install(files_home, real_token=True, real_api_key=True),
-            patch("gobby.cli.install.AuthStore", return_value=auth_store),
+            _full_local_install(files_home, real_api_key=True),
+            patch("gobby.cli.runtime.CliRuntime.require_database", return_value=hub_db),
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
         ):
             result = runner.invoke(cli, ["install", "--no-interactive"])
@@ -616,12 +596,9 @@ class TestInstallCommand:
         monkeypatch.setenv("GOBBY_HOME", str(temp_dir / "gobby-home"))
         files_home = temp_dir / "files"
         files_home.mkdir()
-        auth_store = MagicMock()
-        auth_store._read_local_api_token_hash.return_value = (None, False)
 
         with (
-            _full_local_install(files_home, real_token=True) as mocks,
-            patch("gobby.cli.install.AuthStore", return_value=auth_store),
+            _full_local_install(files_home) as mocks,
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
         ):
             mocks["local_api_key"].side_effect = OSError("bootstrap.yaml is read-only")
@@ -631,7 +608,7 @@ class TestInstallCommand:
         assert isinstance(result.exception, OSError)
         assert str(result.exception) == "bootstrap.yaml is read-only"
 
-    def test_install_db_unreachable_fails_before_token_provisioning(
+    def test_install_db_unreachable_fails_before_key_provisioning(
         self,
         runner: CliRunner,
         temp_dir: Path,
@@ -643,7 +620,7 @@ class TestInstallCommand:
         files_home.mkdir()
 
         with (
-            _full_local_install(files_home, real_token=True),
+            _full_local_install(files_home),
             patch(
                 "gobby.cli.runtime.CliRuntime.require_database",
                 side_effect=FileNotFoundError("bootstrap unavailable"),
@@ -979,7 +956,7 @@ def test_remote_mode_skips_datastore_provisioning(
         ) as preflight,
         patch("gobby.cli.install._install_required_stack") as install_stack,
         patch("gobby.cli.install_components.reconcile_rtk", return_value=_RTK_DISABLED),
-        patch("gobby.cli.install._provision_local_api_token") as provision_token,
+        patch("gobby.cli.install.ensure_local_api_key") as local_api_key,
         patch("gobby.cli.install._should_initialize_project", return_value=False),
         patch("gobby.cli.install.prepare_install_state", return_value=empty_install_state()),
         patch("gobby.cli.install._run_embedding_install", return_value="none"),
@@ -996,7 +973,7 @@ def test_remote_mode_skips_datastore_provisioning(
     assert "Gobby Installation" in result.output
     assert "Installation completed successfully!" in result.output
     install_stack.assert_not_called()
-    provision_token.assert_not_called()
+    local_api_key.assert_not_called()
     preflight.assert_called_once_with(
         is_full_install=True,
         install_dir=Path("/fake/install"),
@@ -1028,7 +1005,7 @@ def test_remote_mode_preflight_errors(
     home = tmp_path / "gobby-home"
     home.mkdir()
     (home / ".secret_kek").write_text("copied-kek")
-    (home / "local_cli_token").write_text("copied-token")
+    (home / "bootstrap.yaml").write_text("api_key: remote-api-key\n")
     config = remote_preflight.RemoteDatastoreConfig(
         qdrant_url="http://qdrant.test:6333",
         falkordb_host="falkor.test",
@@ -1066,7 +1043,7 @@ def test_remote_mode_preflight_errors(
     assert expected_guidance in errors[0]
 
 
-def test_remote_mode_kek_token_guidance(
+def test_remote_mode_kek_api_key_guidance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1092,9 +1069,8 @@ def test_remote_mode_kek_token_guidance(
 
     assert probe_called is False
     assert len(errors) == 2
-    assert all("Copy" in error and "hub" in error for error in errors)
-    assert any(".secret_kek" in error for error in errors)
-    assert any("local_cli_token" in error for error in errors)
+    assert any("Copy" in error and "hub" in error and ".secret_kek" in error for error in errors)
+    assert any("api_key" in error and "bootstrap.yaml" in error for error in errors)
     assert not home.exists()
 
 

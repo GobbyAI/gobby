@@ -37,7 +37,6 @@ async fn unproven_kill_stays_listed_and_refuses_overlap() {
     let state = HostState::new(
         HostConfig::default(),
         "control".to_string(),
-        "local".to_string(),
         "epoch".to_string(),
         crate::host::image::PinnedImage::for_tests(),
         1,
@@ -105,7 +104,6 @@ async fn leader_exit_after_unproven_kill_waits_for_its_group() {
     let state = HostState::new(
         HostConfig::default(),
         "control".to_string(),
-        "local".to_string(),
         "epoch".to_string(),
         crate::host::image::PinnedImage::for_tests(),
         1,
@@ -161,7 +159,6 @@ async fn shutdown_drain_reaches_a_group_retained_after_an_unproven_kill() {
     let state = HostState::new(
         HostConfig::default(),
         "control".to_string(),
-        "local".to_string(),
         "epoch".to_string(),
         crate::host::image::PinnedImage::for_tests(),
         1,

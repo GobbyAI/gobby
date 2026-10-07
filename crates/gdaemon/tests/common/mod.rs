@@ -33,6 +33,14 @@ pub async fn start_front_door(backend: SocketAddr) -> SocketAddr {
             vec![PublicListener { listener, backend }],
             &routes,
             None,
+            Arc::new(
+                gobby_daemon::front_door::auth::AuthState::new(
+                    "test-secret".into(),
+                    None,
+                    Default::default(),
+                )
+                .expect("auth"),
+            ),
             std::future::pending(),
         )
         .await
@@ -70,6 +78,14 @@ pub async fn start_front_door_on(
             vec![PublicListener { listener, backend }],
             &routes,
             config,
+            Arc::new(
+                gobby_daemon::front_door::auth::AuthState::new(
+                    "test-secret".into(),
+                    None,
+                    Default::default(),
+                )
+                .expect("auth"),
+            ),
             std::future::pending(),
         )
         .await

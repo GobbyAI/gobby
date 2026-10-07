@@ -99,6 +99,7 @@ fn communities_database_round_trip() -> anyhow::Result<()> {
     gobby_code::test_env::seed_test_checkout(&mut conn, COMMUNITIES_PROJECT_ID, &project)
         .map_err(anyhow::Error::msg)?;
     let home = isolated_gobby_home(&project)?;
+    let _principal = EvidencePrincipal::issue(&database_url, &home, COMMUNITIES_PROJECT_ID)?;
     let connections = gobby_core::grant::DirectConnections::postgres(&database_url);
     let run = |args: &[&str]| -> anyhow::Result<std::process::Output> {
         let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
@@ -355,6 +356,7 @@ fn database_contract() -> anyhow::Result<()> {
     gobby_code::test_env::seed_test_checkout(&mut conn, PROJECT_ID, &project)
         .map_err(anyhow::Error::msg)?;
     let home = isolated_gobby_home(&project)?;
+    let principal = EvidencePrincipal::issue(&database_url, &home, PROJECT_ID)?;
     let connections = gobby_core::grant::DirectConnections::postgres(&database_url);
     let mut index = Command::new(env!("CARGO_BIN_EXE_gcode"));
     index
@@ -739,6 +741,7 @@ fn database_contract() -> anyhow::Result<()> {
     let unavailable_output = run_raw_evidence(&project, &home, &unavailable, &raw_request, false)?;
     assert_error(&unavailable_output, "index_unavailable");
 
+    drop(principal);
     drop(cleanup);
     Ok(())
 }
@@ -1092,9 +1095,7 @@ fn attach_audited_hybrid_grant(
 ) -> anyhow::Result<()> {
     use std::collections::BTreeMap;
 
-    let machine = std::fs::read_to_string(home.join("machine_id"))?;
-    let mut grant =
-        gobby_core::grant::managed_direct_grant(project_id, machine.trim(), connections);
+    let mut grant = evidence_managed_grant(home, project_id, connections)?;
     grant.capabilities.embed = gobby_core::grant::AiCapability::Daemon {};
     grant = grant.with_checksum();
     let settings = gobby_core::grant::CachedSettings {
@@ -1124,7 +1125,7 @@ fn attach_audited_hybrid_grant(
     std::fs::create_dir_all(&grant_dir)?;
     let path = grant_dir.join("grant.json");
     gobby_core::grant::write_coherent_pair(&path, &grant, &settings)?;
-    std::fs::write(home.join("local_cli_token"), "audited-test-token\n")?;
+    std::fs::write(home.join("bootstrap.yaml"), "api_key: audited-test-token\n")?;
     command
         .env("GOBBY_HOME", home)
         .env("GOBBY_DAEMON_URL", daemon_url)
@@ -1234,8 +1235,7 @@ fn attach_managed_grant(
     project_id: &str,
     connections: &gobby_core::grant::DirectConnections,
 ) -> anyhow::Result<()> {
-    let machine = std::fs::read_to_string(home.join("machine_id"))?;
-    let grant = gobby_core::grant::managed_direct_grant(project_id, machine.trim(), connections);
+    let grant = evidence_managed_grant(home, project_id, connections)?;
     let path = gobby_core::grant::write_managed_bootstrap(&home.join("grants"), &grant)?;
     command
         .env("GOBBY_HOME", home)
@@ -1243,6 +1243,140 @@ fn attach_managed_grant(
         .env_remove("GOBBY_AGENT_RUN_ID")
         .env_remove("GOBBY_MANAGED_EXECUTION_ID");
     Ok(())
+}
+
+#[cfg(gcode_postgres_tests)]
+struct EvidencePrincipal {
+    database_url: String,
+    execution_id: uuid::Uuid,
+    session_id: uuid::Uuid,
+    credential_generation: Option<i32>,
+}
+
+#[cfg(gcode_postgres_tests)]
+impl EvidencePrincipal {
+    fn issue(database_url: &str, home: &std::path::Path, project_id: &str) -> anyhow::Result<Self> {
+        let mut owner = postgres::Client::connect(database_url, postgres::NoTls)?;
+        let machine = std::fs::read_to_string(home.join("machine_id"))?;
+        let machine_id = uuid::Uuid::parse_str(machine.trim())?;
+        let project_uuid = uuid::Uuid::parse_str(project_id)?;
+        let mut principal = Self {
+            database_url: database_url.to_string(),
+            execution_id: uuid::Uuid::new_v4(),
+            session_id: uuid::Uuid::new_v4(),
+            credential_generation: None,
+        };
+        owner.execute(
+            "INSERT INTO sessions(id, external_id, machine_id, source, project_id)
+             VALUES ($1, $2, $3, 'test', $4)",
+            &[
+                &principal.session_id,
+                &format!("evidence-{}", principal.session_id),
+                &machine_id,
+                &project_uuid,
+            ],
+        )?;
+        let password = format!("evidence-test-{}", uuid::Uuid::new_v4().simple());
+        let issued = owner.query_one(
+            "SELECT role_name::TEXT, credential_generation
+             FROM gobby_agent_auth.issue_tool_principal(
+                 $1, $2, $3, clock_timestamp() + INTERVAL '1 hour', $4
+             )",
+            &[
+                &principal.execution_id,
+                &principal.session_id,
+                &machine_id,
+                &password,
+            ],
+        )?;
+        let role_name: String = issued.get(0);
+        let generation: i32 = issued.get(1);
+        principal.credential_generation = Some(generation);
+        let connections = gobby_core::grant::DirectConnections::postgres(database_url);
+        let mut grant =
+            gobby_core::grant::managed_direct_grant(project_id, machine.trim(), &connections);
+        grant.principal.kind = gobby_core::grant::PrincipalKind::ToolChat;
+        grant.principal.execution_id = Some(principal.execution_id.to_string());
+        grant.principal.session_id = Some(principal.session_id.to_string());
+        if let gobby_core::grant::PostgresCapability::Direct {
+            dsn,
+            role_name: role,
+            credential_generation,
+            ..
+        } = &mut grant.capabilities.postgres
+        {
+            *dsn = format!(
+                "{database_url}{}user={role_name}&password={password}",
+                if database_url.contains('?') { '&' } else { '?' }
+            );
+            *role = role_name;
+            *credential_generation = i64::from(generation);
+        }
+        std::fs::write(
+            home.join("evidence-principal.json"),
+            serde_json::to_vec(&grant.with_checksum())?,
+        )?;
+        Ok(principal)
+    }
+}
+
+#[cfg(gcode_postgres_tests)]
+impl Drop for EvidencePrincipal {
+    fn drop(&mut self) {
+        if let Ok(mut owner) = postgres::Client::connect(&self.database_url, postgres::NoTls) {
+            if let Some(generation) = self.credential_generation {
+                let _ = owner.query_one(
+                    "SELECT gobby_agent_auth.revoke_principal($1, $2)",
+                    &[&self.execution_id, &generation],
+                );
+            }
+            let _ = owner.execute("DELETE FROM sessions WHERE id = $1", &[&self.session_id]);
+        }
+    }
+}
+
+#[cfg(gcode_postgres_tests)]
+fn evidence_managed_grant(
+    home: &std::path::Path,
+    project_id: &str,
+    connections: &gobby_core::grant::DirectConnections,
+) -> anyhow::Result<gobby_core::grant::GrantBundle> {
+    let machine = std::fs::read_to_string(home.join("machine_id"))?;
+    let mut grant =
+        gobby_core::grant::managed_direct_grant(project_id, machine.trim(), connections);
+    let path = home.join("evidence-principal.json");
+    // Pure preflight tests reject malformed requests before any datastore admission.
+    if path.exists() {
+        let issued: gobby_core::grant::GrantBundle = serde_json::from_slice(&std::fs::read(path)?)?;
+        grant.principal = issued.principal;
+        if let gobby_core::grant::PostgresCapability::Direct {
+            dsn: issued_dsn,
+            role_name,
+            credential_generation,
+            valid_until,
+        } = issued.capabilities.postgres
+        {
+            let credentials = issued_dsn
+                .split_once("user=")
+                .expect("issued fixture credentials")
+                .1;
+            grant.capabilities.postgres = gobby_core::grant::PostgresCapability::Direct {
+                dsn: format!(
+                    "{}{}user={credentials}",
+                    connections.postgres_dsn,
+                    if connections.postgres_dsn.contains('?') {
+                        '&'
+                    } else {
+                        '?'
+                    }
+                ),
+                role_name,
+                credential_generation,
+                valid_until,
+            };
+        }
+    }
+    Ok(grant.with_checksum())
 }
 
 #[cfg(gcode_postgres_tests)]

@@ -21,7 +21,6 @@ from gobby.runner_init.helpers import (
 )
 from gobby.shutdown_intent import ShutdownIntent
 from gobby.storage.api_keys import ensure_local_api_key
-from gobby.storage.auth import AuthStore, ensure_local_api_token
 from gobby.storage.concurrency import CoverageExecutor, resolve_database_concurrency
 from gobby.storage.concurrency_watchdog import DatabaseSaturationWatchdog
 from gobby.storage.executor import DatabaseExecutor
@@ -217,7 +216,6 @@ def open_storage_and_config(
         secret_store=runner.secret_store,
     )
     config_repository.reconcile_registry()
-    ensure_local_api_token(AuthStore(runner.database))
     stored_config = config_repository.read()
     runner.startup_config = bootstrap_overlaid_config(
         config_repository.runtime_candidate(

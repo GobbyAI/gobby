@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
 
+use axum::body::Body;
 use bytes::Bytes;
 use common::{
     TIMEOUT, frame, head_has, local_non_loopback_ipv4, read_exact_into, refused_addr, self_signed,
@@ -19,7 +20,13 @@ use common::{
     ws_backend, ws_client, ws_upgrade,
 };
 use gobby_core::bootstrap::{RouteBackend, TlsBootstrap, TlsMode, parse_hub_database_bootstrap};
+use gobby_daemon::front_door::auth::{
+    AuthState, KeyIdentity, KeyResolver, PostgresKeyResolver, ResolveFuture,
+};
+use gobby_daemon::front_door::health::BackendState;
+use gobby_daemon::front_door::routes::{FAMILIES, RouteTable};
 use gobby_daemon::front_door::tls;
+use gobby_daemon::front_door::{FrontDoor, FrontDoorState};
 use gobby_daemon::serve::{bind, companion_addr, plaintext_allowed};
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Frame, Incoming};
@@ -32,6 +39,471 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 
 /// A response body fed chunk by chunk from a channel.
+const TEST_API_KEY: &str = "gobby_003aUlTJC7tjlCTQj2uNU3MFagCXG9LRKRcwGkBIDlf1Yo7hP";
+
+async fn request_challenge(door: &FrontDoor, body: serde_json::Value) -> Response<Body> {
+    let request = Request::post("/api/runtime/handshake/challenge")
+        .header("content-type", "application/json")
+        .header("x-gobby-user-id", "forged-user")
+        .header("x-gobby-machine-id", "forged-machine")
+        .header("x-gobby-key-id", "forged-key")
+        .header("x-gobby-front-door", "forged-secret")
+        .body(Body::from(body.to_string()))
+        .expect("challenge");
+    door.handle(request, "127.0.0.1:1234".parse().expect("peer"), false)
+        .await
+}
+
+async fn response_json(response: Response<Body>) -> serde_json::Value {
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    serde_json::from_slice(&body).expect("json")
+}
+
+#[tokio::test]
+async fn interactive_challenge_answered_locally() {
+    let home = tempfile::tempdir().expect("home");
+    let path = home.path().join("bootstrap.yaml");
+    std::fs::write(&path, format!("api_key: {TEST_API_KEY}\n")).expect("key");
+    let (backend, mut seen) = header_backend().await;
+    let auth = Arc::new(AuthState::new("boot-secret".into(), None, path.clone()).expect("auth"));
+    let state = FrontDoorState::new(backend, BackendState::Down, auth);
+    let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
+    let door = FrontDoor::new(state, table);
+    for body in [
+        serde_json::json!({"nonce": "aGVsbG8="}),
+        serde_json::json!({"nonce": "aGVsbG8"}),
+        serde_json::json!({"nonce": "aGVsbG8", "kind": "managed", "caller": {"kind": "interactive"}}),
+        serde_json::json!({"nonce": "aGVsbG8", "kind": "unknown", "caller": {}}),
+    ] {
+        let response = request_challenge(&door, body).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["content-type"], "application/json");
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({"proof": "e1a3de0391d5c478a85d0b284268532aeda08f8ec8838e79ec0b9cea5647a5b5"})
+        );
+    }
+    std::fs::write(
+        &path,
+        "api_key: gobby_00000000000000000000000000000000000000000002CZclj\n",
+    )
+    .expect("rotate");
+    let response = request_challenge(&door, serde_json::json!({"nonce": "aGVsbG8"})).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(response).await["proof"],
+        "9960762d237af08d730167b72352b789c6895409a0b4e5490ca201a4466c0cc8"
+    );
+    for nonce in ["a".repeat(45), "!invalid!".into(), "aGVsbG8===".into()] {
+        let response = request_challenge(&door, serde_json::json!({"nonce": nonce})).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+    let response = request_challenge(
+        &door,
+        serde_json::json!({"nonce": "aGVsbG8", "unknown": true}),
+    )
+    .await;
+    assert!(response.status().is_client_error());
+    let response = request_challenge(
+        &door,
+        serde_json::json!({"nonce": "aGVsbG8", "caller": {"unknown": true}}),
+    )
+    .await;
+    assert!(response.status().is_client_error());
+    for body in [
+        serde_json::json!({"nonce": "aGVsbG8", "kind": "unknown"}),
+        serde_json::json!({"nonce": "aGVsbG8", "kind": "interactive", "caller": {"kind": "unknown"}}),
+    ] {
+        let response = request_challenge(&door, body).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response_json(response).await["code"], "claims_mismatch");
+    }
+    for authorization in ["Bearer unknown", ""] {
+        let request = Request::post("/api/runtime/handshake/challenge")
+            .header("authorization", authorization)
+            .body(Body::from("not JSON"))
+            .expect("request");
+        let response = door
+            .handle(request, "127.0.0.1:1234".parse().expect("peer"), false)
+            .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response_json(response).await["code"],
+            "credential_before_proof"
+        );
+    }
+    for content in ["api_key: ''\n", "bind_host: 127.0.0.1\n", "not: [valid"] {
+        std::fs::write(&path, content).expect("unavailable key");
+        let response = request_challenge(&door, serde_json::json!({"nonce": "aGVsbG8"})).await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response_json(response).await["code"],
+            "key_resolver_unavailable"
+        );
+    }
+    std::fs::remove_file(&path).expect("remove bootstrap");
+    let response = request_challenge(&door, serde_json::json!({"nonce": "aGVsbG8"})).await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(seen.try_recv().is_err(), "native challenges reached Python");
+    for body in [
+        serde_json::json!({"nonce": "aGVsbG8", "kind": "managed", "claims": {}}),
+        serde_json::json!({"nonce": "aGVsbG8", "kind": "unknown", "caller": {"kind": "managed", "claims": {}}}),
+    ] {
+        let response = request_challenge(&door, body).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .into_body()
+                .collect()
+                .await
+                .expect("managed body")
+                .to_bytes(),
+            Bytes::from_static(b"ok")
+        );
+        let (path, headers) = tokio::time::timeout(TIMEOUT, seen.recv())
+            .await
+            .expect("managed forwarding")
+            .expect("headers");
+        assert_eq!(path, "/api/runtime/handshake/challenge");
+        for name in [
+            "x-gobby-user-id",
+            "x-gobby-machine-id",
+            "x-gobby-key-id",
+            "x-gobby-front-door",
+        ] {
+            assert!(!headers.contains_key(name), "{name}");
+        }
+    }
+}
+
+struct FixedResolver {
+    calls: Mutex<Vec<String>>,
+    identity: Option<KeyIdentity>,
+}
+
+impl KeyResolver for FixedResolver {
+    fn resolve<'a>(&'a self, key_hash: &'a str) -> ResolveFuture<'a> {
+        Box::pin(async move {
+            self.calls
+                .lock()
+                .expect("resolver calls")
+                .push(key_hash.to_owned());
+            Ok(self.identity.clone())
+        })
+    }
+}
+
+struct FailedResolver;
+
+#[tokio::test]
+async fn postgres_resolver_and_node_mode_fail_closed() {
+    let target = refused_addr().await;
+    let resolver = Arc::new(PostgresKeyResolver::new("not a PostgreSQL DSN"));
+    let front_door = authenticated_front_door(target, resolver);
+    let auth = Arc::new(
+        AuthState::new("boot-secret".into(), None, Default::default()).expect("node auth"),
+    );
+    let state = FrontDoorState::new(target, BackendState::Down, auth);
+    let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
+    let node = FrontDoor::new(state, table);
+    for door in [front_door, node] {
+        let request = Request::builder()
+            .uri("/api/mcp/servers")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .body(Body::empty())
+            .expect("request");
+        let response = door
+            .handle(request, "127.0.0.1:1234".parse().expect("peer"), false)
+            .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(body["code"], "key_resolver_unavailable");
+    }
+}
+
+impl KeyResolver for FailedResolver {
+    fn resolve<'a>(&'a self, _key_hash: &'a str) -> ResolveFuture<'a> {
+        Box::pin(async { anyhow::bail!("isolated resolver failure") })
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn resolver_error_is_503_and_missing_secret_refuses_start() {
+    let front_door = authenticated_front_door(refused_addr().await, Arc::new(FailedResolver));
+    let request = Request::builder()
+        .uri("/api/mcp/servers")
+        .header("authorization", format!("Bearer {TEST_API_KEY}"))
+        .body(Body::empty())
+        .expect("request");
+    let response = front_door
+        .handle(request, "127.0.0.1:1234".parse().expect("peer"), false)
+        .await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(body["code"], "key_resolver_unavailable");
+
+    let home = tempfile::tempdir().expect("home");
+    let mut ports = Vec::new();
+    while ports.len() < 2 {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("probe");
+        let port = probe.local_addr().expect("probe addr").port();
+        if port <= 65435 && port != 60891 && !ports.contains(&port) {
+            ports.push(port);
+        }
+    }
+    std::fs::write(
+        home.path().join("bootstrap.yaml"),
+        format!("daemon_port: {}\nwebsocket_port: {}\n", ports[0], ports[1]),
+    )
+    .expect("bootstrap");
+    for secret in [None, Some("")] {
+        let (reader, writer) = std::io::pipe().expect("pipe");
+        drop(writer);
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_gdaemon"));
+        command
+            .arg("serve")
+            .env("GOBBY_HOME", home.path())
+            .env("GOBBY_PARENT_FD", "0")
+            .env_remove("GOBBY_FRONT_DOOR_SECRET")
+            .stdin(std::process::Stdio::from(reader));
+        if let Some(secret) = secret {
+            command.env("GOBBY_FRONT_DOOR_SECRET", secret);
+        }
+        let output = command.output().expect("serve refusal");
+        assert!(!output.status.success(), "serve accepted {secret:?}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("GOBBY_FRONT_DOOR_SECRET"));
+    }
+}
+
+#[tokio::test]
+async fn break_glass_header_passes_through_when_resolver_fails() {
+    let (backend, mut seen) = header_backend().await;
+    let front_door = authenticated_front_door(backend, Arc::new(FailedResolver));
+    let request = Request::builder()
+        .uri("/api/mcp/servers")
+        .header("x-gobby-break-glass", "recovery-secret")
+        .header("x-gobby-user-id", "forged-user")
+        .header("x-gobby-machine-id", "forged-machine")
+        .header("x-gobby-key-id", "forged-key")
+        .header("x-gobby-front-door", "forged-secret")
+        .body(Body::empty())
+        .expect("request");
+    let response = front_door
+        .handle(request, "127.0.0.1:1234".parse().expect("peer"), false)
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, headers) = tokio::time::timeout(TIMEOUT, seen.recv())
+        .await
+        .expect("backend request")
+        .expect("headers");
+    assert_eq!(headers["x-gobby-break-glass"], "recovery-secret");
+    for name in [
+        "x-gobby-user-id",
+        "x-gobby-machine-id",
+        "x-gobby-key-id",
+        "x-gobby-front-door",
+    ] {
+        assert!(!headers.contains_key(name), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn invalid_keys_skip_resolver_and_revoked_keys_refuse() {
+    let resolver = Arc::new(FixedResolver {
+        calls: Mutex::new(Vec::new()),
+        identity: None,
+    });
+    let front_door = authenticated_front_door(refused_addr().await, resolver.clone());
+    for key in [
+        "gobby_invalid",
+        "gobby_003aUlTJC7tjlCTQj2uNU3MFagCXG9LRKRcwGkBIDlf1Yo7hQ",
+        "unknown-token",
+        "",
+    ] {
+        let request = Request::builder()
+            .uri("/api/mcp/servers")
+            .header("authorization", format!("Bearer {key}"))
+            .body(Body::empty())
+            .expect("request");
+        let response = front_door
+            .handle(request, "127.0.0.1:1234".parse().expect("peer"), false)
+            .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{key}");
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(body["code"], "missing_auth");
+    }
+    assert!(resolver.calls.lock().expect("calls").is_empty());
+    let request = Request::builder()
+        .uri("/api/mcp/servers")
+        .header("authorization", format!("Bearer {TEST_API_KEY}"))
+        .body(Body::empty())
+        .expect("request");
+    let response = front_door
+        .handle(request, "127.0.0.1:1234".parse().expect("peer"), false)
+        .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(resolver.calls.lock().expect("calls").len(), 1);
+}
+
+fn authenticated_front_door(target: SocketAddr, resolver: Arc<dyn KeyResolver>) -> FrontDoor {
+    let state = FrontDoorState::new(
+        target,
+        BackendState::Down,
+        Arc::new(
+            AuthState::new("boot-secret".into(), Some(resolver), Default::default())
+                .expect("auth state"),
+        ),
+    );
+    let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
+    FrontDoor::new(state, table)
+}
+
+async fn start_authenticated_front_door(backend: SocketAddr, auth: Arc<AuthState>) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("front door");
+    let addr = listener.local_addr().expect("front door addr");
+    tokio::spawn(async move {
+        gobby_daemon::serve::serve(
+            vec![gobby_daemon::serve::PublicListener { listener, backend }],
+            &BTreeMap::new(),
+            None,
+            auth,
+            std::future::pending(),
+        )
+        .await
+        .expect("serve");
+    });
+    addr
+}
+
+#[tokio::test]
+async fn valid_key_forwards_identity_headers() {
+    let (backend, mut seen) = header_backend().await;
+    let resolver = Arc::new(FixedResolver {
+        calls: Mutex::new(Vec::new()),
+        identity: Some(KeyIdentity {
+            user_id: "operator-user".into(),
+            machine_id: "node-machine".into(),
+            key_id: "operator-key".into(),
+        }),
+    });
+    let front_door = authenticated_front_door(backend, resolver.clone());
+    let request = Request::builder()
+        .uri("/api/mcp/servers")
+        .header("authorization", format!("Bearer {TEST_API_KEY}"))
+        .header("x-gobby-user-id", "forged-user")
+        .header("x-gobby-machine-id", "forged-machine")
+        .header("x-gobby-key-id", "forged-key")
+        .header("x-gobby-front-door", "forged-secret")
+        .body(Body::empty())
+        .expect("request");
+    let response = front_door
+        .handle(request, "127.0.0.1:1234".parse().expect("peer"), false)
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, headers) = tokio::time::timeout(TIMEOUT, seen.recv())
+        .await
+        .expect("backend request")
+        .expect("headers");
+    assert_eq!(headers["x-gobby-user-id"], "operator-user");
+    assert_eq!(headers["x-gobby-machine-id"], "node-machine");
+    assert_eq!(headers["x-gobby-key-id"], "operator-key");
+    assert_eq!(headers["x-gobby-front-door"], "boot-secret");
+    assert_eq!(headers["authorization"], format!("Bearer {TEST_API_KEY}"));
+    assert_eq!(
+        *resolver.calls.lock().expect("calls"),
+        vec![gobby_core::api_key_format::hash(TEST_API_KEY)]
+    );
+
+    let (backend, capture) = ws_backend(0, Vec::new()).await;
+    let auth = Arc::new(
+        AuthState::new(
+            "boot-secret".into(),
+            Some(resolver.clone()),
+            Default::default(),
+        )
+        .expect("auth"),
+    );
+    let address = start_authenticated_front_door(backend, auth).await;
+    let mut client = TcpStream::connect(address).await.expect("client");
+    let forged = format!(
+        "authorization: Bearer {TEST_API_KEY}\r\nx-gobby-user-id: forged\r\nx-gobby-machine-id: forged\r\nx-gobby-key-id: forged\r\nx-gobby-front-door: forged\r\n"
+    );
+    let (response, _) =
+        tokio::time::timeout(TIMEOUT, ws_upgrade(&mut client, address, "/ws", &forged))
+            .await
+            .expect("upgrade");
+    assert!(response.starts_with("HTTP/1.1 101"), "{response}");
+    let capture = tokio::time::timeout(TIMEOUT, capture)
+        .await
+        .expect("capture")
+        .expect("backend");
+    for line in [
+        "x-gobby-user-id: operator-user",
+        "x-gobby-machine-id: node-machine",
+        "x-gobby-key-id: operator-key",
+        "x-gobby-front-door: boot-secret",
+    ] {
+        assert!(
+            head_has(&capture.request_head, line),
+            "{line}: {}",
+            capture.request_head
+        );
+    }
+    assert!(!capture.request_head.contains("forged"));
+    assert_eq!(resolver.calls.lock().expect("calls").len(), 2);
+
+    let auth = Arc::new(
+        AuthState::new(
+            "boot-secret".into(),
+            Some(resolver.clone()),
+            Default::default(),
+        )
+        .expect("auth"),
+    );
+    let address = start_authenticated_front_door(refused_addr().await, auth).await;
+    for key in ["unknown", "gobby_bad-checksum"] {
+        let mut client = TcpStream::connect(address).await.expect("client");
+        let (response, _) = tokio::time::timeout(
+            TIMEOUT,
+            ws_upgrade(
+                &mut client,
+                address,
+                "/ws",
+                &format!("authorization: Bearer {key}\r\n"),
+            ),
+        )
+        .await
+        .expect("refusal");
+        assert!(response.starts_with("HTTP/1.1 401"), "{response}");
+    }
+    assert_eq!(resolver.calls.lock().expect("calls").len(), 2);
+}
+
 struct ChannelBody(mpsc::Receiver<Bytes>);
 
 impl hyper::body::Body for ChannelBody {
@@ -114,7 +586,7 @@ async fn http_passthrough_preserves_headers_and_body() {
     let request = Request::post("/api/sessions/list?limit=5&q=a%20b")
         .header("host", "localhost:60887")
         .header("x-custom", "kept")
-        .header("authorization", "Bearer token")
+        .header("authorization", "Bearer gobby-agent-v1.passthrough")
         .header("connection", "keep-alive, x-hop")
         .header("x-hop", "dropped")
         .body(Full::new(Bytes::from_static(b"{\"payload\":true}")))
@@ -128,7 +600,10 @@ async fn http_passthrough_preserves_headers_and_body() {
     assert_eq!(seen.path_and_query, "/api/sessions/list?limit=5&q=a%20b");
     assert_eq!(seen.headers["host"], "localhost:60887");
     assert_eq!(seen.headers["x-custom"], "kept");
-    assert_eq!(seen.headers["authorization"], "Bearer token");
+    assert_eq!(
+        seen.headers["authorization"],
+        "Bearer gobby-agent-v1.passthrough"
+    );
     assert!(!seen.headers.contains_key("x-hop"));
     assert_eq!(seen.body, Bytes::from_static(b"{\"payload\":true}"));
 
@@ -474,6 +949,7 @@ fn spawn_serve(parent_fd: Option<&str>, reader: std::io::PipeReader) -> (ServeCh
     command
         .arg("serve")
         .env("GOBBY_HOME", home.path())
+        .env("GOBBY_FRONT_DOOR_SECRET", "test-front-door-secret")
         .env_remove("GOBBY_PARENT_FD")
         .stdin(Stdio::from(reader));
     if let Some(fd) = parent_fd {
@@ -1178,6 +1654,7 @@ fn spawn_tls_serve(home: &std::path::Path, ports: [u16; 2], log: &str) -> (TlsSe
         Command::new(env!("CARGO_BIN_EXE_gdaemon"))
             .arg("serve")
             .env("GOBBY_HOME", home)
+            .env("GOBBY_FRONT_DOOR_SECRET", "test-front-door-secret")
             .env_remove("GOBBY_PARENT_FD")
             .stdin(Stdio::null())
             .stderr(Stdio::from(std::fs::File::create(&log).expect("log file")))

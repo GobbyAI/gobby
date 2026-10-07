@@ -23,6 +23,22 @@ from gobby.utils.local_token import (
 pytestmark = pytest.mark.unit
 
 
+def test_operator_key_reads_bootstrap_fresh(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bootstrap = tmp_path / "bootstrap.yaml"
+    monkeypatch.setattr(local_token, "_daemon_bootstrap", bootstrap)
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    assert local_token.read_local_api_token() is None
+    bootstrap.write_text("api_key: first-key\n", encoding="utf-8")
+    assert local_token.read_local_api_token() == "first-key"
+    bootstrap.write_text("api_key: second-key\n", encoding="utf-8")
+    assert local_token.read_local_api_token() == "second-key"
+    for content in ("", "api_key: ''\n", "api_key: 123\n", "api_key: [\n"):
+        bootstrap.write_text(content, encoding="utf-8")
+        assert local_token.read_local_api_token() is None
+
+
 def test_managed_tokens_sign_with_derived_key() -> None:
     from gobby.utils.local_token import derive_managed_signing_key
 
@@ -200,25 +216,15 @@ def test_issued_tokens_carry_signed_machine_id() -> None:
     assert verify_agent_api_token(unsigned, derive_managed_signing_key(operator_token)) is None
 
 
-def test_unreadable_local_token_reads_as_absent(
+def test_unreadable_bootstrap_key_reads_as_absent(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A sandbox denial on the operator token is "no token", not a crash.
-
-    ``local_cli_token`` is one of the credential roots a managed grant may never
-    read, so ``gobby mcp-server`` inside an agent sandbox is answered with
-    ``PermissionError``. Run that command under a real Ask sandbox policy with no
-    run capability in the environment and the error escapes here, exits the
-    process as ``MCP server failed: [Errno 1] Operation not permitted``, and the
-    client registers no server at all. ``daemon_auth_headers`` already prefers
-    the run capability and copes with no operator token, so the denial has to
-    arrive as ``None``.
-    """
-    token_path = tmp_path / "local_cli_token"
-    token_path.write_text("operator-token", encoding="utf-8")
+    """A sandbox denial on bootstrap is an absent credential, not a crash."""
+    token_path = tmp_path / "bootstrap.yaml"
+    token_path.write_text("api_key: operator-token\n", encoding="utf-8")
     token_path.chmod(0o000)
-    monkeypatch.setattr(local_token, "local_token_path", lambda: token_path)
+    monkeypatch.setattr(local_token, "daemon_bootstrap_path", lambda: token_path)
     try:
         assert local_token.read_local_api_token() is None
     finally:
@@ -230,10 +236,10 @@ def test_run_capability_is_preferred_over_an_unreadable_operator_token(
     tmp_path: Path,
 ) -> None:
     """The sandboxed MCP bridge authenticates with its run capability."""
-    token_path = tmp_path / "local_cli_token"
-    token_path.write_text("operator-token", encoding="utf-8")
+    token_path = tmp_path / "bootstrap.yaml"
+    token_path.write_text("api_key: operator-token\n", encoding="utf-8")
     token_path.chmod(0o000)
-    monkeypatch.setattr(local_token, "local_token_path", lambda: token_path)
+    monkeypatch.setattr(local_token, "daemon_bootstrap_path", lambda: token_path)
     monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", "run-capability")
     monkeypatch.setenv("GOBBY_SESSION_ID", "session-1")
     try:

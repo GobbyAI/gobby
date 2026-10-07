@@ -436,7 +436,7 @@ def test_namespace_replacement_unsets_omitted_overrides(mutations: ConfigMutatio
 
 
 def test_restricted_keys_require_internal_mutation(mutations: ConfigMutations) -> None:
-    patch = ConfigPatch(values={"auth.api_token_hash": "hash"})
+    patch = ConfigPatch(values={"mcp.tool_embeddings.scoped_payload_version": 1})
 
     with pytest.raises(ConfigValidationError, match="restricted"):
         mutations.patch(expected_revision=0, patch=patch)

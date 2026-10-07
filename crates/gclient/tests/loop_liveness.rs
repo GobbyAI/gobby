@@ -586,12 +586,8 @@ async fn pane_workspace(
         .expect("connect live daemon");
     let mut workspace = Workspace::live(daemon);
     let home = tempfile::tempdir().expect("gobby home");
-    std::fs::write(
-        home.path()
-            .join(gobby_core::local_token::LOCAL_CLI_TOKEN_FILENAME),
-        "local-token\n",
-    )
-    .expect("write local cli token");
+    std::fs::write(home.path().join("bootstrap.yaml"), "api_key: local-token\n")
+        .expect("write API key");
     let focused = terminals.last().expect("at least one terminal");
     mock.seed_workspace("project-1", &[(terminals, focused)]);
     workspace.set_gobby_home(home.path().to_path_buf());

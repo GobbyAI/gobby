@@ -528,7 +528,6 @@ mod tests {
         HostState::new(
             HostConfig::default(),
             "control".to_string(),
-            "local".to_string(),
             "epoch".to_string(),
             crate::host::image::PinnedImage::for_tests(),
             1,

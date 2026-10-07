@@ -15,7 +15,7 @@ use super::handshake::{
     SESSION_HEADER,
 };
 use super::*;
-use crate::local_token::{AUTHORIZATION_HEADER, LOCAL_CLI_TOKEN_FILENAME};
+use crate::local_token::AUTHORIZATION_HEADER;
 
 const TOKEN: &str = "operator-token";
 const MACHINE: &str = "machine-test";
@@ -40,7 +40,11 @@ impl Harness {
         let home = tempfile::tempdir().expect("home");
         let project = tempfile::tempdir().expect("project");
         fs::write(home.path().join("machine_id"), MACHINE).expect("machine");
-        fs::write(home.path().join(LOCAL_CLI_TOKEN_FILENAME), TOKEN).expect("token");
+        fs::write(
+            home.path().join("bootstrap.yaml"),
+            format!("api_key: {TOKEN}\n"),
+        )
+        .expect("API key");
         let gobby = project.path().join(".gobby");
         fs::create_dir_all(&gobby).expect("project dir");
         fs::write(

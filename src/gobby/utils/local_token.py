@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Literal
 
 from gobby.config.bootstrap_io import bootstrap_path
-from gobby.paths import get_gobby_home
 from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
@@ -54,7 +53,6 @@ def read_managed_signing_key(bootstrap: Path | None = None) -> bytes | None:
 
 
 # This is a filename, not a credential value.
-LOCAL_API_TOKEN_FILENAME = "local_cli_token"  # nosec B105
 GOBBY_AGENT_API_TOKEN_ENV = "GOBBY_AGENT_API_TOKEN"
 GOBBY_MANAGED_EXECUTION_ID_ENV = "GOBBY_MANAGED_EXECUTION_ID"
 _AGENT_TOKEN_VERSION = "gobby-agent-v1"
@@ -80,30 +78,17 @@ class AgentApiTokenClaims:
     kind: str | None = None
 
 
-def local_token_path() -> Path:
-    """Return the local daemon API token path."""
-    return get_gobby_home() / LOCAL_API_TOKEN_FILENAME
+def read_local_api_token(bootstrap: Path | None = None) -> str | None:
+    """Read the explicit or startup-bound bootstrap API key fresh, failing closed."""
+    from gobby.config.bootstrap import BootstrapConfigError
+    from gobby.config.bootstrap_io import read_bootstrap_yaml
 
-
-def read_local_api_token() -> str | None:
-    """Read the local daemon API token when a readable non-empty file exists.
-
-    A sandboxed caller is denied this path on purpose: the operator token is one
-    of the managed-grant credential roots, so ``gobby mcp-server`` running inside
-    an agent sandbox is answered with ``PermissionError`` rather than the file.
-    That answer means the same thing as "no operator token here", and returning
-    ``None`` lets ``daemon_auth_headers`` fall through to a request the daemon
-    refuses legibly, instead of an unhandled ``OSError`` killing the MCP server
-    during startup with a bare ``Operation not permitted``.
-    """
     try:
-        token = local_token_path().read_text().strip()
-    except FileNotFoundError:
+        api_key = read_bootstrap_yaml(bootstrap or daemon_bootstrap_path()).get("api_key")
+    except (OSError, BootstrapConfigError):
+        logger.debug("Bootstrap API key is unavailable; continuing without it")
         return None
-    except PermissionError:
-        logger.debug("Local API token is not readable from here; continuing without it")
-        return None
-    return token or None
+    return api_key.strip() or None if isinstance(api_key, str) else None
 
 
 def issue_agent_api_token(

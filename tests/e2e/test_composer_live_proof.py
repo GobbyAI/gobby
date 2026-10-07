@@ -41,6 +41,7 @@ from tests.e2e.composer_proof_races import ComposerRaces
 from tests.e2e.composer_proof_trace import ProofTrace
 from tests.e2e.conftest import (
     DaemonInstance,
+    copy_daemon_api_key,
     link_operator_srt,
     prepare_daemon_env,
     terminate_process_tree,
@@ -139,11 +140,8 @@ async def composer_fixture(
         ),
         source="22915-isolated-composer-proof",
     )
-    token = uuid4().hex
     for directory in (home, nested, host):
-        target = directory / "local_cli_token"
-        target.write_text(token)
-        target.chmod(0o600)
+        copy_daemon_api_key(home, directory)
     env = sealed_environment(dict(os.environ), home=home, native_bin=native_bin)
     bins = [binary.path.parent for binary in (*spec.providers.values(), *spec.support_tools)]
     env["PATH"] = (

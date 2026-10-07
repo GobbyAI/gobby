@@ -50,6 +50,7 @@ from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
     MCPTestClient,
+    copy_daemon_api_key,
     daemon_health_unavailable,
     daemon_token,
     prepare_daemon_env,
@@ -171,11 +172,9 @@ def rig(
     srt = stage_real_srt(home)
     # Each resource is owned the moment it exists, so a failed setup still frees it.
     with host_socket_dir() as socket_dir:
-        token = uuid4().hex
         for directory in (home, home / ".gobby", socket_dir):
             directory.mkdir(exist_ok=True)
-            (directory / "local_cli_token").write_text(token)
-            (directory / "local_cli_token").chmod(0o600)
+            copy_daemon_api_key(home, directory)
         control_token_path(socket_dir).write_text(uuid4().hex)
         control_token_path(socket_dir).chmod(0o600)
         # Two three-seat pods are live at once in scenarios A and D.

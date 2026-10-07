@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,8 @@ from tests.e2e.conftest import (
     DaemonInstance,
     _postgres_url_for_schema,
     _seed_e2e_runtime_state,
+    copy_daemon_api_key,
+    daemon_token,
     find_free_port,
     prepare_daemon_env,
     terminate_process_tree,
@@ -182,13 +185,12 @@ def test_single_active_daemon_and_explicit_handoff(
         wait_for_daemon_health(active.http_port, log_file=active.log_file)
         assert wait_for_port(active.ws_port, timeout=10.0)
 
-        token_path = active.gobby_home / "local_cli_token"
-        assert token_path.exists()
-        for credential_name in ("local_cli_token", ".secret_kek"):
+        copy_daemon_api_key(active.gobby_home, standby_config.parent)
+        for credential_name in (".secret_kek",):
             source = active.gobby_home / credential_name
             if source.exists():
                 shutil.copy2(source, standby_config.parent / credential_name)
-        token = token_path.read_text().strip()
+        token = daemon_token(active.gobby_home)
         headers = {"Authorization": f"Bearer {token}"}
 
         standby = _spawn_daemon(e2e_project_dir, standby_config, ports[2], ports[3])
@@ -197,7 +199,20 @@ def test_single_active_daemon_and_explicit_handoff(
         assert active_machine_id != standby_machine_id
         assert httpx.get(f"{standby.http_url}/mcp", timeout=2.0).status_code == 404
         assert httpx.get(f"{standby.http_url}/api/sessions", timeout=2.0).status_code == 404
-        assert not wait_for_port(standby.ws_port, timeout=1.0)
+        # The front door owns both public ports even while the Python standby
+        # serves only lease control. An upgrade must not reach a live WS backend.
+        refused_upgrade = httpx.get(
+            f"http://127.0.0.1:{standby.ws_port}/",
+            headers={
+                **headers,
+                "Connection": "Upgrade",
+                "Upgrade": "websocket",
+                "Sec-WebSocket-Version": "13",
+                "Sec-WebSocket-Key": base64.b64encode(b"standby ws probe!").decode("ascii"),
+            },
+            timeout=2.0,
+        )
+        assert refused_upgrade.status_code == 503, refused_upgrade.text
         assert "gdaemon schema apply completed" not in standby.read_logs()
 
         held = httpx.post(

@@ -303,7 +303,7 @@ def init_servers(runner: GobbyRunner) -> None:
         runner.websocket_server = WebSocketServer(
             config=websocket_config,
             mcp_manager=runner.mcp_proxy,
-            auth_callback=runner.http_server.auth_service.verify_ws_token,
+            auth_callback=runner.http_server.auth_service.verify_ws_identity,
             session_manager=runner.session_manager,
             db_executor=runner.db_executor,
             daemon_config=config,
@@ -535,12 +535,14 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     if database is not None:
         bind_fenced_writer(database, lease)
     server.grant_service = presenter
+    front_door = getattr(runner, "front_door_child", None)
     server.auth_service.bind_runtime(
         grant_service=presenter,
         lease_live=lease.owns_live_lease,
         local_machine_id=lease.machine_id,
         effect_fence=fence,
         clock=lambda: int(time.time()),
+        front_door_secret=front_door.secret if front_door is not None else None,
     )
 
     credentials = getattr(runner, "managed_credential_manager", None)

@@ -164,7 +164,11 @@ pub fn spawn_host_with_env(extra: &[&str], env: &[(&str, &str)], removed: &[&str
         perms.set_mode(0o600);
         std::fs::set_permissions(&token_path, perms).unwrap();
     }
-    std::fs::write(dir.path().join("local_cli_token"), LOCAL).unwrap();
+    std::fs::write(
+        dir.path().join("bootstrap.yaml"),
+        format!("api_key: {LOCAL}\n"),
+    )
+    .unwrap();
     let mut args = vec!["--tmux-poll-interval-ms", "50"];
     args.extend_from_slice(extra);
     let mut host = crate::host_support::spawn_host_with_env(dir.path(), &args, env, removed);

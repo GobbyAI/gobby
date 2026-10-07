@@ -33,6 +33,7 @@ from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
     MCPTestClient,
+    copy_daemon_api_key,
     create_host_socket_dir,
     daemon_token,
     stop_terminal_host,
@@ -134,13 +135,10 @@ def e2e_pre_daemon_setup(
 ) -> Iterator[None]:
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(_gterm_bin_dir()))
     socket_dir = _short_host_socket_dir()
-    token = uuid.uuid4().hex
     daemon_home = e2e_config[0].parent
     for directory in (daemon_home, daemon_home / ".gobby", socket_dir):
         directory.mkdir(exist_ok=True)
-        token_path = directory / "local_cli_token"
-        token_path.write_text(token)
-        token_path.chmod(0o600)
+        copy_daemon_api_key(daemon_home, directory)
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 
     try:
@@ -456,11 +454,9 @@ async def _open_viewer(
     host_dir = os.environ.get("GOBBY_E2E_HOST_SOCKET_DIR")
     frame_token = token
     if host_dir:
-        token_path = Path(host_dir) / "local_cli_token"
-        if token_path.is_file():
-            frame_token = token_path.read_text(encoding="utf-8").strip()
-        else:
-            frame_token = ""
+        from gobby.utils.local_token import read_local_api_token
+
+        frame_token = read_local_api_token(Path(host_dir) / "bootstrap.yaml") or ""
     reader, writer = await asyncio.open_unix_connection(locator.host_socket)
     client = FrameClient(reader, writer)
     await client.handshake(locator, local_token=frame_token, cols=cols, rows=rows)
