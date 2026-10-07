@@ -11,6 +11,8 @@ from gobby.hooks.provider_launch_guard import _SHELLS, _unwrap
 SHELL_WRAPPER_DEPTH = 8
 # Larger script bodies stay opaque.
 SCRIPT_BODY_LIMIT = 64 * 1024
+# Script bodies one command may read in all, since each body can run more scripts.
+SCRIPT_READ_BUDGET = 8
 # Room for a `#!` line: the kernel reads at most this much of it.
 _HEADER_LIMIT = 512
 # env options that take no value; any other option leaves the interpreter unknown.

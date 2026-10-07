@@ -27,7 +27,8 @@ rules:
           A shell script file (`bash x.sh`, or a path-invoked script without a
           non-shell #! interpreter) is classified by its body like a literal
           sh -c or bash -c string. It requires an active claim wherever it lives
-          when its body cannot be read in full (missing, over 64 KiB, not UTF-8),
+          when its body cannot be read in full (missing, over 64 KiB, not UTF-8,
+          or past the eight script bodies one command may read),
           runs a program unknown before it runs, or may write its own file, or
           when another part of the same command writes files. Programs read from
           stdin or by source/. always require a claim.

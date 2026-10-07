@@ -1,5 +1,6 @@
 """Canonical tool metadata inference."""
 
+from contextvars import ContextVar
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -101,6 +102,7 @@ from gobby.hooks.code_navigation_recovery import (
 )
 from gobby.hooks.provider_launch_guard import _unwrap
 from gobby.hooks.shell_execution import (
+    SCRIPT_READ_BUDGET,
     SHELL_WRAPPER_DEPTH,
     path_execution,
     preserves_directory,
@@ -115,6 +117,8 @@ _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
 )
 # Characters in echo arguments that imply command substitution rather than a plain marker.
 _ECHO_UNSAFE_CHARS = frozenset({"$", "`"})
+# Script bodies the current top-level command may still read; none outside one.
+_script_reads_left: ContextVar[int] = ContextVar("_script_reads_left", default=0)
 
 
 def _is_read_only_pipeline_stage(tokens: list[ShellToken], parts: list[str]) -> bool:
@@ -164,8 +168,21 @@ def _normalize_shell_tool_metadata(
     """Infer canonical semantics from visible shell command segments.
 
     ``base_cwd`` resolves relative command words only until a segment may change the
-    shell's directory; after that they fail closed.
+    shell's directory; after that they fail closed. A top-level call grants the
+    script-read budget its nested calls share.
     """
+    if depth:
+        return _classify_shell_command(command, cwd=cwd, depth=depth, base_cwd=base_cwd)
+    budget = _script_reads_left.set(SCRIPT_READ_BUDGET)
+    try:
+        return _classify_shell_command(command, cwd=cwd, depth=depth, base_cwd=base_cwd)
+    finally:
+        _script_reads_left.reset(budget)
+
+
+def _classify_shell_command(
+    command: str, *, cwd: str | None, depth: int, base_cwd: Path | None
+) -> dict[str, Any]:
     try:
         scan = scan_shell_command(command)
     except ValueError:
@@ -510,8 +527,10 @@ def _classify_shell_segment_without_redirection(
     if execution is not None:
         command = execution.command
         script: tuple[Path, str] | None = None
-        if execution.script_word is not None and depth < SHELL_WRAPPER_DEPTH:
+        reads_left = _script_reads_left.get()
+        if execution.script_word is not None and depth < SHELL_WRAPPER_DEPTH and reads_left:
             # A shell script's body classifies like a `-c` program run in this directory.
+            _script_reads_left.set(reads_left - 1)
             script = read_script_body(execution.script_word, base_cwd)
             command = script[1] if script else None
         if (execution.script_file and script is None) or (

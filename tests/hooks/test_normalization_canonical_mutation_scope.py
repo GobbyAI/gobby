@@ -14,6 +14,7 @@ from gobby.hooks._normalization_canonical import (
 from gobby.hooks._normalization_metadata import _merge_shell_segment_metadata
 from gobby.hooks._normalization_operands import _resolve_long_option
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
+from gobby.hooks.shell_execution import SCRIPT_READ_BUDGET, read_script_body
 
 pytestmark = pytest.mark.unit
 
@@ -375,6 +376,22 @@ def test_unclassifiable_or_self_rewriting_script_requires_a_claim(
     data = _shell_write_metadata(f"bash {_script(script, body)}", tmp_path)
 
     assert data.get("canonical_script_execution") is True
+
+
+def test_self_calling_script_spends_one_bounded_read_budget(tmp_path: Path) -> None:
+    fan = tmp_path / "scratchpad" / "fan.sh"
+    _script(fan, "#!/bin/bash\n" + f"{fan}\n" * 4)
+    reader = _script(tmp_path / "scratchpad" / "q.sh", "#!/bin/zsh\necho ready\n")
+    with patch(
+        "gobby.hooks._normalization_canonical.read_script_body", wraps=read_script_body
+    ) as reads:
+        fanned = _shell_write_metadata(str(fan), tmp_path)
+        assert reads.call_count == SCRIPT_READ_BUDGET
+        # The next command gets a fresh budget.
+        later = _shell_write_metadata(str(reader), tmp_path)
+
+    assert fanned.get("canonical_script_execution") is True
+    assert not later.get("canonical_script_execution")
 
 
 def test_variable_write_in_script_body_has_unknown_scope(tmp_path: Path) -> None:
