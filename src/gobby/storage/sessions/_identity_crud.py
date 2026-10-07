@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from gobby.storage.hub.protocol import HubDatabase, SessionSeqMutation
+from gobby.storage.hub.read_scope import scoped_read
 from gobby.storage.session_lifecycle import session_has_retained_references
 from gobby.storage.session_models import Session
 from gobby.storage.session_resolution import is_session_uuid
@@ -13,6 +14,8 @@ from gobby.utils.datetime import utc_now
 
 from ._registration_cache import invalidate_session_caches
 from ._web_chat_crud import _SessionWebChatCRUDMixin
+
+_SESSION_ROW_TABLES = frozenset({"sessions", "projects"})
 
 _BLOCKING_REFERENCE_COLUMNS = (
     ("sessions", ("parent_session_id",), "child sessions"),
@@ -100,9 +103,14 @@ class _SessionIdentityCRUDMixin(_SessionWebChatCRUDMixin):
         """Get session by ID."""
         if not is_session_uuid(session_id):
             return None
-        row = self.db.fetchone(
-            "SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id) WHERE id = %s",
-            (session_id,),
+        row = scoped_read(
+            self.db,
+            ("session", session_id),
+            _SESSION_ROW_TABLES,
+            lambda: self.db.fetchone(
+                "SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id) WHERE id = %s",
+                (session_id,),
+            ),
         )
         return Session.from_row(row) if row else None
 
