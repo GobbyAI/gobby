@@ -197,11 +197,11 @@ fn dispatch_inner(args: Vec<String>, env: CommandEnv) -> Result<i32, CommandErro
         Some(path) => std::fs::read_to_string(&path)
             .map(|s| s.trim().to_owned())
             .map_err(|e| CommandError::connection(format!("token file {}: {e}", path.display())))?,
-        None => gobby_core::local_token::read_local_cli_token()
+        None => gobby_core::local_token::read_api_key()
             .map_err(|e| CommandError::connection(e.to_string()))?,
     };
     if token.is_empty() {
-        return Err(CommandError::connection("local CLI token is empty"));
+        return Err(CommandError::connection("daemon credential is empty"));
     }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

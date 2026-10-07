@@ -1,6 +1,5 @@
 """Native binary dir selection for e2e daemons, kept outside the e2e autouse-fixture subtree."""
 
-import errno
 import os
 from pathlib import Path
 
@@ -100,22 +99,16 @@ def test_checkout_gdaemon_survives_pinned_gterm_dir(
     assert dict(os.environ) == environ_before
 
 
-def test_pinned_files_are_copied_where_links_are_refused(
+def test_pinned_files_are_copied_with_their_modes(
     checkout_gdaemon: Path,
     installed_dir: Path,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A sandbox that cannot write the pinned dir refuses every link, so its files are copied."""
+    """Every pinned file, dotfiles included, is copied into the test home with its mode."""
     runtime = installed_dir / ".ghook-runtime.json"
     runtime.write_text('{"runtime": "installed"}')
     runtime.chmod(0o644)
     backup = _executable(installed_dir / ".gcode.bak-v435")
-
-    def sandboxed_link(src: Path, dst: Path) -> None:
-        raise PermissionError(errno.EPERM, os.strerror(errno.EPERM), str(src))
-
-    monkeypatch.setattr(os, "link", sandboxed_link)
     home = tmp_path / "home"
     home.mkdir()
     base = {"GOBBY_TEST_GDAEMON": "checkout", NATIVE_BIN_DIR_ENV: str(installed_dir)}
@@ -130,25 +123,6 @@ def test_pinned_files_are_copied_where_links_are_refused(
         assert copied.stat().st_mode == pinned.stat().st_mode
     assert (bin_dir / GDAEMON).resolve() == checkout_gdaemon.resolve()
     assert not (bin_dir / IDENTITY_STAMP_NAME).exists()
-
-
-def test_cross_filesystem_pin_is_copied_without_links(
-    checkout_gdaemon: Path,
-    installed_dir: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A pinned dir need not share a filesystem with the isolated home."""
-
-    def cross_device(src: Path, dst: Path) -> None:
-        raise OSError(errno.EXDEV, os.strerror(errno.EXDEV), str(src), None, str(dst))
-
-    monkeypatch.setattr(os, "link", cross_device)
-    base = {"GOBBY_TEST_GDAEMON": "checkout", NATIVE_BIN_DIR_ENV: str(installed_dir)}
-
-    isolated = Path(e2e_fixtures.prepare_daemon_env(base, home_dir=tmp_path)[NATIVE_BIN_DIR_ENV])
-    assert (isolated / GTERM).read_bytes() == (installed_dir / GTERM).read_bytes()
-    assert not os.path.samefile(isolated / GTERM, installed_dir / GTERM)
 
 
 @pytest.mark.parametrize(

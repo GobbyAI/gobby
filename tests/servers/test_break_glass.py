@@ -48,7 +48,9 @@ def test_break_glass_admits_only_loopback_holder_without_database(
         database_calls.append(None)
         raise RuntimeError("database unavailable")
 
-    service = AuthService(broken_database, token_file=tmp_path / "token", break_glass_file=path)
+    service = AuthService(
+        broken_database, bootstrap_file=tmp_path / "bootstrap.yaml", break_glass_file=path
+    )
     request = _request(peer, value)
     if allowed:
         request.scope["headers"].append((b"authorization", b"Bearer stale-token"))
@@ -67,7 +69,9 @@ def test_break_glass_still_requires_grant_on_grant_routes(tmp_path: Path) -> Non
     def broken_database() -> HubDatabase:
         raise RuntimeError("database must not be consulted")
 
-    service = AuthService(broken_database, token_file=tmp_path / "token", break_glass_file=path)
+    service = AuthService(
+        broken_database, bootstrap_file=tmp_path / "bootstrap.yaml", break_glass_file=path
+    )
     decision = service.authenticate(_request("127.0.0.1", "recovery-value", grant_route=True))
     assert decision.allowed is False
     assert decision.status_code == 401

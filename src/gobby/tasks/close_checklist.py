@@ -7,13 +7,17 @@ import json
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import Any, Literal
 
 from gobby.config.shell_lexing import parse_shell_command
 from gobby.tasks.close_test_coverage import (
+    CloseCandidate,
     changed_python_source_paths,
     changed_web_source_paths,
+    copy_differing_paths,
     coverage_failure_message,
+    drop_foreign_runs,
     related_python_source_tests,
     uncovered_pytest_paths,
     uncovered_vitest_related_paths,
@@ -28,7 +32,6 @@ from gobby.tasks.close_test_coverage import (
 from gobby.tasks.close_test_coverage import (
     uncovered_test_paths as _uncovered_test_paths,
 )
-from gobby.tasks.command_equivalence import runs_outside_root
 from gobby.tasks.criterion_commands import (
     SCOPE_MISMATCH_REASON,
     criterion_command_gap_message,
@@ -139,29 +142,25 @@ def evaluate_validation_commands(
     changed_paths: Iterable[str] = (),
     deleted_paths: Iterable[str] = (),
     close_root: str | None = None,
+    candidate_commit_sha: str | None = None,
 ) -> CloseGateResult:
     """Keep credit decisions separate from observed-run explanations.
 
     A run whose ``uv`` location points outside ``close_root`` validated another
-    checkout, so it neither credits nor fails this task.
+    checkout, so it neither credits nor fails this task, unless it ran identical
+    copies of the changed tests. A copy must match ``candidate_commit_sha`` when given.
     """
     from gobby.tasks.validation_diagnostics import excluded_validation_records, observed_message
 
-    foreign: list[str] = []
-    if close_root is not None:
-
-        def in_scope(run: TranscriptValidationRun) -> bool:
-            if runs_outside_root(run.core_command or run.command, close_root):
-                foreign.append(run.command)
-                return False
-            return True
-
-        evidence = replace(
-            evidence,
-            validation_runs=tuple(filter(in_scope, evidence.validation_runs)),
-            command_runs=tuple(filter(in_scope, evidence.command_runs)),
-        )
     paths = tuple(changed_paths)
+    changed_tests = _changed_python_test_paths(paths)
+    foreign: list[str] = []
+    candidate: CloseCandidate | None = None
+    if close_root is not None:
+        candidate = (
+            CloseCandidate(close_root, candidate_commit_sha) if candidate_commit_sha else None
+        )
+        evidence, foreign = drop_foreign_runs(evidence, changed_tests, close_root, paths, candidate)
     gate = _evaluate_validation_commands(
         task_category=task_category,
         evidence=evidence,
@@ -170,8 +169,8 @@ def evaluate_validation_commands(
         changed_paths=paths,
         deleted_paths=deleted_paths,
         close_root=close_root,
+        candidate=candidate,
     )
-    changed_tests = _changed_python_test_paths(paths)
 
     def uncovered(run: TranscriptValidationRun) -> tuple[str, ...] | None:
         targets = _test_types_audit_targets(run)
@@ -278,6 +277,7 @@ def _evaluate_validation_commands(
     changed_paths: Iterable[str] = (),
     deleted_paths: Iterable[str] = (),
     close_root: str | None = None,
+    candidate: CloseCandidate | None = None,
 ) -> CloseGateResult:
     """Evaluate checklist item 9 from transcript-derived validation commands.
 
@@ -316,13 +316,18 @@ def _evaluate_validation_commands(
     fresh_runs = _fresh_runs(evidence)
     definitive = [run for run in fresh_runs if run.outcome != "unknown"]
     credited = [run for run in definitive if not run.wrapped and run.core_command is not None]
-    passing_commands = tuple(
-        run.core_command or run.command for run in credited if run.outcome == "success"
+    passing_runs = [run for run in credited if run.outcome == "success"]
+    covers = partial(
+        uncovered_pytest_paths,
+        passing_runs,
+        close_root=close_root,
+        changed_paths=changed_paths,
+        candidate=candidate,
     )
     uncovered_sources = {
         source: list(uncovered)
         for source, tests in source_tests.items()
-        if (uncovered := uncovered_pytest_paths(passing_commands, tests))
+        if (uncovered := covers(tests))
     }
     details.update(
         python_source_related_tests={source: list(tests) for source, tests in source_tests.items()},
@@ -385,9 +390,7 @@ def _evaluate_validation_commands(
     criterion_commands = criterion_command_records(validation_criteria, evidence)
     criterion_command_gaps = [record for record in criterion_commands if not record["satisfied"]]
     uncovered_web = uncovered_vitest_related_paths(
-        (run.command for run in credited if run.outcome == "success"),
-        changed_web_paths,
-        close_root=close_root,
+        passing_runs, changed_web_paths, close_root=close_root
     )
     details = {
         **details,
@@ -543,16 +546,16 @@ def _evaluate_validation_commands(
     ]
     uncovered_pytest: tuple[str, ...] = ()
     if pytest_required_paths:
-        uncovered_pytest = uncovered_pytest_paths(
-            (
-                run.core_command if run.core_command is not None else run.command
-                for run in credited
-                if run.outcome == "success"
-            ),
-            pytest_required_paths,
-        )
+        uncovered_pytest = covers(pytest_required_paths)
         details["pytest_uncovered_paths"] = list(uncovered_pytest)
-    coverage_failure = coverage_failure_message(uncovered_pytest, uncovered_sources, uncovered_web)
+    declined = (*uncovered_pytest, *(t for tests in uncovered_sources.values() for t in tests))
+    if differing := copy_differing_paths(
+        passing_runs, declined, close_root, changed_paths, candidate
+    ):
+        details["pytest_copy_differing_paths"] = list(differing)
+    coverage_failure = coverage_failure_message(
+        uncovered_pytest, uncovered_sources, uncovered_web, differing_paths=differing
+    )
     if coverage_failure:
         return CloseGateResult(
             item=9,

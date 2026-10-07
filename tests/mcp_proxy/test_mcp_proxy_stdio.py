@@ -807,6 +807,32 @@ class TestDaemonProxy:
         )
 
     @pytest.mark.asyncio
+    async def test_set_variable_forwards_step_scope(self) -> None:
+        # Seat step flags write the agent's step instance (agent-definition-profiles P3).
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch.object(
+            proxy,
+            "_request",
+            new=AsyncMock(return_value={"success": True}),
+        ) as mock_request:
+            result = await proxy.set_variable(
+                name="skills_routed",
+                value=True,
+                session_id="#1",
+                scope="step",
+            )
+
+        assert result == {"success": True}
+        mock_request.assert_awaited_once_with(
+            "POST",
+            "/api/sessions/%231/variables/set",
+            json={"name": "skills_routed", "value": True, "scope": "step"},
+            session_id="#1",
+        )
+
+    @pytest.mark.asyncio
     async def test_request_handles_empty_exception_message(self) -> None:
         """Test _request handles exceptions with empty messages."""
         from gobby.mcp_proxy.stdio import DaemonProxy
@@ -1702,6 +1728,7 @@ class TestMCPToolsWrapper:
             name="loaded_skills",
             value=skill_names,
             session_id="#1",
+            scope="session",
         )
         mock_proxy.set_variable.reset_mock()
 
@@ -1716,6 +1743,23 @@ class TestMCPToolsWrapper:
             name="resume_metadata",
             value=metadata,
             session_id="#1",
+            scope="session",
+        )
+        mock_proxy.set_variable.reset_mock()
+
+        # 12. set_variable forwards step scope for seat step flags
+        await run_tool(
+            "set_variable",
+            name="skills_routed",
+            value=True,
+            session_id="#1",
+            scope="step",
+        )
+        mock_proxy.set_variable.assert_awaited_once_with(
+            name="skills_routed",
+            value=True,
+            session_id="#1",
+            scope="step",
         )
 
     @pytest.mark.asyncio

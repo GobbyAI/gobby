@@ -10,7 +10,7 @@ Exercises the real AuthMixin._authenticate method with all code paths:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -19,6 +19,7 @@ import pytest
 from websockets.http11 import Response
 
 from gobby.servers.websocket.auth import AuthMixin
+from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import WebSocketServer
 
@@ -30,18 +31,18 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
     from gobby.config.bootstrap import BootstrapConfig
     from gobby.runner_init import servers as runner_servers
 
-    auth_callback = AsyncMock(
-        side_effect=lambda token: "local-cli" if token == "daemon-token" else None
-    )
+    def verified_identity(headers: Mapping[str, str]) -> str | None:
+        return "local-cli" if headers.get("Authorization") == "Bearer daemon-token" else None
+
+    auth_callback = AsyncMock(side_effect=verified_identity)
     websocket_init: dict[str, object] = {}
 
     class FakeHTTPServer:
         def __init__(self, *, services: object, **_kwargs: object) -> None:
             self.services = services
             self.auth_service = SimpleNamespace(
-                verify_ws_token=auth_callback,
+                verify_ws_identity=auth_callback,
                 bind_runtime=lambda **_kwargs: None,
-                local_token=lambda: "operator-token",
             )
             self._internal_manager = object()
             self.broadcaster = SimpleNamespace(websocket_server=None)
@@ -60,7 +61,8 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
             pass
 
     runner = MagicMock()
-    runner.config = DaemonConfig(websocket={"enabled": True})
+    runner.startup_config = DaemonConfig(websocket={"enabled": True})
+    runner.front_door_child = None
     runner.bootstrap_config = BootstrapConfig()
     runner.codex_client = None
     runner.machine_id = "8f000000-0000-4000-8000-000000000001"
@@ -79,9 +81,7 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(runner_servers, "WebSocketServer", FakeWebSocketServer)
     monkeypatch.setattr(runner_servers, "set_app_context", MagicMock())
     monkeypatch.setattr(runner_servers, "CapabilityRefreshCoordinator", MagicMock())
-    monkeypatch.setattr(
-        runner_servers.WebChatRuntimeManager, "__init__", lambda self, **kwargs: None
-    )
+    monkeypatch.setattr(WebChatRuntimeManager, "__init__", lambda self, **kwargs: None)
     monkeypatch.setattr(
         "gobby.adapters.codex_impl.app_server_adapter.CodexAdapter.is_codex_available",
         lambda: False,
@@ -99,7 +99,7 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
     auth_server = WebSocketServer(
         config=WebSocketConfig(),
         mcp_manager=MagicMock(),
-        auth_callback=wired_callback,
+        auth_callback=auth_callback,
     )
     websocket = _make_ws()
     missing = await auth_server._authenticate(websocket, _make_request())
@@ -112,7 +112,7 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
     assert missing.status_code == 401
     assert accepted is None
     assert websocket.user_id == "local-cli"
-    auth_callback.assert_awaited_once_with("daemon-token")
+    auth_callback.assert_awaited_once_with({"Authorization": "Bearer daemon-token"})
 
 
 class ConcreteAuthServer(AuthMixin):
@@ -120,7 +120,7 @@ class ConcreteAuthServer(AuthMixin):
 
     def __init__(
         self,
-        auth_callback: Callable[[str], Coroutine[Any, Any, str | None]] | None = None,
+        auth_callback: Callable[[Mapping[str, str]], Coroutine[Any, Any, str | None]],
     ) -> None:
         self.auth_callback = auth_callback
 
@@ -135,8 +135,7 @@ def _make_ws(remote_address: tuple[str, int] = ("127.0.0.1", 9999)) -> MagicMock
 def _make_request(auth_header: str | None = None) -> MagicMock:
     """Create a mock HTTP request with optional Authorization header."""
     request = MagicMock()
-    request.headers = MagicMock()
-    request.headers.get = MagicMock(return_value=auth_header)
+    request.headers = {} if auth_header is None else {"Authorization": auth_header}
     return request
 
 
@@ -162,6 +161,7 @@ class TestMissingAuthHeader:
 
         result = await server._authenticate(ws, request)
 
+        assert isinstance(result, Response)
         assert b"Missing Authorization header" in result.body
 
     async def test_callback_not_called(self) -> None:
@@ -221,6 +221,7 @@ class TestInvalidAuthFormat:
 
         result = await server._authenticate(ws, request)
 
+        assert isinstance(result, Response)
         assert b"Bearer token" in result.body
 
     async def test_callback_not_called_for_bad_format(self) -> None:
@@ -259,20 +260,24 @@ class TestValidBearerToken:
 
         assert ws.user_id == "user-42"
 
-    async def test_callback_receives_token_without_bearer_prefix(self) -> None:
+    async def test_callback_receives_forwarded_headers(self) -> None:
         callback = AsyncMock(return_value="user-1")
         server = ConcreteAuthServer(auth_callback=callback)
         ws = _make_ws()
         request = _make_request(auth_header="Bearer the-actual-token")
+        request.headers["X-Gobby-Front-Door-Secret"] = "boot-secret"
+        request.headers["X-Gobby-User-Id"] = "user-1"
+        request.headers["X-Gobby-Machine-Id"] = "machine-1"
+        request.headers["X-Gobby-Key-Id"] = "key-1"
 
         await server._authenticate(ws, request)
 
-        callback.assert_called_once_with("the-actual-token")
+        callback.assert_awaited_once_with(request.headers)
         assert callback.call_count == 1
         assert callback.call_args is not None
 
     async def test_empty_string_token_still_passed(self) -> None:
-        """'Bearer ' with empty token should still call callback with ''."""
+        """The identity callback receives all headers even with an empty bearer."""
         callback = AsyncMock(return_value="user-1")
         server = ConcreteAuthServer(auth_callback=callback)
         ws = _make_ws()
@@ -280,7 +285,7 @@ class TestValidBearerToken:
 
         await server._authenticate(ws, request)
 
-        callback.assert_called_once_with("")
+        callback.assert_awaited_once_with(request.headers)
         assert callback.call_count == 1
         assert callback.call_args is not None
 
@@ -307,6 +312,7 @@ class TestInvalidToken:
 
         result = await server._authenticate(ws, request)
 
+        assert isinstance(result, Response)
         assert b"Invalid token" in result.body
 
     async def test_empty_string_user_id_treated_as_invalid(self) -> None:
@@ -344,6 +350,7 @@ class TestAuthCallbackException:
 
         result = await server._authenticate(ws, request)
 
+        assert isinstance(result, Response)
         assert b"Internal server error" in result.body
 
     async def test_different_exception_types_all_return_500(self) -> None:

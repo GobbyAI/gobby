@@ -405,7 +405,7 @@ def test_default_install_completes_required_stack_without_detected_cli(
         "runtime_hub_database",
         MagicMock(side_effect=RuntimeError("test hub unavailable")),
     )
-    monkeypatch.setattr(install_module, "_provision_local_api_token", lambda *_args: None)
+    monkeypatch.setattr(install_module, "ensure_local_api_key", lambda *_args: None)
     monkeypatch.setattr(
         install_module,
         "prepare_install_state",
@@ -573,7 +573,7 @@ def test_install_allows_non_repository_personal_workspace(
             )
         ),
     )
-    monkeypatch.setattr(install_module, "_provision_local_api_token", lambda *_args: None)
+    monkeypatch.setattr(install_module, "ensure_local_api_key", lambda *_args: None)
     monkeypatch.setattr(
         install_module,
         "prepare_install_state",

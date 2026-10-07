@@ -287,6 +287,12 @@ def create_lifespan(
                 startup_ready=lambda: (
                     server.services.startup_ready and server.services.restart_recovery_ready
                 ),
+                write_coordinator=(
+                    server.services.write_coordinator
+                    if config is not None and config.tmux.idle_check_enabled
+                    else None
+                ),
+                max_reprompt_attempts=config.tmux.max_reprompt_attempts if config else None,
             )
             app.state.interactive_attention_monitor = monitor
             await monitor.start()

@@ -9,7 +9,7 @@ use super::request::{
     multipart_form_with_file, text_request_body,
 };
 use super::response::{parse_daemon_embeddings, parse_daemon_transcription};
-use super::transport::{daemon_client, daemon_url, read_local_cli_token, with_grant_presentation};
+use super::transport::{daemon_client, daemon_url, read_api_key, with_grant_presentation};
 use super::types::{DaemonEmbeddingResult, DaemonTranscriptionOptions};
 use crate::grant::{AcquireRequest, GrantBundle, GrantError};
 
@@ -133,7 +133,7 @@ pub fn transcribe_via_daemon(
     cfg.require_granted(capability)?;
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
-    let token = read_local_cli_token()?;
+    let token = read_api_key()?;
     let url = daemon_url(VOICE_TRANSCRIBE_PATH);
     let file_name = file_name.to_string();
     let mime = mime.to_string();
@@ -192,7 +192,7 @@ pub fn describe_image_via_daemon(
     cfg.require_granted(capability)?;
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
-    let token = read_local_cli_token()?;
+    let token = read_api_key()?;
     let url = daemon_url(VISION_EXTRACT_PATH);
     let file_name = file_name.to_string();
     let mime = mime.to_string();
@@ -294,7 +294,7 @@ fn generate_text_via_daemon(
     let capability = AiCapability::TextGenerate;
     cfg.require_granted(capability)?;
     let client = daemon_client()?;
-    let token = read_local_cli_token()?;
+    let token = read_api_key()?;
     let url = daemon_url(TEXT_GENERATE_PATH);
     let (candidate_timeout, cli_candidate_timeout) = budget.candidate_timeouts();
     // An explicit daemon candidate chain pins the exact provider/model
@@ -360,7 +360,7 @@ pub fn embed_via_daemon(
     cfg.require_granted(capability)?;
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
-    let token = read_local_cli_token()?;
+    let token = read_api_key()?;
     let url = daemon_url(EMBEDDINGS_PATH);
     let body = embeddings_request_body(
         input,

@@ -174,12 +174,8 @@ async fn live_workspace(
     delivery: FrameDelivery,
 ) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
     let home = tempfile::tempdir().expect("gobby home");
-    std::fs::write(
-        home.path()
-            .join(gobby_core::local_token::LOCAL_CLI_TOKEN_FILENAME),
-        "local-token\n",
-    )
-    .expect("write local cli token");
+    std::fs::write(home.path().join("bootstrap.yaml"), "api_key: local-token\n")
+        .expect("write bootstrap api key");
     mock.serve_direct_attach(host.attach_locator(terminal_id));
     let mut row = json!({
         "terminal_id": terminal_id,

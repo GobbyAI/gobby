@@ -234,7 +234,8 @@ cases that deny a forbidden actual fallback and permit an allowed one.
 
 Targets:
 - `src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py::*` — scope-reason: add the network-authority check to the 2.1 caller guard
-- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: add the MCP parameter and apply the override after fallback resolution
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: wire the MCP `network` parameter into `spawn_agent` through `_network_override.py`
+- `src/gobby/mcp_proxy/tools/spawn_agent/_network_override.py`
 - `src/gobby/servers/routes/agent_spawn.py::*` — scope-reason: validate and apply the HTTP single-spawn field
 - `src/gobby/cli/agents.py::*` — scope-reason: parse and forward the CLI flag
 - `src/gobby/install/shared/skills/gobby/references/agents/spawning.md`
@@ -257,6 +258,14 @@ and a daemon-internal caller is refused because no daemon path needs an
 override. The 1.2 `before_tool` rule stays; the guard covers pipeline MCP steps
 as well. After the guard passes and fallback has chosen the final definition,
 the surface applies the 1.1 helper and calls `spawn_agent_impl` with the copy.
+
+`src/gobby/mcp_proxy/tools/spawn_agent/_factory.py` is at 858 lines, so this
+change does not grow it with override logic: move the MCP `network` parameter's
+validation and the override application (the guard's network check and the 1.1
+helper call after fallback) into the new
+`src/gobby/mcp_proxy/tools/spawn_agent/_network_override.py`. `_factory.py` only
+adds the parameter to `spawn_agent` and calls that module.
+
 HTTP creates or reuses its per-project `web_launcher` parent session before
 resolving the body; that reused row is not a launch allocation, so a refusal
 after it is acceptable. Update the existing spawning reference, agents guide,
@@ -277,8 +286,8 @@ to `/api/mcp/gobby-agents/tools/spawn_agent` with `daemon_auth_headers`, which
 prefers a managed run token, and such calls get daemon-side `before_tool`
 enforcement (`_enforce_workflow_for_request`). Pipeline MCP steps run with
 `enforce_workflow=False`, so only the 2.1 guard sees their override. Observed:
-none of these three surfaces has a network parameter; `_factory.py` has 844
-lines and stays under the production ceiling after 2.1 and this change.
+none of these three surfaces has a network parameter; `_factory.py` has 858
+lines after 2.1, so the override logic moves to `_network_override.py`.
 Planned: focused MCP, HTTP, Click, and pipeline-step tests for valid and invalid
 values, null, fallback in both directions, explicit `none` on a trusted final
 definition, a later omitted launch inheriting the original profile, `web_chat`,
@@ -486,6 +495,17 @@ remain unchanged.
   second prerequisite, in its prose, finalization edges and deferral reason. No
   deliverable, acceptance item or M1 entry changed. Expansion proceeds with the
   implementation root under Lane 3 epic #22691, **Lane 3 - Runbooks**.
+- 2026-10-07, Lane 7 plan writer W4 (gobby#15528), repair under #23671 by the
+  Orchestrator gobby#14972's 02:05 CT ruling (b), relayed by Lane 7 manager LM7
+  (gobby#15389): after 2.1 landed, `_factory.py` has 858 lines, past the
+  850-line growth threshold, so base validation failed 2.2 on
+  production-size-growth. 2.2 now targets the new bare path
+  `src/gobby/mcp_proxy/tools/spawn_agent/_network_override.py`, which holds the
+  MCP `network` parameter's validation and the override application. The
+  `_factory.py` scope-reason narrows to wiring, a body paragraph names the move,
+  and 2.2's research note now reads 858 lines. Completed 2.1 keeps its
+  delivered bytes, including its own 844-line observation. No acceptance item
+  changed. The M1 block was withdrawn for re-derivation (memory f5577ae0).
 
 ## M1 Task Manifest
 `kind: manifest`

@@ -6,7 +6,7 @@
 //! configuration without spamming the inbox.
 
 use crate::{cli_config::CliConfig, diagnostics};
-use gobby_core::{bootstrap, daemon_url, local_token::LOCAL_CLI_TOKEN_FILENAME, project};
+use gobby_core::{bootstrap, daemon_url, local_token::read_api_key_at, project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -29,7 +29,7 @@ pub struct DiagnoseOutput {
     pub cli_recognized: bool,
     pub install_method: Option<String>,
     pub install_source_url: Option<String>,
-    pub local_token_file_present: bool,
+    pub api_key_present: bool,
     pub auth_401_remediation: &'static str,
     pub failure_dir: PathBuf,
     pub recent_failure_count: usize,
@@ -38,7 +38,7 @@ pub struct DiagnoseOutput {
 
 pub const DIAGNOSE_SCHEMA_VERSION: u32 = 2;
 pub const GHOOK_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const AUTH_401_REMEDIATION: &str = "run 'gobby install' or 'gobby auth token --rotate' on the hub machine and copy ~/.gobby/local_cli_token here";
+pub const AUTH_401_REMEDIATION: &str = "run 'gobby auth login' to refresh the bootstrap API key";
 
 /// Sidecar filename written by the installer next to the `ghook` binary.
 /// See `docs/guides/ghook-development-guide.md` for the contract.
@@ -104,8 +104,8 @@ pub fn diagnose(cli: &str, hook_type: &str) -> DiagnoseOutput {
     };
 
     let (install_method, install_source_url) = install_provenance_for_running_binary();
-    let local_token_file_present = gobby_core::gobby_home()
-        .map(|home| home.join(LOCAL_CLI_TOKEN_FILENAME).is_file())
+    let api_key_present = gobby_core::gobby_home()
+        .map(|home| read_api_key_at(&home).is_ok())
         .unwrap_or(false);
     let failure_inventory = diagnostics::failure_inventory();
 
@@ -126,7 +126,7 @@ pub fn diagnose(cli: &str, hook_type: &str) -> DiagnoseOutput {
         cli_recognized,
         install_method,
         install_source_url,
-        local_token_file_present,
+        api_key_present,
         auth_401_remediation: AUTH_401_REMEDIATION,
         failure_dir: failure_inventory.failure_dir,
         recent_failure_count: failure_inventory.recent_failure_count,
@@ -296,20 +296,16 @@ mod tests {
     }
 
     #[test]
-    fn diagnose_reports_token_file_presence_and_401_remediation() {
+    fn diagnose_reports_api_key_presence_and_401_remediation() {
         let home = tempfile::tempdir().unwrap();
         temp_env::with_var("GOBBY_HOME", Some(home.path()), || {
             let missing = diagnose("claude", "session-start");
-            assert!(!missing.local_token_file_present);
+            assert!(!missing.api_key_present);
 
-            std::fs::write(home.path().join(LOCAL_CLI_TOKEN_FILENAME), "token\n").unwrap();
+            std::fs::write(home.path().join("bootstrap.yaml"), "api_key: token\n").unwrap();
             let present = diagnose("claude", "session-start");
-            assert!(present.local_token_file_present);
-            assert!(
-                present
-                    .auth_401_remediation
-                    .contains("gobby auth token --rotate")
-            );
+            assert!(present.api_key_present);
+            assert!(present.auth_401_remediation.contains("gobby auth login"));
         });
     }
 

@@ -15,7 +15,7 @@ use super::handshake::{
     SESSION_HEADER,
 };
 use super::*;
-use crate::local_token::{AUTHORIZATION_HEADER, LOCAL_CLI_TOKEN_FILENAME};
+use crate::local_token::AUTHORIZATION_HEADER;
 
 const TOKEN: &str = "operator-token";
 const MACHINE: &str = "machine-test";
@@ -40,7 +40,11 @@ impl Harness {
         let home = tempfile::tempdir().expect("home");
         let project = tempfile::tempdir().expect("project");
         fs::write(home.path().join("machine_id"), MACHINE).expect("machine");
-        fs::write(home.path().join(LOCAL_CLI_TOKEN_FILENAME), TOKEN).expect("token");
+        fs::write(
+            home.path().join("bootstrap.yaml"),
+            format!("api_key: {TOKEN}\n"),
+        )
+        .expect("API key");
         let gobby = project.path().join(".gobby");
         fs::create_dir_all(&gobby).expect("project dir");
         fs::write(
@@ -331,7 +335,20 @@ fn spawn_scripted(steps: Vec<Step>) -> Scripted {
                                 .and_then(|rest| rest.split('"').next())
                                 .unwrap_or_default();
                             let proof = if *valid {
-                                hmac_hex(token.as_bytes(), &b64url_decode(nonce))
+                                let body: serde_json::Value = serde_json::from_str(
+                                    request.split("\r\n\r\n").nth(1).expect("body"),
+                                )
+                                .expect("challenge JSON");
+                                if body["kind"] == "managed" {
+                                    hmac_hex(token.as_bytes(), &b64url_decode(nonce))
+                                } else {
+                                    let proof_key = super::handshake::hmac_sha256(
+                                        token.as_bytes(),
+                                        b"gobby-interactive-proof-v1",
+                                    )
+                                    .expect("interactive proof key");
+                                    hmac_hex(&proof_key, &b64url_decode(nonce))
+                                }
                             } else {
                                 "00".repeat(32)
                             };

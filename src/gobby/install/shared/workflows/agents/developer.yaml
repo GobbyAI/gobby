@@ -1,0 +1,423 @@
+name: developer
+description: |
+  Developer seat. Implements its lane's tasks one at a time: claims each task,
+  loads the skills the task needs, submits a CANDIDATE to the Lane Manager and
+  the assigned Code Reviewer, and closes on the Lane Manager's release.
+version: "1.0"
+tags: [gobby, seat]
+surfaces: [spawn, persona]
+provider: inherit
+checkout_mode: inherit
+timeout: 0
+send_message_targets: [parent, session]
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
+
+prompts:
+  agent: &seat |
+    ## Role
+    You are a lane developer. You implement your lane's tasks one at a time in your lane's worktree. Your lane, worktree, Lane Manager and Code Reviewer come from your role file (`.gobby/roles/`, found by your session ref in `roster.md`) and from Orchestrator or Lane Manager messages.
+    - Flow. Claim the task, implement it, validate it, commit, and attach the commit with `gobby-tasks:link_commit`. Then send a CANDIDATE to your Lane Manager and the assigned Code Reviewer with the exact commit and the tests you ran, as one event line: `LANE= EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`. Wait with `gobby-agents:wait_for_coordination`, and close the task only when your Lane Manager releases it.
+    - Bounces. When the reviewer bounces the candidate, or a close names a blocker you must fix, set `bounced` to true with the top-level `set_variable(scope="step")`. That returns you to implementation, and linking the rework commit clears it.
+    - HOLD and GO. On HOLD, start nothing new and finish only what is in flight; resume on GO. Run heavy commands (cargo build, clippy, full-crate nextest, e2e, benchmarks, full mypy, package-scope pytest) and close reviews only in a slot your Lane Manager gives you. Focused single-file runs need no slot.
+    - **Never run the full test suite**: it takes 30+ minutes and starves the machine. Scope Rust to `cargo test -p <package>` or `cargo test <name> -p <package>`.
+    - Restart the daemon, run a cutover or promote binaries only when the Orchestrator says so.
+    - Found work. Fix what you find on your lane's surface inside the claimed task and name it in the close summary. Send anything that needs its own task to the Orchestrator with the failing command, diagnostics, paths and impact.
+
+    ## Task skills
+    After claiming, read the task with `gobby-tasks:get_task` and route its skills by the paths it touches:
+    - `web/`: `impeccable` and `typescript`
+    - `crates/`: `rust`
+    - Python only: nothing beyond the required set
+    - docs only: `tech-writer`
+    Add the task's own `additional_skills`, any skill its description names, and `test-driven-development` for a `tdd:required` task. Write the list to `additional_skills`, then set `skills_routed` to true, both with the top-level `set_variable(scope="step")`.
+
+    ## Messages
+    Reach your Lane Manager, your reviewer and the Orchestrator through `gobby-agents:send_message`.
+
+    ## Continuity
+    Compact mid-task: under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`. Between tasks, after the close, hand off with `gobby-sessions:set_handoff(clear_session=true)`.
+
+    ## Platform Context
+    Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.
+
+    ## Skills
+    Use gobby-skills for tracked skill discovery and loading. Use the native Skill tool only for CLI-owned skills.
+  persona: *seat
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:roles"
+      - "tag:worker-safety"
+
+step_workflow:
+  variables:
+    task_claimed: false
+    assigned_task_id: null
+    assigned_task_ref: null
+    skills_routed: false
+    required_skills:
+      - gobby:references/development/obligations.md
+      - restraint
+      - gobby:references/tasks/overview.md
+    required_skills_loaded: false
+    additional_skills: []
+    additional_skills_loaded: false
+    implementation_complete: false
+    candidate_sent: false
+    bounced: false
+
+  steps:
+    - name: load_skills
+      mcp_error_policy: stay
+      description: "Load required developer discipline skills"
+      status_message: |
+        Execute loads through mcp__gobby__call_tool.
+        Plain requirements use get_skill(name=<name>). Exact references
+        use get_skill_file(name=<skill>, path=<reference path>): first fetch
+        its schema with get_tool_schema in a separate outer result. Follow
+        each page.next_cursor with only cursor until null before continuing.
+        Load required developer skills before claiming a task:
+        1. get_skill_file(name="gobby", path="references/development/obligations.md") on gobby-skills
+        2. get_skill(name="restraint") on gobby-skills
+        3. get_skill_file(name="gobby", path="references/tasks/overview.md") on gobby-skills
+        Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
+        call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
+        call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill_loaded(skill) for skill in vars.required_skills)
+        - server: gobby-skills
+          tool: get_skill_file
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill_loaded(skill) for skill in vars.required_skills)
+      transitions:
+        - to: claim
+          when: "all(skill_loaded(skill) for skill in vars.required_skills)"
+
+    - name: claim
+      mcp_error_policy: stay
+      description: "Claim the next assigned task"
+      status_message: |
+        Spawned agents normally arrive with their task already claimed; they
+        still call claim_task once, which returns already_claimed and binds the
+        task, so they do not skip this step. If this step is active, claim the
+        task your Lane Manager or the Orchestrator assigned with claim_task.
+        With no task assigned, wait with gobby-agents:wait_for_coordination.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:get_task"
+        - "gobby-agents:wait_for_coordination"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: task_claimed
+          value: true
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: assigned_task_id
+          value: "(tool_output.get('result') or tool_output).get('task_id')"
+      transitions:
+        - to: route_skills
+          when: "vars.task_claimed and vars.assigned_task_id"
+
+    - name: route_skills
+      mcp_error_policy: stay
+      description: "Route the claimed task's skills"
+      status_message: |
+        Read the claimed task with get_task(task_id=assigned_task_id). When the
+        card comes back offloaded, read it in full with
+        gobby-results:get_tool_result(result_id=<its result_id>), paging with
+        next_offset. Route its skills with the table in your prompt, then call
+        the top-level set_variable with scope="step": first
+        name="additional_skills" with the list, then name="skills_routed" with
+        true.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+        - mcp__gobby__set_variable
+      allowed_mcp_tools:
+        - "gobby-tasks:get_task"
+        - "gobby-results:get_tool_result"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: get_task
+          when: >-
+            (tool_output.get('result') or tool_output).get('id') == vars.get('assigned_task_id')
+          action: set_variable
+          variable: assigned_task_ref
+          value: "(tool_output.get('result') or tool_output).get('ref')"
+      transitions:
+        - to: load_additional_skills
+          when: "vars.skills_routed and vars.assigned_task_ref"
+
+    - name: load_additional_skills
+      mcp_error_policy: stay
+      description: "Load the task's routed skills"
+      status_message: |
+        Execute loads through mcp__gobby__call_tool.
+        Plain requirements use get_skill(name=<name>). Exact references
+        use get_skill_file(name=<skill>, path=<reference path>): first fetch
+        its schema with get_tool_schema in a separate outer result. Follow
+        each page.next_cursor with only cursor until null before continuing.
+        Load each additional_skills entry using the plain-name or exact-reference
+        loading contract above. If the list is empty, proceed to implementation.
+        Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
+        call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
+        call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          action: set_variable
+          variable: additional_skills_loaded
+          value: >-
+            not vars.additional_skills
+            or all(skill_loaded(skill) for skill in vars.additional_skills)
+        - server: gobby-skills
+          tool: get_skill_file
+          action: set_variable
+          variable: additional_skills_loaded
+          value: >-
+            not vars.additional_skills
+            or all(skill_loaded(skill) for skill in vars.additional_skills)
+      transitions:
+        - to: implement
+          when: >-
+            not vars.additional_skills
+            or all(skill_loaded(skill) for skill in vars.additional_skills)
+
+    - name: implement
+      mcp_error_policy: stay
+      description: "Implement, validate, commit and link the commit"
+      status_message: |
+        Implement and validate the claimed task, commit, then attach the commit
+        with link_commit(task_id=assigned_task_id, commit_sha=<sha>). Linking
+        the commit moves you to submit. Close only from submit, after your Lane
+        Manager releases the task.
+      allowed_tools: "all"
+      blocked_mcp_tools:
+        - "gobby-tasks:close_task"
+        - "gobby-tasks:de_escalate_task"
+        - "gobby-tasks:reopen_task"
+        - "gobby-agents:spawn_agent"
+        - "gobby-agents:kill_agent"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: link_commit
+          when: &own_task >-
+            tool_input.get('task_id') is not None
+            and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
+          action: set_variable
+          variable: implementation_complete
+          value: true
+        - server: gobby-tasks
+          tool: link_commit
+          when: *own_task
+          action: set_variable
+          variable: bounced
+          value: false
+        - server: gobby-tasks
+          tool: link_commit
+          when: *own_task
+          action: set_variable
+          variable: candidate_sent
+          value: false
+      transitions:
+        - to: submit
+          when: "vars.implementation_complete and not vars.bounced"
+
+    - name: submit
+      mcp_error_policy: stay
+      description: "Submit the candidate and close on release"
+      status_message: |
+        Send the CANDIDATE event line for assigned_task_ref to your Lane Manager
+        and the assigned Code Reviewer with gobby-agents:send_message, then wait
+        with gobby-agents:wait_for_coordination. On the Lane Manager's release,
+        close the task with close_task. If it returns close_review_required,
+        call gobby-agents:wait_for_agent once with its reviewer_run_id and
+        yield; after the verdict arrives, read the task with
+        get_task(task_id=assigned_task_id). A closed task returns you to claim.
+        On a bounce, a close blocker you must fix, or a verdict that leaves the
+        task open, call the top-level set_variable(name="bounced", value=true,
+        scope="step") to return to implement.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+        - mcp__gobby__set_variable
+      allowed_mcp_tools:
+        - "gobby-agents:send_message"
+        - "gobby-agents:wait_for_coordination"
+        - "gobby-agents:wait_for_agent"
+        - "gobby-tasks:close_task"
+        - "gobby-tasks:get_task"
+        - "gobby-tasks:link_commit"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: send_message
+          when: >-
+            'EVENT=CANDIDATE' in str(tool_input.get('content'))
+            and str(vars.get('assigned_task_ref')) in str(tool_input.get('content'))
+          action: set_variable
+          variable: candidate_sent
+          value: true
+        # Closing the claimed task resets the loop for the next claim. The
+        # first handler matches the task; the rest key off its reset so the
+        # task ids clear last.
+        - server: gobby-tasks
+          tool: close_task
+          when: >-
+            tool_input.get('task_id') is not None
+            and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
+            and (
+              tool_output.get('closed') is True
+              or (tool_output.get('result') or {}).get('closed') is True
+            )
+          action: set_variable
+          variable: task_claimed
+          value: false
+        - server: gobby-tasks
+          tool: close_task
+          when: &task_closed >-
+            not vars.get('task_claimed')
+            and (
+              tool_output.get('closed') is True
+              or (tool_output.get('result') or {}).get('closed') is True
+            )
+          action: set_variable
+          variable: implementation_complete
+          value: false
+        - server: gobby-tasks
+          tool: close_task
+          when: *task_closed
+          action: set_variable
+          variable: additional_skills_loaded
+          value: false
+        - server: gobby-tasks
+          tool: close_task
+          when: *task_closed
+          action: set_variable
+          variable: skills_routed
+          value: false
+        - server: gobby-tasks
+          tool: close_task
+          when: *task_closed
+          action: set_variable
+          variable: candidate_sent
+          value: false
+        - server: gobby-tasks
+          tool: close_task
+          when: *task_closed
+          action: set_variable
+          variable: bounced
+          value: false
+        - server: gobby-tasks
+          tool: close_task
+          when: *task_closed
+          action: set_variable
+          variable: assigned_task_id
+          value: null
+        - server: gobby-tasks
+          tool: close_task
+          when: *task_closed
+          action: set_variable
+          variable: assigned_task_ref
+          value: null
+        # A reviewed close returns close_review_required and the reviewer closes
+        # the task out of band, so reading the closed task drives the same reset.
+        # The offload envelope of a large card keeps id and state.
+        - server: gobby-tasks
+          tool: get_task
+          when: >-
+            (tool_output.get('result') or tool_output).get('id') == vars.get('assigned_task_id')
+            and ((tool_output.get('result') or tool_output).get('state') or {}).get('is_closed') is True
+          action: set_variable
+          variable: task_claimed
+          value: false
+        - server: gobby-tasks
+          tool: get_task
+          when: &task_read_closed >-
+            not vars.get('task_claimed')
+            and ((tool_output.get('result') or tool_output).get('state') or {}).get('is_closed') is True
+          action: set_variable
+          variable: implementation_complete
+          value: false
+        - server: gobby-tasks
+          tool: get_task
+          when: *task_read_closed
+          action: set_variable
+          variable: additional_skills_loaded
+          value: false
+        - server: gobby-tasks
+          tool: get_task
+          when: *task_read_closed
+          action: set_variable
+          variable: skills_routed
+          value: false
+        - server: gobby-tasks
+          tool: get_task
+          when: *task_read_closed
+          action: set_variable
+          variable: candidate_sent
+          value: false
+        - server: gobby-tasks
+          tool: get_task
+          when: *task_read_closed
+          action: set_variable
+          variable: bounced
+          value: false
+        - server: gobby-tasks
+          tool: get_task
+          when: *task_read_closed
+          action: set_variable
+          variable: assigned_task_id
+          value: null
+        - server: gobby-tasks
+          tool: get_task
+          when: *task_read_closed
+          action: set_variable
+          variable: assigned_task_ref
+          value: null
+      transitions:
+        - to: implement
+          when: "vars.bounced"
+        - to: claim
+          when: "not vars.task_claimed"

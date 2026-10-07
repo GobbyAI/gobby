@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "auth_forged_identity",
   "family": "auth",
   "backend": "up",
@@ -9,7 +9,6 @@
     "path": "/api/embeddings",
     "query": {},
     "headers": {
-      "X-Gobby-Machine-Id": "forged-machine",
       "X-Gobby-Project-Id": "forged-project"
     },
     "body": {

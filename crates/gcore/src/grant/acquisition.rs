@@ -1,4 +1,5 @@
 //! Grant acquisition and renewal state machine for interactive and managed callers.
+mod managed;
 use super::bundle::validate_for_construction as validate_grant;
 use super::cache::{
     self, CachePair, discard_cache_pair, inspect_cache_pair, lock_with_deadline, matching_settings,
@@ -7,14 +8,17 @@ use super::cache::{
 use super::handshake::{
     self, HandshakeIdentity, MANAGED_BOOTSTRAP_ENV, challenge_and_handshake,
     deployment_token as derived_deployment_token, is_default_local_endpoint,
-    parse_capability_token as parse_envelope,
 };
 use super::inspection::annotate_source;
 use super::{
-    AcquiredGrant, CachedSettings, CapabilityClaims, GrantBundle, GrantError, GrantFileLock,
-    GrantSource, TrustedBinding, daemon_reachable, fetch_runtime_config, grant_lock_path,
+    AcquiredGrant, CachedSettings, GrantBundle, GrantError, GrantFileLock, GrantSource,
+    TrustedBinding, daemon_reachable, fetch_runtime_config, grant_lock_path,
     interactive_cache_path, load_binding, load_grant_file, resolve_home, try_lock, unix_now,
     write_binding,
+};
+use managed::{
+    acquire_managed, handshake_managed, managed_bootstrap_path, managed_envelope,
+    validate_managed_refresh,
 };
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -224,54 +228,6 @@ impl AcquireCtx {
         } else {
             Ok(remaining)
         }
-    }
-}
-
-fn acquire_managed(ctx: &AcquireCtx, path: &Path) -> Result<AcquiredGrant, GrantError> {
-    let source_error =
-        |error| annotate_source(error, &format!("managed grant file {}", path.display()));
-    let (grant, settings, incoherent) = match inspect_cache_pair(path).map_err(source_error)? {
-        Some(CachePair::Coherent(grant, settings)) => (grant, Some(settings), false),
-        Some(CachePair::Incoherent(grant)) => (grant, None, true),
-        Some(CachePair::GrantOnly(grant)) => (grant, None, false),
-        None => (load_grant_file(path).map_err(source_error)?, None, false),
-    };
-    let validation = validate_grant(
-        &grant,
-        &ctx.project_id,
-        &ctx.machine_id,
-        Some(&grant.deployment.token),
-        None,
-        true,
-    );
-    validate_managed_identity(&grant, ctx.expected_execution_id.as_deref())?;
-    let destination = path.to_path_buf();
-    match validation {
-        Err(GrantError::SchemaMismatch { .. }) if ctx.reachable() => {
-            return refresh_or_fail(
-                ctx,
-                Some(&grant),
-                GrantSource::ManagedFile,
-                destination,
-                true,
-                true,
-                None,
-            );
-        }
-        result => result?,
-    }
-    // Use the exact grant validated above; a second read could replace its identity.
-    match settings {
-        Some(settings) => finish_loaded_with_settings(
-            ctx,
-            grant,
-            settings,
-            GrantSource::ManagedFile,
-            destination,
-            true,
-        ),
-        None if incoherent && ctx.reachable() => handshake_managed(ctx, Some(&grant), destination),
-        _ => finish_loaded(ctx, grant, GrantSource::ManagedFile, destination, true),
     }
 }
 
@@ -747,125 +703,6 @@ fn handshake_interactive_once(
     persist_interactive(ctx, grant, &token)
 }
 
-fn matches_managed_principal(claims: &CapabilityClaims, grant: &GrantBundle) -> bool {
-    let expected_session = if grant.principal.kind == super::PrincipalKind::Maintenance {
-        None
-    } else {
-        Some(claims.session_id.as_str())
-    };
-    claims.matches_principal(&grant.principal)
-        && grant.principal.session_id.as_deref() == expected_session
-}
-
-fn managed_envelope(
-    ctx: &AcquireCtx,
-    existing: Option<&GrantBundle>,
-) -> Result<(String, CapabilityClaims), GrantError> {
-    let owned = ctx
-        .managed_envelope
-        .clone()
-        .ok_or(GrantError::ManagedCapabilityMissing)?;
-    let envelope = owned.trim();
-    if envelope.is_empty() {
-        return Err(GrantError::ManagedCapabilityMissing);
-    }
-    let claims = parse_envelope(envelope)?;
-    if claims.exp <= ctx.now {
-        return Err(GrantError::Expired);
-    }
-    if let Some(existing) = existing
-        && !matches_managed_principal(&claims, existing)
-    {
-        return Err(GrantError::Malformed(
-            "envelope token principal mismatch".to_string(),
-        ));
-    }
-    Ok((envelope.to_string(), claims))
-}
-
-fn handshake_managed(
-    ctx: &AcquireCtx,
-    existing: Option<&GrantBundle>,
-    destination: PathBuf,
-) -> Result<AcquiredGrant, GrantError> {
-    with_presentation_retry(|| handshake_managed_once(ctx, existing, destination.clone()))
-}
-
-fn validate_managed_refresh(
-    ctx: &AcquireCtx,
-    grant: &GrantBundle,
-    claims: &CapabilityClaims,
-    existing: Option<&GrantBundle>,
-) -> Result<(), GrantError> {
-    let validation = validate_grant(
-        grant,
-        &ctx.project_id,
-        &ctx.machine_id,
-        existing.map(|grant| grant.deployment.token.as_str()),
-        None,
-        true,
-    );
-    if !matches_managed_principal(claims, grant) {
-        return Err(GrantError::Malformed(
-            "refreshed grant does not match capability principal".to_string(),
-        ));
-    }
-    validate_managed_identity(grant, ctx.expected_execution_id.as_deref())?;
-    validation
-}
-
-fn handshake_managed_once(
-    ctx: &AcquireCtx,
-    existing: Option<&GrantBundle>,
-    destination: PathBuf,
-) -> Result<AcquiredGrant, GrantError> {
-    let (envelope, claims) = managed_envelope(ctx, existing)?;
-    let grant = challenge_and_handshake(
-        &ctx.daemon_url,
-        &envelope,
-        ctx.managed_identity(&claims.session_id),
-        Some(&claims),
-        ctx.deadline,
-    )?;
-    validate_managed_refresh(ctx, &grant, &claims, existing)?;
-    if !newer_generation(existing, &grant) {
-        let existing = existing.cloned().ok_or(GrantError::Malformed(
-            "managed refresh refused a generation downgrade".to_string(),
-        ))?;
-        validate_grant(
-            &existing,
-            &ctx.project_id,
-            &ctx.machine_id,
-            Some(&existing.deployment.token),
-            None,
-            true,
-        )?;
-        return Ok(AcquiredGrant {
-            bundle: existing,
-            source: GrantSource::ManagedFile,
-            settings: None,
-            daemon_reachable: true,
-            now: ctx.now,
-        });
-    }
-    let (grant, settings) =
-        fetch_settings_coherent(ctx, grant, Some(&envelope), existing.cloned(), true)?;
-    validate_managed_refresh(ctx, &grant, &claims, existing)?;
-    if !newer_generation(existing, &grant) {
-        return Err(GrantError::Malformed(
-            "managed refresh refused a generation downgrade".to_string(),
-        ));
-    }
-    persist_cache(&destination, &grant, settings.as_ref())?;
-    Ok(AcquiredGrant {
-        bundle: grant,
-        source: GrantSource::ManagedFile,
-        settings,
-        daemon_reachable: true,
-        now: ctx.now,
-    })
-}
-
 fn persist_interactive(
     ctx: &AcquireCtx,
     grant: GrantBundle,
@@ -974,24 +811,6 @@ fn fetch_settings_coherent(
 }
 
 fn interactive_bearer(home: &Path) -> Result<String, GrantError> {
-    crate::local_token::read_local_cli_token_at(home)
+    crate::local_token::read_api_key_at(home)
         .map_err(|error| GrantError::Malformed(error.to_string()))
-}
-
-fn managed_bootstrap_path(ctx: &AcquireCtx) -> Option<PathBuf> {
-    ctx.managed_bootstrap.clone()
-}
-
-fn validate_managed_identity(
-    grant: &GrantBundle,
-    expected: Option<&str>,
-) -> Result<(), GrantError> {
-    if let Some(expected) = expected.filter(|value| !value.trim().is_empty())
-        && grant.principal.execution_id.as_deref() != Some(expected.trim())
-    {
-        return Err(GrantError::Malformed(
-            "managed grant execution identity mismatch".to_string(),
-        ));
-    }
-    Ok(())
 }

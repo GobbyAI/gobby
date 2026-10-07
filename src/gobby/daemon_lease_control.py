@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import secrets
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future
@@ -12,7 +11,7 @@ from dataclasses import asdict, dataclass
 from typing import Literal, Protocol
 
 import uvicorn
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 
 from gobby.daemon_lease import (
     DaemonLeaseError,
@@ -21,6 +20,7 @@ from gobby.daemon_lease import (
     LeaseConnectionLostError,
     LeaseHeartbeatAbort,
 )
+from gobby.servers.auth_service import verified_front_door_identity
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class StandbyLeaseControl:
 
     lease: LeaseBackend
     database_url: str
-    local_token: str | None
+    front_door_secret: str | None
     promotion_requested: asyncio.Event
     schema_verifier: Callable[[str], None]
 
@@ -84,12 +84,8 @@ def create_standby_app(control: StandbyLeaseControl) -> FastAPI:
     """Create the deliberately tiny standby status/control application."""
     app = FastAPI(title="Gobby standby lease control", docs_url=None, redoc_url=None)
 
-    def require_auth(authorization: str | None = Header(default=None)) -> None:
-        token = control.local_token
-        supplied = ""
-        if authorization and authorization.startswith("Bearer "):
-            supplied = authorization.removeprefix("Bearer ")
-        if not token or not supplied or not secrets.compare_digest(supplied, token):
+    def require_auth(request: Request) -> None:
+        if verified_front_door_identity(request, control.front_door_secret) is None:
             raise HTTPException(status_code=401, detail="Authentication required")
 
     @app.get("/api/health")
@@ -105,8 +101,8 @@ def create_standby_app(control: StandbyLeaseControl) -> FastAPI:
         return await control.status_payload()
 
     @app.post("/api/admin/lease/promote", dependencies=[])
-    async def promote(authorization: str | None = Header(default=None)) -> dict[str, bool]:
-        require_auth(authorization)
+    async def promote(request: Request) -> dict[str, bool]:
+        require_auth(request)
         acquired, owner = await control.promote()
         if not acquired:
             raise HTTPException(
@@ -122,10 +118,10 @@ def create_standby_app(control: StandbyLeaseControl) -> FastAPI:
 
     @app.post("/api/admin/lease/recover", dependencies=[])
     async def recover(
+        request: Request,
         stale_after_seconds: float = 30.0,
-        authorization: str | None = Header(default=None),
     ) -> dict[str, bool]:
-        require_auth(authorization)
+        require_auth(request)
         try:
             await control.recover(stale_after_seconds=stale_after_seconds)
         except FreshLeaseOwnerError as exc:

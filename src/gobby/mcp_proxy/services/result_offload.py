@@ -8,7 +8,7 @@ import logging
 from collections.abc import Callable, Mapping
 from fnmatch import fnmatch
 from functools import partial
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, TypeGuard
 
 from mcp.types import CallToolResult, TextContent
 
@@ -43,14 +43,18 @@ _SCALAR_FIELD_PRIORITY = (
     "task_id",
     "status",
     "error_code",
+    "id",
+    "state",
 )
+type _Scalar = str | int | float | bool | None
+type _OutcomeValue = _Scalar | dict[str, _Scalar]
 
 
 class _SerializedResult(NamedTuple):
     text: str
     content_kind: Literal["json", "text"]
     structure: dict[str, Any]
-    scalar_fields: dict[str, str | int | float | bool | None]
+    scalar_fields: dict[str, _OutcomeValue]
 
 
 class ToolResultOffloader:
@@ -388,7 +392,7 @@ def _serialize_success_result(result: object) -> _SerializedResult:
 
 def _summarize_scalar_fields(
     payload: object,
-) -> dict[str, str | int | float | bool | None]:
+) -> dict[str, _OutcomeValue]:
     """Retain bounded outcome fields needed after an oversized result is offloaded."""
     if not isinstance(payload, Mapping):
         return {}
@@ -397,16 +401,30 @@ def _summarize_scalar_fields(
         *(field for field in _SCALAR_FIELD_PRIORITY if field in payload),
         *(key for key in payload if key not in _SCALAR_FIELD_PRIORITY),
     )
-    summary: dict[str, str | int | float | bool | None] = {}
+    summary: dict[str, _OutcomeValue] = {}
     for field in ordered_fields:
         if len(summary) >= _MAX_SCALAR_FIELDS or not isinstance(field, str) or field in summary:
             continue
         value = payload[field]
-        if value is None or isinstance(value, bool | int | float):
+        if _is_bounded_scalar(value):
             summary[field] = value
-        elif isinstance(value, str) and len(value) <= _MAX_SCALAR_STRING_CHARS:
-            summary[field] = value
+        # Task cards nest their lifecycle outcome (is_closed, is_claimed) in a flat
+        # ``state`` mapping that step handlers read after a reviewed close.
+        elif (
+            field == "state"
+            and isinstance(value, Mapping)
+            and all(
+                isinstance(key, str) and _is_bounded_scalar(item) for key, item in value.items()
+            )
+        ):
+            summary[field] = dict(value)
     return summary
+
+
+def _is_bounded_scalar(value: object) -> TypeGuard[_Scalar]:
+    if value is None or isinstance(value, bool | int | float):
+        return True
+    return isinstance(value, str) and len(value) <= _MAX_SCALAR_STRING_CHARS
 
 
 def _summarize_structure(payload: object) -> dict[str, Any]:
@@ -474,7 +492,7 @@ def _fits(envelope: dict[str, Any], key: str, value: object, limit: int) -> bool
 
 def _fit_scalar_fields(
     envelope: dict[str, Any],
-    scalar_fields: Mapping[str, str | int | float | bool | None],
+    scalar_fields: Mapping[str, _OutcomeValue],
     limit: int,
 ) -> None:
     """Copy scalar result fields that fit without replacing envelope metadata."""

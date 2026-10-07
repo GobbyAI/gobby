@@ -54,7 +54,7 @@ stages:
     display_label: Development
     description: Leaf implementation work; carries skill-backed TDD when required.
     category: implementation
-    default_agent: backend-developer
+    default_agent: developer
     reviewer_agent_selector:
       rules:
         - category: docs

@@ -2474,6 +2474,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bytes",
+ "crc32fast",
  "deadpool-postgres",
  "dirs",
  "fernet",
@@ -2508,12 +2509,14 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "axum",
+ "base64 0.22.1",
  "bytes",
  "clap",
  "deadpool-postgres",
  "futures-util",
  "gobby-core",
  "gobby-terminals",
+ "hmac 0.12.1",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -2580,6 +2583,7 @@ dependencies = [
  "widestring",
  "windows-sys 0.61.2",
  "wmi",
+ "yaml_serde",
 ]
 
 [[package]]

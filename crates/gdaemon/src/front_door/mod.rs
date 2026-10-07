@@ -1,6 +1,8 @@
 //! `gdaemon serve` front door: owns the public ports and proxies to the Python
 //! backend on `127.0.0.1:<port + 100>`.
 
+pub mod auth;
+pub mod challenge;
 pub mod health;
 pub mod proxy;
 pub mod routes;
@@ -24,14 +26,20 @@ pub struct FrontDoorState {
     pub target: SocketAddr,
     pub backend_state: BackendState,
     pub client: ProxyClient,
+    pub auth: Arc<auth::AuthState>,
 }
 
 impl FrontDoorState {
-    pub fn new(target: SocketAddr, backend_state: BackendState) -> Self {
+    pub fn new(
+        target: SocketAddr,
+        backend_state: BackendState,
+        auth: Arc<auth::AuthState>,
+    ) -> Self {
         Self {
             target,
             backend_state,
             client: proxy::client(),
+            auth,
         }
     }
 }
@@ -60,6 +68,17 @@ impl FrontDoor {
         https: bool,
     ) -> Response<Body> {
         observe_peer(request.headers_mut(), peer, https);
+        if request.method() == axum::http::Method::POST
+            && request.uri().path() == "/api/runtime/handshake/challenge"
+        {
+            request = match challenge::answer(&self.state.auth.bootstrap_path, request).await {
+                Ok(request) => request,
+                Err(response) => return response,
+            };
+        }
+        if let Err(response) = self.state.auth.authenticate(request.headers_mut()).await {
+            return response;
+        }
         if ws::is_upgrade(request.headers()) {
             ws::splice(&self.state, request).await
         } else {

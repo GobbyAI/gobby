@@ -39,14 +39,30 @@ pub const BACKEND_PORT_OFFSET: u16 = 100;
 
 const BOOTSTRAP_FILENAME: &str = "bootstrap.yaml";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct HubDatabaseBootstrap {
     pub database_url: Option<String>,
+    pub api_key: Option<String>,
     pub daemon_url: Option<String>,
     pub bind_host: String,
     pub daemon_port: u16,
     pub websocket_port: u16,
     pub front_door: FrontDoorBootstrap,
+}
+
+impl std::fmt::Debug for HubDatabaseBootstrap {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HubDatabaseBootstrap")
+            .field("database_url", &self.database_url)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("daemon_url", &self.daemon_url)
+            .field("bind_host", &self.bind_host)
+            .field("daemon_port", &self.daemon_port)
+            .field("websocket_port", &self.websocket_port)
+            .field("front_door", &self.front_door)
+            .finish()
+    }
 }
 
 /// Return the loopback `(http, ws)` ports Python binds behind the front door.
@@ -201,6 +217,7 @@ pub fn parse_hub_database_bootstrap(
     let front_door = parse_front_door(map.get("front_door"), &bind_host)?;
     Ok(Some(HubDatabaseBootstrap {
         database_url: optional_string_field(map, "database_url")?,
+        api_key: optional_string_field(map, "api_key")?,
         daemon_url: optional_string_field(map, "daemon_url")?,
         bind_host,
         daemon_port: port_field(&yaml, "daemon_port", DEFAULT_DAEMON_PORT),
@@ -378,6 +395,24 @@ fn non_empty_trimmed(value: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bootstrap_api_key_is_parsed() {
+        let bootstrap = super::parse_hub_database_bootstrap("api_key: fixture-secret\n")
+            .expect("bootstrap")
+            .expect("mapping");
+        assert_eq!(bootstrap.api_key.as_deref(), Some("fixture-secret"));
+    }
+
+    #[test]
+    fn bootstrap_api_key_is_redacted() {
+        let mut bootstrap = super::parse_hub_database_bootstrap("bind_host: 127.0.0.1\n")
+            .expect("bootstrap")
+            .expect("mapping");
+        bootstrap.api_key = Some("fixture-secret".into());
+        let debug = format!("{bootstrap:?}");
+        assert!(debug.contains("api_key"));
+        assert!(!debug.contains("fixture-secret"));
+    }
     use super::*;
     use std::fs;
     use tempfile::tempdir;

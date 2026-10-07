@@ -593,21 +593,6 @@
     },
     {
       "surface": "cli",
-      "command": "gobby auth token",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/authentication.md",
-      "implementation": {
-        "path": "src/gobby/cli/auth.py",
-        "symbol": "token"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-auth-files"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
       "command": "gobby secrets set",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/secrets.md",
       "implementation": {

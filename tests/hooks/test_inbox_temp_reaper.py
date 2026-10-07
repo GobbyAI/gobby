@@ -18,9 +18,9 @@ from pathlib import Path
 import pytest
 
 from gobby.hooks.envelope_dedupe import DirectoryPruneResult
-from gobby.hooks.inbox import (
+from gobby.hooks.inbox import _iter_inbox_files
+from gobby.hooks.inbox_maintenance import (
     ORPHANED_TEMP_RETENTION_SECONDS,
-    _iter_inbox_files,
     prune_hook_inbox,
     prune_orphaned_inbox_temp_files,
 )
@@ -119,7 +119,7 @@ async def test_the_temp_reaper_never_runs_on_the_event_loop_thread(
     marker directory on the loop's critical path in the first place."""
     inbox_dir = tmp_path / "inbox"
     _inbox_file(inbox_dir, "n-1-stale.json.tmp", age_seconds=2 * _HOUR)
-    monkeypatch.setattr("gobby.hooks.inbox.get_hook_inbox_dir", lambda: inbox_dir)
+    monkeypatch.setattr("gobby.hooks.inbox_maintenance.get_hook_inbox_dir", lambda: inbox_dir)
 
     reaper_threads: list[int] = []
     real_reaper = prune_orphaned_inbox_temp_files
@@ -128,7 +128,9 @@ async def test_the_temp_reaper_never_runs_on_the_event_loop_thread(
         reaper_threads.append(threading.get_ident())
         return real_reaper(target)
 
-    monkeypatch.setattr("gobby.hooks.inbox.prune_orphaned_inbox_temp_files", _recording_reaper)
+    monkeypatch.setattr(
+        "gobby.hooks.inbox_maintenance.prune_orphaned_inbox_temp_files", _recording_reaper
+    )
     loop_thread = threading.get_ident()
 
     deleted = await prune_hook_inbox()

@@ -21,7 +21,7 @@ async def drain_hook_inbox_loop(
     interval_seconds: int = 60,
 ) -> None:
     """Replay pending hook inbox envelopes on the maintenance loop."""
-    from gobby.hooks.inbox import drain_hook_inbox_loop as _drain_hook_inbox_loop
+    from gobby.hooks.inbox_maintenance import drain_hook_inbox_loop as _drain_hook_inbox_loop
 
     await _drain_hook_inbox_loop(
         app,

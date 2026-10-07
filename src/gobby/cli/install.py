@@ -3,7 +3,6 @@ Installation commands for hooks.
 """
 
 import logging
-import secrets
 import subprocess  # nosec B404 # fixed install startup command
 import sys
 import webbrowser
@@ -23,17 +22,15 @@ from gobby.cli.install_files_home import (
 from gobby.config.bootstrap import BootstrapConfigError, DatastoreMode, load_bootstrap
 from gobby.config.bootstrap_io import bootstrap_path
 from gobby.storage.api_keys import ensure_local_api_key
-from gobby.storage.auth import AuthStore, ensure_local_api_token
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.projects import ensure_personal_project_identity
-from gobby.storage.secrets import SecretStore, write_private_file
+from gobby.storage.secrets import SecretStore
 from gobby.ui_exposure import (
     UiExposeError,
     UiExposeResult,
     apply_installer_ui_exposure,
     resolve_installer_ui_exposure,
 )
-from gobby.utils.local_token import local_token_path, read_local_api_token
 from gobby.utils.machine_id import require_machine_id
 
 from ._detectors import (
@@ -153,18 +150,6 @@ def _maybe_start_daemon_after_install(*, no_interactive: bool, claim: Any | None
         subprocess_popen=subprocess.Popen,
         browser_open=webbrowser.open,
     )
-
-
-def _provision_local_api_token(auth_store: AuthStore | None) -> None:
-    """Provision the local token with or without a reachable hub database."""
-    if auth_store is not None:
-        ensure_local_api_token(auth_store)
-        ensure_local_api_key(auth_store.db, require_machine_id(), bootstrap_path())
-        return
-    if read_local_api_token() is not None:
-        return
-    token = secrets.token_urlsafe(32)
-    write_private_file(local_token_path(), token.encode("utf-8"))
 
 
 def _provision_gdaemon_for_services() -> None:
@@ -532,12 +517,10 @@ def install(
 
         secret_store: SecretStore | None = None
         config_store: ConfigStore | None = None
-        auth_store: AuthStore | None = None
         provider_hook_timeout_seconds = 120
         try:
             secret_store = SecretStore(db)
             config_store = ConfigStore(db)
-            auth_store = AuthStore(db)
             provider_hook_timeout_seconds = runtime.require_config().hooks.provider_timeout
         except (
             BootstrapConfigError,
@@ -560,7 +543,7 @@ def install(
             )
 
         if datastore_mode == "local":
-            _provision_local_api_token(auth_store)
+            ensure_local_api_key(db, require_machine_id(), bootstrap_path())
 
         install_state = prepare_install_state(config_store, secret_store)
 

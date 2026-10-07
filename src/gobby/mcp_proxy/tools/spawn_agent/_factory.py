@@ -698,7 +698,7 @@ def create_spawn_agent_registry(
     )
     async def dispatch_batch(
         suggestions: list[dict[str, Any]],
-        agent: str = "backend-developer",
+        agent: str = "developer",
         worktree_id: str | None = None,
         clone_id: str | None = None,
         checkout_mode: Literal["none", "worktree", "clone"] | None = None,
@@ -718,7 +718,7 @@ def create_spawn_agent_registry(
 
         Args:
             suggestions: Task briefs from suggest_next_task output
-            agent: Agent definition name (default: "backend-developer")
+            agent: Agent definition name (default: "developer")
             worktree_id: Shared worktree for all agents (full UUID or unique id prefix)
             clone_id: Existing clone ID for all agents
             checkout_mode: Checkout mode (none/worktree/clone)
@@ -798,7 +798,7 @@ def create_spawn_agent_registry(
                     extra_write_paths=suggestion.get("extra_write_paths", extra_write_paths),
                     write_paths_reason=suggestion.get("write_paths_reason", write_paths_reason),
                     prompt=prompt,
-                    agent=suggestion_agent or "backend-developer",
+                    agent=suggestion_agent or "developer",
                     task_id=task_id,
                     worktree_id=_coalesce_string(suggestion, "worktree_id", worktree_id),
                     clone_id=_coalesce_string(suggestion, "clone_id", clone_id),
@@ -828,7 +828,7 @@ def create_spawn_agent_registry(
                     "task_ref": task_ref,
                     "run_id": result.get("run_id", ""),
                     "success": result.get("success", False),
-                    "agent": suggestion_agent or "backend-developer",
+                    "agent": suggestion_agent or "developer",
                     "external_write_grant": result.get("external_write_grant"),
                 }
                 if not out["success"] and result.get("error"):

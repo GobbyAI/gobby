@@ -229,11 +229,16 @@ async def _show_one_commit(
     graph: CommitGraph,
     output: tuple[str, ...] = _PATCH_OUTPUT,
 ) -> str | None:
-    merges = (
-        ["--remerge-diff"] if graph.is_sync_merge(sha, ordered) else ["--diff-merges=first-parent"]
-    )
     raw = await _git_bytes(
-        ["show", *merges, "--format=", "--find-renames", "--find-copies", *output, sha],
+        [
+            "show",
+            graph.merge_view(sha, ordered),
+            "--format=",
+            "--find-renames",
+            "--find-copies",
+            *output,
+            sha,
+        ],
         cwd=cwd,
     )
     if raw is None:

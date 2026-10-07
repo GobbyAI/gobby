@@ -10,19 +10,22 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import gobby.utils.daemon_git as daemon_git_module
 from gobby import runner_lifecycle
 from gobby.runner_pid_file import PidOwnershipResolution
 from gobby.utils.daemon_git import DaemonGitService
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
+    from gobby.utils.daemon_git import _GitProcess
 
 COMMAND = "git-deadline-command"
 BLOCKED = "git-deadline-blocked"
 RESULT = "git-deadline-result"
 PID_FILE = "git-deadline-pid"
+KILL_FILE = "git-deadline-kill-time"
 TIMEOUT_SECONDS = 1.0
-BLOCK_SECONDS = 2.0
+BLOCK_SECONDS = 4.0
 
 
 def _read_command(home: Path) -> bytes:
@@ -34,13 +37,13 @@ async def _reproduce(home: Path) -> None:
     command = await asyncio.to_thread(_read_command, home)
     env = {"PATH": str(home), "GIT_TEST_PID": str(home / PID_FILE)}
     service = DaemonGitService()
-    started_at = time.monotonic()
     operation = (
         service.run([], cwd=home, timeout=TIMEOUT_SECONDS, env=env)
         if command == b"r"
         else service.stream_bytes([], cwd=home, timeout=TIMEOUT_SECONDS, env=env, consume=None)
     )
     task = asyncio.create_task(operation)
+    started_at = time.monotonic()
     try:
         async with asyncio.timeout(5.0):
             while not (home / PID_FILE).exists():
@@ -62,6 +65,14 @@ async def _reproduce(home: Path) -> None:
 def main() -> None:
     home = Path(os.environ["GOBBY_HOME"])
     original = runner_lifecycle.run_daemon
+    original_kill = daemon_git_module._kill_process_group
+
+    def record_kill(process: _GitProcess) -> None:
+        original_kill(process)
+        signalled_at = time.monotonic()
+        pid_path = home / PID_FILE
+        if pid_path.exists() and process.pid == int(pid_path.read_text()):
+            (home / KILL_FILE).write_text(str(signalled_at))
 
     async def run_with_probe(
         runner: GobbyRunner, *, ownership_resolution: PidOwnershipResolution
@@ -73,7 +84,10 @@ def main() -> None:
             probe.cancel()
             await asyncio.gather(probe, return_exceptions=True)
 
-    with patch.object(runner_lifecycle, "run_daemon", run_with_probe):
+    with (
+        patch.object(runner_lifecycle, "run_daemon", run_with_probe),
+        patch.object(daemon_git_module, "_kill_process_group", record_kill),
+    ):
         runpy.run_module("gobby.runner", run_name="__main__")
 
 
