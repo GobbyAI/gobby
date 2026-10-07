@@ -88,6 +88,7 @@ pub(super) fn index_overlay_files(
     request: &IndexRequest,
     ctx: &Context,
 ) -> anyhow::Result<IndexOutcome> {
+    let mut timings = super::IndexTimings::new("overlay.parent_validation");
     let ProjectIndexScope::Overlay {
         overlay_project_id,
         overlay_root,
@@ -99,6 +100,8 @@ pub(super) fn index_overlay_files(
     };
 
     crate::config::validate_parent_code_index(conn, &ctx.index_scope)?;
+
+    timings.phase("overlay.seed");
 
     let start = Instant::now();
     let discovery_start = Instant::now();
@@ -124,6 +127,7 @@ pub(super) fn index_overlay_files(
         parent_root: parent_root.to_string_lossy().to_string(),
     });
 
+    timings.phase("overlay.discovery");
     let excludes = effective_excludes(&ctx.indexing.extra_excludes);
     let explicit_request = !request.explicit_files.is_empty();
     let explicit_rels = request
@@ -168,7 +172,9 @@ pub(super) fn index_overlay_files(
         let content_by_rel = paths_by_relative(root_path, &content_only);
         (ast_by_rel, content_by_rel, candidates)
     };
+    timings.phase("overlay.import_context");
     let import_context = parser::build_import_resolution_context(root_path, &import_candidates);
+    timings.phase("overlay.reconcile");
     let mut rels = overlay_reconcile_candidates(
         request,
         root_path,
@@ -216,6 +222,7 @@ pub(super) fn index_overlay_files(
     let mut semantic_resolver =
         create_semantic_resolver_if_needed(root_path, &ast_reindex, request.require_cpp_semantics)?;
 
+    timings.phase("overlay.files");
     let indexing_start = Instant::now();
     let mut adopted_paths = Vec::new();
     for rel in rels {
@@ -313,6 +320,7 @@ pub(super) fn index_overlay_files(
     // Resolve cross-file local-import calls against the overlay's own symbols.
     // Calls into inherited (not re-indexed) files miss and degrade to unresolved,
     // matching pre-resolution behavior; no project-wide file scan is performed.
+    timings.phase("overlay.local_imports");
     resolve_local_import_calls(conn, overlay_project_id, &outcome.indexed_file_paths)?;
     let mut trigger_paths = outcome.indexed_file_paths.clone();
     trigger_paths.extend(adopted_paths);
@@ -321,6 +329,7 @@ pub(super) fn index_overlay_files(
     outcome.record_promotion_owners(promoted_owners);
     outcome.durations.indexing_ms = indexing_start.elapsed().as_millis() as u64;
 
+    timings.phase("overlay.stats");
     let stats_start = Instant::now();
     refresh_project_stats(
         conn,
@@ -334,7 +343,9 @@ pub(super) fn index_overlay_files(
     outcome.durations.stats_ms = stats_start.elapsed().as_millis() as u64;
     outcome.durations.total_ms = start.elapsed().as_millis() as u64;
 
+    timings.phase("overlay.communities");
     refresh_communities(conn, ctx, &mut outcome);
+    timings.phase("overlay.projection_attachment");
     attach_projection_sync(&mut outcome, request);
     Ok(outcome)
 }

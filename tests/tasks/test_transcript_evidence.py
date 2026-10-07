@@ -1988,7 +1988,9 @@ async def test_codex_tracks_apply_patch_inside_functions_exec(tmp_path: Path) ->
         str(tmp_path),
     )
 
-    assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [("src/changed.py", "exec")]
+    assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [
+        ("src/changed.py", "functions.exec")
+    ]
 
 
 async def test_codex_ingests_unified_exec_failure_event(tmp_path: Path) -> None:
@@ -4944,7 +4946,7 @@ async def test_edits_in_another_checkout_match_task_files_by_suffix(tmp_path: Pa
     )
 
     assert [(edit.path, edit.tool_name) for edit in codex_evidence.edits] == [
-        ("src/changed.py", "exec")
+        ("src/changed.py", "functions.exec")
     ]
     assert [(edit.path, edit.tool_name) for edit in claude_evidence.edits] == [
         ("src/changed.py", "Edit")

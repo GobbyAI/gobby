@@ -14,9 +14,9 @@ use crate::index::indexer::CommunityRefreshReport;
 use chrono::{DateTime, Utc};
 use postgres::Client;
 
-use self::identity::load_project_imports;
+use self::identity::{ImportIdentity, load_project_inputs};
 use self::labels::LABEL_ALGORITHM_VERSION;
-use self::partition::{PartitionCommunity, ProjectPartition, build_partition};
+use self::partition::{PartitionCommunity, PartitionError, ProjectPartition, build_partition};
 use self::remap::{AssignedCommunity, PriorCommunity, assign_ids};
 
 #[allow(dead_code)] // consumed by the 3.2 persistence stage
@@ -78,12 +78,40 @@ pub(crate) fn refresh_project_communities(
     conn: &mut Client,
     ctx: &Context,
 ) -> anyhow::Result<CommunityRefreshReport> {
-    let imports = load_project_imports(conn, ctx)?;
-    let partition = build_partition(&imports.identity, &imports.rows)?;
+    refresh_with_partition_builder(conn, ctx, build_partition)
+}
+
+fn refresh_with_partition_builder(
+    conn: &mut Client,
+    ctx: &Context,
+    build: impl FnOnce(&ImportIdentity, &[(String, String)]) -> Result<ProjectPartition, PartitionError>,
+) -> anyhow::Result<CommunityRefreshReport> {
+    let mut timings = crate::index::indexer::IndexTimings::new("communities.imports");
+    let inputs = load_project_inputs(conn, ctx)?;
+    let input_digest = inputs.digest(ctx);
     let machine_id = gobby_core::machine::read_local_machine_id()?;
     let target_project_id = storage_project_id(ctx);
-    let mut replace = db::begin_replace(conn, &machine_id, target_project_id)?;
+    timings.phase("communities.replace_lock");
+    let mut replace = db::begin_community_refresh(conn, &machine_id, target_project_id)?;
     let target_signature = replace.partition_signature().map(str::to_owned);
+    if replace.input_digest() == Some(input_digest.as_str())
+        && target_signature
+            .as_deref()
+            .is_some_and(|signature| signature.starts_with(&format!("{LABEL_ALGORITHM_VERSION}:")))
+    {
+        let communities = replace.community_count()?;
+        replace.skip()?;
+        return Ok(CommunityRefreshReport {
+            communities,
+            skipped_unchanged: true,
+            ..CommunityRefreshReport::default()
+        });
+    }
+    timings.phase("communities.partition");
+    let imports = inputs.resolve(ctx);
+    let partition = build(&imports.identity, &imports.rows)?;
+    timings.phase("communities.parent_seed");
+    replace.load_prior()?;
     if let ProjectIndexScope::Overlay {
         parent_project_id, ..
     } = &ctx.index_scope
@@ -95,7 +123,7 @@ pub(crate) fn refresh_project_communities(
         partition.partition_signature
     );
     if target_signature.as_deref() == Some(stored_signature.as_str()) {
-        replace.skip()?;
+        replace.commit_input_digest(&input_digest)?;
         return Ok(CommunityRefreshReport {
             communities: partition.communities.len(),
             skipped_unchanged: true,
@@ -103,6 +131,7 @@ pub(crate) fn refresh_project_communities(
         });
     }
 
+    timings.phase("communities.assign_ids");
     let prior = replace
         .prior()
         .iter()
@@ -133,7 +162,8 @@ pub(crate) fn refresh_project_communities(
         })
         .count();
     let communities = rows.len();
-    replace.commit(rows, watermark, &stored_signature)?;
+    timings.phase("communities.persist");
+    replace.commit_with_input_digest(rows, watermark, &stored_signature, Some(&input_digest))?;
     Ok(CommunityRefreshReport {
         communities,
         changed,

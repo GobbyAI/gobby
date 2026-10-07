@@ -12,8 +12,8 @@ use crate::ui::chrome::Chrome;
 use crate::ui::status::{toast_cue, Toast};
 use crate::ui::text::{display_width_u16, truncate_end};
 use crate::ui::widgets::{
-    action_button_row_rects, modal_choice_rows, render_action_button, render_modal_description,
-    render_modal_header, render_modal_shell, ActionButtonSpec,
+    action_button_row_rects, centered_popup_rect, modal_choice_rows, render_action_button,
+    render_modal_description, render_modal_header, render_panel_shell, ActionButtonSpec,
 };
 
 use super::secondary_button_style;
@@ -30,11 +30,23 @@ pub fn alerts_page_rows(area: Rect) -> usize {
     usize::from(room.clamp(1, MAX_LIST_ROWS))
 }
 
+/// Log rows the dialog draws inside `area`: one per alert up to a page,
+/// and one for the empty log's note.
+fn list_rows(area: Rect, chrome: &Chrome) -> u16 {
+    chrome.alert_log.len().clamp(1, alerts_page_rows(area)) as u16
+}
+
+/// The dialog's popup over `area`, border included.
+pub fn popup_area(area: Rect, chrome: &Chrome) -> Option<Rect> {
+    centered_popup_rect(area, POPUP_WIDTH, BASE_HEIGHT + list_rows(area, chrome))
+}
+
 pub fn render_alerts(frame: &mut Frame, area: Rect, chrome: &Chrome, scroll: usize) -> Vec<Rect> {
     let p = &chrome.palette;
     let page = alerts_page_rows(area);
-    let list_rows = chrome.alert_log.len().clamp(1, page) as u16;
-    let Some(inner) = render_modal_shell(frame, area, POPUP_WIDTH, BASE_HEIGHT + list_rows, p)
+    let list_rows = list_rows(area, chrome);
+    let Some(inner) = popup_area(area, chrome)
+        .and_then(|popup| render_panel_shell(frame, popup, p.accent, p.panel_bg))
     else {
         return Vec::new();
     };

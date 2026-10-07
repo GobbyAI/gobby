@@ -38,6 +38,9 @@ pub struct ChromeHits {
     pub dialog_buttons: Vec<Rect>,
     /// The furthest scroll the keybinding help's drawn body shows.
     pub help_last_scroll: usize,
+    /// The open keybinding help, navigator, Alerts, Open worktree or Destroy
+    /// orphaned terminals popup.
+    pub dialog: Option<Rect>,
 }
 
 /// Compose the whole frame; `content` paints each pane's terminal grid.
@@ -95,6 +98,20 @@ pub fn render_workspace_with<W: WorkspaceView>(
         }
         Mode::Terminal | Mode::Navigate | Mode::Prefix | Mode::Copy | Mode::Resize => {}
     }
+    hits.dialog = match (chrome.mode, &chrome.dialog) {
+        (Mode::KeybindHelp, _) => keybind_help::popup_area(area),
+        (Mode::Navigator, _) => navigator::popup_area(area),
+        (Mode::ProjectDialog, Some(dialogs::Dialog::Alerts { .. })) => {
+            dialogs::alerts::popup_area(area, chrome)
+        }
+        (Mode::ProjectDialog, Some(dialogs::Dialog::OpenWorktree { choices, .. })) => {
+            dialogs::project::open_worktree_area(area, choices.len())
+        }
+        (Mode::ProjectDialog, Some(dialogs::Dialog::DestroyOrphans { rows, .. })) => {
+            dialogs::orphans::popup_area(area, rows.len())
+        }
+        _ => None,
+    };
     paint_ground(frame, chrome);
     hits
 }

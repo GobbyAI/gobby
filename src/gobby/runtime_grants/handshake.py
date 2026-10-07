@@ -66,6 +66,7 @@ def challenge_proof(
     *,
     kind: str,
     operator_token: str,
+    signing_key: bytes | None = None,
     claims: AgentApiTokenClaims | None = None,
 ) -> str:
     """HMAC the client nonce with the caller's credential secret."""
@@ -74,13 +75,15 @@ def challenge_proof(
     elif kind == "managed":
         if claims is None:
             raise HandshakeRejection("managed challenge requires claims", code="claims_mismatch")
-        secret = _recompute_capability_signature(operator_token, claims)
+        if not signing_key:
+            raise HandshakeRejection("signing_key_unavailable", code="signing_key_unavailable")
+        secret = _recompute_capability_signature(signing_key, claims)
     else:
         raise HandshakeRejection(f"unknown challenge kind {kind}", code="claims_mismatch")
     return hmac.new(secret, nonce, hashlib.sha256).hexdigest()
 
 
-def _recompute_capability_signature(operator_token: str, claims: AgentApiTokenClaims) -> bytes:
+def _recompute_capability_signature(signing_key: bytes, claims: AgentApiTokenClaims) -> bytes:
     payload = managed_token_signing_payload(
         {
             "exp": claims.exp,
@@ -95,14 +98,13 @@ def _recompute_capability_signature(operator_token: str, claims: AgentApiTokenCl
     )
     encoded = _urlsafe_encode(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode())
     signed = f"{_AGENT_TOKEN_VERSION}.{encoded}"
-    return hmac.new(operator_token.encode(), signed.encode(), hashlib.sha256).digest()
+    return hmac.new(signing_key, signed.encode(), hashlib.sha256).digest()
 
 
 @dataclass
 class HandshakeService:
     grants: GrantService
     local_machine_id: str
-    operator_token: str
     issue_postgres: Callable[[GrantPrincipal], PostgresDirect]
     admitted_projects: frozenset[str] | Callable[[str], bool]
     clock: Callable[[], int]

@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
+from uuid import UUID
 
 from psycopg.errors import UniqueViolation
 
@@ -472,7 +473,11 @@ class TaskCloseReviewStore:
         return bool(getattr(cursor, "rowcount", 0))
 
     def get(self, review_id: str) -> TaskCloseReview | None:
-        return self._get("id = %s", (review_id,))
+        try:
+            canonical_id = str(UUID(review_id))
+        except ValueError:
+            return None
+        return self._get("id = %s", (canonical_id,))
 
     def get_by_run(self, run_id: str) -> TaskCloseReview | None:
         return self._get("agent_run_id = %s", (run_id,))
@@ -612,12 +617,12 @@ class TaskCloseReviewStore:
         *,
         verdict: Mapping[str, Any] | None = None,
     ) -> TaskCloseReview | None:
-        """Claim verdict finalization, including a late verdict from a successful run.
+        """Claim verdict finalization, including a late verdict after the run ended.
 
         The claim clears `delivered_at` and overwrites `result_payload`. Both
         are safe only because the eligibility predicate below admits just
         `running` and the run-ended-without-verdict error, neither of which has
-        a delivered terminal payload to lose. Widening that predicate to a
+        a judged terminal verdict to lose. Widening that predicate to a
         status whose payload already reached its caller would silently erase it.
 
         `verdict` records the submission as it arrived, which is forensic only
@@ -644,7 +649,10 @@ class TaskCloseReviewStore:
                     WHERE id = %s AND agent_run_id = %s
                       AND (
                           status = 'running'
-                          OR (status = 'error' AND error = %s)
+                          OR (status = 'error' AND (
+                              error = %s
+                              OR result_payload ->> 'reviewer_ended_without_verdict' = 'true'
+                          ))
                       )
                     RETURNING {_COLUMNS}
                     """,  # nosec B608 # static column fragment

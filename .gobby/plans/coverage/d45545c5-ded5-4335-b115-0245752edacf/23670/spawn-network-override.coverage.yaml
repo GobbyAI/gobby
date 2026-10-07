@@ -1,0 +1,212 @@
+header:
+  plan_id: spawn-network-override
+  plan_hash: 8f412ec5312f6e2cb21a9431aee07419109758ebd7c501cb59396fe648efa20c
+  root_task_ref: '23670'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-06T15:49:00Z'
+  task_tree_source: db
+  task_tree_source_hash: 1c5a4744fa5a628f55ae37be3cf26aec2194f18a923eee14d63ff49fc761f068
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 1e1e9755037073d49ed8bfeed9d24d4a5c33619b25e882cde2b2ee400909cc82
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23674'
+    validation_criteria_snippet: '1.1.1: Null inherits the final definition''s profile;
+      explicit `none` and `trusted` take precedence for one launch, and an explicit
+      value without a resolved def...'
+    matched_artifact_ref: effective per-spawn SRT network profile
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 1803ec42265b4205436752eec36c6bc25b4283a19349c09b2dfd6900dd4429d8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23674'
+    validation_criteria_snippet: '1.1.1: Null inherits the final definition''s profile;
+      explicit `none` and `trusted` take precedence for one launch, and an explicit
+      value without a resolved def...'
+    matched_artifact_ref: one-launch override lifetime
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: f1bff64e8f4b12dbac68aacc44bb631588624758cde7269835dea9a6595f6ad5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23674'
+    validation_criteria_snippet: '1.1.1: Null inherits the final definition''s profile;
+      explicit `none` and `trusted` take precedence for one launch, and an explicit
+      value without a resolved def...'
+    matched_artifact_ref: resume retains selected network profile
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 4fb89d1ef15ac0e0bb9516b835458a5f11b5215d88a6d1dc8e3d1ec26a908526
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23675'
+    validation_criteria_snippet: '1.2.1: Root and named spawned callers may select
+      either profile; all other spawned callers may spawn only without an override.
+      behavior: "network override auth...'
+    matched_artifact_ref: network override authority
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: e5492e330186f8cf89e309b79dc528b5c4014e74ba60dea1bae04d772ce0697f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23675'
+    validation_criteria_snippet: '1.2.1: Root and named spawned callers may select
+      either profile; all other spawned callers may spawn only without an override.
+      behavior: "network override auth...'
+    matched_artifact_ref: verified caller identity
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 05e3c4d0533f179b776b91ccb64f5e3cc27265c4f936ecc0a93e0ed9d182e8bb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23675'
+    validation_criteria_snippet: '1.2.1: Root and named spawned callers may select
+      either profile; all other spawned callers may spawn only without an override.
+      behavior: "network override auth...'
+    matched_artifact_ref: definition and seat spawn policy
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: c9391ef76d54765b97ab70f304dad770af5b537fa88e273493984b1094de4584
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23676'
+    validation_criteria_snippet: '2.1.1: A spawned agent whose `spawnable_agents`
+      excludes an agent cannot spawn it through a pipeline MCP step, and the refusal
+      names `spawnable_agents`; a regr...'
+    matched_artifact_ref: spawnable_agents on every entry path
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 2dd0c1b07340ac7c99851d06f85ee4d30a4a297c0378abea6f66441c52e1fff4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23676'
+    validation_criteria_snippet: '2.1.1: A spawned agent whose `spawnable_agents`
+      excludes an agent cannot spawn it through a pipeline MCP step, and the refusal
+      names `spawnable_agents`; a regr...'
+    matched_artifact_ref: allowed spawns unchanged
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: d24b8d9aaa56676ee58dbd9dc2c89a81148748eb6991eec2a6e5bb505204af38
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23676'
+    validation_criteria_snippet: '2.1.1: A spawned agent whose `spawnable_agents`
+      excludes an agent cannot spawn it through a pipeline MCP step, and the refusal
+      names `spawnable_agents`; a regr...'
+    matched_artifact_ref: spawn caller identity fails closed
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: baf5b19e7e0045b1796961cf7d25a4db68e71df4ffed0642bb06e508b97f93c1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23676'
+    validation_criteria_snippet: '2.1.1: A spawned agent whose `spawnable_agents`
+      excludes an agent cannot spawn it through a pipeline MCP step, and the refusal
+      names `spawnable_agents`; a regr...'
+    matched_artifact_ref: rejected principal refused
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: f598d6936ead64676b0e68e7f9fcd2358c5da6112a296b8a1b78c284301d3769
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23676'
+    validation_criteria_snippet: '2.1.1: A spawned agent whose `spawnable_agents`
+      excludes an agent cannot spawn it through a pipeline MCP step, and the refusal
+      names `spawnable_agents`; a regr...'
+    matched_artifact_ref: target-project fallback authority
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: fbf678ff80e0e0028f427ac05e46c3d9efc409a9e53fc31678dabca86ad4f4b0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23677'
+    validation_criteria_snippet: '2.2.1: MCP, HTTP, and CLI expose only `none|trusted`,
+      with omission/null inheriting the final definition, including after fallback
+      in both directions. behavior...'
+    matched_artifact_ref: single-spawn network input
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: de8745451ede73ae04cb9853980b12feb03f602de8e422b2a46ab21e9b620244
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23677'
+    validation_criteria_snippet: '2.2.1: MCP, HTTP, and CLI expose only `none|trusted`,
+      with omission/null inheriting the final definition, including after fallback
+      in both directions. behavior...'
+    matched_artifact_ref: HTTP spawn boundary
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: 3543a7267e1ef0bfd27099053e9202fecc906296acec3fbb6ddb4f1161f01de5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23677'
+    validation_criteria_snippet: '2.2.1: MCP, HTTP, and CLI expose only `none|trusted`,
+      with omission/null inheriting the final definition, including after fallback
+      in both directions. behavior...'
+    matched_artifact_ref: override authority at the spawn boundary
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: 29dfd6058fa6228bde6d9f214043a33cde89ac9a9c2b9f32c8b7f7e5c70166c2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23677'
+    validation_criteria_snippet: '2.2.1: MCP, HTTP, and CLI expose only `none|trusted`,
+      with omission/null inheriting the final definition, including after fallback
+      in both directions. behavior...'
+    matched_artifact_ref: docs/guides/sandboxing.md
+  deferral_target: null
+  detail: ''
+- section_id: D1
+  item_id: D1.1
+  plan_node_hash: 355c27fc205b29ab47298483ecf5edf30e8a4497fc88001b8ee7acf1375368a4
+  status: deferred
+  leaves: []
+  deferral_target: '#23678'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.2
+  plan_node_hash: 9099a07e8e523c9823309f7d63765d8e810a09b6c5b2c1eccc65fbe6427f567f
+  status: deferred
+  leaves: []
+  deferral_target: '#23678'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.3
+  plan_node_hash: 93ea7538f85a2b590833021b8d44119fcd375d0c70bd1b256e5932406c475c75
+  status: deferred
+  leaves: []
+  deferral_target: '#23678'
+  detail: deferral is valid

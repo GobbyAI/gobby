@@ -18,6 +18,7 @@ from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead
 from gobby.sessions.turn_lifecycle import TurnLifecycleState
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import LIVE_SESSION_STATUSES, PROTECTED_SESSION_STATUSES, SessionManager
 from gobby.terminals.pane_io import (
     COMPOSER_MATCH_CHARS,
     ComposerReader,
@@ -79,6 +80,25 @@ async def _read_composer(pane: PaneIO, composer_read: ComposerReader) -> Compose
         return None
 
 
+def continuation_write_allowed(
+    db: HubDatabase, session_id: str, *, baseline_generation: int | None = None
+) -> bool:
+    """Permit the compact's handoff wait, but protect other live interaction waits."""
+    try:
+        session = SessionManager(db).get(session_id)
+        if session is None or session.status not in LIVE_SESSION_STATUSES:
+            return False
+        if session.status in PROTECTED_SESSION_STATUSES and session.status != "awaiting_handoff":
+            return False
+        attention = AttentionStateManager(db).get(session_attention_entry_id(session_id))
+        state = TurnLifecycleState.from_payload(attention.payload if attention else None)
+        if baseline_generation is not None and state.generation > baseline_generation:
+            return False
+        return not any(wait.kind in {"input", "approval"} for wait in state.waits)
+    except Exception:
+        return False
+
+
 async def resubmit_continuation(
     pane: PaneIO,
     prompt: str,
@@ -88,6 +108,8 @@ async def resubmit_continuation(
     composer_read: ComposerReader | None,
     verify_seconds: float,
     before_agent_check: Callable[[], Awaitable[bool]] | None = None,
+    db: HubDatabase | None = None,
+    baseline_generation: int | None = None,
 ) -> bool:
     """Re-submit the continuation without ever writing over operator text.
 
@@ -109,8 +131,16 @@ async def resubmit_continuation(
 
     Returns False when nothing safe could be written or a pane write failed.
     """
-    if composer_read is None:
+
+    async def send_enter_if_allowed() -> bool:
+        if db is not None and not await asyncio.to_thread(
+            continuation_write_allowed, db, session_id, baseline_generation=baseline_generation
+        ):
+            return False
         return await _send_enter(pane, session_id)
+
+    if composer_read is None:
+        return await send_enter_if_allowed()
 
     read = await _read_composer(pane, composer_read)
     if read is None or read.state == "unknown":
@@ -118,9 +148,9 @@ async def resubmit_continuation(
     if read.state == "draft":
         if not _holds_our_prompt(read, prompt):
             return False
-        return await _send_enter(pane, session_id)
+        return await send_enter_if_allowed()
 
-    if not await _send_enter(pane, session_id):
+    if not await send_enter_if_allowed():
         return False
     if before_agent_check is not None and await before_agent_check():
         # A held copy the empty read missed was submitted by that Enter and its
@@ -131,6 +161,10 @@ async def resubmit_continuation(
         # A held copy is visible now, or the frame is unreadable or holds operator
         # text: never type over it. The next bounded Enter handles a held copy.
         return read is not None and read.state == "draft" and _holds_our_prompt(read, prompt)
+    if db is not None and not await asyncio.to_thread(
+        continuation_write_allowed, db, session_id, baseline_generation=baseline_generation
+    ):
+        return False
     result = await submit_text(
         pane,
         prompt,
@@ -187,6 +221,8 @@ async def resubmit_until_before_agent(
             cli_source=cli_source,
             composer_read=composer_read,
             verify_seconds=verify_seconds,
+            db=db,
+            baseline_generation=baseline_generation,
             before_agent_check=lambda: await_before_agent(
                 db,
                 session_id,

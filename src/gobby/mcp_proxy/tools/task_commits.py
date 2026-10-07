@@ -248,9 +248,10 @@ def create_commit_registry(
             "from the creator or delegator and requires a comma-separated reason fact naming "
             "restart, freeze, or overlap (optional batch). landing is written only by "
             "land_commit. The calling session is the "
-            "author; the task's claimant and task-close reviewers are refused. Idempotent per "
-            "author, kind, and commit; landing_approval also matches the reason set, so changed "
-            "reasons append a new receipt."
+            "author; the task's claimant and task-close reviewers are refused, and a session "
+            "that has ever claimed the task cannot record its independent_review_approval. "
+            "Idempotent per author, kind, and commit; landing_approval also matches the "
+            "reason set, so changed reasons append a new receipt."
         ),
         input_schema={
             "type": "object",

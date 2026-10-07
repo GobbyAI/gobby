@@ -41,6 +41,7 @@ from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
     classify_agent_api_token,
+    derive_managed_signing_key,
     issue_agent_api_token,
 )
 from gobby.utils.session_context import (
@@ -334,7 +335,9 @@ def _http_server(stack: _Stack, temp_db: HubDatabase, tmp_path: Path) -> HTTPSer
     token_file = tmp_path / "local-token"
     token_file.write_text(OPERATOR_TOKEN)
     AuthStore(temp_db).set_local_api_token_hash(hash_token(OPERATOR_TOKEN))
-    server.auth_service = AuthService(lambda: temp_db, token_file=token_file)
+    server.auth_service = AuthService(
+        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
+    )
     return server
 
 
@@ -364,7 +367,7 @@ async def test_actor_is_derived_from_session_context_and_principal(
     )
     stack.sessions.update_terminal_pickup_metadata(agent_session.id, agent_run_id=run.id)
     agent_token = issue_agent_api_token(
-        OPERATOR_TOKEN,
+        derive_managed_signing_key(OPERATOR_TOKEN),
         agent_run_id=run.id,
         session_id=agent_session.id,
         project_id=stack.project_id,
@@ -411,7 +414,7 @@ async def test_actor_is_derived_from_session_context_and_principal(
         assert internal is not None
         registry = internal.get_registry("gobby-workspaces")
         assert registry is not None
-        claims = classify_agent_api_token(agent_token, OPERATOR_TOKEN)
+        claims = classify_agent_api_token(agent_token, derive_managed_signing_key(OPERATOR_TOKEN))
         assert isinstance(claims, AgentApiTokenClaims)
         with _principal(claims):
             assert await _code(registry, "create_workspace", name="claims") == "forbidden"
@@ -463,3 +466,10 @@ async def test_agent_token_is_refused_even_with_a_session_header(stack: _Stack) 
     assert tokenless == "forbidden"
     assert refused == dict.fromkeys(calls, "forbidden")
     assert create.await_count == 0
+
+
+def _managed_bootstrap(token_file: Path) -> Path:
+    bootstrap = token_file.with_name(token_file.name + ".bootstrap.yaml")
+    api_key = token_file.read_text().strip() if token_file.exists() else None
+    bootstrap.write_text(json.dumps({"api_key": api_key}))
+    return bootstrap

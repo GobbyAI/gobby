@@ -55,7 +55,8 @@ code_indexed_projects for a linked worktree, so it serves stale offsets).
 
 **When the leaves close:**
 - A dated evidence report records C1 to C8, including C7 for both tools, for
-  current gcode against the current Graphify release, at quiet load, on the
+  current gcode against the current Graphify release, with interleaved,
+  order-balanced measurements and recorded load, on the
   frozen Game Goblins corpus. It also records the community-label facts that
   decide #22604 (1.1).
 - Every gcode read surface orders communities by member count descending,
@@ -72,19 +73,20 @@ decisions on 2026-10-05 from the sources cited.
    the completed plan set it. A broader Graphify capability is built only
    when the plan names its consumer. No capability outside the community
    subsystem has one, so this plan adds none (Decisions 6 and 7).
-2. **The plan expands only after #22862 closes.** #22862 (gcode community
-   refresh: measure the unchanged-file cost against the +250 ms budget, add
-   the input-digest skip if over) may change the community refresh that C2
-   to C6 time, so the benchmark runs after it (Q2). The Orchestrator ruled on
-   2026-10-05 at 12:11 CT that `docs/contracts/plan-coverage.md` has no
-   exception for external edges. So both deliverables stay active, fully
-   specified leaves, with no external edges and no typed deferrals. The
-   whole plan expands only after #22862 closes, which leaves no leaf with an
-   open external prerequisite at expansion. Expansion is the Orchestrator's
-   action, and the Orchestrator holds it to this gate. Leaf 1.2 has no
-   technical dependency on #22862; it is gated only because the plan expands
-   as one unit. The leaves expand under #22948 (Code index: communities and
-   Graphify parity), the epic that already holds #22862.
+2. **Expand two leaves, each blocked by batch 3 activation.** The
+   Orchestrator's 2026-10-06 15:29 CT ruling supersedes the earlier
+   expansion-after-close gate. Expand exactly the existing two fully
+   specified leaves under #22948 (Code index: communities and Graphify
+   parity), and give each a blocked-by dependency on #23692 (Land batch 3
+   with one cutover). That carrier activates #22862 (gcode community refresh
+   input-digest skip) and #23638 (avoid quadratic community remapping), with
+   gcode 1.9.13 and schema 461. The benchmark uses that activated state;
+   #22862's post-activation latency measurement remains its own close gate.
+   Preserve both existing routes and no sibling dependency. The external
+   task reference is a task dependency applied by the Orchestrator during
+   expansion, never an M1 `depends_on` value, which names sibling sections.
+   This explicit ruling governs this amendment's expansion; it does not
+   change the plan-coverage contract for other plans or add a third leaf.
 3. **The benchmark is the first leaf (Q2), and its protocol amends the frozen
    matrix.** `docs/evidence/wiki-bakeoff-code-2026-09/matrix.md` stays the
    protocol for everything 1.1 does not amend. Leaf 1.1 carries each
@@ -92,7 +94,9 @@ decisions on 2026-10-05 from the sources cited.
    - the rerun provisions a fresh runtime root, because the September
      provisioning refuses an existing root and asserts the September owner
      task;
-   - every timed case starts at quiet load, the threshold #22862 set;
+   - every timed comparison uses at least five interleaved, order-balanced
+     pairs, with the load recorded at each run, per the Orchestrator's
+     2026-10-06 15:29 CT protocol amendment;
    - both tools run at their current identities;
    - gcode's C7 marker is a row count of its per-file state table, because
      gcode prints no progress under a pipe and keeps its state in
@@ -174,7 +178,8 @@ decisions on 2026-10-05 from the sources cited.
 `kind: framing`
 
 - Leaf 1.1 is a heavy, long-running measurement. The Lane Manager admits it,
-  and it runs only at quiet load (Decision 3). It runs in the fresh isolated
+  using Decision 3's comparative protocol and the shared heavy-work hold.
+  It runs in the fresh isolated
   root `/Users/josh/Projects/gcode-graphify-rerun-2026-10/`, with its own
   compose services and its own Gobby home. It never touches the live daemon,
   the live database, or port 60891, and it never writes under the September
@@ -312,9 +317,20 @@ Targets:
    neither the corpus nor the source, which is what the matrix's marker
    rules protect. No production seam is added.
 3. **C1 to C6** for both tools, with the 09 argv shapes and corpora, each
-   case from the starting state the matrix names. Before each timed case of
-   either tool, record the 5-minute load average and wait until it is under
-   5, the quiet-load threshold in #22862's description. For gcode's C2 to
+   case from the starting state the matrix names. For each timed comparison,
+   run at least five interleaved pairs of gcode and Graphify, alternating
+   which tool runs first. Use an even number of pairs for equal numbers of
+   both orders (six pairs minimum). Every repetition starts from an
+   independent copy of the case's prescribed starting state; repetitions
+   never share a mutated state. Record pair id, tool order, exact argv,
+   raw timing, and the 1-, 5-, and 15-minute load averages immediately before
+   each run. Report both tools' p50 timings and the p50 paired difference,
+   alongside the raw samples. This comparative protocol replaces the
+   5-minute load-under-5 preflight, per the Orchestrator's 2026-10-06
+   15:29 CT ruling; the shared heavy-work hold still applies. Apply the same
+   pairing and state-isolation rules to any timed C7 or C8 comparison.
+   Keep each C7 repetition's one planned interruption and one native recovery.
+   For gcode's C2 to
    C6, read the case state's `code_communities` rows and its
    `community_id_watermark` before the timed command starts and after it
    ends, outside the timed window.
@@ -423,7 +439,7 @@ Targets:
 
 **Acceptance:**
 
-- 1.1.1 - The report records the fresh runtime root and its ownership receipt, the dated script copies' SHA-256 values, both tools' identities (gcode version, contract, and SHA-256 of the copied installed binary; Graphify's PyPI version and executable and lock SHA-256), the corpus commits, and a 5-minute load average under 5 before every timed case. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+- 1.1.1 - The report records the fresh runtime root and its ownership receipt, the dated script copies' SHA-256 values, both tools' identities (gcode version, contract, and SHA-256 of the copied installed binary; Graphify's PyPI version and executable and lock SHA-256), the corpus commits, and at least five interleaved, order-balanced pairs for each timed comparison (an even number, six minimum, with equal AB/BA orders), with the load recorded at each run, raw samples, both tools' p50 timings and the p50 paired difference. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
 - 1.1.2 - The report gives C1 to C6 for both tools in the 09 table shape (seconds, changed files, symbols and chunks for gcode; nodes, edges and uncached files for Graphify) beside the 09 numbers, and states that gcode's C2 to C6 include the community refresh. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
 - 1.1.3 - The report gives C7 for both tools: the marker each used, the one planned `SIGTERM`, any safety `SIGKILL`, the native recovery commands, and whether the recovered state equals a fresh clean C1 state, by the 09 signature for Graphify and by step 4's fact, projection and vector checks for gcode, with the gcode row-count marker recorded as an amendment to the matrix. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
 - 1.1.4 - The report scores C8's 14 frozen questions for both tools as in 09, and states whether the gcode hybrid lane was included or excluded by the embedding preflight. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
@@ -561,6 +577,23 @@ Consumers unchanged:
   `backend-developer`, TDD true, no sibling dependencies. The whole plan
   stays gated on #22862 and on Josh's approval of the stamped plan.
 
+- 2026-10-06: Lane 5 writer gobby#15405 applies the Orchestrator's 15:29 CT
+  targeted amendment: comparative interleaved, order-balanced measurements
+  replace the quiet-load preflight, and two leaves expand with blocked-by
+  #23692 (batch 3 activation) instead of waiting for #22862 to close.
+  The dated 2026-10-05 consensus above remains historical evidence; this
+  amendment supersedes its expansion gate. Adversary gobby#15414's audit
+  accepted the comparative protocol and identified A1 (old expansion gate),
+  A2 (stale M1 criterion), and N1 (explicit even pair count in acceptance).
+  On 2026-10-06 at 16:55 CT, writer gobby#15405 and Adversary gobby#15414
+  reached technical consensus on revised SHA-256
+  `25ee4cf1c087c5ae3fdeb853c61bd8dfdb7990a790e8e46e7e3e5a21b68f1a20`:
+  A1, A2 and N1 are resolved with no blocking amendment findings. A2's
+  service-derived M1 matches all nine narrative criteria. Both existing
+  routes, Targets, other acceptance items, and the separate #22958 plan
+  remain intact. This consensus entry receives a fresh service-derived M1;
+  operational GO remains with Lane 7 and commit timing with the Merge Manager.
+
 ## V2: Verification
 `kind: verification`
 
@@ -583,8 +616,10 @@ After both leaves pass:
   validation_criteria: '1.1.1: The report records the fresh runtime root and its ownership
     receipt, the dated script copies'' SHA-256 values, both tools'' identities (gcode
     version, contract, and SHA-256 of the copied installed binary; Graphify''s PyPI
-    version and executable and lock SHA-256), the corpus commits, and a 5-minute load
-    average under 5 before every timed case. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
+    version and executable and lock SHA-256), the corpus commits, and at least five
+    interleaved, order-balanced pairs for each timed comparison (an even number, six
+    minimum, with equal AB/BA orders), with the load recorded at each run, raw samples,
+    both tools'' p50 timings and the p50 paired difference. file: `docs/evidence/gcode-graphify-rerun-2026-10/report.md`.
 
     1.1.2: The report gives C1 to C6 for both tools in the 09 table shape (seconds,
     changed files, symbols and chunks for gcode; nodes, edges and uncached files for

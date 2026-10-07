@@ -1,15 +1,18 @@
-"""Tests for the bundled rule that limits which agents a spawned agent may spawn."""
+"""Tests for the bundled rules that limit what a spawned agent may spawn and with which network."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
 from gobby.agents.sync import sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.sessions.clear_continuation import stage_clear_attempt, take_clear_handoff_marker
+from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
@@ -26,6 +29,8 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 pytestmark = pytest.mark.unit
 
 LIMIT_SPAWNABLE_AGENTS = "limit-spawnable-agents"
+LIMIT_SPAWN_NETWORK_OVERRIDE = "limit-spawn-network-override"
+SEAT_NO_SPAWN = "seat-no-spawn"
 
 
 class _UnreachableSessions(SessionManager):
@@ -35,18 +40,22 @@ class _UnreachableSessions(SessionManager):
         raise RuntimeError("session store unavailable")
 
 
-def _only_limit_rule_enabled(db: HubDatabase) -> RuleDefinitionManager:
-    """Sync the bundled rules and leave only the rule under test enabled."""
+def _only_rules_enabled(db: HubDatabase, *names: str) -> RuleDefinitionManager:
+    """Sync the bundled rules and leave only the rules under test enabled."""
     sync_bundled_rules(db, get_bundled_rules_path())
     manager = RuleDefinitionManager(db)
     for row in manager.list_all():
-        if row.name != LIMIT_SPAWNABLE_AGENTS and row.enabled:
+        if row.name not in names and row.enabled:
             manager.update(row.id, enabled=False)
     return manager
 
 
 def _spawn_event(
-    caller_id: str, tool_name: str, agent: str | None, suggestions: object = None
+    caller_id: str,
+    tool_name: str,
+    agent: str | None,
+    suggestions: object = None,
+    **extra: Any,
 ) -> HookEvent:
     """The before_tool event the MCP proxy builds for one spawn dispatch."""
     arguments: dict[str, Any] = {"prompt": "work"}
@@ -54,6 +63,7 @@ def _spawn_event(
         arguments = {"suggestions": [{"task_id": "#1"}] if suggestions is None else suggestions}
     if agent is not None:
         arguments["agent"] = agent
+    arguments.update(extra)
     data: dict[str, Any] = {
         "tool_name": "mcp__gobby__call_tool",
         "tool_input": {
@@ -88,7 +98,89 @@ def _define_agent(
     AgentDefinitionManager(db).create(name, body)
 
 
+def _register(
+    session_manager: SessionManager, project_id: str, name: str, parent: Session | None = None
+) -> Session:
+    """A root session, or a depth-1 child of ``parent`` with no agent run yet."""
+    return session_manager.register(
+        external_id=f"spawn-scope-{name}",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id=project_id,
+        parent_session_id=None if parent is None else parent.id,
+        agent_depth=0 if parent is None else 1,
+    )
+
+
+def _spawned(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    root: Session,
+    name: str,
+    agent_name: str | None,
+) -> Session:
+    """A child of ``root`` bound to an agent run that names ``agent_name``."""
+    child = _register(session_manager, root.project_id, name, root)
+    run = LocalAgentRunManager(db).create(
+        parent_session_id=root.id,
+        provider="claude",
+        prompt="work",
+        agent_name=agent_name,
+        child_session_id=child.id,
+    )
+    updated = session_manager.update_terminal_pickup_metadata(child.id, agent_run_id=run.id)
+    assert updated is not None and updated.agent_run_id == run.id
+    return updated
+
+
 class TestLimitSpawnableAgents:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("cleared", ["root", "coordinator", "caller"])
+    @pytest.mark.parametrize("allowed", [False, True], ids=["forbidden-target", "allowed-target"])
+    async def test_rule_spawn_scope_survives_clear(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        callers: dict[str, Session],
+        cleared: str,
+        allowed: bool,
+    ) -> None:
+        _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS)
+        predecessor = callers["lister"] if cleared == "caller" else callers["root"]
+        successor = session_manager.register(
+            "clear-successor",
+            predecessor.machine_id,
+            predecessor.source,
+            project_id=predecessor.project_id,
+            agent_depth=predecessor.agent_depth,
+        )
+        session_manager.update_terminal_pickup_metadata(
+            successor.id,
+            agent_run_id=predecessor.agent_run_id,
+        )
+        attempt = uuid4().hex
+        stage_clear_attempt(
+            temp_db,
+            predecessor.id,
+            attempt_id=attempt,
+            handoff=build_handoff_payload(current_state="Continue.", next_steps=["Continue."]),
+            terminal_context=None,
+            chat_context=None,
+        )
+        assert take_clear_handoff_marker(
+            temp_db, predecessor.id, attempt_id=attempt, successor_id=successor.id
+        )
+        caller_id = callers["lister"].id if cleared == "coordinator" else successor.id
+        target = "spawn-scope-worker" if allowed else "spawn-scope-other"
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            _spawn_event(caller_id, "spawn_agent", target),
+            session_id=caller_id,
+            variables={},
+        )
+        assert response.decision == ("allow" if allowed or cleared == "root" else "block")
+        if response.decision == "block":
+            assert response.reason is not None and "spawnable_agents" in response.reason
+
     @pytest.fixture
     def callers(
         self,
@@ -108,30 +200,10 @@ class TestLimitSpawnableAgents:
             temp_db, "spawn-scope-chain-both", ["spawn-scope-chained", "spawn-scope-backup"]
         )
 
-        def register(name: str, parent: Session | None = None) -> Session:
-            return session_manager.register(
-                external_id=f"spawn-scope-{name}",
-                machine_id=require_machine_id(),
-                source="claude",
-                project_id=project_id,
-                parent_session_id=None if parent is None else parent.id,
-                agent_depth=0 if parent is None else 1,
-            )
-
-        root = register("root")
+        root = _register(session_manager, project_id, "root")
 
         def spawned(agent_name: str) -> Session:
-            child = register(agent_name, root)
-            run = LocalAgentRunManager(temp_db).create(
-                parent_session_id=root.id,
-                provider="claude",
-                prompt="work",
-                agent_name=agent_name,
-                child_session_id=child.id,
-            )
-            updated = session_manager.update_terminal_pickup_metadata(child.id, agent_run_id=run.id)
-            assert updated is not None and updated.agent_run_id == run.id
-            return updated
+            return _spawned(temp_db, session_manager, root, agent_name, agent_name)
 
         return {
             "root": root,
@@ -181,7 +253,7 @@ class TestLimitSpawnableAgents:
         agent: str | None,
         expected_decision: str,
     ) -> None:
-        _only_limit_rule_enabled(temp_db)
+        _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS)
         caller_id = callers[caller].id
 
         response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
@@ -211,20 +283,20 @@ class TestLimitSpawnableAgents:
             ),
             ("lister", "dispatch_batch", "spawn-scope-worker", "#1", "block"),
             ("lister", "dispatch_batch", "spawn-scope-worker", ["#1"], "block"),
-            # Every agent in a target's fallback_agent chain is a target too.
-            ("chain-lister", "spawn_agent", "spawn-scope-chained", None, "block"),
+            # Rules check requested names; admission checks the resolved project's chain.
+            ("chain-lister", "spawn_agent", "spawn-scope-chained", None, "allow"),
             ("chain-both", "spawn_agent", "spawn-scope-chained", None, "allow"),
             (
                 "chain-lister",
                 "dispatch_batch",
                 None,
                 [{"agent": "spawn-scope-chained"}],
-                "block",
+                "allow",
             ),
             ("chain-both", "dispatch_batch", "spawn-scope-chained", [{}], "allow"),
         ],
     )
-    async def test_every_effective_spawn_target_must_be_listed(
+    async def test_every_requested_spawn_target_must_be_listed(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,
@@ -235,7 +307,7 @@ class TestLimitSpawnableAgents:
         suggestions: object,
         expected_decision: str,
     ) -> None:
-        _only_limit_rule_enabled(temp_db)
+        _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS)
         caller_id = callers[caller].id
 
         response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
@@ -256,7 +328,7 @@ class TestLimitSpawnableAgents:
         session_manager: SessionManager,
         callers: dict[str, Session],
     ) -> None:
-        manager = _only_limit_rule_enabled(temp_db)
+        manager = _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS)
         row = manager.get_by_name(LIMIT_SPAWNABLE_AGENTS)
         assert row is not None
         manager.update(row.id, enabled=False)
@@ -274,7 +346,7 @@ class TestLimitSpawnableAgents:
     async def test_evaluation_error_refuses_the_spawn(
         self, temp_db: HubDatabase, callers: dict[str, Session]
     ) -> None:
-        _only_limit_rule_enabled(temp_db)
+        _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS)
         caller_id = callers["root"].id
         engine = RuleEngine(temp_db, session_manager=_UnreachableSessions(temp_db))
 
@@ -287,6 +359,237 @@ class TestLimitSpawnableAgents:
         assert response.decision == "block"
         assert response.reason is not None
         assert LIMIT_SPAWNABLE_AGENTS in response.reason
+
+
+class TestLimitSpawnNetworkOverride:
+    @pytest.fixture
+    def callers(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> dict[str, Session]:
+        """A root session, spawned runs with and without authority, and broken identities."""
+        root = _register(session_manager, str(sample_project["id"]), "root")
+        return {
+            "root": root,
+            "default": _spawned(temp_db, session_manager, root, "default", "default"),
+            "orchestrator": _spawned(
+                temp_db, session_manager, root, "orchestrator", "orchestrator"
+            ),
+            "worker": _spawned(temp_db, session_manager, root, "worker", "spawn-scope-worker"),
+            "nameless": _spawned(temp_db, session_manager, root, "nameless", None),
+            "runless": _register(session_manager, root.project_id, "runless", root),
+        }
+
+    def test_rule_syncs_enabled_blocking_spawn_agent(self, temp_db: HubDatabase) -> None:
+        sync_bundled_rules(temp_db, get_bundled_rules_path())
+
+        row = RuleDefinitionManager(temp_db).get_by_name(LIMIT_SPAWN_NETWORK_OVERRIDE)
+        assert row is not None
+        assert row.enabled is True
+        effect = RuleDefinitionBody.model_validate(row.definition_json).resolved_effects[0]
+        assert effect.type == "block"
+        assert effect.mcp_tools == ["gobby-agents:spawn_agent"]
+        assert effect.reason is not None
+        assert "network" in effect.reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("caller", ["root", "default", "orchestrator"])
+    @pytest.mark.parametrize("network", ["none", "trusted"])
+    async def test_root_default_and_orchestrator_choose_either_profile(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        callers: dict[str, Session],
+        caller: str,
+        network: str,
+    ) -> None:
+        _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE)
+        caller_id = callers[caller].id
+
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            _spawn_event(caller_id, "spawn_agent", "spawn-scope-worker", network=network),
+            session_id=caller_id,
+            variables={},
+        )
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("network", ["none", "trusted"])
+    async def test_other_spawned_caller_cannot_choose_a_profile(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        callers: dict[str, Session],
+        network: str,
+    ) -> None:
+        _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE)
+        caller_id = callers["worker"].id
+
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            _spawn_event(caller_id, "spawn_agent", "spawn-scope-worker", network=network),
+            session_id=caller_id,
+            variables={},
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert LIMIT_SPAWN_NETWORK_OVERRIDE in response.reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "override",
+        [pytest.param({}, id="omitted"), pytest.param({"network": None}, id="explicit-null")],
+    )
+    async def test_other_spawned_caller_spawns_with_the_inherited_profile(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        callers: dict[str, Session],
+        override: dict[str, Any],
+    ) -> None:
+        _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE)
+        caller_id = callers["worker"].id
+
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            _spawn_event(caller_id, "spawn_agent", "spawn-scope-worker", **override),
+            session_id=caller_id,
+            variables={},
+        )
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "caller",
+        [
+            pytest.param("worker", id="forged-root-parent"),
+            pytest.param("runless", id="run-less-child"),
+            pytest.param("nameless", id="run-names-no-definition"),
+        ],
+    )
+    async def test_unverified_identity_never_gains_authority(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        callers: dict[str, Session],
+        caller: str,
+    ) -> None:
+        _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE)
+        caller_id = callers[caller].id
+        event = _spawn_event(
+            caller_id,
+            "spawn_agent",
+            "spawn-scope-worker",
+            network="trusted",
+            parent_session_id=callers["root"].id,
+        )
+
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            event, session_id=caller_id, variables={}
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert LIMIT_SPAWN_NETWORK_OVERRIDE in response.reason
+
+    @pytest.mark.asyncio
+    async def test_missing_caller_identity_refuses_an_override(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        callers: dict[str, Session],
+    ) -> None:
+        _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE)
+        root_id = callers["root"].id
+        event = _spawn_event(
+            root_id,
+            "spawn_agent",
+            "spawn-scope-worker",
+            network="trusted",
+            parent_session_id=root_id,
+        )
+        del event.metadata["_platform_session_id"]
+
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            event, session_id=root_id, variables={}
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert LIMIT_SPAWN_NETWORK_OVERRIDE in response.reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("override", "expected_decision"),
+        [
+            pytest.param({"network": "trusted"}, "block", id="override-refused"),
+            pytest.param({}, "allow", id="no-override-spared"),
+        ],
+    )
+    async def test_evaluation_error_refuses_only_an_override(
+        self,
+        temp_db: HubDatabase,
+        callers: dict[str, Session],
+        override: dict[str, Any],
+        expected_decision: str,
+    ) -> None:
+        _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE)
+        caller_id = callers["root"].id
+        engine = RuleEngine(temp_db, session_manager=_UnreachableSessions(temp_db))
+
+        response = await engine.evaluate(
+            _spawn_event(caller_id, "spawn_agent", "spawn-scope-worker", **override),
+            session_id=caller_id,
+            variables={},
+        )
+
+        assert response.decision == expected_decision
+
+    @pytest.mark.asyncio
+    async def test_spawned_default_spawns_children_with_a_chosen_profile(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        callers: dict[str, Session],
+    ) -> None:
+        sync_bundled_agents(temp_db)
+        _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS, LIMIT_SPAWN_NETWORK_OVERRIDE)
+        caller_id = callers["default"].id
+
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            _spawn_event(caller_id, "spawn_agent", "spawn-scope-worker", network="trusted"),
+            session_id=caller_id,
+            variables={},
+        )
+
+        body = resolve_agent("default", temp_db)
+        assert body is not None
+        assert body.spawnable_agents == ["*"]
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_override_authority_leaves_seat_no_spawn_in_force(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        callers: dict[str, Session],
+    ) -> None:
+        _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE, SEAT_NO_SPAWN)
+        caller_id = callers["orchestrator"].id
+
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            _spawn_event(caller_id, "spawn_agent", "spawn-scope-worker", network="trusted"),
+            session_id=caller_id,
+            variables={"_agent_type": "orchestrator"},
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert SEAT_NO_SPAWN in response.reason
+        assert LIMIT_SPAWN_NETWORK_OVERRIDE not in response.reason
 
 
 def test_bundled_merge_orchestrator_may_spawn_merge_workers(temp_db: HubDatabase) -> None:

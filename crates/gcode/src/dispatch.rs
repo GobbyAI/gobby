@@ -364,6 +364,8 @@ fn run() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let mut index_timings = matches!(&cli.command, Command::Index { .. })
+        .then(|| crate::index::indexer::IndexTimings::new("dispatch.context"));
     let ctx = config::Context::resolve_with_services(
         cli.project.as_deref(),
         cli.quiet,
@@ -376,6 +378,9 @@ fn run() -> anyhow::Result<()> {
             error
         }
     })?;
+    if let Some(timings) = &mut index_timings {
+        timings.phase("dispatch.command");
+    }
     let cwd = std::env::current_dir()?;
 
     if navigation::dispatch(

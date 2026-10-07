@@ -32,6 +32,7 @@ from gobby.agents.constants import (
 from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, managed_tool_bin_dir
 from gobby.utils.local_token import (
     AGENT_TOKEN_MAX_TTL_SECONDS,
+    derive_managed_signing_key,
     local_token_path,
     verify_agent_api_token,
 )
@@ -185,10 +186,12 @@ class TestGetTerminalEnvVars:
             parent_session_id="sess-parent",
             agent_run_id="run-123",
             project_id="proj-abc",
-            operator_token="operator-token",
+            signing_key=derive_managed_signing_key("operator-token"),
         )
 
-        claims = verify_agent_api_token(result[GOBBY_AGENT_API_TOKEN], "operator-token")
+        claims = verify_agent_api_token(
+            result[GOBBY_AGENT_API_TOKEN], derive_managed_signing_key("operator-token")
+        )
         assert claims is not None
         assert claims.agent_run_id == "run-123"
         assert claims.session_id == "sess-child"
@@ -209,11 +212,13 @@ class TestGetTerminalEnvVars:
             parent_session_id="sess-parent",
             agent_run_id="run-123",
             project_id="proj-abc",
-            operator_token="operator-token",
+            signing_key=derive_managed_signing_key("operator-token"),
             timeout_seconds=300,
         )
 
-        claims = verify_agent_api_token(result[GOBBY_AGENT_API_TOKEN], "operator-token")
+        claims = verify_agent_api_token(
+            result[GOBBY_AGENT_API_TOKEN], derive_managed_signing_key("operator-token")
+        )
         assert claims is not None
         # Declared run timeout plus the fixed 60-second grace.
         assert claims.exp - claims.iat == 360

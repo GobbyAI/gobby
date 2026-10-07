@@ -26,6 +26,7 @@ pub(super) fn extract_ast_calls(
         return Ok(Vec::new());
     }
 
+    let mut timings = crate::index::indexer::IndexTimings::new("calls.compile_query");
     let query = Query::new(ctx.ts_lang, spec.call_query).with_context(|| {
         format!(
             "failed to compile call query for language `{language}` while parsing {}",
@@ -33,6 +34,7 @@ pub(super) fn extract_ast_calls(
         )
     })?;
 
+    timings.phase("calls.matches");
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source);
     let capture_names = query.capture_names();

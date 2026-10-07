@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -17,7 +18,11 @@ from gobby.runtime_grants.handshake import HandshakeService, encode_grant_header
 from gobby.runtime_grants.schema import PostgresDirect
 from gobby.runtime_grants.service import DeploymentGrantContext, GrantService
 from gobby.servers.auth_service import AuthService
-from gobby.utils.local_token import issue_agent_api_token, verify_agent_api_token
+from gobby.utils.local_token import (
+    derive_managed_signing_key,
+    issue_agent_api_token,
+    verify_agent_api_token,
+)
 from tests.runtime_grants.support import (
     DEPLOYMENT_TOKEN,
     FENCING_EPOCH,
@@ -66,7 +71,6 @@ def _services(config: DaemonConfig) -> tuple[GrantService, HandshakeService, Any
     handshake = HandshakeService(
         grants=grants,
         local_machine_id=LOCAL_MACHINE_ID,
-        operator_token=OPERATOR_TOKEN,
         issue_postgres=lambda _principal: _postgres(),
         admitted_projects=frozenset({PROJECT_ID}),
         clock=lambda: 1_700_000_000,
@@ -81,7 +85,11 @@ def _client(
     server = create_http_server(config=config, authenticated_requests=False)
     token_file = tmp_path / "local_cli_token"
     token_file.write_text(OPERATOR_TOKEN)
-    server.auth_service = AuthService(lambda: server.services.database, token_file=token_file)
+    server.auth_service = AuthService(
+        lambda: server.services.database,
+        token_file=token_file,
+        bootstrap_file=_managed_bootstrap(token_file),
+    )
 
     def _header_authenticated(request: HTTPConnection) -> bool:
         return bool(request.headers.get("Authorization"))
@@ -110,14 +118,14 @@ def test_grant_presenting_config_transport(tmp_path: Path) -> None:
         session_id=SESSION_ID,
     )
     agent_token = issue_agent_api_token(
-        OPERATOR_TOKEN,
+        derive_managed_signing_key(OPERATOR_TOKEN),
         agent_run_id=AGENT_RUN_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
         machine_id=LOCAL_MACHINE_ID,
         timeout_seconds=30,
     )
-    agent_claims = verify_agent_api_token(agent_token, OPERATOR_TOKEN)
+    agent_claims = verify_agent_api_token(agent_token, derive_managed_signing_key(OPERATOR_TOKEN))
     assert agent_claims is not None
     agent_grant = handshake.issue_for_agent(
         agent_claims,
@@ -169,3 +177,10 @@ def test_config_revision_in_response(tmp_path: Path) -> None:
     assert body["config_revision"] == 41
     assert body["config_revision"] == grant.config_revision
     assert "settings" in body
+
+
+def _managed_bootstrap(token_file: Path) -> Path:
+    bootstrap = token_file.with_name(token_file.name + ".bootstrap.yaml")
+    api_key = token_file.read_text().strip() if token_file.exists() else None
+    bootstrap.write_text(json.dumps({"api_key": api_key}))
+    return bootstrap

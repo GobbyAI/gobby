@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.project_context import get_project_context
-from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.definitions import AgentDefinitionBody
 
 from ._implementation import spawn_agent_impl
@@ -24,7 +23,7 @@ from ._provider_resolution import (
     spawning_session_provider,
 )
 from ._seat_adoption import pipeline_caller, pipeline_invocation_reply
-from ._spawn_guards import max_active_agents_for_project
+from ._spawn_guards import enforce_spawn_caller, max_active_agents_for_project
 
 if TYPE_CHECKING:
     from gobby.agents.detection.registry import DetectionManifestRegistry
@@ -434,7 +433,10 @@ def create_spawn_agent_registry(
         project_id = _project_id_from_context(spawn_project_ctx)
         # The spawning session, which may differ from the declared parent when an
         # agent points parent_session_id at the coordinator it reports to.
-        caller_session_id = get_current_session_id()
+        try:
+            caller_session_id = await enforce_spawn_caller(session_manager, agent, project_id)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
         default_provider = concrete_provider(
             await asyncio.to_thread(
                 spawning_session_provider,

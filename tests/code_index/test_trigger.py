@@ -693,16 +693,61 @@ async def test_partial_lock_contention_requeues_only_busy_files(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error_stderr", "stdout", "expected_detail"),
+    [
+        (
+            "index failed: database disconnected",
+            "unused stdout",
+            "index failed: database disconnected",
+        ),
+        ("", "stdout error", "stdout error"),
+        ("", "", "(no output)"),
+    ],
+)
+async def test_nonzero_result_filters_phases_and_requeues_with_command_backoff(
+    harness: TriggerHarness,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    error_stderr: str,
+    stdout: str,
+    expected_detail: str,
+) -> None:
+    root_key = harness.trigger._root_key(str(tmp_path))
+    harness.trigger._pending_by_root[root_key] = {"src/foo.py"}
+    phases = "gcode_index_phase pid=12 phase=file.parse event=start elapsed_ms=0 total_ms=0\n"
+    harness.gateway.outcomes.append(
+        _result(returncode=1, stderr=phases * 2_000 + error_stderr, stdout=stdout)
+    )
+
+    await harness.trigger._flush(root_key, "proj-1")
+    _cancel_scheduled_callback(harness.trigger, root_key)
+
+    assert harness.trigger._pending_by_root[root_key] == {"src/foo.py"}
+    assert harness.trigger._retry_delay_by_root[root_key] == 10.0
+    assert (
+        f"gcode index exited 1 for project proj-1 at {root_key}: {expected_detail}" in caplog.text
+    )
+    assert "gcode_index_phase" not in caplog.text
+    assert "unused stdout" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_timeout_result_requeues_with_command_backoff(
     harness: TriggerHarness,
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     root_key = harness.trigger._root_key(str(tmp_path))
     harness.trigger._pending_by_root[root_key] = {"src/foo.py"}
     harness.gateway.outcomes.append(
         _result(
             returncode=None,
-            stderr="gcode timed out after 0.01s",
+            stderr=(
+                "private subprocess detail\n"
+                "gcode_index_phase pid=12 phase=communities.replace_lock event=start "
+                "elapsed_ms=0 total_ms=20\ngcode timed out after 0.01s"
+            ),
             timed_out=True,
         )
     )
@@ -712,6 +757,10 @@ async def test_timeout_result_requeues_with_command_backoff(
 
     assert harness.trigger._pending_by_root[root_key] == {"src/foo.py"}
     assert harness.trigger._retry_delay_by_root[root_key] == 10.0
+    assert "files=1 active_batches=0" in caplog.text
+    assert "subprocess_seconds=" in caplog.text
+    assert "phase=communities.replace_lock event=start" in caplog.text
+    assert "private subprocess detail" not in caplog.text
 
 
 @pytest.mark.asyncio

@@ -158,6 +158,50 @@ def test_claimant_cannot_attest_its_own_close(
     assert list_close_receipts(temp_db, task.id) == []
 
 
+@pytest.mark.parametrize("release", ["escalation", "force-claim", "hand-off"])
+def test_former_claimant_cannot_approve_its_own_task(
+    temp_db: HubDatabase, task: Task, roles: dict[str, str], release: str
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    if release == "escalation":
+        manager.escalate_task(task.id, "Handed off: review pending")
+    elif release == "hand-off":
+        manager.claim_task(task.id, roles["bystander"], expected_owner=roles["claimant"])
+    else:
+        manager.claim_task(task.id, roles["bystander"], force=True)
+    with pytest.raises(CloseReceiptError, match="former claimant"):
+        _record(temp_db, task, roles["claimant"])
+    assert list_close_receipts(temp_db, task.id) == []
+    receipt, created = _record(temp_db, task, roles["reviewer"])
+    assert created
+    assert receipt.author_session_id == roles["reviewer"]
+
+
+def test_every_claim_writer_records_the_claimant(
+    temp_db: HubDatabase, sample_project: dict[str, Any], roles: dict[str, str]
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    created = manager.create_task(
+        sample_project["id"],
+        "Claimed at creation",
+        validation_criteria="Every claimant is recorded.",
+        claimed_by_session_id=roles["claimant"],
+    )
+    manager.claim_task(created.id, roles["bystander"], expected_owner=roles["claimant"])
+    manager.claim_task(created.id, roles["creator"], force=True)
+    manager.escalate_task(created.id, "Released")
+    rows = temp_db.fetchall(
+        "SELECT session_id::text AS session_id FROM session_tasks"
+        " WHERE task_id = %s AND action = 'claimed'",
+        (created.id,),
+    )
+    assert {row["session_id"] for row in rows} == {
+        roles["claimant"],
+        roles["bystander"],
+        roles["creator"],
+    }
+
+
 @pytest.mark.parametrize("kind", [INDEPENDENT_REVIEW_APPROVAL, LANDING_APPROVAL, LANDING])
 def test_task_close_reviewer_session_cannot_record_receipts(
     temp_db: HubDatabase, task: Task, roles: dict[str, str], sessions: _Sessions, kind: str

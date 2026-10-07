@@ -28,7 +28,7 @@ async def pending_retry() -> None:
 @pytest.mark.parametrize("changed", [False, True])
 @pytest.mark.parametrize("retire", [False, True])
 async def test_cleanup_accepts_only_exact_owned_exited_readback(
-    changed: bool, retire: bool
+    changed: bool, retire: bool, managed_composer_tmpdir: Path
 ) -> None:
     terminal = replace(
         make_memory_terminal(),
@@ -50,8 +50,10 @@ async def test_cleanup_accepts_only_exact_owned_exited_readback(
     dispatcher = WakeDispatcher(MagicMock(), MagicMock())
     retry = asyncio.create_task(pending_retry())
     dispatcher._composer_retries[surface.session_id] = retry
-    with tempfile.TemporaryDirectory(prefix="p22915-clean-", dir="/tmp") as root:
+    with tempfile.TemporaryDirectory(prefix="c") as root:
         control = CleanupControl(Path(root) / "clean.sock", terminal_lookup=lookup)
+        assert Path(root).parent == managed_composer_tmpdir
+        assert len(bytes(control.socket)) < 104
         with patch.object(
             dispatcher,
             "_terminal_route_for_session",
@@ -124,12 +126,14 @@ async def test_foreign_retry_prevents_any_cancellation() -> None:
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def test_private_cleanup_refuses_an_unowned_retry() -> None:
+async def test_private_cleanup_refuses_an_unowned_retry(managed_composer_tmpdir: Path) -> None:
     dispatcher = WakeDispatcher(MagicMock(), MagicMock())
     retry = asyncio.create_task(pending_retry())
     dispatcher._composer_retries["foreign"] = retry
-    with tempfile.TemporaryDirectory(prefix="p22915-unit-", dir="/tmp") as directory:
+    with tempfile.TemporaryDirectory(prefix="c") as directory:
         control = CleanupControl(Path(directory) / "cleanup.sock")
+        assert Path(directory).parent == managed_composer_tmpdir
+        assert len(bytes(control.socket)) < 104
         control.schedule(dispatcher)
         try:
             async with asyncio.timeout(2):
