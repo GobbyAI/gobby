@@ -141,6 +141,13 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
             non_executing_args_any=_NON_EXECUTING_VALIDATION_ARGS,
         ),
         _matcher(
+            "gobby-plan-validation",
+            "Gobby plan validation",
+            ["markdown"],
+            ["lint"],
+            ["gobby plans validate"],
+        ),
+        _matcher(
             "python-format-check",
             "Python format checks",
             ["python"],

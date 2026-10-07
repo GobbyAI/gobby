@@ -315,7 +315,7 @@ def test_root_ref_from_file_only_strips_matching_quote_pairs(tmp_path: Path) -> 
     assert _root_ref_from_file(plan) == expected
 
 
-def test_validate_command_runs_semantic_lint_without_project(
+def test_validate_command_reports_completion_lookup_unavailable_without_project(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     plan = _write_contract_plan(tmp_path)
@@ -324,13 +324,17 @@ def test_validate_command_runs_semantic_lint_without_project(
 
     result = CliRunner().invoke(plans, ["validate", str(plan)])
 
-    assert result.exit_code == 0
-    assert "Plan:" in result.output
-    assert "Phases: 1" in result.output
-    assert "Symbol validation skipped" in result.output
+    assert result.exit_code == 1
+    assert "completed-section exemptions unavailable" in result.output
+    assert "no task manager" in result.output
 
 
-def test_validate_command_returns_semantic_lint_errors(tmp_path: Path) -> None:
+def test_validate_command_returns_semantic_lint_errors(
+    tmp_path: Path, temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _create_project(temp_db, tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(plans_module, "_open_db", lambda: temp_db)
     plan = _write_contract_plan(tmp_path, target_line="")
 
     result = CliRunner().invoke(plans, ["validate", str(plan)])
@@ -459,8 +463,8 @@ def test_validate_helper_expansion_mode_fails_closed_without_project(
     result = plans_module._validate_plan_for_cli(plan, None, mode="expansion")
 
     assert result["valid"] is False
-    assert result["symbol_validation"]["status"] == "failed"
-    assert result["symbol_validation"]["issues"][0]["code"] == "symbol_index_unavailable"
+    assert result["condition"] == "completed_section_exemptions_unavailable"
+    assert result["symbol_validation"]["status"] == "skipped"
 
 
 def test_validate_helper_expansion_mode_requires_manifest(
