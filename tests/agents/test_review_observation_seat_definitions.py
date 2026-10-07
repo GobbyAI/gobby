@@ -196,10 +196,13 @@ def test_step_seats_open_by_loading_their_required_skills(name: str) -> None:
     load_skills = next(iter(_steps(name).values()))
 
     assert load_skills.name == "load_skills"
-    assert _allowed_mcp_tools(load_skills) == {
+    expected = {
         "gobby-skills:get_skill",
         "gobby-skills:get_skill_file",
     }
+    if name == "code-reviewer":
+        expected.update({"gobby-agents:send_message", "gobby-agents:wait_for_coordination"})
+    assert _allowed_mcp_tools(load_skills) == expected
     assert _transitions(load_skills)[0][1] == LOAD_SKILLS_WHEN
     assert _variables(name)["required_skills_loaded"] is False
 

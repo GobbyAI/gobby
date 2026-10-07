@@ -34,6 +34,7 @@ prompts:
 
     ## Messages
     Reach your Lane Manager, your reviewer and the Orchestrator through `gobby-agents:send_message`.
+    On launch, read the shared role files before task assignment and report readiness to the live session named in the launch prompt with target="session". A runbook's pipeline parent may have ended; use the supplied report target for readiness, blockers and unassigned waits.
 
     ## Continuity
     Compact mid-task: under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`. Between tasks, after the close, hand off with `gobby-sessions:set_handoff(clear_session=true)`.
@@ -74,6 +75,11 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load required developer discipline skills"
       status_message: |
+        First read _common.md, roster.md and your assigned role file from the
+        shared checkout using Read or Bash. These native tools are for role
+        bootstrap here; defer implementation and validation until implement.
+        Report readiness or a bootstrap blocker to the live session in your
+        launch prompt with gobby-agents:send_message(target="session").
         Execute loads through mcp__gobby__call_tool.
         Plain requirements use get_skill(name=<name>). Exact references
         use get_skill_file(name=<skill>, path=<reference path>): first fetch
@@ -89,6 +95,8 @@ step_workflow:
         native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's skill tracking.
       allowed_tools:
+        - Bash
+        - Read
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
@@ -96,6 +104,8 @@ step_workflow:
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
+        - "gobby-agents:send_message"
+        - "gobby-agents:wait_for_coordination"
       on_mcp_success:
         - server: gobby-skills
           tool: get_skill
@@ -121,8 +131,14 @@ step_workflow:
         still call claim_task once, which returns already_claimed and binds the
         task, so they do not skip this step. If this step is active, claim the
         task your Lane Manager or the Orchestrator assigned with claim_task.
-        With no task assigned, wait with gobby-agents:wait_for_coordination.
+        Read any role files still missing using Read or Bash; defer
+        implementation and validation until implement. With no task assigned,
+        report readiness to the live session in your launch prompt using
+        gobby-agents:send_message(target="session", target_id=<report target>),
+        then wait_for_coordination(owner_session=<report target>, reply=true).
       allowed_tools:
+        - Bash
+        - Read
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
@@ -130,6 +146,7 @@ step_workflow:
       allowed_mcp_tools:
         - "gobby-tasks:claim_task"
         - "gobby-tasks:get_task"
+        - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
       on_mcp_success:
         - server: gobby-tasks

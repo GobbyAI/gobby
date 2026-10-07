@@ -143,6 +143,7 @@ def test_crew_lane_renders_operator_inputs(
         seats=seat,
         workspace="pilot-workspace",
         worktree_id="pilot-worktree",
+        report_to="gobby#14972",
     )
     inputs.update(
         {
@@ -178,6 +179,9 @@ def test_crew_lane_renders_operator_inputs(
     assert f".gobby/roles/{role_file}" in args["prompt"]
     assert ".gobby/roles/_common.md first" in args["prompt"]
     assert f"Explicit lane assignment: Lane {lane}" in args["prompt"]
+    assert 'target="session", target_id="gobby#14972"' in args["prompt"]
+    assert 'owner_session="gobby#14972"' in args["prompt"]
+    assert definition.inputs["report_to"]["required"]
     inputs["seats"] = "researcher"
     assert not renderer.should_run_step(step, context)
 
