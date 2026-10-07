@@ -23,6 +23,7 @@ from gobby.search import (
 from gobby.search.backends import embedding as embedding_module
 from gobby.search.keyword import BM25SearchBackend, KeywordAsyncSearchBackend, SearchHit
 from gobby.search.similarity import cosine_similarity
+from tests.search.fakes import RawEmbeddingsResponse
 
 pytestmark = pytest.mark.unit
 
@@ -64,7 +65,7 @@ def _make_openai_client(dim: int) -> AsyncMock:
 
     async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
         response = FakeResponse([FakeItem([0.1] * dim, index) for index, _ in enumerate(input)])
-        return SimpleNamespace(parse=lambda: response)
+        return RawEmbeddingsResponse(response.data)
 
     create_mock: AsyncMock = AsyncMock(side_effect=fake_create)
     mock_client.embeddings.with_raw_response.create = create_mock

@@ -17,6 +17,7 @@ from gobby.ai.embeddings import (
 from gobby.ai.embeddings import (
     _generate_embedding as generate_embedding,
 )
+from tests.search.fakes import RawEmbeddingsResponse
 
 pytestmark = pytest.mark.unit
 LOCAL_API_BASE = "http://localhost:1234/v1"
@@ -52,7 +53,7 @@ def _make_mock_client(dim: int) -> AsyncMock:
             vec[0] = hash(text) % 1000 / 1000.0
             items.append(FakeItem(vec, index))
         response = FakeResponse(items)
-        return SimpleNamespace(parse=lambda: response)
+        return RawEmbeddingsResponse(response.data)
 
     mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client
@@ -85,7 +86,7 @@ def _make_evicting_client(dim: int) -> AsyncMock:
                 self.data = items
 
         response = FakeResponse([FakeItem([0.1] * dim, index) for index, _ in enumerate(input)])
-        return SimpleNamespace(parse=lambda: response)
+        return RawEmbeddingsResponse(response.data)
 
     mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client

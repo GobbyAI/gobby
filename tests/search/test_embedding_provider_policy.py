@@ -19,6 +19,7 @@ from gobby.ai.embeddings import (
 from gobby.ai.embeddings import (
     _is_embedding_configured as is_embedding_configured,
 )
+from tests.search.fakes import RawEmbeddingsResponse
 
 pytestmark = pytest.mark.unit
 
@@ -44,7 +45,7 @@ def _make_openai_client(dim: int = 1536) -> AsyncMock:
 
     async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
         response = FakeResponse([FakeItem([0.1] * dim, index) for index, _ in enumerate(input)])
-        return SimpleNamespace(parse=lambda: response)
+        return RawEmbeddingsResponse(response.data)
 
     mock_client.embeddings.with_raw_response.create = AsyncMock(side_effect=fake_create)
     return mock_client

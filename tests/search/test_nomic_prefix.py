@@ -22,6 +22,7 @@ from gobby.ai.embeddings import (
     _generate_embedding as generate_embedding,
 )
 from gobby.config.persistence import EmbeddingsConfig
+from tests.search.fakes import RawEmbeddingsResponse
 
 pytestmark = pytest.mark.unit
 LOCAL_API_BASE = "http://localhost:1234/v1"
@@ -103,7 +104,7 @@ def _make_mock_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
         response = FakeResponse(items)
-        return SimpleNamespace(parse=lambda: response)
+        return RawEmbeddingsResponse(response.data)
 
     mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client, captured
@@ -196,7 +197,7 @@ def _make_evicting_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
         response = FakeResponse(items)
-        return SimpleNamespace(parse=lambda: response)
+        return RawEmbeddingsResponse(response.data)
 
     mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client, captured
@@ -238,7 +239,7 @@ def _make_missing_model_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
         response = FakeResponse(items)
-        return SimpleNamespace(parse=lambda: response)
+        return RawEmbeddingsResponse(response.data)
 
     mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client, captured
@@ -269,7 +270,7 @@ def _make_connect_error_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
         response = FakeResponse(items)
-        return SimpleNamespace(parse=lambda: response)
+        return RawEmbeddingsResponse(response.data)
 
     mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client, captured
