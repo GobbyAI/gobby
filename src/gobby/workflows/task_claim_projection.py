@@ -84,6 +84,9 @@ def merge_claimed_task_projection(
                 ):
                     variables["active_task_id"] = current_active
                 variables["active_task_id"] = active_task_id_for_edit(variables)
+                # With no claim state to say which claim was active, a sole claim is.
+                if not current_ids and len(owned) == 1 and variables["active_task_id"] is None:
+                    variables["active_task_id"] = next(iter(owned))
                 if not owned:
                     variables["task_has_commits"] = False
                 refresh_claimed_task_extra_skills(variables, tasks)

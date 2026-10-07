@@ -36,8 +36,8 @@ holding capacity, once a reviewer recorded an `independent_review_approval`
 receipt for it and none of its attributed files is uncommitted. It stays claimed
 while it waits on landing or close, and a new claim becomes the active one that
 receives your edits. Reclaiming a handed-off task makes it active again only when
-no other active claim exists. While you hold several claims and none is active,
-edits are refused until you reclaim the one they belong to. Once the newer
+no other active claim exists. When your active claim ends, the claims left behind
+stay inactive: edits are refused until you reclaim the one they belong to. Once the newer
 claim ends, reclaim the handed-off task with `claim_task` before re-validating
 it: runs made before that reclaim do not count toward its close. Closing it judges only runs made while it was
 active, but every edit you make to its files counts and stales its earlier
