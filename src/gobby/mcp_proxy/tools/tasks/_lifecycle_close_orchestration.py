@@ -607,9 +607,21 @@ async def submit_close_review(
     than what the daemon goes on to do (#23393).
     """
     store = TaskCloseReviewStore(ctx.task_manager.db)
-    review = store.get(review_id)
+    try:
+        canonical_id = str(UUID(review_id))
+    except ValueError:
+        review = None
+    else:
+        review = store.get(canonical_id)
     authenticated = _authenticate_submission(ctx, review)
     if authenticated is not None:
+        if review is None and (run_id := get_current_agent_run_id()):
+            owned_review = store.get_by_run(run_id)
+            if owned_review is not None and _authenticate_submission(ctx, owned_review) is None:
+                authenticated.update(
+                    review_id=owned_review.id,
+                    message="Task-close review was not found. Retry with the returned review_id.",
+                )
         return authenticated
     assert review is not None and review.agent_run_id is not None
     claimed = store.claim_finalizing(review.id, review.agent_run_id, verdict=verdict)

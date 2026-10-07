@@ -77,7 +77,7 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
     )
 
     def transfer_task_authority(task_id: str, reason: str) -> dict[str, Any]:
-        """Take over activation-receipt authority when the recorded authority expired."""
+        """Take over activation-receipt authority that no live session can use."""
         from gobby.utils.session_context import get_current_session_id
 
         caller_session_id = get_current_session_id()
@@ -103,8 +103,9 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="transfer_task_authority",
         description=(
             "Take over activation-receipt authority for a task whose creator and "
-            "delegator have both expired. Refused while either is live, and for the "
-            "task's claimant or a task-close reviewer."
+            "delegator have both expired, or whose live creator is its claimant with "
+            "no live delegator. Refused while a creator that is not the claimant, or "
+            "a delegator, is live, and for the task's claimant or a task-close reviewer."
         ),
         input_schema={
             "type": "object",

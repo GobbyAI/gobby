@@ -424,7 +424,7 @@ class _AgentRunLifecycleMixin:
         terminal_reason: AgentRunTerminalReason | None = None,
     ) -> AgentRun | None:
         """
-        Mark agent run as completed successfully.
+        Complete a run, failing a close reviewer that has no persisted verdict.
 
         Args:
             run_id: The agent run ID.
@@ -442,11 +442,29 @@ class _AgentRunLifecycleMixin:
             self,
             run_id=run_id,
             sql="""
-            UPDATE agent_runs
-            SET status = 'success',
+            WITH completion AS (
+                SELECT runs.id,
+                    CASE WHEN runs.agent_name = 'task-close-reviewer'
+                              AND runs.task_id IS NULL
+                              AND NOT COALESCE(
+                                  (reviews.status IN ('closed', 'invalid', 'external_pending', 'stale')
+                                      AND reviews.result_payload IS NOT NULL)
+                                  OR (reviews.status = 'finalizing'
+                                      AND reviews.result_payload ->> 'kind' =
+                                          'submitted_close_verdict'), false)
+                         THEN 'Task-close review ' || COALESCE(reviews.id::text, runs.id::text)
+                              || ' ended without a verdict.'
+                    END AS error
+                FROM agent_runs AS runs
+                LEFT JOIN task_close_reviews AS reviews ON reviews.agent_run_id = runs.id
+                WHERE runs.id = %s
+            )
+            UPDATE agent_runs AS runs
+            SET status = CASE WHEN completion.error IS NULL THEN 'success' ELSE 'error' END,
                 result = COALESCE(%s, result),
-                error = NULL,
-                terminal_reason = %s,
+                error = completion.error,
+                terminal_reason = CASE WHEN completion.error IS NULL THEN %s
+                                       ELSE 'review_verdict_missing' END,
                 pending_terminal_action = NULL,
                 pending_terminal_reason = NULL,
                 termination_requested_at = NULL,
@@ -455,9 +473,10 @@ class _AgentRunLifecycleMixin:
                 turns_used = %s,
                 completed_at = %s,
                 updated_at = %s
-            WHERE id = %s AND status IN ('pending', 'running')
+            FROM completion
+            WHERE runs.id = completion.id AND runs.status IN ('pending', 'running')
             """,
-            params=(result, terminal_reason, tool_calls_count, turns_used, now, now, run_id),
+            params=(run_id, result, terminal_reason, tool_calls_count, turns_used, now, now),
         )
 
     def fail(

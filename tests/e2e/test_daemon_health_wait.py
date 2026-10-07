@@ -1,5 +1,6 @@
 """Tests for isolated-daemon health polling."""
 
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -140,3 +141,50 @@ def test_daemon_that_never_serves_route_fails_promptly(tmp_path: Path) -> None:
     assert time.monotonic() - started < 1.0
     assert exc_info.value.connect_refused >= 1
     assert "startup stopped making progress" in str(exc_info.value)
+
+
+def test_timeout_captures_isolated_stacks_timings_and_safe_backend_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    log_file = tmp_path / "daemon.log"
+    log_file.write_text("registries initialized\n")
+    process = Mock(spec=subprocess.Popen, pid=12345)
+    process.poll.return_value = None
+    (tmp_path / "readiness-diagnostics.pid").write_text(str(process.pid))
+    (tmp_path / "startup-timings.jsonl").write_text(
+        '{"stage":"transcript pool prewarm","state":"started"}\n'
+    )
+
+    def capture(sig: int) -> None:
+        if sig == signal.SIGUSR2:
+            (tmp_path / "startup-threads.log").write_text("Thread: blocked_startup\n")
+        elif sig == signal.SIGUSR1:
+            (tmp_path / "startup-tasks.log").write_text("Task: prewarm_transcript_evidence_pool\n")
+            (tmp_path / "readiness-tasks.ready").write_text(str(process.pid))
+
+    process.send_signal.side_effect = capture
+    response = httpx.Response(
+        503,
+        json={
+            "status": "unavailable",
+            "backend": {"state": "starting", "target": "do-not-emit-target"},
+            "token": "do-not-emit-token",
+        },
+    )
+    monkeypatch.setattr("tests.e2e.conftest.httpx.get", lambda *args, **kwargs: response)
+    with pytest.raises(DaemonHealthTimeoutError) as exc_info:
+        wait_for_daemon_health(
+            find_free_port(),
+            log_file=log_file,
+            process=cast(subprocess.Popen[bytes], process),
+            timeout=0.0,
+            min_attempts=1,
+        )
+    error = exc_info.value
+    assert error.backend_state == "starting"
+    assert "blocked_startup" in error.thread_stack_tail
+    assert "prewarm_transcript_evidence_pool" in error.task_stack_tail
+    assert "transcript pool prewarm" in error.startup_timing_tail
+    assert "do-not-emit" not in str(error)
+    process.send_signal.assert_any_call(signal.SIGUSR2)
+    process.send_signal.assert_any_call(signal.SIGUSR1)

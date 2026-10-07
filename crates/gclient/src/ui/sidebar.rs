@@ -394,8 +394,8 @@ fn list_travel(rows: &[SidebarRow], body: Rect) -> usize {
 }
 
 /// The longest overrun of a scrolling sidebar title, for
-/// `ViewState::title_travel`: an Agents task line or a Projects worktree
-/// name, each measured in its section of `rects`.
+/// `ViewState::title_travel`: an Agents title or task line or a Projects
+/// worktree name, each measured in its section of `rects`.
 pub fn title_travel<W: WorkspaceView>(ws: &W, chrome: &Chrome, rects: &[Rect; 4]) -> usize {
     [SidebarSection::Projects, SidebarSection::Agents]
         .into_iter()
