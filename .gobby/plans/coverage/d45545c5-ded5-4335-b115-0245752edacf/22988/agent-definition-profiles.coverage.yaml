@@ -1,11 +1,11 @@
 header:
   plan_id: agent-definition-profiles
-  plan_hash: 94b061e2e5736660cb5fd6cb36c34c8bab85f151a5ad7c735385bfbc7d6b096c
+  plan_hash: 44b041d2a198254b907d25fae069dd6731d07105081cd6bb89aff46001c029c2
   root_task_ref: '22988'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-06T15:48:50Z'
+  generated_at: '2026-10-06T20:32:50Z'
   task_tree_source: db
-  task_tree_source_hash: 3c7df89836ad6f8365717f4da124ab0c19868f51f7ed13d87d87c296ad034f6b
+  task_tree_source_hash: 0373a536d73e83b57d83567e127bca0635ad3bfaecf75762bc3544ffd3d0f197
   evidence_summary: []
   evidence: []
 rows:
@@ -170,7 +170,7 @@ rows:
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.1
-  plan_node_hash: 6d047dd1c949addde7b70264afaab8cd0779d26809f76b0d2ae61029155c426b
+  plan_node_hash: a9fbaeb13e1984cf2e98e4d73d48fddd0e1c7bdfc3f2b8c6c448e76189f8ca42
   status: covered
   leaves:
   - leaf_task_ref: '#22996'
@@ -182,19 +182,19 @@ rows:
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.2
-  plan_node_hash: d5325a48b882df6ae793aec864954f51776bcb2dcb1075372123dbe7ae027784
-  status: invalid
+  plan_node_hash: 5576fa0f46b0b4d21c48c4782cb9a6bd70675cbb7f33031336a9f754a8a1bfd1
+  status: covered
   leaves:
   - leaf_task_ref: '#22996'
     validation_criteria_snippet: '3.1.1: `assistant` validates, is `seat`-tagged,
       carries the routing-only contract, status cadence, restart alerts, one-line
       Telegram confirmation, and task edi...'
-    matched_artifact_ref: src/gobby/install/shared/workflows/agents/program-director.yaml
+    matched_artifact_ref: src/gobby/install/shared/workflows/agents/orchestrator.yaml
   deferral_target: null
   detail: ''
 - section_id: '3.1'
   item_id: 3.1.3
-  plan_node_hash: 5d3fa4e3c550b97b7472531d381304832afc6784bb5c685d9518f4223924c390
+  plan_node_hash: b6c87fd12e682bb6e5d8ff0695d551766fa0733ef28732147f9331dc293511e8
   status: covered
   leaves:
   - leaf_task_ref: '#22996'
@@ -338,94 +338,97 @@ rows:
   detail: ''
 - section_id: '3.4'
   item_id: 3.4.1
-  plan_node_hash: 16b2b9ba0003d3cb9401da2881e3a985ae34b3966629b4758ec6416e85831909
+  plan_node_hash: 77fdfb6b86c24becc9e0860fa26a84f49382245d545c50165365374430eb686b
   status: covered
   leaves:
   - leaf_task_ref: '#22999'
     validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06 10:41
-      CT): these criteria replace the superseded 3.4 criteria and map to the amended
-      plan items 3.4.1 to 3.4.5. ...'
-    matched_artifact_ref: src/gobby/install/shared/workflows/agents/plan-writer.yaml
+      CT; 3.4.5 revised 13:45 CT): these criteria replace the superseded 3.4 criteria
+      and map to plan items 3.4....'
+    matched_artifact_ref: src/gobby/install/shared/workflows/agents/plan-adversary.yaml
   deferral_target: null
   detail: ''
 - section_id: '3.4'
   item_id: 3.4.2
-  plan_node_hash: 4dac60e00eadf35da599665ddd12726ca2c493934032a9dc4d9dd0810fb5abda
+  plan_node_hash: ac74cb980f21033f6bc348858cd94ed125ddf69e232eadab2558c434a47ae260
   status: covered
   leaves:
   - leaf_task_ref: '#22999'
     validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06 10:41
-      CT): these criteria replace the superseded 3.4 criteria and map to the amended
-      plan items 3.4.1 to 3.4.5. ...'
+      CT; 3.4.5 revised 13:45 CT): these criteria replace the superseded 3.4 criteria
+      and map to plan items 3.4....'
     matched_artifact_ref: src/gobby/install/shared/workflows/agents/plan-adversary.yaml
   deferral_target: null
   detail: ''
 - section_id: '3.4'
   item_id: 3.4.3
-  plan_node_hash: ac557796b09e0d885e3b9a7ae33693d81cb63284a90ab1db1b3b245a89bf7f8e
-  status: invalid
+  plan_node_hash: d4508be48e26800df27d37dcaf7abe423359f2e1d56b7565224acd6db74bf7a7
+  status: covered
   leaves:
   - leaf_task_ref: '#22999'
     validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06 10:41
-      CT): these criteria replace the superseded 3.4 criteria and map to the amended
-      plan items 3.4.1 to 3.4.5. ...'
-    matched_artifact_ref: tests/agents/test_plan_adversary_no_edits_on_reject.py::test_instructions_forbid_plan_edits_on_rejection
+      CT; 3.4.5 revised 13:45 CT): these criteria replace the superseded 3.4 criteria
+      and map to plan items 3.4....'
+    matched_artifact_ref: src/gobby/install/shared/workflows/agents/plan-writer.yaml
   deferral_target: null
   detail: ''
 - section_id: '3.4'
   item_id: 3.4.4
-  plan_node_hash: 3bbed879f43aa9bd3427de205de28224f73776d07befce2db6cd5d7ad7d3d17c
-  status: invalid
+  plan_node_hash: 6ddf2028a696e73e39922cd62bd0d97dbc0a71f70cd59d6592c6b4ed064bfab0
+  status: covered
   leaves:
   - leaf_task_ref: '#22999'
     validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06 10:41
-      CT): these criteria replace the superseded 3.4 criteria and map to the amended
-      plan items 3.4.1 to 3.4.5. ...'
-    matched_artifact_ref: tests/agents/test_plan_adversary_internal_research_definition.py::test_taskless_review_status_allows_protocol_failure_without_verdict
+      CT; 3.4.5 revised 13:45 CT): these criteria replace the superseded 3.4 criteria
+      and map to plan items 3.4....'
+    matched_artifact_ref: tests/agents/test_plan_seat_definitions.py::test_seat_definitions_sync_and_validate
   deferral_target: null
   detail: ''
 - section_id: '3.4'
   item_id: 3.4.5
-  plan_node_hash: 46a937c390b05301cc390f601190e697e766e35946f7893e31cf0766b459e04a
+  plan_node_hash: 32ea6647ccd83b79c84d8bac438fcc09340a6ccd5e772a72c72ed832644f7d0e
   status: covered
   leaves:
   - leaf_task_ref: '#22999'
     validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06 10:41
-      CT): these criteria replace the superseded 3.4 criteria and map to the amended
-      plan items 3.4.1 to 3.4.5. ...'
-    matched_artifact_ref: derive_plan_handoff_manifest
+      CT; 3.4.5 revised 13:45 CT): these criteria replace the superseded 3.4 criteria
+      and map to plan items 3.4....'
+    matched_artifact_ref: docs/contracts/plan-coverage.md
   deferral_target: null
   detail: ''
 - section_id: '3.5'
   item_id: 3.5.1
-  plan_node_hash: d0073f4f576b998753cd55de423db51e5760f84f77db4f65c0ae9fe5578f361e
+  plan_node_hash: e4fc7975c3d8f6906156fab342e09dcab0343e874734872d1afc2182dee7a4b5
   status: covered
   leaves:
   - leaf_task_ref: '#23000'
-    validation_criteria_snippet: '3.5.1: Every `seat`-tagged bundled definition satisfies
-      the invariants above. test: `tests/workflows/test_seat_definitions.py::test_seat_definitions_share_the_...'
+    validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06):
+      these criteria replace the superseded 3.5 criteria and keep the item IDs 3.5.1
+      to 3.5.5. 3.5.1: Every `seat`-t...'
     matched_artifact_ref: tests/workflows/test_seat_definitions.py::test_seat_definitions_share_the_seat_contract
   deferral_target: null
   detail: ''
 - section_id: '3.5'
   item_id: 3.5.2
-  plan_node_hash: f9eb38ab7a9b0beeb8ba648baa46aa8331a2c3b255a92d15c4b040e812a517de
+  plan_node_hash: a691a42d9e337f1d7d93dfee9f11f5aa47915acb65e1aeda382916dfeeac4ab9
   status: covered
   leaves:
   - leaf_task_ref: '#23000'
-    validation_criteria_snippet: '3.5.1: Every `seat`-tagged bundled definition satisfies
-      the invariants above. test: `tests/workflows/test_seat_definitions.py::test_seat_definitions_share_the_...'
+    validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06):
+      these criteria replace the superseded 3.5 criteria and keep the item IDs 3.5.1
+      to 3.5.5. 3.5.1: Every `seat`-t...'
     matched_artifact_ref: tests/workflows/test_seat_definitions.py::test_required_skills_resolve_to_bundled_skills
   deferral_target: null
   detail: ''
 - section_id: '3.5'
   item_id: 3.5.3
-  plan_node_hash: db0f35673988f69ef3a479c8d1ee4fcbb8c4091c32a3b4c3a1aa0e777d41bb30
+  plan_node_hash: 2befd3f7735acad421ee28c619c50daae1ded8e1cbc7a0543046a855b876d7e7
   status: covered
   leaves:
   - leaf_task_ref: '#23000'
-    validation_criteria_snippet: '3.5.1: Every `seat`-tagged bundled definition satisfies
-      the invariants above. test: `tests/workflows/test_seat_definitions.py::test_seat_definitions_share_the_...'
+    validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06):
+      these criteria replace the superseded 3.5 criteria and keep the item IDs 3.5.1
+      to 3.5.5. 3.5.1: Every `seat`-t...'
     matched_artifact_ref: tests/workflows/test_seat_definitions.py::test_seat_catalogue_is_exact
   deferral_target: null
   detail: ''
@@ -435,19 +438,21 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23000'
-    validation_criteria_snippet: '3.5.1: Every `seat`-tagged bundled definition satisfies
-      the invariants above. test: `tests/workflows/test_seat_definitions.py::test_seat_definitions_share_the_...'
+    validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06):
+      these criteria replace the superseded 3.5 criteria and keep the item IDs 3.5.1
+      to 3.5.5. 3.5.1: Every `seat`-t...'
     matched_artifact_ref: tests/workflows/test_seat_definitions.py::test_developer_routes_skills_by_task
   deferral_target: null
   detail: ''
 - section_id: '3.5'
   item_id: 3.5.5
-  plan_node_hash: cb2a5270a9723e0c3da1fc35eff81a789105cd61be2d839c6ccee99f494ea9e3
+  plan_node_hash: f5fad9dda54a5545164e7e5dda3da695038fb2642b45aa6d03e6d7831ba65f48
   status: covered
   leaves:
   - leaf_task_ref: '#23000'
-    validation_criteria_snippet: '3.5.1: Every `seat`-tagged bundled definition satisfies
-      the invariants above. test: `tests/workflows/test_seat_definitions.py::test_seat_definitions_share_the_...'
+    validation_criteria_snippet: 'RE-SCOPE (Orchestrator gobby#14972, 2026-10-06):
+      these criteria replace the superseded 3.5 criteria and keep the item IDs 3.5.1
+      to 3.5.5. 3.5.1: Every `seat`-t...'
     matched_artifact_ref: tests/workflows/test_seat_step_loops.py::test_loop_seats_reset_between_units
   deferral_target: null
   detail: ''

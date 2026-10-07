@@ -347,7 +347,14 @@ async def derive_close_transcript_evidence(
                 task_checkout_paths,
                 archive_dir=archive_dir,
             )
-            if task_links is not None and session_id not in required:
+            if session_id not in required or session_id == owner_session_id:
+                # The owner leaves too: once this task is handed off it may claim newer
+                # work, whose runs must neither fail nor pass this close (#23665). It
+                # still holds this task, so its edits to the task's files always count.
+                if task_links is None:
+                    task_links = await asyncio.to_thread(
+                        ctx.session_task_manager.get_session_tasks, session_id
+                    )
                 # session_tasks keeps one row per task, so a return to this task
                 # after a departure shows only in the transcript's own claims.
                 claims = await _resolve_transcript_claims(
@@ -355,7 +362,11 @@ async def derive_close_transcript_evidence(
                 )
                 presence = _task_presence(task_links, task_id, effective_window, claims)
                 if presence is not None:
-                    session_evidence = _while_on_task(session_evidence, presence)
+                    session_evidence = _while_on_task(
+                        session_evidence,
+                        presence,
+                        keep_edits=session_id == owner_session_id,
+                    )
             try:
                 excluded = await derive_prelink_runs(
                     session, effective_window, detection, repo_path, archive_dir=archive_dir
@@ -478,9 +489,16 @@ def _task_presence(
 
 
 def _while_on_task(
-    evidence: TranscriptEvidence, presence: list[tuple[float, bool]]
+    evidence: TranscriptEvidence,
+    presence: list[tuple[float, bool]],
+    *,
+    keep_edits: bool = False,
 ) -> TranscriptEvidence:
-    """Keep only the runs and edits a linked session made while working this task."""
+    """Keep only the runs and edits a linked session made while working this task.
+
+    ``keep_edits`` keeps every edit: an owner edit to the task's files stales its
+    earlier green even while another claim was active or no claim call marked a return.
+    """
 
     def on_task(value: datetime) -> bool:
         epoch = _evidence_epoch(value)
@@ -497,7 +515,9 @@ def _while_on_task(
         evidence,
         validation_runs=tuple(r for r in evidence.validation_runs if on_task(r.started_at)),
         command_runs=tuple(r for r in evidence.command_runs if on_task(r.started_at)),
-        edits=tuple(e for e in evidence.edits if on_task(e.timestamp)),
+        edits=evidence.edits
+        if keep_edits
+        else tuple(e for e in evidence.edits if on_task(e.timestamp)),
     )
 
 

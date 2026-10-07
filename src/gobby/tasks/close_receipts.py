@@ -122,6 +122,12 @@ def record_close_receipt(
             raise CloseReceiptError(f"task {task.id} no longer exists")
         if author_session_id == authority["claimed_by_session_id"]:
             raise CloseReceiptError("the task's claimant cannot attest evidence for its own close")
+        from gobby.storage.session_tasks import claimant_sessions
+
+        if kind == INDEPENDENT_REVIEW_APPROVAL and author_session_id in claimant_sessions(
+            conn, task.id
+        ):
+            raise CloseReceiptError("a former claimant cannot approve its own task")
         if kind in {ACTIVATION, LANDING_APPROVAL} and author_session_id not in {
             authority["created_in_session_id"],
             authority["delegated_by_session_id"],

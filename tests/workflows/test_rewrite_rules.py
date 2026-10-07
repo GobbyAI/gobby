@@ -451,6 +451,7 @@ def _insert_require_uv_block_rule(manager: RuleDefinitionManager) -> None:
                     tools=["Bash"],
                     command_pattern=REQUIRE_UV_COMMAND_PATTERN,
                     reason=REQUIRE_UV_REASON,
+                    resolve_uv_run=False,
                 ),
             ],
         ),

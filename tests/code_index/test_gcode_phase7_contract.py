@@ -236,7 +236,7 @@ _REMOVED_CREDENTIAL_MARKERS: tuple[str, ...] = (
     "GOBBY_FALKORDB_",
     "GOBBY_QDRANT_",
 )
-_CRATE_AUDIT_ROOTS: tuple[str, ...] = ("gcode", "gcore", "gwiki", "gdaemon", "ghook")
+_CRATE_AUDIT_ROOTS: tuple[str, ...] = ("gcode", "gcore", "gdaemon", "ghook")
 _GRANT_CAPABILITY_MARKERS: tuple[str, ...] = (
     "PostgresCapability",
     "FalkorCapability",
@@ -269,16 +269,16 @@ def test_contract_on_grant_fixtures() -> None:
     repo = _gobby_cli_repo()
     context = _read("crates/gcode/src/config/context.rs")
     resolution = _read("crates/gcode/src/db/resolution.rs")
-    gwiki_common = _read("crates/gwiki/tests/common/mod.rs")
+    grant_fixture = _read("crates/gcode/tests/file_lock_concurrency.rs")
     storage_conformance = (repo / "tests/code_index/test_gcode_storage_conformance.py").read_text()
 
     for fragment in _GRANT_CAPABILITY_MARKERS:
-        assert fragment in resolution or fragment in context or fragment in gwiki_common, fragment
+        assert fragment in resolution or fragment in context or fragment in grant_fixture, fragment
 
     assert "postgres_dsn_from_grant" in resolution
     assert "falkor_from_grant" in resolution
     assert "qdrant_from_grant" in resolution
-    assert "GOBBY_MANAGED_EXECUTION_BOOTSTRAP" in gwiki_common
+    assert "GOBBY_MANAGED_EXECUTION_BOOTSTRAP" in grant_fixture
     assert "GOBBY_RUNTIME_MODE" not in storage_conformance
     for marker in (
         "StandaloneSetup",

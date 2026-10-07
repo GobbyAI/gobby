@@ -45,6 +45,7 @@ def http_server(
     session_storage: SessionManager,
     mock_pipeline_executor: MagicMock,
     mock_workflow_loader: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> HTTPServer:
     """Create an HTTP server instance for testing."""
     services = ServiceContainer(
@@ -57,12 +58,15 @@ def http_server(
     # Route handler calls get_pipeline_executor(project_id) instead of accessing
     # pipeline_executor directly
     services.__dict__["get_pipeline_executor"] = MagicMock(return_value=mock_pipeline_executor)
-    return HTTPServer(
+    server = HTTPServer(
         services=services,
         port=60887,
         test_mode=True,
         bootstrap_config=BootstrapConfig(),
     )
+    # Requests carry operator credentials, the only ones the approve routes admit.
+    monkeypatch.setattr(server.auth_service, "request_principal", lambda _request: None)
+    return server
 
 
 @pytest.fixture
@@ -424,7 +428,7 @@ class TestPipelinesApproveEndpoint:
 
         assert response.status_code == 200
         _pipeline_executor(http_server).approve.assert_called_once_with(
-            "approval-token-xyz", approved_by=None
+            "approval-token-xyz", approved_by="operator"
         )
         data = response.json()
         assert data["status"] == "completed"
@@ -444,6 +448,26 @@ class TestPipelinesApproveEndpoint:
 
         assert response.status_code == 404
         assert "invalid" in response.json()["detail"].lower()
+
+    def test_approve_refuses_rejected_credentials(
+        self,
+        client: TestClient,
+        http_server: HTTPServer,
+        mock_execution_manager: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A caller whose credentials resolve to no principal approves nothing."""
+        monkeypatch.setattr(http_server.auth_service, "request_principal", lambda _request: False)
+        _pipeline_executor(http_server).approve = AsyncMock()
+
+        with patch(
+            "gobby.storage.pipelines.LocalPipelineExecutionManager",
+            return_value=mock_execution_manager,
+        ):
+            response = client.post("/api/pipelines/approve/approval-token-xyz")
+
+        assert response.status_code == 403
+        _pipeline_executor(http_server).approve.assert_not_awaited()
 
     def test_approve_returns_next_approval(
         self, client: TestClient, http_server: HTTPServer, mock_execution_manager: MagicMock
@@ -521,7 +545,7 @@ class TestPipelinesRejectEndpoint:
 
         assert response.status_code == 200
         _pipeline_executor(http_server).reject.assert_called_once_with(
-            "approval-token-xyz", rejected_by=None
+            "approval-token-xyz", rejected_by="operator"
         )
         data = response.json()
         assert data["status"] == "failed"
