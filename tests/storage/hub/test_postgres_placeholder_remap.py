@@ -135,7 +135,8 @@ def test_postgres_execute_materializes_results_before_transaction_exits(
     database = object.__new__(module.PostgresHubDatabase)
     monkeypatch.setattr(database, "transaction", transaction)
 
-    cursor = database.execute("SELECT id FROM tasks")
+    # A write keeps its transaction; a lone SELECT would run in autocommit.
+    cursor = database.execute("UPDATE tasks SET title = title RETURNING id")
 
     assert cursor.rowcount == 2
     assert cursor.fetchone() == {"id": 1}

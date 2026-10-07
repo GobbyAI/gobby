@@ -338,6 +338,48 @@ def transaction_context(
             logger.exception("PostgreSQL after-commit callback failed")
 
 
+def is_autocommit_read(sql: str) -> bool:
+    """Whether ``sql`` is one read-only statement that needs no BEGIN/COMMIT.
+
+    Only SELECT and a write-free WITH qualify: a plain SET would persist on the
+    pooled session, and SAVEPOINT or RELEASE need a transaction block. A ``;``
+    anywhere but the end, even inside a literal, keeps the statement transactional.
+    """
+    statement = sql.strip().removesuffix(";")
+    return (
+        ";" not in statement
+        and statement[:6].upper().startswith(("SELECT", "WITH"))
+        and written_tables(statement) == frozenset()
+    )
+
+
+def autocommit_read(
+    open_pool: Callable[[], None],
+    connection: Callable[[], AbstractContextManager[psycopg.Connection[Any]]],
+    sql: str,
+    params: Sequence[Any] | Mapping[str, Any] = (),
+) -> PostgresCursor:
+    """Run one read-only statement without the BEGIN/COMMIT round trips (#23359).
+
+    PostgreSQL runs a lone statement atomically either way, so autocommit only
+    drops the transaction bookkeeping around it. Rows are buffered before the
+    connection returns to the pool in the mode it was handed over in.
+    """
+    open_pool()
+    with connection() as conn:
+        conn.autocommit = True
+        started_at = time.perf_counter()
+        try:
+            result = conn.execute(sql, params) if params else conn.execute(sql)
+            return PostgresCursor(result).materialize()
+        finally:
+            record_query(time.perf_counter() - started_at)
+            # Outside IDLE the connection is broken and the pool discards it;
+            # changing the mode there would raise over the original error.
+            if conn.info.transaction_status == TransactionStatus.IDLE:
+                conn.autocommit = False
+
+
 class _PostgresTransaction:
     def __init__(
         self,
