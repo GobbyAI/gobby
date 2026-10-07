@@ -30,6 +30,10 @@ pytestmark = pytest.mark.unit
 
 
 def _runner(monkeypatch: pytest.MonkeyPatch, app: FastAPI) -> SimpleNamespace:
+    # These budgets measure retained-hook recovery, not subprocess import time.
+    monkeypatch.setattr(
+        "gobby.tasks.transcript_evidence_pool.prewarm_transcript_evidence_pool", AsyncMock()
+    )
     services = SimpleNamespace(
         startup_ready=False, restart_recovery_ready=False, shutdown_in_progress=False
     )
