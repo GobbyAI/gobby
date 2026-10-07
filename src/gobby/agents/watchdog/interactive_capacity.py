@@ -119,22 +119,14 @@ class InteractiveCapacityRecovery:
                     return True
                 fresh = await reader.read(session.transcript_path)
                 if not fresh.has_conclusive_capacity_error or fresh.provider_error_event != error:
+                    await self._clear_capacity_attention(session.id, error.line_num)
                     return True
                 delivered = await self._reprompt(terminal, session, error.line_num)
             if delivered:
                 capacity.last_error_line_num = error.line_num
                 capacity.successful_reprompts += 1
                 state.failed_deliveries = 0
-                entry_id = session_attention_entry_id(session.id)
-                blocked = await asyncio.to_thread(self._attention.get, entry_id)
-                if blocked is not None and blocked.fingerprint == f"capacity:{error.line_num}":
-                    await self._attention.transition_async(
-                        asyncio.to_thread,
-                        entry_id,
-                        state=None,
-                        expected_attention_id=blocked.attention_id,
-                        expected_fingerprint=blocked.fingerprint,
-                    )
+                await self._clear_capacity_attention(session.id, error.line_num)
                 return True
             state.failed_deliveries += 1
             if state.failed_deliveries < self._max_attempts:
@@ -162,6 +154,18 @@ class InteractiveCapacityRecovery:
 
         await asyncio.to_thread(fail)
         return True
+
+    async def _clear_capacity_attention(self, session_id: str, error_line: int) -> None:
+        entry_id = session_attention_entry_id(session_id)
+        blocked = await asyncio.to_thread(self._attention.get, entry_id)
+        if blocked is not None and blocked.fingerprint == f"capacity:{error_line}":
+            await self._attention.transition_async(
+                asyncio.to_thread,
+                entry_id,
+                state=None,
+                expected_attention_id=blocked.attention_id,
+                expected_fingerprint=blocked.fingerprint,
+            )
 
     async def _reprompt(self, terminal: Terminal, session: Session, error_line: int) -> bool:
         coordinator = self._coordinator
