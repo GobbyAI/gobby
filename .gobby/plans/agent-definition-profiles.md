@@ -1966,3 +1966,347 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
   M1 is re-derived through the handoff-manifest tools for 3.3.6 and 3.3.7.
   Base and expansion-mode validation pass. No implementation tests were
   run.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Retire the skills map and store version
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: A body with a top-level `skills` key is rejected with
+    a migration hint naming `workflows.skill_selectors` and `step_workflow.variables.required_skills`.
+    symbol: `AgentDefinitionBody.reject_legacy_step_keys`. test: `tests/workflows/test_agent_definitions_v2.py::test_skills_map_is_rejected_with_migration_hint`.
+
+    1.1.2: `version` round-trips through `model_validate` and `model_dump` and is
+    present in `definition_json` after bundled sync. file: `src/gobby/workflows/agent_models.py`.
+    test: `tests/workflows/test_agent_definitions_v2.py::test_version_is_stored_in_body`.
+
+    1.1.3: No bundled agent YAML contains a top-level `skills` key and every bundled
+    YAML still validates against the body. test: `tests/workflows/test_agent_definitions_v2.py::test_bundled_agents_carry_no_skills_map`.
+
+    1.1.4: A stored body carrying `skills: {}` resolves after the change, and a stored
+    non-empty map is surfaced by the inventory, not silently dropped. symbol: `src/gobby/storage/definitions/agents.py::parent_body`.
+    test: `tests/agents/test_agents_sync.py::test_stored_body_with_empty_skills_map_resolves`.'
+  labels:
+  - covers:agent-definition-profiles:1.1:1.1.1
+  - covers:agent-definition-profiles:1.1:1.1.2
+  - covers:agent-definition-profiles:1.1:1.1.3
+  - covers:agent-definition-profiles:1.1:1.1.4
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Roles rule group with shared seat guidance
+  category: config
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '2.1.1: A persona-bound seat receives the shared seat guidance
+    once per context epoch. file: `src/gobby/install/shared/workflows/rules/roles/inject-seat-common.yaml`.
+    test: `tests/workflows/test_seat_rules.py::test_seat_common_injected_once_per_epoch`.
+
+    2.1.2: A spawned seat (`_agent_type` set, no `_persona_name`) receives the same
+    guidance; a non-seat session receives none. test: `tests/workflows/test_seat_rules.py::test_seat_common_matches_spawned_and_skips_non_seats`.
+
+    2.1.3: Context loss re-arms the injection. file: `src/gobby/install/shared/workflows/rules/roles/reset-seat-common-on-context-loss.yaml`.
+    test: `tests/workflows/test_seat_rules.py::test_seat_common_rearms_after_compact`.
+
+    2.1.4: The rule group is documented. behavior: "`roles` row" in `src/gobby/install/shared/workflows/rules/AGENTS.md`.
+
+    2.1.5: The shared seat guidance states the task-edit policy: the Assistant edits
+    tasks only when Josh asks, the PD edits as needed, and every other seat asks the
+    PD. behavior: "only when Josh asks" in `src/gobby/install/shared/workflows/rules/roles/inject-seat-common.yaml`.'
+  labels:
+  - covers:agent-definition-profiles:2.1:2.1.1
+  - covers:agent-definition-profiles:2.1:2.1.2
+  - covers:agent-definition-profiles:2.1:2.1.3
+  - covers:agent-definition-profiles:2.1:2.1.4
+  - covers:agent-definition-profiles:2.1:2.1.5
+  tdd: true
+  source_section: '2.1'
+  assigned_agent: backend-developer
+- title: Seat spawn and write policy with the Plan Writer enhancer exception
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: A non-writer seat''s `spawn_agent` and `dispatch_batch`
+    calls are blocked with the seat reason; every seat, the Plan Writer included,
+    is blocked from `gobby-workflows:run_pipeline`, an exposed `gobby-workflows:pipeline:<name>`
+    tool, and a shell `gobby agents spawn` or `uv run gobby pipelines run`, while
+    `gobby-workflows:set_variable` stays allowed. file: `src/gobby/install/shared/workflows/rules/roles/seat-spawn-policy.yaml`.
+    test: `tests/workflows/test_seat_rules.py::test_seats_cannot_spawn`.
+
+    2.2.2: The Plan Writer may spawn `plan-enhancer-taskless` with `isolation: none`
+    once per planning task, receipted by the task label `enhancer-pass-spent` before
+    the spawn runs: a second attempt for the same task is refused after a reclaim
+    answered `already_claimed`, a `create_task(claim=true)`, a compact, a `/clear`
+    successor, and a release followed by a fresh session''s claim; one call evaluated
+    by the provider hook and then the proxy, a proxy-only call, and two concurrent
+    same-session calls each yield exactly one receipt and one spawn; a failed receipt
+    write refuses the spawn; a failed spawn keeps the receipt; a different agent,
+    another isolation, or no claimed task is refused; a different planning task admits
+    exactly one pass; only the PD can remove the receipt. test: `tests/workflows/test_seat_rules.py::test_plan_writer_enhancer_pass_is_per_task`.
+
+    2.2.3: The shared role rules name the exception. behavior: "plan-writer-enhancer-only"
+    in `.gobby/roles/_common.md`.
+
+    2.2.4: The Assistant''s write under `docs/` is allowed and under `src/`, `docs-other/`,
+    or `docs/../src/` blocked; the Archivist''s write to `/Users/josh/Desktop/gobby-digest-2026-09-27.md`
+    is allowed, and an adjacent desktop file, an undated or suffixed digest name,
+    and any write inside the checkout are blocked; a write with no resolvable path
+    is blocked for both. file: `src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml`.
+    test: `tests/workflows/test_seat_rules.py::test_seat_write_scope_is_path_aware`.
+
+    2.2.5: `write_paths_within` is component-wise directory containment and `write_paths_match`
+    an exact fullmatch, both after resolving relative paths, `..` traversal, and symlinks
+    against the project root and tool cwd; a symlink under an allowed directory that
+    resolves outside it is refused, and both are callable from a rule condition. symbol:
+    `src/gobby/workflows/condition_helpers_paths.py::write_paths_within`. test: `tests/workflows/test_condition_helpers_paths.py::test_write_path_helpers_resolve_before_matching`.'
+  labels:
+  - covers:agent-definition-profiles:2.2:2.2.1
+  - covers:agent-definition-profiles:2.2:2.2.2
+  - covers:agent-definition-profiles:2.2:2.2.3
+  - covers:agent-definition-profiles:2.2:2.2.4
+  - covers:agent-definition-profiles:2.2:2.2.5
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: 'Coordination seats: assistant, orchestrator, lane-manager'
+  category: config
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '3.1.1: `assistant` validates, is `seat`-tagged, carries the
+    routing-only contract, status cadence, restart alerts, one-line Telegram confirmation,
+    and task edits only when Josh asks. It includes `tag:worker-safety`, its `send_message_targets`
+    is `[parent, session, project]`, and its HOLD text is HOLD after two consecutive
+    5-minute loads above 30, lifted after two below 24. file: `src/gobby/install/shared/workflows/agents/assistant.yaml`.
+
+    3.1.2: `orchestrator` validates, is `seat`-tagged, and carries the coordination-only
+    contract, restart authority with notices, Archivist updates, decision routing,
+    and task-edit authority as needed. The seat rules match `_agent_type` `''orchestrator''`.
+    Its selectors include `tag:worker-safety`, `name:no-force-push-interactive` and
+    `name:no-destructive-git-interactive` and exclude exactly `name:no-daemon-management`,
+    `name:no-daemon-management-http` and `name:block-git-worktree-mutations`, and
+    its `send_message_targets` is `[parent, session, project, global]`. file: `src/gobby/install/shared/workflows/agents/orchestrator.yaml`.
+
+    3.1.3: `lane-manager` validates, is `seat`-tagged, read-only, and carries the
+    event-line grammar and HOLD/RESUME behavior, with HOLD after two consecutive 5-minute
+    loads above 30, lifted after two below 24. It includes `tag:worker-safety`, and
+    its `send_message_targets` is `[parent, session, project]`. file: `src/gobby/install/shared/workflows/agents/lane-manager.yaml`.
+
+    3.1.4: All three select `tag:roles` and carry the `seat` tag. behavior: "tag:roles"
+    in `src/gobby/install/shared/workflows/agents/lane-manager.yaml`.'
+  labels:
+  - covers:agent-definition-profiles:3.1:3.1.1
+  - covers:agent-definition-profiles:3.1:3.1.2
+  - covers:agent-definition-profiles:3.1:3.1.3
+  - covers:agent-definition-profiles:3.1:3.1.4
+  tdd: true
+  source_section: '3.1'
+  assigned_agent: backend-developer
+- title: One developer definition with task-routed skills
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  - '3.1'
+  validation_criteria: "3.2.1: `developer` validates, is `seat`-tagged, selects `tag:roles`,\
+    \ carries the lane flow with the CANDIDATE event line, HOLD/GO discipline, and\
+    \ the skill routing table, and declares the load skills \u2192 claim \u2192 route\
+    \ skills \u2192 load additional skills \u2192 implement \u2192 submit loop whose\
+    \ close-task handler resets it to `claim` for the next task. behavior: \"EVENT=CANDIDATE\"\
+    \ in `src/gobby/install/shared/workflows/agents/developer.yaml`.\n3.2.2: `backend-developer.yaml`,\
+    \ `frontend-developer.yaml`, and `fullstack-developer.yaml` no longer exist and\
+    \ no routing constant, stage binding, prompt builder, or expansion prompt under\
+    \ `src/gobby` names them. behavior: \"developer\" replaces the three names in\
+    \ `src/gobby/tasks/categories.py`.\n3.2.3: Every task category and implementation\
+    \ domain that routed to one of the three now routes to `developer`, and the default-agent\
+    \ fallback is `developer`. symbol: `src/gobby/tasks/categories.py::AGENT_BY_IMPLEMENTATION_DOMAIN`.\
+    \ test: `tests/tasks/test_expansion_service_compile_plan_12725.py::test_domains_route_to_developer`.\n\
+    3.2.4: The bundle smoke test and claim-step test pass with `developer` in place\
+    \ of the three names. test: `tests/workflows/test_workflows_agent_definitions.py::test_build_smoke_agent_runtime_mappings`.\n\
+    3.2.5: The close summary hands the PD the cutover. After 3.2 lands, the announced\
+    \ restart runs, and the restarted daemon shows the `developer` row installed and\
+    \ no row for the three retired names. behavior: \"cutover restart due\" in the\
+    \ 3.2 close summary, naming `src/gobby/install/shared/workflows/agents/developer.yaml`."
+  labels:
+  - covers:agent-definition-profiles:3.2:3.2.1
+  - covers:agent-definition-profiles:3.2:3.2.2
+  - covers:agent-definition-profiles:3.2:3.2.3
+  - covers:agent-definition-profiles:3.2:3.2.4
+  - covers:agent-definition-profiles:3.2:3.2.5
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: 'Review and observation seats: code-reviewer, archivist, log-monitor, researcher'
+  category: config
+  task_type: feature
+  depends_on:
+  - '2.2'
+  - '3.2'
+  validation_criteria: "3.3.1: `code-reviewer` validates, is `seat`-tagged, read-only,\
+    \ names only bundled skills (`code-review`, `restraint`), and declares the await\
+    \ \u2192 review \u2192 verdict loop with the verdict grammar. file: `src/gobby/install/shared/workflows/agents/code-reviewer.yaml`.\n\
+    3.3.2: `archivist` validates, is `seat`-tagged, carries no write block, names\
+    \ `archivist-write-scope`, and carries the digest contract. file: `src/gobby/install/shared/workflows/agents/archivist.yaml`.\n\
+    3.3.3: `log-monitor` validates, is `seat`-tagged, declares the tick \u2192 report\
+    \ loop, carries the nominal and ALARM grammar, and names no `gobby:log-monitor-tick`\
+    \ skill. behavior: \"Systems nominal | window\" in `src/gobby/install/shared/workflows/agents/log-monitor.yaml`.\n\
+    3.3.4: `researcher` validates as a seat (`seat`-tagged, read-only, inherited provider,\
+    \ `load_skills` \u2192 `serve`, no claim step), and the discovery-agent tests\
+    \ no longer list it. file: `src/gobby/install/shared/workflows/agents/researcher.yaml`.\
+    \ test: `tests/agents/test_discovery_agents.py::test_discovery_agent_yaml_validates_and_is_enabled`.\n\
+    3.3.5: Before its first edit, the 3.3 session records from the restarted daemon\
+    \ that `gobby agents show developer` prints the installed row and that `gobby\
+    \ agents show backend-developer` reports no definition. behavior: \"cutover verified\"\
+    \ in the 3.3 close summary, naming `src/gobby/install/shared/workflows/agents/code-reviewer.yaml`.\n\
+    3.3.6: `code-reviewer`'s `verdict` step allows `send_message`, `gobby-tasks:record_close_receipt`,\
+    \ `gobby-tasks-ops:land_commit` and `gobby-agents:wait_for_coordination`, plus\
+    \ the tools `mcp__gobby__set_variable` and `Bash`. On LAND the prompt records\
+    \ the `independent_review_approval` receipt before `land_commit` and runs the\
+    \ 1.4 retest when `retest_required` is true. On `receipt_pending` it sends `EVENT=LAND_PENDING`\
+    \ and retries `land_commit` on the same SHA until a `receipt_id` returns. It sends\
+    \ each `notification_pending` session the `Landed` line. Its final `EVENT=LANDED`\
+    \ line carries `RECEIPT` and the retest report and goes to its Lane Manager and\
+    \ the author lane. A refusal sends `EVENT=LAND_BLOCKED`. The reset fires only\
+    \ on a `VERDICT=BOUNCE` or `EVENT=LANDED` message naming `candidate_task`. behavior:\
+    \ \"EVENT=LANDED\" in `src/gobby/install/shared/workflows/agents/code-reviewer.yaml`.\n\
+    3.3.7: `lane-manager` relays each `EVENT=LANDED`, `EVENT=LAND_PENDING` and `EVENT=LAND_BLOCKED`\
+    \ line to the Orchestrator. A close release needs an `EVENT=LANDED` line with\
+    \ a `RECEIPT` value, `LANDED_TIP` ancestry, and `RETEST=PASS` for a merge landing.\
+    \ It withholds the release on a failed or unavailable retest or on `ACTIVATION=unknown`,\
+    \ routes no LAND to the Merge Manager, and still declares no `step_workflow`.\
+    \ behavior: \"EVENT=LANDED\" in `src/gobby/install/shared/workflows/agents/lane-manager.yaml`."
+  labels:
+  - covers:agent-definition-profiles:3.3:3.3.1
+  - covers:agent-definition-profiles:3.3:3.3.2
+  - covers:agent-definition-profiles:3.3:3.3.3
+  - covers:agent-definition-profiles:3.3:3.3.4
+  - covers:agent-definition-profiles:3.3:3.3.5
+  - covers:agent-definition-profiles:3.3:3.3.6
+  - covers:agent-definition-profiles:3.3:3.3.7
+  tdd: true
+  source_section: '3.3'
+  assigned_agent: developer
+- title: Plan Adversary stamp gating and evidence-round blocklist
+  category: config
+  task_type: feature
+  depends_on:
+  - '2.2'
+  - '3.3'
+  validation_criteria: '3.4.1: `plan-adversary.yaml` blocks `gobby-plans:derive_plan_handoff_manifest`
+    and `gobby-plans:apply_plan_handoff_manifest` in `load_skill` and `review` and
+    allows them only in the new `stamp` step. `review` transitions to `stamp` only
+    when `vars.consensus`, which an `on_mcp_success` handler for `gobby-agents:send_message`
+    on `EVENT=CONSENSUS` sets; no step relies on an agent-invoked `gobby-workflows:set_variable`
+    for that flag. A new test in `tests/agents/test_plan_seat_definitions.py` proves
+    the gating. file: `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`.
+
+    3.4.2: `plan-adversary.yaml`''s definition-level `blocked_mcp_tools` lists all
+    ten evidence-round tools named above, and a new test in `tests/agents/test_plan_seat_definitions.py`
+    asserts the full list. file: `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`.
+
+    3.4.3: `plan-writer.yaml` and `plan-adversary.yaml` both list `gobby:references/plan/coverage.md`
+    in `step_workflow.variables.required_skills` and in their `load_skill` status
+    messages, and a new test in `tests/agents/test_plan_seat_definitions.py` asserts
+    it. file: `src/gobby/install/shared/workflows/agents/plan-writer.yaml`.
+
+    3.4.4: #23339''s C.1 to C.4 tests still pass. test: `tests/agents/test_plan_seat_definitions.py::test_seat_definitions_sync_and_validate`.
+    test: `tests/agents/test_plan_seat_definitions.py::test_seat_instructions_carry_seat_role`.
+    test: `tests/agents/test_plan_seat_definitions.py::test_writer_spawns_no_enhancer_enhancer_stays_live`.
+    test: `tests/agents/test_plan_seat_definitions.py::test_seat_spawns_admitted_from_pipeline_child`.
+
+    3.4.5: `docs/contracts/plan-coverage.md` no longer says the Writer spawns an enhancer
+    pass. The implementing leaf verifies, without editing this plan or re-deriving
+    its M1, that sections 3.4, 3.5 and M1 match the shipped definitions. file: `docs/contracts/plan-coverage.md`.'
+  labels:
+  - covers:agent-definition-profiles:3.4:3.4.1
+  - covers:agent-definition-profiles:3.4:3.4.2
+  - covers:agent-definition-profiles:3.4:3.4.3
+  - covers:agent-definition-profiles:3.4:3.4.4
+  - covers:agent-definition-profiles:3.4:3.4.5
+  tdd: true
+  source_section: '3.4'
+  assigned_agent: developer
+- title: Seat bundle contract test for the eight standing seats
+  category: test
+  task_type: chore
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  validation_criteria: '3.5.1: Every `seat`-tagged bundled definition satisfies the
+    invariants above, including the coordination seats'' selectors (`orchestrator`
+    excludes exactly `name:no-daemon-management`, `name:no-daemon-management-http`
+    and `name:block-git-worktree-mutations`) and `send_message_targets` (`[parent,
+    session, project, global]` on `orchestrator`, `[parent, session, project]` on
+    `assistant` and `lane-manager`). test: `tests/workflows/test_seat_definitions.py::test_seat_definitions_share_the_seat_contract`.
+
+    3.5.2: Every `required_skills` entry in every bundled definition, the planning
+    runbook agents included, resolves to a bundled skill or skill file. test: `tests/workflows/test_seat_definitions.py::test_required_skills_resolve_to_bundled_skills`.
+
+    3.5.3: The set of `seat`-tagged names equals the eight-name catalogue (`assistant`,
+    `orchestrator`, `lane-manager`, `developer`, `code-reviewer`, `researcher`, `archivist`
+    and `log-monitor`), and `plan-writer`, `plan-enhancer` and `plan-adversary` carry
+    no `seat` tag, so an added or removed seat is a deliberate test edit. test: `tests/workflows/test_seat_definitions.py::test_seat_catalogue_is_exact`.
+
+    3.5.4: The `developer` routing table names only bundled skills and the lane event
+    line. test: `tests/workflows/test_seat_definitions.py::test_developer_routes_skills_by_task`.
+
+    3.5.5: `developer`, `code-reviewer` and `log-monitor` each admit `wait_for_coordination`
+    at idle and run two consecutive units of work through the real step engine, with
+    the correlation variable rebound and the flags reset by the named handler. A non-matching
+    message leaves the step unchanged, and `developer` refuses implementation before
+    both skill sets load. One run-scoped `plan-adversary` pass is refused `derive_plan_handoff_manifest`
+    in `load_skill` and `review`, and is admitted to derive and apply in `stamp` after
+    its `EVENT=CONSENSUS` handler fires. test: `tests/workflows/test_seat_step_loops.py::test_loop_seats_reset_between_units`.'
+  labels:
+  - covers:agent-definition-profiles:3.5:3.5.1
+  - covers:agent-definition-profiles:3.5:3.5.2
+  - covers:agent-definition-profiles:3.5:3.5.3
+  - covers:agent-definition-profiles:3.5:3.5.4
+  - covers:agent-definition-profiles:3.5:3.5.5
+  tdd: false
+  source_section: '3.5'
+  assigned_agent: developer
+- title: Role files point at seat definitions
+  category: config
+  task_type: chore
+  depends_on:
+  - '3.5'
+  validation_criteria: '4.1.1: Every role file names its seat definition and the `apply_persona`
+    call; the roster regex and `default.yaml` phrases are unchanged. file: `.gobby/roles/plan-writer.md`.
+    test: `tests/workflows/test_default_agent_role_contract.py::test_default_profile_describes_all_lookup_guards`.
+
+    4.1.2: A mapped session that calls `apply_persona` for its seat receives that
+    seat''s prompt and the shared seat guidance on its next turn. behavior: "persona
+    receipt from one live seat recorded in the close summary of the implementing leaf"
+    in `.gobby/roles/roster.md`.'
+  labels:
+  - covers:agent-definition-profiles:4.1:4.1.1
+  - covers:agent-definition-profiles:4.1:4.1.2
+  tdd: false
+  source_section: '4.1'
+  assigned_agent: developer
+- title: Guide updates
+  category: docs
+  task_type: chore
+  depends_on:
+  - '1.1'
+  validation_criteria: '4.2.1: The agents guide documents `version`, omits `skills`,
+    and lists the seat catalogue with its shared shape. behavior: "Seats" section
+    in `docs/guides/agents.md`.
+
+    4.2.2: The workflows overview names the current prompt fields. behavior: "`prompts.persona`"
+    in `docs/guides/workflows-overview.md`.'
+  labels:
+  - covers:agent-definition-profiles:4.2:4.2.1
+  - covers:agent-definition-profiles:4.2:4.2.2
+  tdd: false
+  source_section: '4.2'
+  assigned_agent: tech-writer
+```
