@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -152,6 +154,8 @@ async def _evaluate_named_test_close(
     net_paths: NetCommitPaths | None = None,
     linked: tuple[str, ...] = ("abc123",),
     diff_text: AsyncMock | None = None,
+    transcript: TranscriptEvidence | None = None,
+    repo_path: str = "/repo",
 ) -> tuple[CloseEvaluation, MagicMock]:
     review = AsyncMock(
         return_value=ValidationResult(
@@ -162,7 +166,7 @@ async def _evaluate_named_test_close(
             extra={"verdict": {"status": "valid"}},
         )
     )
-    transcript = _successful_transcript(
+    transcript = transcript or _successful_transcript(
         task,
         command="uv run pytest tests/test_example.py -q",
     )
@@ -186,7 +190,7 @@ async def _evaluate_named_test_close(
 
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
-        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value=repo_path),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_linked_commit_paths", return_value=frozenset()),
         patch.object(close_finalization, "_committable_task_paths", return_value=set()),
@@ -230,6 +234,38 @@ async def _evaluate_named_test_close(
         )
 
     return evaluation, tdd_check
+
+
+@pytest.mark.asyncio
+async def test_close_without_project_path_credits_lane_vitest_run(tmp_path: Path) -> None:
+    task = _task()
+    repo, lane = tmp_path / "main", tmp_path / "lane"
+    path = "web/src/widget.ts"
+    body = b"export const widget = 1;\n"
+    for tree in (repo, lane):
+        (tree / "web/src").mkdir(parents=True)
+        (tree / path).write_bytes(body)
+    transcript = _successful_transcript(
+        task, command="node_modules/.bin/vitest related src/widget.ts --run"
+    )
+    transcript = replace(
+        transcript,
+        validation_runs=(replace(transcript.validation_runs[0], workdir=str(lane / "web")),),
+    )
+    blob = hashlib.sha1(b"blob %d\0" % len(body) + body, usedforsecurity=False).hexdigest()
+    with patch("gobby.tasks.close_test_coverage._candidate_blobs", return_value={path: blob}):
+        evaluation, _ = await _evaluate_named_test_close(
+            task,
+            tdd_result=None,
+            named_tests=False,
+            net_paths=NetCommitPaths(changed=frozenset({path})),
+            transcript=transcript,
+            repo_path=str(repo),
+        )
+
+    gate = next(gate for gate in evaluation.gates if gate.item == 10)
+    assert gate.status == "passed", gate.message
+    assert gate.details["vitest_related_uncovered_paths"] == []
 
 
 @pytest.mark.asyncio
