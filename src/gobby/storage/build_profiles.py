@@ -188,6 +188,10 @@ class BuildProfileLoader:
     def _parse_profile(index: int, raw: dict[str, Any]) -> BuildProfile:
         name = _required_string(raw, "name", index)
         _validate_profile_name(name)
+        if "isolation" in raw:
+            raise BuildProfileError(
+                f"Build profile {name} isolation is no longer accepted: use checkout_mode"
+            )
         checkout_mode = raw.get("checkout_mode", "worktree")
         if checkout_mode not in {"none", "worktree", "clone"}:
             raise BuildProfileError(f"Build profile {name} checkout_mode is invalid")
