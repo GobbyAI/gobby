@@ -31,14 +31,17 @@ cargo test --doc -p <package>             # nextest does not run doctests
 # PostgreSQL-backed gcore schema tests need the postgres feature and a DB:
 GOBBY_SCHEMA_TEST_DATABASE_URL=<test-dsn> cargo nextest run -p gobby-core --features postgres
 
-# gcode serial-DB tests compile only when GCODE_POSTGRES_TEST_DATABASE_URL is
+# gcode DB tests compile only when GCODE_POSTGRES_TEST_DATABASE_URL is
 # set at build time (DATABASE_URL and GOBBY_POSTGRES_TEST_* are ignored); the
 # fixture applies the schema and seeds this machine's row itself, so it refuses
 # targets outside the `gobby_gcode_test` namespace, never gobby_test's
 # pytest-managed schema. The fixture selects `gobby_gcode_test_v<compiled schema>_<root hash prefix>`
 # on this hub and creates it with pg_search when absent:
 GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test \
-  cargo nextest run -p gobby-code -E 'test(serial_db)'
+  cargo nextest run --profile ci -p gobby-code --test-threads 1
+# Run every module, including DB tests without serial_db in their names.
+# One nextest process at a time protects their shared fixture database;
+# serial_test guards alone do not serialize separate nextest processes.
 ```
 
 `gobby-terminal` builds a vendored Zig library (libghostty-vt) whenever the
