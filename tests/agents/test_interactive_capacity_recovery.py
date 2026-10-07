@@ -1,5 +1,7 @@
 """Capacity failures in externally placed seats have no AgentRun to watchdog."""
 
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +12,8 @@ from gobby.storage.attention import AttentionStateManager, session_attention_ent
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
-from gobby.storage.terminals import TerminalManager
+from gobby.storage.terminals import Terminal, TerminalManager
+from gobby.terminals.runtime import SnapshotMode, SnapshotResult
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.agents.test_lifecycle_monitor import LifecycleRuntime, _fake_terminal_services
 from tests.agents.test_lifecycle_monitor_watchdog_idle_recovery import (
@@ -273,3 +276,88 @@ async def test_capacity_composer_probe_outage_retries_on_next_poll(
     current = session_manager.get(session.id)
     assert current is not None
     assert current.status == "active"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("new_failure", [False, True])
+@pytest.mark.parametrize("replace_attention", [False, True])
+async def test_capacity_recheck_reconciles_preserved_composer_attention(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    placed_seat: tuple[Session, Path, LifecycleRuntime, AttentionStateManager],
+    monkeypatch: pytest.MonkeyPatch,
+    new_failure: bool,
+    replace_attention: bool,
+) -> None:
+    session, transcript, runtime, attention = placed_seat
+    services = _fake_terminal_services(temp_db, runtime)
+    monitor = InteractiveAttentionMonitor(
+        detection_registry=BundledDetectionRegistry(),
+        session_manager=session_manager,
+        attention_manager=attention,
+        registry=services.registry,
+        write_coordinator=services.coordinator,
+        max_reprompt_attempts=1,
+    )
+    empty_frame = runtime.snapshot_text
+    runtime.snapshot_text = empty_frame.replace("›", "› operator draft")
+    await monitor._check_attention_panes(active_runs=[])
+    entry_id = session_attention_entry_id(session.id)
+    blocked = attention.get(entry_id)
+    assert blocked is not None
+    assert blocked.fingerprint is not None
+    assert blocked.fingerprint.startswith("capacity:")
+    runtime.snapshot_text = empty_frame
+    original_snapshot = runtime.snapshot
+
+    async def snapshot_after_progress(
+        terminal: Terminal, lines: int = 50, *, mode: SnapshotMode = "text"
+    ) -> SnapshotResult:
+        if mode == "ansi":
+            if new_failure:
+                _append_codex_capacity_turn(transcript, model_output_payload_type="reasoning")
+            else:
+                with transcript.open("a", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "timestamp": datetime.now(UTC).isoformat(),
+                                "type": "event_msg",
+                                "payload": {"type": "task_started"},
+                            }
+                        )
+                        + "\n"
+                    )
+                    handle.write(
+                        json.dumps(
+                            {
+                                "timestamp": datetime.now(UTC).isoformat(),
+                                "type": "response_item",
+                                "payload": {"type": "reasoning"},
+                            }
+                        )
+                        + "\n"
+                    )
+            if replace_attention:
+                attention.transition(
+                    entry_id,
+                    state="blocked",
+                    session_id=session.id,
+                    reason="stall",
+                    kind="non_actionable",
+                    fingerprint="operator-attention",
+                    payload={"label": "Operator intervention"},
+                )
+        return await original_snapshot(terminal, lines, mode=mode)
+
+    monkeypatch.setattr(runtime, "snapshot", snapshot_after_progress)
+    await monitor._check_attention_panes(active_runs=[])
+
+    assert runtime.write_log == []
+    current = attention.get(entry_id)
+    assert current is not None
+    if replace_attention:
+        assert current.fingerprint == "operator-attention"
+        assert current.state == "blocked"
+    else:
+        assert current.state is None
