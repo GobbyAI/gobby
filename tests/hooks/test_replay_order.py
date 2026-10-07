@@ -7,7 +7,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+import httpx
 import pytest
+from fastapi import FastAPI
 
 from gobby.hooks import envelope_dedupe, inbox
 from gobby.hooks.event_handlers import EventHandlers
@@ -20,6 +22,20 @@ from gobby.utils.datetime import utc_now
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.integration
+
+
+def _route_replay_to_test_app(monkeypatch: pytest.MonkeyPatch, app: FastAPI) -> None:
+    """Keep replay HTTP inside the ordering harness, outside the auth contract."""
+    real_client = httpx.AsyncClient
+
+    def replay_client(**kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = httpx.ASGITransport(app=app)
+        return real_client(**kwargs)
+
+    monkeypatch.setattr("gobby.hooks.inbox.httpx.AsyncClient", replay_client)
+    monkeypatch.setattr(
+        "gobby.utils.daemon_url.resolve_daemon_url", lambda *args, **kwargs: "http://test"
+    )
 
 
 class LifecycleHooks:
@@ -84,6 +100,7 @@ async def test_backlog_keeps_later_same_session_events(
     manager = LifecycleHooks(session_manager)
     server = create_http_server(session_manager=session_manager)
     server.app.state.hook_manager = manager
+    _route_replay_to_test_app(monkeypatch, server.app)
     monkeypatch.setattr(inbox, "read_local_api_token", lambda: "isolated-test-token")
     monkeypatch.setattr(
         envelope_dedupe, "get_processed_envelope_dir", lambda _=None: tmp_path / "processed"
@@ -124,6 +141,7 @@ async def test_missed_stop_after_live_same_status_prompt_is_archived(
     manager = LifecycleHooks(session_manager)
     server = create_http_server(session_manager=session_manager)
     server.app.state.hook_manager = manager
+    _route_replay_to_test_app(monkeypatch, server.app)
     monkeypatch.setattr(inbox, "read_local_api_token", lambda: "isolated-test-token")
     monkeypatch.setattr(
         envelope_dedupe, "get_processed_envelope_dir", lambda _=None: tmp_path / "processed"
