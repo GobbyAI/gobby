@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
 import uuid
 from collections.abc import Callable, Iterator
@@ -30,6 +31,7 @@ from tests.e2e.conftest import (
     stop_terminal_host,
 )
 from tests.e2e.test_external_terminal_attach import _gterm_bin_dir
+from tests.workflows import placed_runbook_live_support as placed
 
 pytestmark = pytest.mark.e2e
 
@@ -178,6 +180,95 @@ def test_stop_terminal_host_stops_the_dirs_host(host_root: Path, spawn: Spawn) -
 
     _wait_for_exit(host)
     assert host.returncode is not None
+
+
+def test_test_daemon_exits_when_pytest_parent_dies(tmp_path: Path, spawn: Spawn) -> None:
+    ready = tmp_path / "runner-ready.pid"
+    home = tmp_path / "home"
+    home.mkdir()
+    (tmp_path / "inert_test_runner.py").write_text(
+        textwrap.dedent(
+            f"""\
+            import os
+            import signal
+            from pathlib import Path
+
+            Path({str(ready)!r}).write_text(str(os.getpid()))
+            while True:
+                signal.pause()
+            """
+        )
+    )
+    bootstrap = Path(__file__).with_name("readiness_bootstrap.py")
+    parent = spawn(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                f"""\
+                import os
+                import signal
+                import subprocess
+                import sys
+                from tests.e2e.conftest import prepare_daemon_env
+
+                env = prepare_daemon_env(home_dir={str(home)!r})
+                env["GOBBY_HOME"] = {str(home)!r}
+                env["PYTHONPATH"] = {str(tmp_path)!r} + os.pathsep + env["PYTHONPATH"]
+                subprocess.Popen(
+                    [sys.executable, {str(bootstrap)!r}, "inert_test_runner"],
+                    env=env,
+                    start_new_session=True,
+                )
+                while True:
+                    signal.pause()
+                """
+            ),
+        ]
+    )
+    daemon: psutil.Process | None = None
+    try:
+        wait_for_condition(ready.exists, timeout=60, description="test runner entered bootstrap")
+        daemon = psutil.Process(int(ready.read_text()))
+        parent.kill()
+        parent.wait(timeout=5)
+        try:
+            daemon.wait(timeout=5)
+        except psutil.TimeoutExpired:
+            pass
+        assert not daemon.is_running() or daemon.status() == psutil.STATUS_ZOMBIE
+    finally:
+        children = [daemon] if daemon is not None else psutil.Process(parent.pid).children()
+        for child in children:
+            if child.is_running():
+                child.kill()
+                child.wait(timeout=5)
+
+
+def test_placed_runbook_socket_dir_host_is_reaped(
+    host_root: Path, spawn: Spawn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tempfile, "tempdir", str(host_root))
+    with placed.host_socket_dir() as socket_dir:
+        marker = socket_dir / E2E_HOST_OWNER_FILE
+        if marker.exists():
+            assert int(marker.read_text()) == os.getpid()
+            marker.write_text(str(_dead_pid()))
+        host = _start_host(spawn, socket_dir)
+        reap_orphaned_terminal_hosts(host_root)
+        assert host.poll() is not None
+        assert not socket_dir.exists()
+
+
+def test_placed_runbook_teardown_stops_a_replacement_host(host_root: Path, spawn: Spawn) -> None:
+    socket_dir = create_host_socket_dir(root=host_root, prefix="grb-")
+    original = _start_host(spawn, socket_dir)
+    fixture = placed.FixtureHost(socket_dir, original, psutil.Process(original.pid).create_time())
+    original.kill()
+    original.wait(timeout=5)
+    replacement = _start_host(spawn, socket_dir)
+    placed.stop_fixture_host(fixture)
+    assert replacement.poll() is not None
 
 
 def test_stop_terminal_host_stops_a_host_that_starts_during_teardown(

@@ -29,7 +29,6 @@ import os
 import shutil
 import stat
 import subprocess
-import tempfile
 import time
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -576,41 +575,26 @@ def host_identity(socket_dir: Path) -> HostIdentity:
     return asyncio.run(_ping(socket_dir))
 
 
-async def _shutdown(socket_dir: Path) -> None:
-    client = await _control(socket_dir)
-    try:
-        await client.host_shutdown(grace_ms=1000)
-    finally:
-        await client.close()
-
-
 def stop_fixture_host(host: FixtureHost) -> dict[str, Any]:
-    """Shut down only this fixture's host, through its socket, then its own handle."""
-    if not host.alive():
-        return {"pid": host.pid, "already_exited": True}
-    method = "host_shutdown"
-    try:
-        asyncio.run(_shutdown(host.socket_dir))
-        host.process.wait(timeout=15)
-    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
-        method = "kill"
-    finally:
-        # The host runs in its own session, so nothing else would reap it, whatever
-        # the shutdown request raised.
-        if host.alive():
-            method = "kill"
-            host.process.kill()
-            host.process.wait(timeout=15)
-    return {"pid": host.pid, "already_exited": False, "method": method}
+    """Drain this fixture's directory, including a replacement of its original host."""
+    from tests.e2e.conftest import stop_terminal_host
+
+    already_exited = not host.alive()
+    stop_terminal_host(host.socket_dir)
+    host.process.wait(timeout=15)
+    return {"pid": host.pid, "already_exited": already_exited, "method": "socket_dir_drain"}
 
 
 @contextmanager
 def host_socket_dir() -> Iterator[Path]:
     """A short private socket directory, removed whatever happens while it is in use."""
-    socket_dir = Path(tempfile.mkdtemp(prefix="grb-"))
+    from tests.e2e.conftest import create_host_socket_dir, stop_terminal_host
+
+    socket_dir = create_host_socket_dir(prefix="grb-")
     try:
         yield socket_dir
     finally:
+        stop_terminal_host(socket_dir)
         shutil.rmtree(socket_dir, ignore_errors=True)
 
 
