@@ -617,13 +617,13 @@ def test_db_deferral_uses_project_records_without_widening_root_scope(
     deferral = manager.create_task(
         project.id,
         "Project-wide deferral",
-        labels=["deferred-from:plan:A1", "covers:plan:A1:A1.1"],
+        labels=["deferred-from:plan:A1"],
         validation_criteria="Follow-up owns A1.1.",
     )
     foreign_deferral = manager.create_task(
         foreign_project.id,
         "Foreign deferral",
-        labels=["deferred-from:plan:A1", "covers:plan:A1:A1.1"],
+        labels=["deferred-from:plan:A1"],
         validation_criteria="Follow-up owns A1.1.",
     )
     dependencies = TaskDependencyManager(temp_db)
@@ -682,7 +682,7 @@ def test_db_deferral_uses_project_records_without_widening_root_scope(
     assert foreign_report.rows[0].status is CoverageStatus.invalid
 
 
-def test_evaluate_root_scope_excludes_other_subtree() -> None:
+def test_evaluate_counts_covering_leaf_outside_root_subtree() -> None:
     plan_doc = _plan(_section(_item("A1.1", "src/covered.py")))
 
     report = evaluate(
@@ -698,11 +698,15 @@ def test_evaluate_root_scope_excludes_other_subtree() -> None:
                 "path_cache": "2.999",
                 "labels": ["covers:plan:A1:A1.1"],
                 "validation_criteria": "Touches src/covered.py.",
-            }
+            },
+            {"ref": "#998", "path_cache": "2.998", "labels": ["covers:plan:A1"]},
+            {"ref": "#997", "path_cache": "2.997", "labels": ["covers:other-plan:A9:A9.1"]},
         ],
     )
 
-    assert report.rows[0].status is CoverageStatus.missing
+    assert [(row.status, [leaf.leaf_task_ref for leaf in row.leaves]) for row in report.rows] == [
+        (CoverageStatus.covered, ["#999"])
+    ]
 
 
 def test_stale_hash_raises() -> None:
