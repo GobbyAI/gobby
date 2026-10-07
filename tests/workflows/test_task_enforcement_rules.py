@@ -3191,7 +3191,8 @@ async def test_reference_contract_4_1_2(db: HubDatabase, route: str) -> None:
     ("claim_state", "blocked"),
     [
         ({"task_claimed": False, "claimed_tasks": {}}, True),
-        ({"task_claimed": True, "claimed_tasks": {"a": "#1"}, "active_task_id": None}, False),
+        ({"task_claimed": True, "claimed_tasks": {"a": "#1"}, "active_task_id": "a"}, False),
+        ({"task_claimed": True, "claimed_tasks": {"a": "#1"}, "active_task_id": None}, True),
         (
             {"task_claimed": True, "claimed_tasks": {"a": "#1", "b": "#2"}, "active_task_id": "b"},
             False,
@@ -3201,7 +3202,13 @@ async def test_reference_contract_4_1_2(db: HubDatabase, route: str) -> None:
             True,
         ),
     ],
-    ids=["no-claim", "sole-claim", "active-claim", "handed-off-claims-none-active"],
+    ids=[
+        "no-claim",
+        "sole-active-claim",
+        "claim-left-without-active",
+        "active-claim",
+        "handed-off-claims-none-active",
+    ],
 )
 def test_edits_need_a_claim_that_receives_them(
     db: HubDatabase,

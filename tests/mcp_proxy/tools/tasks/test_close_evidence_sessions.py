@@ -1386,8 +1386,8 @@ async def test_owner_runs_after_reactivating_the_handed_off_task_are_credited() 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("edited", [True, False], ids=["edited", "untouched"])
 async def test_owner_edit_without_a_reclaim_stales_the_handed_off_green(edited: bool) -> None:
-    """#23665: the newer claim ended and the task became the edit target with no claim
-    call, so no return is recorded. The owner's edit still stales the earlier green."""
+    """#23665: the newer claim ended and the owner edited the task's file without a
+    reclaim, so no return is recorded. That edit still stales the earlier green."""
     green = _run_at(QA, "2026-09-29T20:30:00+00:00", "success", order=1)
     edit = TranscriptEdit(
         session_id=QA,

@@ -2049,6 +2049,7 @@ class TestLedgerDirtyState:
         self, session_var_manager: SessionVariableManager, paths: list[str]
     ) -> None:
         session_var_manager.set_variable(SESSION_ID, "claimed_tasks", {"task-1": "#1"})
+        session_var_manager.set_variable(SESSION_ID, "active_task_id", "task-1")
         assert session_var_manager.record_edited_files(SESSION_ID, paths, checkout_root="/tmp")
 
     @pytest.mark.asyncio
@@ -2177,6 +2178,7 @@ class TestLedgerDirtyState:
         tmp_path: Path,
     ) -> None:
         session_var_manager.set_variable(SESSION_ID, "claimed_tasks", {"task-1": "#1"})
+        session_var_manager.set_variable(SESSION_ID, "active_task_id", "task-1")
         assert session_var_manager.record_edited_files(
             SESSION_ID, ["a.py"], checkout_root=str(tmp_path)
         )
