@@ -337,7 +337,10 @@ async def _bind_agent_run_context(
                 request.method == "POST"
                 and request.path_params.get("server_name") == "gobby-tasks"
                 and request.path_params.get("tool_name") == "submit_close_review"
-                and run.status == "success"
+                and (
+                    run.status == "success"
+                    or (run.status == "error" and run.terminal_reason == "review_verdict_missing")
+                )
                 and tokens.resolved_session_id is not None
                 and run.child_session_id == tokens.resolved_session_id
                 and run.agent_name == TASK_CLOSE_REVIEWER_AGENT
@@ -379,7 +382,13 @@ def _owns_recoverable_close_review(db: HubDatabase, run: AgentRun, review_id: st
         return False
     recoverable = (
         review.status in {"running", "finalizing"}
-        or (review.status == "error" and review.error == REVIEWER_RUN_ENDED_SUCCESS_ERROR)
+        or (
+            review.status == "error"
+            and (
+                review.error == REVIEWER_RUN_ENDED_SUCCESS_ERROR
+                or (review.result_payload or {}).get("reviewer_ended_without_verdict") is True
+            )
+        )
         or (
             review.status in {"closed", "invalid", "external_pending"}
             and review.result_payload is not None

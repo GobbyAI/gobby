@@ -214,10 +214,14 @@ pub fn challenge_and_handshake(
     }
     let envelope: ChallengeEnvelope = serde_json::from_str(&challenge.body)
         .map_err(|error| GrantError::Malformed(error.to_string()))?;
-    let expected_key = managed
-        .map(|claims| claims.signature.as_slice())
-        .unwrap_or(bearer.as_bytes());
-    let expected = hex_encode(&hmac_sha256(expected_key, &nonce)?);
+    let expected = match managed {
+        Some(claims) => hmac_sha256(&claims.signature, &nonce)?,
+        None => {
+            let proof_key = hmac_sha256(bearer.as_bytes(), b"gobby-interactive-proof-v1")?;
+            hmac_sha256(&proof_key, &nonce)?
+        }
+    };
+    let expected = hex_encode(&expected);
     if !constant_time_eq(expected.as_bytes(), envelope.proof.as_bytes()) {
         return Err(GrantError::Malformed(
             "challenge proof did not match the local credential secret".to_string(),

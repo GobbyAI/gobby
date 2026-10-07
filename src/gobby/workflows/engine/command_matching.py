@@ -32,6 +32,7 @@ established by an earlier segment (#21056) and a quoted path such as
 
 from __future__ import annotations
 
+import functools
 import re
 import shlex
 from dataclasses import dataclass
@@ -55,6 +56,7 @@ from gobby.hooks.provider_launch_guard import (
     _unwrap,
     option_word_count,
 )
+from gobby.hooks.shell_execution import SHELL_WRAPPER_DEPTH, shell_execution
 
 # Commands whose standard input is never interpreted as code. Every other
 # consumer — shells, language interpreters, ``ssh``, ``xargs``, ``eval``,
@@ -96,7 +98,9 @@ def mask_quoted_spans(command: str) -> str:
 
 # Wrapper scripts nest (``bash -c "bash -c '…'"``); resolve them to a bounded
 # depth, matching the substitution-recursion guard used by the shell scanner.
-_WRAPPER_DEPTH = 8
+_WRAPPER_DEPTH = SHELL_WRAPPER_DEPTH
+# Hook events from concurrent sessions interleave, so keep a few dozen commands.
+_SELECTOR_SUBJECTS_CACHE_SIZE = 64
 # Value-taking options for wrapper tools whose executed command follows them.
 # procps watch: only these take a separate operand; -d/-p/-x and the rest are flags.
 _WATCH_VALUE_OPTIONS = frozenset({"-n", "--interval", "-q", "--equexit"})
@@ -314,14 +318,9 @@ def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) ->
             continue
         name = shell_command_name(unwrapped[0])
         if name in _SHELLS:
-            for index, arg in enumerate(unwrapped[1:], 1):
-                if arg.startswith("-") and not arg.startswith("--") and "c" in arg:
-                    # `--` ends the options; the script is the word after it.
-                    script = unwrapped[index + 1 : index + 3]
-                    if script[:1] == ["--"]:
-                        script = script[1:]
-                    scripts.extend(script[:1])
-                    break
+            execution = shell_execution(unwrapped)
+            if execution and execution.command is not None:
+                scripts.append(execution.command)
             continue
         # watch and ssh join every remaining word into the command they run.
         if name == "watch":
@@ -359,6 +358,26 @@ def command_patterns_match(
     """
     if not pattern:
         return True
+    derived = _selector_subjects(command, mask_quoted, resolve_uv_run)
+    if derived is None:
+        # Code nested past the wrapper bound is unread, so the selector fails closed.
+        return True
+    pattern_subjects, exemption_text = derived
+    if not any(re.search(pattern, subject) for subject in pattern_subjects):
+        return False
+    return not (not_pattern and re.search(not_pattern, exemption_text))
+
+
+@functools.lru_cache(maxsize=_SELECTOR_SUBJECTS_CACHE_SIZE)
+def _selector_subjects(
+    command: str, mask_quoted: bool, resolve_uv_run: bool
+) -> tuple[tuple[str, ...], str] | None:
+    """Return the pattern subjects and exemption text of ``command``.
+
+    The derivation depends only on these arguments, and every rule's selector
+    reads the same command, so one hook event derives it once (#23359).
+    Returns None when a wrapper nests past the bound.
+    """
     subjects = executable_command_subjects(command)
     exemption_text = "\n".join(subjects)
     mask_one = mask_quoted_spans if mask_quoted else _mask_quoted_command_boundaries
@@ -379,13 +398,10 @@ def command_patterns_match(
         # ``bash -c "bash -c '…'"`` still matches (#23134).
         scripts = _wrapper_scripts(stages, resolve_uv_run=resolve_uv_run)
         if scripts and depth >= _WRAPPER_DEPTH:
-            # Code nested past the bound is unread, so the selector fails closed.
-            return True
+            return None
         for script in scripts:
             pending.extend((inner, depth + 1) for inner in executable_command_subjects(script))
-    if not any(re.search(pattern, subject) for subject in pattern_subjects):
-        return False
-    return not (not_pattern and re.search(not_pattern, exemption_text))
+    return tuple(pattern_subjects), exemption_text
 
 
 def _mask_quoted_command_boundaries(command: str) -> str:

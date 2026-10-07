@@ -38,6 +38,7 @@ from gobby.hooks.session_activation import reconcile_session_activation
 from gobby.hooks.session_materialize import activate_deferred_session, has_deferred_help_activation
 from gobby.hooks.session_summary_wiring import build_session_summary_dispatcher
 from gobby.hooks.session_types import HookSessionManager
+from gobby.storage.hub.read_scope import hub_read_scope
 from gobby.telemetry.tracing import create_span
 
 if TYPE_CHECKING:
@@ -233,7 +234,8 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
             },
         ) as span:
             try:
-                response = self._handle_internal(event)
+                with hub_read_scope():
+                    response = self._handle_internal(event)
                 if span.is_recording():
                     span.set_attribute("decision", response.decision)
                 return response
@@ -261,7 +263,8 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
             },
         ) as span:
             try:
-                response = await self._handle_internal_async(event)
+                with hub_read_scope():
+                    response = await self._handle_internal_async(event)
                 if span.is_recording():
                     span.set_attribute("decision", response.decision)
                 return response

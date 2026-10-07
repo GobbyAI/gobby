@@ -48,6 +48,14 @@ def release_session_admission_for_external_wait() -> None:
         release()
 
 
+class AdapterHookCancelled(asyncio.CancelledError):
+    """Cancelled request whose adapter worker can still own its processing lease."""
+
+    def __init__(self, executor_future: Future[dict[str, Any]] | None) -> None:
+        super().__init__("hook adapter request cancelled")
+        self.executor_future = executor_future
+
+
 class AdapterHookTimeout(TimeoutError):
     """Timed out waiting for an adapter worker that may still be running."""
 
@@ -279,6 +287,9 @@ async def run_adapter_hook(
             queue_duration_seconds=queue_duration,
             execution_duration_seconds=execution_duration,
         ) from exc
+    except asyncio.CancelledError as exc:
+        exception_type = type(exc).__name__
+        raise AdapterHookCancelled(executor_future) from exc
     except BaseException as exc:
         exception_type = type(exc).__name__
         raise

@@ -179,6 +179,7 @@ def register_lifecycle_routes(
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
 
+            await server.run_db(server.session_manager.load_task_refs, [session])
             session_data = session.to_dict()
             variables: dict[str, Any] = {}
             try:

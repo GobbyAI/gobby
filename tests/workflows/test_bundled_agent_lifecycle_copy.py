@@ -19,6 +19,15 @@ def _bundled_agent_files() -> list[Path]:
     return files
 
 
+def _is_seat(path: Path) -> bool:
+    """Seats share one prompt across both surfaces, pinned by the seat contract tests.
+
+    ``tags`` is sync metadata the body model ignores, so read it from the raw file.
+    """
+    data = yaml.safe_load(path.read_text())
+    return isinstance(data, dict) and "seat" in (data.get("tags") or [])
+
+
 @pytest.mark.parametrize("path", _bundled_agent_files(), ids=lambda path: path.name)
 def test_bundled_agent_yaml_validates(path: Path) -> None:
     data = yaml.safe_load(path.read_text())
@@ -46,7 +55,10 @@ def test_bundled_persona_prompts_exclude_agent_lifecycle_language() -> None:
         if not body.supports_surface("persona"):
             continue
         persona = body.prompt_for("persona") or ""
-        for term in forbidden:
+        # A seat's persona is its agent prompt, whose message contract names
+        # gobby-agents:send_message.
+        terms = [t for t in forbidden if not (t == "send_message" and _is_seat(path))]
+        for term in terms:
             assert term not in persona, f"{path.name} persona contains agent lifecycle term: {term}"
 
 
@@ -55,7 +67,7 @@ def test_all_bundled_agents_include_semantic_lifecycle_note() -> None:
 
     for path in _bundled_agent_files():
         body = AgentDefinitionBody.model_validate(yaml.safe_load(path.read_text()))
-        if not body.supports_surface("spawn"):
+        if not body.supports_surface("spawn") or _is_seat(path):
             continue
         instructions = body.prompt_for("agent") or ""
 

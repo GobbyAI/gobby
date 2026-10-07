@@ -31,6 +31,7 @@ from gobby.workflows.definitions import (
     split_rule_definition_data,
 )
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.engine.effects import MAX_OBSERVATIONS
 from gobby.workflows.engine.event_utils import _resolve_rule_events
 from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
@@ -1284,6 +1285,35 @@ class TestObserveEffect:
         assert len(variables["_observations"]) == 2
         assert variables["_observations"][0]["category"] == "a"
         assert variables["_observations"][1]["category"] == "b"
+
+    @pytest.mark.asyncio
+    async def test_observe_keeps_only_newest_entries(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """An oversized observation log is trimmed to the newest entries on append."""
+
+        _insert_rule(
+            manager,
+            "observe-claim",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.AFTER_TOOL,
+                effects=[RuleEffect(type="observe", category="claim", message="latest")],
+            ),
+        )
+        stale = [
+            {"category": "claim", "message": f"old-{i}", "timestamp": "t", "rule": "r"}
+            for i in range(300)
+        ]
+        variables: dict[str, Any] = {"_observations": stale}
+
+        await RuleEngine(db).evaluate(
+            _make_event(HookEventType.AFTER_TOOL), session_id=SESSION_ID, variables=variables
+        )
+
+        messages = [entry["message"] for entry in variables["_observations"]]
+        assert len(messages) == MAX_OBSERVATIONS
+        assert messages[-1] == "latest"
+        assert messages[0] == f"old-{300 - MAX_OBSERVATIONS + 1}"
 
     @pytest.mark.asyncio
     async def test_observe_defaults_category_to_general(

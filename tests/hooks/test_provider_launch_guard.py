@@ -22,6 +22,22 @@ RULE = SHARED / "workflows/rules/worker-safety/block-direct-provider-launch.yaml
 SESSION = "abababab-0000-4000-8000-000000000001"
 
 
+@pytest.mark.parametrize("error", [MemoryError, RecursionError])
+@pytest.mark.parametrize("target", ["ast.parse", "_python_skeleton"])
+def test_python_parse_resource_limit_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, error: type[Exception], target: str
+) -> None:
+    def fail_parse(source: object, *args: object, **kwargs: object) -> None:
+        raise error("parser resource limit")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(f"gobby.hooks.provider_launch_guard.{target}", fail_parse)
+        blocked = blocks_direct_provider_launch(
+            "exec_command", {"cmd": "python3 -c 'import os; os.system(\"true\")'"}
+        )
+    assert blocked
+
+
 @pytest.mark.parametrize(
     "command,blocked",
     [
@@ -44,6 +60,39 @@ SESSION = "abababab-0000-4000-8000-000000000001"
         ("uv run python report.py -c 'import subprocess; subprocess.run([\"codex\"])'", False),
         *[
             pytest.param(
+                "uv run python - <<'PY'\n"
+                f"{imports}\nfrom pathlib import Path\n"
+                "Path('/tmp/report.txt').write_text('codex exec hi')\nPY\n",
+                False,
+                id=f"dotted-report-{index}",
+            )
+            for index, imports in enumerate(
+                (
+                    "import os\nimport os.path",
+                    "import urllib.request\nimport urllib.parse",
+                    "import xml.etree.ElementTree\nimport xml.dom.minidom",
+                )
+            )
+        ],
+        *[
+            pytest.param(
+                f"uv run python - <<'PY'\n{body}\nPY\n",
+                True,
+                id=f"round2-launch-{index}",
+            )
+            for index, body in enumerate(
+                (
+                    "import os.path\nos.system('codex exec hi')",
+                    "import asyncio.subprocess\nasyncio.create_subprocess_shell('codex exec hi')",
+                    "import os\nos.system('codex exec %s' % x)",
+                    "import os\nos.system('codex exec {}'.format(x))",
+                    "import os\nos.system(' '.join(['codex', 'exec', x]))",
+                    "import os, shlex\nos.system(shlex.join(['codex', 'exec', x]))",
+                )
+            )
+        ],
+        *[
+            pytest.param(
                 f"uv run python {option} <<'PY'\n"
                 "import subprocess\nsubprocess.run(['codex'])\nPY\n",
                 False,
@@ -56,6 +105,41 @@ SESSION = "abababab-0000-4000-8000-000000000001"
             True,
             id="clustered-inline-code",
         ),
+        *[
+            pytest.param(
+                f"uv run python - <<'PY'\nimport subprocess, os, sys\n{body}\nPY\n",
+                True,
+                id=f"review-{index}",
+            )
+            for index, body in enumerate(
+                (
+                    'subprocess.run(["claude", "-p", p])',
+                    'subprocess.run(["codex", "exec", *sys.argv])',
+                    'subprocess.run(f"codex exec {p}", shell=True)',
+                    'subprocess.run("codex exec " + p, shell=True)',
+                    'os.system(f"claude -p {p}")',
+                    "import json as j; import sys as j; "
+                    'from subprocess import run; run(["codex", "exec", "hi"])',
+                    'subprocess.run("codex exec hi", shell=1)',
+                    'subprocess.run("codex exec hi", shell=use_shell)',
+                )
+            )
+        ],
+        *[
+            pytest.param(command, True, id=f"python-channel-{index}")
+            for index, command in enumerate(
+                (
+                    "echo 'import subprocess; subprocess.run([\"codex\"])' | python3",
+                    "python3 <<< 'import subprocess; subprocess.run([\"codex\"])'",
+                    "python3 --check-hash-based-pycs always - <<'PY'\n"
+                    'import subprocess; subprocess.run(["codex"])\nPY\n',
+                    "uv run python3.13 <<'PY'\n"
+                    'import subprocess; subprocess.run(["codex"])\nPY\n',
+                )
+            )
+        ],
+        ("python3 -c 'import subprocess; subprocess.run([cmd, \"exec\"])'", False),
+        ("python3 -c 'import subprocess; subprocess.run(\"codex exec\", shell=False)'", False),
         ("uv run python -c 'from subprocess import run as launch; launch([\"claude\"])'", True),
         ("uv run python -c 'import subprocess; subprocess.run(args=[\"codex\"])'", True),
         (
@@ -467,7 +551,7 @@ def test_bounded_and_malformed_input() -> None:
     assert not blocks_direct_provider_launch("spawn_agent", {"command": "codex exec hi"})
 
 
-@pytest.mark.parametrize("agent", ["default", "backend-developer", "merge-worker"])
+@pytest.mark.parametrize("agent", ["default", "developer", "merge-worker"])
 @pytest.mark.parametrize(
     "source",
     [

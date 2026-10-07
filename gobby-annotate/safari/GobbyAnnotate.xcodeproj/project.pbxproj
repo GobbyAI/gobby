@@ -98,6 +98,7 @@
 		8FF389B75581511991FEBFED /* ExportStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportStore.swift; sourceTree = SOURCE_ROOT; };
 		95392E63681EAB9790C9D80F /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = SOURCE_ROOT; };
 		B70EF8F287B988A45022836E /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = SOURCE_ROOT; };
+		0381B6523054E7B300E7B608 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -144,6 +145,7 @@
 				8FF389B75581511991FEBFED /* ExportStore.swift */,
 				95392E63681EAB9790C9D80F /* SafariWebExtensionHandler.swift */,
 				0381B5E13054E7B300E7B608 /* Assets.xcassets */,
+				0381B6523054E7B300E7B608 /* Signing.xcconfig */,
 			);
 			sourceTree = "<group>";
 		};
@@ -245,6 +247,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0381B6263054E7B300E7B608 /* Build configuration list for PBXNativeTarget "GobbyAnnotate Extension (iOS)" */;
 			buildPhases = (
+				0381B6503054E7B300E7B608 /* Build extension bundle */,
 				0381B6023054E7B300E7B608 /* Sources */,
 				0381B6033054E7B300E7B608 /* Frameworks */,
 				0381B6043054E7B300E7B608 /* Resources */,
@@ -264,6 +267,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0381B62D3054E7B300E7B608 /* Build configuration list for PBXNativeTarget "GobbyAnnotate Extension (macOS)" */;
 			buildPhases = (
+				0381B6513054E7B300E7B608 /* Build extension bundle */,
 				0381B60C3054E7B300E7B608 /* Sources */,
 				0381B60D3054E7B300E7B608 /* Frameworks */,
 				0381B60E3054E7B300E7B608 /* Resources */,
@@ -372,6 +376,47 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		0381B6503054E7B300E7B608 /* Build extension bundle */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build extension bundle";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\n# Xcode copies ../packages/extension/dist/safari as plain resources; build it\n# here so an app build can never ship a stale extension bundle.\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"$SRCROOT/..\"\nif ! command -v npm >/dev/null; then\n  echo \"error: npm not found; install Node.js >=22.18 to build the extension bundle\"\n  exit 1\nfi\nfor dir in . ../web; do\n  if [ ! -d \"$dir/node_modules\" ]; then\n    echo \"error: run npm ci in gobby-annotate/$dir before building the Safari app\"\n    exit 1\n  fi\ndone\nnpm run build:extension\n";
+		};
+		0381B6513054E7B300E7B608 /* Build extension bundle */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build extension bundle";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\n# Xcode copies ../packages/extension/dist/safari as plain resources; build it\n# here so an app build can never ship a stale extension bundle.\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"$SRCROOT/..\"\nif ! command -v npm >/dev/null; then\n  echo \"error: npm not found; install Node.js >=22.18 to build the extension bundle\"\n  exit 1\nfi\nfor dir in . ../web; do\n  if [ ! -d \"$dir/node_modules\" ]; then\n    echo \"error: run npm ci in gobby-annotate/$dir before building the Safari app\"\n    exit 1\n  fi\ndone\nnpm run build:extension\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		0381B5E43054E7B300E7B608 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -429,6 +474,7 @@
 /* Begin XCBuildConfiguration section */
 		0381B6243054E7B300E7B608 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0381B6523054E7B300E7B608 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -490,6 +536,7 @@
 		};
 		0381B6253054E7B300E7B608 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0381B6523054E7B300E7B608 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -547,7 +594,7 @@
 				CODE_SIGN_ENTITLEMENTS = GobbyAnnotate.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = WUSQ36T7Z6;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "iOS (Extension)/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "GobbyAnnotate Extension";
@@ -584,7 +631,7 @@
 				CODE_SIGN_ENTITLEMENTS = GobbyAnnotate.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = WUSQ36T7Z6;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "iOS (Extension)/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "GobbyAnnotate Extension";
@@ -624,7 +671,6 @@
 				CODE_SIGN_ENTITLEMENTS = GobbyAnnotate.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = WUSQ36T7Z6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Gobby Annotate";
@@ -667,7 +713,6 @@
 				CODE_SIGN_ENTITLEMENTS = GobbyAnnotate.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = WUSQ36T7Z6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Gobby Annotate";
@@ -709,8 +754,8 @@
 				CODE_SIGN_ENTITLEMENTS = GobbyAnnotate.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = WUSQ36T7Z6;
 				ENABLE_APP_SANDBOX = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -748,8 +793,8 @@
 				CODE_SIGN_ENTITLEMENTS = GobbyAnnotate.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = WUSQ36T7Z6;
 				ENABLE_APP_SANDBOX = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -789,7 +834,6 @@
 				CODE_SIGN_ENTITLEMENTS = GobbyAnnotate.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = WUSQ36T7Z6;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -834,7 +878,6 @@
 				CODE_SIGN_ENTITLEMENTS = GobbyAnnotate.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = WUSQ36T7Z6;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;

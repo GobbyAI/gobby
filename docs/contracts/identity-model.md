@@ -25,17 +25,19 @@ auto-claimed.
 
 ## Daemon Access Credentials
 
-Daemon auth establishes access to one operator-controlled daemon. The
-install-scoped `local_cli_token` authorizes CLI, hook, MCP, HTTP, and direct
-WebSocket clients. Canonical email credentials in `users` create
+Per-machine API keys authorize CLI, hook, MCP, HTTP, and direct WebSocket
+clients. gdaemon resolves each key to its user, machine, and key ids from the
+hub, strips client-supplied identity headers, and forwards the resolved identity
+with a per-boot secret. Python accepts operator identity only with that secret.
+Canonical email credentials in `users` create
 `gobby_session` browser sessions linked through `auth_sessions.user_id`.
 
-The local token remains a machine-local access capability. Browser sessions
-identify a canonical user. Neither path adds parallel user columns to task,
+API keys identify a canonical user and machine. Browser sessions identify a
+canonical user. Neither path adds parallel user columns to task,
 session, memory, agent, or workflow rows; those domains derive user identity
 through machine ownership where needed.
 
-See [Secrets Contract](./secrets.md#daemon-api-token) for token storage, header,
+See [Secrets Contract](./secrets.md#daemon-api-key) for key storage, header,
 and rotation semantics.
 
 ## Sessions

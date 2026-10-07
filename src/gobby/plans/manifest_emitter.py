@@ -63,13 +63,13 @@ _FRONTEND_TARGET_PREFIXES = ("web/", "crates/gclient/")
 _BACKEND_TARGET_PREFIXES = ("src/gobby/",)
 _DEFAULT_CATEGORY = "code"
 _AGENT_BY_CATEGORY: dict[str, str] = {
-    "code": "backend-developer",
-    "config": "backend-developer",
+    "code": "developer",
+    "config": "developer",
     "docs": "tech-writer",
-    "refactor": "backend-developer",
-    "test": "backend-developer",
+    "refactor": "developer",
+    "test": "developer",
 }
-_DEFAULT_AGENT_FALLBACK = "backend-developer"
+_DEFAULT_AGENT_FALLBACK = "developer"
 _DEFAULT_TASK_TYPE = "feature"
 _ROUTING_FIELDS = frozenset(
     {

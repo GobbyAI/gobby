@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from gobby.agents.detection.registry import DetectionManifestRegistry
     from gobby.config.runtime import ConfigRuntime
     from gobby.config.terminal_host import TerminalHostConfig
-    from gobby.config.terminals import TerminalConfig
     from gobby.events.wake import WakeDispatcher
     from gobby.feedback.service import FeedbackReviewService
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -107,7 +106,6 @@ class ServiceContainer:
     detection_registry: DetectionManifestRegistry | None = None
     terminal_manager: TerminalManager | None = None
     terminal_runtime_registry: TerminalRuntimeRegistry | None = None
-    terminal_config: TerminalConfig | None = None
     terminal_services: TerminalServices | None = None
     terminal_host_config: TerminalHostConfig | None = None
     terminal_host_manager: TerminalHostManager | None = None
@@ -158,6 +156,7 @@ class ServiceContainer:
     project_id: str | None = None
     websocket_server: Any | None = None  # GobbyWebSocketServer
     startup_ready: bool = False
+    restart_recovery_ready: bool = False
     shutdown_in_progress: bool = False
     http_admission_closed: bool = False
     # The daemon's long-lived event loop, captured at run_daemon startup.
@@ -313,14 +312,8 @@ class ServiceContainer:
             if self.tool_proxy_getter:
                 pe.tool_proxy_getter = self.tool_proxy_getter
 
-            # Lazily created per-project executors are the only sweep point
-            # for projects outside the runner's home project: the runner's
-            # startup recovery is scoped to its own project_id, so restart
-            # orphans here would otherwise stay RUNNING forever.
-            try:
-                pe.startup_sweep()
-            except Exception:
-                _logger.warning("Pipeline startup sweep failed for project %r", pid, exc_info=True)
+            # The runner recovers every project using its fixed startup cutoff.
+            # Lazy construction must preserve admitted and resumable executions.
 
             self._project_infra_cache.setdefault(pid, {})["pipeline_executor"] = pe
             _logger.debug("Lazily created PipelineExecutor for project %r", pid)

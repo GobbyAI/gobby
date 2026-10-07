@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use gobby_core::local_token::{read_local_cli_token, read_local_cli_token_for};
+use gobby_core::local_token::{read_api_key, read_api_key_for};
 use gobby_terminal::protocol::{
     read_message_async, write_message_async, ClientMessage, FramingError, RenderEncoding,
     ServerMessage, MAX_FRAME_SIZE, PROTOCOL_VERSION,
@@ -576,7 +576,7 @@ impl UnixSocketFrameSource {
         let home = home.to_path_buf();
         let token = timeout(
             CONNECT_TIMEOUT,
-            tokio::task::spawn_blocking(move || read_local_cli_token_for(&home)),
+            tokio::task::spawn_blocking(move || read_api_key_for(&home)),
         )
         .await
         .map_err(|_| FrameError::Io("local token read timed out".into()))?
@@ -590,14 +590,11 @@ impl UnixSocketFrameSource {
         cols: u16,
         rows: u16,
     ) -> Result<Self, FrameError> {
-        let token = timeout(
-            CONNECT_TIMEOUT,
-            tokio::task::spawn_blocking(read_local_cli_token),
-        )
-        .await
-        .map_err(|_| FrameError::Io("local token read timed out".into()))?
-        .map_err(|error| FrameError::Io(error.to_string()))?
-        .map_err(|error| FrameError::Io(error.to_string()))?;
+        let token = timeout(CONNECT_TIMEOUT, tokio::task::spawn_blocking(read_api_key))
+            .await
+            .map_err(|_| FrameError::Io("local token read timed out".into()))?
+            .map_err(|error| FrameError::Io(error.to_string()))?
+            .map_err(|error| FrameError::Io(error.to_string()))?;
         Self::connect(locator, token.trim(), cols, rows).await
     }
 

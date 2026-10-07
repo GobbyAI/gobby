@@ -1051,8 +1051,7 @@ class TestSyncBundledAgents:
         names = [r.name for r in rows]
         # Check for agents from the new-format bundled definitions
         assert "default" in names
-        assert "backend-developer" in names
-        assert "frontend-developer" in names
+        assert "developer" in names
         assert "qa-reviewer" in names
         assert "doc-reviewer" in names
         close_reviewer = mgr.get_by_name("task-close-reviewer")
@@ -1072,7 +1071,7 @@ class TestSyncBundledAgents:
         assert "test-architect" not in names
         assert "requirements-analyst" not in names
         assert "conductor" not in names
-        assert "developer" not in names
+        assert not {"backend-developer", "frontend-developer", "fullstack-developer"} & set(names)
         assert "pipeline-worker" not in names
 
         children = {
@@ -1214,7 +1213,19 @@ class TestSyncBundledAgents:
         assert _parse_body(row).network == "trusted"
 
 
-_STEPLESS_BUNDLED_AGENTS = frozenset({"comms-agent", "default", "memory-curator", "triage-agent"})
+# The message-driven coordination seats carry no step workflow (agent-definition-profiles
+# Decision 7).
+_STEPLESS_BUNDLED_AGENTS = frozenset(
+    {
+        "assistant",
+        "comms-agent",
+        "default",
+        "lane-manager",
+        "memory-curator",
+        "orchestrator",
+        "triage-agent",
+    }
+)
 _LEGACY_STEP_KEYS = ("steps", "step_variables", "exit_condition")
 
 

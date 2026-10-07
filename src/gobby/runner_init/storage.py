@@ -21,7 +21,6 @@ from gobby.runner_init.helpers import (
 )
 from gobby.shutdown_intent import ShutdownIntent
 from gobby.storage.api_keys import ensure_local_api_key
-from gobby.storage.auth import AuthStore, ensure_local_api_token
 from gobby.storage.concurrency import CoverageExecutor, resolve_database_concurrency
 from gobby.storage.concurrency_watchdog import DatabaseSaturationWatchdog
 from gobby.storage.executor import DatabaseExecutor
@@ -31,6 +30,7 @@ from gobby.storage.sessions._constants import ensure_system_session
 from gobby.storage.tasks import LocalTaskManager
 from gobby.telemetry import init_telemetry
 from gobby.telemetry.logging import setup_file_logging
+from gobby.utils.datetime import require_stored_datetime
 from gobby.utils.machine_id import get_machine_id
 from gobby.worktrees.executor import WorktreeDeleteExecutor
 
@@ -183,6 +183,12 @@ def open_storage_and_config(
     runner._pending_tasks = set()
 
     runner.database = init_hub_database(runner.bootstrap_config)
+    # Runs receive DB-default timestamps. Freeze eligibility on that same clock,
+    # before services or HTTP admission, even when the daemon host clock differs.
+    startup_clock = runner.database.fetchone("SELECT clock_timestamp() AS started_at")
+    if startup_clock is None:
+        raise RuntimeError("database startup clock is unavailable")
+    runner.started_at = require_stored_datetime(startup_clock["started_at"], "started_at")
     if runner.machine_id is None:
         raise RuntimeError("local machine identity is unavailable")
     runner.machine_id = ensure_machine_identity(runner.database, runner.machine_id)
@@ -217,7 +223,6 @@ def open_storage_and_config(
         secret_store=runner.secret_store,
     )
     config_repository.reconcile_registry()
-    ensure_local_api_token(AuthStore(runner.database))
     stored_config = config_repository.read()
     runner.startup_config = bootstrap_overlaid_config(
         config_repository.runtime_candidate(

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory_session import resolve_session
 from gobby.memory.prompt_triage import is_substantive_prompt
+from gobby.memory.push_exclusion import PUSH_EXCLUDED_TAGS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -27,9 +28,6 @@ SURFACE_LIMIT = 5
 # payload out of the embedding request.
 MAX_QUERY_CHARS = 2000
 SURFACE_CALLER = "memory.surface"
-# Review lessons swamped generically worded queries in the graded cohort and
-# already have their own injection path, so they never enter this index.
-EXCLUDED_TAGS = ["review-lesson"]
 
 SurfaceTrigger = Literal["turn", "spawn_agent", "task", "handoff"]
 
@@ -107,7 +105,7 @@ def register_memory_surface_tools(
                 embed_text=query,
                 project_id=project_id,
                 limit=SURFACE_LIMIT,
-                tags_none=list(EXCLUDED_TAGS),
+                tags_none=list(PUSH_EXCLUDED_TAGS),
                 min_score=SURFACE_MIN_SCORE,
                 session_id=resolved_session_id,
                 caller=SURFACE_CALLER,

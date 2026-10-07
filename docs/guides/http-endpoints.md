@@ -43,17 +43,24 @@ context; any `session_id` inside the JSON body remains a target-tool argument.
 
 ## Authentication
 
-Daemon auth is mandatory. Protected HTTP requests accept these
-credentials, in precedence order:
+Daemon auth is mandatory. CLI, hook, stdio-proxy, and daemon-aware Rust clients
+read `api_key` from their owner-only bootstrap and send
+`Authorization: Bearer <api_key>`. External streamable-HTTP MCP clients send
+that header to `/mcp`. Remote machines obtain their own key with
+`gobby auth login`.
 
-1. `Authorization: Bearer <local_cli_token>`
-2. `X-Gobby-Local-Token: <local_cli_token>`
-3. A valid `gobby_session` browser cookie
+gdaemon validates `gobby_` bearers against the hub's `api_keys` rows before
+forwarding HTTP or WebSocket upgrades. It strips client-supplied user, machine,
+key, and front-door-secret headers, then supplies the resolved ids with a
+per-boot secret. Python accepts operator identity only with that matching secret.
+Unknown, malformed, and revoked keys receive 401. A resolver outage receives
+503 with `code: "key_resolver_unavailable"`.
 
-The plaintext token lives at `$GOBBY_HOME/local_cli_token` (default
-`~/.gobby/local_cli_token`) with mode `0600`. External streamable-HTTP MCP
-clients must send the bearer header to the `/mcp` endpoint. Gobby CLI, hook,
-stdio-proxy, and daemon-aware Rust clients read the token file automatically.
+Managed `gobby-agent-v1.` bearers pass through to Python for capability and grant
+verification. A presented bearer takes precedence over a browser cookie; a valid
+`gobby_session` cookie authenticates browser requests without a bearer. Loopback
+HTTP recovery can use the owner-only `X-Gobby-Break-Glass` credential; grant
+routes still require a valid grant. See [the secrets contract](../contracts/secrets.md#daemon-api-key).
 
 The complete unauthenticated HTTP surface is:
 
@@ -69,25 +76,24 @@ The complete unauthenticated HTTP surface is:
 | Exact | `/logo.png` | Production UI asset |
 
 Every other `/api/*`, `/mcp*`, and `/memory*` request requires authentication.
-The standalone WebSocket server on port `60888` requires bearer auth during the
-handshake. The HTTP `/ws` route serves the same WebSocket server directly: it
-accepts the handshake, then authenticates like any protected request (bearer
-token, then `X-Gobby-Local-Token`, then a browser session cookie; the first
-credential present decides) and closes with code `4401` when it fails.
+The public `/ws` endpoint authenticates through gdaemon and forwards verified
+identity to the internal WebSocket server. Browser cookies remain supported.
+Python rejects missing or wrong front-door secrets and invalid capabilities,
+closing an accepted unauthenticated connection with code `4401`.
 
 Unauthenticated protected API requests return `401` with:
 
 ```json
 {
-  "error": "Authentication required. CLI clients need ~/.gobby/local_cli_token (run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in.",
+  "error": "Authentication required. CLI clients need an API key in bootstrap.yaml and gdaemon (run 'gobby auth login'). Browsers: log in.",
   "code": "missing_auth"
 }
 ```
 
 `code` names why the credential was refused. `missing_auth`, `invalid_token` (an
-unrecognised bearer or local token), and `session_invalid` (a stale browser
+unrecognised bearer), and `session_invalid` (a stale browser
 cookie) keep the login guidance above. A refused managed capability bearer
-returns `"error": "Request rejected"` with one of `operator_token_unavailable`,
+returns `"error": "Request rejected"` with one of `signing_key_unavailable`,
 `capability_invalid`, `capability_expired`, `route_not_permitted`,
 `run_inactive`, or `identity_mismatch`.
 
@@ -95,7 +101,7 @@ returns `"error": "Request rejected"` with one of `operator_token_unavailable`,
 
 | Route | Method | Purpose |
 | --- | --- | --- |
-| `/mcp` | MCP HTTP transport | FastMCP protocol endpoint. External clients send the local-token bearer header. |
+| `/mcp` | MCP HTTP transport | FastMCP protocol endpoint. External clients send the API-key bearer header. |
 | `/ws` | WebSocket | Cookie-authenticated proxy to the standalone WebSocket server. |
 | `/ws/{path}` | WebSocket | Cookie-authenticated proxy subpaths to the standalone WebSocket server. |
 | `/assets/*` | `GET` | Production UI assets, mounted only when production UI mode is enabled and assets exist. |
@@ -289,7 +295,8 @@ available at `/mcp`.
 | `DELETE` | `/api/mcp/servers/{name}` | Remove the exact `(name, resolved project)` row. |
 | `GET` | `/api/mcp/templates` | List templates visible to the resolved project with parameter contracts. |
 | `GET` | `/api/mcp/status` | Return MCP registry/status data. |
-| `POST` | `/api/mcp/bridge/ready` | Stdio bridge report, sent once the CLI lists the Gobby tools; sets `_mcp_proxy_ready` on the caller's session. An unresolved wrapper caller gets `409 SESSION_REQUIRED`; the bridge retries that, `DAEMON_UNAVAILABLE` and `REQUEST_TIMEOUT` eight times, with backoff sleeps totalling about 90 seconds, and logs a late success, or a give-up as a warning unless no session ever registered. |
+| `POST` | `/api/mcp/bridge/ready` | Stdio bridge report, sent once the CLI lists the Gobby tools; sets `_mcp_proxy_ready` on the caller's session. An agent capability token must name its own session, project and run in the identity headers. An unresolved wrapper caller gets `409 SESSION_REQUIRED`; the bridge retries that, `DAEMON_UNAVAILABLE` and `REQUEST_TIMEOUT` eight times, with backoff sleeps totalling about 90 seconds, and logs a late success, or a give-up as a warning unless no session ever registered. |
+| `GET` | `/api/mcp/bridge/tool-timeouts` | Return the active `mcp_client_proxy.tool_timeouts` map. The stdio bridge reads it once per process, on its first tool call, and retries the read after a failure. Agent tokens may read it. |
 | `POST` | `/api/mcp/refresh` | Re-index tool schemas: `server`/`server_id` targets one resolved instance; otherwise every internal registry and enabled visible instance. Body may include `server`, `server_id`, `project_id`, `scope`, and `force`. |
 | `GET` | `/api/mcp/tools` | List tools across servers. |
 | `POST` | `/api/mcp/tools/search` | Search tools. |

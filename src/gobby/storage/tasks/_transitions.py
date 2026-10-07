@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime
 from typing import Any, cast
 
@@ -225,6 +226,10 @@ def claim_task(
             "SELECT claimed_by_session_id FROM tasks WHERE id = %s FOR UPDATE", (task_id,)
         ).fetchone()
         cursor = conn.execute(sql, params)
+        if cursor.rowcount == 1:
+            from gobby.storage.session_tasks import record_claim
+
+            record_claim(conn, session_id, task_id)
         prior_owner = prior["claimed_by_session_id"] if prior is not None else None
         if cursor.rowcount == 1 and prior_owner is not None and str(prior_owner) != session_id:
             from gobby.workflows.state_manager import SessionVariableManager
@@ -252,10 +257,16 @@ def claim_task_for_agent(
     *,
     force: bool = False,
     expected_owner: str | None = None,
+    handed_off_task_ids: Collection[str] = (),
 ) -> Task:
-    """Atomically claim a task while enforcing one open claim for the session."""
+    """Atomically claim a task while enforcing one active open claim for the session."""
     with db.transaction_immediate(AgentTaskClaimMutation(session_id)) as conn:
-        ensure_agent_claim_available(conn, session_id, target_task_id=task_id)
+        ensure_agent_claim_available(
+            conn,
+            session_id,
+            target_task_id=task_id,
+            handed_off_task_ids=handed_off_task_ids,
+        )
         return claim_task(
             db,
             task_id,

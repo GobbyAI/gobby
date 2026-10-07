@@ -128,10 +128,12 @@ terminal's own background and foreground and only picks the palette from the
 OS appearance.
 
 **Themes.** A theme sets two fills and a model colour. The header fill takes
-the sidebar's section headings, the tab row, and the menu bar. The selection
-fill takes the selected and active sidebar rows, the active tab, and the open
-menu's title. The model colour takes the model line of the Agents rows. In
-Dark and Light a theme also sets its own ground. Restored is the default.
+the sidebar's section headings and the tab row. The menu bar sits on its own
+bar fill, a lightness step off the header fill toward the selection. The
+selection fill takes the selected and active sidebar rows, the active tab,
+and the open menu's title. The model colour takes the model line of the
+Agents rows. In Dark and Light a theme also sets its own ground. Restored is
+the default.
 Each appearance offers its own list under **View › Theme** and the `Theme`
 setting:
 
@@ -613,7 +615,12 @@ and any pane whose direct connection failed and fell back to `proxy`. Those
 are the panes that can show `· Uncertain`, because only a write the daemon
 acknowledges can have an unknown outcome. No indicator tells the two apart; a
 pane that typed instantly and then went sluggish fell back, and
-`~/.gobby/logs/gclient.log` records it.
+`~/.gobby/logs/gclient.log` records it as `direct-fallback`. Under `auto`, a
+fallen-back pane keeps trying the direct connection beside its proxy, first
+after 5 seconds and then backing off to once a minute. The proxy keeps
+delivering until the host accepts and the direct stream is in place. Then the
+pane switches back, a lease you held follows it, and the log records
+`direct-promotion`.
 
 On hosts that support the kitty keyboard protocol, gclient enables disambiguated
 key reporting while the client is active. That lets the host distinguish modified
@@ -818,6 +825,7 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Wheel over a pane | Scroll its scrollback; on an alternate screen the wheel sends arrow keys instead |
 | Wheel over the tab bar | Switch tabs |
 | Wheel over the sidebar | Scroll the section under the pointer |
+| Wheel over the keybinding help, the alert log, the navigator, or the Open worktree or Destroy orphaned terminals list | Do what its arrow keys do: the help and the log scroll three rows a notch, the navigator and the two lists move their selection one row; a notch outside the popup does nothing |
 | Click a tab, the new-tab button, or an edge count | Switch tabs, open one, or page the bar one screen |
 | Drag a tab onto another tab | Reorder tabs, including when the terminal delivers only press and release events |
 | Click a project card / worktree row | Focus the project (expanding its card) / open the worktree |

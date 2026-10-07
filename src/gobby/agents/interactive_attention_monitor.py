@@ -14,6 +14,7 @@ from gobby.storage.attention import session_attention_entry_id
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 from gobby.terminals.host_client import HostUnavailableError
+from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.utils.logging import ThrottledLogger
 from gobby.utils.machine_id import require_machine_id
 
@@ -46,6 +47,8 @@ class InteractiveAttentionMonitor:
         *,
         registry: TerminalRuntimeRegistry,
         startup_ready: Callable[[], bool] | None = None,
+        write_coordinator: WriteCoordinator | None = None,
+        max_reprompt_attempts: int | None = None,
     ) -> None:
         self._poll_interval = poll_interval
         self._session_manager = session_manager
@@ -57,6 +60,23 @@ class InteractiveAttentionMonitor:
         # use their own snapshot implementations.
         self._registry = registry
         self._startup_ready = startup_ready
+        from gobby.agents.watchdog.interactive_capacity import InteractiveCapacityRecovery
+        from gobby.config.tmux import TmuxConfig
+
+        self._capacity_recovery = (
+            InteractiveCapacityRecovery(
+                session_manager,
+                attention_manager,
+                detection_registry,
+                registry,
+                write_coordinator,
+                max_reprompt_attempts
+                if max_reprompt_attempts is not None
+                else TmuxConfig().max_reprompt_attempts,
+            )
+            if session_manager is not None and attention_manager is not None
+            else None
+        )
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -128,7 +148,7 @@ class InteractiveAttentionMonitor:
         await self._check_attention_panes(active_runs=active_runs)
 
     async def _check_attention_panes(self, *, active_runs: Sequence[AgentRun]) -> None:
-        """Report attention for interactive panes without injecting input."""
+        """Report attention and recover confirmed capacity failures in placed seats."""
         manager = self._attention_manager
         session_manager = self._session_manager
         if manager is None or session_manager is None:
@@ -147,6 +167,8 @@ class InteractiveAttentionMonitor:
             run.child_session_id for run in active_runs if run.child_session_id is not None
         }
         active_interactive_ids = {session.id for session in sessions}
+        if self._capacity_recovery is not None:
+            self._capacity_recovery.prune(active_interactive_ids - active_agent_sessions)
         for attention in await asyncio.to_thread(manager.list_blocked):
             if (
                 attention.run_id is None
@@ -183,6 +205,12 @@ class InteractiveAttentionMonitor:
                     continue
                 snapshot = await self._registry.resolve(row.backend).snapshot(row, 15)
                 pane_output = snapshot.text
+                if (
+                    pane_output is not None
+                    and self._capacity_recovery is not None
+                    and await self._capacity_recovery.check(session, row, pane_output)
+                ):
+                    continue
             except TimeoutError as exc:
                 logger.debug(
                     "InteractiveAttentionMonitor: interactive terminal capture timed out",
@@ -250,6 +278,11 @@ class InteractiveAttentionMonitor:
                 classification_reason = classification.reason
 
         if reason is None or kind is None:
+            if (
+                self._capacity_recovery is not None
+                and await self._capacity_recovery.has_current_failure(session_id)
+            ):
+                return
             await self._resolve_interactive_lifecycle_wait(session_id)
             await self._clear_attention_if_current(session_attention_entry_id(session_id))
             return

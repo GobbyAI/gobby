@@ -10,7 +10,8 @@ import pytest
 
 from gobby.plans.parser import parse_plan
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.categories import AGENT_BY_IMPLEMENTATION_DOMAIN
+from gobby.tasks.categories import AGENT_BY_IMPLEMENTATION_DOMAIN, IMPLEMENTATION_DOMAINS
+from gobby.tasks.expansion._common import _agent_selection_fields
 from gobby.tasks.expansion_service import ExpansionService
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
@@ -112,3 +113,12 @@ def test_plan_12725_compiles_clean(
                 f"missing dependency edge: {caller_lead} -> {blocker_terminal} "
                 f"from {entry.source_section} depends_on {blocker_section}"
             )
+
+
+def test_domains_route_to_developer() -> None:
+    # Plan 3.2.3: every implementation domain and the default fallback route to
+    # the one developer seat.
+    assert AGENT_BY_IMPLEMENTATION_DOMAIN == dict.fromkeys(IMPLEMENTATION_DOMAINS, "developer")
+    agent, skills, description = _agent_selection_fields({"category": "code"}, [])
+    assert (agent, skills) == ("developer", [])
+    assert "Defaulted to `developer`" in description

@@ -12,6 +12,7 @@ from typing import Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._authorization import has_delegated_agent_run
 from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session_activity
+from gobby.mcp_proxy.tools.tasks._claim_handoff import handed_off_claim_ids
 from gobby.mcp_proxy.tools.tasks._context import (
     CHECKOUT_RESOLUTION_ERRORS,
     RegistryContext,
@@ -38,11 +39,22 @@ from gobby.workflows.commit_guard import (
     foreign_owned_dirty_paths,
 )
 from gobby.workflows.task_claim_state import (
+    active_task_id_for_edit,
     normalize_task_edited_path,
     task_edited_file_set_for_checkout,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _edit_target_task_id(ctx: RegistryContext, session_id: str) -> str | None:
+    """Return the claimed task that receives the session's next edit, when known."""
+    try:
+        variables = ctx.session_var_manager.get_variables(session_id)
+    except KeyError:
+        return None
+    return active_task_id_for_edit(variables) if isinstance(variables, dict) else None
+
 
 _DECLARED_AFFECTED_FILE_SOURCES = frozenset({"manual", "expansion"})
 
@@ -240,7 +252,11 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             )
 
         current_owner = get_claimed_session_id(task)
-        if current_owner == resolved_session_id:
+        # While another owned task receives this session's edits, a reclaim reactivates
+        # this one only through the capacity check below (#23665).
+        if current_owner == resolved_session_id and _edit_target_task_id(
+            ctx, resolved_session_id
+        ) in (None, resolved_id):
             task_ref = f"#{task.seq_num}" if task.seq_num else resolved_id
             return {
                 "success": True,
@@ -314,18 +330,23 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 ],
             )
 
+        handed_off = handed_off_claim_ids(
+            ctx, resolved_session_id, task.project_id, target_task_id=resolved_id
+        )
         try:
             if delegated_claim:
                 updated = ctx.task_manager.claim_task_for_agent(
                     resolved_id,
                     session_id=resolved_session_id,
                     expected_owner=current_owner,
+                    handed_off_task_ids=handed_off,
                 )
             else:
                 updated = ctx.task_manager.claim_task_for_agent(
                     resolved_id,
                     session_id=resolved_session_id,
                     force=force,
+                    handed_off_task_ids=handed_off,
                 )
         except AgentTaskClaimConflictError as e:
             return task_error(

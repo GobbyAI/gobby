@@ -134,12 +134,20 @@ def terminal_review_delivery(
                 error_class=error_class,
                 retry_seconds=retry_seconds,
             )
+            if run is not None and run.terminal_reason == "review_verdict_missing":
+                payload["reviewer_ended_without_verdict"] = True
             review = (
                 store.finish_run_ended(review.id, result_payload=payload, error=message) or review
             )
     if review.result_payload is None:
         return None
     payload = dict(review.result_payload)
+    if payload.get("status") == "error" and run is not None:
+        payload.update(
+            reviewer_status=run.status,
+            reviewer_terminal_reason=run.terminal_reason,
+            reviewer_error=run.error,
+        )
     message = str(payload.get("message") or "Background task-close review completed.")
     if sandbox_denials := _review_sandbox_denials(run):
         payload["sandbox_denials"] = sandbox_denials

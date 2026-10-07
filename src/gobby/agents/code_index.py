@@ -284,7 +284,7 @@ async def ensure_isolation_code_index(
     ``api_token`` authenticates only the daemon-owned preflight probes, via
     their subprocess environment. It is never written to the runtime home or
     the wrapper script and never returned in the agent env additions: the
-    runtime home deliberately carries no ``local_cli_token`` (#19289), and the
+    runtime home deliberately carries no operator credentials, and the
     spawned agent authenticates with its own run-scoped capability instead.
 
     ``identity_env`` carries the spawned run's managed-execution identity
@@ -600,16 +600,14 @@ def _reap_stale_gcode_runtime_tokens(runtime_root: Path) -> None:
     for runtime_home in runtime_homes:
         if runtime_home.is_symlink() or not runtime_home.is_dir():
             continue
-        for name in ("local_cli_token", ".secret_kek"):
-            try:
-                (runtime_home / name).unlink(missing_ok=True)
-            except OSError:
-                logger.debug(
-                    "Failed to reap gcode runtime credential %s in %s",
-                    name,
-                    runtime_home,
-                    exc_info=True,
-                )
+        try:
+            (runtime_home / ".secret_kek").unlink(missing_ok=True)
+        except OSError:
+            logger.debug(
+                "Failed to reap gcode runtime .secret_kek in %s",
+                runtime_home,
+                exc_info=True,
+            )
         bootstrap = runtime_home / "bootstrap.yaml"
         if _has_scoped_runtime_bootstrap(bootstrap):
             continue

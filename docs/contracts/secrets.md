@@ -5,17 +5,17 @@ trusted local binaries that support standalone direct-hub mode. Remote clients
 can create, replace, list metadata, and delete secrets; remote clients never
 receive plaintext secret values, the DEK, or KEK material.
 
-Daemon API tokens follow a separate one-way verification contract. They grant
+Daemon API keys follow a separate one-way verification contract. They grant
 daemon access and never participate in secret-envelope encryption.
 
-## Daemon API Token
+## Daemon API Key
 
 | Surface | Contract |
 | --- | --- |
-| Plaintext | `$GOBBY_HOME/local_cli_token` (default `~/.gobby/local_cli_token`), written with mode `0600` |
-| Hub verifier | SHA-256 hex digest in `config_store` key `auth.api_token_hash` |
-| Canonical HTTP credential | `Authorization: Bearer <token>` |
-| Local alias | `X-Gobby-Local-Token: <token>` |
+| Plaintext | `api_key` and `api_key_id` in the owner-only startup bootstrap (default `~/.gobby/bootstrap.yaml`) |
+| Hub verifier | SHA-256 hex digest in `api_keys.key_hash`, resolved by gdaemon with the key's user and machine ownership |
+| Canonical HTTP credential | `Authorization: Bearer <gobby_ API key>` |
+| Python operator identity | gdaemon strips client user, machine, key, and front-door-secret headers, then supplies verified ids with the per-boot `GOBBY_FRONT_DOOR_SECRET`; Python requires the matching secret |
 | Browser credential | `gobby_session` cookie created by `/api/auth/login` |
 | Break-glass credential | `break_glass` beside the daemon's bound bootstrap (default `~/.gobby/break_glass`), created once with mode `0600`; never logged or copied; the credential and its owner-only `.break_glass-staging` directory are read/write denied to managed sandboxes |
 
@@ -23,15 +23,21 @@ daemon access and never participate in secret-envelope encryption.
 break-glass credential before hub credential lookup. Grant routes still require
 a valid grant. Remote peers and WebSocket connections cannot use it.
 
-`gobby install` provisions the token. A file-only install is adopted into the
-hub on daemon startup. When both values exist, the hub hash is authoritative;
-a missing or mismatched file requires `gobby auth token --rotate` on the hub
-machine and a fresh copy to every additional client machine.
+Local `gobby install` and hub startup provision a live API key. Remote machines
+enroll with `gobby auth login`, which writes their own key into their bootstrap.
+gdaemon resolves key bearers against the hub on HTTP and WebSocket upgrades.
+Unknown, malformed, and revoked keys receive 401; an unavailable resolver receives
+503 `key_resolver_unavailable`.
 
-Rotation replaces the plaintext file and stored hash together. Running clients
-refresh within about five seconds. The old token stops authorizing HTTP and
-direct WebSocket connections; browser sessions remain independent and the
-browser WebSocket proxy reads the refreshed daemon token.
+Clients read the bootstrap key for each new request or frame-stream hello.
+After key replacement, new frame connections use the new key immediately;
+existing frame streams remain attached. Revoking the old hub key stops new HTTP
+and WebSocket authentication. Browser sessions remain independent.
+
+Managed `gobby-agent-v1.` capabilities pass through gdaemon for Python to verify.
+They sign with `HMAC-SHA256(api_key, b"gobby-managed-token-v1")`, survive daemon
+restarts, and must be reissued when the bootstrap key rotates. The interactive
+runtime challenge is answered by gdaemon using a fresh bootstrap read.
 
 Web UI passwords are stored as salted Argon2id hashes in the canonical
 `users.password_hash` column. Browser sessions store only token hashes and a

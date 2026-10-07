@@ -2,6 +2,7 @@
 use std::collections::hash_map::DefaultHasher;
 #[cfg(test)]
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -181,13 +182,38 @@ pub(crate) struct GhosttyPaneCore {
     windows_powershell_prompt_cwd_reporting: bool,
 }
 
+/// Process-wide source of content generations, so a replacement terminal never
+/// reuses a generation an attachment recorded for its predecessor.
+static NEXT_CONTENT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+fn next_content_generation() -> u64 {
+    NEXT_CONTENT_GENERATION.fetch_add(1, Ordering::Relaxed)
+}
+
 pub(crate) struct PaneTerminal {
     pub(crate) ghostty: GhosttyPaneTerminal,
+    /// Changes after every mutation that can alter a rendered frame. Scroll
+    /// moves are excluded: frame builders set the viewport themselves.
+    content_generation: AtomicU64,
 }
 
 impl PaneTerminal {
     pub(crate) fn new(ghostty: GhosttyPaneTerminal) -> Self {
-        Self { ghostty }
+        Self {
+            ghostty,
+            content_generation: AtomicU64::new(next_content_generation()),
+        }
+    }
+
+    pub(crate) fn content_generation(&self) -> u64 {
+        self.content_generation.load(Ordering::Acquire)
+    }
+
+    /// Advance the generation. Call after the mutation lands, so a reader
+    /// that sees the new generation also sees the new state.
+    pub(crate) fn mark_content_changed(&self) {
+        self.content_generation
+            .store(next_content_generation(), Ordering::Release);
     }
 
     pub fn process_pty_bytes(
@@ -197,8 +223,11 @@ impl PaneTerminal {
         bytes: &[u8],
         response_writer: &mpsc::Sender<Bytes>,
     ) -> ProcessBytesResult {
-        self.ghostty
-            .process_pty_bytes(pane_id, shell_pid, bytes, response_writer)
+        let result = self
+            .ghostty
+            .process_pty_bytes(pane_id, shell_pid, bytes, response_writer);
+        self.mark_content_changed();
+        result
     }
 
     pub fn resize(
@@ -208,8 +237,11 @@ impl PaneTerminal {
         cell_width_px: u32,
         cell_height_px: u32,
     ) -> Vec<Bytes> {
-        self.ghostty
-            .resize(rows, cols, cell_width_px, cell_height_px)
+        let responses = self
+            .ghostty
+            .resize(rows, cols, cell_width_px, cell_height_px);
+        self.mark_content_changed();
+        responses
     }
 
     pub fn scroll_up(&self, lines: usize) {
@@ -459,13 +491,16 @@ impl PaneTerminal {
 
     pub fn apply_host_terminal_theme(&self, theme: crate::terminal_theme::TerminalTheme) {
         self.ghostty.apply_host_terminal_theme(theme);
+        self.mark_content_changed();
     }
 
     pub fn apply_host_terminal_appearance(
         &self,
         appearance: Option<crate::terminal_theme::HostAppearance>,
     ) -> Option<Bytes> {
-        self.ghostty.apply_host_terminal_appearance(appearance)
+        let response = self.ghostty.apply_host_terminal_appearance(appearance);
+        self.mark_content_changed();
+        response
     }
 
     pub fn terminal_title(&self) -> Option<String> {

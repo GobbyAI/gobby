@@ -260,26 +260,6 @@ class PipelineExecutor(
 
         task.add_done_callback(_on_done)
 
-    def startup_sweep(self) -> int:
-        """Mark restart-orphaned RUNNING executions FAILED.
-
-        A freshly created executor owns no background tasks, so any RUNNING
-        execution in its manager's scope was orphaned by a daemon restart —
-        detached runs and approval-resumed runs alike. Without this, clients
-        polling the executions API would watch a phantom RUNNING execution
-        forever. Live detached runs are excluded, so the sweep is safe to run
-        at any point in the executor's lifetime.
-
-        Returns:
-            Number of executions marked as failed.
-        """
-        count: int = self.execution_manager.fail_stale_running_executions(
-            exclude_ids=set(self._detached_execution_ids)
-        )
-        if count > 0:
-            logger.info("Startup sweep marked %s orphaned pipeline execution(s) failed", count)
-        return count
-
     def _get_cancelled_execution(self, execution_id: str) -> PipelineExecution | None:
         """Return the latest execution record when cancellation was persisted."""
         execution: PipelineExecution | None = self.execution_manager.get_execution(execution_id)

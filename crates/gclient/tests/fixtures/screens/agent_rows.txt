@@ -1,7 +1,7 @@
 # gclient screen golden: agent_rows
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
-00 : subtext0/surface0+b*120
+00 : subtext0/dim+b*120
 01 |                                                                                                                        |
 01 : text/panel_bg*120
 02 | Machines                                                                                                               |
@@ -18,7 +18,7 @@
 07 : text/panel_bg*120
 08 | Agents                                                                                                                 |
 08 : text/surface0*1 subtext0/surface0+b*6 text/surface0*26 text/panel_bg*87
-09 | ○ #123: backend-developer-workf…                                       ▄▄    ▄  ▄▄                                     |
+09 | ○ #123: backend-developer-workfl                                       ▄▄    ▄  ▄▄                                     |
 09 : text/panel_bg*1 overlay0/panel_bg*1 text/panel_bg*1 identifier/panel_bg*4 subtext0/panel_bg*2 text/panel_bg*63 overlay0/panel_bg*2 text/panel_bg*4 overlay0/panel_bg*1 text/panel_bg*2 overlay0/panel_bg*2 text/panel_bg*37
 10 |   Working task 123 Implement the                                   ▀▀  ▀▀ ▄▄▀▀  ▀▀   ▄▄                                |
 10 : text/panel_bg*19 subtext0/panel_bg*14 text/panel_bg*35 overlay0/overlay0*2 text/panel_bg*2 overlay0/panel_bg*1 overlay0/dim*1 text/panel_bg*1 overlay0/panel_bg*2 overlay0/dim*1 dim/dim*1 text/panel_bg*2 overlay0/dim*1 overlay0/panel_bg*1 text/panel_bg*3 overlay0/panel_bg*2 text/panel_bg*32

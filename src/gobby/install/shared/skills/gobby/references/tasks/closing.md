@@ -13,7 +13,11 @@ Finish in this order:
    credited. Pipelines such as `| tail`, `;` command sequences, trailing output
    such as `echo`, fallbacks, backgrounding, subshells, and obscuring wrappers
    are not; one of them anywhere voids every check in that call. Recover with a
-   direct rerun of each validation as its own call. Changed Python tests also
+   direct rerun of each validation as its own call. Pytest and `vitest related`
+   targets resolve from the recorded working directory, any leading `cd`, and
+   `uv --directory`; a pytest target in another tree is credited only when that
+   tree holds the close candidate commit's exact bytes (the close checkout's
+   without a candidate) for the test and every changed path. Changed Python tests also
    require a clean `gobby test-types audit` against the test-types baseline with
    `--fail-on-new`, credited from one invocation whose explicit targets lexically
    cover every changed test: a file target covers itself, a directory target covers
@@ -74,13 +78,15 @@ Peer evidence a close depends on is recorded by the peer, not the closer:
 `record_close_receipt(task_id, kind, commit_sha, facts)` stores a daemon-attested
 `independent_review_approval` (LAND of an exact commit) or `activation` receipt
 on another session's task, authorized against the locked task row.
+A session that has ever claimed the task can neither approve nor land it.
 An `activation` receipt comes only from the task's creator or delegator. When
-both have ended, a live session in the task's project takes over that authority
-with `transfer_task_authority(task_id, reason)`. It becomes the delegator, the
+both have ended, or the live creator is the task's claimant and no delegator is
+live, a live session in the task's project takes over that authority with
+`transfer_task_authority(task_id, reason)`. It becomes the delegator, the
 delegation receiver is kept, and the reason is appended to the delegation reason.
 It refuses a closed task, the claimant, a task-close reviewer, and any caller
-while the creator or delegator is still live. Re-running it is a no-op for the
-session already holding authority.
+while a creator that is not the claimant, or a delegator, is still live.
+Re-running it is a no-op for the session already holding authority.
 
 When a CLOSED/VALID task's `closed_commit_sha` differs from the explicit
 `commit_sha` its original VALID close review accepted,

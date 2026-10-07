@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import AsyncIterator, Iterator
-from typing import Any, NoReturn
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -34,10 +34,7 @@ def _proxy_dependencies(
     check_health: AsyncMock,
     client: AsyncMock,
 ) -> DaemonProxyDependencies:
-    runtime = MagicMock()
-    runtime.require_config.return_value.mcp_client_proxy.tool_timeouts = {}
     return DaemonProxyDependencies(
-        runtime_factory=lambda: runtime,
         check_daemon_http_health=check_health,
         read_project_id=lambda: None,
         http_client_factory=lambda: client,
@@ -168,10 +165,12 @@ async def test_tool_call_awaits_lazy_daemon_startup() -> None:
     await startup_waiting.wait()
 
     check_health = AsyncMock(return_value=True)
+    timeouts = MagicMock(status_code=200, text="")
+    timeouts.json.return_value = {"success": True, "tool_timeouts": {}}
     response = MagicMock(status_code=200, text="")
     response.json.return_value = {"success": True, "value": "ready"}
     client = AsyncMock(spec=httpx.AsyncClient)
-    client.request.return_value = response
+    client.request.side_effect = [timeouts, response]
     deps = _proxy_dependencies(check_health=check_health, client=client)
     proxy = DaemonProxy(60887, deps_factory=lambda: deps, startup_task=startup_task)
 
@@ -185,7 +184,10 @@ async def test_tool_call_awaits_lazy_daemon_startup() -> None:
     release_startup.set()
     assert await call_task == {"success": True, "value": "ready"}
     check_health.assert_awaited_once()
-    client.request.assert_awaited_once()
+    assert [item.args for item in client.request.await_args_list] == [
+        ("GET", "http://127.0.0.1:60887/api/mcp/bridge/tool-timeouts"),
+        ("POST", "http://127.0.0.1:60887/api/mcp/example/tools/ready"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -206,6 +208,7 @@ async def test_tool_call_after_startup_failure_returns_daemon_unavailable(
 
     check_health = AsyncMock(return_value=False)
     client = AsyncMock(spec=httpx.AsyncClient)
+    client.request.side_effect = httpx.ConnectError("connection refused")
     deps = _proxy_dependencies(check_health=check_health, client=client)
     proxy = DaemonProxy(60887, deps_factory=lambda: deps, startup_task=startup_task)
 
@@ -214,16 +217,16 @@ async def test_tool_call_after_startup_failure_returns_daemon_unavailable(
     assert result["success"] is False
     assert result["error_code"] == "DAEMON_UNAVAILABLE"
     assert "gobby restart --verbose" in result["error"]
-    client.request.assert_not_awaited()
-
-
-def _hub_is_forbidden(*_args: object, **_kwargs: object) -> NoReturn:
-    raise AssertionError("stdio bridge opened the hub while building the MCP server")
+    # The refused timeout read falls back to defaults; the failed preflight then
+    # keeps the tool request itself from being sent.
+    assert [item.args for item in client.request.await_args_list] == [
+        ("GET", "http://127.0.0.1:60887/api/mcp/bridge/tool-timeouts"),
+    ]
 
 
 @pytest.fixture
 def bridge_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Build the real bridge against fixed bootstrap facts and a forbidden hub."""
+    """Build the real bridge against fixed bootstrap facts."""
     for name in (
         "GOBBY_AGENT_RUN_ID",
         "GOBBY_DAEMON_URL",
@@ -235,7 +238,6 @@ def bridge_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr("gobby.mcp_proxy.stdio.load_bootstrap", lambda **_: BRIDGE_BOOTSTRAP)
-    monkeypatch.setattr("gobby.mcp_proxy.stdio.CliRuntime", _hub_is_forbidden)
     yield
 
 
@@ -270,7 +272,7 @@ async def test_initialize_and_tools_precede_daemon_health_and_hub_config(
     bridge_environment: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The handshake answers while daemon health stalls and the hub is unreachable.
+    """The handshake answers while daemon health stalls.
 
     Regression for #22032: server construction used to read the DB-backed config
     before serving stdio, so a loaded control plane pushed ``initialize`` past
@@ -379,6 +381,51 @@ def test_bridge_import_defers_config_and_storage_layers() -> None:
     )
 
     assert loaded == ""
+
+
+# The bridge's first tool call against a daemon that serves tool timeouts of its own.
+_FIRST_TOOL_CALL = """
+import asyncio, logging, sys
+import httpx
+import gobby.cli, gobby.mcp_proxy.stdio
+from gobby.mcp_proxy.stdio_proxy import DaemonProxy, DaemonProxyDependencies
+
+health_checks = []
+
+async def check_health(port, timeout=2.0, *, base_url=None):
+    health_checks.append(port)
+    return True
+
+def respond(request):
+    if request.url.path == "/api/mcp/bridge/tool-timeouts":
+        return httpx.Response(200, json={"success": True, "tool_timeouts": {"ready": 7.0}})
+    return httpx.Response(200, json={"timeout": request.extensions["timeout"]["read"]})
+
+deps = DaemonProxyDependencies(
+    check_daemon_http_health=check_health,
+    read_project_id=lambda: None,
+    http_client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    logger=logging.getLogger("probe"),
+)
+proxy = DaemonProxy(60887, deps_factory=lambda: deps)
+result = asyncio.run(proxy.call_tool("example", "ready"))
+"""
+
+
+def test_first_tool_call_defers_config_and_storage_layers() -> None:
+    """The first tool call takes its timeouts from the daemon, not the hub (#23680).
+
+    The hub read imported the storage stack and read the whole config, about 0.7s
+    of CPU that a loaded machine stretched past the caller's deadline.
+    """
+    observed = _fresh_interpreter(
+        _FIRST_TOOL_CALL + "print(result['timeout'], len(health_checks), "
+        f"','.join(m for m in {BRIDGE_DEFERRED_MODULES!r} if m in sys.modules))"
+    )
+
+    # The daemon's timeout applies, the call keeps its one health preflight, and
+    # no deferred layer loaded.
+    assert observed == "7.0 1"
 
 
 def test_config_package_exports_resolve_on_first_access() -> None:

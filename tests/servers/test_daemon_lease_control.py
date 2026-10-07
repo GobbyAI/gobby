@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from gobby.daemon_lease import (
@@ -73,7 +74,7 @@ def _control(lease: FakeLease, events: list[str]) -> StandbyLeaseControl:
     return StandbyLeaseControl(
         lease=lease,
         database_url="postgresql://test.invalid/gobby_test",
-        local_token="lease-token",
+        front_door_secret="lease-front-door-secret",
         promotion_requested=asyncio.Event(),
         schema_verifier=lambda _url: events.append("verify"),
     )
@@ -96,6 +97,62 @@ def test_standby_exposes_only_health_status_and_lease_control() -> None:
     assert client.get("/api/sessions").status_code == 404
 
 
+def _front_door_headers() -> dict[str, str]:
+    return {
+        "X-Gobby-Front-Door": "lease-front-door-secret",
+        "X-Gobby-User-Id": "user",
+        "X-Gobby-Machine-Id": "machine",
+        "X-Gobby-Key-Id": "key",
+    }
+
+
+@pytest.mark.parametrize("action", ["promote", "recover"])
+def test_standby_accepts_verified_identity_without_local_bearer(action: str) -> None:
+    events: list[str] = []
+    control = _control(FakeLease(acquire_result=True, recovered=True), events)
+    client = TestClient(create_standby_app(control))
+
+    response = client.post(f"/api/admin/lease/{action}", headers=_front_door_headers())
+
+    assert response.status_code == 200, response.text
+    assert events == ["verify"]
+    assert control.promotion_requested.is_set()
+
+
+@pytest.mark.parametrize("action", ["promote", "recover"])
+@pytest.mark.parametrize(
+    "invalid_header",
+    ["X-Gobby-Front-Door", "X-Gobby-User-Id", "X-Gobby-Machine-Id", "X-Gobby-Key-Id"],
+)
+def test_standby_refuses_incomplete_or_forged_identity(action: str, invalid_header: str) -> None:
+    events: list[str] = []
+    control = _control(FakeLease(acquire_result=True, recovered=True), events)
+    client = TestClient(create_standby_app(control))
+    headers = _front_door_headers()
+    headers[invalid_header] = "wrong-secret" if invalid_header == "X-Gobby-Front-Door" else ""
+    headers["Authorization"] = "Bearer lease-token"
+
+    response = client.post(f"/api/admin/lease/{action}", headers=headers)
+
+    assert response.status_code == 401
+    assert events == []
+    assert not control.promotion_requested.is_set()
+
+
+@pytest.mark.parametrize("action", ["promote", "recover"])
+def test_standby_refuses_identity_without_configured_front_door(action: str) -> None:
+    events: list[str] = []
+    control = _control(FakeLease(acquire_result=True, recovered=True), events)
+    control.front_door_secret = None
+    client = TestClient(create_standby_app(control))
+
+    response = client.post(f"/api/admin/lease/{action}", headers=_front_door_headers())
+
+    assert response.status_code == 401
+    assert events == []
+    assert not control.promotion_requested.is_set()
+
+
 def test_promotion_requires_auth_and_schema_verification_before_acquisition() -> None:
     events: list[str] = []
     lease = FakeLease(acquire_result=True)
@@ -105,7 +162,7 @@ def test_promotion_requires_auth_and_schema_verification_before_acquisition() ->
     assert client.post("/api/admin/lease/promote").status_code == 401
     response = client.post(
         "/api/admin/lease/promote",
-        headers={"Authorization": "Bearer lease-token"},
+        headers=_front_door_headers(),
     )
 
     assert response.status_code == 200
@@ -120,7 +177,7 @@ def test_promotion_reports_current_owner_when_lease_is_held() -> None:
 
     response = client.post(
         "/api/admin/lease/promote",
-        headers={"Authorization": "Bearer lease-token"},
+        headers=_front_door_headers(),
     )
 
     assert response.status_code == 409
@@ -134,7 +191,7 @@ def test_recovery_refuses_fresh_owner() -> None:
     response = client.post(
         "/api/admin/lease/recover",
         params={"stale_after_seconds": 60},
-        headers={"Authorization": "Bearer lease-token"},
+        headers=_front_door_headers(),
     )
 
     assert response.status_code == 409

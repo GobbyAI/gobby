@@ -175,9 +175,9 @@ pub fn spawn_host_binary(
     removed: &[&str],
 ) -> HostProc {
     let log_path = socket_dir.join("gterm.log");
-    let token_path = socket_dir.join("local_cli_token");
+    let token_path = socket_dir.join("bootstrap.yaml");
     if !token_path.exists() {
-        std::fs::write(&token_path, "local-token").expect("write local token");
+        std::fs::write(&token_path, "api_key: local-token\n").expect("write API key");
     }
     let stderr_path = socket_dir.join("gterm.stderr");
     let stderr_file = std::fs::File::create(&stderr_path).ok();
@@ -188,6 +188,7 @@ pub fn spawn_host_binary(
         .args(extra)
         .env("GTERM_LOG_FILE", &log_path)
         .env("GTERM_TEST_HELPER", "1")
+        .env("GOBBY_HOME", socket_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(match stderr_file {
@@ -496,14 +497,14 @@ pub fn candidate_script(dir: &Path, name: &str, body: &str) -> PathBuf {
 
 /// A candidate whose probe blocks reading a FIFO until the test closes the
 /// write end `send_held_upgrade` returns; returns the candidate and its FIFO.
-pub fn held_probe(dir: &Path, name: &str) -> (PathBuf, PathBuf) {
+pub fn held_probe(dir: &Path, name: &str, exit_code: u8) -> (PathBuf, PathBuf) {
     let fifo = dir.join(format!("{name}.fifo"));
     let made = Command::new("mkfifo")
         .arg(&fifo)
         .status()
         .expect("run mkfifo");
     assert!(made.success(), "mkfifo: {made}");
-    let body = format!("read line < '{}'\nexit 0", fifo.display());
+    let body = format!("read line < '{}'\nexit {exit_code}", fifo.display());
     (candidate_script(dir, &format!("{name}.sh"), &body), fifo)
 }
 

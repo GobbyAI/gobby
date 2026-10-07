@@ -32,6 +32,23 @@ def _postgres_pool_module() -> ModuleType:
     return importlib.import_module("gobby.storage.hub.postgres_pool")
 
 
+def test_main_checkout_landing_lock_key() -> None:
+    from gobby.storage.hub import protocol
+
+    lock = protocol.MainCheckoutLanding(project_id="project-1")
+    assert _postgres_pool_module().advisory_lock_keys(lock) == ("main_checkout_landing:project-1",)
+    priorities: dict[str, object] = {
+        name: getattr(getattr(protocol, name), "PRIORITY", None) for name in protocol.__all__
+    }
+    other_priorities = [
+        priority
+        for name, priority in priorities.items()
+        if name != "MainCheckoutLanding" and isinstance(priority, int)
+    ]
+    assert lock.PRIORITY == 25
+    assert lock.PRIORITY < min(other_priorities)
+
+
 def test_stage_review_approval_lock_key_is_task_scoped() -> None:
     from gobby.storage.hub.protocol import StageReviewApprovalMutation
 
@@ -118,7 +135,8 @@ def test_postgres_execute_materializes_results_before_transaction_exits(
     database = object.__new__(module.PostgresHubDatabase)
     monkeypatch.setattr(database, "transaction", transaction)
 
-    cursor = database.execute("SELECT id FROM tasks")
+    # A write keeps its transaction; a lone SELECT would run in autocommit.
+    cursor = database.execute("UPDATE tasks SET title = title RETURNING id")
 
     assert cursor.rowcount == 2
     assert cursor.fetchone() == {"id": 1}
@@ -564,6 +582,53 @@ def test_postgres_cursor_normalizes_jsonb_values_to_storage_json_text() -> None:
         "skip_stages_json": '["merge","qa"]',
         "metadata_json": '{"a":1,"b":2}',
     }
+
+
+@dataclass(frozen=True)
+class _FakeColumn:
+    name: str
+    type_code: int
+
+
+class _TypedFakeResult(_FakeResult):
+    def __init__(self, rows: list[dict[str, object]], columns: list[_FakeColumn]) -> None:
+        super().__init__(rows)
+        self.description = columns
+
+
+def test_postgres_cursor_dumps_json_columns_without_python_walk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_pool_module()
+    walked: list[object] = []
+    real_to_json_safe = module.to_json_safe
+
+    def spy_to_json_safe(value: object) -> object:
+        walked.append(value)
+        return real_to_json_safe(value)
+
+    monkeypatch.setattr(module, "to_json_safe", spy_to_json_safe)
+    variables = {"b": 1, "a": [1, {"d": None, "c": "ü"}]}
+    run_times = [datetime(2026, 5, 21, 5, 30, tzinfo=UTC)]
+    cursor = module.PostgresCursor(
+        _TypedFakeResult(
+            [{"variables": variables, "scalar": "plain", "run_times": run_times}],
+            [
+                _FakeColumn("variables", 3802),  # jsonb
+                _FakeColumn("scalar", 114),  # json string scalar
+                _FakeColumn("run_times", 1185),  # timestamptz[]
+            ],
+        )
+    )
+
+    assert cursor.fetchall() == [
+        {
+            "variables": '{"a":[1,{"c":"\\u00fc","d":null}],"b":1}',
+            "scalar": "plain",
+            "run_times": '["2026-05-21T05:30:00+00:00"]',
+        }
+    ]
+    assert walked == [run_times]
 
 
 def test_postgres_cursor_preserves_datetime_values_as_aware_utc() -> None:

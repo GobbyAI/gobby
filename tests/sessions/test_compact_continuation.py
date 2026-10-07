@@ -19,6 +19,7 @@ import pytest
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
 from gobby.runner import GobbyRunner
 from gobby.runner_lifecycle_shutdown import _settle_finalizers_under_cancellation
+from gobby.sessions import continuation_retry
 from gobby.sessions.compact_continuation import (
     _HANDOFF_COMPACT_CONTINUATION_TASKS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
@@ -43,11 +44,13 @@ from gobby.sessions.handoff import (
 )
 from gobby.sessions.handoff_records import build_handoff_payload, record_handoff_delivery
 from gobby.sessions.transcript_cursor import CodexRolloutCursor, TranscriptObservationError
+from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.sessions import SessionManager
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.key_bytes import tmux_key_name
-from gobby.terminals.pane_io import RuntimePaneIO, TmuxPaneIO
+from gobby.terminals.pane_io import RuntimePaneIO, SubmitResult, TmuxPaneIO
 from gobby.terminals.runtime import Delivered, SnapshotMode
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
@@ -59,6 +62,196 @@ SESSION_ID = "00000000-0000-4000-8000-000000000001"
 SOURCE_SESSION_ID = "00000000-0000-4000-8000-000000000002"
 PROJECT_ID = "00000000-0000-4000-8000-000000000003"
 TURN_ABORTED_RECORD = b'{"type":"event_msg","payload":{"type":"turn_aborted"}}\n'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "first_landed,late_reread",
+    [(False, False), (True, False), (True, True)],
+    ids=["lost-submit", "late-before-agent", "late-composer-read"],
+)
+async def test_codex_unverified_continuation_recovers_without_duplicate(
+    session_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, first_landed: bool, late_reread: bool
+) -> None:
+    attempt_id = "d" * 32
+    prompt = "Call get_handoff for the completed compact and continue."
+    staged = stage_handoff_attempt(
+        session_db,
+        SESSION_ID,
+        attempt_id=attempt_id,
+        handoff=build_handoff_payload(current_state="Compacted", next_steps=["Continue"]),
+        clear_session=False,
+    )
+    record_handoff_delivery(
+        session_db,
+        handoff_id=staged.handoff_record_id,
+        attempt_id=attempt_id,
+        boundary_kind="compact",
+        continuation_session_id=SESSION_ID,
+    )
+    mark_handoff_compact_continuation_pending(
+        session_db, SESSION_ID, prompt=prompt, attempt_id=attempt_id
+    )
+    manager = SessionManager(session_db)
+    manager.update_session_status(SESSION_ID, "awaiting_handoff")
+    lifecycle = TurnLifecycleReducer(manager)
+    accepted: list[str] = []
+
+    class UnverifiedTmux(_FakeTmux):
+        enters = 0
+        draft = ""
+        hook_seen = False
+
+        async def snapshot_lines(
+            self, pane_id: str, lines: int = 5, *, mode: SnapshotMode = "text"
+        ) -> str | None:
+            if late_reread and self.enters == 2 and not self.hook_seen:
+                lifecycle.begin_turn(SESSION_ID, TurnEvidence(source="hook"))
+                self.hook_seen = True
+            return await super().snapshot_lines(pane_id, lines, mode=mode)
+
+        async def capture_pane(self, pane_id: str, *, lines: int) -> str:
+            return "• Context compacted\n›"
+
+        async def send_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
+            result = await super().send_keys(pane_id, text, literal=literal)
+            if literal:
+                self.draft = text.strip()
+            elif text == "Enter":
+                self.enters += 1
+                if self.enters == 1:
+                    if first_landed:
+                        accepted.append(self.draft)
+                    # The first Enter's verification frame is unavailable.
+                    self.composer_text = None
+                    self.draft = ""
+                elif self.draft:
+                    accepted.append(self.draft)
+                    self.draft = ""
+                    lifecycle.begin_turn(SESSION_ID, TurnEvidence(source="hook"))
+                    self.composer_text = _EMPTY_CODEX_COMPOSER
+            return result
+
+    tmux = UnverifiedTmux()
+    checks: list[int | None] = []
+    original_check = continuation_retry.await_before_agent
+
+    async def check(
+        db: HubDatabase, session_id: str, *, baseline_generation: int | None, **_kwargs: Any
+    ) -> bool:
+        checks.append(baseline_generation)
+        tmux.composer_text = _EMPTY_CODEX_COMPOSER
+        if first_landed and not late_reread and len(checks) == 1:
+            # BEFORE_AGENT lands late, after the unverified screen read.
+            lifecycle.begin_turn(SESSION_ID, TurnEvidence(source="hook"))
+        return await original_check(
+            db, session_id, baseline_generation=baseline_generation, timeout_seconds=0
+        )
+
+    monkeypatch.setattr(continuation_retry, "await_before_agent", check)
+    monkeypatch.setattr("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    monkeypatch.setattr(
+        "gobby.sessions.compact_continuation._composer_reader", lambda *_args: _CODEX_READ
+    )
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        pane=TmuxPaneIO(tmux, "%12"),
+        pending_session_id=SESSION_ID,
+        before_command="Before /compact\n›",
+        poll_seconds=0,
+        attempt_id=attempt_id,
+    )
+
+    assert checks, "unverified submission never entered bounded lifecycle verification"
+    assert accepted == [prompt]
+    recipient = manager.get(SESSION_ID)
+    assert recipient is not None and recipient.status == "active"
+    typed = [text for _, text, literal in tmux.sent_keys if literal]
+    assert typed == [f"{prompt}\n"] * (1 if first_landed else 2)
+    assert tmux.enters == (2 if late_reread else 1 if first_landed else 3)
+    assert InterSessionMessageManager(session_db).get_undelivered_messages(SESSION_ID) == []
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in SessionVariableManager(
+        session_db
+    ).get_variables(SESSION_ID)
+    receipt = session_db.fetchone(
+        "SELECT count(*) AS n FROM session_handoff_deliveries WHERE attempt_id = %s", (attempt_id,)
+    )
+    assert receipt is not None and receipt["n"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["awaiting_input", "awaiting_approval"])
+@pytest.mark.parametrize("during_retry", [False, True], ids=["initial-wait", "wait-during-retry"])
+@pytest.mark.parametrize("durable_wait", [False, True], ids=["projected-status", "durable-token"])
+async def test_codex_continuation_never_types_into_interaction_wait(
+    session_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    during_retry: bool,
+    durable_wait: bool,
+) -> None:
+    manager = SessionManager(session_db)
+    lifecycle = TurnLifecycleReducer(manager)
+    lifecycle.begin_turn(SESSION_ID, TurnEvidence(source="hook"))
+    manager.update_session_status(SESSION_ID, "awaiting_handoff")
+
+    def protect_interaction() -> None:
+        if durable_wait:
+            lifecycle.enter_wait(
+                SESSION_ID,
+                kind="input" if status == "awaiting_input" else "approval",
+                token="operator-interaction",
+                evidence=TurnEvidence(source="hook"),
+            )
+            # The durable wait must protect writes even before status projection catches up.
+            manager.update_session_status(SESSION_ID, "awaiting_handoff")
+            assert lifecycle.get(SESSION_ID).waits
+        else:
+            manager.update_session_status(SESSION_ID, status)
+
+    if not during_retry:
+        protect_interaction()
+
+    class UnverifiedTmux(_FakeTmux):
+        async def send_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
+            result = await super().send_keys(pane_id, text, literal=literal)
+            if text == "Enter" and not literal:
+                self.composer_text = None
+            return result
+
+    tmux = UnverifiedTmux()
+    original_check = continuation_retry.await_before_agent
+
+    async def check(
+        db: HubDatabase, session_id: str, *, baseline_generation: int | None, **_kwargs: Any
+    ) -> bool:
+        protect_interaction()
+        tmux.composer_text = _EMPTY_CODEX_COMPOSER
+        return await original_check(
+            db, session_id, baseline_generation=baseline_generation, timeout_seconds=0
+        )
+
+    monkeypatch.setattr(continuation_retry, "await_before_agent", check)
+    monkeypatch.setattr("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    failures: list[int] = []
+    sent = await _send_handoff_compact_continuation(
+        TmuxPaneIO(tmux, "%12"),
+        _PULL_PROMPT,
+        SESSION_ID,
+        delay_seconds=0,
+        cli_source="codex",
+        composer_read=_CODEX_READ,
+        db=session_db,
+        on_send_failure=lambda: failures.append(1),
+    )
+    assert sent is False
+    assert failures == [1]
+    recipient = manager.get(SESSION_ID)
+    assert recipient is not None
+    assert recipient.status == ("awaiting_handoff" if durable_wait else status)
+    assert tmux.sent_keys == ([("%12", f"{_PULL_PROMPT}\n", True), _ENTER] if during_retry else [])
 
 
 @pytest.fixture
@@ -1144,9 +1337,10 @@ async def _send_pull_prompt(
 @pytest.mark.parametrize("cli_source", ["claude", "codex"])
 @pytest.mark.parametrize("state", ["draft", "unknown", "probe_error"])
 async def test_pull_prompt_refuses_unconfirmed_composer_and_keeps_durable_message(
-    session_db: HubDatabase, cli_source: str, state: str
+    session_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, cli_source: str, state: str
 ) -> None:
     """An unreadable frame may conceal a draft; refusal must write nothing."""
+    monkeypatch.setattr("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0)
     tmux = _FakeTmux()
     tmux.composer_text = "unreadable frame containing the operator's unsent draft"
 
@@ -1175,6 +1369,93 @@ async def test_pull_prompt_refuses_unconfirmed_composer_and_keeps_durable_messag
     assert [(message.content, message.message_type) for message in queued] == [
         (_PULL_PROMPT, "handoff_continuation")
     ]
+
+
+class _RedrawingTmux(_FakeTmux):
+    """A Claude pane still redrawing after compaction: its first probes show no frame."""
+
+    def __init__(self, unframed_probes: int) -> None:
+        super().__init__()
+        self.unframed_probes = unframed_probes
+
+    async def snapshot_lines(
+        self, pane_id: str, lines: int = 5, *, mode: SnapshotMode = "text"
+    ) -> str | None:
+        if lines == COMPOSER_PROBE_LINES and self.unframed_probes > 0:
+            self.unframed_probes -= 1
+            self.composer_modes.append(mode)
+            return "✻ Conversation compacted (ctrl+o for history)\n"
+        return await super().snapshot_lines(pane_id, lines, mode=mode)
+
+
+@pytest.mark.asyncio
+async def test_pull_prompt_reprobes_a_composer_still_redrawing_after_compaction() -> None:
+    """SessionStart(compact) can arrive before Claude redraws its composer frame.
+
+    A single unframed probe used to refuse the pull prompt and queue it with no
+    wake, stranding the seat until an unrelated message arrived (#23727).
+    """
+    tmux = _RedrawingTmux(unframed_probes=2)
+    tmux.composer_text = _claude_frame("❯\xa0")
+    assert _CLAUDE_READ("✻ Conversation compacted (ctrl+o for history)\n").state == "unknown"
+    failures: list[int] = []
+
+    assert await _send_pull_prompt(tmux, on_send_failure=lambda: failures.append(0)) is True
+
+    assert failures == []
+    assert tmux.unframed_probes == 0
+    assert any(
+        text.startswith(_PULL_PROMPT[:12]) for _pane, text, literal in tmux.sent_keys if literal
+    )
+
+
+@pytest.mark.asyncio
+async def test_pull_prompt_composer_refusal_logs_session_and_reason(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tmux = _FakeTmux()
+    tmux.composer_text = _claude_frame("❯ half-typed operator note")
+    assert _CLAUDE_READ(tmux.composer_text).state == "draft"
+    failures: list[int] = []
+
+    with caplog.at_level(logging.WARNING, logger="gobby.sessions.compact_continuation"):
+        sent = await _send_pull_prompt(tmux, on_send_failure=lambda: failures.append(0))
+
+    assert sent is False
+    assert failures == [0]
+    assert tmux.sent_keys == []
+    assert any(
+        SESSION_ID in record.getMessage()
+        and "composer holds an operator draft" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_pull_prompt_write_gate_refusal_logs_session_and_reason(
+    session_db: HubDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
+    SessionManager(session_db).update_session_status(SESSION_ID, "awaiting_input")
+    tmux = _FakeTmux()
+    tmux.composer_text = _claude_frame("❯\xa0")
+
+    with caplog.at_level(logging.WARNING, logger="gobby.sessions.compact_continuation"):
+        sent = await _send_handoff_compact_continuation(
+            TmuxPaneIO(tmux, "%12"),
+            _PULL_PROMPT,
+            SESSION_ID,
+            delay_seconds=0,
+            cli_source="claude",
+            composer_read=_CLAUDE_READ,
+            db=session_db,
+        )
+
+    assert sent is False
+    assert tmux.sent_keys == []
+    assert any(
+        SESSION_ID in record.getMessage() and "awaiting_input" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio
@@ -1464,7 +1745,7 @@ class TestPullPromptFallback:
             ),
             patch(
                 "gobby.sessions.compact_continuation._type_handoff_compact_continuation",
-                new=AsyncMock(return_value=False),
+                new=AsyncMock(return_value=SubmitResult(False)),
             ),
         ):
             scheduled = consume_and_schedule_handoff_compact_continuation(

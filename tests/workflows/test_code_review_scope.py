@@ -237,6 +237,102 @@ async def test_empty_commit_stays_gated(repo: Path) -> None:
     assert await _reviewable("git commit --allow-empty -m empty", repo) is True
 
 
+def _prepare_reviewed_integration(repo: Path) -> None:
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "0.5.0")
+    _edit(repo, "src/app.py", "value = 2\n")
+    _git(repo, "add", "src/app.py")
+    _git(repo, "commit", "-q", "-m", "reviewed integration change")
+    _git(repo, "branch", "reviewed-alias")
+    _git(repo, "checkout", "-q", "-b", "lane", base)
+
+
+@pytest.mark.parametrize("target", ["0.5.0", "reviewed-alias"])
+async def test_reviewed_fast_forward_needs_no_review(repo: Path, target: str) -> None:
+    _prepare_reviewed_integration(repo)
+
+    scope = await inspect_commit_review_scope(
+        _event(f"git merge --ff-only {target}", repo),
+        str(repo),
+        integration_branch="0.5.0",
+    )
+
+    assert scope.has_reviewable_paths is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git merge --ff-only unreviewed",
+        "git merge --no-ff 0.5.0",
+        "git merge 0.5.0",
+        "git merge --ff-only 0.5.0 unreviewed",
+        "git merge --ff-only missing",
+        "git merge --ff-only 0.5.0 && git commit --allow-empty -m other",
+        "git add src/app.py && git merge --ff-only 0.5.0",
+        "git merge --ff-only $TARGET",
+        "git merge --ff-only 0.5.0 > result.txt",
+        "git -c core.hooksPath=elsewhere merge --ff-only 0.5.0",
+    ],
+)
+async def test_unproven_fast_forward_stays_gated(repo: Path, command: str) -> None:
+    _prepare_reviewed_integration(repo)
+    _git(repo, "checkout", "-q", "-b", "unreviewed", "0.5.0")
+    _edit(repo, "src/app.py", "value = 3\n")
+    _git(repo, "add", "src/app.py")
+    _git(repo, "commit", "-q", "-m", "unreviewed change")
+    _git(repo, "checkout", "-q", "lane")
+
+    scope = await inspect_commit_review_scope(
+        _event(command, repo), str(repo), integration_branch="0.5.0"
+    )
+
+    assert scope.has_reviewable_paths is True
+
+
+async def test_divergent_fast_forward_stays_gated(repo: Path) -> None:
+    _prepare_reviewed_integration(repo)
+    _edit(repo, "src/app.py", "value = 3\n")
+    _git(repo, "add", "src/app.py")
+    _git(repo, "commit", "-q", "-m", "divergent lane change")
+
+    scope = await inspect_commit_review_scope(
+        _event("git merge --ff-only 0.5.0", repo), str(repo), integration_branch="0.5.0"
+    )
+
+    assert scope.has_reviewable_paths is True
+
+
+@pytest.mark.parametrize("integration_branch", [None, "missing"])
+async def test_unknown_integration_branch_stays_gated(
+    repo: Path, integration_branch: str | None
+) -> None:
+    _prepare_reviewed_integration(repo)
+
+    scope = await inspect_commit_review_scope(
+        _event("git merge --ff-only 0.5.0", repo),
+        str(repo),
+        integration_branch=integration_branch,
+    )
+
+    assert scope.has_reviewable_paths is True
+
+
+@pytest.mark.parametrize("staged_path", ["src/app.py", "docs/guide.md"])
+async def test_reviewed_fast_forward_with_staged_work_stays_gated(
+    repo: Path, staged_path: str
+) -> None:
+    _prepare_reviewed_integration(repo)
+    _edit(repo, staged_path, "staged work\n")
+    _git(repo, "add", staged_path)
+
+    scope = await inspect_commit_review_scope(
+        _event("git merge --ff-only 0.5.0", repo), str(repo), integration_branch="0.5.0"
+    )
+
+    assert scope.has_reviewable_paths is True
+
+
 async def test_first_commit_of_a_repository_reads_its_staged_documentation(
     tmp_path: Path,
 ) -> None:
@@ -420,6 +516,67 @@ async def test_gate_blocks_a_commit_that_records_code(
     assert response.decision == "block"
     assert response.reason is not None
     assert "code-review" in response.reason
+
+
+@pytest.mark.parametrize("skill_loaded", [False, True])
+@pytest.mark.parametrize("scenario", ["reviewed", "unreviewed", "detached", "foreign_repo"])
+async def test_fast_forward_code_review_gates_use_registered_main_target(
+    gate_handler: tuple[WorkflowHookHandler, Session, Project],
+    temp_db: HubDatabase,
+    repo: Path,
+    tmp_path: Path,
+    skill_loaded: bool,
+    scenario: str,
+) -> None:
+    handler, session, project = gate_handler
+    _prepare_reviewed_integration(repo)
+    _git(repo, "checkout", "-q", "0.5.0")
+    command = "git merge --ff-only 0.5.0"
+    if scenario == "unreviewed":
+        _git(repo, "checkout", "-q", "-b", "unreviewed")
+        _edit(repo, "src/app.py", "value = 3\n")
+        _git(repo, "add", "src/app.py")
+        _git(repo, "commit", "-q", "-m", "unreviewed change")
+        _git(repo, "checkout", "-q", "0.5.0")
+        command = "git merge --ff-only unreviewed"
+    elif scenario == "detached":
+        _git(repo, "checkout", "-q", "--detach", "HEAD")
+    elif scenario == "foreign_repo":
+        foreign = tmp_path / "foreign"
+        foreign.mkdir()
+        _git(foreign, "init", "-q", "-b", "0.5.0")
+        _git(foreign, "config", "user.email", "tests@gobby.local")
+        _git(foreign, "config", "user.name", "Gobby Tests")
+        _git(foreign, "commit", "-q", "--allow-empty", "-m", "foreign")
+        command = f"git -C {foreign} merge --ff-only 0.5.0"
+    SessionVariableManager(temp_db).merge_variables(
+        session.id,
+        {"loaded_skills": ["code-review"] if skill_loaded else [], "code_review_fresh": False},
+    )
+
+    response = await handler._evaluate_rules(_gate_event(command, session, project, repo))
+
+    assert response.decision == ("allow" if scenario == "reviewed" else "block")
+    if scenario != "reviewed":
+        expected_gate = (
+            "require-code-review-self-review" if skill_loaded else "require-code-review-skill"
+        )
+        assert expected_gate in str(response.reason)
+
+
+async def test_fast_forward_missing_main_registration_stays_gated(
+    gate_handler: tuple[WorkflowHookHandler, Session, Project],
+    temp_db: HubDatabase,
+    repo: Path,
+) -> None:
+    _, session, project = gate_handler
+    _prepare_reviewed_integration(repo)
+    event = _gate_event("git merge --ff-only 0.5.0", session, project, repo)
+    event.project_id = "44444444-4444-4444-8444-444444444444"
+
+    scope = await inspect_commit_review_scope(event, str(repo), db=temp_db)
+
+    assert scope.has_reviewable_paths is True
 
 
 @pytest.mark.asyncio

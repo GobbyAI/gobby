@@ -30,6 +30,7 @@ from gobby.sessions.compact_markers import (
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
 )
 from gobby.sessions.continuation_retry import (
+    continuation_write_refusal,
     resubmit_until_before_agent,
     turn_lifecycle_generation,
 )
@@ -41,8 +42,11 @@ from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.terminals.pane_io import (
+    ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE,
+    SUBMIT_UNVERIFIED_ERROR_CODE,
     SUBMIT_VERIFY_SECONDS,
     ComposerReader,
+    SubmitResult,
     clear_composer,
     composer_gate_for_write,
     submit_text,
@@ -526,6 +530,12 @@ def _take_same_terminal_handoff_compact_continuation_pending(
             target_context,
         )
     ]
+    if len(matching) > 1:
+        logger.warning(
+            "Skipping set_handoff continuation for %s: %d same-terminal markers are ambiguous",
+            pending_session_id,
+            len(matching),
+        )
     if len(matching) != 1:
         return None
     taken = _take_handoff_compact_continuation_pending(db, matching[0].id)
@@ -573,7 +583,7 @@ async def _send_handoff_compact_continuation(
     # submits, so hold the shared lock across its whole clear/submit/verify run and
     # the BEFORE_AGENT re-submit ladder that may type it again.
     async with composer_action_lock(str(getattr(pane, "target", "") or "")):
-        sent = await _type_handoff_compact_continuation(
+        result = await _type_handoff_compact_continuation(
             pane,
             prompt,
             session_id,
@@ -581,8 +591,18 @@ async def _send_handoff_compact_continuation(
             cli_source=cli_source,
             composer_read=composer_read,
             verify_seconds=SUBMIT_VERIFY_SECONDS,
+            db=db,
         )
-        if sent and db is not None and baseline is not None:
+        sent = result.ok
+        if (
+            (
+                sent
+                or result.error_code
+                in {SUBMIT_UNVERIFIED_ERROR_CODE, ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE}
+            )
+            and db is not None
+            and baseline is not None
+        ):
             sent = await resubmit_until_before_agent(
                 pane,
                 prompt,
@@ -597,10 +617,29 @@ async def _send_handoff_compact_continuation(
         # An unreadable lifecycle can neither confirm nor refute BEFORE_AGENT, so
         # the composer read is not delivery. Report unconfirmed and let the
         # caller queue the durable pull prompt instead of trusting the screen.
+        logger.warning(
+            "Unconfirmed set_handoff continuation for %s: turn lifecycle is unreadable",
+            session_id,
+        )
         sent = False
     if not sent and on_send_failure is not None:
         on_send_failure()
     return sent
+
+
+#: Composer reads before an unclassifiable frame refuses the pull prompt, one
+#: verify interval apart: enough for Claude's post-compact redraw to settle.
+CONTINUATION_COMPOSER_PROBES = 3
+
+
+def _refuse_continuation(session_id: str, reason: str) -> SubmitResult:
+    logger.warning(
+        "Skipping set_handoff continuation for %s: %s",
+        session_id,
+        reason,
+        extra={"event": "handoff_continuation_refused", "session_id": session_id},
+    )
+    return SubmitResult(False, reason)
 
 
 async def _type_handoff_compact_continuation(
@@ -612,31 +651,44 @@ async def _type_handoff_compact_continuation(
     cli_source: str | None,
     composer_read: ComposerReader | None,
     verify_seconds: float,
-) -> bool:
+    db: HubDatabase | None = None,
+) -> SubmitResult:
     """Type the pull prompt and prove it left the composer, or report the failure.
 
     The prompt gets the same verified-submit ladder as the compaction command that
     precedes it: a Delivered Enter is not a submitted prompt, so the composer is read
     back after every Enter. A held prompt gets bare-Enter retries without being
-    retyped. If it never leaves, the caller drains the draft before its durable
-    fallback delivers it exactly once. A drain that itself fails still reports the
-    failure: a duplicated prompt is a far smaller harm than a lost handoff.
+    retyped. An unverified submit retains its text and error code so the caller can
+    await BEFORE_AGENT before considering any retry. A proven held draft is drained
+    after its retry budget, then reported for durable fallback.
     """
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)
     try:
+        if db is not None and (
+            refusal := await asyncio.to_thread(continuation_write_refusal, db, session_id)
+        ):
+            return _refuse_continuation(session_id, refusal)
         # An operator draft in the composer would be submitted with the pull
         # prompt, so require a positively empty composer before typing anything.
         # Only an unprobed composer keeps the blind drain: after a confirmed-empty
         # read it could only delete keystrokes the operator typed since.
-        writable, _, composer_state = await composer_gate_for_write(
-            pane,
-            cli_source,
-            composer_read,
-            action="the set_handoff continuation",
-        )
+        # SessionStart(compact) can arrive before Claude redraws its composer, so an
+        # unclassifiable frame is re-read after it settles; a draft is never retried.
+        for probe in range(1, CONTINUATION_COMPOSER_PROBES + 1):
+            writable, refuse_reason, composer_state = await composer_gate_for_write(
+                pane,
+                cli_source,
+                composer_read,
+                action="the set_handoff continuation",
+            )
+            if writable or composer_state != "unknown" or probe == CONTINUATION_COMPOSER_PROBES:
+                break
+            await asyncio.sleep(verify_seconds)
         if not writable:
-            return False
+            return _refuse_continuation(
+                session_id, f"{refuse_reason} (composer {composer_state} after {probe} probe(s))"
+            )
         ok, reason = (
             (True, None) if composer_state == "empty" else await clear_composer(pane, cli_source)
         )
@@ -646,7 +698,11 @@ async def _type_handoff_compact_continuation(
                 session_id,
                 reason,
             )
-            return False
+            return SubmitResult(False, reason)
+        if db is not None and (
+            refusal := await asyncio.to_thread(continuation_write_refusal, db, session_id)
+        ):
+            return _refuse_continuation(session_id, refusal)
         result = await submit_text(
             pane,
             prompt,
@@ -657,7 +713,14 @@ async def _type_handoff_compact_continuation(
             verify_seconds=verify_seconds,
         )
         if result.ok:
-            return True
+            return result
+        if result.error_code in {
+            SUBMIT_UNVERIFIED_ERROR_CODE,
+            ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE,
+        }:
+            # Enter may have submitted. Clearing now could erase operator text,
+            # while falling back now would strand an awaiting_handoff seat.
+            return result
         logger.error(
             "Failed to submit the set_handoff compact continuation prompt for session %s: %s",
             session_id,
@@ -675,13 +738,14 @@ async def _type_handoff_compact_continuation(
                 session_id,
                 clear_reason,
             )
+        return result
     except Exception:
         logger.warning(
             "Failed to send set_handoff compact continuation prompt for session %s",
             session_id,
             exc_info=True,
         )
-    return False
+    return SubmitResult(False, "continuation write failed")
 
 
 async def _continue_after_codex_compaction_ready(

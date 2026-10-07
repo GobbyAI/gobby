@@ -669,6 +669,7 @@ fn roles(chrome: &Chrome) -> Vec<(&'static str, Color)> {
         })
         .chain([
             ("band_ink", palette.band_ink.text),
+            ("bar_ink", palette.bar_ink.text),
             ("selection_ink", palette.selection_ink.text),
         ])
         .chain(palette.unfocused.map(|fill| ("unfocused", fill)))

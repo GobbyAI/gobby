@@ -146,7 +146,7 @@ def restore_postgres_backup(
         "dump_sha256": actual_sha256,
         "expected_dump_sha256": expected_sha256,
         "sha256_verified": bool(expected_sha256 and actual_sha256 == expected_sha256),
-        "released_epoch_id": str(released_epoch.id) if released_epoch is not None else None,
+        "released_epoch_id": str(released_epoch) if released_epoch is not None else None,
         "probes": probes,
     }
 

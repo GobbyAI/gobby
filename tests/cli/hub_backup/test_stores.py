@@ -19,7 +19,6 @@ import psycopg
 import pytest
 
 from gobby.cli.hub_backup import _stores as stores
-from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
 
 pytestmark = pytest.mark.unit
 
@@ -460,31 +459,6 @@ def test_restore_postgres_globals_keeps_destination_role_credentials(
         b"ALTER ROLE gobby SET search_path TO 'PASSWORD ''kept''';\n"
         b"GRANT gobby_runtime TO gobby;\n"
     ]
-
-
-def test_dump_postgres_forwards_maintenance_pgoptions_into_container(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _patch_psycopg(monkeypatch, _FakeConnection())
-    commands: list[list[str]] = []
-    monkeypatch.setattr(subprocess, "run", _postgres_runner(commands))
-    monkeypatch.setenv(
-        MAINTENANCE_EPOCH_ENV,
-        "28fc4ff4-8454-4ed9-b4db-a0adcb1ca674",
-    )
-    monkeypatch.setenv(
-        "PGOPTIONS",
-        "-c gobby.maintenance_epoch=28fc4ff4-8454-4ed9-b4db-a0adcb1ca674",
-    )
-
-    stores.dump_postgres(DATABASE_URL, tmp_path)
-
-    live_commands = [
-        command for command in commands if "pg_dump" in command or "pg_dumpall" in command
-    ]
-    assert len(live_commands) == 2
-    assert all(command[2:4] == ["-e", "PGOPTIONS"] for command in live_commands)
 
 
 def test_dump_postgres_raises_when_pg_dump_fails(

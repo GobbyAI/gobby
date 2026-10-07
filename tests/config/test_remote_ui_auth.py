@@ -79,8 +79,8 @@ def test_http_server_allows_remote_ui_with_mandatory_auth() -> None:
     )
     denial = {
         "error": (
-            "Authentication required. CLI clients need ~/.gobby/local_cli_token "
-            "(run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
+            "Authentication required. CLI clients need an API key in bootstrap.yaml "
+            "and gdaemon (run 'gobby auth login'). Browsers: log in."
         ),
         "code": "missing_auth",
     }

@@ -19,7 +19,7 @@ from gobby.config.app import DaemonConfig
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.servers.middleware.auth import AuthMiddleware
-from gobby.storage.auth import AuthStore, hash_token
+from gobby.storage.auth import AuthStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from tests.fixtures.postgres import TEST_USER_ID
@@ -49,8 +49,8 @@ def _required_auth_middleware_app(
             allowed=False,
             code="missing_auth",
             message=(
-                "Authentication required. CLI clients need ~/.gobby/local_cli_token "
-                "(run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
+                "Authentication required. CLI clients need an API key in bootstrap.yaml "
+                "and gdaemon (run 'gobby auth login'). Browsers: log in."
             ),
         )
 
@@ -192,7 +192,7 @@ def test_public_prefix_matrix() -> None:
     for path in protected_paths:
         response = client.get(path)
         assert response.status_code == 401, path
-        assert "gobby auth token --rotate" in response.json()["error"]
+    assert "gobby auth login" in response.json()["error"]
 
 
 def test_public_webhooks_signature_gated() -> None:
@@ -223,20 +223,27 @@ def test_public_webhooks_signature_gated() -> None:
     assert client.post("/api/github/webhooks/signed", content=body).status_code == 401
 
 
-def test_bearer_and_alias_accepted(temp_db: HubDatabase, tmp_path: Path) -> None:
-    token = "local-cli-token"
+def test_verified_identity_and_cookie_accepted(temp_db: HubDatabase, tmp_path: Path) -> None:
     auth_store = AuthStore(temp_db)
-    auth_store.set_local_api_token_hash(hash_token(token))
     session_token, _ = auth_store.create_session(TEST_USER_ID)
     server = cast(
         HTTPServer,
         SimpleNamespace(
             auth_service=AuthService(
                 lambda: temp_db,
-                token_file=tmp_path / "missing",
+                bootstrap_file=tmp_path / "missing-bootstrap",
+                break_glass_file=tmp_path / "missing-break-glass",
             ),
             run_db=_run_db,
         ),
+    )
+    server.auth_service.bind_runtime(
+        grant_service=None,
+        lease_live=None,
+        local_machine_id=None,
+        effect_fence=None,
+        clock=None,
+        front_door_secret="middleware-front-door",
     )
     app = FastAPI()
     app.add_middleware(AuthMiddleware, server=server)
@@ -247,13 +254,23 @@ def test_bearer_and_alias_accepted(temp_db: HubDatabase, tmp_path: Path) -> None
 
     client = TestClient(app)
 
-    bearer = client.get("/api/tasks", headers={"Authorization": f"Bearer {token}"})
-    alias = client.get("/api/tasks", headers={"X-Gobby-Local-Token": token})
+    identity = client.get(
+        "/api/tasks",
+        headers={
+            "X-Gobby-Front-Door": "middleware-front-door",
+            "X-Gobby-User-Id": TEST_USER_ID,
+            "X-Gobby-Machine-Id": "middleware-machine",
+            "X-Gobby-Key-Id": "middleware-key",
+        },
+    )
+    bearer = client.get("/api/tasks", headers={"Authorization": "Bearer retired-token"})
+    alias = client.get("/api/tasks", headers={"X-Gobby-Local-Token": "retired-token"})
     client.cookies.set("gobby_session", session_token)
     cookie = client.get("/api/tasks")
 
-    assert bearer.status_code == 200
-    assert alias.status_code == 200
+    assert identity.status_code == 200
+    assert bearer.status_code == 401
+    assert alias.status_code == 401
     assert cookie.status_code == 200
 
 

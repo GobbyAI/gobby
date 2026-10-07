@@ -664,6 +664,71 @@ async def test_successful_merge_cleanup_deletes_inactive_worktree(
     assert stored.worktree_path is None
 
 
+async def test_successful_merge_cleanup_keeps_worktree_a_live_session_occupies(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    from gobby.build import control_artifacts, controls
+    from gobby.storage.tasks import TaskArtifactManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    monkeypatch.setattr(controls, "LocalTaskManager", LocalTaskManager)
+    _set_project_repo(temp_db, sample_project["id"], tmp_path)
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Merged while a session still works in the worktree",
+        category="code",
+        task_type="task",
+        validation_criteria="Test task completion is observable.",
+    )
+    worktree_path = tmp_path / "occupied-worktree"
+    worktree_path.mkdir()
+    worktree = LocalWorktreeManager(temp_db).create(
+        project_id=sample_project["id"],
+        branch_name="0b9d1c62-4d6e-5f0b-9a43-2b1f3c7e8d11",
+        worktree_path=str(worktree_path),
+        base_branch="0.4.7",
+        task_id=task.id,
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        worktree_path=str(worktree_path),
+        worktree_id=worktree.id,
+        base_commit_sha="abc123",
+    )
+    asked: list[tuple[str, str | None]] = []
+
+    def occupied(_db: object, path: str, *, worktree_id: str | None = None) -> str:
+        asked.append((path, worktree_id))
+        return f"Live session gobby#15411 working in {path}; it was not deleted"
+
+    class NoDeleteWorktreeGitManager:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def delete_worktree(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("an occupied worktree must not reach git")
+
+    monkeypatch.setattr(control_artifacts, "refuse_occupied_worktree", occupied)
+    monkeypatch.setattr(control_artifacts, "WorktreeGitManager", NoDeleteWorktreeGitManager)
+    monkeypatch.setattr(controls, "delete_orphan_build_branches", AsyncMock(return_value=(0, [])))
+
+    artifacts = await controls.cleanup_successful_merge_artifacts(
+        temp_db,
+        task.id,
+        project_id=sample_project["id"],
+    )
+
+    assert [(artifact.deleted, artifact.error) for artifact in artifacts] == [
+        (False, f"Live session gobby#15411 working in {worktree_path}; it was not deleted")
+    ]
+    assert asked == [(str(worktree_path), worktree.id)]
+    assert worktree_path.is_dir()
+    assert LocalWorktreeManager(temp_db).get(worktree.id) is not None
+
+
 async def test_successful_merge_cleanup_preserves_explicit_reused_worktree(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

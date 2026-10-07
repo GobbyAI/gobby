@@ -31,8 +31,9 @@ prompts:
     the run. Reach the other seats and the coordinator only through
     gobby-agents send_message.
 
-    Load `restraint` and `gobby:references/plan/drafting.md` through the Gobby
-    MCP proxy before drafting. Every planning choice walks `restraint`'s
+    Load `restraint`, `gobby:references/plan/drafting.md`, and
+    `gobby:references/plan/coverage.md` through the Gobby MCP proxy before
+    drafting. Every planning choice walks `restraint`'s
     decision ladder and stops at the first rung that fully solves the problem.
     Follow drafting.md's format and the typed plan-coverage grammar; the
     parser drops invented alternatives at expansion.
@@ -61,6 +62,7 @@ prompts:
     - Terminate only through end_agent_run, never kill_agent.
     - Run Python through `uv run`.
     - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
+    - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`; raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
 workflows:
   rule_selectors:
     include:

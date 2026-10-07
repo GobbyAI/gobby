@@ -14,7 +14,7 @@ from gobby.config.app import DaemonConfig
 from gobby.identity import hash_password
 from gobby.servers.http import HTTPServer
 from gobby.storage.api_keys import ApiKeyManager
-from gobby.storage.auth import AuthStore, hash_token
+from gobby.storage.auth import hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.tasks import LocalTaskManager
@@ -27,7 +27,8 @@ from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
-OPERATOR_TOKEN = "api-keys-operator-token"
+BOOTSTRAP_KEY = "api-keys-bootstrap-key"
+FRONT_DOOR_SECRET = "api-keys-front-door-secret"
 PASSWORD = "correctpassword"
 OTHER_EMAIL = "other@example.com"
 NEW_MACHINE = "3c0f7a52-9b1e-4d6a-8e2f-5a7b9c1d3e4f"
@@ -38,17 +39,25 @@ REDACTED_FIELDS = {"id", "hint", "label", "machine_id", "created_at", "last_used
 @pytest.fixture
 def db(hub_db: HubDatabase) -> HubDatabase:
     LocalUserManager(hub_db).update_password(TEST_USER_ID, hash_password(PASSWORD))
-    AuthStore(hub_db).set_local_api_token_hash(hash_token(OPERATOR_TOKEN))
     return hub_db
 
 
 def _server(db: HubDatabase) -> HTTPServer:
-    return create_http_server(
+    server = create_http_server(
         config=DaemonConfig(),
         database=db,
         task_manager=LocalTaskManager(db),
         authenticated_requests=False,
     )
+    server.auth_service.bind_runtime(
+        grant_service=None,
+        lease_live=None,
+        local_machine_id=require_machine_id(),
+        effect_fence=None,
+        clock=None,
+        front_door_secret=FRONT_DOOR_SECRET,
+    )
+    return server
 
 
 def _other_user(db: HubDatabase) -> str:
@@ -162,8 +171,8 @@ def test_bootstrap_mints_bound_key(db: HubDatabase) -> None:
 def test_issuance_routes_require_label(db: HubDatabase, label: str | None) -> None:
     """Both issuance routes reject a missing label before reaching storage."""
     label_field = {} if label == "omitted" else {"label": label}
-    app = _server(db).app
-    bootstrap = TestClient(app).post(
+    server = _server(db)
+    bootstrap = TestClient(server.app).post(
         "/api/auth/keys/bootstrap",
         json={
             "email": TEST_USER_EMAIL,
@@ -172,16 +181,14 @@ def test_issuance_routes_require_label(db: HubDatabase, label: str | None) -> No
             **label_field,
         },
     )
-    mint = TestClient(app, headers={"X-Gobby-Local-Token": OPERATOR_TOKEN}).post(
-        "/api/auth/keys", json=label_field
-    )
+    mint = _cookie_client(server).post("/api/auth/keys", json=label_field)
 
     assert (bootstrap.status_code, mint.status_code) == (422, 422)
     assert db.fetchone("SELECT 1 FROM api_keys") is None
 
 
 def test_management_routes_admit_only_resolved_principals(db: HubDatabase) -> None:
-    """4.2.10: only a cookie or the operator token resolves a principal."""
+    """Only a cookie or verified front-door identity resolves a principal."""
     server = _server(db)
     local_machine = require_machine_id()
     expired_client = _cookie_client(server)
@@ -189,7 +196,7 @@ def test_management_routes_admit_only_resolved_principals(db: HubDatabase) -> No
         "UPDATE auth_sessions SET expires_at = '2000-01-01T00:00:00+00:00'",
     )
     agent_token = issue_agent_api_token(
-        derive_managed_signing_key(OPERATOR_TOKEN),
+        derive_managed_signing_key(BOOTSTRAP_KEY),
         agent_run_id=str(uuid.uuid4()),
         session_id="session-123",
         project_id="project-123",
@@ -213,20 +220,28 @@ def test_management_routes_admit_only_resolved_principals(db: HubDatabase) -> No
     assert db.fetchone("SELECT 1 FROM api_keys") is None
 
     cookie = _cookie_client(server)
-    _assert_issued(
+    cookie_key = _assert_issued(
         cookie.post("/api/auth/keys", json={"label": "cookie"}), TEST_USER_ID, local_machine
     )
-    operator = TestClient(server.app, headers={"X-Gobby-Local-Token": OPERATOR_TOKEN})
+    operator = TestClient(
+        server.app,
+        headers={
+            "Authorization": f"Bearer {cookie_key['key']}",
+            "X-Gobby-Front-Door": FRONT_DOOR_SECRET,
+            "X-Gobby-User-Id": TEST_USER_ID,
+            "X-Gobby-Machine-Id": local_machine,
+            "X-Gobby-Key-Id": cookie_key["key_id"],
+        },
+    )
     _assert_issued(
         operator.post("/api/auth/keys", json={"label": "op"}), TEST_USER_ID, local_machine
     )
-    bearer = TestClient(server.app, headers={"Authorization": f"Bearer {OPERATOR_TOKEN}"})
-    assert len(bearer.get("/api/auth/keys").json()["keys"]) == 2
+    assert len(operator.get("/api/auth/keys").json()["keys"]) == 2
 
     _other_user(db)
-    ambiguous = operator.post("/api/auth/keys", json={"label": "op"})
-    assert ambiguous.status_code == 403
-    assert ambiguous.json()["code"] == "user_identity_state"
+    _assert_issued(
+        operator.post("/api/auth/keys", json={"label": "multi-user"}), TEST_USER_ID, local_machine
+    )
     assert cookie.get("/api/auth/keys").status_code == 200
 
     foreign = _cookie_client(server, OTHER_EMAIL).post("/api/auth/keys", json={"label": "x"})
@@ -234,14 +249,34 @@ def test_management_routes_admit_only_resolved_principals(db: HubDatabase) -> No
     assert foreign.json()["code"] == "machine_not_owned"
 
 
-def test_key_management_is_owner_scoped_and_redacted(db: HubDatabase) -> None:
+@pytest.mark.parametrize("use_front_door", [False, True], ids=["cookie", "front-door"])
+def test_key_routes_use_verified_front_door_identity(db: HubDatabase, use_front_door: bool) -> None:
     """4.2.6: list and revoke see only the caller's keys and never the secret."""
     other_user = _other_user(db)
+    LocalMachineManager(db).upsert_seen(NEW_MACHINE, TEST_USER_ID)
     LocalMachineManager(db).upsert_seen(OTHER_MACHINE, other_user)
     keys = ApiKeyManager(db)
-    own_key, own = keys.mint(TEST_USER_ID, require_machine_id(), "mine")
+    own_key, own = keys.mint(TEST_USER_ID, NEW_MACHINE, "mine")
     other_key, other = keys.mint(other_user, OTHER_MACHINE, "theirs")
-    client = _cookie_client(_server(db))
+    server = _server(db)
+    if use_front_door:
+        identity_headers = {
+            "X-Gobby-User-Id": TEST_USER_ID,
+            "X-Gobby-Machine-Id": NEW_MACHINE,
+            "X-Gobby-Key-Id": own.id,
+        }
+        unverified = TestClient(server.app)
+        for secret in (None, "wrong-secret"):
+            forged = dict(identity_headers)
+            if secret is not None:
+                forged["X-Gobby-Front-Door"] = secret
+            assert unverified.get("/api/auth/keys", headers=forged).status_code == 401
+        client = TestClient(
+            server.app,
+            headers={**identity_headers, "X-Gobby-Front-Door": FRONT_DOOR_SECRET},
+        )
+    else:
+        client = _cookie_client(server)
 
     listed = client.get("/api/auth/keys")
     assert listed.status_code == 200
@@ -262,3 +297,7 @@ def test_key_management_is_owner_scoped_and_redacted(db: HubDatabase) -> None:
     assert revoked.status_code == 200
     assert _stored_key(db, own.id)["revoked_at"] is not None
     assert client.get("/api/auth/keys").json()["keys"][0]["revoked_at"] is not None
+    if use_front_door:
+        _assert_issued(
+            client.post("/api/auth/keys", json={"label": "node"}), TEST_USER_ID, NEW_MACHINE
+        )

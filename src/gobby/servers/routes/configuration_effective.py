@@ -62,33 +62,24 @@ def _machine_config_values(snapshot: ConfigSnapshot) -> dict[str, str]:
     return values
 
 
-def _runtime_token(request: Request) -> str | None:
-    authorization = request.headers.get("Authorization")
-    if authorization is not None:
-        parts = authorization.split(maxsplit=1)
-        if parts and parts[0].casefold() == "bearer":
-            return parts[1] if len(parts) == 2 and parts[1] else None
-
-    local_token = request.headers.get("X-Gobby-Local-Token")
-    return local_token if local_token else None
-
-
 def register_effective_routes(
     router: APIRouter,
     context: ConfigurationRouteContext,
 ) -> None:
     """Register the effective configuration endpoint."""
 
-    def require_runtime_token(request: Request) -> None:
-        token = _runtime_token(request)
-        if token is not None and context.server.auth_service.verify_bearer(token):
+    def require_runtime_identity(request: Request) -> None:
+        auth = context.server.auth_service
+        if auth.verified_front_door_identity(request) is not None or auth.break_glass_admits(
+            request
+        ):
             return
         raise HTTPException(
             status_code=401,
-            detail="Authentication required. Supply the local runtime token.",
+            detail="Authentication required. Use an API key through gdaemon.",
         )
 
-    @router.get("/effective", dependencies=[Depends(require_runtime_token)])
+    @router.get("/effective", dependencies=[Depends(require_runtime_identity)])
     def get_effective_config() -> JSONResponse:
         """Serve resolved client configuration."""
         try:

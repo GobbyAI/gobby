@@ -24,6 +24,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
 from gobby.storage.workspaces import Workspace, WorkspaceManager, WorkspaceNotFoundError
 from gobby.terminals.leases import LifecyclePublicationError, TerminalLeaseRegistry
+from gobby.terminals.pane_io import SUBMIT_UNVERIFIED_ERROR_CODE
 from gobby.terminals.runtime import PreparedSpawn, TerminalSpawnRequest
 from gobby.terminals.workspace_contract import (
     WorkspaceEvent,
@@ -415,9 +416,11 @@ async def test_ops_round_trip_and_errors_are_typed(stack: _Stack) -> None:
     )
     assert focused["id"] == tab["id"]
     written = await op("pane.send_text", pane=first["id"], text="echo ready", submit=True)
-    assert set(written) == {"idempotency_key", "indeterminate", "detail"}
+    assert set(written) == {"idempotency_key", "indeterminate", "detail", "error_code"}
     # The pane runs no CLI with a composer reader, so the submit is unverified (#23188).
+    # gclient reads error_code to tell this apart from a held draft (#23730).
     assert written["indeterminate"] is True
+    assert written["error_code"] == SUBMIT_UNVERIFIED_ERROR_CODE
     assert "no composer reader" in written["detail"]
     keyed = await op("pane.send_keys", pane=first["id"], keys="ls\n", idempotency_key="keys-1")
     assert keyed["idempotency_key"] == "keys-1"

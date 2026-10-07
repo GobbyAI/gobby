@@ -5,12 +5,13 @@ import os
 import time
 from collections.abc import Iterator
 from types import SimpleNamespace
+from typing import Any
 
 import psycopg
 import pytest
 
 from gobby.config.postgres_pool import PostgresPoolConfig
-from gobby.storage.hub import operation_deadline
+from gobby.storage.hub import operation_deadline, postgres_pool
 from gobby.storage.hub.operation_deadline import (
     DatabaseOperationDeadlineExceeded,
     database_operation_deadline,
@@ -341,3 +342,88 @@ def test_distant_deadline_fits_postgres_timeout_range(database: PostgresHubDatab
             row = txn.execute("SELECT current_setting('statement_timeout') AS value").fetchone()
             assert row is not None
             assert row["value"] == "2147483647ms"
+
+
+# True only when the server opened no transaction block before this statement:
+# an explicit BEGIN fixes now() at its own, earlier, statement start.
+_NO_EARLIER_BEGIN = "SELECT now() = statement_timestamp() AS fresh"
+
+
+@pytest.fixture
+def opened_transactions(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    opened: list[str] = []
+    original = psycopg.Connection.transaction
+
+    def recording(self: psycopg.Connection[Any], *args: Any, **kwargs: Any) -> Any:
+        opened.append("BEGIN")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(psycopg.Connection, "transaction", recording)
+    return opened
+
+
+def test_lone_reads_run_in_autocommit_without_a_transaction_block(
+    database: PostgresHubDatabase,
+    opened_transactions: list[str],
+) -> None:
+    assert database.fetchone(_NO_EARLIER_BEGIN) == {"fresh": True}
+    assert database.fetchall("SELECT %s::int AS n", (7,)) == [{"n": 7}]
+    assert database.execute("WITH v AS (SELECT 2 AS n) SELECT n FROM v").fetchall() == [{"n": 2}]
+
+    assert opened_transactions == []
+    with database._pool.connection() as connection:
+        assert connection.autocommit is False
+
+
+def test_failed_autocommit_read_returns_the_connection_transactional(
+    database: PostgresHubDatabase,
+) -> None:
+    with pytest.raises(psycopg.errors.DivisionByZero):
+        database.fetchone("SELECT 1 / 0")
+
+    with database._pool.connection() as connection:
+        assert connection.autocommit is False
+    assert database.fetchone("SELECT 3 AS n") == {"n": 3}
+
+
+def test_writes_ambient_reads_and_deadline_reads_stay_transactional(
+    database: PostgresHubDatabase,
+    opened_transactions: list[str],
+) -> None:
+    database.execute("CREATE TEMP TABLE decision_seven (n int)")
+    inserted = database.fetchone(
+        "INSERT INTO decision_seven VALUES (1) RETURNING now() = statement_timestamp() AS fresh"
+    )
+    assert inserted == {"fresh": False}
+
+    with database.transaction() as txn:
+        txn.execute("INSERT INTO decision_seven VALUES (2)")
+        # The pool holds one connection, so only the ambient transaction can
+        # answer this read, and it sees the uncommitted row.
+        assert database.fetchone("SELECT count(*) AS n FROM decision_seven") == {"n": 2}
+        assert database.fetchone(_NO_EARLIER_BEGIN) == {"fresh": False}
+
+    # Deadline bounds are SET LOCAL, which only a transaction block honors.
+    with database_operation_deadline(timeout_seconds=5):
+        assert database.fetchone(_NO_EARLIER_BEGIN) == {"fresh": False}
+
+    assert len(opened_transactions) == 4
+
+
+@pytest.mark.parametrize(
+    ("sql", "eligible"),
+    [
+        ("SELECT 1", True),
+        ("  select 1;", True),
+        ("WITH v AS (SELECT 1) SELECT * FROM v", True),
+        ("WITH gone AS (DELETE FROM t RETURNING id) SELECT id FROM gone", False),
+        ("WITH moved AS (UPDATE t SET n = 1 RETURNING id) SELECT id FROM moved", False),
+        ("SELECT 1; SELECT 2", False),
+        ("SET statement_timeout = 0", False),
+        ("SHOW statement_timeout", False),
+        ("SAVEPOINT before_write", False),
+        ("INSERT INTO t VALUES (1)", False),
+    ],
+)
+def test_only_single_read_statements_qualify_for_autocommit(sql: str, eligible: bool) -> None:
+    assert postgres_pool.is_autocommit_read(sql) is eligible

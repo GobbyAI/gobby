@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import subprocess
-import sys
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -19,7 +17,7 @@ from websockets.exceptions import ConnectionClosedError, InvalidStatus
 from gobby.identity import hash_password
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.users import LocalUserManager
-from tests.e2e.conftest import DaemonInstance, daemon_token, prepare_daemon_env
+from tests.e2e.conftest import DaemonInstance, daemon_token
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.e2e
@@ -192,28 +190,28 @@ async def _assert_handshake_rejected(
 
 
 def _rotate_isolated_token(instance: DaemonInstance) -> tuple[str, str]:
+    from gobby.config.bootstrap_io import read_bootstrap_yaml, update_bootstrap_yaml
+
+    bootstrap = instance.gobby_home / "bootstrap.yaml"
+    old_key_id = read_bootstrap_yaml(bootstrap)["api_key_id"]
     old_token = daemon_token(instance.gobby_home)
-    env = prepare_daemon_env(home_dir=instance.gobby_home)
-    env["GOBBY_HOME"] = str(instance.gobby_home)
-    env["GOBBY_CONFIG"] = str(instance.config_path)
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from gobby.cli import cli; cli()",
-            "auth",
-            "token",
-            "--rotate",
-        ],
-        cwd=instance.project_dir,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=30.0,
-        check=False,
-    )
-    assert completed.returncode == 0, completed.stderr
-    assert "Local API token rotated." in completed.stdout
+    with httpx.Client(base_url=instance.http_url, timeout=10.0) as client:
+        minted = client.post(
+            "/api/auth/keys",
+            json={"label": "isolated rotation"},
+            headers={"Authorization": f"Bearer {old_token}"},
+        )
+        assert minted.status_code == 200, minted.text
+        issued = minted.json()
+        update_bootstrap_yaml(
+            bootstrap,
+            lambda data: data.update(api_key=issued["key"], api_key_id=issued["key_id"]),
+        )
+        headers = {"Authorization": f"Bearer {issued['key']}"}
+        verified = client.get("/api/admin/config", headers=headers)
+        assert verified.status_code == 200, verified.text
+        revoked = client.delete(f"/api/auth/keys/{old_key_id}", headers=headers)
+        assert revoked.status_code == 200, revoked.text
     new_token = daemon_token(instance.gobby_home)
     assert new_token != old_token
     return old_token, new_token
@@ -254,11 +252,11 @@ def test_http_auth_matrix(daemon_instance: DaemonInstance) -> None:
         )
         assert invalid.status_code == 401
 
-        local_header = client.get(
+        retired_header = client.get(
             "/api/admin/config",
             headers={"X-Gobby-Local-Token": token},
         )
-        assert local_header.status_code == 200
+        assert retired_header.status_code == 401
 
     with httpx.Client(
         base_url=daemon_instance.http_url,
@@ -316,7 +314,7 @@ async def test_ws_rotation(daemon_instance: DaemonInstance) -> None:
     await _assert_handshake_rejected(
         daemon_instance.ws_url,
         headers=[("Authorization", f"Bearer {old_token}")],
-        status_code=403,
+        status_code=401,
     )
     await _assert_websocket_frames(
         daemon_instance.ws_url,

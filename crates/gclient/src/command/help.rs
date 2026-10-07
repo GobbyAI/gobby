@@ -55,6 +55,8 @@ const VERBS: &[Verb] = &[
         usage: "send-keys [REF] TEXT [--enter]",
         summary: "Send pane text",
         detail: "Types TEXT into the pane; --enter presses Enter after it.\n\
+                 With --enter the daemon reads the composer back before it answers, \
+                 which can take tens of seconds; exit 1 means the CLI kept the text.\n\
                  Put TEXT after -- when it starts with a dash.\n\
                  On a timeout the text may already be in the pane: check it with \
                  capture-pane before retrying.",

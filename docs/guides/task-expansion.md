@@ -159,7 +159,7 @@ Minimal shape:
       "validation": "Implementation is present.",
       "affected_files": ["src/foundation.py"],
       "execution_group": "foundation",
-      "assigned_agent": "backend-developer",
+      "assigned_agent": "developer",
       "additional_skills": []
     }
   ],
@@ -412,7 +412,7 @@ Rules worth knowing:
   refactor/final-green, exact command, and supported test-quality audit or
   unsupported-language fallback evidence.
 - Code leaves require `implementation_domain`, which routes to
-  `backend-developer`, `frontend-developer`, or `fullstack-developer`.
+  `developer`, which reads the domain to pick its skills.
 - Non-TDD categories `docs`, `refactor`, and `test` expand as single tasks.
   Automated manifests reject `research`, `planning`, and `manual`.
 - Dependencies follow manifest `depends_on` edges directly between leaves.

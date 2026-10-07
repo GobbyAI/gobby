@@ -17,7 +17,10 @@ or closes. Prefer `capture-pane` for read-only pane inspection.
   switches every running gclient window on the workspace to that tab and pane;
   a tab REF keeps the tab's own focused pane.
 - `gclient send-keys [REF] TEXT [--enter]` sends pane text, optionally
-  submitting Enter.
+  submitting Enter. With `--enter` the daemon answers only after it reads the
+  composer back, which can take tens of seconds: exit 1 with
+  `command_not_submitted` means the CLI kept the text, and a reply with
+  `indeterminate: true` means nobody could verify the submit.
 - `gclient capture-pane [REF] [--lines N]` reads pane text; `N` must be
   positive.
 - `gclient wait-for-output [REF] --pattern REGEX [--timeout S] [--interval S]`

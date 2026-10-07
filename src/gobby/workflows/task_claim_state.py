@@ -148,6 +148,15 @@ def active_task_id_for_edit(variables: dict[str, Any]) -> str | None:
     return None
 
 
+def claims_without_edit_target(variables: dict[str, Any]) -> bool:
+    """Whether the session holds claims but none receives its edits (#23665).
+
+    The active claim ended while the others wait on review, landing or close, so an
+    edit must wait for a reclaim that makes one of them active.
+    """
+    return bool(_claimed_tasks(variables)) and active_task_id_for_edit(variables) is None
+
+
 def resolve_target_task_id(variables: dict[str, Any], task_ref: Any) -> str | None:
     """Resolve a lifecycle tool task reference to a task UUID tracked in session variables."""
     if task_ref is None:
@@ -187,6 +196,15 @@ def task_edited_file_set_for_checkout(
     if not task_id or root is None:
         return set()
     return set(_task_edited_file_checkouts(variables).get(task_id, {}).get(root, []))
+
+
+def task_live_checkout_files(variables: dict[str, Any], task_id: str) -> dict[str, set[str]]:
+    """Return this task's live attributed paths by checkout root, without released pairs."""
+    return {
+        root: set(files)
+        for root, files in _task_edited_file_checkouts(variables).get(task_id, {}).items()
+        if files
+    }
 
 
 def task_edited_checkout_paths(
