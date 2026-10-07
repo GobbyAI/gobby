@@ -49,6 +49,7 @@ def test_extended_timeout_tools_excludes_stale_apply_tdd() -> None:
     assert wait_tools.EXTENDED_TIMEOUT_TOOL_NAMES == (
         "close_task",
         "submit_close_review",
+        "land_commit",
         "expand_task",
         "merge_resolve",
         "suggest_next_task",
@@ -1269,6 +1270,51 @@ class TestDaemonProxy:
             timeout=MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS,
             preflight=False,
         )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_uses_extended_timeout_for_land_commit(self) -> None:
+        """A landing beyond the default boundary returns its authoritative result."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        proxy._tool_timeouts = {}
+        landed_result = {"success": True, "commit_sha": "landed-sha"}
+
+        async def request_after_boundary(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            if kwargs["timeout"] <= 30.0:
+                raise httpx.ReadTimeout("simulated landing still running after 30 seconds")
+            return landed_result
+
+        with patch.object(
+            proxy, "_request", new=AsyncMock(side_effect=request_after_boundary)
+        ) as mock_request:
+            result = await proxy.call_tool(
+                "gobby-tasks-ops",
+                "land_commit",
+                {"task_id": "#23726", "commit_sha": "candidate-sha"},
+                preflight_enabled=False,
+            )
+
+        assert result == landed_result
+        mock_request.assert_awaited_once_with(
+            "POST",
+            "/api/mcp/gobby-tasks-ops/tools/land_commit",
+            json={"task_id": "#23726", "commit_sha": "candidate-sha"},
+            timeout=300.0,
+            preflight=False,
+        )
+
+    def test_land_commit_is_client_guarded_and_heartbeated(self) -> None:
+        from gobby.mcp_proxy import wait_tools
+
+        assert "land_commit" in wait_tools.CLIENT_GUARDED_TOOL_NAMES
+        assert "land_commit" in wait_tools.HEARTBEAT_TOOL_NAMES
+        guard = wait_tools.prepare_client_guard(
+            tool_name="land_commit",
+            arguments={"task_id": "#23726", "commit_sha": "candidate-sha"},
+        )
+        assert guard.timeout == 300.0
+        assert guard.wait_timeout_capped is False
 
     def test_run_expansion_qa_coverage_is_client_guarded_and_heartbeated(self) -> None:
         """Extended-timeout membership also arms the wrapper guard and heartbeat."""
