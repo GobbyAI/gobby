@@ -1625,6 +1625,91 @@ class TestLocalTaskManager:
         open_claims = task_manager.list_tasks(claimed_by_session_id=session.id)
         assert len(open_claims) == 1
 
+    def test_concurrent_claims_beside_a_handed_off_claim_allow_only_one_task(
+        self,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        session_manager: SessionManager,
+    ) -> None:
+        import concurrent.futures
+        import threading
+
+        session = session_manager.register(
+            external_id="concurrent-handed-off-claim-ext",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project_id,
+        )
+        handed_off = task_manager.create_task(
+            project_id, "Handed off", validation_criteria=VALIDATION_CRITERIA
+        )
+        task_manager.claim_task_for_agent(handed_off.id, session.id)
+        tasks = [
+            task_manager.create_task(
+                project_id, f"Concurrent claim {index}", validation_criteria=VALIDATION_CRITERIA
+            )
+            for index in range(2)
+        ]
+        barrier = threading.Barrier(2)
+
+        def _claim(task_id: str) -> str:
+            barrier.wait()
+            try:
+                task_manager.claim_task_for_agent(
+                    task_id, session.id, handed_off_task_ids={handed_off.id}
+                )
+            except AgentTaskClaimConflictError:
+                return "conflict"
+            return task_id
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(_claim, [task.id for task in tasks]))
+
+        winners = [outcome for outcome in outcomes if outcome != "conflict"]
+        assert len(winners) == 1
+        assert outcomes.count("conflict") == 1
+        open_claims = task_manager.list_tasks(claimed_by_session_id=session.id)
+        assert {task.id for task in open_claims} == {handed_off.id, winners[0]}
+
+    def test_delegated_agent_claim_needs_the_receivers_other_claim_handed_off(
+        self,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        session_manager: SessionManager,
+    ) -> None:
+        parent = session_manager.register(
+            external_id="delegating-parent-ext",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project_id,
+        )
+        child = session_manager.register(
+            external_id="delegated-child-ext",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project_id,
+        )
+        held = task_manager.create_task(
+            project_id, "Child's earlier claim", validation_criteria=VALIDATION_CRITERIA
+        )
+        delegated = task_manager.create_task(
+            project_id, "Delegated work", validation_criteria=VALIDATION_CRITERIA
+        )
+        task_manager.claim_task_for_agent(held.id, child.id)
+        task_manager.claim_task_for_agent(delegated.id, parent.id)
+
+        with pytest.raises(AgentTaskClaimConflictError) as conflict:
+            task_manager.claim_task_for_agent(delegated.id, child.id, expected_owner=parent.id)
+        assert conflict.value.claimed_task_id == held.id
+        assert task_manager.get_task(delegated.id).claimed_by_session_id == parent.id
+
+        claimed = task_manager.claim_task_for_agent(
+            delegated.id, child.id, expected_owner=parent.id, handed_off_task_ids={held.id}
+        )
+
+        assert claimed.claimed_by_session_id == child.id
+        assert task_manager.get_task(held.id).claimed_by_session_id == child.id
+
     def test_submit_for_review_clears_canonical_owner(
         self, task_manager, project_id, session_manager
     ) -> None:

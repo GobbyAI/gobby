@@ -22,6 +22,7 @@ __all__ = [
     "IsolationRegistryReconciliation",
     "LockAcquisitionOrderError",
     "LockTarget",
+    "MainCheckoutLanding",
     "PlanReviewEvidenceMutation",
     "ReviewLearningPatternMutation",
     "Row",
@@ -63,6 +64,14 @@ class LockTarget(Protocol):
     """
 
     PRIORITY: ClassVar[int]
+
+
+@dataclass(frozen=True)
+class MainCheckoutLanding:
+    """Serialize project landing and freeze writes before nested task locks."""
+
+    PRIORITY: ClassVar[int] = 25
+    project_id: str
 
 
 @dataclass(frozen=True)

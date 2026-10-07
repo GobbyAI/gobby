@@ -182,7 +182,6 @@ async def _complete_self_terminated_run(
                 "error": termination_error,
                 "error_code": termination_code,
             }
-        result["status"] = "success"
         result["terminal_killed"] = True
     else:
         kill_result = await agents._kill_agent_process(
@@ -198,13 +197,17 @@ async def _complete_self_terminated_run(
 
         transitioned_here = await complete_with_acknowledged_delivery()
         if not transitioned_here:
-            current = runner.get_run(run.id)
-            result["status"] = current.status if current else "unknown"
             result["noop"] = True
-        else:
-            result["status"] = "success"
 
-    if terminal_reason is not None:
+    current = runner.get_run(run.id)
+    result["status"] = current.status if current else "unknown"
+    if current is not None and current.status != "success" and current.error:
+        result["error"] = current.error
+
+    stored_reason = getattr(current, "terminal_reason", None)
+    if stored_reason is not None:
+        result["terminal_reason"] = stored_reason
+    elif terminal_reason is not None and result["status"] == "success":
         result["terminal_reason"] = terminal_reason
     await agents._cleanup_terminal_artifacts(
         run_id=run.id,

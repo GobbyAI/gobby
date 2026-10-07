@@ -152,6 +152,8 @@ async def test_terminal_review_waits_for_run_exit_and_delivers_retained_denials(
     run = SimpleNamespace(
         id="run",
         status="running",
+        terminal_reason=None,
+        error=None,
         resume_metadata_json={
             "sandbox": {
                 "backend": "srt",
@@ -210,7 +212,9 @@ async def test_periodic_reconciliation_expires_review_and_wakes_subscriber(
     )
     store = _Store(review)
     subscribers = _Subscribers()
-    run = SimpleNamespace(id="run", status="running", resume_metadata_json={}, error=None)
+    run = SimpleNamespace(
+        id="run", status="running", resume_metadata_json={}, error=None, terminal_reason=None
+    )
 
     async def cleanup_run(*_args: object, **_kwargs: object) -> None:
         run.status = "timeout"
@@ -378,7 +382,9 @@ async def test_close_verdict_survives_daemon_restart(
         )
     )
     run = (
-        SimpleNamespace(id="run", status=run_status, resume_metadata_json={})
+        SimpleNamespace(
+            id="run", status=run_status, resume_metadata_json={}, terminal_reason=None, error=None
+        )
         if run_status
         else None
     )
@@ -473,7 +479,12 @@ async def test_periodic_tick_sweeps_only_a_proven_orphaned_finalizing_review(
         )
     )
     run = SimpleNamespace(
-        id="run", status="running", machine_id=machine_id, resume_metadata_json={}
+        id="run",
+        status="running",
+        machine_id=machine_id,
+        resume_metadata_json={},
+        terminal_reason=None,
+        error=None,
     )
     wake = AsyncMock(return_value={"ism_persisted": True})
     _install(monkeypatch, store=store, run=run, subscribers=_Subscribers())

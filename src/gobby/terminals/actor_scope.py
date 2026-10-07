@@ -3,8 +3,9 @@
 An actor is ``operator`` or ``session:<id>``. The operator is in scope
 everywhere. A session actor must be an interactive session (an autonomous
 agent-run session is refused) and reaches a target in its own project, the
-session itself, or a session in its agent tree. ``send_keys`` and every
-workspace op that kills, spawns into, adopts, or writes a terminal share it.
+session itself, or a session in its agent tree. ``send_keys``,
+``capture_output``, and every workspace op that kills, spawns into, adopts, or
+writes a terminal share it.
 """
 
 from __future__ import annotations

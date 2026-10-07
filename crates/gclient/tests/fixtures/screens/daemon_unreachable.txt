@@ -1,7 +1,7 @@
 # gclient screen golden: daemon_unreachable
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
-00 : subtext0/surface0+b*120
+00 : subtext0/dim+b*120
 01 |                                                                                                                        |
 01 : text/panel_bg*120
 02 | Machines                  ⍾ alpha    │ ⍾ second   │ +                                                                  |

@@ -158,8 +158,8 @@ pub fn has_following_sibling_at_depth(rows: &[NavigatorRow], idx: usize, depth: 
         .any(|row| row.depth == depth)
 }
 
-pub fn render_navigator<W: WorkspaceView>(frame: &mut Frame, area: Rect, ws: &W, chrome: &Chrome) {
-    let p = &chrome.palette;
+/// The navigator's popup over `area`, border included.
+pub fn popup_area(area: Rect) -> Option<Rect> {
     let margin_x = (area.width / 16).max(2);
     let margin_y = (area.height / 10).max(1);
     let width = area.width.saturating_sub(margin_x.saturating_mul(2)).max(4);
@@ -167,7 +167,12 @@ pub fn render_navigator<W: WorkspaceView>(frame: &mut Frame, area: Rect, ws: &W,
         .height
         .saturating_sub(margin_y.saturating_mul(2))
         .max(4);
-    let Some(popup) = centered_popup_rect(area, width, height) else {
+    centered_popup_rect(area, width, height)
+}
+
+pub fn render_navigator<W: WorkspaceView>(frame: &mut Frame, area: Rect, ws: &W, chrome: &Chrome) {
+    let p = &chrome.palette;
+    let Some(popup) = popup_area(area) else {
         return;
     };
     let Some(inner) = render_panel_shell(frame, popup, p.accent, p.panel_bg) else {

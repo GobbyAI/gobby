@@ -11,6 +11,7 @@ Tools included:
 - Artifacts (5): set/get artifact pointers and append idempotent description sections
 - Reindex (1): reindex_tasks
 - Build (1): build_task
+- Landing (2): set_landing_freeze, land_commit
 """
 
 from collections.abc import Callable
@@ -22,6 +23,7 @@ from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_file
 from gobby.mcp_proxy.tools.tasks._artifacts import create_ops_artifact_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
+from gobby.mcp_proxy.tools.tasks._landing import create_landing_registry
 from gobby.mcp_proxy.tools.tasks._search import create_reindex_registry
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 from gobby.mcp_proxy.tools.tasks._stage_registry_ops import create_stage_registry_ops_registry
@@ -110,5 +112,8 @@ def create_task_ops_registry(
 
     # Merge build automation entry point
     registry.merge_from(create_build_registry(ctx))
+
+    # Merge landing tools
+    registry.merge_from(create_landing_registry(ctx))
 
     return registry

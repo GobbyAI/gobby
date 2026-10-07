@@ -48,6 +48,7 @@ HUB_ONLY_STARTUP_PHASES = frozenset(
         "expansion_cleanup",
         "vector_store",
         "core_services",
+        "communications_start",
         "cron_scheduler",
         "pipeline_recovery",
         "system_automation_start",
@@ -260,11 +261,9 @@ async def _run_tracked_start_async(
 
 
 async def _start_core_services(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
-    await _start_tracked_service(
-        runner.communications_manager,
-        "Communications manager",
-        tracker,
-    )
+    services = getattr(getattr(runner, "http_server", None), "services", None)
+    if services is not None and services.shutdown_in_progress:
+        return
     await _start_tracked_service(
         runner.lifecycle_manager,
         "Session lifecycle manager",
@@ -635,6 +634,131 @@ def _maybe_start_ui_dev_server(runner: GobbyRunner) -> None:
         logger.warning("UI dev mode effective but source web/ directory not found")
 
 
+async def _recover_after_restart(
+    runner: GobbyRunner,
+    tracker: StartupTracker | None,
+    *,
+    reconcile_agent_runs_after_restart: AgentLifecycleOperation,
+    reap_orphaned_srt_runners: AgentLifecycleOperation,
+    recover_agent_completion_subscribers: AgentLifecycleOperation,
+) -> None:
+    """Own ordered recovery without putting the retained backlog on readiness."""
+    services = getattr(getattr(runner, "http_server", None), "services", None)
+    node_mode = runner.bootstrap_config.run_mode() == "node"
+
+    async def hub_only_phase[T](name: str, start: Callable[[], Awaitable[T]]) -> T | None:
+        if node_mode and name in HUB_ONLY_STARTUP_PHASES:
+            return None
+        return await timed_startup_phase(name, start())
+
+    # Live rule/MCP sends can wait on channel startup. Initialize channels
+    # before replay can call them; expiry/transcript jobs still wait for recovery.
+    await hub_only_phase(
+        "communications_start",
+        lambda: _start_tracked_service(
+            getattr(runner, "communications_manager", None), "Communications manager", tracker
+        ),
+    )
+    if services is not None and services.shutdown_in_progress:
+        return
+    barrier_outcome = await timed_startup_phase(
+        "hook_replay_barrier", _run_agent_hook_replay_barrier(runner)
+    )
+    if services is not None and services.shutdown_in_progress:
+        return
+    paused_sessions = await timed_startup_phase(
+        "restart_session_reconciliation",
+        runner.wake_dispatcher.reconcile_restart_active_sessions(
+            restart_horizon_ms=getattr(runner, "http_bound_at_ms", None),
+            excluded_session_ids=barrier_outcome.excluded_session_ids,
+            recovery_safe=barrier_outcome.session_recovery_safe,
+        ),
+    )
+    if paused_sessions:
+        logger.info(
+            "Reconciled %d restart-stale active session(s)",
+            len(paused_sessions),
+        )
+    if services is not None and services.shutdown_in_progress:
+        return
+    await _resume_dead_handoff_dispatches(runner)
+    if services is not None and services.shutdown_in_progress:
+        return
+    wake_replay_coordinator = getattr(runner, "wake_replay_coordinator", None)
+    if wake_replay_coordinator is not None:
+        await timed_startup_phase("wake_replay_open", wake_replay_coordinator.open())
+    if services is not None and services.shutdown_in_progress:
+        return
+    reconciled_runs = (
+        await timed_startup_phase(
+            "agent_run_reconciliation", reconcile_agent_runs_after_restart(runner)
+        )
+        if getattr(runner, "agent_runner", None) is not None
+        else 0
+    )
+    if reconciled_runs > 0:
+        logger.info(
+            "Reconciled %d active agent run(s) after daemon restart",
+            reconciled_runs,
+        )
+    if services is not None and services.shutdown_in_progress:
+        return
+    try:
+        await timed_startup_phase("sandbox_reaping", reap_orphaned_srt_runners(runner))
+    except Exception:
+        logger.exception("SRT sandbox runner cleanup failed during startup")
+    if services is not None and services.shutdown_in_progress:
+        return
+    try:
+        recovered_subscribers = await timed_startup_phase(
+            "completion_subscriber_recovery", recover_agent_completion_subscribers(runner)
+        )
+        if recovered_subscribers > 0:
+            logger.info(
+                "Recovered %d agent completion subscriber notification(s)",
+                recovered_subscribers,
+            )
+    except Exception:
+        logger.exception("Agent completion subscriber recovery failed during startup")
+    if services is not None and services.shutdown_in_progress:
+        return
+    await hub_only_phase("core_services", lambda: _start_core_services(runner, tracker))
+    if services is not None and services.shutdown_in_progress:
+        return
+    if node_mode:
+        await timed_startup_phase(
+            "node_machine_local_lifecycle", _start_machine_local_lifecycle(runner, tracker)
+        )
+    if services is not None and services.shutdown_in_progress:
+        return
+    await timed_startup_phase(
+        "agent_lifecycle_monitor", _start_agent_lifecycle_monitor(runner, tracker)
+    )
+    if services is not None and services.shutdown_in_progress:
+        return
+    await hub_only_phase("cron_scheduler", lambda: _start_cron_scheduler(runner, tracker))
+    if services is not None and services.shutdown_in_progress:
+        return
+    await hub_only_phase("pipeline_recovery", lambda: _recover_pipelines(runner, tracker))
+    if services is not None and services.shutdown_in_progress:
+        return
+    await hub_only_phase(
+        "system_automation_start", lambda: _start_system_automation_loop(runner, tracker)
+    )
+    if services is not None and not services.shutdown_in_progress:
+        services.restart_recovery_ready = True
+    logger.info("Restart recovery complete")
+
+
+def _observe_restart_recovery(task: asyncio.Task[None]) -> None:
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        logger.debug("Restart recovery cancelled for daemon shutdown")
+    except Exception:
+        logger.exception("Restart recovery failed; lifecycle admission remains closed")
+
+
 async def init_subsystems(
     runner: GobbyRunner,
     rebuild_vector_store: Any,
@@ -668,53 +792,6 @@ async def init_subsystems(
     # terminals, so the surviving gterm host must be adopted (or a fresh one
     # spawned) before the slow recovery steps below (#22002).
     await timed_startup_phase("terminal_host", _start_terminal_host(runner, tracker))
-    barrier_outcome = await timed_startup_phase(
-        "hook_replay_barrier", _run_agent_hook_replay_barrier(runner)
-    )
-    paused_sessions = await timed_startup_phase(
-        "restart_session_reconciliation",
-        runner.wake_dispatcher.reconcile_restart_active_sessions(
-            restart_horizon_ms=getattr(runner, "http_bound_at_ms", None),
-            excluded_session_ids=barrier_outcome.excluded_session_ids,
-            recovery_safe=barrier_outcome.session_recovery_safe,
-        ),
-    )
-    if paused_sessions:
-        logger.info(
-            "Reconciled %d restart-stale active session(s)",
-            len(paused_sessions),
-        )
-    await _resume_dead_handoff_dispatches(runner)
-    wake_replay_coordinator = getattr(runner, "wake_replay_coordinator", None)
-    if wake_replay_coordinator is not None:
-        await timed_startup_phase("wake_replay_open", wake_replay_coordinator.open())
-    reconciled_runs = (
-        await timed_startup_phase(
-            "agent_run_reconciliation", reconcile_agent_runs_after_restart(runner)
-        )
-        if getattr(runner, "agent_runner", None) is not None
-        else 0
-    )
-    if reconciled_runs > 0:
-        logger.info(
-            "Reconciled %d active agent run(s) after daemon restart",
-            reconciled_runs,
-        )
-    try:
-        await timed_startup_phase("sandbox_reaping", reap_orphaned_srt_runners(runner))
-    except Exception:
-        logger.exception("SRT sandbox runner cleanup failed during startup")
-    try:
-        recovered_subscribers = await timed_startup_phase(
-            "completion_subscriber_recovery", recover_agent_completion_subscribers(runner)
-        )
-        if recovered_subscribers > 0:
-            logger.info(
-                "Recovered %d agent completion subscriber notification(s)",
-                recovered_subscribers,
-            )
-    except Exception:
-        logger.exception("Agent completion subscriber recovery failed during startup")
     await timed_startup_phase("mcp_connections", _connect_mcp_servers(runner, tracker))
     code_index_bm25_ready = await hub_only_phase(
         "code_index_bm25", lambda: _repair_code_index_bm25(runner, tracker)
@@ -727,22 +804,12 @@ async def init_subsystems(
     await hub_only_phase(
         "vector_store", lambda: _initialize_vector_store(runner, rebuild_vector_store, tracker)
     )
-    await hub_only_phase("core_services", lambda: _start_core_services(runner, tracker))
-    if node_mode:
-        await timed_startup_phase(
-            "node_machine_local_lifecycle", _start_machine_local_lifecycle(runner, tracker)
-        )
-    await timed_startup_phase(
-        "agent_lifecycle_monitor", _start_agent_lifecycle_monitor(runner, tracker)
-    )
-    await hub_only_phase("cron_scheduler", lambda: _start_cron_scheduler(runner, tracker))
     if code_index_bm25_ready:
         _run_tracked_start(
             lambda: _start_code_index_tasks(runner, tracker),
             "Code index tasks",
             tracker,
         )
-    await hub_only_phase("pipeline_recovery", lambda: _recover_pipelines(runner, tracker))
     services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None and bool(getattr(services, "shutdown_in_progress", False)):
         logger.info("Subsystem initialization stopped because daemon shutdown is in progress")
@@ -761,12 +828,33 @@ async def init_subsystems(
             tracker,
         ),
     )
-    await hub_only_phase(
-        "system_automation_start", lambda: _start_system_automation_loop(runner, tracker)
-    )
+    # Both HTTP and WebSocket must serve while the CPU workers import.
+    # Recheck shutdown below: it can begin while this barrier is pending.
+    if services is None or not bool(getattr(services, "shutdown_in_progress", False)):
+        from gobby.tasks.transcript_evidence_pool import prewarm_transcript_evidence_pool
+
+        try:
+            await timed_startup_phase("transcript_pool_prewarm", prewarm_transcript_evidence_pool())
+        except Exception as exc:
+            logger.exception("Transcript evidence pool prewarm failed during startup")
+            if tracker:
+                tracker.error("Transcript evidence pool", str(exc))
     if services is not None and bool(getattr(services, "shutdown_in_progress", False)):
         logger.info("Subsystem initialization stopped because daemon shutdown is in progress")
         return
+    if services is not None:
+        services.restart_recovery_ready = False
+    runner._startup_recovery_task = asyncio.create_task(
+        _recover_after_restart(
+            runner,
+            tracker,
+            reconcile_agent_runs_after_restart=reconcile_agent_runs_after_restart,
+            reap_orphaned_srt_runners=reap_orphaned_srt_runners,
+            recover_agent_completion_subscribers=recover_agent_completion_subscribers,
+        ),
+        name="restart-recovery",
+    )
+    runner._startup_recovery_task.add_done_callback(_observe_restart_recovery)
     _schedule_workflow_skill_prewarm(runner)
     if tracker:
         tracker.finish()

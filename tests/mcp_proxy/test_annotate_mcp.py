@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import shutil
 import subprocess
 import zipfile
 from pathlib import Path
@@ -270,3 +271,69 @@ def test_managed_annotation_template_proxy_and_restart(
     servers.raise_for_status()
     assert str(root) in servers.text
     assert PROJECT in servers.text
+
+
+@pytest.mark.skipif(
+    not os.environ.get("ANNOTATE_BROWSER_EXPORT"),
+    reason="Set ANNOTATE_BROWSER_EXPORT to the two-note editor.spec.ts export",
+)
+def test_managed_browser_export_preserves_both_notes_and_screenshots(
+    daemon_instance: DaemonInstance,
+    mcp_client: MCPTestClient,
+) -> None:
+    """Validate a real browser export without touching the live capture connection."""
+    source = Path(os.environ["ANNOTATE_BROWSER_EXPORT"])
+    with zipfile.ZipFile(source) as archive:
+        manifest = json.loads(archive.read("capture.json"))
+        screenshots = {
+            note["id"]: base64.b64encode(archive.read(note["screenshot"]["path"])).decode()
+            for note in manifest["annotations"]
+        }
+    assert [note["comment"] for note in manifest["annotations"]] == [
+        "First mobile note",
+        "Second mobile note",
+    ]
+    export_id = manifest["exportId"]
+    root = daemon_instance.gobby_home / "annotate-captures"
+    root.mkdir()
+    client = mcp_client.client
+    client.headers.update({"X-Gobby-Project-Id": PROJECT})
+    added = client.post(
+        "/api/mcp/servers",
+        json={
+            "name": "gobby-annotate",
+            "template": "gobby-annotate",
+            "scope": "project",
+            "project_id": PROJECT,
+            "values": {"capture_root": str(root)},
+        },
+    )
+    added.raise_for_status()
+    assert added.json()["success"], added.text
+    events = CLIEventSimulator(daemon_instance.http_url, daemon_token(daemon_instance.gobby_home))
+    try:
+        session = events.register_session(
+            str(uuid4()), project_id=PROJECT, cwd=str(daemon_instance.project_dir)
+        )
+        mcp_client.session_id = session["id"]
+    finally:
+        events.close()
+
+    def call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        schema = mcp_client.get_tool_schema("gobby-annotate", name)
+        assert schema.get("success"), schema
+        result = mcp_client.call_tool("gobby-annotate", name, arguments)
+        assert result.get("success"), result
+        return result
+
+    assert export_id not in json.dumps(call("list_captures", {}))
+    delivered = root / f"{export_id}.zip"
+    shutil.copyfile(source, delivered)
+    assert delivered.read_bytes() == source.read_bytes()
+    assert export_id in json.dumps(call("list_captures", {}))
+    for note in manifest["annotations"]:
+        arguments = {"export_id": export_id, "annotation_id": note["id"]}
+        annotation = json.dumps(call("get_annotation", arguments))
+        assert note["comment"] in annotation
+        assert screenshots[note["id"]] not in annotation
+        assert screenshots[note["id"]] in json.dumps(call("get_screenshot", arguments))

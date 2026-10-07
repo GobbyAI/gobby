@@ -277,11 +277,13 @@ async def compute_sandbox_paths(
         canonical_path,
         canonical_paths,
         credential_env_vars,
+        credential_read_roots,
         default_write_paths,
         deny_paths,
         gcode_runtime_write_exceptions,
         gobby_read_exceptions,
         mcp_config_read_exceptions,
+        provider_credential_read_exceptions,
         provider_read_exceptions,
         provider_write_exceptions,
         sensitive_roots,
@@ -292,6 +294,17 @@ async def compute_sandbox_paths(
 
     workspace = Path(canonical_path(workspace_path))
     policy_env = os.environ if env is None else env
+    from gobby.agents.sandbox_control_paths import (
+        assert_credential_read_contract,
+        provider_control_write_paths,
+    )
+
+    provider_reads = (
+        provider_read_exceptions(provider, policy_env, provider_executable=provider_executable)
+        if provider
+        else []
+    )
+    credential_denies = credential_read_roots()
     git_paths = await _git_metadata_write_paths(workspace)
     from gobby.integrations.rtk import sandbox_paths as resolve_rtk_sandbox_paths
 
@@ -313,15 +326,8 @@ async def compute_sandbox_paths(
             *(tuple(str(path) for path in rtk_paths.read_paths) if rtk_paths else ()),
             *toolchain_read_roots(),
             *mcp_config_read_exceptions(workspace),
-            *(
-                provider_read_exceptions(
-                    provider,
-                    policy_env,
-                    provider_executable=provider_executable,
-                )
-                if provider
-                else []
-            ),
+            *provider_reads,
+            "~/.ssh/known_hosts",
             *config.extra_read_paths,
         ],
         base=workspace,
@@ -329,6 +335,7 @@ async def compute_sandbox_paths(
     deny_read_paths = deny_paths(
         [
             *sensitive_roots(),
+            *credential_denies,
             *toolchain_credential_paths(),
             *config.extra_deny_read_paths,
         ],
@@ -337,6 +344,13 @@ async def compute_sandbox_paths(
     deny_write_paths = deny_paths(
         [
             *sensitive_write_roots(),
+            *provider_control_write_paths(
+                workspace,
+                policy_env,
+                extra_roots=tuple(
+                    Path(canonical_path(path, base=workspace)) for path in config.extra_write_paths
+                ),
+            ),
             *toolchain_credential_paths(),
             *config.extra_deny_write_paths,
         ],
@@ -344,6 +358,11 @@ async def compute_sandbox_paths(
     )
     domains = allowed_domains(config, provider, api_base)
     assert_sensitive_path_contract(read_paths, write_paths)
+    assert_credential_read_contract(
+        read_paths,
+        credential_denies,
+        provider_credential_read_exceptions(provider) if provider else [],
+    )
 
     return ResolvedSandboxPaths(
         workspace_path=str(workspace),

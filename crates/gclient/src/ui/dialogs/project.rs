@@ -163,6 +163,21 @@ pub fn render_new_worktree(
     buttons(frame, inner, chrome, "Create", &[])
 }
 
+/// Rows the open-worktree list takes: one per choice, or one for the note
+/// that there are none.
+fn option_rows(choices: usize) -> u16 {
+    choices.max(1).min(u16::MAX as usize) as u16
+}
+
+/// The open-worktree popup over `choices` worktrees, border included.
+pub fn open_worktree_area(area: Rect, choices: usize) -> Option<Rect> {
+    centered_popup_rect(
+        area,
+        POPUP_WIDTH,
+        OPEN_WORKTREE_BASE_HEIGHT + option_rows(choices),
+    )
+}
+
 pub fn render_open_worktree(
     frame: &mut Frame,
     area: Rect,
@@ -171,14 +186,10 @@ pub fn render_open_worktree(
     selected: usize,
 ) -> Vec<Rect> {
     let p = &chrome.palette;
-    let option_rows = choices.len().max(1).min(u16::MAX as usize) as u16;
-    let Some(inner) = render_modal_shell(
-        frame,
-        area,
-        POPUP_WIDTH,
-        OPEN_WORKTREE_BASE_HEIGHT + option_rows,
-        p,
-    ) else {
+    let option_rows = option_rows(choices.len());
+    let Some(inner) = open_worktree_area(area, choices.len())
+        .and_then(|popup| render_panel_shell(frame, popup, p.accent, p.panel_bg))
+    else {
         return Vec::new();
     };
     if inner.height < 4 {
