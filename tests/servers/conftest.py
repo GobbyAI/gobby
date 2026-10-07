@@ -24,7 +24,6 @@ from gobby.servers.auth_service import AuthService
 from gobby.servers.grant_auth import AuthDecision
 from gobby.servers.http import HTTPServer
 from gobby.sessions.handoff_shutdown import cancel_handoff_shutdown
-from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -32,7 +31,14 @@ from gobby.utils.machine_id import require_machine_id
 
 # Sentinel to distinguish "not provided" from "explicitly None"
 _NOT_PROVIDED = object()
-TEST_LOCAL_TOKEN = "server-test-local-token"
+TEST_API_KEY = "server-test-api-key"
+TEST_FRONT_DOOR_SECRET = "server-test-front-door-secret"
+TEST_FRONT_DOOR_IDENTITY = {
+    "X-Gobby-Front-Door": TEST_FRONT_DOOR_SECRET,
+    "X-Gobby-User-Id": "server-test-user",
+    "X-Gobby-Machine-Id": "21000000-0000-4000-8000-000000000002",
+    "X-Gobby-Key-Id": "server-test-key",
+}
 
 
 class _AsyncProbeClientAdapter:
@@ -258,13 +264,20 @@ def http_server(
         test_mode=True,
         bootstrap_config=BootstrapConfig(),
     )
-    token_file = tmp_path / "local_cli_token"
-    token_file.write_text(TEST_LOCAL_TOKEN)
-    AuthStore(session_storage.db).set_local_api_token_hash(hash_token(TEST_LOCAL_TOKEN))
+    bootstrap_file = tmp_path / "bootstrap.yaml"
+    bootstrap_file.write_text(json.dumps({"api_key": TEST_API_KEY}))
     server.auth_service = AuthService(
         lambda: session_storage.db,
-        token_file=token_file,
-        bootstrap_file=_managed_bootstrap(token_file),
+        bootstrap_file=bootstrap_file,
+        break_glass_file=tmp_path / "absent-break-glass",
+    )
+    server.auth_service.bind_runtime(
+        grant_service=None,
+        lease_live=None,
+        local_machine_id=TEST_FRONT_DOOR_IDENTITY["X-Gobby-Machine-Id"],
+        effect_fence=None,
+        clock=None,
+        front_door_secret=TEST_FRONT_DOOR_SECRET,
     )
     return server
 
@@ -285,13 +298,6 @@ def client(http_server: HTTPServer) -> Iterator[TestClient]:
         mock_instance.shutdown_async = AsyncMock()
         with TestClient(
             http_server.app,
-            headers={"X-Gobby-Local-Token": TEST_LOCAL_TOKEN},
+            headers=TEST_FRONT_DOOR_IDENTITY,
         ) as client:
             yield client
-
-
-def _managed_bootstrap(token_file: Path) -> Path:
-    bootstrap = token_file.with_name(token_file.name + ".bootstrap.yaml")
-    api_key = token_file.read_text().strip() if token_file.exists() else None
-    bootstrap.write_text(json.dumps({"api_key": api_key}))
-    return bootstrap

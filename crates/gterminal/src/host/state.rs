@@ -176,7 +176,6 @@ impl Inner {
 pub struct HostState {
     pub config: HostConfig,
     pub token: String,
-    pub local_token: String,
     pub host_epoch: String,
     pub version: String,
     /// The pinned image this host runs from; `version` is its `CARGO_PKG_VERSION`.
@@ -208,7 +207,6 @@ impl HostState {
     pub fn new(
         config: HostConfig,
         token: String,
-        local_token: String,
         host_epoch: String,
         image: PinnedImage,
         host_pid: u32,
@@ -219,7 +217,6 @@ impl HostState {
         Arc::new(Self {
             config,
             token,
-            local_token,
             host_epoch,
             version: env!("CARGO_PKG_VERSION").to_string(),
             image,
@@ -247,7 +244,6 @@ impl HostState {
     pub(crate) fn restored(
         config: HostConfig,
         token: String,
-        local_token: String,
         image: PinnedImage,
         host_pid: u32,
         shutdown: watch::Sender<bool>,
@@ -256,7 +252,6 @@ impl HostState {
         Arc::new(Self {
             config,
             token,
-            local_token,
             host_epoch: carried.host_epoch,
             version: env!("CARGO_PKG_VERSION").to_string(),
             image,

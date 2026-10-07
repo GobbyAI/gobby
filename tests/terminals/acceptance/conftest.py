@@ -153,7 +153,9 @@ async def native_host(
 ) -> AsyncIterator[AcceptanceHost]:
     """Start one freshly built ``gterm host`` for a single test."""
     socket_dir = short_dir("h")
-    (socket_dir / "local_cli_token").write_text("acceptance-frame-token\n", encoding="utf-8")
+    (socket_dir / "bootstrap.yaml").write_text(
+        "api_key: acceptance-frame-token\n", encoding="utf-8"
+    )
     manager = TerminalHostManager(
         config=TerminalHostConfig(
             enabled=True,

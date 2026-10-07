@@ -28,7 +28,6 @@ from gobby.servers.grant_auth import AuthDecision
 from gobby.servers.http import HTTPServer
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
@@ -332,11 +331,18 @@ def _http_server(stack: _Stack, temp_db: HubDatabase, tmp_path: Path) -> HTTPSer
         bootstrap_config=BootstrapConfig(),
     )
     server.app.state.server = server
-    token_file = tmp_path / "local-token"
-    token_file.write_text(OPERATOR_TOKEN)
-    AuthStore(temp_db).set_local_api_token_hash(hash_token(OPERATOR_TOKEN))
     server.auth_service = AuthService(
-        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
+        lambda: temp_db,
+        bootstrap_file=_managed_bootstrap(tmp_path / "bootstrap.yaml", OPERATOR_TOKEN),
+        break_glass_file=tmp_path / "missing-break-glass",
+    )
+    server.auth_service.bind_runtime(
+        grant_service=None,
+        lease_live=None,
+        local_machine_id=None,
+        effect_fence=None,
+        clock=None,
+        front_door_secret="workspaces-front-door",
     )
     return server
 
@@ -373,7 +379,10 @@ async def test_actor_is_derived_from_session_context_and_principal(
         project_id=stack.project_id,
     )
     operator = {
-        "Authorization": f"Bearer {OPERATOR_TOKEN}",
+        "X-Gobby-Front-Door": "workspaces-front-door",
+        "X-Gobby-User-Id": TEST_USER_ID,
+        "X-Gobby-Machine-Id": LOCAL_MACHINE_ID,
+        "X-Gobby-Key-Id": "workspaces-key",
         "X-Gobby-Project-Id": stack.project_id,
     }
     wrapper = operator | {
@@ -468,8 +477,6 @@ async def test_agent_token_is_refused_even_with_a_session_header(stack: _Stack) 
     assert create.await_count == 0
 
 
-def _managed_bootstrap(token_file: Path) -> Path:
-    bootstrap = token_file.with_name(token_file.name + ".bootstrap.yaml")
-    api_key = token_file.read_text().strip() if token_file.exists() else None
+def _managed_bootstrap(bootstrap: Path, api_key: str) -> Path:
     bootstrap.write_text(json.dumps({"api_key": api_key}))
     return bootstrap

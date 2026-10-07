@@ -7,7 +7,7 @@ Extracted from server.py as part of the Strangler Fig decomposition.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from typing import Any
 
 from websockets.datastructures import Headers
@@ -22,11 +22,11 @@ class AuthMixin:
     Requires ``self.auth_callback`` on the host class.
     """
 
-    auth_callback: Callable[[str], Coroutine[Any, Any, str | None]]
+    auth_callback: Callable[[Mapping[str, str]], Coroutine[Any, Any, str | None]]
 
     async def _authenticate(self, websocket: Any, request: Any) -> Response | None:
         """
-        Authenticate WebSocket connection via Bearer token.
+        Authenticate WebSocket connection via forwarded identity headers.
 
         Args:
             websocket: WebSocket connection
@@ -35,7 +35,7 @@ class AuthMixin:
         Returns:
             None to accept connection, Response to reject
         """
-        # Direct WebSocket clients authenticate with the daemon bearer token.
+        # The native front door validates the key and forwards its bound identity.
         auth_header = request.headers.get("Authorization")
 
         if not auth_header:
@@ -62,10 +62,8 @@ class AuthMixin:
                 b"Unauthorized: Expected Bearer token\n",
             )
 
-        token = auth_header.removeprefix("Bearer ")
-
         try:
-            user_id = await self.auth_callback(token)
+            user_id = await self.auth_callback(request.headers)
 
             if not user_id:
                 logger.warning(

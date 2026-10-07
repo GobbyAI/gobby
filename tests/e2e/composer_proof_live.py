@@ -258,9 +258,7 @@ class LiveProof:
             socket_dir = Path(locator.host_socket).parent
             reader, writer = await asyncio.open_unix_connection(frames_socket_path(socket_dir))
             client = FrameClient(reader, writer)
-            await client.handshake(
-                locator, local_token=(socket_dir / "local_cli_token").read_text().strip()
-            )
+            await client.handshake(locator, local_token=daemon_token(socket_dir))
             await client.attach_terminal(locator)
             seat = Seat(
                 own,

@@ -33,7 +33,6 @@ from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, managed_tool_bin_dir
 from gobby.utils.local_token import (
     AGENT_TOKEN_MAX_TTL_SECONDS,
     derive_managed_signing_key,
-    local_token_path,
     verify_agent_api_token,
 )
 
@@ -179,7 +178,6 @@ class TestGetTerminalEnvVars:
         tmp_path: Path,
     ) -> None:
         monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-        local_token_path().write_text("operator-token\n")
 
         result = get_terminal_env_vars(
             session_id="sess-child",
@@ -205,7 +203,6 @@ class TestGetTerminalEnvVars:
         tmp_path: Path,
     ) -> None:
         monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-        local_token_path().write_text("operator-token\n")
 
         result = get_terminal_env_vars(
             session_id="sess-child",

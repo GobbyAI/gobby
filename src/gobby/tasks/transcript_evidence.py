@@ -172,7 +172,7 @@ def _derivation_fingerprint(
     """Fingerprint every input the derived records are a function of."""
     payload = json.dumps(
         {
-            "derivation_version": 16,
+            "derivation_version": 17,
             "session": session.id,
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,
@@ -654,8 +654,14 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
     match = matches[0] if matches else None
     segments = _validation_segments(matches)
     output, output_truncated = _extract_output(outcome.result)
+    provenance = outcome.result.get("outcome_provenance")
+    outcome_fields = outcome.result
+    if provenance == "codex.functions_exec.wrapper":
+        # The wrapper's output is whatever the cell printed, which can be command
+        # stdout spelling an exit code, so only the wrapper's own fields count (#23724).
+        outcome_fields = {key: value for key, value in outcome.result.items() if key != "output"}
     status, exit_code, unknown_reason = _extract_outcome(
-        outcome.result,
+        outcome_fields,
         output,
         aggregate_status_is_trustworthy=(
             not match.is_compound
@@ -664,7 +670,6 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
         ),
     )
     output, output_truncated = _retained_output(outcome.command, segments, output, output_truncated)
-    provenance = outcome.result.get("outcome_provenance")
     if provenance == "codex.functions_exec.wrapper" and state.runs:
         prior = state.runs[-1]
         elapsed = (completed_at - prior.completed_at).total_seconds()

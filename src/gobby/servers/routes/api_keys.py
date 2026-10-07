@@ -26,14 +26,12 @@ from gobby.storage.api_keys import ApiKey, ApiKeyManager
 from gobby.storage.auth import AuthStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager, MachineOwnershipConflictError
-from gobby.storage.users import LocalUserManager, UserIdentityStateError
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
-_LOCAL_TOKEN_HEADER = "X-Gobby-Local-Token"
-_AUTH_REQUIRED = "Authentication required. Use the operator token or log in."
+_AUTH_REQUIRED = "Authentication required. Use an API key through gdaemon or log in."
 _NOT_FOUND = {"ok": False, "error": "API key not found"}
 
 
@@ -67,24 +65,12 @@ class MintKeyRequest(BaseModel):
 
 
 def _resolve_principal(server: HTTPServer, db: HubDatabase, request: Request) -> KeyPrincipal:
-    operator_token: str | None = None
-    authorization = request.headers.get("Authorization")
-    if authorization is not None:
-        parts = authorization.split(maxsplit=1)
-        if len(parts) != 2 or parts[0].casefold() != "bearer":
-            raise KeyPrincipalRejected(401, "missing_auth", _AUTH_REQUIRED)
-        operator_token = parts[1]
-    else:
-        operator_token = request.headers.get(_LOCAL_TOKEN_HEADER)
-    if operator_token is not None:
-        # Managed agent capabilities are bearers too, and they never act as a user.
-        if not server.auth_service.verify_bearer(operator_token):
-            raise KeyPrincipalRejected(401, "invalid_token", _AUTH_REQUIRED)
-        try:
-            user = LocalUserManager(db).require_sole_user()
-        except UserIdentityStateError as exc:
-            raise KeyPrincipalRejected(403, "user_identity_state", str(exc)) from exc
-        return KeyPrincipal(user.id, require_machine_id())
+    identity = server.auth_service.verified_front_door_identity(request)
+    if identity is not None:
+        return KeyPrincipal(identity.user_id, identity.machine_id)
+    # Raw bearers, including managed capabilities, cannot resolve a user here.
+    if request.headers.get("Authorization") is not None:
+        raise KeyPrincipalRejected(401, "invalid_token", _AUTH_REQUIRED)
 
     session_token = request.cookies.get(COOKIE_NAME)
     if session_token is None:

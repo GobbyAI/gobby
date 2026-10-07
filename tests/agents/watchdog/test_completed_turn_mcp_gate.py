@@ -71,12 +71,14 @@ class _FakeHost:
         step_context: StepWorkflowContext | None,
         made_call: bool | None,
         send_ok: bool = True,
+        finished: bool = False,
     ) -> None:
         self._send_ok = send_ok
         self._completed_turn_recovery: dict[str, CompletedTurnRecoveryState] = {}
         self._tmux_config = TmuxConfig(max_reprompt_attempts=3)
         self._step_context = step_context
         self._made_call = made_call
+        self._finished = finished
         self.failures: list[str] = []
         self.reprompts: list[str] = []
         self.snapshot_logs: list[str] = []
@@ -122,7 +124,7 @@ class _FakeHost:
         self.failures.append(reason)
 
     async def _complete_if_work_finished(self, run: AgentRun) -> bool:
-        return False
+        return self._finished
 
     async def _log_transcript_snapshot(
         self,
@@ -170,7 +172,7 @@ async def _recover(
 async def test_toolless_run_in_mcp_only_step_fails_without_reprompts() -> None:
     host = _FakeHost(step_context=_step_context(_MCP_ONLY_TOOLS), made_call=False)
 
-    assert await _recover(host) == 1
+    assert await _recover(host, pane_tail="MCP client for `gobby` failed to start: closed") == 1
     assert len(host.failures) == 1
     assert "MCP-gated step 'load_skill'" in host.failures[0]
     assert host.reprompts == []
@@ -193,7 +195,7 @@ async def test_all_tools_step_gated_on_mcp_progress_fails_without_reprompts() ->
         made_call=False,
     )
 
-    assert await _recover(host) == 1
+    assert await _recover(host, pane_tail="MCP client for `gobby` failed to start: closed") == 1
     assert len(host.failures) == 1
     assert "MCP-gated step 'review'" in host.failures[0]
     assert host.reprompts == []
@@ -204,6 +206,21 @@ async def test_all_tools_step_with_non_mcp_route_keeps_reprompt_path() -> None:
     """A step carrying `transitions` or `exit_when` can still progress natively."""
     host = _FakeHost(
         step_context=_step_context("all", mcp_progress_only=False, current_step="review"),
+        made_call=False,
+    )
+
+    assert await _recover(host) == 1
+    assert host.failures == []
+    assert len(host.reprompts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_entry_step", [True, False])
+async def test_mcp_gated_step_without_failed_startup_keeps_reprompt_path(
+    is_entry_step: bool,
+) -> None:
+    host = _FakeHost(
+        step_context=_step_context("all", mcp_progress_only=True, is_entry_step=is_entry_step),
         made_call=False,
     )
 
@@ -280,7 +297,7 @@ async def test_non_entry_mcp_only_step_without_mcp_calls_fails_fast() -> None:
         made_call=False,
     )
 
-    assert await _recover(host) == 1
+    assert await _recover(host, pane_tail="MCP client for `gobby` failed to start: closed") == 1
     assert len(host.failures) == 1
     assert "MCP-gated step 'load_skill'" in host.failures[0]
     assert host.reprompts == []
@@ -317,24 +334,58 @@ async def test_mcp_call_lookup_failure_fails_open_to_reprompts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unbound_run_without_mcp_calls_fails_without_reprompts() -> None:
-    """An unbound run can only hand back its result through Gobby MCP."""
+async def test_unbound_run_without_mcp_attempt_keeps_reprompt_path() -> None:
     host = _FakeHost(step_context=None, made_call=False)
 
     assert await _recover(host) == 1
+    assert host.failures == []
+    assert host.reprompts == ["reprompt"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "pane_tail",
+    [None, "MCP client for gobby failed to start: connection closed"],
+)
+async def test_finished_work_precedes_mcp_unavailability(pane_tail: str | None) -> None:
+    host = _FakeHost(step_context=None, made_call=False, finished=True)
+
+    assert await _recover(host, pane_tail=pane_tail) == 1
+    assert host.failures == []
+    assert host.reprompts == []
+
+
+@pytest.mark.asyncio
+async def test_unbound_run_with_failed_gobby_startup_fails_without_reprompts() -> None:
+    host = _FakeHost(step_context=None, made_call=False)
+
+    assert (
+        await _recover(host, pane_tail="MCP client for gobby failed to start: connection closed")
+        == 1
+    )
     assert len(host.failures) == 1
-    assert "Gobby MCP proxy tools unavailable" in host.failures[0]
     assert "with no step workflow or task" in host.failures[0]
     assert host.reprompts == []
+
+
+@pytest.mark.parametrize(
+    "pane_tail",
+    [
+        "MCP client for unrelated failed to start: connection closed",
+        "Error: required MCP servers failed to initialize: gobby-other: connection closed",
+    ],
+)
+def test_unrelated_mcp_startup_failure_is_not_gobby_failure(pane_tail: str) -> None:
+    assert codex_mcp_startup_error(pane_tail) is None
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("made_call", "task_id"),
-    [(True, None), (None, None), (False, "task-1")],
-    ids=["successful-mcp-call", "lookup-failure", "task-bound"],
+    [(True, None), (None, None), (False, "task-1"), (False, None)],
+    ids=["successful-mcp-call", "lookup-failure", "task-bound", "no-mcp-attempt"],
 )
-async def test_workflow_less_run_keeps_reprompt_path_unless_unbound_without_mcp_calls(
+async def test_workflow_less_run_without_failed_startup_keeps_reprompt_path(
     made_call: bool | None, task_id: str | None
 ) -> None:
     host = _FakeHost(step_context=None, made_call=made_call)

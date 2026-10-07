@@ -53,6 +53,7 @@ const SECRET_KEYS: &[&str] = &[
 /// The gdaemon-authored family: its typed 503 covers every proxied path, so it is not
 /// a `RouteFamily` and the parity precheck exempts it.
 const SYNTHETIC_FAMILY: &str = "front_door";
+const NATIVE_CHALLENGE_FAMILY: &str = "runtime_challenge";
 
 fn read_json(path: &Path) -> Value {
     let text = std::fs::read_to_string(path)
@@ -66,6 +67,7 @@ fn load_manifest() -> Value {
 
 /// Every manifest case in order, rejecting any whose `schema_version` differs.
 fn load_all_cases(manifest: &Value) -> Vec<Value> {
+    assert_eq!(manifest["schema_version"], 2, "key-cutover corpus version");
     let version = &manifest["schema_version"];
     let families = manifest["families"].as_object().expect("manifest families");
     manifest["cases"]
@@ -255,15 +257,31 @@ async fn start_front_door(
     backend: SocketAddr,
     routes: BTreeMap<String, RouteBackend>,
 ) -> SocketAddr {
+    let home = tempfile::tempdir().expect("bootstrap home");
+    let bootstrap_path = home.path().join("bootstrap.yaml");
+    std::fs::write(
+        &bootstrap_path,
+        "database_url: postgresql://test@127.0.0.1/test\napi_key: corpus-test-api-key\n",
+    )
+    .expect("write bootstrap");
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind front door");
     let addr = listener.local_addr().expect("front door addr");
     tokio::spawn(async move {
+        let _home = home;
         serve(
             vec![PublicListener { listener, backend }],
             &routes,
             None,
+            Arc::new(
+                gobby_daemon::front_door::auth::AuthState::new(
+                    "test-secret".into(),
+                    None,
+                    bootstrap_path,
+                )
+                .expect("auth"),
+            ),
             std::future::pending(),
         )
         .await
@@ -387,7 +405,7 @@ async fn replay_in_declared_backend_state(manifest: &Value, case: &Value) -> Hea
         (addr, CaseBackend::Down(held))
     };
     let family = case["family"].as_str().expect("case family");
-    let routes = if family == SYNTHETIC_FAMILY {
+    let routes = if matches!(family, SYNTHETIC_FAMILY | NATIVE_CHALLENGE_FAMILY) {
         BTreeMap::new()
     } else {
         let backend = parity(family_field(manifest, family, "parity"));
@@ -399,6 +417,12 @@ async fn replay_in_declared_backend_state(manifest: &Value, case: &Value) -> Hea
 
     assert_eq!(actual, expected_response(case), "{name}");
     match backend {
+        CaseBackend::Up(seen) if family == NATIVE_CHALLENGE_FAMILY => {
+            assert!(
+                seen.lock().expect("seen log").is_empty(),
+                "{name}: native challenge reached Python"
+            );
+        }
         CaseBackend::Up(seen) => assert_request_unchanged(case, &seen),
         CaseBackend::Down(held) => drop(held),
     }
@@ -428,7 +452,7 @@ fn parity_violations(
     }
     let routes: BTreeMap<String, RouteBackend> = manifest_families
         .iter()
-        .filter(|(name, _)| name.as_str() != SYNTHETIC_FAMILY)
+        .filter(|(name, _)| !matches!(name.as_str(), SYNTHETIC_FAMILY | NATIVE_CHALLENGE_FAMILY))
         .map(|(name, entry)| {
             let declared = entry["parity"].as_str().expect("family parity");
             (name.clone(), parity(declared))

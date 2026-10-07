@@ -633,7 +633,7 @@ mod tests {
             let (port, rx) = spawn_embed_server();
             let dir = std::env::temp_dir().join(format!("gobby-embed-route-{port}"));
             std::fs::create_dir_all(&dir).expect("temp home");
-            std::fs::write(dir.join("local_cli_token"), "embed-token\n").expect("token");
+            std::fs::write(dir.join("bootstrap.yaml"), "api_key: embed-token\n").expect("API key");
             let url = format!("http://127.0.0.1:{port}");
             let route = Self {
                 _lock,

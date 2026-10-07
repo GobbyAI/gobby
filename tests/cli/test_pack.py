@@ -84,8 +84,7 @@ class TestPackCommand:
         # Setup fake GOBBY_HOME structure
         fake_home = tmp_path / ".gobby"
         fake_home.mkdir()
-        (fake_home / "bootstrap.yaml").write_text("hub_backend: postgres\n")
-        (fake_home / "local_cli_token").write_text("token\n")
+        (fake_home / "bootstrap.yaml").write_text("hub_backend: postgres\napi_key: test-pack-key\n")
         (fake_home / "session_transcripts").mkdir()
         (fake_home / "session_transcripts" / "1.txt").write_text("ts")
 
@@ -96,7 +95,6 @@ class TestPackCommand:
         assert "Pack contents (dry run):" in result.output
         assert "gobby/bootstrap.yaml" in result.output
         assert "gobby/hub-postgres.db" not in result.output
-        assert "gobby/local_cli_token" not in result.output
         assert "gobby/session_transcripts/" in result.output
 
     @patch("gobby.cli.pack.get_gobby_home")
@@ -112,8 +110,7 @@ class TestPackCommand:
     ) -> None:
         fake_home = tmp_path / ".gobby"
         fake_home.mkdir()
-        (fake_home / "bootstrap.yaml").write_text("hub_backend: postgres\n")
-        (fake_home / "local_cli_token").write_text("token\n")
+        (fake_home / "bootstrap.yaml").write_text("hub_backend: postgres\napi_key: test-pack-key\n")
         (fake_home / ".secret_kek").write_text("kek-key\n")
 
         mock_home.return_value = fake_home
@@ -134,7 +131,9 @@ class TestPackCommand:
             assert "gobby/.secret_salt" not in names
             assert "gobby/.secret_kek" in names
             assert "gobby/hub-postgres.db" not in names
-            assert "gobby/local_cli_token" not in names
+            bootstrap = tar.extractfile("gobby/bootstrap.yaml")
+            assert bootstrap is not None
+            assert b"api_key: test-pack-key" in bootstrap.read()
 
     @patch("gobby.cli.pack.get_gobby_home")
     @patch("gobby.cli.pack._daemon_is_running", return_value=False)

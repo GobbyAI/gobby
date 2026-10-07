@@ -710,24 +710,101 @@ def test_legacy_truncation_and_direct_diff_callers_are_removed() -> None:
     assert "get_task_diff(" not in validation_source
 
 
-def test_merge_commit_manifest_and_patch_use_the_first_parent_diff(repo: Path) -> None:
+@pytest.mark.parametrize("link_side", [False, True])
+def test_merge_commit_manifest_and_patch_use_the_first_parent_diff(
+    repo: Path, link_side: bool
+) -> None:
+    """A landing merge, alone or with the work it lands, shows its first-parent diff."""
     (repo / "base.txt").write_text("base\n")
     _commit(repo, "base")
     _git(repo, "checkout", "-q", "-b", "side")
     (repo / "side.txt").write_text("one\ntwo\n")
-    _commit(repo, "side")
+    side = _commit(repo, "side")
     _git(repo, "checkout", "-q", "-")
     (repo / "main.txt").write_text("main\n")
     _commit(repo, "main")
     _git(repo, "merge", "--no-ff", "-m", "land side", "side")
     landing = _git(repo, "rev-parse", "HEAD").strip().decode("ascii")
+    manager = _manager(side, landing) if link_side else _manager(landing)
 
-    page = get_task_diff_page("task-id", _manager(landing), cwd=repo)
-    content, _pages = _page_all_diff(_manager(landing), repo, limit_bytes=MAX_LIMIT_BYTES)
+    page = get_task_diff_page("task-id", manager, cwd=repo)
+    content, _pages = _page_all_diff(manager, repo, limit_bytes=MAX_LIMIT_BYTES)
 
     item = _find_manifest_item(page, b"side.txt")
     assert (item["lines_added"], item["lines_deleted"]) == (2, 0)
-    listed = [decode_content(entry["path"]) for entry in page["manifest"]["items"]]
-    assert b"main.txt" not in listed
+    listed = [
+        (entry["commit"], decode_content(entry["path"])) for entry in page["manifest"]["items"]
+    ]
+    assert (landing, b"side.txt") in listed
+    assert all(path != b"main.txt" for _commit_sha, path in listed)
     assert b"+one\n+two\n" in content
     assert b"main.txt" not in content
+
+
+def _start_side_branch(repo: Path, path: str, base: str, side: str) -> tuple[str, str]:
+    """Commit ``base`` on the target branch, then ``side`` on a new side branch.
+
+    Returns the target branch name and the side commit.
+    """
+    (repo / path).write_text(base)
+    _commit(repo, "base")
+    target = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip().decode("ascii")
+    _git(repo, "checkout", "-q", "-b", "side")
+    (repo / path).write_text(side)
+    return target, _commit(repo, "side work")
+
+
+def test_clean_sync_merge_adds_nothing_to_manifest_or_patch(repo: Path) -> None:
+    """Syncing the target into the task branch shows only what the merge authored."""
+    target, feature = _start_side_branch(repo, "feature.txt", "base\n", "feature\n")
+    _git(repo, "checkout", "-q", target)
+    (repo / "unrelated.txt").write_text("unrelated\n")
+    _commit(repo, "target work")
+    _git(repo, "checkout", "-q", "side")
+    _git(repo, "merge", "--no-ff", "-m", "sync target", target)
+    sync = _git(repo, "rev-parse", "HEAD").strip().decode("ascii")
+    manager = _manager(feature, sync)
+
+    page = get_task_diff_page("task-id", manager, cwd=repo)
+    content, _pages = _page_all_diff(manager, repo, limit_bytes=MAX_LIMIT_BYTES)
+    sync_view = get_task_diff_page("task-id", manager, cwd=repo, commit=sync)
+
+    listed = [
+        (entry["commit"], decode_content(entry["path"])) for entry in page["manifest"]["items"]
+    ]
+    assert listed == [(feature, b"feature.txt")]
+    assert page["manifest"]["total"] == 1
+    assert b"+feature\n" in content
+    assert b"unrelated" not in content
+    assert decode_content(sync_view["content"]) == b""
+
+
+def test_conflict_sync_merge_shows_only_its_resolution(repo: Path) -> None:
+    """A sync merge that resolved a conflict shows its remerge diff, not the target's work."""
+    target, side = _start_side_branch(repo, "shared.txt", "base\n", "side\n")
+    _git(repo, "checkout", "-q", target)
+    (repo / "shared.txt").write_text("target\n")
+    (repo / "unrelated.txt").write_text("unrelated\n")
+    _commit(repo, "target work")
+    _git(repo, "checkout", "-q", "side")
+    merge = subprocess.run(
+        ["git", "merge", "--no-ff", "-m", "sync target", target],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+    )
+    assert merge.returncode != 0
+    (repo / "shared.txt").write_text("resolved\n")
+    sync = _commit(repo, "sync target")
+    manager = _manager(side, sync)
+
+    page = get_task_diff_page("task-id", manager, cwd=repo)
+    content, _pages = _page_all_diff(manager, repo, limit_bytes=MAX_LIMIT_BYTES)
+
+    listed = [
+        (entry["commit"], decode_content(entry["path"])) for entry in page["manifest"]["items"]
+    ]
+    assert listed == [(side, b"shared.txt"), (sync, b"shared.txt")]
+    assert b"remerge CONFLICT" in content
+    assert b"+resolved\n" in content
+    assert b"unrelated" not in content

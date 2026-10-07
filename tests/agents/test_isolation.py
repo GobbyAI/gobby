@@ -183,10 +183,9 @@ class TestEnsureIsolationCodeIndex:
 
     @staticmethod
     def _write_operator_token(source_home: Path, token: str = "isolated-agent-token") -> None:
-        source_token = source_home / "local_cli_token"
-        source_token.write_text(f"{token}\n")
-        source_token.chmod(0o600)
-        (source_home / "bootstrap.yaml").write_text(json.dumps({"api_key": token}))
+        bootstrap = source_home / "bootstrap.yaml"
+        bootstrap.write_text(json.dumps({"api_key": token}))
+        bootstrap.chmod(0o600)
 
     def _identity_env(self) -> dict[str, str]:
         return {
@@ -289,9 +288,6 @@ class TestEnsureIsolationCodeIndex:
             'exec /tmp/gcode "$@"\n'
         )
         assert not (Path(result.runtime_home) / "bootstrap.yaml").exists()
-        runtime_token = Path(result.runtime_home) / "local_cli_token"
-        assert not runtime_token.exists()
-        assert not runtime_token.is_symlink()
         preflight = self._gcode_calls(popen)[0]
         assert preflight.args[0][0] == "/tmp/gcode"
         assert preflight.kwargs["env"]["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == str(grant_path)
@@ -586,12 +582,6 @@ class TestEnsureIsolationCodeIndex:
         for runtime_home in (symlink_home, file_home, live_home):
             runtime_home.mkdir(parents=True)
 
-        source_token = tmp_path / "operator-token"
-        source_token.touch()
-        symlink_token = symlink_home / "local_cli_token"
-        symlink_token.symlink_to(source_token)
-        file_token = file_home / "local_cli_token"
-        file_token.touch()
         stale_kek = file_home / ".secret_kek"
         stale_kek.write_text("copied-kek", encoding="utf-8")
         symlink_kek = symlink_home / ".secret_kek"
@@ -607,12 +597,8 @@ class TestEnsureIsolationCodeIndex:
 
         _reap_stale_gcode_runtime_tokens(runtime_root)
 
-        assert not symlink_token.exists()
-        assert not symlink_token.is_symlink()
-        assert not file_token.exists()
         assert not stale_kek.exists()
         assert not symlink_kek.is_symlink()
-        assert source_token.exists()
         for path in legacy_bootstraps:
             assert not path.exists()
 
@@ -647,8 +633,8 @@ class TestEnsureIsolationCodeIndex:
         reapable_home = runtime_root / "reapable"
         for runtime_home in (locked_home, reapable_home):
             runtime_home.mkdir(parents=True)
-        (locked_home / "local_cli_token").touch()
-        reapable_token = reapable_home / "local_cli_token"
+        (locked_home / ".secret_kek").touch()
+        reapable_token = reapable_home / ".secret_kek"
         reapable_token.touch()
         locked_home.chmod(0o500)
 
@@ -659,7 +645,7 @@ class TestEnsureIsolationCodeIndex:
         finally:
             locked_home.chmod(0o700)
 
-        assert (locked_home / "local_cli_token").exists()
+        assert (locked_home / ".secret_kek").exists()
         assert not reapable_token.exists()
 
     @pytest.mark.asyncio
@@ -703,7 +689,7 @@ class TestEnsureIsolationCodeIndex:
         # The credential is ephemeral: never in the runtime home, the wrapper,
         # or the env additions handed to the spawned agent.
         assert result.runtime_home is not None
-        assert not (Path(result.runtime_home) / "local_cli_token").exists()
+        assert not (Path(result.runtime_home) / "bootstrap.yaml").exists()
         wrapper = workspace / ".gobby" / "bin" / "gcode"
         assert "operator-token-value" not in wrapper.read_text()
         assert "GOBBY_AGENT_API_TOKEN" not in result.env

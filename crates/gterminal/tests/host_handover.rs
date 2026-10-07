@@ -1726,7 +1726,7 @@ fn deferral_then_stalled_cleanup() {
     // The probe blocks until the test releases it, so the batch below holds
     // the gate before the probe ends, however long the probe takes to start,
     // and through the whole gate wait after it.
-    let (held, fifo) = held_probe(&dir, "held-probe");
+    let (held, fifo) = held_probe(&dir, "held-probe", 0);
     let mut upgrader = connect_control(&dir, UPGRADE_TOKEN);
     let release = send_held_upgrade(&mut upgrader, &held, &fifo, "attempt-busy");
 
@@ -1805,7 +1805,7 @@ fn reservation_deferral_then_alarm_after_release() {
     let id = echo_panes(&mut host, &mut ctl, 1)
         .remove(0)
         .host_terminal_id;
-    let (held, fifo) = held_probe(&dir, "held-accept");
+    let (held, fifo) = held_probe(&dir, "held-accept", 0);
 
     let mut upgrader = connect_control(&dir, UPGRADE_TOKEN);
     let release = send_held_upgrade(&mut upgrader, &held, &fifo, "attempt-reserve");
@@ -1859,7 +1859,7 @@ fn draining_deferral() {
     let mut host = live_host(&[]);
     let dir = host.socket_dir().to_path_buf();
     let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
-    let (held, fifo) = held_probe(&dir, "held-accept");
+    let (held, fifo) = held_probe(&dir, "held-accept", 0);
     let mut upgrader = connect_control(&dir, UPGRADE_TOKEN);
     let release = send_held_upgrade(&mut upgrader, &held, &fifo, "attempt-drain");
     let draining = rpc(&mut ctl, "host_shutdown", json!({"grace_ms": 3000}));

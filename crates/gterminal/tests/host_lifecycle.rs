@@ -860,7 +860,11 @@ fn host_survives_daemon_disconnect_and_readopts() {
     let dir = temp_socket_dir();
     let token = "control-token-readopt";
     write_token(dir.path(), token);
-    std::fs::write(dir.path().join("local_cli_token"), LOCAL).expect("local token");
+    std::fs::write(
+        dir.path().join("bootstrap.yaml"),
+        format!("api_key: {LOCAL}\n"),
+    )
+    .expect("API key");
     let mut child = spawn_host(dir.path());
     let control = dir.path().join(CONTROL_SOCKET);
     let frames = dir.path().join(FRAMES_SOCKET);

@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "runtime_handshake_challenge",
-  "family": "runtime_handshake",
+  "family": "runtime_challenge",
   "backend": "up",
   "credential": "none",
   "request": {

@@ -127,6 +127,7 @@ with open(os.environ["FAKE_GDAEMON_LOG"], "a") as log:
     log.write(json.dumps({
         "argv": sys.argv[1:],
         "home": os.environ["GOBBY_HOME"],
+        "front_door_secret": os.environ.get("GOBBY_FRONT_DOOR_SECRET"),
         "parent_fd_open": is_open(parent_fd),
         "probe_fds_open": [fd for fd in probe_fds if is_open(fd)],
     }) + "\\n")
@@ -319,6 +320,8 @@ async def test_runner_spawns_child_for_either_launch_path(
             child = self.front_door_child
             observed["pid"] = child.pid if child is not None else None
             observed["serving"] = fake_gdaemon.serving()
+            if child is not None:
+                observed["front_door_secret"] = child.secret
 
         def request_shutdown(self) -> None:
             pass
@@ -346,10 +349,31 @@ async def test_runner_spawns_child_for_either_launch_path(
             "home": str(child_home),
             "parent_fd_open": True,
             "probe_fds_open": [],
+            "front_door_secret": observed["front_door_secret"],
         }
     ]
     # run_gobby stops the child before it releases the claim.
     assert fake_gdaemon.ports_free()
+
+
+@pytest.mark.asyncio
+async def test_front_door_secret_survives_respawn(fake_gdaemon: FakeGdaemon) -> None:
+    child = fake_gdaemon.child()
+    assert child.secret
+    assert len(child.secret) >= 43
+    assert fake_gdaemon.child().secret != child.secret
+    await asyncio.to_thread(child.start)
+    child.arm_respawn()
+    first_pid = child.pid
+    assert first_pid is not None
+    try:
+        assert fake_gdaemon.spawns()[-1]["front_door_secret"] == child.secret
+        os.kill(first_pid, signal.SIGKILL)
+        await _eventually(lambda: child.pid not in (None, first_pid))
+        await _eventually(fake_gdaemon.serving)
+        assert fake_gdaemon.spawns()[-1]["front_door_secret"] == child.secret
+    finally:
+        child.stop()
 
 
 @pytest.mark.asyncio
@@ -516,3 +540,14 @@ async def test_shutdown_disarms_respawn(
     assert backing_off.pid is None
     assert len(fake_gdaemon.spawns()) == 2
     assert fake_gdaemon.ports_free()
+
+
+def test_missing_gdaemon_guidance_requires_front_door(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(runner_front_door, "resolve_native_bin", lambda _name: None)
+    bootstrap = BootstrapConfig(front_door=FrontDoorConfig(enabled=True))
+    with pytest.raises(runner_front_door.FrontDoorStartupError, match="gobby install") as error:
+        runner_front_door.FrontDoorChild.from_bootstrap(bootstrap, tmp_path)
+    assert "front_door.enabled: false" not in str(error.value)
+    assert "API-key" in str(error.value)

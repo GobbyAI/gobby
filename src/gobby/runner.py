@@ -405,7 +405,6 @@ async def run_gobby(
     from gobby.utils.local_token import (
         bind_daemon_bootstrap,
         daemon_bootstrap_path,
-        read_local_api_token,
     )
     from gobby.utils.machine_id import require_machine_id
 
@@ -479,7 +478,7 @@ async def run_gobby(
             control = StandbyLeaseControl(
                 lease=lease,
                 database_url=database_url,
-                local_token=read_local_api_token(),
+                front_door_secret=front_door.secret if front_door is not None else None,
                 promotion_requested=promotion_requested,
                 schema_verifier=verify_schema,
             )
