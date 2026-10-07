@@ -19,7 +19,7 @@ from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
-USAGE_LEDGER_VERSION = 461
+USAGE_LEDGER_VERSION = 463
 
 
 def _machine_id(db: HubDatabase) -> str:
@@ -114,6 +114,18 @@ def test_close_and_reopen_follow_holder(
             "VALUES (%s, %s, clock_timestamp())",
             (task_id, holder),
         )
+
+
+def test_task_history_index_orders_by_claim(temp_db: HubDatabase) -> None:
+    with temp_db.transaction() as conn:
+        row = conn.execute(
+            "SELECT tablename, indexdef FROM pg_indexes "
+            "WHERE schemaname = current_schema() AND indexname = %s",
+            ("idx_task_claim_intervals_task",),
+        ).fetchone()
+    assert row is not None
+    assert row["tablename"] == "task_claim_intervals"
+    assert row["indexdef"].endswith("USING btree (task_id, claimed_at)")
 
 
 def test_sync_seeds_current_holder_idempotently(

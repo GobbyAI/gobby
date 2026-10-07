@@ -33,6 +33,7 @@ CREATE TABLE task_claim_intervals (
 CREATE UNIQUE INDEX idx_task_claim_intervals_open
     ON task_claim_intervals (task_id) WHERE released_at IS NULL;
 CREATE INDEX idx_task_claim_intervals_session ON task_claim_intervals (session_id, claimed_at);
+CREATE INDEX idx_task_claim_intervals_task ON task_claim_intervals (task_id, claimed_at);
 
 -- The holder is the claimant of an open task. Interval edges use the database clock.
 CREATE FUNCTION sync_task_claim_interval(p_task_id uuid) RETURNS void
