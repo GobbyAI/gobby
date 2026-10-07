@@ -8,6 +8,7 @@ import select
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import psutil
@@ -17,6 +18,7 @@ from tests.e2e import conftest
 from tests.e2e.daemon_git_deadline_bootstrap import (
     BLOCKED,
     COMMAND,
+    KILL_FILE,
     PID_FILE,
     RESULT,
     TIMEOUT_SECONDS,
@@ -24,12 +26,15 @@ from tests.e2e.daemon_git_deadline_bootstrap import (
 
 pytestmark = pytest.mark.e2e
 
+DEADLINE_ALLOWANCE_SECONDS = 1.5
+
 
 @pytest.mark.parametrize("command", [b"r", b"s"], ids=["run", "stream"])
 def test_git_deadline_survives_isolated_daemon_loop_stall(
     e2e_project_dir: Path,
     e2e_config: tuple[Path, int, int],
     monkeypatch: pytest.MonkeyPatch,
+    record_property: Callable[[str, object], None],
     command: bytes,
 ) -> None:
     home = e2e_config[0].parent
@@ -70,17 +75,33 @@ def test_git_deadline_survives_isolated_daemon_loop_stall(
             pid_text, start_text = payload.decode().split()
             pid = int(pid_text)
             started_at = float(start_text)
-            deadline = started_at + TIMEOUT_SECONDS + 0.4
+            # The 2.5s bound stays below the 4s loop stall and 60s natural exit.
+            deadline = started_at + TIMEOUT_SECONDS + DEADLINE_ALLOWANCE_SECONDS
             try:
                 with contextlib.suppress(psutil.NoSuchProcess):
                     psutil.Process(pid).wait(timeout=max(0.0, deadline - time.monotonic()))
             except psutil.TimeoutExpired:
+                observed_at = time.monotonic()
                 terminated_on_time = False
             else:
-                terminated_on_time = time.monotonic() <= deadline
+                observed_at = time.monotonic()
+                terminated_on_time = observed_at <= deadline
+            print(
+                f"Git deadline observation: elapsed_seconds={observed_at - started_at:.6f} "
+                f"bound_seconds={deadline - started_at:.6f} "
+                f"overrun_seconds={observed_at - deadline:.6f} "
+                f"terminated_on_time={terminated_on_time}"
+            )
+            record_property("deadline_elapsed_seconds", observed_at - started_at)
+            record_property("deadline_bound_seconds", deadline - started_at)
+            record_property("deadline_overrun_seconds", observed_at - deadline)
             ready, _, _ = select.select([result_channel], [], [], 5.0)
             assert ready, "Isolated runner never settled the Git result"
             assert result_channel.read(1024) == b"timeout"
+            signalled_at = float((home / KILL_FILE).read_text())
+            print(f"Git daemon kill signal: elapsed_seconds={signalled_at - started_at:.6f}")
+            record_property("kill_signal_elapsed_seconds", signalled_at - started_at)
+            assert signalled_at <= deadline, "Daemon signalled Git after the bounded deadline"
             assert terminated_on_time, (
                 "Git subprocess survived its deadline while the isolated daemon loop was blocked"
             )
