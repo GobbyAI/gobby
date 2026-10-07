@@ -1,7 +1,7 @@
 # gclient screen golden: arrange_window
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
-00 : subtext0/surface0+b*25 text/selection+b*8 subtext0/surface0+b*87
+00 : subtext0/dim+b*25 text/selection+b*8 subtext0/dim+b*87
 01 |                         ┌─────────────┐                                                                                |
 01 : text/panel_bg*25 surface0/panel_bg*15 text/panel_bg*80
 02 | build      │ logs       │ Split right │                                                                                |

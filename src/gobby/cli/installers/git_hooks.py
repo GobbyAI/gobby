@@ -2,11 +2,12 @@
 Git hooks installation for Gobby automation.
 
 This module handles installing git hooks for verification, code indexing,
-and JSONL backup export.
+JSONL backup export, and the protected-branch guard.
 
 Features:
 - Backs up existing hooks before modification
-- Chains with existing hooks (doesn't overwrite)
+- Chains with existing hooks (doesn't overwrite): a Gobby section exits only on
+  its own failure and restores any stdin it read, so foreign content after it runs
 - Integrates with pre-commit framework when available
 - Supports clean uninstallation
 """
@@ -17,6 +18,8 @@ import stat
 import time
 from pathlib import Path
 from typing import Any
+
+from gobby.tasks.landing_policy import DIRECT_COMMIT_ANY_FILE_DIRS, DIRECT_COMMIT_MARKDOWN_DIRS
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,87 @@ def _code_index_reindex_hook(event_name: str, changed_files_script: str) -> str:
     )
 
 
+def _restore_stdin(variable: str) -> str:
+    """Return sh that restores stdin captured in ``variable`` for chained hook content."""
+    return f"""
+# Restore the captured stdin for hook content chained after this section.
+if [ -n "${variable}" ]; then
+    exec 0<<GOBBY_STDIN_EOF
+${variable}
+GOBBY_STDIN_EOF
+else
+    exec 0</dev/null
+fi
+"""
+
+
+def _landing_guard_hook() -> str:
+    """Render the reference-transaction guard from the landing policy's path allowance."""
+    allowed = "|".join(
+        [f'"{prefix}"*' for prefix in DIRECT_COMMIT_ANY_FILE_DIRS]
+        + [f'"{prefix}"*.md' for prefix in DIRECT_COMMIT_MARKDOWN_DIRS]
+    )
+    return (
+        r"""
+# Gobby protected-branch guard. The branch checked out in the main worktree
+# takes code only through gobby-tasks-ops:land_commit. A direct update may
+# change only Markdown at the root or under the listed directories, and
+# coverage manifests. POSIX sh: no interpreter start per ref update.
+GOBBY_REF_LINES=$(cat)
+gobby_refuse() {
+    echo "Gobby refused the update of ${GOBBY_PROTECTED_REF:-the protected branch}: $1." >&2
+    echo "Code lands through gobby-tasks-ops:land_commit (operator override: GOBBY_LAND_COMMIT=1)." >&2
+    exit 1
+}
+GOBBY_PROTECTED_REF=
+if [ "$1" = "prepared" ] && [ "${GOBBY_LAND_COMMIT:-}" != "1" ]; then
+    GOBBY_COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir) ||
+        gobby_refuse "cannot find the main checkout"
+    # git reads HEAD in every ref format (a reftable HEAD file is a stub). Status 1 is
+    # a detached HEAD, which protects nothing; any other failure refuses.
+    GOBBY_PROTECTED_REF=$(git --git-dir="$GOBBY_COMMON_DIR" symbolic-ref -q HEAD)
+    case $? in
+    0|1) ;;
+    *) gobby_refuse "cannot resolve the main checkout's HEAD" ;;
+    esac
+fi
+if [ -n "$GOBBY_PROTECTED_REF" ]; then
+    while read -r gobby_old gobby_new gobby_ref; do
+        [ "$gobby_ref" = "$GOBBY_PROTECTED_REF" ] || continue
+        case $gobby_new in
+        *[!0]*) ;;
+        *) gobby_refuse "the protected branch cannot be deleted" ;;
+        esac
+        # A zero old value is a creation or a forced update; read the ref to tell.
+        case $gobby_old in
+        *[!0]*) ;;
+        *) gobby_old=$(git rev-parse -q --verify "$gobby_ref^{commit}") || continue ;;
+        esac
+        # Unquoted non-ASCII matches the policy; git still quotes control characters.
+        gobby_paths=$(git -c core.quotePath=false diff --name-only --no-renames \
+            "$gobby_old" "$gobby_new") ||
+            gobby_refuse "cannot list the paths changed by $gobby_old..$gobby_new"
+        while IFS= read -r gobby_path; do
+            case $gobby_path in
+            ""|"""
+        + allowed
+        + r""") ;;
+            \"*|*/*) gobby_refuse "$gobby_path is not a direct-commit path" ;;
+            *.md) ;;
+            *) gobby_refuse "$gobby_path is not a direct-commit path" ;;
+            esac
+        done <<GOBBY_PATHS_EOF
+$gobby_paths
+GOBBY_PATHS_EOF
+    done <<GOBBY_REF_LINES_EOF
+$GOBBY_REF_LINES
+GOBBY_REF_LINES_EOF
+fi
+"""
+        + _restore_stdin("GOBBY_REF_LINES")
+    )
+
+
 # Hook script templates - these get wrapped with markers
 HOOK_TEMPLATES = {
     "pre-commit": r"""
@@ -65,6 +149,12 @@ fi
 
 # Run pre-commit if available and config exists
 if command -v pre-commit >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
+    # POSIX sh: path sets go through files in a scratch directory. The subshell
+    # owns its EXIT trap, so cleanup never replaces a trap of chained hook content.
+    (
+    GOBBY_SCRATCH=$(mktemp -d) || exit 1
+    trap 'rm -rf "$GOBBY_SCRATCH"' EXIT
+
     # git reads GIT_INDEX_FILE, the index this commit is built from, so plain,
     # -a, and path-limited commits each snapshot and restage their own path set.
     _gobby_paths() {
@@ -72,33 +162,33 @@ if command -v pre-commit >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
     }
     # "<worktree blob> <path>" for each unstaged path, to see what pre-commit rewrote
     _gobby_worktree_states() {
-        local paths
-        paths=$(_gobby_paths --diff-filter=d)
-        [ -n "$paths" ] || return 0
-        paste -d ' ' <(printf '%s\n' "$paths" | git hash-object --stdin-paths) \
-            <(printf '%s\n' "$paths") | LC_ALL=C sort
+        _gobby_paths --diff-filter=d >"$GOBBY_SCRATCH/paths"
+        [ -s "$GOBBY_SCRATCH/paths" ] || return 0
+        git hash-object --stdin-paths <"$GOBBY_SCRATCH/paths" >"$GOBBY_SCRATCH/blobs"
+        paste -d ' ' "$GOBBY_SCRATCH/blobs" "$GOBBY_SCRATCH/paths" | LC_ALL=C sort
     }
 
-    STAGED_BEFORE=$(_gobby_paths --cached)
-    UNSTAGED_BEFORE=$(_gobby_paths)
-    STATES_BEFORE=$(_gobby_worktree_states)
+    _gobby_paths --cached >"$GOBBY_SCRATCH/staged-before"
+    _gobby_paths >"$GOBBY_SCRATCH/unstaged-before"
+    _gobby_worktree_states >"$GOBBY_SCRATCH/states-before"
 
     pre-commit run --hook-stage pre-commit
     PRECOMMIT_EXIT=$?
 
     if [ $PRECOMMIT_EXIT -ne 0 ]; then
-        AUTO_FIXED=$(LC_ALL=C comm -13 <(printf '%s\n' "$STATES_BEFORE") \
-            <(_gobby_worktree_states) | cut -d ' ' -f 2- | LC_ALL=C sort)
+        _gobby_worktree_states >"$GOBBY_SCRATCH/states-after"
+        AUTO_FIXED=$(LC_ALL=C comm -13 "$GOBBY_SCRATCH/states-before" \
+            "$GOBBY_SCRATCH/states-after" | cut -d ' ' -f 2- | LC_ALL=C sort)
         if [ -z "$AUTO_FIXED" ]; then
             exit $PRECOMMIT_EXIT
         fi
 
         # A fix may join the commit only if its path was fully staged; anything
         # else would sweep unstaged hunks or unstaged paths into the commit.
-        FULLY_STAGED=$(LC_ALL=C comm -23 <(printf '%s\n' "$STAGED_BEFORE") \
-            <(printf '%s\n' "$UNSTAGED_BEFORE"))
-        NOT_RESTAGEABLE=$(LC_ALL=C comm -23 <(printf '%s\n' "$AUTO_FIXED") \
-            <(printf '%s\n' "$FULLY_STAGED"))
+        LC_ALL=C comm -23 "$GOBBY_SCRATCH/staged-before" "$GOBBY_SCRATCH/unstaged-before" \
+            >"$GOBBY_SCRATCH/fully-staged"
+        NOT_RESTAGEABLE=$(printf '%s\n' "$AUTO_FIXED" |
+            LC_ALL=C comm -23 - "$GOBBY_SCRATCH/fully-staged")
         if [ -n "$NOT_RESTAGEABLE" ]; then
             echo ""
             echo "Pre-commit auto-fixed files that were not fully staged:"
@@ -125,6 +215,7 @@ if command -v pre-commit >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
         # Re-run so failures pre-commit could not fix still block the commit
         pre-commit run --hook-stage pre-commit || exit $?
     fi
+    ) || exit $?
 fi
 """,
     "pre-push": """
@@ -147,42 +238,41 @@ if [ -n "$PUSH_REFS" ]; then
             DELETE_ONLY=false
         fi
 
-    done <<< "$PUSH_REFS"
+    done <<GOBBY_PUSH_REFS_EOF
+$PUSH_REFS
+GOBBY_PUSH_REFS_EOF
 fi
-if [ "$DELETE_ONLY" = true ]; then
-    exit 0
-fi
+if [ "$DELETE_ONLY" != true ]; then
+    # Gobby backup — snapshot tasks and memories outside the repository before push
+    # Skip for spawned agents to avoid JSONL contamination in worktrees
+    if [ -z "$GOBBY_AGENT_RUN_ID" ] && command -v gobby >/dev/null 2>&1; then
+        gobby tasks backup --quiet 2>/dev/null || true
+        gobby memory backup --quiet 2>/dev/null || true
+    fi
 
-# Gobby backup — snapshot tasks and memories outside the repository before push
-# Skip for spawned agents to avoid JSONL contamination in worktrees
-if [ -z "$GOBBY_AGENT_RUN_ID" ] && command -v gobby >/dev/null 2>&1; then
-    gobby tasks backup --quiet 2>/dev/null || true
-    gobby memory backup --quiet 2>/dev/null || true
-fi
-
-if command -v gobby >/dev/null 2>&1; then
-    gobby hooks run pre-push 2>/dev/null
-    GOBBY_EXIT=$?
-    if [ $GOBBY_EXIT -ne 0 ]; then
-        echo "Gobby pre-push verification failed"
-        exit $GOBBY_EXIT
+    if command -v gobby >/dev/null 2>&1; then
+        gobby hooks run pre-push 2>/dev/null
+        GOBBY_EXIT=$?
+        if [ $GOBBY_EXIT -ne 0 ]; then
+            echo "Gobby pre-push verification failed"
+            exit $GOBBY_EXIT
+        fi
     fi
 fi
-
-""",
+"""
+    + _restore_stdin("PUSH_REFS"),
     "pre-merge-commit": """
 # Gobby verification runner for pre-merge-commit
 # Skip when Gobby itself is performing a merge (e.g. merge_clone)
-if [ "$GOBBY_MERGE" = "1" ]; then
-    exit 0
-fi
-# Runs configured verification commands (code_review, integration tests, etc.)
-if command -v gobby >/dev/null 2>&1; then
-    gobby hooks run pre-merge
-    GOBBY_EXIT=$?
-    if [ $GOBBY_EXIT -ne 0 ]; then
-        echo "Gobby pre-merge-commit verification failed"
-        exit $GOBBY_EXIT
+if [ "$GOBBY_MERGE" != "1" ]; then
+    # Runs configured verification commands (code_review, integration tests, etc.)
+    if command -v gobby >/dev/null 2>&1; then
+        gobby hooks run pre-merge
+        GOBBY_EXIT=$?
+        if [ $GOBBY_EXIT -ne 0 ]; then
+            echo "Gobby pre-merge-commit verification failed"
+            exit $GOBBY_EXIT
+        fi
     fi
 fi
 """,
@@ -226,15 +316,18 @@ fi
     "post-rewrite": _code_index_reindex_hook(
         "rewrite",
         r"""
+REWRITE_LINES=$(cat)
 CHANGED_FILES=$(
-    while read -r OLD_REV NEW_REV; do
+    printf '%s\n' "$REWRITE_LINES" | while read -r OLD_REV NEW_REV; do
         if [ -n "$OLD_REV" ] && [ -n "$NEW_REV" ]; then
             git diff --name-only "$OLD_REV" "$NEW_REV" 2>/dev/null
         fi
     done | sort -u
 )
 """,
-    ),
+    )
+    + _restore_stdin("REWRITE_LINES"),
+    "reference-transaction": _landing_guard_hook(),
 }
 
 
@@ -414,28 +507,35 @@ def _has_precommit_config(project_path: Path) -> bool:
 
 
 def get_stale_git_hooks(project_path: Path) -> list[str]:
-    """Return installed Gobby hook sections that differ from the current template.
+    """Return template hooks whose installed Gobby section differs from the template.
 
-    Read-only: hook files are never written. Hooks carrying no Gobby-managed
-    section, and checkouts without a hooks directory, report nothing.
+    Read-only: hook files are never written. Once any template hook carries a
+    Gobby section, a template hook that is missing or has no section is stale,
+    so a hook added after the last install shows up. A checkout with no Gobby
+    section anywhere, or without a hooks directory, reports nothing.
     """
     hooks_dir = _resolve_git_hooks_dir(project_path)
     if hooks_dir is None:
         return []
 
-    stale: list[str] = []
-    for hook_name, gobby_script in HOOK_TEMPLATES.items():
+    installed: dict[str, str | None] = {}
+    for hook_name in HOOK_TEMPLATES:
         try:
             content = (hooks_dir / hook_name).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            installed[hook_name] = None
+            continue
         except (OSError, UnicodeDecodeError, ValueError):
             # A hook this probe cannot read is not drift, and must not hide the rest.
             continue
-        installed_section = _extract_gobby_section(content)
-        if installed_section is None:
-            continue
-        if installed_section != _wrap_gobby_section(gobby_script).strip():
-            stale.append(hook_name)
-    return stale
+        installed[hook_name] = _extract_gobby_section(content)
+    if all(section is None for section in installed.values()):
+        return []
+    return [
+        hook_name
+        for hook_name, section in installed.items()
+        if section != _wrap_gobby_section(HOOK_TEMPLATES[hook_name]).strip()
+    ]
 
 
 def install_git_hooks(
@@ -532,7 +632,7 @@ def install_git_hooks(
                 logger.info("Appended Gobby hook to existing %s", hook_name)
 
         else:
-            # Create new hook (use bash for pre-commit process substitution)
+            # Create new hook
             new_content = f"#!/usr/bin/env bash\n\n{gobby_section}"
             hook_path.write_text(new_content)
             logger.info("Created new %s hook", hook_name)

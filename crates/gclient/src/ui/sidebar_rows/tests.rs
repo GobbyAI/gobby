@@ -235,7 +235,11 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
         kind: RowKind::Agent,
         ..SidebarRow::default()
     };
-    let line = line_text(&row_line(&long, 34, &Chrome::dark(), 0));
+    // With title scrolling off a long name truncates; scrolling is covered by
+    // an_agent_name_too_long_for_its_row_scrolls_on_the_shared_clock.
+    let mut still = Chrome::dark();
+    still.prefs.title_scrolling = TitleScrolling::Off;
+    let line = line_text(&row_line(&long, 34, &still, 0));
     assert!(line.ends_with(" #77: An extraordinarily long a…"), "{line}");
 
     let mut all = Chrome::dark();
@@ -559,6 +563,62 @@ fn a_worktree_name_too_long_for_its_row_scrolls_on_the_shared_clock() {
     assert_eq!(
         line_text(&row_line(&fits, 20, &chrome, 0)),
         "   └─ ○ feature-name"
+    );
+}
+
+#[test]
+fn an_agent_name_too_long_for_its_row_scrolls_on_the_shared_clock() {
+    let mut chrome = Chrome::dark();
+    let lane = SidebarRow {
+        id: "session:lane".into(),
+        definition: "Lane 2 developer gClient chrome".into(),
+        reference: "#15398".into(),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    // The marker, glyph and spacer leave 21 of 24 cells and the pinned
+    // `#15398: ` takes 8, so the 31-cell title scrolls through 13.
+    assert_eq!(row_travel(&lane, 24), 31 - 13);
+    assert_eq!(
+        line_text(&row_line(&lane, 24, &chrome, 0)),
+        " ○ #15398: Lane 2 develo"
+    );
+    chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
+    assert_eq!(
+        line_text(&row_line(&lane, 24, &chrome, 0)),
+        " ○ #15398: ne 2 develope"
+    );
+    chrome.ticker = (TICKER_PAUSE + 18) * TICKER_STEP;
+    let line = row_line(&lane, 24, &chrome, 0);
+    assert_eq!(line_text(&line), " ○ #15398: Client chrome");
+    let reference = line
+        .spans
+        .iter()
+        .find(|span| span.content == "#15398")
+        .expect("the reference keeps its own span");
+    assert_eq!(reference.style.fg, Some(chrome.palette.identifier));
+
+    chrome.prefs.title_scrolling = TitleScrolling::Off;
+    assert_eq!(
+        line_text(&row_line(&lane, 24, &chrome, 0)),
+        " ○ #15398: Lane 2 devel…"
+    );
+
+    // A row too narrow to pin the reference beside a title truncates.
+    chrome.prefs.title_scrolling = TitleScrolling::Left;
+    assert_eq!(row_travel(&lane, 10), 0);
+    assert_eq!(line_text(&row_line(&lane, 10, &chrome, 0)), " ○ #15398…");
+
+    // A name that fits stays still.
+    let fits = SidebarRow {
+        definition: "Lane 2".into(),
+        ..lane
+    };
+    chrome.prefs.title_scrolling = TitleScrolling::Left;
+    assert_eq!(row_travel(&fits, 24), 0);
+    assert_eq!(
+        line_text(&row_line(&fits, 24, &chrome, 0)),
+        " ○ #15398: Lane 2"
     );
 }
 

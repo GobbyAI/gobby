@@ -1,8 +1,8 @@
-"""Stdio bridge lifecycle endpoint."""
+"""Stdio bridge lifecycle endpoints."""
 
 from typing import TYPE_CHECKING, Any
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request
 
 from gobby.hooks.event_handlers._session_start.claims import MCP_PROXY_READY_VARIABLE
 from gobby.servers.routes.dependencies import get_server
@@ -36,3 +36,17 @@ async def report_bridge_ready(
         return {"success": bool(recorded), "session_id": session_id}
     finally:
         request_context._reset_context(tokens)
+
+
+async def get_bridge_tool_timeouts(
+    server: "HTTPServer" = Depends(get_server),
+) -> dict[str, Any]:
+    """Return the per-tool timeouts the stdio bridge applies to its daemon calls.
+
+    Serving the daemon's active map keeps the storage stack, a hub connection
+    and a full config read out of the bridge's first tool call (#23680).
+    """
+    config = server.config
+    if config is None:
+        raise HTTPException(status_code=503, detail="Daemon configuration unavailable")
+    return {"success": True, "tool_timeouts": dict(config.mcp_client_proxy.tool_timeouts)}

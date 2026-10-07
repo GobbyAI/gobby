@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -24,7 +25,7 @@ from gobby.runtime_grants.schema import (
     SchemaIdentity,
     UnavailableCapability,
 )
-from gobby.runtime_grants.signing import payload_checksum
+from gobby.runtime_grants.signing import sign_grant
 from gobby.servers.lease_fence import bind_fenced_writer
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.schema_contract import expected_schema_identity
@@ -47,18 +48,19 @@ class Worker:
 CHANGED_SOURCE = INITIAL_SOURCE.replace("Hello", "Hi")
 
 
-def _managed_grant(*, project_id: str, machine_id: str, dsn: str) -> GrantBundle:
+def _interactive_grant(*, project_id: str, machine_id: str, dsn: str) -> GrantBundle:
+    # This fixture owns an ordinary per-test hub, not a managed agent DB role.
     now = int(time.time())
     unsigned = GrantBundle(
         config_revision=1,
         deployment=GrantDeployment(token="cafebabedeadbeef", fencing_epoch=1),
         schema_identity=SchemaIdentity.model_validate(expected_schema_identity()),
         principal=GrantPrincipal(
-            kind="agent_run",
+            kind="interactive",
             machine_id=machine_id,
             project_id=project_id,
-            execution_id="grant-fixture",
-            session_id="grant-fixture",
+            execution_id=None,
+            session_id=None,
         ),
         capabilities=GrantCapabilities(
             postgres=PostgresDirect(
@@ -79,8 +81,22 @@ def _managed_grant(*, project_id: str, machine_id: str, dsn: str) -> GrantBundle
         issued_at=now,
         expires_at=now + 86_400,
     )
-    checksum = payload_checksum(unsigned)
-    return unsigned.model_copy(update={"payload_checksum": checksum})
+    return sign_grant(unsigned, "secret")
+
+
+def _cache_interactive_grant(home: Path, daemon_url: str, grant: GrantBundle) -> None:
+    write_grant_file(
+        home / "grants" / grant.deployment.token / f"{grant.principal.project_id}.json",
+        grant,
+    )
+    endpoint = daemon_url.strip().rstrip("/")
+    digest = hashlib.sha256(endpoint.encode()).hexdigest()[:16]
+    binding = home / "grants" / "bindings" / f"{digest}.json"
+    binding.parent.mkdir(parents=True, exist_ok=True)
+    binding.write_text(
+        json.dumps({"endpoint": endpoint, "deployment_token": grant.deployment.token})
+    )
+    binding.chmod(0o600)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -203,6 +219,9 @@ def test_real_gcode_writer_matches_python_model_contract(
     )
     (gobby_home / "machine_id").write_text(machine_id, encoding="utf-8")
     env["GOBBY_HOME"] = str(gobby_home)
+    # The isolated interactive cache works offline and never contacts the daemon.
+    daemon_url = "http://127.0.0.1:1"
+    env["GOBBY_DAEMON_URL"] = daemon_url
     env["DATABASE_URL"] = scoped_database_url
     env.setdefault("GCODE_BROKER_TIMEOUT_MS", "1")
 
@@ -222,23 +241,21 @@ def test_real_gcode_writer_matches_python_model_contract(
         "INSERT INTO project_checkouts (machine_id, project_id, root_path) VALUES (%s, %s, %s)",
         (machine_id, project_id, str(root.resolve())),
     )
-    grant = _managed_grant(
+    grant = _interactive_grant(
         project_id=project_id,
         machine_id=machine_id,
         dsn=scoped_database_url,
     )
-    grant_path = write_grant_file(gobby_home / "grants" / "grant.json", grant)
-    env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] = str(grant_path)
+    _cache_interactive_grant(gobby_home, daemon_url, grant)
 
     _run_gcode(gcode_bin, root, env, "init", "--quiet")
     project_id = _project_id(root)
-    grant = _managed_grant(
+    grant = _interactive_grant(
         project_id=project_id,
         machine_id=machine_id,
         dsn=scoped_database_url,
     )
-    grant_path = write_grant_file(gobby_home / "grants" / "grant.json", grant)
-    env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] = str(grant_path)
+    _cache_interactive_grant(gobby_home, daemon_url, grant)
     request.addfinalizer(lambda: code_storage.delete_project_index(project_id))
     _run_gcode(gcode_bin, root, env, "index", "--full", "--quiet")
 

@@ -92,6 +92,7 @@
     {"path": "crates/gcore/src/falkor.rs", "calls": {"query": 1}, "classification": "external-non-postgresql"},
     {"path": "crates/gcore/src/postgres.rs", "calls": {"execute": 1, "query_one": 1, "query_opt": 1}, "classification": "operator-only"},
     {"path": "crates/gcore/src/postgres_pool/row.rs", "calls": {"query": 1, "query_opt": 1}, "classification": "operator-only"},
+    {"path": "crates/gcore/src/postgres_pool/session.rs", "calls": {"query": 1, "query_one": 2}, "classification": "operator-only"},
     {"path": "crates/gcore/src/postgres_pool/transaction.rs", "calls": {"execute": 2, "query": 1, "query_one": 1, "query_opt": 1}, "classification": "operator-only"},
     {"path": "crates/gcore/src/schema/runner_plan.rs", "calls": {"query": 1}, "classification": "operator-only"},
     {"path": "crates/gcore/src/schema/sweep.rs", "calls": {"batch_execute": 1, "query": 1, "query_one": 2, "query_opt": 1}, "classification": "operator-only"},

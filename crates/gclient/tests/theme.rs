@@ -87,7 +87,7 @@ fn tokens_match_design_contract_and_survive_monochrome() {
 
         // Every herdr palette name resolves to a contract token.
         let entries = Palette::entries(theme);
-        assert_eq!(entries.len(), 23);
+        assert_eq!(entries.len(), 24);
         for (name, token) in entries {
             let hues: &[u16] = if name == "model" {
                 // The model-line board's slate teal and clay.
@@ -299,7 +299,7 @@ fn palette_entries_bind_the_same_tokens_the_render_paints_with() {
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
         let theme = Theme::new(kind);
         let palette = theme.palette();
-        assert_eq!(Palette::entries(&theme).len(), 23);
+        assert_eq!(Palette::entries(&theme).len(), 24);
         for (name, token) in Palette::entries(&theme) {
             let painted = match name {
                 "accent" => palette.accent,
@@ -323,6 +323,7 @@ fn palette_entries_bind_the_same_tokens_the_render_paints_with() {
                 "dim" => palette.dim,
                 "identifier" => palette.identifier,
                 "band" => palette.band,
+                "bar" => palette.bar,
                 "selection" => palette.selection,
                 "model" => palette.model,
                 // Every new role has to be bound here, or a capture

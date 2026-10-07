@@ -1154,7 +1154,10 @@ class TestCreateTaskTool:
 
             recovery = (
                 "Session already owns open claimed task #40. "
-                "Finish and close it, or for a genuine blocker or explicitly directed recovery use "
+                "Finish and close it. To start other work while it waits on review, landing or "
+                "close, commit its attributed files and get a reviewer's "
+                "independent_review_approval receipt. For a genuine blocker or explicitly "
+                "directed recovery use "
                 'escalate_task(task_id="#40", reason="<concrete reason>") '
                 "to release ownership. Alternatively, arrange an authorized transfer to another "
                 "session with claim capacity. force=true does not bypass your existing claim. "

@@ -1,7 +1,7 @@
 # gclient screen golden: help_dialog
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
-00 : subtext0/surface0+bd*120
+00 : subtext0/dim+bd*120
 01 |  ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  |
 01 : text/panel_bg+d*2 accent/panel_bg*116 text/panel_bg+d*2
 02 | M│Keybinds                                                                                                esc Close │  |
