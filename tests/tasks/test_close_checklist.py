@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import subprocess
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -15,6 +16,7 @@ import pytest
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
 import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle_validation
+import gobby.tasks.close_test_coverage as close_test_coverage
 from gobby.config.validation_detection import is_validation_command
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
@@ -1663,6 +1665,104 @@ def test_symlink_into_close_root_credits_only_an_identical_tree(
     assert gate.status == ("failed" if differing else "passed"), gate.message
     assert gate.details["pytest_uncovered_paths"] == (["tests/test_widget.py"] if differing else [])
     assert gate.details.get("pytest_copy_differing_paths", []) == differing
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(["git", *args], cwd=repo, text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+@pytest.mark.parametrize(
+    ("export_log", "candidate", "differing"),
+    [
+        pytest.param("clean\n", "head", [], id="candidate-bytes-despite-foreign-dirt"),
+        pytest.param("clean\n", None, ["regen.log"], id="no-candidate-compares-the-checkout"),
+        pytest.param(
+            "dirty\n",
+            "missing",
+            ["regen.log", "src/gone.py", "tests/test_widget.py"],
+            id="unlisted-candidate-fails-closed",
+        ),
+        pytest.param("dirty\n", "head", ["regen.log"], id="checkout-bytes-are-not-the-candidate"),
+    ],
+)
+def test_copy_credit_compares_against_the_close_candidate_commit(
+    tmp_path: Path, export_log: str, candidate: str | None, differing: list[str]
+) -> None:
+    # Another session's uncommitted edit to a changed path is not the candidate's code.
+    repo, export = tmp_path / "repo", tmp_path / "export"
+    for tree in (repo, export):
+        (tree / "tests").mkdir(parents=True)
+        (tree / "tests/test_widget.py").write_text("def test_widget(): pass\n")
+    (repo / "regen.log").write_text("clean\n")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "c")
+    shas = {"head": _git(repo, "rev-parse", "HEAD").strip(), "missing": "0" * 40}
+    (repo / "regen.log").write_text("dirty\n")
+    (export / "regen.log").write_text(export_log)
+    run = _run(2, command="uv run pytest tests/test_widget.py -q", workdir=str(export))
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_scoped_audit_run(1, "tests/test_widget.py"), run)
+        ),
+        has_attributed_edits=True,
+        changed_paths=("regen.log", "src/gone.py", "tests/test_widget.py"),
+        close_root=str(repo),
+        candidate_commit_sha=shas[candidate] if candidate else None,
+    )
+
+    assert gate.status == ("failed" if differing else "passed"), gate.message
+    assert gate.details.get("pytest_copy_differing_paths", []) == differing
+
+
+@pytest.mark.parametrize(
+    ("answered", "reads_after_two"),
+    [
+        pytest.param(False, 2, id="failed-listing-retried-by-the-next-evaluation"),
+        pytest.param(True, 1, id="listing-reused-across-evaluations"),
+    ],
+)
+def test_candidate_listing_costs_one_git_read_per_evaluation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answered: bool, reads_after_two: int
+) -> None:
+    # A hung git must not cost one timeout per compared path, nor outlive the evaluation.
+    reads: list[list[str]] = []
+    changed = ("src/a.py", "src/b.py", "tests/test_widget.py")
+    listing = "".join(f"100644 blob {'0' * 40}\t{path}\0" for path in changed)
+
+    def answer(command: list[str], cwd: str | Path, timeout: int = 5) -> str | None:
+        reads.append(command)
+        return listing if answered else None
+
+    monkeypatch.setattr(close_test_coverage, "run_git_command", answer)
+    for tree in ("repo", "export"):
+        for path in changed:
+            (tmp_path / tree / path).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / tree / path).write_text("def test_widget(): pass\n")
+    run = _run(2, command="uv run pytest tests/test_widget.py -q", workdir=str(tmp_path / "export"))
+
+    def evaluate() -> CloseGateResult:
+        return evaluate_validation_commands(
+            task_category="code",
+            evidence=TranscriptEvidence(
+                validation_runs=(_scoped_audit_run(1, "tests/test_widget.py"), run)
+            ),
+            has_attributed_edits=True,
+            changed_paths=changed,
+            close_root=str(tmp_path / "repo"),
+            candidate_commit_sha="1" * 40,
+        )
+
+    first = evaluate()
+    assert first.status == "failed", first.message
+    assert len(reads) == 1
+    second = evaluate()
+    assert second.status == "failed", second.message
+    assert len(reads) == reads_after_two
 
 
 def _scoped_pytest_gate(tmp_path: Path, failing_command: str) -> CloseGateResult:

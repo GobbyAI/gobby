@@ -1378,6 +1378,25 @@ class TestMissingPathSupersession:
             runs, owner_handoff=False, project_path=str(tmp_path)
         ) == (runs[0],)
 
+    @pytest.mark.parametrize("tracked", [False, True], ids=["untracked", "tracked"])
+    def test_red_in_an_exported_tree_asks_the_project_head(
+        self, project: str, tmp_path_factory: pytest.TempPathFactory, tracked: bool
+    ) -> None:
+        # A `git archive` export is not a repository, so the project's HEAD answers.
+        export = tmp_path_factory.mktemp("export")
+        (export / _ALIVE).parent.mkdir(parents=True)
+        (export / _ALIVE).write_text("")
+        if tracked:
+            (Path(project) / _GONE).write_text("")
+            _commit(Path(project))
+        runs = [
+            _run(1, "failure", f"cd {export} && {_MISSING_PATH_RED}", output=_MISSING_PATH_OUTPUT),
+            _run(2, "success", f"cd {export} && {_SURVIVING_GREEN}"),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False, project_path=project) == (
+            (runs[0],) if tracked else ()
+        )
+
     @pytest.mark.parametrize("history", ["never_tracked", "committed_deletion", "committed_rename"])
     def test_missing_path_failure_is_superseded_by_green_over_surviving_paths(
         self, project: str, history: str
