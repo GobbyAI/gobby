@@ -262,6 +262,28 @@ trusted_hash = "sha256:user-tool"
     assert user_entry["trusted_hash"] == "sha256:user-tool"
 
 
+def test_dead_hook_trust_state_pruned_from_out_of_order_tables(tmp_path: Path) -> None:
+    """Codex interleaves hooks.state with other tables; tomlkit then yields proxies."""
+    from gobby.cli.installers.codex import (
+        _load_toml_config,
+        _remove_dead_generated_hook_trust_state,
+    )
+
+    dead = tmp_path / "deleted" / ".codex" / "hooks.json"
+    user_key = "/opt/user-project-not-generated/.codex/hooks.json:pre_tool_use:0:0"
+    config = _load_toml_config(
+        f'[hooks.state.{json.dumps(f"{dead}:pre_tool_use:0:0")}]\ntrusted_hash = "a"\n\n'
+        '[projects."/opt/p"]\ntrust_level = "trusted"\n\n'
+        f'[hooks.state.{json.dumps(user_key)}]\ntrusted_hash = "b"\n'
+    )
+
+    with patch("gobby.agents.trust.tempfile.gettempdir", return_value=str(tmp_path)):
+        _remove_dead_generated_hook_trust_state(config)
+
+    state = tomllib.loads(config.as_string())["hooks"]["state"]
+    assert list(state) == [user_key]
+
+
 class TestInstallCodex:
     """Tests for install_codex function."""
 

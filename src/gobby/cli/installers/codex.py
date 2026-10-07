@@ -362,11 +362,12 @@ def _remove_dead_generated_hook_trust_state(config: TOMLDocument) -> None:
     Codex never forgets a hooks file, so without this sweep every deleted worktree
     leaves its trust tables behind and config.toml grows with each worktree created.
     """
+    # Interleaved tables parse as OutOfOrderTableProxy (a dict), not Table.
     hooks_table = config.get("hooks")
-    if not isinstance(hooks_table, Table):
+    if not isinstance(hooks_table, (dict, Table)):
         return
     state_table = hooks_table.get("state")
-    if not isinstance(state_table, Table):
+    if not isinstance(state_table, (dict, Table)):
         return
 
     event_labels = set(CODEX_HOOK_EVENT_KEY_LABELS.values())
