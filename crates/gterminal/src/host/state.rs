@@ -132,6 +132,10 @@ pub struct Attachment {
     pub delta_bytes: usize,
     /// Last semantic frame queued for this attachment's viewport.
     pub(crate) last_semantic_frame: Option<FrameData>,
+    /// Pane content generation of the last frame built for this attachment.
+    /// While it matches and the stream is in sync, the frame pass skips the
+    /// rebuild; viewport and scroll changes resync through `desynced`.
+    pub(crate) built_generation: Option<u64>,
     /// Per-attachment diff state for `terminal_ansi` frames.
     pub(crate) encoder: BlitEncoder,
     /// Last `SetTerminalTheme` this stream declared; applied to the slot
@@ -589,6 +593,7 @@ impl HostState {
                 delta_len: 0,
                 delta_bytes: 0,
                 last_semantic_frame: None,
+                built_generation: None,
                 encoder: BlitEncoder::new(),
                 declared_theme: None,
             },

@@ -197,6 +197,7 @@ async fn attach_tmux(
             delta_len: 0,
             delta_bytes: 0,
             last_semantic_frame: None,
+            built_generation: None,
             encoder: crate::protocol::render_ansi::BlitEncoder::new(),
             declared_theme: None,
         },
