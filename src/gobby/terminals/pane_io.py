@@ -79,7 +79,7 @@ ComposerReader = Callable[[str | None], ComposerRead]
 #: What the composer says about a text we just pressed Enter on. ``left`` and
 #: ``held`` are positive reads; ``unreadable`` is no evidence in either direction,
 #: so it can neither prove a submission nor condemn one.
-ComposerVerdict = Literal["left", "held", "unreadable"]
+ComposerVerdict = Literal["left", "held", "changed", "unreadable"]
 #: Leading characters that identify our own text on the composer's first row.
 #: A wrapped draft only shows its first row, so the whole text never matches.
 COMPOSER_MATCH_CHARS = 24
@@ -454,8 +454,10 @@ async def composer_verdict(
 
     Read through the full window: an initially empty frame can be stale before
     the CLI paints a held draft. At the deadline, ``left`` means the composer is
-    empty or has a different draft, ``held`` means it still starts with
-    ``held_text``, and ``unreadable`` means there was no classifiable final frame.
+    empty, ``held`` means it still starts with ``held_text``, ``changed`` means
+    a different draft remains, and ``unreadable`` means no classifiable final frame.
+    A different draft cannot prove submission: a stale pre-write frame may have
+    hidden it, or an operator may have typed it after Enter.
     The read trims its line, so the match trims ``held_text`` too.
     """
     prefix = held_text.strip()[:COMPOSER_MATCH_CHARS]
@@ -463,10 +465,10 @@ async def composer_verdict(
     while True:
         read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
         if elapsed >= window_seconds:
-            if read.state == "empty" or (
-                read.state == "draft" and read.line is not None and not read.line.startswith(prefix)
-            ):
+            if read.state == "empty":
                 return "left"
+            if read.state == "draft" and read.line is not None and not read.line.startswith(prefix):
+                return "changed"
             return "held" if read.state == "draft" else "unreadable"
         delay = min(poll_seconds, window_seconds - elapsed)
         await asyncio.sleep(delay)
@@ -575,6 +577,13 @@ async def submit_text(
                 False,
                 f"{label} was typed and Enter sent, but the composer could not be read "
                 "to verify it",
+                SUBMIT_UNVERIFIED_ERROR_CODE,
+            )
+        if verdict == "changed":
+            return SubmitResult(
+                False,
+                f"{label} was typed and Enter sent, but a different draft remains in the "
+                "composer; submission cannot be verified",
                 SUBMIT_UNVERIFIED_ERROR_CODE,
             )
         logger.debug(

@@ -12,6 +12,7 @@ from gobby.agents.detection.matcher import CompiledManifest, compile_manifest
 from gobby.agents.idle_detector import ComposerRead, IdleDetector
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.pane_io import (
+    SUBMIT_UNVERIFIED_ERROR_CODE,
     TEXT_NOT_SUBMITTED_ERROR_CODE,
     PaneIO,
     RuntimePaneIO,
@@ -470,6 +471,39 @@ async def test_an_unreadable_composer_after_a_held_read_is_unverified(
 
 #: A wake that was typed but never submitted, as a stuck seat shows it (#23730).
 _STUCK_DRAFT = "[Gobby] Check messages"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("before", [ComposerRead("empty"), ComposerRead("unknown")])
+async def test_a_missed_existing_draft_cannot_prove_submission(
+    monkeypatch: pytest.MonkeyPatch,
+    before: ComposerRead,
+) -> None:
+    """A stale pre-write frame hides the draft that still holds after Enter."""
+    pane = _ScriptedPane([before, ComposerRead("draft", _STUCK_DRAFT)])
+
+    result = await _submit(pane, monkeypatch)
+
+    assert result.ok is False
+    assert result.error_code == SUBMIT_UNVERIFIED_ERROR_CODE
+    assert result.reason is not None and "different draft" in result.reason
+    assert pane.typed == [f"{_TEXT}\n"]
+    assert pane.keys == ["enter"]
+
+
+@pytest.mark.asyncio
+async def test_a_changed_draft_is_unverified_without_submitting_it_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Different text can be a fresh operator draft, so never retry its Enter."""
+    pane = _ScriptedPane([ComposerRead("draft", _STUCK_DRAFT), ComposerRead("draft", "new draft")])
+
+    result = await _submit(pane, monkeypatch)
+
+    assert result.ok is False
+    assert result.error_code == SUBMIT_UNVERIFIED_ERROR_CODE
+    assert pane.typed == [f"{_TEXT}\n"]
+    assert pane.keys == ["enter"]
 
 
 @pytest.mark.asyncio
