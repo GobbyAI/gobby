@@ -781,6 +781,38 @@ def test_related_source_selector_prefilters_and_caches_sibling_parses(
     )
 
 
+def test_related_source_selector_reuses_unchanged_test_parses(tmp_path: Path) -> None:
+    """Repeated close evaluations do not re-parse the test tree (#23359)."""
+    (tmp_path / "src/gobby").mkdir(parents=True)
+    (tmp_path / "src/gobby/widget.py").write_text("VALUE = 1\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_consumer.py").write_text("from gobby.widget import VALUE\n")
+    first = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path)
+
+    with patch("gobby.tasks.close_test_coverage.ast.parse", wraps=ast.parse) as parse:
+        second = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path)
+
+    assert first == second == {"src/gobby/widget.py": ("tests/test_consumer.py",)}
+    assert parse.call_args_list == []
+
+
+def test_related_source_selector_reparses_an_edited_test(tmp_path: Path) -> None:
+    (tmp_path / "src/gobby").mkdir(parents=True)
+    (tmp_path / "src/gobby/widget.py").write_text("VALUE = 1\n")
+    (tmp_path / "tests").mkdir()
+    consumer = tmp_path / "tests/test_consumer.py"
+    consumer.write_text("EXAMPLE = 'gobby.widget'\n")
+    assert related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path) == {
+        "src/gobby/widget.py": ()
+    }
+
+    consumer.write_text("from gobby.widget import VALUE\n")
+
+    assert related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path) == {
+        "src/gobby/widget.py": ("tests/test_consumer.py",)
+    }
+
+
 @pytest.mark.parametrize(
     ("name", "collected"),
     [("test_widget.py", True), ("run_widget_sandbox.py", True), ("widget_test.py", False)],

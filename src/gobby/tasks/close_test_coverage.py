@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import logging
 import posixpath
 import re
@@ -62,30 +63,11 @@ def _module_name(path: str) -> str:
     return ".".join(parts)
 
 
-def _module_imports(
-    path: Path,
-    module: str,
-    relevant_prefixes: set[str] | None = None,
-    parent_import: re.Pattern[str] | None = None,
-    *,
-    text: str | None = None,
-) -> set[str]:
+def _module_imports(path: Path, module: str, text: str) -> set[str]:
     """Read imports without importing/executing repository modules."""
     try:
-        if text is None:
-            text = path.read_text(encoding="utf-8")
-        if (
-            relevant_prefixes is not None
-            and not any(prefix in text for prefix in relevant_prefixes)
-            and not (
-                parent_import is not None
-                and parent_import.search(text)
-                and any(prefix.rpartition(".")[2] in text for prefix in relevant_prefixes)
-            )
-        ):
-            return set()
         tree = ast.parse(text)
-    except (OSError, UnicodeError, SyntaxError) as exc:
+    except SyntaxError as exc:
         logger.debug("Cannot select related tests from %s: %s", path, exc)
         return set()
     package = module if path.stem == "__init__" else module.rpartition(".")[0]
@@ -116,6 +98,42 @@ def _module_imports(
     return imports
 
 
+# Parsed imports by path, valid while the file's content digest matches (#23359).
+# Closes evaluate on worker threads; dict get/set is atomic, so a race only parses twice.
+_PARSED_IMPORTS: dict[Path, tuple[bytes, frozenset[str]]] = {}
+
+
+def _parsed_imports(path: Path, module: str, text: str) -> frozenset[str]:
+    digest = hashlib.blake2b(text.encode(), digest_size=16).digest()
+    cached = _PARSED_IMPORTS.get(path)
+    if cached is not None and cached[0] == digest:
+        return cached[1]
+    imports = frozenset(_module_imports(path, module, text))
+    _PARSED_IMPORTS[path] = (digest, imports)
+    return imports
+
+
+def _test_imports(
+    path: Path,
+    module: str,
+    prefixes: set[str],
+    leaves: set[str],
+    parent_import: re.Pattern[str] | None,
+) -> frozenset[str]:
+    """Imports of a test that may import a prefix; every prefix contains its leaf."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        logger.debug("Cannot select related tests from %s: %s", path, exc)
+        return frozenset()
+    if not any(leaf in text for leaf in leaves) or not (
+        any(prefix in text for prefix in prefixes)
+        or (parent_import is not None and parent_import.search(text) is not None)
+    ):
+        return frozenset()
+    return _parsed_imports(path, module, text)
+
+
 def related_python_source_tests(
     changed_paths: Iterable[str], base_dir: str | Path
 ) -> dict[str, tuple[str, ...]]:
@@ -131,7 +149,7 @@ def related_python_source_tests(
     if not sources or not (base / "tests").is_dir():
         return selected
     packages: dict[Path, dict[str, tuple[Path, str]]] = {}
-    parsed_siblings: dict[Path, set[str]] = {}
+    parsed_siblings: dict[Path, frozenset[str]] = {}
     families: dict[str, dict[str, int]] = {}
     for source in sources:
         source_path = PurePosixPath(source)
@@ -158,7 +176,7 @@ def related_python_source_tests(
                 if sibling in family or not any(leaf in text for leaf in leaves):
                     continue
                 if path not in parsed_siblings:
-                    parsed_siblings[path] = _module_imports(path, sibling, leaves, text=text)
+                    parsed_siblings[path] = _parsed_imports(path, sibling, text)
                 if dependencies := parsed_siblings[path].intersection(family):
                     importers[sibling] = 1 + min(family[dependency] for dependency in dependencies)
             if not importers:
@@ -176,22 +194,16 @@ def related_python_source_tests(
         if parents
         else None
     )
-    candidates = [
-        base / path
-        for path in pytest_module_paths(
-            path.relative_to(base).as_posix()
-            for path in (base / "tests").rglob("*.py")
-            if path.is_file()
-        )
-    ]
+    leaves = {prefix.rpartition(".")[2] for prefix in prefixes}
+    tests_dir = base / "tests"
+    # rglob joins onto tests_dir, so slicing its string skips pathlib's relative_to.
+    offset = len(str(tests_dir)) - len("tests")
+    candidates = pytest_module_paths(
+        str(path)[offset:] for path in tests_dir.rglob("*.py") if path.is_file()
+    )
     tests = [
-        (
-            path.relative_to(base).as_posix(),
-            _module_imports(
-                path, _module_name(path.relative_to(base).as_posix()), prefixes, parent_import
-            ),
-        )
-        for path in candidates
+        (test, _test_imports(base / test, _module_name(test), prefixes, leaves, parent_import))
+        for test in candidates
     ]
     for source, family in families.items():
         source_path = PurePosixPath(source)
