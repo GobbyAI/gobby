@@ -17,6 +17,7 @@ from gobby.storage.concurrency import CoverageExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError, PlanRecord
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.project_context import get_project_context
 
 P = ParamSpec("P")
@@ -323,6 +324,7 @@ def create_plan_registry(
             expected_project_id=default_project_id,
             code_index=code_index,
             require_symbol_validation=True,
+            task_manager=LocalTaskManager(db),
         )
 
     registry.register(
