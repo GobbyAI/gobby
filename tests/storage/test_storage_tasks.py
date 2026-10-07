@@ -98,6 +98,25 @@ def _mark_closed_without_stage_cleanup(task_manager: LocalTaskManager, task_id: 
     )
 
 
+def _create_closed_task(
+    task_manager: LocalTaskManager,
+    project_id: str,
+    title: str,
+    *,
+    created_day: int,
+    closed_day: int,
+) -> None:
+    task = task_manager.create_task(project_id, title, validation_criteria=VALIDATION_CRITERIA)
+    task_manager.db.execute(
+        "UPDATE tasks SET created_at = %s, closed_at = %s WHERE id = %s",
+        (
+            f"2026-05-{created_day:02d}T00:00:00+00:00",
+            f"2026-06-{closed_day:02d}T00:00:00+00:00",
+            task.id,
+        ),
+    )
+
+
 def _assert_stage_state(task, state: str) -> None:
     assert projected_task_state(task) == state
 
@@ -1606,6 +1625,91 @@ class TestLocalTaskManager:
         open_claims = task_manager.list_tasks(claimed_by_session_id=session.id)
         assert len(open_claims) == 1
 
+    def test_concurrent_claims_beside_a_handed_off_claim_allow_only_one_task(
+        self,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        session_manager: SessionManager,
+    ) -> None:
+        import concurrent.futures
+        import threading
+
+        session = session_manager.register(
+            external_id="concurrent-handed-off-claim-ext",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project_id,
+        )
+        handed_off = task_manager.create_task(
+            project_id, "Handed off", validation_criteria=VALIDATION_CRITERIA
+        )
+        task_manager.claim_task_for_agent(handed_off.id, session.id)
+        tasks = [
+            task_manager.create_task(
+                project_id, f"Concurrent claim {index}", validation_criteria=VALIDATION_CRITERIA
+            )
+            for index in range(2)
+        ]
+        barrier = threading.Barrier(2)
+
+        def _claim(task_id: str) -> str:
+            barrier.wait()
+            try:
+                task_manager.claim_task_for_agent(
+                    task_id, session.id, handed_off_task_ids={handed_off.id}
+                )
+            except AgentTaskClaimConflictError:
+                return "conflict"
+            return task_id
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(_claim, [task.id for task in tasks]))
+
+        winners = [outcome for outcome in outcomes if outcome != "conflict"]
+        assert len(winners) == 1
+        assert outcomes.count("conflict") == 1
+        open_claims = task_manager.list_tasks(claimed_by_session_id=session.id)
+        assert {task.id for task in open_claims} == {handed_off.id, winners[0]}
+
+    def test_delegated_agent_claim_needs_the_receivers_other_claim_handed_off(
+        self,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        session_manager: SessionManager,
+    ) -> None:
+        parent = session_manager.register(
+            external_id="delegating-parent-ext",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project_id,
+        )
+        child = session_manager.register(
+            external_id="delegated-child-ext",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project_id,
+        )
+        held = task_manager.create_task(
+            project_id, "Child's earlier claim", validation_criteria=VALIDATION_CRITERIA
+        )
+        delegated = task_manager.create_task(
+            project_id, "Delegated work", validation_criteria=VALIDATION_CRITERIA
+        )
+        task_manager.claim_task_for_agent(held.id, child.id)
+        task_manager.claim_task_for_agent(delegated.id, parent.id)
+
+        with pytest.raises(AgentTaskClaimConflictError) as conflict:
+            task_manager.claim_task_for_agent(delegated.id, child.id, expected_owner=parent.id)
+        assert conflict.value.claimed_task_id == held.id
+        assert task_manager.get_task(delegated.id).claimed_by_session_id == parent.id
+
+        claimed = task_manager.claim_task_for_agent(
+            delegated.id, child.id, expected_owner=parent.id, handed_off_task_ids={held.id}
+        )
+
+        assert claimed.claimed_by_session_id == child.id
+        assert task_manager.get_task(held.id).claimed_by_session_id == child.id
+
     def test_submit_for_review_clears_canonical_owner(
         self, task_manager, project_id, session_manager
     ) -> None:
@@ -3056,6 +3160,24 @@ class TestListTasksBranchCoverage:
         assert len(tasks) == 2
         for t in tasks:
             assert t.parent_task_id == parent.id
+
+    def test_closed_listing_defaults_to_newest_closure_first(
+        self, task_manager: LocalTaskManager, project_id: str
+    ) -> None:
+        """A limited closed listing returns the latest closures, newest first (#23687)."""
+        _create_closed_task(task_manager, project_id, "A", created_day=1, closed_day=4)
+        _create_closed_task(task_manager, project_id, "B", created_day=2, closed_day=1)
+        _create_closed_task(task_manager, project_id, "C", created_day=3, closed_day=3)
+        _create_closed_task(task_manager, project_id, "D", created_day=4, closed_day=2)
+        task_manager.create_task(project_id, "Open", validation_criteria=VALIDATION_CRITERIA)
+
+        newest = task_manager.list_tasks(project_id=project_id, closed=True, limit=3)
+        hierarchy = task_manager.list_tasks(
+            project_id=project_id, closed=True, limit=3, sort_by="hierarchy"
+        )
+
+        assert [t.title for t in newest] == ["A", "C", "D"]
+        assert [t.title for t in hierarchy] == ["A", "B", "C"]
 
 
 @pytest.mark.integration

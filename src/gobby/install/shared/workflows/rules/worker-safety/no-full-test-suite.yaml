@@ -16,7 +16,7 @@ rules:
         mask_quoted: true
         command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+)?(?:python3?\\s+-m\\s+)?pytest(?=$|[\\s;&|<>()`])"
         # `--version` / `--help` answer a question and run no suite.
-        command_not_pattern: "\\bpytest\\b[^\\n;&|]*\\s(?:-k|--version\\b|--help\\b|[^\\s;&|-]\\S*\\.py\\b|['\"]?(?:[^\\s;&|'\"-][^\\s;&|]*/)?tests/[^\\s/;&|'\"]+)"
+        command_not_pattern: "\\bpytest\\b[^\\n;&|]*[^\\S\\n](?:-k|--version\\b|--help\\b|[^\\s;&|-]\\S*\\.py\\b|['\"]?(?:[^\\s;&|'\"-][^\\s;&|]*/)?tests/[^\\s/;&|'\"]+)"
         reason: >-
           Run targeted tests: `GOBBY_TEST_PROTECT=1 pytest tests/path/test_file.py`
           or `GOBBY_TEST_PROTECT=1 pytest -k 'pattern'`
@@ -36,7 +36,9 @@ rules:
         # Third alternative: `--version` / `--help` answer a question. Fourth:
         # `vitest related <path>` runs only the tests importing that path; consume
         # reporter values so neither a bare word nor a test-shaped value is a target.
-        command_not_pattern: "\\b(vitest|jest)\\b(?!\\s+related\\b)[^;&|]*(?:__tests__/\\S+\\.(ts|js|tsx|jsx)|\\S+\\.(test|spec)\\.(ts|js|tsx|jsx))\\b|\\b(vitest|jest)\\b(?!\\s+related\\b)[^;&|]*(-t|--testNamePattern|--testPathPattern)(\\s+|=)|\\b(vitest|jest)\\b[^;&|]*\\s--(?:version|help)\\b|\\bvitest\\s+related\\b(?:\\s+(?:--(?:run|no-coverage|silent|passWithNoTests)|--reporter(?:=[^\\s;&|]+|\\s+[^\\s;&|]+)))*\\s(?!-)[^\\s;&|]+"
+        # Exemptions read the command subjects joined by newlines, so no span may
+        # cross a newline: a later command, or a closing `)` / `}`, is no target.
+        command_not_pattern: "\\b(vitest|jest)\\b(?!\\s+related\\b)[^\\n;&|]*(?:__tests__/\\S+\\.(ts|js|tsx|jsx)|\\S+\\.(test|spec)\\.(ts|js|tsx|jsx))\\b|\\b(vitest|jest)\\b(?!\\s+related\\b)[^\\n;&|]*(-t|--testNamePattern|--testPathPattern)([^\\S\\n]+|=)|\\b(vitest|jest)\\b[^\\n;&|]*[^\\S\\n]--(?:version|help)\\b|\\bvitest[^\\S\\n]+related\\b(?:[^\\S\\n]+(?:--(?:run|no-coverage|silent|passWithNoTests)|--reporter(?:=[^\\s;&|]+|[^\\S\\n]+[^\\s;&|]+)))*[^\\S\\n]+(?![-)}])[^\\s;&|]+"
         reason: >-
           Run targeted tests: name specific test files or use `-t` /
           `--testNamePattern` filters.
@@ -50,7 +52,8 @@ rules:
       - type: block
         tools: [Bash]
         command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+)?cargo\\s+(?:\\+\\S+\\s+)?test\\b"
-        command_not_pattern: "\\bcargo\\s+(?:\\+\\S+\\s+)?test\\b[^;&|]*(?:\\s(?:-p|--package|--test|--bin)\\s+\\S+|\\s(?!-)[^\\s;&|]+)"
+        # Same single-line exemption as no-full-vitest-suite.
+        command_not_pattern: "\\bcargo\\s+(?:\\+\\S+\\s+)?test\\b[^\\n;&|]*(?:[^\\S\\n](?:-p|--package|--test|--bin)[^\\S\\n]+\\S+|[^\\S\\n](?![-)}])[^\\s;&|]+)"
         reason: >-
           Run targeted tests: `cargo test <name>` or `cargo test -p <package>`.
 

@@ -44,7 +44,7 @@ from gobby.config.runtime_models import ConfigSnapshot
 from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.storage.managed_credentials import ManagedCredential
 from gobby.storage.schema_contract import expected_schema_identity
-from gobby.utils.local_token import verify_agent_api_token
+from gobby.utils.local_token import derive_managed_signing_key, verify_agent_api_token
 from gobby.worktrees.git import WorktreeGitManager
 from tests.runtime_grants.support import config_snapshot, daemon_config
 
@@ -186,6 +186,7 @@ class TestEnsureIsolationCodeIndex:
         source_token = source_home / "local_cli_token"
         source_token.write_text(f"{token}\n")
         source_token.chmod(0o600)
+        (source_home / "bootstrap.yaml").write_text(json.dumps({"api_key": token}))
 
     def _identity_env(self) -> dict[str, str]:
         return {
@@ -422,7 +423,7 @@ class TestEnsureIsolationCodeIndex:
         assert context.fencing_epoch == 9
         assert context.signing_secret == "sec-live"
 
-    def test_missing_operator_token_fails_before_grant_write(
+    def test_missing_signing_key_fails_before_grant_write(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from gobby.agents.code_index import _prepare_gcode_runtime
@@ -439,7 +440,9 @@ class TestEnsureIsolationCodeIndex:
         monkeypatch.setattr("gobby.agents.code_index._signed_grant_from_credential", signed)
         monkeypatch.setattr("gobby.agents.code_index.materialize_managed_launch", materialized)
 
-        with pytest.raises(IndexInventoryError, match="operator token unavailable") as exc_info:
+        with pytest.raises(
+            IndexInventoryError, match="managed signing key unavailable"
+        ) as exc_info:
             _prepare_gcode_runtime(
                 workspace=workspace,
                 gcode_bin=Path("/tmp/gcode"),
@@ -448,7 +451,7 @@ class TestEnsureIsolationCodeIndex:
                 project_id=self._PROJECT_ID,
             )
 
-        assert exc_info.value.code == "operator_token_unavailable"
+        assert exc_info.value.code == "signing_key_unavailable"
         signed.assert_not_called()
         materialized.assert_not_called()
         assert not any(runtime_root.rglob("grant.json"))
@@ -744,7 +747,7 @@ class TestEnsureIsolationCodeIndex:
 
         token = result.api_token
         assert token is not None
-        claims = verify_agent_api_token(token, "isolated-agent-token")
+        claims = verify_agent_api_token(token, derive_managed_signing_key("isolated-agent-token"))
         assert claims is not None
         assert claims.agent_run_id == str(credential.managed_execution_id)
         assert (claims.project_id, claims.session_id) == (self._PROJECT_ID, self._SESSION_ID)

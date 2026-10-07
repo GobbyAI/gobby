@@ -95,6 +95,9 @@ pub enum Hit {
     SettingsDialog,
     /// A button of the open dialog, as an index into its button row.
     DialogButton(usize),
+    /// Inside the open popup a wheel notch scrolls (`ViewState::dialog_area`),
+    /// off its buttons.
+    Dialog,
     /// A menu bar title, as an index into `MenuBarMenu::ALL`.
     MenuTitle(usize),
     /// The menu bar beside its titles.
@@ -123,6 +126,9 @@ pub fn hit_test(view: &ViewState, column: u16, row: u16) -> Hit {
         if dialog.contains(at) {
             return Hit::SettingsDialog;
         }
+    }
+    if view.dialog_area.is_some_and(|dialog| dialog.contains(at)) {
+        return Hit::Dialog;
     }
     if view.toast_hit_area.is_some_and(|toast| toast.contains(at)) {
         return Hit::Toast;

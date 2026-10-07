@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from gobby.runtime_grants.handshake import _recompute_capability_signature
 from gobby.runtime_grants.schema import GrantPrincipal
 from gobby.utils.local_token import (
+    derive_managed_signing_key,
     issue_agent_api_token,
     issue_maintenance_api_token,
     verify_agent_api_token,
@@ -50,13 +51,13 @@ def test_maintenance_kind_has_no_compatibility_alias() -> None:
 
 def test_issue_maintenance_api_token_embeds_kind_and_execution() -> None:
     token = issue_maintenance_api_token(
-        "operator-token",
+        derive_managed_signing_key("operator-token"),
         execution_id="exec-1",
         project_id="project-1",
         machine_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         timeout_seconds=30,
     )
-    claims = verify_agent_api_token(token, "operator-token")
+    claims = verify_agent_api_token(token, derive_managed_signing_key("operator-token"))
 
     assert claims is not None
     assert claims.kind == "maintenance"
@@ -67,13 +68,13 @@ def test_issue_maintenance_api_token_embeds_kind_and_execution() -> None:
 
 def test_maintenance_token_does_not_verify_as_tool_chat_principal() -> None:
     token = issue_maintenance_api_token(
-        "operator-token",
+        derive_managed_signing_key("operator-token"),
         execution_id="exec-1",
         project_id="project-1",
         machine_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         timeout_seconds=30,
     )
-    claims = verify_agent_api_token(token, "operator-token")
+    claims = verify_agent_api_token(token, derive_managed_signing_key("operator-token"))
     assert claims is not None
     assert claims.kind != "tool_chat"
     payload: dict[str, Any] = {
@@ -86,17 +87,19 @@ def test_maintenance_token_does_not_verify_as_tool_chat_principal() -> None:
 def test_capability_signature_includes_token_kind() -> None:
     operator = "operator-token"
     token = issue_agent_api_token(
-        operator,
+        derive_managed_signing_key(operator),
         agent_run_id="run-1",
         session_id="session-1",
         project_id="project-1",
         machine_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         timeout_seconds=30,
     )
-    claims = verify_agent_api_token(token, operator)
+    claims = verify_agent_api_token(token, derive_managed_signing_key(operator))
     assert claims is not None
     encoded = token.rsplit(".", maxsplit=1)[1]
     supplied = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
-    assert _recompute_capability_signature(operator, claims) == supplied
+    assert _recompute_capability_signature(derive_managed_signing_key(operator), claims) == supplied
     swapped = replace(claims, kind="tool_chat")
-    assert _recompute_capability_signature(operator, swapped) != supplied
+    assert (
+        _recompute_capability_signature(derive_managed_signing_key(operator), swapped) != supplied
+    )

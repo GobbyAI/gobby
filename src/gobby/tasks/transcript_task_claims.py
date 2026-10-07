@@ -8,9 +8,11 @@ linked session's work to the stretches it spent on the task (#23385).
 
 from __future__ import annotations
 
-from datetime import datetime
+from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any
 
+from gobby.sessions.transcripts.base import ParsedToolEvent
 from gobby.sessions.transcripts.tool_activity import canonical_tool_name
 from gobby.tasks.transcript_evidence_models import TranscriptTaskClaim
 from gobby.tasks.transcript_evidence_snapshots import PendingTool
@@ -55,3 +57,22 @@ def task_claim(pending: PendingTool, result: Any, at: datetime) -> TranscriptTas
     if not succeeded or not isinstance(task_ref, str) or not task_ref:
         return None
     return TranscriptTaskClaim(task_ref=task_ref, claimed_at=at)
+
+
+def codex_item_claim(
+    item: ParsedToolEvent, window_start: datetime | None, pending: Mapping[str, PendingTool]
+) -> TranscriptTaskClaim | None:
+    """The claim a completed Codex MCP item records (#23724).
+
+    A call made inside ``functions.exec`` leaves only this item. A direct call is
+    still pending here, and its own output records the claim instead.
+    """
+    if item.call_id in pending:
+        return None
+    at = item.timestamp
+    at = at.replace(tzinfo=UTC) if at.tzinfo is None else at.astimezone(UTC)
+    if window_start is not None and at < window_start:
+        return None
+    call = PendingTool(item.tool or "", item.arguments, at, 0, item.call_id, item.server)
+    result = item.result if item.error is None else {"success": False, "error": item.error}
+    return task_claim(call, result, at)

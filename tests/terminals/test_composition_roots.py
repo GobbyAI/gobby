@@ -24,7 +24,6 @@ pytestmark = pytest.mark.unit
 
 
 def test_single_lease_registry_is_injected() -> None:
-    from gobby.config.terminals import TerminalConfig
     from gobby.storage.terminals import TerminalManager
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.leases import TerminalLeaseRegistry
@@ -42,7 +41,7 @@ def test_single_lease_registry_is_injected() -> None:
     container_names = {item.name for item in fields(ServiceContainer)}
     assert "terminal_manager" in container_names
     assert "terminal_runtime_registry" in container_names
-    assert "terminal_config" in container_names
+    assert "terminal_config" not in container_names
     assert "frame_client" in container_names
     assert "terminal_services" in container_names
     assert "write_coordinator" in container_names
@@ -53,7 +52,6 @@ def test_single_lease_registry_is_injected() -> None:
     registry.register(FakeRuntime(backend="tmux"))
     leases = TerminalLeaseRegistry(daemon_epoch="test-epoch")
     coordinator = WriteCoordinator(manager, registry, lease_registry=leases)
-    config = TerminalConfig()
 
     database = MagicMock(spec=HubDatabase)
     session_manager = MagicMock(spec=SessionManager)
@@ -64,7 +62,6 @@ def test_single_lease_registry_is_injected() -> None:
         task_manager=task_manager,
         terminal_manager=manager,
         terminal_runtime_registry=registry,
-        terminal_config=config,
         terminal_services=TerminalServices(
             manager=manager,
             registry=registry,
@@ -75,7 +72,6 @@ def test_single_lease_registry_is_injected() -> None:
     )
     assert services.terminal_manager is manager
     assert services.terminal_runtime_registry is registry
-    assert services.terminal_config is config
 
     ws_config = MagicMock(spec=WebSocketConfig)
     ws_config.host = "localhost"
@@ -87,7 +83,6 @@ def test_single_lease_registry_is_injected() -> None:
     server.configure_terminals(
         manager,
         registry,
-        config,
         terminal_services=services.terminal_services,
         lease_registry=leases,
         write_coordinator=coordinator,
@@ -95,10 +90,9 @@ def test_single_lease_registry_is_injected() -> None:
     assert server.terminal_manager is manager
     assert server.terminal_services is services.terminal_services
     assert server.terminal_runtime_registry is registry
-    assert server.terminal_config is config
+    assert not hasattr(server, "terminal_config")
     assert server.terminal_manager is services.terminal_manager
     assert server.terminal_runtime_registry is services.terminal_runtime_registry
-    assert server.terminal_config is services.terminal_config
     assert server.lease_registry is services.lease_registry
     assert server.write_coordinator is services.write_coordinator
     assert coordinator.lease_registry is leases
@@ -310,7 +304,6 @@ async def test_configure_terminals_installs_input_activity_sink() -> None:
     server.configure_terminals(
         MagicMock(),
         MagicMock(),
-        None,
         host_manager=host,
         lease_registry=MagicMock(),
         write_coordinator=coordinator,

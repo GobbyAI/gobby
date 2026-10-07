@@ -17,7 +17,7 @@ from gobby.ai._managed_tool_chat_lease import build_managed_tool_chat_lease_fact
 from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolPolicy
 from gobby.runtime_grants.schema import GrantBundle
 from gobby.storage.managed_credentials import CredentialAuthorizationError
-from gobby.utils.local_token import verify_agent_api_token
+from gobby.utils.local_token import derive_managed_signing_key, verify_agent_api_token
 
 pytestmark = pytest.mark.unit
 
@@ -67,8 +67,8 @@ def _issued_credential(
 
 def _patch_lease_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "gobby.ai._managed_tool_chat_lease.read_local_api_token",
-        lambda: _OPERATOR_TOKEN,
+        "gobby.ai._managed_tool_chat_lease.read_managed_signing_key",
+        lambda: derive_managed_signing_key(_OPERATOR_TOKEN),
     )
     monkeypatch.setattr(
         "gobby.ai._managed_tool_chat_lease.get_machine_id",
@@ -124,7 +124,7 @@ async def test_lease_replaces_client_path_and_revokes_after_success(
         assert grant.signature
         claims = verify_agent_api_token(
             subprocess_env["GOBBY_AGENT_API_TOKEN"],
-            _OPERATOR_TOKEN,
+            derive_managed_signing_key(_OPERATOR_TOKEN),
         )
         assert claims is not None
         assert claims.managed_execution_id == str(execution_id)
@@ -196,8 +196,8 @@ async def test_lease_revokes_and_skips_grant_when_lease_context_is_missing(
     manager = MagicMock()
     manager.issue_tool_request.return_value = issued
     monkeypatch.setattr(
-        "gobby.ai._managed_tool_chat_lease.read_local_api_token",
-        lambda: _OPERATOR_TOKEN,
+        "gobby.ai._managed_tool_chat_lease.read_managed_signing_key",
+        lambda: derive_managed_signing_key(_OPERATOR_TOKEN),
     )
     monkeypatch.setattr("gobby.daemon_lease.current_lease", lambda: None)
     factory = build_managed_tool_chat_lease_factory(manager)

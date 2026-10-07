@@ -156,13 +156,16 @@ async def test_trace_refuses_extra_raw_fields_and_invalid_phases(tmp_path: Path)
 @pytest.mark.asyncio
 async def test_socket_barrier_holds_the_real_after_receipt_and_cleanup_releases_it(
     tmp_path: Path,
+    managed_composer_tmpdir: Path,
 ) -> None:
     trace, event = registered_trace(tmp_path)
     own = trace.surfaces[str(event["terminal_id"])]
     trace.arm(own, WAKE_TEXT)
     # macOS AF_UNIX paths cannot fit pytest's deeply nested temporary directory.
-    socket_root = tempfile.TemporaryDirectory(prefix="proof-", dir="/tmp")
+    socket_root = tempfile.TemporaryDirectory(prefix="p")
     trace.socket = Path(socket_root.name) / "trace.sock"
+    assert Path(socket_root.name).parent == managed_composer_tmpdir
+    assert len(bytes(trace.socket)) < 104
     await trace.start()
     task = asyncio.create_task(exchange_trace(trace.socket, event))
     try:

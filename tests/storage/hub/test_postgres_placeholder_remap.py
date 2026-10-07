@@ -583,6 +583,53 @@ def test_postgres_cursor_normalizes_jsonb_values_to_storage_json_text() -> None:
     }
 
 
+@dataclass(frozen=True)
+class _FakeColumn:
+    name: str
+    type_code: int
+
+
+class _TypedFakeResult(_FakeResult):
+    def __init__(self, rows: list[dict[str, object]], columns: list[_FakeColumn]) -> None:
+        super().__init__(rows)
+        self.description = columns
+
+
+def test_postgres_cursor_dumps_json_columns_without_python_walk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_pool_module()
+    walked: list[object] = []
+    real_to_json_safe = module.to_json_safe
+
+    def spy_to_json_safe(value: object) -> object:
+        walked.append(value)
+        return real_to_json_safe(value)
+
+    monkeypatch.setattr(module, "to_json_safe", spy_to_json_safe)
+    variables = {"b": 1, "a": [1, {"d": None, "c": "ü"}]}
+    run_times = [datetime(2026, 5, 21, 5, 30, tzinfo=UTC)]
+    cursor = module.PostgresCursor(
+        _TypedFakeResult(
+            [{"variables": variables, "scalar": "plain", "run_times": run_times}],
+            [
+                _FakeColumn("variables", 3802),  # jsonb
+                _FakeColumn("scalar", 114),  # json string scalar
+                _FakeColumn("run_times", 1185),  # timestamptz[]
+            ],
+        )
+    )
+
+    assert cursor.fetchall() == [
+        {
+            "variables": '{"a":[1,{"c":"\\u00fc","d":null}],"b":1}',
+            "scalar": "plain",
+            "run_times": '["2026-05-21T05:30:00+00:00"]',
+        }
+    ]
+    assert walked == [run_times]
+
+
 def test_postgres_cursor_preserves_datetime_values_as_aware_utc() -> None:
     module = _postgres_pool_module()
     cursor = module.PostgresCursor(

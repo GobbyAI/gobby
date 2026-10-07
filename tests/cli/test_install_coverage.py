@@ -41,6 +41,15 @@ def _isolate_gobby_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     return home
 
 
+@pytest.fixture(autouse=True)
+def mock_gdaemon_provisioning(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Install command coverage must never build or promote the live native set."""
+    provisioning = MagicMock()
+    monkeypatch.setattr("gobby.cli.install._provision_gdaemon_for_services", provisioning)
+    monkeypatch.setattr("gobby.cli.install_setup.ensure_gdaemon", MagicMock())
+    return provisioning
+
+
 @pytest.fixture
 def runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     import importlib
@@ -60,7 +69,6 @@ def runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     monkeypatch.setattr(install_module, "ConfigStore", MagicMock())
     monkeypatch.setattr(install_module, "AuthStore", MagicMock())
     monkeypatch.setattr(install_module, "_provision_local_api_token", MagicMock())
-    monkeypatch.setattr(install_module, "_provision_gdaemon_for_services", MagicMock())
     monkeypatch.setattr(install_module, "require_installed", lambda: None)
     monkeypatch.setattr(
         importlib.import_module("gobby.cli.install_components"),
@@ -1341,7 +1349,7 @@ class TestUninstallCommand:
 
 class TestInstallFilesHomeLifecycle:
     def test_local_install_persists_files_home_before_identity_and_services(
-        self, tmp_path: Path
+        self, tmp_path: Path, mock_gdaemon_provisioning: MagicMock
     ) -> None:
         files_home = tmp_path / "files"
         files_home.mkdir()
@@ -1386,6 +1394,7 @@ class TestInstallFilesHomeLifecycle:
         assert result.exit_code != 0 or "publish" in order
         assert order[:2] == ["publish", "identity"]
         assert "services" not in order or order.index("identity") < order.index("services")
+        mock_gdaemon_provisioning.assert_called_once()
 
     def test_bootstrap_write_failure_skips_identity_and_services(self, tmp_path: Path) -> None:
         files_home = tmp_path / "files"

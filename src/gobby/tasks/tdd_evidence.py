@@ -38,6 +38,7 @@ _ASSERTION_DETAIL_RE = re.compile(
     re.IGNORECASE,
 )
 _PYTEST_FAILURE_HEADER_RE = re.compile(r"^_{2,}\s+(?P<name>\S+)\s+_{2,}\s*$")
+_RTK_FAILURE_HEADER_RE = re.compile(r"^\s*\d+\.\s+\[FAIL\]\s+(?P<name>\S+)\s*$")
 _PYTEST_LOCATION_RE = re.compile(
     r"^\s*(?P<path>\S+\.py):(?P<line>\d+):"
     r"(?: in (?P<symbol>\S+)| (?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)|Failed)(?::.*)?"
@@ -56,7 +57,8 @@ _RAISE_EXCEPTION_DETAIL_RE = re.compile(
 )
 _PASS_STATUS_RE = re.compile(r"\b(?:PASSED|SKIPPED|XFAIL|XPASS)\b", re.IGNORECASE)
 _FAILURE_SECTION_BOUNDARY_RE = re.compile(
-    r"^(?:_{2,}\s+\S.*\s+_{2,}|(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
+    r"^(?:_{2,}\s+\S.*\s+_{2,}|\s*\d+\.\s+\[FAIL\]\s+\S.*|"
+    r"(?:FAILED|ERROR|PASSED|SKIPPED)\s+\S.*|"
     r".*::\S+\s+(?:PASSED|FAILED|ERROR|SKIPPED)\b)",
     re.IGNORECASE,
 )
@@ -566,7 +568,7 @@ def _has_pytest_body_failure(
     lines = output.splitlines()
     has_attributable_section = False
     for index, line in enumerate(lines):
-        header = _PYTEST_FAILURE_HEADER_RE.match(line)
+        header = _PYTEST_FAILURE_HEADER_RE.match(line) or _RTK_FAILURE_HEADER_RE.match(line)
         if header is None or not _header_names_artifact(
             header.group("name"), test, artifact_nodes, same_file_nodes
         ):

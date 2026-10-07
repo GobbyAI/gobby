@@ -38,6 +38,7 @@ def _create_sandbox_roots(gobby_home: Path, run_id: str) -> tuple[Path, Path]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("error", [None, "Task-close review review-123 ended without a verdict."])
 @pytest.mark.parametrize(
     "terminal_id",
     [None, "44444444-4444-4444-8444-444444444444"],
@@ -47,6 +48,7 @@ async def test_self_termination_reaps_sandbox_run_roots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     terminal_id: str | None,
+    error: str | None,
 ) -> None:
     gobby_home = tmp_path / "gobby-home"
     run_id = "11111111-1111-4111-8111-111111111111"
@@ -59,7 +61,11 @@ async def test_self_termination_reaps_sandbox_run_roots(
         terminal_id=terminal_id,
         task_id=None,
     )
-    terminal_run = SimpleNamespace(status="success")
+    terminal_run = SimpleNamespace(
+        status="error" if error else "success",
+        error=error,
+        terminal_reason="review_verdict_missing" if error else None,
+    )
     runner = MagicMock()
     runner.get_run.return_value = terminal_run
     runner.terminal_runtime_registry.resolve.return_value = MagicMock()
@@ -107,7 +113,10 @@ async def test_self_termination_reaps_sandbox_run_roots(
         )
 
     assert result["success"] is True
-    assert result["status"] == "success"
+    assert result["status"] == ("error" if error else "success")
+    if error:
+        assert result["error"] == error
+        assert result["terminal_reason"] == "review_verdict_missing"
     assert not sandbox_root.exists()
     assert not managed_root.exists()
     retained = gobby_home / "logs" / "sandbox-violations" / f"{run_id}.jsonl"
@@ -123,7 +132,7 @@ async def test_self_termination_lost_terminal_race_does_not_reap() -> None:
         task_id=None,
     )
     runner = MagicMock()
-    runner.get_run.return_value = SimpleNamespace(status="cancelled")
+    runner.get_run.return_value = SimpleNamespace(status="cancelled", error=None)
     with (
         patch(
             "gobby.mcp_proxy.tools.agents._kill_agent_process",

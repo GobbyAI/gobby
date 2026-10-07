@@ -22,6 +22,7 @@ from gobby.code_index.models import (
     IndexedFile,
     IndexedProject,
     IndexWriteMode,
+    Symbol,
 )
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.server import GobbyDaemonTools
@@ -815,6 +816,71 @@ async def test_validate_plan_returns_valid_for_canonical_plan(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("completed", [False, True])
+async def test_validate_plan_resolves_completed_section_targets(
+    temp_db: HubDatabase, tmp_path: Path, completed: bool
+) -> None:
+    project_id = _create_indexed_project(temp_db, tmp_path)
+    target = "src/demo.py"
+    source = tmp_path / target
+    source.parent.mkdir()
+    source.write_text("def run():\n    return 1\n", encoding="utf-8")
+    content_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    code_index = CodeIndexStorage(temp_db)
+    code_index.upsert_file(
+        IndexedFile(
+            id=IndexedFile.make_id(project_id, target, content_hash),
+            project_id=project_id,
+            file_path=target,
+            language="python",
+            content_hash=content_hash,
+            symbol_count=1,
+            byte_size=source.stat().st_size,
+        ),
+        root_path=str(tmp_path),
+        mode=IndexWriteMode.OVERLAY,
+    )
+    code_index.upsert_symbols(
+        [
+            Symbol(
+                id=str(uuid.uuid4()),
+                project_id=project_id,
+                file_path=target,
+                name="run",
+                qualified_name="run",
+                kind="function",
+                language="python",
+                byte_start=0,
+                byte_end=source.stat().st_size,
+                line_start=1,
+                line_end=2,
+                file_content_hash=content_hash,
+                content_hash=content_hash,
+            )
+        ]
+    )
+    plan_path = _write_plan(tmp_path, target=target)
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=project_id,
+        title="Deliver section",
+        labels=["covers:task-100-demo:1.1:1.1.1"],
+        validation_criteria="Source target exists.",
+    )
+    if completed:
+        manager.close_task(task.id, reason="completed")
+    registry = create_plan_registry(temp_db)
+    token = set_project_context({"id": project_id, "project_path": str(tmp_path)})
+    try:
+        result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
+    finally:
+        reset_project_context(token)
+
+    assert result["valid"] is completed, result
+    assert result["symbol_validation"]["status"] == ("passed" if completed else "failed")
+
+
+@pytest.mark.asyncio
 async def test_validate_plan_uses_complete_isolated_context(
     temp_db: HubDatabase,
     tmp_path: Path,
@@ -952,10 +1018,11 @@ async def test_validate_plan_fails_closed_without_project_context(
     result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
 
     assert result["valid"] is False
-    assert result["symbol_validation"]["status"] == "failed"
-    assert {issue["code"] for issue in result["symbol_validation"]["issues"]} == {
-        "symbol_index_unavailable",
-    }
+    assert result["condition"] == "completed_section_exemptions_unavailable"
+    assert result["errors"] == [
+        "completed-section exemptions unavailable: no project or plan identity"
+    ]
+    assert result["symbol_validation"]["status"] == "skipped"
 
 
 @pytest.mark.asyncio

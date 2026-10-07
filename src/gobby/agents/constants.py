@@ -195,7 +195,7 @@ def get_terminal_env_vars(
     max_agent_depth: int = 5,
     prompt: str | None = None,
     prompt_file: str | None = None,
-    operator_token: str | None = None,
+    signing_key: bytes | None = None,
     timeout_seconds: float | None = None,
 ) -> dict[str, str]:
     """
@@ -212,7 +212,7 @@ def get_terminal_env_vars(
         max_agent_depth: Maximum allowed depth (default: 5).
         prompt: Optional short prompt (for inline passing).
         prompt_file: Optional path to file containing prompt (for long prompts).
-        operator_token: Operator token used to mint the run capability.
+        signing_key: Managed signing key used to mint the run capability.
         timeout_seconds: The run's declared timeout, bounding capability expiry.
 
     Returns:
@@ -236,9 +236,9 @@ def get_terminal_env_vars(
             project_id,
         ),
     }
-    if operator_token:
+    if signing_key:
         env[GOBBY_AGENT_API_TOKEN] = issue_agent_api_token(
-            operator_token,
+            signing_key,
             agent_run_id=agent_run_id,
             session_id=session_id,
             project_id=project_id,

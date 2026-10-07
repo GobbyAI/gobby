@@ -65,6 +65,7 @@ pub(crate) fn u32_to_color(val: u32) -> ratatui::style::Color {
     }
 }
 
+#[cfg(any(unix, feature = "vt-engine"))]
 const UNDERLINE_STYLE_SHIFT: u16 = 12;
 const UNDERLINE_STYLE_MASK: u16 = 0xF000;
 
@@ -73,6 +74,7 @@ pub(crate) fn modifier_to_u16(modifier: ratatui::style::Modifier) -> u16 {
     modifier.bits()
 }
 
+#[cfg(any(unix, all(test, feature = "vt-engine")))]
 pub(crate) fn underline_style_from_modifier(modifier: u16) -> u8 {
     ((modifier & UNDERLINE_STYLE_MASK) >> UNDERLINE_STYLE_SHIFT) as u8
 }

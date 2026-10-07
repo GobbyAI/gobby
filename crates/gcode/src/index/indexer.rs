@@ -11,6 +11,7 @@ mod local_imports;
 mod overlay;
 mod pipeline;
 mod sink;
+mod timing;
 mod types;
 mod util;
 
@@ -22,6 +23,7 @@ pub(crate) use local_imports::{
     LocalImportRepair, resolve_project_local_import_calls, resolve_project_local_import_inheritance,
 };
 pub use pipeline::index_files;
+pub(crate) use timing::IndexTimings;
 pub use types::{
     CommunityRefreshReport, IndexDegradation, IndexDurations, IndexOptions, IndexOutcome,
     IndexProgressSink, IndexRequest, UnsupportedFileType,

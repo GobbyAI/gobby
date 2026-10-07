@@ -179,6 +179,9 @@ pub fn route_mouse<W: WorkspaceView>(
     let released = matches!(mouse.kind, MouseEventKind::Up(_))
         .then(|| chrome.gesture.take())
         .flatten();
+    if let Some(outcome) = wheel::overlay(ws, chrome, mouse) {
+        return outcome;
+    }
     match chrome.mode {
         Mode::Copy => return MouseOutcome::Ignore,
         Mode::Settings => return settings_mouse(ws, chrome, mouse),

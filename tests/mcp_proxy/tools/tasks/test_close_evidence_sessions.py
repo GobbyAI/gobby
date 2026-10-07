@@ -22,6 +22,7 @@ from gobby.tasks.acceptance_artifacts import AcceptanceTest
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence_models import (
+    TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
     TranscriptTaskClaim,
@@ -1125,10 +1126,10 @@ def _session_link(task_id: str, created_at: str) -> dict[str, Any]:
     }
 
 
-def _run_at(session_id: str, at: str, outcome: str) -> Any:
+def _run_at(session_id: str, at: str, outcome: str, order: int = 1) -> Any:
     started = datetime.fromisoformat(at)
     return replace(
-        _run(1, outcome=outcome),
+        _run(order, outcome=outcome),
         session_id=session_id,
         started_at=started,
         completed_at=started + timedelta(seconds=5),
@@ -1154,7 +1155,7 @@ async def test_linked_session_runs_after_it_claims_another_task_are_not_credited
             _session_link("other-task", "2026-09-29T02:14:00+00:00"),
             _session_link("task", "2026-09-28T13:55:00+00:00"),
         ],
-        # The owner's own later claim never bounds its window.
+        # The owner's own later claim bounds its window too (#23665).
         QA: [
             _session_link("owner-next", "2026-09-28T21:00:00+00:00"),
             _session_link("task", "2026-09-28T20:00:00+00:00"),
@@ -1195,7 +1196,7 @@ async def test_linked_session_runs_after_it_claims_another_task_are_not_credited
     by_session = {evidence.sessions[0]: evidence for evidence in merged}
     assert by_session[IMPLEMENTER].validation_runs == runs[IMPLEMENTER][:1]
     assert by_session[IMPLEMENTER].command_runs == runs[IMPLEMENTER][:1]
-    assert by_session[QA].validation_runs == runs[QA]
+    assert by_session[QA].validation_runs == runs[QA][:1]
 
 
 async def _implementer_runs_after_claims(
@@ -1294,3 +1295,281 @@ async def test_linked_session_runs_after_returning_to_an_earlier_task_are_not_cr
     )
 
     assert credited == (before,)
+
+
+async def _owner_evidence(
+    db_claims: list[dict[str, Any]],
+    transcript_claims: tuple[TranscriptTaskClaim, ...],
+    runs: tuple[Any, ...],
+    edits: tuple[TranscriptEdit, ...] = (),
+) -> TranscriptEvidence:
+    """Derive close evidence where QA alone owns and closes the task."""
+    ctx = _context(
+        [_link(QA, "claimed", "2026-09-29T20:00:00+00:00")],
+        {QA: _session(QA, "2026-09-29T19:00:00+00:00")},
+    )
+    ctx.session_var_manager.get_variables.return_value = {}
+    ctx.session_task_manager.get_session_tasks.return_value = db_claims
+
+    async def record(session: Any, *args: Any, **kwargs: Any) -> TranscriptEvidence:
+        return TranscriptEvidence(
+            validation_runs=runs,
+            command_runs=runs,
+            edits=edits,
+            task_claims=transcript_claims,
+            sessions=(QA,),
+        )
+
+    with (
+        patch(f"{_SUPPORT}.resolve_validation_detection_config"),
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_transcript_evidence", new=AsyncMock(side_effect=record)),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+        patch(f"{_SUPPORT}.merge_transcript_evidence", side_effect=lambda *sets: list(sets)),
+    ):
+        merged: Any = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=QA,
+            closing_session_id=QA,
+            owner_window_start="2026-09-29T20:00:00+00:00",
+            task_edited_files=set(),
+            repo_path="/repo",
+        )
+    (evidence,) = merged
+    assert isinstance(evidence, TranscriptEvidence)
+    assert evidence.command_runs == evidence.validation_runs
+    return evidence
+
+
+_HANDED_OFF_THEN_NEWER_CLAIM = [
+    _session_link("newer-task", "2026-09-29T21:00:00+00:00"),
+    _session_link("task", "2026-09-29T20:00:00+00:00"),
+]
+
+
+@pytest.mark.asyncio
+async def test_owner_runs_for_newer_work_after_a_hand_off_do_not_judge_the_close() -> None:
+    """#23665: a handed-off task's close ignores the owner's runs for its newer claim."""
+    green = _run_at(QA, "2026-09-29T20:30:00+00:00", "success")
+    newer_red = _run_at(QA, "2026-09-29T22:00:00+00:00", "failure")
+    newer_green = _run_at(QA, "2026-09-29T22:30:00+00:00", "success")
+
+    evidence = await _owner_evidence(
+        _HANDED_OFF_THEN_NEWER_CLAIM,
+        (_claim("newer-task", "2026-09-29T21:00:00+00:00"),),
+        (green, newer_red, newer_green),
+    )
+
+    assert evidence.validation_runs == (green,)
+
+
+@pytest.mark.asyncio
+async def test_owner_runs_after_reactivating_the_handed_off_task_are_credited() -> None:
+    """#23665: reclaiming the task once the newer claim is handed off resumes its window."""
+    newer_red = _run_at(QA, "2026-09-29T22:00:00+00:00", "failure")
+    red = _run_at(QA, "2026-09-30T01:00:00+00:00", "failure")
+    green = _run_at(QA, "2026-09-30T01:30:00+00:00", "success")
+
+    evidence = await _owner_evidence(
+        _HANDED_OFF_THEN_NEWER_CLAIM,
+        (
+            _claim("newer-task", "2026-09-29T21:00:00+00:00"),
+            _claim("task", "2026-09-30T00:00:00+00:00"),
+        ),
+        (newer_red, red, green),
+    )
+
+    assert evidence.validation_runs == (red, green)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("edited", [True, False], ids=["edited", "untouched"])
+async def test_owner_edit_without_a_reclaim_stales_the_handed_off_green(edited: bool) -> None:
+    """#23665: the newer claim ended and the task became the edit target with no claim
+    call, so no return is recorded. The owner's edit still stales the earlier green."""
+    green = _run_at(QA, "2026-09-29T20:30:00+00:00", "success", order=1)
+    edit = TranscriptEdit(
+        session_id=QA,
+        source="codex",
+        path="src/handed_off.py",
+        timestamp=datetime.fromisoformat("2026-09-30T01:00:00+00:00"),
+        order=2,
+        tool_name="apply_patch",
+    )
+    red = _run_at(QA, "2026-09-30T01:10:00+00:00", "failure", order=3)
+
+    evidence = await _owner_evidence(
+        _HANDED_OFF_THEN_NEWER_CLAIM,
+        (_claim("newer-task", "2026-09-29T21:00:00+00:00"),),
+        (green, red),
+        (edit,) if edited else (),
+    )
+    gate = evaluate_validation_commands(
+        task_category="code", evidence=evidence, has_attributed_edits=True
+    )
+
+    assert evidence.validation_runs == (green,)
+    assert evidence.edits == ((edit,) if edited else ())
+    assert gate.passed is not edited, gate.message
+
+
+_HANDED_OFF_AT = datetime.fromisoformat("2026-09-29T20:00:00+00:00")
+_NESTED_PYTEST = "uv run pytest tests/test_handed_off.py -q"
+
+
+def _codex_record(at: datetime, record_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return {"type": record_type, "timestamp": at.isoformat(), "payload": payload}
+
+
+def _codex_exec_cell(at: datetime, call_id: str, source: str, outputs: list[Any]) -> list[Any]:
+    """One functions.exec cell and the text results its script returned."""
+    return [
+        _codex_record(
+            at,
+            "response_item",
+            {"type": "custom_tool_call", "call_id": call_id, "name": "exec", "input": source},
+        ),
+        _codex_record(
+            at + timedelta(seconds=1),
+            "response_item",
+            {
+                "type": "custom_tool_call_output",
+                "call_id": call_id,
+                "output": [
+                    {"type": "input_text", "text": "Script completed\nOutput:\n"},
+                    *({"type": "input_text", "text": json.dumps(output)} for output in outputs),
+                ],
+            },
+        ),
+    ]
+
+
+def _codex_item(at: datetime, item: dict[str, Any]) -> dict[str, Any]:
+    return _codex_record(at, "event_msg", {"type": "item_completed", "item": item})
+
+
+def _nested_return_then_pytest(shape: str, exit_code: int) -> list[dict[str, Any]]:
+    """A Codex owner leaves the task, reclaims it and runs pytest, all through
+    functions.exec, the shapes Codex seats 15411 and 15397 used (#23724)."""
+    claimed = {"success": True, "result": {"task_id": "task", "title": "Handed off"}}
+    reclaim_at = _HANDED_OFF_AT + timedelta(hours=2)
+    run_at = reclaim_at + timedelta(minutes=10)
+    output = "1 passed in 0.10s" if exit_code == 0 else "FAILED tests/test_handed_off.py::test_x"
+    finished = {"exit_code": exit_code, "output": output}
+    completed = _codex_item(
+        run_at + timedelta(minutes=12),
+        {
+            "type": "CommandExecution",
+            "id": "exec-pytest",
+            "command": ["/bin/zsh", "-lc", _NESTED_PYTEST],
+            "source": "unified_exec_startup",
+            "status": "completed" if exit_code == 0 else "failed",
+            "exit_code": exit_code,
+            "aggregated_output": output,
+        },
+    )
+    records = [
+        *_codex_exec_cell(
+            reclaim_at,
+            "reclaim",
+            'text(await tools.mcp__gobby__call_tool({server_name:"gobby-tasks",'
+            'tool_name:"claim_task",arguments:{task_id:"#1"}}));',
+            [claimed],
+        ),
+        _codex_item(
+            reclaim_at + timedelta(milliseconds=500),
+            {
+                "type": "McpToolCall",
+                "id": "exec-reclaim",
+                "server": "gobby",
+                "tool": "call_tool",
+                "arguments": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "claim_task",
+                    "arguments": {"task_id": "#1"},
+                },
+                "status": "completed",
+                "result": {"structuredContent": claimed, "isError": False},
+            },
+        ),
+    ]
+    start = f'text(await tools.exec_command({{cmd:"{_NESTED_PYTEST}",yield_time_ms:1000}}));'
+    if shape == "single-cell":
+        cell = _codex_exec_cell(run_at + timedelta(minutes=12), "pytest", start, [finished])
+        return [*records, cell[0], completed, cell[1]]
+    poll = 'text(await tools.write_stdin({session_id:79056,chars:""}));'
+    final_poll = _codex_exec_cell(run_at + timedelta(minutes=12), "poll", poll, [finished])
+    return [
+        *records,
+        *_codex_exec_cell(run_at, "pytest", start, [{"session_id": 79056, "output": ""}]),
+        _codex_record(
+            run_at + timedelta(minutes=5),
+            "compacted",
+            {"message": "", "replacement_history": []},
+        ),
+        final_poll[0],
+        completed,
+        final_poll[1],
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["single-cell", "write-stdin-after-compaction"])
+@pytest.mark.parametrize("exit_code", [0, 1], ids=["passing", "failing"])
+async def test_owner_codex_reclaim_through_functions_exec_credits_nested_pytest(
+    tmp_path: Path, shape: str, exit_code: int
+) -> None:
+    """#23724: a reclaim made inside functions.exec returns the owner to the task, so the
+    nested pytest it ran afterwards is fresh close evidence, passing or failing."""
+    transcript = tmp_path / "codex.jsonl"
+    transcript.write_text(
+        "".join(
+            json.dumps(record) + "\n" for record in _nested_return_then_pytest(shape, exit_code)
+        )
+    )
+    machine_id = get_machine_id()
+    assert machine_id is not None
+    session = Session(
+        id=QA,
+        external_id=QA,
+        machine_id=machine_id,
+        source="codex",
+        project_id="project",
+        title=None,
+        status="active",
+        transcript_path=str(transcript),
+        summary_path=None,
+        summary_markdown=None,
+        git_branch="test",
+        parent_session_id=None,
+        created_at=_HANDED_OFF_AT,
+        updated_at=_HANDED_OFF_AT,
+    )
+    ctx = _context([_link(QA, "claimed", _HANDED_OFF_AT.isoformat())], {QA: session})
+    ctx.session_var_manager.get_variables.return_value = {}
+    ctx.session_task_manager.get_session_tasks.return_value = _HANDED_OFF_THEN_NEWER_CLAIM
+    with (
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+    ):
+        evidence = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=QA,
+            closing_session_id=QA,
+            owner_window_start=_HANDED_OFF_AT.isoformat(),
+            task_edited_files={"src/handed_off.py"},
+            repo_path=str(tmp_path),
+        )
+    gate = evaluate_validation_commands(
+        task_category="code", evidence=evidence, has_attributed_edits=True
+    )
+
+    latest = max(evidence.validation_runs, key=lambda run: (run.completed_at, run.order))
+    assert (latest.command, latest.outcome, latest.exit_code) == (
+        _NESTED_PYTEST,
+        "success" if exit_code == 0 else "failure",
+        exit_code,
+    )
+    assert gate.passed is (exit_code == 0), gate.message

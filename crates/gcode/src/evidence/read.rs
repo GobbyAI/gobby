@@ -116,6 +116,7 @@ pub(super) fn source_for_symbol(
 ) -> Result<SourceEvidence> {
     library.verify_fact(&symbol.file_path, &symbol.file_content_hash)?;
     let bytes = library.read_file(&symbol.file_path)?;
+    library.verify_source_hash(&symbol.file_path, &symbol.file_content_hash, &bytes)?;
     if symbol.byte_start >= symbol.byte_end || symbol.byte_end > bytes.len() {
         return Err(EvidenceError::StaleRange {
             path: symbol.file_path.clone(),
@@ -159,6 +160,7 @@ pub(super) fn source_for_symbol(
         library,
         SourceSlice {
             path: &symbol.file_path,
+            bytes: &bytes,
             byte_start: symbol.byte_start,
             byte_end: symbol.byte_end,
             line_start,
@@ -183,6 +185,7 @@ pub(super) fn source_for_lines(
         });
     }
     let bytes = library.read_file(path)?;
+    library.verify_source_hash(path, &library.entry(path)?.content_hash, &bytes)?;
     let starts = line_starts(&bytes);
     if end_line > starts.len() {
         return Err(EvidenceError::StaleRange {
@@ -263,6 +266,7 @@ fn slice_lines(
         library,
         SourceSlice {
             path,
+            bytes,
             byte_start,
             byte_end,
             line_start: start_line,
@@ -275,6 +279,7 @@ fn slice_lines(
 
 struct SourceSlice<'a> {
     path: &'a str,
+    bytes: &'a [u8],
     byte_start: usize,
     byte_end: usize,
     line_start: usize,
@@ -286,6 +291,7 @@ struct SourceSlice<'a> {
 fn make_source(library: &EvidenceLibrary, source: SourceSlice<'_>) -> Result<SourceEvidence> {
     let SourceSlice {
         path,
+        bytes,
         byte_start,
         byte_end,
         line_start,
@@ -293,8 +299,7 @@ fn make_source(library: &EvidenceLibrary, source: SourceSlice<'_>) -> Result<Sou
         excerpt,
         qualified_name,
     } = source;
-    let entry = library.entry(path)?;
-    let content_hash = entry.content_hash.clone();
+    let content_hash = gobby_core::indexing::content_hash(bytes);
     let excerpt_hash = gobby_core::indexing::content_hash(excerpt.as_bytes());
     let evidence_id = format!(
         "src:{}",

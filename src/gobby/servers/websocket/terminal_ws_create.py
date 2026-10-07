@@ -6,9 +6,9 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from gobby.config.terminals import TerminalConfig
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
+from gobby.terminals.lifetime import NATIVE_FIRST_BACKEND
 from gobby.terminals.termination import kill_terminal
 from gobby.terminals.ws_protocol import inventory_item
 
@@ -27,7 +27,6 @@ def _bounded_code(code: str | None, fallback: str) -> str:
 class TerminalCreateMixin:
     """Serve terminal lifecycle mutations for websocket hosts."""
 
-    terminal_config: Any
     terminal_manager: Any
     terminal_runtime_registry: Any
 
@@ -79,9 +78,8 @@ class TerminalCreateMixin:
                 },
             )
             return
-        backend = getattr(self.terminal_config, "default_backend", None)
         try:
-            runtime = registry.resolve(backend or TerminalConfig().default_backend)
+            runtime = registry.resolve(NATIVE_FIRST_BACKEND)
         except Exception as exc:
             reason = str(exc) or "terminal runtime unavailable"
             await self._send_json(

@@ -128,6 +128,7 @@ fn parse_source_with_identity(
     import_context: &ImportResolutionContext,
     semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
 ) -> anyhow::Result<Option<ParseResult>> {
+    let mut timings = crate::index::indexer::IndexTimings::new("parse.tree");
     let SourceIdentity {
         rel_path,
         language,
@@ -159,6 +160,7 @@ fn parse_source_with_identity(
     };
     // Retrieval ranges include metadata; call scope starts at the original AST definition.
     let mut definition_starts = HashMap::new();
+    timings.phase("parse.symbols");
     let mut symbols = extract_symbols(
         &tree,
         &source,
@@ -168,8 +170,10 @@ fn parse_source_with_identity(
         symbol_file,
         &mut definition_starts,
     )?;
+    timings.phase("parse.parents");
     link_parents(&mut symbols);
     collapse_rust_impl_symbols(&mut symbols);
+    timings.phase("parse.imports");
     let extracted_imports = extract_imports(
         &tree,
         &source,
@@ -190,7 +194,9 @@ fn parse_source_with_identity(
         file_path,
         root_path,
     };
+    timings.phase("parse.calls");
     let calls = extract_calls(&tree, &source, spec, ctx, semantic_resolver)?;
+    timings.phase("parse.inheritance");
     let inheritance = extract_inheritance(&tree, &source, spec, &ctx, &file_content_hash)?;
 
     Ok(Some(ParseResult {
@@ -221,6 +227,7 @@ fn extract_symbols(
         return Ok(Vec::new());
     }
 
+    let mut timings = crate::index::indexer::IndexTimings::new("symbols.compile_query");
     let query = Query::new(ts_lang, spec.symbol_query).with_context(|| {
         format!(
             "failed to compile symbol query for language `{language}` while parsing {}",
@@ -228,6 +235,7 @@ fn extract_symbols(
         )
     })?;
 
+    timings.phase("symbols.matches");
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source);
 
@@ -612,10 +620,12 @@ fn extract_imports(
         return Ok(ExtractedImports::default());
     }
 
+    let mut timings = crate::index::indexer::IndexTimings::new("imports.compile_query");
     let query = Query::new(ts_lang, spec.import_query).with_context(|| {
         format!("failed to compile import query for language `{language}` while parsing {rel_path}")
     })?;
 
+    timings.phase("imports.matches");
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source);
     let capture_names = query.capture_names();

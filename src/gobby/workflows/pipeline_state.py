@@ -118,7 +118,6 @@ class PipelineExecution:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "completed_at": self.completed_at,
-            "resume_token": self.resume_token,
             "session_id": self.session_id,
             "parent_execution_id": self.parent_execution_id,
             "continuation_prompt": self.continuation_prompt,

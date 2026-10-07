@@ -8,26 +8,30 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_PROTOCOL_VERSION,
     MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
 )
-from gobby.servers.auth_service import AuthService
+from gobby.servers.auth_service import AuthService, _agent_capability_allows
 from gobby.servers.routes.mcp.endpoints import request_context
-from gobby.servers.routes.mcp.endpoints.bridge import report_bridge_ready
+from gobby.servers.routes.mcp.endpoints.bridge import (
+    get_bridge_tool_timeouts,
+    report_bridge_ready,
+)
 from gobby.servers.routes.mcp.tools import create_mcp_router
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.utils.local_token import issue_agent_api_token
+from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
 from gobby.utils.session_context import SeededContextTokens
 from gobby.workflows.state_manager import SessionVariableManager
-from tests.servers.conftest import create_http_server
+from tests.servers.conftest import _managed_bootstrap, create_http_server
 
 pytestmark = pytest.mark.unit
 
@@ -43,7 +47,7 @@ def _server(db: HubDatabase) -> Any:
     return SimpleNamespace(session_manager=SimpleNamespace(db=db), run_db=_run_inline)
 
 
-def test_router_registers_bridge_ready_post() -> None:
+def test_router_registers_bridge_routes() -> None:
     routes = {
         (route.path, method)
         for route in create_mcp_router().routes
@@ -52,6 +56,43 @@ def test_router_registers_bridge_ready_post() -> None:
     }
 
     assert ("/api/mcp/bridge/ready", "POST") in routes
+    assert ("/api/mcp/bridge/tool-timeouts", "GET") in routes
+
+
+@pytest.mark.asyncio
+async def test_bridge_tool_timeouts_serve_the_active_config() -> None:
+    config = DaemonConfig.model_validate(
+        {"mcp_client_proxy": {"tool_timeouts": {"close_task": 600.0}}}
+    )
+
+    result = await get_bridge_tool_timeouts(cast(Any, SimpleNamespace(config=config)))
+
+    assert result == {"success": True, "tool_timeouts": {"close_task": 600.0}}
+
+
+@pytest.mark.asyncio
+async def test_bridge_tool_timeouts_wait_for_daemon_config() -> None:
+    with pytest.raises(HTTPException) as raised:
+        await get_bridge_tool_timeouts(cast(Any, SimpleNamespace(config=None)))
+
+    assert raised.value.status_code == 503
+
+
+def test_agent_tokens_may_read_bridge_tool_timeouts() -> None:
+    """A spawned agent's bridge reads its timeouts with the run-scoped token."""
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/mcp/bridge/tool-timeouts",
+            "headers": [],
+        }
+    )
+
+    entry = _agent_capability_allows(request)
+
+    assert entry is not None
+    assert entry.bind_identity is False
 
 
 @pytest.mark.asyncio
@@ -128,9 +169,14 @@ def _agent_bridge_client(
         authenticated_requests=False,
     )
     server.app.state.server = server
-    server.auth_service = AuthService(lambda: temp_db, token_file=token_file)
+    server.auth_service = AuthService(
+        lambda: temp_db, token_file=token_file, bootstrap_file=_managed_bootstrap(token_file)
+    )
     token = issue_agent_api_token(
-        "bridge-operator-token", agent_run_id=run.id, session_id=own.id, project_id=project_id
+        derive_managed_signing_key("bridge-operator-token"),
+        agent_run_id=run.id,
+        session_id=own.id,
+        project_id=project_id,
     )
     # What DaemonProxy._request sends for a managed run's bridge.
     headers = {
