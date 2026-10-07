@@ -554,6 +554,7 @@ pub async fn run_live_loop<B: Backend>(
                     && supervisor.next_attempt_at().is_none()
                 {
                     recoveries.extend(workspace.start_due_attaches(Instant::now(), false));
+                    recoveries.extend(workspace.start_due_promotions(Instant::now()));
                 }
                 if chrome.sidebar.pinned || chrome.sidebar.overlay {
                     workspace.request_git_refresh_if_due();
