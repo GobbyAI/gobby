@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Iterator, Sequence
-from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, patch
 
@@ -53,7 +52,7 @@ def _make_mock_client(dim: int = 4) -> AsyncMock:
     """
     mock_client = AsyncMock()
 
-    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def fake_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         class FakeItem:
             def __init__(self, embedding: list[float], index: int) -> None:
                 self.embedding = embedding
@@ -82,10 +81,10 @@ async def test_cache_hit_avoids_api_call() -> None:
     call_count = 0
     original_create = mock_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def tracking_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         nonlocal call_count
         call_count += 1
-        return cast(SimpleNamespace, await original_create(model=model, input=input))
+        return cast(RawEmbeddingsResponse, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
@@ -163,10 +162,10 @@ async def test_cache_miss_on_different_text() -> None:
     call_count = 0
     original_create = mock_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def tracking_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         nonlocal call_count
         call_count += 1
-        return cast(SimpleNamespace, await original_create(model=model, input=input))
+        return cast(RawEmbeddingsResponse, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
@@ -185,10 +184,10 @@ async def test_ttl_expiry() -> None:
     call_count = 0
     original_create = mock_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def tracking_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         nonlocal call_count
         call_count += 1
-        return cast(SimpleNamespace, await original_create(model=model, input=input))
+        return cast(RawEmbeddingsResponse, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
@@ -213,9 +212,9 @@ async def test_batch_dedup_within_request() -> None:
     captured_inputs: list[list[str]] = []
     original_create = mock_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def tracking_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         captured_inputs.append(input)
-        return cast(SimpleNamespace, await original_create(model=model, input=input))
+        return cast(RawEmbeddingsResponse, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
@@ -509,12 +508,12 @@ async def test_concurrent_identical_misses_share_inflight_fetch() -> None:
             second_lookup.set()
         return _cache_key(text, model, api_base)
 
-    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def tracking_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         nonlocal call_count
         call_count += 1
         started.set()
         await release.wait()
-        return cast(SimpleNamespace, await original_create(model=model, input=input))
+        return cast(RawEmbeddingsResponse, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
@@ -544,9 +543,9 @@ async def test_cross_call_dedup() -> None:
     captured_inputs: list[list[str]] = []
     original_create = mock_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def tracking_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         captured_inputs.append(input)
-        return cast(SimpleNamespace, await original_create(model=model, input=input))
+        return cast(RawEmbeddingsResponse, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
@@ -574,10 +573,10 @@ async def test_different_model_is_cache_miss() -> None:
     call_count = 0
     original_create = mock_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def tracking_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         nonlocal call_count
         call_count += 1
-        return cast(SimpleNamespace, await original_create(model=model, input=input))
+        return cast(RawEmbeddingsResponse, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
@@ -595,10 +594,10 @@ async def test_different_api_base_is_cache_miss() -> None:
     call_count = 0
     original_create = mock_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def tracking_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         nonlocal call_count
         call_count += 1
-        return cast(SimpleNamespace, await original_create(model=model, input=input))
+        return cast(RawEmbeddingsResponse, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 

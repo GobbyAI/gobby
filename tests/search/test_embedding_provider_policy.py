@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -43,7 +42,7 @@ def _make_openai_client(dim: int = 1536) -> AsyncMock:
     class FakeResponse:
         data: list[FakeItem]
 
-    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def fake_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         response = FakeResponse([FakeItem([0.1] * dim, index) for index, _ in enumerate(input)])
         return RawEmbeddingsResponse(response.data)
 

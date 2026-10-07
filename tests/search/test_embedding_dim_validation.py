@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, patch
 
@@ -37,7 +36,7 @@ def _make_mock_client(dim: int) -> AsyncMock:
     """Create a mock AsyncOpenAI client returning vectors of the requested size."""
     mock_client = AsyncMock()
 
-    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def fake_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         class FakeItem:
             def __init__(self, embedding: list[float], index: int) -> None:
                 self.embedding = embedding
@@ -66,7 +65,7 @@ def _make_evicting_client(dim: int) -> AsyncMock:
     mock_client = AsyncMock()
     call_count = 0
 
-    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def fake_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -162,10 +161,10 @@ async def test_stale_cache_entry_is_refetched_for_new_expected_dim() -> None:
     replacement_calls = 0
     original_create = replacement_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
+    async def tracking_create(model: str, input: list[str]) -> RawEmbeddingsResponse:
         nonlocal replacement_calls
         replacement_calls += 1
-        return cast(SimpleNamespace, await original_create(model=model, input=input))
+        return cast(RawEmbeddingsResponse, await original_create(model=model, input=input))
 
     replacement_client.embeddings.with_raw_response.create = tracking_create
 
