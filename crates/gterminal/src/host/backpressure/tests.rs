@@ -12,7 +12,7 @@ use tokio::time::{timeout, Instant};
 
 use super::{
     encoded_message_bytes, enqueue_control, send_control, write_outbound, ControlClose,
-    ControlOutbound, FrameMailbox, PushResult,
+    ControlOutbound, FrameMailbox, PushResult, REPLY_DELIVERY_GRACE,
 };
 use crate::host::config::HostConfig;
 use crate::host::helpers::push_terminal_ansi;
@@ -312,7 +312,9 @@ async fn rpc_reply_survives_recoverable_reader_stall() {
     assert!(!first_bytes.is_empty());
 
     tokio::time::pause();
-    tokio::time::advance(state.config.control_deadline() * 3).await;
+    // Recover even beyond three shipped event deadlines (6 s), rather than
+    // only beyond the tiny test-local deadline.
+    tokio::time::advance(HostConfig::default().control_deadline() * 3).await;
     tokio::time::resume();
     let reply = timeout(Duration::from_secs(5), peer.next_response())
         .await
@@ -329,6 +331,48 @@ async fn rpc_reply_survives_recoverable_reader_stall() {
         .expect("control connection must remain usable");
     assert_eq!(next["id"], "after-stall");
     assert_eq!(next["ok"], true);
+}
+
+#[tokio::test]
+async fn rpc_reply_closes_permanently_stalled_reader() {
+    let state = test_state(HostConfig {
+        control_deadline_ms: 20,
+        control_queue_entries: 1,
+        ..HostConfig::default()
+    });
+    let mut peer = ControlPeer::connect_with_send_buffer(&state, Some(4096)).await;
+    let huge_id = "x".repeat(1024 * 1024);
+    peer.send(json!({"id": huge_id, "method": "ping"})).await;
+    assert!(!timeout(Duration::from_secs(5), peer.reader.fill_buf())
+        .await
+        .expect("reply write must begin")
+        .expect("control peer read")
+        .is_empty());
+
+    // Do not drain the socket until after the reply and diagnostic deadlines.
+    tokio::time::pause();
+    tokio::time::advance(REPLY_DELIVERY_GRACE + Duration::from_millis(20)).await;
+    let mut received = Vec::new();
+    timeout(
+        Duration::from_secs(1),
+        peer.reader.read_to_end(&mut received),
+    )
+    .await
+    .expect("permanent stall must close the connection")
+    .expect("read until host closes");
+    assert!(
+        received.len() < huge_id.len(),
+        "reply must not resume after expiry"
+    );
+
+    let mut healthy = ControlPeer::connect(&state).await;
+    healthy
+        .send(json!({"id": "after-expiry", "method": "ping"}))
+        .await;
+    assert_eq!(
+        healthy.next_response().await.expect("host stays usable")["id"],
+        "after-expiry"
+    );
 }
 
 #[tokio::test]
@@ -687,6 +731,23 @@ async fn write_outbound_bounds_flush_by_control_deadline() {
     .await
     .expect("control close is bounded");
     assert_eq!(closed, ControlClose::Deadline);
+}
+
+#[tokio::test(start_paused = true)]
+async fn rpc_reply_bounds_stalled_flush() {
+    let (tx, rx) = mpsc::channel(1);
+    tx.try_send(ControlOutbound::Reply(json!({"id": "reply", "ok": true})))
+        .expect("enqueue reply");
+    let started = Instant::now();
+    let closed = timeout(
+        REPLY_DELIVERY_GRACE + Duration::from_secs(1),
+        write_outbound(StalledFlushWriter, rx, Duration::from_millis(20)),
+    )
+    .await
+    .expect("reply flush must be bounded");
+    assert_eq!(closed, ControlClose::Deadline);
+    assert_eq!(started.elapsed(), REPLY_DELIVERY_GRACE);
+    assert!(tx.is_closed(), "expiry must release queued reply producers");
 }
 
 #[tokio::test]
