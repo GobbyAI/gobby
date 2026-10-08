@@ -12,9 +12,25 @@ from gobby.tasks.landing_policy import (
     freeze_path,
     is_direct_commit_path,
     read_freeze,
+    requires_project_sync,
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("paths", "expected"),
+    [
+        ([".gobby/workflows/pipelines/crew-lane.yaml", "src/gobby/example.py"], True),
+        ([".gobby/workflows/pipelines/crew-lane.yml", "web/src/example.ts"], True),
+        ([".gobby/workflows/pipelines/nested/example.yaml"], False),
+        ([".gobby/workflows/pipelines/README.md"], False),
+        (["src/gobby/install/shared/workflows/agents/example.yaml"], False),
+        ([], False),
+    ],
+)
+def test_project_sync_is_independent_of_strongest_class(paths: list[str], expected: bool) -> None:
+    assert requires_project_sync(iter(paths)) is expected
 
 
 @pytest.mark.parametrize(

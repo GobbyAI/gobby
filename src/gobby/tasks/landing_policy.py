@@ -71,6 +71,11 @@ def classify_paths(paths: Iterable[str]) -> str:
     )
 
 
+def requires_project_sync(paths: Iterable[str]) -> bool:
+    """Report imported pipeline changes independently of activation precedence."""
+    return any(_path_class(path) == "sync" for path in paths)
+
+
 def is_direct_commit_path(path: str) -> bool:
     """Return whether a direct commit to the protected branch may change ``path``.
 
