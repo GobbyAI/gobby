@@ -45,6 +45,8 @@ _CAPABILITY_NEUTRAL_MCP_TOOLS = frozenset(
         # able to search memories and read the ones its index points at.
         "gobby-memory:search_memories",
         "gobby-memory:get_memory",
+        # Required post-close review must remain reachable after the seat advances.
+        "gobby-memory:review_task_memories",
     }
 )
 # Grok's read-only poll for a backgrounded call. It returns the result of a call

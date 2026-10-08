@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import faulthandler
 import json
 import os
@@ -14,6 +15,7 @@ import time
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from functools import wraps
+from importlib.util import resolve_name
 from pathlib import Path
 from types import FrameType
 from typing import Any, TextIO
@@ -97,15 +99,26 @@ def stage_timings(stream: TextIO) -> Iterator[Callable[[str], AbstractContextMan
 def instrument_startup(
     stage: Callable[[str], AbstractContextManager[None]],
 ) -> Iterator[None]:
-    with stage("diagnostic imports"):
-        import uvicorn
-
-        from gobby import runner_init, runner_lifecycle, runner_service_readiness
-        from gobby.events.coordination_waits import CoordinationWaitService
-        from gobby.runner_gate import acquire_runner_gate
-        from gobby.servers import app_factory
-        from gobby.servers.http import HTTPServer
-        from gobby.tasks import transcript_evidence_pool
+    """Wrap boundaries after their modules load; diagnostics never preload them."""
+    boundaries: dict[str, tuple[tuple[str, str, bool], ...]] = {
+        "gobby.servers.http": (
+            ("HTTPServer.__init__", "HTTP construction", False),
+            ("HTTPServer._init_mcp_subsystems", "HTTP MCP setup", False),
+        ),
+        "gobby.servers.app_factory": (("create_app", "HTTP app construction", False),),
+        "gobby.runner_init.servers": (("init_servers", "runtime server construction", False),),
+        "gobby.runner_gate": (("acquire_runner_gate", "predecessor gate", True),),
+        "gobby.runner_service_readiness": (
+            ("require_managed_services_ready", "managed readiness", True),
+        ),
+        "gobby.tasks.transcript_evidence_pool": (
+            ("prewarm_transcript_evidence_pool", "transcript pool prewarm", True),
+        ),
+        "gobby.events.coordination_waits": (
+            ("CoordinationWaitService.start", "coordination listener", True),
+        ),
+        "uvicorn.server": (("Server.startup", "HTTP bind and lifespan", True),),
+    }
 
     def sync(name: str, function: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(function)
@@ -124,66 +137,50 @@ def instrument_startup(
         return timed
 
     with ExitStack() as patches:
-        patches.enter_context(
-            patch.object(HTTPServer, "__init__", sync("HTTP construction", HTTPServer.__init__))
-        )
-        patches.enter_context(
-            patch.object(
-                HTTPServer,
-                "_init_mcp_subsystems",
-                sync("HTTP MCP setup", HTTPServer._init_mcp_subsystems),
-            )
-        )
-        patches.enter_context(
-            patch.object(
-                app_factory, "create_app", sync("HTTP app construction", app_factory.create_app)
-            )
-        )
-        patches.enter_context(
-            patch.object(
-                runner_init,
-                "init_servers",
-                sync("runtime server construction", runner_init.init_servers),
-            )
-        )
-        patches.enter_context(
-            patch.object(
-                runner_lifecycle,
-                "acquire_runner_gate",
-                async_("predecessor gate", acquire_runner_gate),
-            )
-        )
-        patches.enter_context(
-            patch.object(
-                runner_service_readiness,
-                "require_managed_services_ready",
-                async_(
-                    "managed readiness", runner_service_readiness.require_managed_services_ready
-                ),
-            )
-        )
-        patches.enter_context(
-            patch.object(
-                transcript_evidence_pool,
-                "prewarm_transcript_evidence_pool",
-                async_(
-                    "transcript pool prewarm",
-                    transcript_evidence_pool.prewarm_transcript_evidence_pool,
-                ),
-            )
-        )
-        patches.enter_context(
-            patch.object(
-                CoordinationWaitService,
-                "start",
-                async_("coordination listener", CoordinationWaitService.start),
-            )
-        )
-        patches.enter_context(
-            patch.object(
-                uvicorn.Server, "startup", async_("HTTP bind and lifespan", uvicorn.Server.startup)
-            )
-        )
+        wrapped: set[int] = set()
+
+        def attach(module_name: str) -> None:
+            for qualified_name, label, is_async in boundaries.get(module_name, ()):
+                target: Any = sys.modules.get(module_name)
+                members = qualified_name.split(".")
+                for member in members[:-1]:
+                    if target is None:
+                        break
+                    target = vars(target).get(member)
+                if target is None:
+                    continue
+                function = vars(target).get(members[-1])
+                if not callable(function) or id(function) in wrapped:
+                    continue
+                timed = async_(label, function) if is_async else sync(label, function)
+                patches.enter_context(patch.object(target, members[-1], timed))
+                wrapped.add(id(timed))
+
+        for name in boundaries:
+            attach(name)
+        original_import = builtins.__import__
+
+        def imported(
+            name: str,
+            globals: dict[str, Any] | None = None,
+            locals: dict[str, Any] | None = None,
+            fromlist: tuple[str, ...] | list[str] | None = (),
+            level: int = 0,
+        ) -> Any:
+            module = original_import(name, globals, locals, fromlist, level)
+            package = (globals or {}).get("__package__")
+            resolved = resolve_name("." * level + name, package) if level and package else name
+            if resolved in boundaries:
+                attach(resolved)
+            for member in fromlist or ():
+                child = f"{resolved}.{member}"
+                if child in boundaries:
+                    attach(child)
+            return module
+
+        # Import returns precede copying `from` exports into the caller. Observe
+        # those boundaries only, leaving ordinary runtime calls uninstrumented.
+        patches.enter_context(patch.object(builtins, "__import__", imported))
         yield
 
 
@@ -228,6 +225,16 @@ def main() -> None:
             with instrument_startup(stage), stage("runner execution"):
                 runpy.run_module(module, run_name="__main__")
         finally:
+            # Interpreter thread joins happen after this scope. Preserve the
+            # threads still alive when runner execution ends, before closing
+            # the files and removing the opt-in signal marker.
+            threads.write("<runner execution ended; interpreter finalization pending>\n")
+            threads.flush()
+            faulthandler.dump_traceback(file=threads, all_threads=True)
+            # A process-owned descriptor lets the C watchdog report a stuck
+            # interpreter join after these context-managed files are closed.
+            # Normal exits close it with the process before the watchdog fires.
+            faulthandler.dump_traceback_later(10, file=os.dup(threads.fileno()))
             marker.unlink(missing_ok=True)
             faulthandler.unregister(signal.SIGUSR2)
             signal.signal(signal.SIGUSR1, previous)
