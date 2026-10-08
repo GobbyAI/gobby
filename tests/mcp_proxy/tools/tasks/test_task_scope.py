@@ -519,6 +519,41 @@ async def test_net_commit_paths_report_deletions_absent_from_the_candidate(
     )
 
 
+@pytest.mark.parametrize("candidate_state", ["deleted", "readded", "missing-worktree"])
+async def test_net_commit_paths_use_candidate_presence_after_foreign_deletion(
+    tmp_path: Path, candidate_state: str
+) -> None:
+    git = _git_repo(tmp_path)
+    test = tmp_path / "tests/test_changed.py"
+    test.parent.mkdir()
+    test.write_text("def test_it():\n    assert True\n")
+    git("add", ".")
+    git("commit", "-qm", "root")
+    test.write_text("def test_it():\n    assert 1 == 1\n")
+    git("commit", "-qam", "linked modification")
+    linked = git("rev-parse", "HEAD")
+    if candidate_state != "missing-worktree":
+        git("rm", "-q", "tests/test_changed.py")
+        git("commit", "-qm", "foreign deletion")
+        if candidate_state == "readded":
+            test.parent.mkdir(exist_ok=True)
+            test.write_text("def test_it():\n    assert True\n")
+            git("add", ".")
+            git("commit", "-qm", "foreign readdition")
+    candidate = git("rev-parse", "HEAD")
+    if candidate_state == "missing-worktree":
+        test.unlink()
+
+    net = await task_scope.collect_net_commit_paths_async(
+        [linked], str(tmp_path), candidate=candidate
+    )
+
+    assert net.changed == frozenset({"tests/test_changed.py"})
+    assert net.deleted == (
+        frozenset({"tests/test_changed.py"}) if candidate_state == "deleted" else frozenset()
+    )
+
+
 async def test_net_commit_paths_fail_closed_on_an_unknown_commit(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
 
