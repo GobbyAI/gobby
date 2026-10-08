@@ -1,6 +1,6 @@
 [package]
 name = "gobby-client"
-version = "0.1.24"
+version = "0.1.25"
 edition = "2021"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
