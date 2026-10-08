@@ -103,8 +103,6 @@ step_workflow:
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
-        - "gobby-sessions:set_handoff"
-        - "gobby-sessions:get_handoff"
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
         - "gobby-sessions:get_session"
@@ -149,8 +147,6 @@ step_workflow:
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
-        - "gobby-sessions:set_handoff"
-        - "gobby-sessions:get_handoff"
         - "gobby-tasks:claim_task"
         - "gobby-tasks:get_task"
         - "gobby-agents:send_message"
@@ -188,8 +184,6 @@ step_workflow:
         - mcp__gobby__get_tool_schema
         - mcp__gobby__set_variable
       allowed_mcp_tools:
-        - "gobby-sessions:set_handoff"
-        - "gobby-sessions:get_handoff"
         - "gobby-tasks:get_task"
         - "gobby-results:get_tool_result"
       on_mcp_success:
@@ -226,8 +220,6 @@ step_workflow:
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
-        - "gobby-sessions:set_handoff"
-        - "gobby-sessions:get_handoff"
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
       on_mcp_success:
@@ -312,8 +304,6 @@ step_workflow:
         - mcp__gobby__get_tool_schema
         - mcp__gobby__set_variable
       allowed_mcp_tools:
-        - "gobby-sessions:set_handoff"
-        - "gobby-sessions:get_handoff"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
         - "gobby-agents:wait_for_agent"

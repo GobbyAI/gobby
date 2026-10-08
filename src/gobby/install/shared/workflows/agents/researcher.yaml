@@ -85,8 +85,6 @@ step_workflow:
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
-        - "gobby-sessions:set_handoff"
-        - "gobby-sessions:get_handoff"
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
       on_mcp_success:
@@ -113,10 +111,8 @@ step_workflow:
         Research the routed question and report findings and proposals to the
         Orchestrator; send decisions for Josh through the Assistant.
       # Read-only internal reads (research, memory, sessions, plans) pass any
-      # step allowlist; these entries name messaging and session continuity.
+      # step allowlist; these entries name the seat's messaging.
       allowed_mcp_tools:
-        - "gobby-sessions:set_handoff"
-        - "gobby-sessions:get_handoff"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
       transitions: []

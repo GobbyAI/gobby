@@ -101,8 +101,6 @@ step_workflow:
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
-        - "gobby-sessions:set_handoff"
-        - "gobby-sessions:get_handoff"
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
         - "gobby-sessions:get_session"
@@ -146,8 +144,6 @@ step_workflow:
         - mcp__gobby__get_tool_schema
         - mcp__gobby__set_variable
       allowed_mcp_tools:
-        - "gobby-sessions:set_handoff"
-        - "gobby-sessions:get_handoff"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
         - "gobby-sessions:get_session"
@@ -176,8 +172,6 @@ step_workflow:
         - mcp__gobby__get_tool_schema
         - mcp__gobby__set_variable
       allowed_mcp_tools:
-        - "gobby-sessions:set_handoff"
-        - "gobby-sessions:get_handoff"
         - "gobby-tasks:get_task"
         - "gobby-tasks:get_task_diff"
         - "gobby-results:get_tool_result"
@@ -204,8 +198,6 @@ step_workflow:
         - mcp__gobby__get_tool_schema
         - mcp__gobby__set_variable
       allowed_mcp_tools:
-        - "gobby-sessions:set_handoff"
-        - "gobby-sessions:get_handoff"
         - "gobby-agents:send_message"
         - "gobby-tasks:record_close_receipt"
         - "gobby-tasks-ops:land_commit"
