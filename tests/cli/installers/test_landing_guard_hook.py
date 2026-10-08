@@ -10,11 +10,12 @@ import json
 import os
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from gobby.cli.installers.git_hooks import HOOK_TEMPLATES
+from gobby.cli.installers.git_hooks import GOBBY_HOOK_END, HOOK_TEMPLATES, install_git_hooks
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -71,6 +72,8 @@ class _Repo:
             "GIT_COMMITTER_NAME": "Test",
             "GIT_COMMITTER_EMAIL": "test@gobby.local",
         }
+        # Command prefix for every git call, such as a sandbox.
+        self.wrapper: list[str] = []
         self.root = tmp_path / "repo"
         self.ok(tmp_path, "init", "-q", "-b", "main", *init_args, str(self.root))
         hook = self.root / ".git" / "hooks" / "reference-transaction"
@@ -79,7 +82,12 @@ class _Repo:
 
     def git(self, cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["git", *args], cwd=cwd, env=self.env, capture_output=True, text=True, check=False
+            [*self.wrapper, "git", *args],
+            cwd=cwd,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            check=False,
         )
 
     def ok(self, cwd: Path, *args: str) -> str:
@@ -251,6 +259,94 @@ def test_guard_resolves_reftable_head_and_fails_closed(tmp_path: Path) -> None:
     assert lane_commit.returncode != 0
     assert "cannot resolve the main checkout's HEAD" in lane_commit.stderr
     assert LAND_COMMIT_TEXT in lane_commit.stderr
+
+
+CHAINED_RECORDER = (
+    "#!/bin/sh\n"
+    "# foreign hook: record the state argument and stdin\n"
+    'printf "== %s %s\\n" "${0##*/}" "$*" >> "$CHAINED_LOG"\n'
+    'cat >> "$CHAINED_LOG"\n'
+)
+
+
+def _chain_recorder(repo: _Repo, tmp_path: Path) -> Path:
+    """Install the guard the way the installer chains it ahead of a foreign hook."""
+    hook = repo.root / ".git" / "hooks" / "reference-transaction"
+    hook.write_text(CHAINED_RECORDER, encoding="utf-8")
+    assert install_git_hooks(repo.root)["success"] is True
+    log = tmp_path / "chained.log"
+    log.touch()
+    repo.env["CHAINED_LOG"] = str(log)
+    return log
+
+
+def _without_tmp_writes(repo: _Repo, log: Path) -> list[str]:
+    """Return a seatbelt prefix leaving git only its own directory and the log.
+
+    Ignoring TMPDIR, bash 3.2 writes here-documents to /tmp or /var/tmp, else
+    to the working directory. Seatbelt does not nest, so a sandboxed seat
+    skips, as does any platform without sandbox-exec.
+    """
+    sandbox_exec = shutil.which("sandbox-exec")
+    if sandbox_exec is None:
+        pytest.skip("needs macOS sandbox-exec")
+    root = repo.root.resolve()
+    profile = (
+        "(version 1)(allow default)"
+        '(deny file-write* (subpath "/private/tmp") (subpath "/private/var/tmp")'
+        f' (subpath "{root.parent}"))'
+        f'(allow file-write* (subpath "{root / ".git"}") (literal "{log.resolve()}"))'
+    )
+    probe = subprocess.run(
+        [sandbox_exec, "-p", profile, "/usr/bin/true"], capture_output=True, check=False
+    )
+    if probe.returncode != 0:
+        pytest.skip(f"seatbelt cannot apply here: {probe.stderr!r}")
+    return [sandbox_exec, "-p", profile]
+
+
+def test_guard_and_chained_hook_need_no_writable_temp_directory(tmp_path: Path) -> None:
+    repo = _baseline(tmp_path)
+    log = _chain_recorder(repo, tmp_path)
+    old = repo.ok(repo.root, "rev-parse", "main")
+    repo.wrapper = _without_tmp_writes(repo, log)
+
+    allowed = repo.commit(repo.root, {"docs/ok.md": "ok\n"})
+    new = repo.ok(repo.root, "rev-parse", "main")
+    refused = repo.commit(repo.root, {"src/gobby/x.py": "x = 2\n"})
+
+    assert allowed.returncode == 0, allowed.stderr
+    _assert_refused(refused, "src/gobby/x.py")
+    assert repo.ok(repo.root, "rev-parse", "main") == new
+    assert f"== reference-transaction prepared\n{old} {new} refs/heads/main\n" in log.read_text()
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        pytest.param(lambda text: text.replace("\n", f"\n{GOBBY_HOOK_END}\n", 1), id="early"),
+        pytest.param(lambda text: text.replace(f"{GOBBY_HOOK_END}\n", "", 1), id="removed"),
+        pytest.param(lambda text: f"{text}{GOBBY_HOOK_END}\n", id="trailing"),
+    ],
+)
+def test_misplaced_end_marker_cannot_bypass_the_guard(
+    tmp_path: Path, tamper: Callable[[str], str]
+) -> None:
+    """The replay runs this file's own text after the guard passed, at most once."""
+    repo = _baseline(tmp_path)
+    log = _chain_recorder(repo, tmp_path)
+    hook = repo.root / ".git" / "hooks" / "reference-transaction"
+    hook.write_text(tamper(hook.read_text(encoding="utf-8")), encoding="utf-8")
+
+    refused = repo.commit(repo.root, {"src/gobby/x.py": "x = 2\n"})
+    repo.unstage(repo.root, "src/gobby/x.py")
+    main_before = repo.ok(repo.root, "rev-parse", "main")
+    allowed = repo.commit(repo.root, {"docs/ok.md": "ok\n"})
+
+    _assert_refused(refused, "src/gobby/x.py")
+    assert allowed.returncode == 0, allowed.stderr
+    assert repo.ok(repo.root, "rev-parse", "main~1") == main_before
+    assert "== reference-transaction prepared\n" in log.read_text()
 
 
 async def test_land_commit_passes_installed_guard(
