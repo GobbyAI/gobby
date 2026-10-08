@@ -24,6 +24,7 @@ from gobby import runner as runner_module
 from gobby import runner_front_door
 from gobby.cli.utils_process import is_port_available
 from gobby.config.bootstrap import BootstrapConfig, FrontDoorConfig
+from gobby.config.terminal_host import TerminalHostConfig
 from gobby.runner_front_door import FrontDoorChild, FrontDoorStartupError
 from gobby.runner_pid_file import SERVICE_LAUNCH_ENV, PidOwnershipResolution, claim_pid_file
 
@@ -112,7 +113,16 @@ async def test_run_gobby_creates_break_glass_before_front_door(
 # Stands in for `gdaemon serve`: logs what it inherited, then binds, exits, or
 # hangs per FAKE_GDAEMON_MODE, and serves until its parent pipe reaches EOF.
 FAKE_GDAEMON = """
-import json, os, socket, sys
+import json, os, signal, socket, sys
+
+def stopped(intent):
+    report = os.environ.get("FAKE_GDAEMON_STOP_REPORT")
+    if report:
+        with open(report, "w") as output:
+            json.dump({"intent": intent}, output)
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, lambda *_args: stopped("preserve"))
 
 def is_open(fd):
     try:
@@ -142,8 +152,12 @@ if mode == "serve":
         sock.bind(("127.0.0.1", int(port)))
         sock.listen()
         listeners.append(sock)
-while os.read(parent_fd, 64):
-    pass
+while True:
+    payload = os.read(parent_fd, 64)
+    if b"D" in payload:
+        stopped("drain")
+    if not payload:
+        stopped("preserve")
 """
 
 
@@ -264,12 +278,16 @@ class FakeLease:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("launch", ["service", "direct", "explicit-bootstrap", "disabled"])
+@pytest.mark.parametrize(
+    "launch", ["service", "direct", "explicit-bootstrap", "disabled", "explicit-drain"]
+)
 async def test_runner_spawns_child_for_either_launch_path(
     launch: str, fake_gdaemon: FakeGdaemon, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     claims: list[str] = []
     observed: dict[str, object] = {}
+    stop_report = tmp_path / "runner-stop.json"
+    monkeypatch.setenv("FAKE_GDAEMON_STOP_REPORT", str(stop_report))
     bootstrap = BootstrapConfig(
         database_url="postgresql://test.invalid/gobby_test",
         bind_host="127.0.0.1",
@@ -311,6 +329,8 @@ async def test_runner_spawns_child_for_either_launch_path(
 
         def __init__(self) -> None:
             self.http_server = type("HTTP", (), {"effect_fence": None})()
+            self._drain_terminals_on_shutdown = launch == "explicit-drain"
+            self.terminal_host_config = TerminalHostConfig()
 
         @classmethod
         async def create(cls, *_args: object, **_kwargs: object) -> FakeRunner:
@@ -354,6 +374,31 @@ async def test_runner_spawns_child_for_either_launch_path(
     ]
     # run_gobby stops the child before it releases the claim.
     assert fake_gdaemon.ports_free()
+    assert json.loads(stop_report.read_text()) == {
+        "intent": "drain" if launch == "explicit-drain" else "preserve"
+    }
+
+
+@pytest.mark.parametrize("drain_terminals", [False, True])
+def test_stop_forwards_only_explicit_terminal_drain(
+    drain_terminals: bool,
+    fake_gdaemon: FakeGdaemon,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop_report = tmp_path / "child-stop.json"
+    monkeypatch.setenv("FAKE_GDAEMON_STOP_REPORT", str(stop_report))
+    child = fake_gdaemon.child()
+    child.start()
+    try:
+        child.stop(drain_terminals=drain_terminals)
+        assert child.pid is None
+        assert fake_gdaemon.ports_free()
+        assert json.loads(stop_report.read_text()) == {
+            "intent": "drain" if drain_terminals else "preserve"
+        }
+    finally:
+        child.stop()
 
 
 @pytest.mark.asyncio

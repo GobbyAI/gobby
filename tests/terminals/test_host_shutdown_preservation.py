@@ -10,9 +10,12 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 import gobby.runner_lifecycle_processes as runner_lifecycle_processes
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
+from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig, FrontDoorConfig
 from gobby.config.terminal_host import TerminalHostConfig
 from gobby.config.terminals import TerminalConfig
 from gobby.runner import GobbyRunner
@@ -25,6 +28,55 @@ from gobby.utils.machine_id import require_machine_id
 from tests.terminals.host_fakes import FakeControlClient, FakeListRow
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("route", "front_door_enabled"),
+    [("proxy", True), ("compare", True), ("native", True), ("native", False)],
+)
+def test_route_mode_constructs_exactly_one_python_supervisor(
+    route: str, front_door_enabled: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.config.bootstrap import FrontDoorRouteBackend
+    from gobby.runner_init.terminal_wiring import init_terminal_wiring
+
+    host = MagicMock()
+    leases = MagicMock()
+    writes = MagicMock()
+    monkeypatch.setattr("gobby.terminals.host_manager.TerminalHostManager", host)
+    monkeypatch.setattr("gobby.terminals.leases.TerminalLeaseRegistry", leases)
+    monkeypatch.setattr("gobby.terminals.write_coordinator.WriteCoordinator", writes)
+    for target in (
+        "gobby.storage.terminals.TerminalManager",
+        "gobby.storage.agents.LocalAgentRunManager",
+        "gobby.storage.workspaces.WorkspaceManager",
+        "gobby.terminals.composer_lock.bind_composer_coordinator",
+        "gobby.runner_init.terminal_wiring.bind_wake_write_services",
+    ):
+        monkeypatch.setattr(target, MagicMock())
+    monkeypatch.setattr("gobby.utils.machine_id.require_machine_id", lambda: "machine-1")
+    runner = MagicMock()
+    runner.agent_runner = None
+    runner.bootstrap_config = BootstrapConfig(
+        front_door=FrontDoorConfig(
+            enabled=front_door_enabled,
+            routes={"terminal_ws": cast(FrontDoorRouteBackend, route)},
+        )
+    )
+    init_terminal_wiring(cast(GobbyRunner, runner), DaemonConfig())
+
+    if route == "native" and front_door_enabled:
+        host.assert_not_called()
+        leases.assert_not_called()
+        writes.assert_not_called()
+        assert runner.terminal_host_manager is None
+        assert runner.lease_registry is None
+        assert runner.write_coordinator is None
+    else:
+        host.assert_called_once()
+        leases.assert_called_once()
+        writes.assert_called_once()
+
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 HOST_PID = 4242
@@ -152,7 +204,7 @@ async def test_stop_preserves_host_by_default_for_every_intent(
 
 
 @pytest.mark.asyncio
-async def test_explicit_opt_in_drains_host(
+async def test_explicit_terminal_drain_is_the_only_host_shutdown_path(
     tmp_path: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -174,28 +226,16 @@ async def test_explicit_opt_in_drains_host(
         db_executor=None,
         _drain_terminals_on_shutdown=True,
     )
-    with patch("gobby.terminals.host_manager.os.kill") as kill:
+    with patch("gobby.terminals.host_shutdown.os.kill") as kill:
         reap_calls = await _run_shutdown_cleanup(runner, intent=ShutdownIntent.STOP)
     assert client.shutdown_calls == [200]
     kill.assert_not_called()
     assert host.preserved_host_pid() is None
     assert reap_calls == [set()], "a drained host is not held back from the reaper"
 
-    # Config opt-in (`terminals.stop_host_on_shutdown = true`) drains on a plain stop.
-    configured = FakeControlClient(host_epoch=epoch, host_pid=HOST_PID)
-    host2 = _adopted_host(
-        tmp_path,
-        terminals,
-        configured,
-        terminal_config=TerminalConfig(stop_host_on_shutdown=True),
-    )
-    await host2.start()
-    monkeypatch.setattr(host2, "_await_host_exit", AsyncMock(return_value=True))
-    with patch("gobby.terminals.host_manager.os.kill") as kill:
-        await host2.stop()
-    assert configured.shutdown_calls == [200]
-    kill.assert_not_called()
-    assert host2.host_pid is None
+    # Ordinary configuration cannot request a destructive drain.
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        TerminalConfig.model_validate({"stop_host_on_shutdown": True})
 
     # Direct opt-in on the supervisor API.
     direct = FakeControlClient(host_epoch=epoch, host_pid=HOST_PID)
@@ -204,7 +244,7 @@ async def test_explicit_opt_in_drains_host(
     await host3.stop()
     assert direct.shutdown_calls == []
     monkeypatch.setattr(host3, "_await_host_exit", AsyncMock(return_value=True))
-    with patch("gobby.terminals.host_manager.os.kill") as kill:
+    with patch("gobby.terminals.host_shutdown.os.kill") as kill:
         await host3.stop(drain_host=True)
     assert direct.shutdown_calls == [200]
     kill.assert_not_called()

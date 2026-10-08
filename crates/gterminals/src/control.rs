@@ -409,6 +409,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
         })
     }
 
+    pub async fn host_shutdown(&mut self, grace_ms: u64) -> Result<Value, ControlError> {
+        self.mutating("host_shutdown", json!({"grace_ms": grace_ms}))
+            .await
+    }
+
     pub async fn list(&mut self) -> Result<Inventory, ControlError> {
         let reply = self.request("list", json!({})).await?;
         let epoch = reply_str(&reply, "epoch")?;

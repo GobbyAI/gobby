@@ -34,7 +34,22 @@ pub trait RouteFamily: Send + Sync {
 }
 
 /// Every family gdaemon implements. Stage 2 leaves add their families here.
-pub static FAMILIES: &[&dyn RouteFamily] = &[&HealthFamily];
+pub static FAMILIES: &[&dyn RouteFamily] = &[&HealthFamily, &TerminalFamily];
+
+/// The lifecycle is native; terminal upgrades retain the existing proxy transport.
+struct TerminalFamily;
+
+impl RouteFamily for TerminalFamily {
+    fn name(&self) -> &'static str {
+        "terminal_ws"
+    }
+    fn prefixes(&self) -> &'static [&'static str] {
+        &[]
+    }
+    fn router(&self) -> Router<FrontDoorState> {
+        Router::new()
+    }
+}
 
 struct Entry {
     name: &'static str,

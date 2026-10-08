@@ -2504,7 +2504,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-daemon"
-version = "0.4.9"
+version = "0.4.10"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2593,10 +2593,13 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bincode",
+ "gobby-core",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
