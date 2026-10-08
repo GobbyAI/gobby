@@ -95,6 +95,9 @@ def test_crew_runbook_renders_each_subset_in_one_tab(
         assert (step.mcp.server, step.mcp.tool) == ("gobby-agents", "spawn_agent")
         args = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
         assert args["agent"] == step.id
+        assert args["provider"] in {"claude", "codex"}
+        assert isinstance(args["model"], str) and args["model"]
+        assert isinstance(args["reasoning_effort"], str) and args["reasoning_effort"]
         assert args["execution_mode"] == "interactive"
         assert args["checkout_mode"] == "none"
         assert args["project_path"] == "/pilot/shared-checkout"
