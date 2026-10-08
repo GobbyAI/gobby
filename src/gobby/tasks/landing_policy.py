@@ -16,7 +16,7 @@ from pathlib import Path
 from gobby.sync.jsonl_io import atomic_write_text
 
 # Weakest first; the strongest class among a candidate's changed paths wins.
-ACTIVATION_CLASSES = ("none", "reload", "ui_build", "restart", "cutover")
+ACTIVATION_CLASSES = ("none", "sync", "reload", "ui_build", "restart", "cutover")
 
 _CUTOVER_PREFIXES = ("crates/",)
 _CUTOVER_FILES = frozenset(
@@ -39,6 +39,14 @@ UNREADABLE_FREEZE_REASON = "unreadable landing freeze file"
 def _path_class(path: str) -> str:
     if path in _CUTOVER_FILES or path.startswith(_CUTOVER_PREFIXES):
         return "cutover"
+    # Project pipeline files are authoring inputs; runtime reads their synced DB rows.
+    pipeline_file = path.removeprefix(".gobby/workflows/pipelines/")
+    if (
+        pipeline_file != path
+        and "/" not in pipeline_file
+        and pipeline_file.endswith((".yaml", ".yml"))
+    ):
+        return "sync"
     # reload_cache syncs these definitions to the DB read by each new spawn.
     agent_file = path.removeprefix("src/gobby/install/shared/workflows/agents/")
     if agent_file != path and "/" not in agent_file and agent_file.endswith(".yaml"):
