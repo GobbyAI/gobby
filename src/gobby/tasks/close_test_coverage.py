@@ -574,49 +574,64 @@ def _candidate_blobs(root: str, commit: str) -> Mapping[str, str]:
     return blobs
 
 
-def coverage_failure_message(
+def coverage_failure_messages(
     python_tests: tuple[str, ...],
     python_sources: Mapping[str, Sequence[str]],
     web_paths: tuple[str, ...],
     *,
     differing_paths: tuple[str, ...] = (),
     close_root: str | None = None,
-) -> str | None:
-    """Describe the first uncovered test obligation in checklist priority order."""
-    copies = (
-        " A run from another tree is credited only when that tree matches the close "
-        "candidate commit, or the close checkout without one; these paths differ: "
-        f"{', '.join(f'`{path}`' for path in differing_paths)}."
-        if differing_paths
-        else ""
-    )
+) -> list[tuple[str, str]]:
+    """Name and describe every uncovered test obligation in checklist priority order.
+
+    The differing-copy note closes the last pytest obligation, since its paths can
+    come from either one.
+    """
+    failures: list[tuple[str, str]] = []
     if python_tests:
         display = ", ".join(f"`{path}`" for path in python_tests)
-        return (
-            "Changed Python tests have no credited fresh passing pytest target. "
-            f"Uncovered paths: {display}.{copies}"
+        failures.append(
+            (
+                "pytest_changed_tests",
+                "Changed Python tests have no credited fresh passing pytest target. "
+                f"Uncovered paths: {display}.",
+            )
         )
     if python_sources:
         display = "; ".join(
             f"`{source}`: " + ", ".join(f"`{test}`" for test in tests)
             for source, tests in python_sources.items()
         )
-        return (
-            "Changed Python sources have related tests with no credited fresh passing pytest target. "
-            f"Uncovered sources and tests: {display}.{copies}"
+        failures.append(
+            (
+                "pytest_related_source_tests",
+                "Changed Python sources have related tests with no credited fresh passing "
+                f"pytest target. Uncovered sources and tests: {display}.",
+            )
+        )
+    if failures and differing_paths:
+        name, message = failures[-1]
+        failures[-1] = (
+            name,
+            f"{message} A run from another tree is credited only when that tree matches the "
+            "close candidate commit, or the close checkout without one; these paths differ: "
+            f"{', '.join(f'`{path}`' for path in differing_paths)}.",
         )
     if web_paths:
         # Direct binary avoids wrappers that rewrite `vitest related` into `vitest run`.
         display = ", ".join(f"`{path}`" for path in web_paths)
         workdir = shlex.quote(os.path.join(close_root, "web")) if close_root else "web"
-        return (
-            "Changed web/src files have no credited fresh passing `vitest related` run. "
-            f"Uncovered paths: {display}. Run `cd {workdir} && node_modules/.bin/vitest "
-            "related <each path relative to web/> --run` clean after the final task edit; "
-            "add `--passWithNoTests` when a path has no runtime importer (type-only "
-            "modules, declarations, assets)."
+        failures.append(
+            (
+                "vitest_related",
+                "Changed web/src files have no credited fresh passing `vitest related` run. "
+                f"Uncovered paths: {display}. Run `cd {workdir} && node_modules/.bin/vitest "
+                "related <each path relative to web/> --run` clean after the final task edit; "
+                "add `--passWithNoTests` when a path has no runtime importer (type-only "
+                "modules, declarations, assets).",
+            )
         )
-    return None
+    return failures
 
 
 def changed_web_source_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:

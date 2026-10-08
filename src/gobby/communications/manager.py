@@ -217,9 +217,7 @@ class CommunicationsManager:
     ) -> CommsMessage:
         """Send a message to a named channel."""
         await self._wait_for_channel_startup(channel_name)
-        return await self._outbound.run(
-            self._outbound.send_message(channel_name, content, session_id, metadata)
-        )
+        return await self._outbound.send_message(channel_name, content, session_id, metadata)
 
     async def _wait_for_channel_startup(self, channel_name: str) -> None:
         """Wait for an enabled channel when a send races adapter initialization."""
@@ -350,16 +348,14 @@ class CommunicationsManager:
     ) -> tuple[CommsMessage, CommsAttachment]:
         """Send a file attachment to a named channel."""
         await self._wait_for_channel_startup(channel_name)
-        return await self._outbound.run(
-            self._outbound.send_attachment(
-                channel_name,
-                file_path,
-                filename,
-                content_type,
-                content,
-                session_id,
-                metadata,
-            )
+        return await self._outbound.send_attachment(
+            channel_name,
+            file_path,
+            filename,
+            content_type,
+            content,
+            session_id,
+            metadata,
         )
 
     def _bridge_identity(self, identity_id: str, session_id: str) -> None:
@@ -665,8 +661,8 @@ class CommunicationsManager:
         self, channel_name: str, conversation_id: str, content: str, content_type: str = "text"
     ) -> CommsMessage:
         """Send a proactive message via an adapter that supports it."""
-        return await self._outbound.run(
-            self._outbound.send_proactive(channel_name, conversation_id, content, content_type)
+        return await self._outbound.send_proactive(
+            channel_name, conversation_id, content, content_type
         )
 
     def list_messages(
