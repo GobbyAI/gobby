@@ -1205,20 +1205,11 @@ async def test_prepare_srt_launch_refuses_a_cargo_home_swapped_in_at_render(
 
 
 @pytest.mark.asyncio
-async def test_prepare_srt_launch_grants_write_on_the_managed_grant_lock_only(
+async def test_prepare_srt_launch_keeps_managed_grant_assets_read_only(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A managed run may take its grant lock without gaining the run root.
-
-    gcode locks a managed grant at ``<grant>.lock``, and for a managed run that
-    path lands in the managed-execution run root beside the grant itself. Only
-    the root's four siblings are writable, so without this one grant the lock
-    create returns EPERM and both call sites in ``grant/acquisition.rs``
-    propagate the IO error instead of waiting for the lock. The root also holds
-    the grant, which is the credential the sandbox exists to keep out of the
-    agent's reach, so the grant must stay readable and unwritable.
-    """
+    """The daemon owns grant publication; clients need no lock write grant."""
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
     monkeypatch.setattr(srt_runtime, "sys", SimpleNamespace(platform="darwin"))
     gobby_home = tmp_path / "gobby-home"
@@ -1276,12 +1267,7 @@ async def test_prepare_srt_launch_grants_write_on_the_managed_grant_lock_only(
     policy = json.loads(Path(launch.policy_path or "").read_text(encoding="utf-8"))
     allowed_writes = policy["filesystem"]["allowWrite"]
     lock = str(run_root.resolve() / "grant.json.lock")
-    assert lock in allowed_writes
-    # SRT blocks creating each ancestor of a write deny, so a deny beneath the lock
-    # would refuse the lock's own create.
-    assert not [deny for deny in policy["filesystem"]["denyWrite"] if deny.startswith(f"{lock}/")]
-    # The lock is the whole grant: neither the credential nor the root it sits in
-    # becomes writable, which is what separates this from widening the run root.
+    assert lock not in allowed_writes
     assert str(grant_path.resolve()) not in allowed_writes
     assert str(run_root.resolve()) not in allowed_writes
     assert str(grant_path.resolve()) in policy["filesystem"]["allowRead"]

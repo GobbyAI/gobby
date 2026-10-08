@@ -710,6 +710,11 @@ async def test_resume_never_replays_stored_secret_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Non-allowlisted stored overrides are dropped; the capability is re-minted."""
+    cache_env = {
+        "UV_CACHE_DIR": "/sandbox/cache/uv",
+        "CARGO_HOME": "/sandbox/shared/cargo-home",
+        "CARGO_TARGET_DIR": "/sandbox/checkout/cargo-target",
+    }
     legacy_token_override = 'mcp_servers.gobby.env.GOBBY_AGENT_API_TOKEN="stale-capability"'
     metadata = _resume_metadata()
     metadata["config_overrides"] = [
@@ -731,13 +736,14 @@ async def test_resume_never_replays_stored_secret_overrides(
             "GOBBY_DAEMON_URL": "http://127.0.0.1:31579",
             "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/fresh/grant.json",
             "GOBBY_AGENT_API_TOKEN": "fresh-capability",
+            **{name: f"/operator/{name}" for name in cache_env},
         }
     )
     prepare_sandbox = AsyncMock(
         return_value=SandboxLaunch(
             backend="srt",
             enforced=True,
-            provider_env={"TMPDIR": "/fresh-tmp"},
+            provider_env={"TMPDIR": "/fresh-tmp", **cache_env},
             provider_executable="/managed/codex",
             policy_path="/fresh/policy.json",
             violation_path="/fresh/violations.jsonl",
@@ -779,6 +785,9 @@ async def test_resume_never_replays_stored_secret_overrides(
         'mcp_servers.gobby.env.GOBBY_MANAGED_EXECUTION_BOOTSTRAP="/fresh/grant.json"' in overrides
     )
     assert 'mcp_servers.gobby.env_vars=["GOBBY_AGENT_API_TOKEN"]' in overrides
+    for name, path in cache_env.items():
+        assert f'shell_environment_policy.set.{name}="{path}"' in overrides
+        assert f'mcp_servers.gobby.env.{name}="{path}"' in overrides
 
 
 @pytest.mark.parametrize(

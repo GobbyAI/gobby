@@ -169,7 +169,7 @@ fn handshake_managed_once(
     }
     // The daemon publishes the managed launch grant when it rotates credentials.
     // Clients only read that asset; persisting here fails under the managed sandbox
-    // after the predecessor database credential has already been revoked.
+    // while the predecessor database credential is on its five-minute drain.
     Ok(AcquiredGrant {
         bundle: grant,
         source: GrantSource::ManagedFile,
