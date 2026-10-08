@@ -267,6 +267,7 @@ class SessionVariableManager:
         *,
         observed_claim_task_id: str | None = None,
         reconcile_claims: bool = False,
+        inherited_active_task_id: str | None = None,
     ) -> bool:
         """Atomically merge variable updates into session variables.
 
@@ -285,7 +286,9 @@ class SessionVariableManager:
         if reconcile_claims or observed_claim_task_id is not None:
             from gobby.workflows.task_claim_projection import merge_claimed_task_projection
 
-            return merge_claimed_task_projection(self, session_id, updates, observed_claim_task_id)
+            return merge_claimed_task_projection(
+                self, session_id, updates, observed_claim_task_id, inherited_active_task_id
+            )
 
         def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
             variables.update(updates)

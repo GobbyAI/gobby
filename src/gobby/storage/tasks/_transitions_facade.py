@@ -125,6 +125,7 @@ class TaskTransitionsMixin:
         force: bool = False,
         *,
         expected_owner: str | None = None,
+        select_claim: bool = True,
     ) -> Task:
         """Claim a task for a session, preserving non-open lifecycle states."""
         task = _claim_task(
@@ -133,6 +134,7 @@ class TaskTransitionsMixin:
             session_id=session_id,
             force=force,
             expected_owner=expected_owner,
+            select_claim=select_claim,
         )
         self._notify_listeners()
         return task

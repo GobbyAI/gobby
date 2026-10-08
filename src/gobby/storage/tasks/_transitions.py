@@ -189,10 +189,13 @@ def claim_task(
     force: bool = False,
     expected_owner: str | None = None,
     guard_selection: bool = False,
+    select_claim: bool = True,
 ) -> Task:
     """Claim a task for a session with an atomic ownership guard."""
     if force and expected_owner is not None:
         raise ValueError("force and expected_owner are mutually exclusive")
+    if guard_selection and not select_claim:
+        raise ValueError("guarded claims must select their task")
     if is_task_closed(get_task(db, task_id)):
         raise TaskClosedError(f"Cannot claim task {task_id}: task is closed")
 
@@ -238,8 +241,11 @@ def claim_task(
             from gobby.workflows.state_manager import SessionVariableManager
             from gobby.workflows.task_tool_bindings import TaskToolBindings
 
-            sessions = (session_id,) if prior_owner is None else (session_id, str(prior_owner))
-            conn.acquire_additional_lock(SessionVariableTransfer(sessions))
+            sessions = {session_id} if select_claim else set()
+            if prior_owner is not None:
+                sessions.add(str(prior_owner))
+            if sessions:
+                conn.acquire_additional_lock(SessionVariableTransfer(tuple(sessions)))
             if guard_selection:
                 TaskToolBindings(SessionVariableManager(db), session_id).assert_can_select(task_id)
         if cursor.rowcount == 1 and prior_owner is not None and str(prior_owner) != session_id:
@@ -249,7 +255,7 @@ def claim_task(
             # variable mutation. A failed cleanup rolls back the ownership move.
             SessionVariableManager(db).release_task_claim(str(prior_owner), task_id)
 
-        if cursor.rowcount == 1:
+        if cursor.rowcount == 1 and select_claim:
             from gobby.workflows.state_manager import SessionVariableManager
 
             task = get_task(db, task_id)

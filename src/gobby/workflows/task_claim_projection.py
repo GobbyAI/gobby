@@ -31,6 +31,7 @@ def merge_claimed_task_projection(
     session_id: str,
     updates: dict[str, Any],
     observed_claim_task_id: str | None,
+    inherited_active_task_id: str | None = None,
 ) -> bool:
     """Merge a snapshot without restoring lost claims or replacing newer claims.
 
@@ -72,6 +73,12 @@ def merge_claimed_task_projection(
                     return False, False
 
                 current_active = variables.get("active_task_id")
+                if (
+                    not current_ids
+                    and "task_selection_history" not in variables
+                    and inherited_active_task_id in owned
+                ):
+                    current_active = inherited_active_task_id
                 variables.update(updates)
                 variables["claimed_tasks"] = owned
                 variables["task_claimed"] = bool(owned)
