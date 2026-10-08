@@ -33,6 +33,7 @@ from gobby.workflows.pipeline_state import (
     ExecutionStatus,
     PipelineExecution,
     PipelineStepError,
+    PipelineStepRefusal,
     StepExecution,
     StepStatus,
 )
@@ -256,7 +257,7 @@ class PipelineExecutor(
                     execution_id,
                     exc.step_id,
                 )
-            elif exc:
+            elif exc and not isinstance(exc, PipelineStepRefusal):
                 logger.error("Detached pipeline run %s failed: %s", execution_id, exc)
 
         task.add_done_callback(_on_done)
@@ -817,7 +818,15 @@ class PipelineExecutor(
                     span.set_status(Status(StatusCode.ERROR, str(e)))
 
                 if execution:
-                    logger.exception("Pipeline execution failed: %s", e)
+                    if isinstance(e, PipelineStepRefusal):
+                        if _depth == 0:
+                            logger.warning(
+                                "Pipeline guard refused: %s",
+                                " ".join(str(e).split()),
+                                extra={"pipeline_guard_refused": True},
+                            )
+                    else:
+                        logger.exception("Pipeline execution failed: %s", e)
 
                     # Mark the currently-running step as FAILED
                     if (

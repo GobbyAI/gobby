@@ -476,7 +476,11 @@ def test_registered_tool_replies_in_mcp_step_shape(env: _Env) -> None:
         "workspace_id": env.workspace_id,
         "seats": ({"name": "lead", "title": "Lead", "agent": "lead-agent"},),
     }
-    assert refused == {"success": False, "error": "seat 'ghost' is not in the catalogue"}
+    assert refused == {
+        "success": False,
+        "error": "seat 'ghost' is not in the catalogue",
+        "error_code": "runbook_seat_refused",
+    }
 
 
 @pytest.mark.parametrize("report_to", [None, "", " \t", "operator"])
@@ -509,4 +513,8 @@ def test_crew_lane_guard_validates_rendered_report_target(env: _Env, report_to: 
         assert result["success"] is True and "error" not in result
         assert arguments["report_to"] == env.parent_session_id
     else:
-        assert result == {"success": False, "error": "report_to must be a nonempty session ref"}
+        assert result == {
+            "success": False,
+            "error": "report_to must be a nonempty session ref",
+            "error_code": "runbook_seat_refused",
+        }

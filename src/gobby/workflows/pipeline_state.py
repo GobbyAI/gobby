@@ -199,6 +199,10 @@ class PipelineStepError(RuntimeError):
     """A failed pipeline step whose diagnostic is visible to the operator."""
 
 
+class PipelineStepRefusal(PipelineStepError):
+    """A designed guard refusal, reported without an execution-error traceback."""
+
+
 class ApprovalRequired(Exception):
     """Exception raised when a pipeline step requires approval.
 
