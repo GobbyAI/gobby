@@ -55,9 +55,9 @@ Submission success persists findings/report; deterministic intake subsequently
 records task outcomes. It does not prove all proposed tasks were filed or fixed.
 
 The service files reviewed findings under its exact-title findings epic with
-`feedback-review`, `llm-reviewed`, `awaiting-human-review`; guidance gaps also carry
-`needs-decision`. Do not remove the human-review boundary as a side effect of
-reading a report. Reports use one local-start-date daily path; dry-run reports
+`feedback-review`, `llm-reviewed`, `awaiting-human-review`; intake adds no hold
+label such as `needs-decision`. Do not remove the human-review boundary as a side
+effect of reading a report. Reports use one local-start-date daily path; dry-run reports
 have a separate directory.
 
 Failed actions leave their observations unreviewed; partial runs identify those

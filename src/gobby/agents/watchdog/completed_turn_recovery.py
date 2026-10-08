@@ -13,6 +13,7 @@ from gobby.agents.watchdog.models import (
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.host_sleep import AWAKE_CLOCK
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_context import StepWorkflowContext
 
@@ -326,7 +327,7 @@ async def _give_up_unanswered_reprompt(
     """
     if state.last_reprompt_at is None:
         return 0
-    elapsed = (datetime.now(UTC) - state.last_reprompt_at).total_seconds()
+    elapsed = AWAKE_CLOCK.awake_seconds_since(state.last_reprompt_at)
     if elapsed < idle_timeout_seconds:
         return 0
     logger.error(

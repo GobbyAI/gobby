@@ -44,6 +44,11 @@ def build_spawn_request(
         cwd=isolation_ctx.cwd,
         provider=spawn_config.provider,
         session_id=prepared_spawn.session_id,
+        resume_session_id=(
+            resume_metadata.get("provider_native_session_id")
+            if resume_metadata.get("resume_existing_session")
+            else None
+        ),
         run_id=run_id,
         agent_run_id=run_id,
         parent_session_id=spawn_config.parent_session_id,
