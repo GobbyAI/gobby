@@ -1932,9 +1932,11 @@ def test_interactive_reuse_after_restart(
         store.db.close()
 
 
+@pytest.mark.parametrize("explicit_revoke", [False, True], ids=["drain-expiry", "explicit-revoke"])
 def test_rotation_drains_predecessor_generations(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,
+    explicit_revoke: bool,
 ) -> None:
     fixture = authorization_fixture
     manager = _manager(fixture, tmp_path / "managed")
@@ -1967,16 +1969,27 @@ def test_rotation_drains_predecessor_generations(
             None,
             first.credential_generation,
         ) not in manager._interactive_grant_expiry
+        manager.reconcile()
         with psycopg.connect(first.dsn) as conn:
             assert conn.execute("SELECT 1").fetchone() == (1,)
         with psycopg.connect(rotated.dsn) as conn:
             assert conn.execute("SELECT 1").fetchone() == (1,)
-        manager.revoke_interactive(
-            deployment_token=token,
-            project_id=fixture.project_id,
-            generation=first.credential_generation,
-            reason="explicit-revoke",
-        )
+        if explicit_revoke:
+            manager.revoke_interactive(
+                deployment_token=token,
+                project_id=fixture.project_id,
+                generation=first.credential_generation,
+                reason="explicit-revoke",
+            )
+        else:
+            with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+                admin.execute(
+                    f"UPDATE {AUTH_SCHEMA}.principal_bindings "
+                    "SET predecessor_drain_deadline = clock_timestamp() - INTERVAL '1 second' "
+                    "WHERE role_name = %s",
+                    (first.role_name,),
+                )
+            manager.reconcile()
         with pytest.raises(psycopg.OperationalError):
             psycopg.connect(first.dsn)
         assert manager.interactive_generation_revoked(
@@ -1985,6 +1998,8 @@ def test_rotation_drains_predecessor_generations(
             generation=first.credential_generation,
         )
         assert _material_generations(fixture, token) == {rotated.credential_generation}
+        with psycopg.connect(rotated.dsn) as conn:
+            assert conn.execute("SELECT 1").fetchone() == (1,)
     finally:
         manager.revoke_interactive(
             deployment_token=token,
