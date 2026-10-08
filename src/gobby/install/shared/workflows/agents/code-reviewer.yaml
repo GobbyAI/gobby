@@ -50,7 +50,7 @@ prompts:
     - Your lane, Lane Manager and author lanes come from your role file (`.gobby/roles/`, found by your session ref in `roster.md`) and from the CANDIDATE line.
 
     ## Continuity
-    Continuity: clear after each landing or bounce. Once the unit's last line is sent, hand off with `gobby-sessions:set_handoff(clear_session=true)`. Under context pressure mid-review, use `set_handoff(clear_session=false)`.
+    Continuity: compact in place after each landing or bounce. Once the unit's last line is sent, or under context pressure mid-review, hand off with `gobby-sessions:set_handoff` without `clear_session`. The session compacts and continues.
 
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.
@@ -101,6 +101,8 @@ step_workflow:
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
+        - "gobby-sessions:set_handoff"
+        - "gobby-sessions:get_handoff"
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
         - "gobby-sessions:get_session"
@@ -144,6 +146,8 @@ step_workflow:
         - mcp__gobby__get_tool_schema
         - mcp__gobby__set_variable
       allowed_mcp_tools:
+        - "gobby-sessions:set_handoff"
+        - "gobby-sessions:get_handoff"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
         - "gobby-sessions:get_session"
@@ -172,6 +176,8 @@ step_workflow:
         - mcp__gobby__get_tool_schema
         - mcp__gobby__set_variable
       allowed_mcp_tools:
+        - "gobby-sessions:set_handoff"
+        - "gobby-sessions:get_handoff"
         - "gobby-tasks:get_task"
         - "gobby-tasks:get_task_diff"
         - "gobby-results:get_tool_result"
@@ -198,6 +204,8 @@ step_workflow:
         - mcp__gobby__get_tool_schema
         - mcp__gobby__set_variable
       allowed_mcp_tools:
+        - "gobby-sessions:set_handoff"
+        - "gobby-sessions:get_handoff"
         - "gobby-agents:send_message"
         - "gobby-tasks:record_close_receipt"
         - "gobby-tasks-ops:land_commit"

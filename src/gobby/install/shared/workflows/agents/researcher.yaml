@@ -36,7 +36,7 @@ prompts:
     - Reach the Orchestrator and the Assistant through `gobby-agents:send_message`, and wait on replies with `gobby-agents:wait_for_coordination`.
 
     ## Continuity
-    Continuity: clear after each report. Once a report is sent, hand off with `gobby-sessions:set_handoff(clear_session=true)`. Under context pressure mid-research, use `set_handoff(clear_session=false)`.
+    Continuity: compact in place after each report. Once a report is sent, or under context pressure mid-research, hand off with `gobby-sessions:set_handoff` without `clear_session`. The session compacts and continues.
 
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.
@@ -85,6 +85,8 @@ step_workflow:
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
+        - "gobby-sessions:set_handoff"
+        - "gobby-sessions:get_handoff"
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
       on_mcp_success:
@@ -111,8 +113,10 @@ step_workflow:
         Research the routed question and report findings and proposals to the
         Orchestrator; send decisions for Josh through the Assistant.
       # Read-only internal reads (research, memory, sessions, plans) pass any
-      # step allowlist; these entries name the seat's messaging.
+      # step allowlist; these entries name messaging and session continuity.
       allowed_mcp_tools:
+        - "gobby-sessions:set_handoff"
+        - "gobby-sessions:get_handoff"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
       transitions: []

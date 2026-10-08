@@ -10,6 +10,8 @@ protocol.
 
 from __future__ import annotations
 
+import re
+from fnmatch import fnmatchcase
 from typing import Any
 
 import pytest
@@ -64,7 +66,7 @@ RULE_SELECTORS = {
 }
 # Decision 10: continuity is prose.
 COMPACT_SEATS = ("archivist", "log-monitor")
-CLEAR_SEATS = ("code-reviewer", "researcher")
+DELIVERABLE_SEATS = ("code-reviewer", "researcher", "developer")
 STEP_SEATS = ("code-reviewer", "log-monitor", "researcher")
 LOAD_SKILLS_WHEN = "all(skill_loaded(skill) for skill in vars.required_skills)"
 
@@ -183,12 +185,12 @@ def test_standing_seats_compact_and_never_clear(name: str) -> None:
     assert "set_handoff(clear_session=false)" in prompt
 
 
-@pytest.mark.parametrize("name", CLEAR_SEATS)
-def test_deliverable_seats_clear_between_deliverables(name: str) -> None:
+@pytest.mark.parametrize("name", DELIVERABLE_SEATS)
+def test_deliverable_seats_compact_in_place_between_deliverables(name: str) -> None:
     prompt = _prompt(name)
 
-    assert "set_handoff(clear_session=true)" in prompt
-    assert "never /clear" not in prompt
+    assert "`gobby-sessions:set_handoff` without `clear_session`" in prompt
+    assert "The session compacts and continues." in prompt
 
 
 @pytest.mark.parametrize("name", STEP_SEATS)
@@ -200,6 +202,8 @@ def test_step_seats_open_by_loading_their_required_skills(name: str) -> None:
         "gobby-skills:get_skill",
         "gobby-skills:get_skill_file",
     }
+    if name in {"code-reviewer", "researcher"}:
+        expected.update({"gobby-sessions:set_handoff", "gobby-sessions:get_handoff"})
     if name == "code-reviewer":
         expected.update(
             {
@@ -249,6 +253,8 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     prompt = _prompt("code-reviewer")
 
     assert _allowed_mcp_tools(verdict) == {
+        "gobby-sessions:set_handoff",
+        "gobby-sessions:get_handoff",
         "gobby-agents:send_message",
         "gobby-tasks:record_close_receipt",
         "gobby-tasks-ops:land_commit",
@@ -431,3 +437,29 @@ def test_bootstrap_steps_allow_role_title_setup(seat: str, step_name: str) -> No
     assert workflow is not None
     step = next(step for step in workflow.steps if step.name == step_name)
     assert {"gobby-sessions:get_session", "gobby-sessions:set_title"} <= set(step.allowed_mcp_tools)
+
+
+@pytest.mark.parametrize(
+    "name", sorted(path.stem for path in get_bundled_agents_path().glob("*.yaml"))
+)
+def test_bundled_agent_definitions_never_request_autonomous_clear(name: str) -> None:
+    definition = (get_bundled_agents_path() / f"{name}.yaml").read_text()
+    assert re.search(r"clear_session\s*[:=]\s*true\b", definition, re.IGNORECASE) is None, name
+
+
+@pytest.mark.parametrize("name", ["developer", "code-reviewer", "researcher", "lane-manager"])
+def test_lane_seats_allow_handoff_and_resume_in_every_step(name: str) -> None:
+    definition = _load(name)
+    handoff_tools = {"gobby-sessions:set_handoff", "gobby-sessions:get_handoff"}
+    assert handoff_tools.isdisjoint(definition.blocked_mcp_tools)
+    workflow = definition.step_workflow
+    if workflow is None:
+        return
+    for step in workflow.steps:
+        assert handoff_tools.isdisjoint(step.blocked_mcp_tools), step.name
+        if step.allowed_mcp_tools != "all":
+            for tool in handoff_tools:
+                assert any(fnmatchcase(tool, pattern) for pattern in step.allowed_mcp_tools), (
+                    step.name,
+                    tool,
+                )

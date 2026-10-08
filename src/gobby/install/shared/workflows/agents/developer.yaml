@@ -38,7 +38,7 @@ prompts:
     On launch, read the shared role files before task assignment and report readiness to the live session named in the launch prompt with target="session". A runbook's pipeline parent may have ended; use the supplied report target for readiness, blockers and unassigned waits.
 
     ## Continuity
-    Compact mid-task: under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`. Between tasks, after the close, hand off with `gobby-sessions:set_handoff(clear_session=true)`.
+    Compact in place: under context pressure or between tasks after the close, hand off with `gobby-sessions:set_handoff` without `clear_session`. The session compacts and continues.
 
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.
@@ -103,6 +103,8 @@ step_workflow:
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
+        - "gobby-sessions:set_handoff"
+        - "gobby-sessions:get_handoff"
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
         - "gobby-sessions:get_session"
@@ -147,6 +149,8 @@ step_workflow:
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
+        - "gobby-sessions:set_handoff"
+        - "gobby-sessions:get_handoff"
         - "gobby-tasks:claim_task"
         - "gobby-tasks:get_task"
         - "gobby-agents:send_message"
@@ -184,6 +188,8 @@ step_workflow:
         - mcp__gobby__get_tool_schema
         - mcp__gobby__set_variable
       allowed_mcp_tools:
+        - "gobby-sessions:set_handoff"
+        - "gobby-sessions:get_handoff"
         - "gobby-tasks:get_task"
         - "gobby-results:get_tool_result"
       on_mcp_success:
@@ -220,6 +226,8 @@ step_workflow:
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
+        - "gobby-sessions:set_handoff"
+        - "gobby-sessions:get_handoff"
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
       on_mcp_success:
@@ -304,6 +312,8 @@ step_workflow:
         - mcp__gobby__get_tool_schema
         - mcp__gobby__set_variable
       allowed_mcp_tools:
+        - "gobby-sessions:set_handoff"
+        - "gobby-sessions:get_handoff"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
         - "gobby-agents:wait_for_agent"
