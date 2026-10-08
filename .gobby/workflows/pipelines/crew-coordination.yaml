@@ -36,96 +36,96 @@ inputs:
     description: "Live operator session ref for readiness, blockers and unassigned waits"
   assistant_provider:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: claude
+    description: "Seat provider; override to change the roster default"
   assistant_model:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: claude-opus-5-5
+    description: "Seat model; override to change the roster default"
   assistant_reasoning_effort:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: high
+    description: "Seat reasoning effort; override to change the roster default"
   assistant_role_file:
     type: string
     default: assistant.md
     description: "Role filename under the shared checkout .gobby/roles/"
   orchestrator_provider:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: claude
+    description: "Seat provider; override to change the roster default"
   orchestrator_model:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: claude-opus-5-5
+    description: "Seat model; override to change the roster default"
   orchestrator_reasoning_effort:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: xhigh
+    description: "Seat reasoning effort; override to change the roster default"
   orchestrator_role_file:
     type: string
     default: orchestrator.md
     description: "Role filename under the shared checkout .gobby/roles/"
   archivist_provider:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: claude
+    description: "Seat provider; override to change the roster default"
   archivist_model:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: claude-opus-5-5
+    description: "Seat model; override to change the roster default"
   archivist_reasoning_effort:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: medium
+    description: "Seat reasoning effort; override to change the roster default"
   archivist_role_file:
     type: string
     default: archivist.md
     description: "Role filename under the shared checkout .gobby/roles/"
   log_monitor_provider:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: claude
+    description: "Seat provider; override to change the roster default"
   log_monitor_model:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: claude-sonnet-5-5
+    description: "Seat model; override to change the roster default"
   log_monitor_reasoning_effort:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: medium
+    description: "Seat reasoning effort; override to change the roster default"
   log_monitor_role_file:
     type: string
     default: monitor.md
     description: "Role filename under the shared checkout .gobby/roles/"
   merge_manager_provider:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: codex
+    description: "Seat provider; override to change the roster default"
   merge_manager_model:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: gpt-6.1-sol
+    description: "Seat model; override to change the roster default"
   merge_manager_reasoning_effort:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: medium
+    description: "Seat reasoning effort; override to change the roster default"
   merge_manager_role_file:
     type: string
     default: merge-manager.md
     description: "Role filename under the shared checkout .gobby/roles/"
   inbox_manager_provider:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: claude
+    description: "Seat provider; override to change the roster default"
   inbox_manager_model:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: claude-opus-5-5
+    description: "Seat model; override to change the roster default"
   inbox_manager_reasoning_effort:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: medium
+    description: "Seat reasoning effort; override to change the roster default"
   inbox_manager_role_file:
     type: string
     default: inbox-manager.md
