@@ -152,6 +152,8 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
                     id: "sess-effort".to_string(),
                     reference: Some("#77".to_string()),
                     title: Some("effort session".to_string()),
+                    source: Some("codex".to_string()),
+                    model: Some("gpt-5".to_string()),
                     reasoning_effort: Some("high".to_string()),
                     ..SessionRow::default()
                 },

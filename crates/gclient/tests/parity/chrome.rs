@@ -420,8 +420,8 @@ parity_tests! {
             );
         }
 
-        // Project creation uses the existing path-dialog chrome.
-        fn project_creation_dialog_renders_new_project_title() {
+        // Keep the pinned upstream test identity; Gobby uses project creation here.
+        fn workspace_creation_dialog_renders_new_workspace_title() {
             let ws = scripted(&["one"]);
             let mut chrome = chrome_for(&ws, "one");
             chrome.mode = Mode::ProjectDialog;
