@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast, get_args
 
 from gobby.storage.attention import (
     AttentionState,
@@ -25,6 +25,7 @@ TurnDisposition = Literal[
     "user_interrupted",
     "unknown",
 ]
+_TURN_DISPOSITIONS: frozenset[str] = frozenset(get_args(TurnDisposition))
 WaitKind = Literal["input", "approval", "handoff"]
 WaitResolution = Literal["resumed", "abandoned", "ambiguous"]
 WaitState = Literal["open", "resolving"]
@@ -144,6 +145,8 @@ class TurnLifecycleState:
     provider_turn_key: str | None = None
     waits: tuple[OutstandingWait, ...] = ()
     turn_state: Literal["open", "terminal"] = "terminal"
+    # How this generation's turn last ended; ``None`` until ``end_turn`` records it.
+    disposition: TurnDisposition | None = None
     prior_status: str = "paused"
     request_ids: tuple[str, ...] = ()
     evidence_source: str | None = None
@@ -157,6 +160,7 @@ class TurnLifecycleState:
             "provider_turn_key": self.provider_turn_key,
             "outstanding_wait_tokens": [wait.to_dict() for wait in self.waits],
             "turn_state": self.turn_state,
+            "disposition": self.disposition,
             "prior_status": self.prior_status,
             "request_ids": list(self.request_ids),
             "evidence_source": self.evidence_source,
@@ -186,6 +190,7 @@ class TurnLifecycleState:
             else ()
         )
         turn_state = raw.get("turn_state")
+        disposition = raw.get("disposition")
         try:
             started_at = parse_stored_datetime(raw.get("started_at"))
         except ValueError:
@@ -195,6 +200,7 @@ class TurnLifecycleState:
             provider_turn_key=_optional_str(raw.get("provider_turn_key")),
             waits=waits,
             turn_state=turn_state if turn_state in {"open", "terminal"} else "terminal",
+            disposition=disposition if disposition in _TURN_DISPOSITIONS else None,
             prior_status=_optional_str(raw.get("prior_status")) or "paused",
             request_ids=request_ids,
             evidence_source=_optional_str(raw.get("evidence_source")),
@@ -385,7 +391,10 @@ class TurnLifecycleReducer:
             if disposition == "unknown":
                 return current, status
             next_status = "interrupted" if disposition == "user_interrupted" else "paused"
-            updated = self._with_evidence(current, evidence, waits=(), turn_state="terminal")
+            updated = replace(
+                self._with_evidence(current, evidence, waits=(), turn_state="terminal"),
+                disposition=disposition,
+            )
             if disposition == "completed":
                 updated = replace(updated, provider_error=None)
             return (
@@ -637,6 +646,7 @@ class TurnLifecycleReducer:
             provider_turn_key=current.provider_turn_key or evidence.provider_turn_key,
             waits=current.waits if waits is None else waits,
             turn_state=current.turn_state if turn_state is None else turn_state,
+            disposition=current.disposition,
             prior_status=current.prior_status if prior_status is None else prior_status,
             request_ids=request_ids,
             evidence_source=evidence.source,
