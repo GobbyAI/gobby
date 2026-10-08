@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.servers.routes.pipelines import _batch_load_cron_info, create_pipelines_router
-from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
+from gobby.workflows.pipeline_state import ExecutionStatus, PipelineStepError, StepStatus
 
 pytestmark = pytest.mark.unit
 
@@ -537,11 +537,23 @@ class TestApproveExecution:
             assert response.status_code == 200
             assert response.json()["execution_id"] == "pe-1"
 
-    def test_approve_failed_resume_returns_server_error(
+    @pytest.mark.parametrize(
+        ("outputs_json", "expected_detail"),
+        [
+            (
+                '{"error": "Unsupported spawn provider: pipeline"}',
+                "Internal server error",
+            ),
+            (None, "Internal server error"),
+        ],
+    )
+    def test_approve_failed_record_keeps_internal_error_generic(
         self,
         client: TestClient,
         mock_server: MagicMock,
         caplog: pytest.LogCaptureFixture,
+        outputs_json: str | None,
+        expected_detail: str,
     ) -> None:
         with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
             mock_step = MagicMock(
@@ -553,6 +565,7 @@ class TestApproveExecution:
                 id="pe-1",
                 pipeline_name="test",
                 status=ExecutionStatus.FAILED,
+                outputs_json=outputs_json,
             )
 
             em = MockEM.return_value
@@ -564,8 +577,12 @@ class TestApproveExecution:
             response = client.post("/api/pipelines/approve/tok-1")
 
         assert response.status_code == 500
-        assert response.json()["detail"] == "Internal server error"
+        assert response.json()["detail"] == expected_detail
         assert "Pipeline execution pe-1 failed after approval" in caplog.text
+        failure_records = [
+            record for record in caplog.records if "failed after approval" in record.getMessage()
+        ]
+        assert len(failure_records) == 1
         failure_record = next(
             record
             for record in caplog.records
@@ -574,6 +591,38 @@ class TestApproveExecution:
         assert failure_record.__dict__["execution_id"] == "pe-1"
         assert failure_record.__dict__["pipeline_name"] == "test"
         assert failure_record.__dict__["execution_status"] == "failed"
+
+    @pytest.mark.parametrize(
+        ("error", "status", "detail"),
+        [
+            (
+                PipelineStepError("Unsupported spawn provider: pipeline"),
+                422,
+                "Unsupported spawn provider: pipeline",
+            ),
+            (RuntimeError("boom"), 500, "Internal server error"),
+        ],
+    )
+    def test_approve_resume_exception_respects_error_type(
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        error: Exception,
+        status: int,
+        detail: str,
+    ) -> None:
+        with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as manager:
+            manager.return_value.get_step_by_approval_token.return_value = MagicMock(
+                execution_id="pe-1", status=StepStatus.WAITING_APPROVAL
+            )
+            manager.return_value.get_execution.return_value = MagicMock(project_id="proj-1")
+            mock_server.services.get_pipeline_executor.return_value.approve = AsyncMock(
+                side_effect=error
+            )
+            response = client.post("/api/pipelines/approve/tok-1")
+
+        assert response.status_code == status
+        assert response.json()["detail"] == detail
 
     def test_approve_non_waiting_step_returns_conflict(
         self, client: TestClient, mock_server: MagicMock

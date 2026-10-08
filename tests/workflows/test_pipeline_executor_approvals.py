@@ -20,7 +20,12 @@ from gobby.workflows.definitions import (
     WebhookEndpoint,
 )
 from gobby.workflows.pipeline.gatekeeper import ApprovalManager
-from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
+from gobby.workflows.pipeline_state import (
+    ExecutionStatus,
+    PipelineExecution,
+    PipelineStepError,
+    StepStatus,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -367,7 +372,6 @@ class TestApprovalGateHandling:
         )
         notifier = WebhookNotifier(base_url="http://127.0.0.1:7778")
         send_webhook = AsyncMock(return_value=MagicMock(success=True))
-        notifier.transport.execute = send_webhook
         executor = PipelineExecutor(
             db=mock_db,
             execution_manager=mock_execution_manager,
@@ -375,7 +379,10 @@ class TestApprovalGateHandling:
             webhook_notifier=notifier,
         )
 
-        with pytest.raises(ApprovalRequired):
+        with (
+            patch.object(notifier.transport, "execute", new=send_webhook),
+            pytest.raises(ApprovalRequired),
+        ):
             await executor.execute(
                 pipeline=pipeline_with_approval,
                 inputs={},
@@ -383,6 +390,7 @@ class TestApprovalGateHandling:
             )
 
         send_webhook.assert_awaited_once()
+        assert send_webhook.await_args is not None
         assert send_webhook.await_args.kwargs["url"] == "https://example.com/approval"
         assert send_webhook.await_args.kwargs["payload"]["step_id"] == "deploy"
 
@@ -758,12 +766,13 @@ class TestApproveReject:
             loader=loader,
         )
         executor.approval_manager = approval_mgr
-        executor.execute = AsyncMock(return_value=mock_exec)  # type: ignore[method-assign]
-
-        result = await executor.approve("tok-1")
+        execute = AsyncMock(return_value=mock_exec)
+        with patch.object(executor, "execute", new=execute):
+            result = await executor.approve("tok-1")
 
         assert result.id == "pe-1"
-        resumed_pipeline = executor.execute.await_args.kwargs["pipeline"]
+        assert execute.await_args is not None
+        resumed_pipeline = execute.await_args.kwargs["pipeline"]
         assert resumed_pipeline.steps[0].exec == "echo snapshot"
         loader.load_pipeline.assert_not_awaited()
 
@@ -796,8 +805,13 @@ class TestApproveReject:
             await executor.approve("tok-1")
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("operator_failure", [False, True])
     async def test_approve_returns_failed_execution_after_resume_error(
-        self, mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        operator_failure: bool,
     ) -> None:
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
@@ -834,11 +848,20 @@ class TestApproveReject:
         )
         executor.approval_manager = approval_mgr
 
-        execute = AsyncMock(side_effect=RuntimeError("boom"))
+        error = (
+            PipelineStepError("Unsupported spawn provider: pipeline")
+            if operator_failure
+            else RuntimeError("boom")
+        )
+        execute = AsyncMock(side_effect=error)
         with patch.object(executor, "execute", new=execute):
-            result = await executor.approve("tok-1")
+            if operator_failure:
+                with pytest.raises(PipelineStepError, match="Unsupported spawn provider: pipeline"):
+                    await executor.approve("tok-1")
+            else:
+                result = await executor.approve("tok-1")
+                assert result is failed
 
-        assert result is failed
         approval_mgr.approve_step.assert_awaited_once_with("tok-1", None)
         execute.assert_awaited_once()
         mock_execution_manager.get_execution.assert_called_once_with("pe-1")
@@ -943,12 +966,18 @@ class TestApprovalReplayIntegration:
         update_status = MagicMock(wraps=manager._session_manager.update_status)
         monkeypatch.setattr(manager._session_manager, "update_status", update_status)
 
-        assert sessions.get(child.id).status == "active"
+        child_before = sessions.get(child.id)
+        assert child_before is not None
+        assert child_before.status == "active"
         await ApprovalManager(manager).reject_step(token, rejected_by="reviewer")
 
         update_status.assert_called_once_with(child.id, "deleted")
-        assert sessions.get(child.id).status == "deleted"
-        assert sessions.get(caller.id).status == "active"
+        child_after = sessions.get(child.id)
+        caller_after = sessions.get(caller.id)
+        assert child_after is not None
+        assert caller_after is not None
+        assert child_after.status == "deleted"
+        assert caller_after.status == "active"
 
     async def test_approve_after_reject_cannot_rewrite_rejected_step(
         self,

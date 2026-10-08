@@ -439,9 +439,10 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             202: Execution resumed but needs another approval
             404: Invalid token
             409: Approval is no longer waiting
+            422: Resumed execution failed
         """
         from gobby.storage.pipelines import LocalPipelineExecutionManager
-        from gobby.workflows.pipeline_state import ApprovalRequired
+        from gobby.workflows.pipeline_state import ApprovalRequired, PipelineStepError
 
         # Look up the execution's project from the approval token
         global_mgr = LocalPipelineExecutionManager(db=server.services.database, project_id=None)
@@ -496,8 +497,18 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                 },
             )
 
+        except PipelineStepError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+
         except ValueError:
             raise HTTPException(status_code=409, detail="Approval is no longer waiting") from None
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            logger.exception("Pipeline execution failed after approval: %s", e)
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/reject/{token}")
     async def reject_execution(token: str, request: Request) -> dict[str, Any]:
