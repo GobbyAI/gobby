@@ -130,12 +130,96 @@ typing where the provider supports it.
       spawned seats.
    4. On a scratch seat, an external `turn/start` renders in the TUI and leaves a
       composer draft untouched.
-   5. `thread/compact/start` on a TUI-attached thread writes the rollout `compacted`
-      record that the existing boundary waiter reads.
+   5. On the same TUI-attached scratch seat, `thread/compact/start` writes the rollout
+      `compacted` record that the existing boundary waiter reads. It never targets a
+      live seat.
 
 Transcript turn state (`transcript_cursor.turn_settled`) remains the authority for
 idle and turn completion, and the pane probe is removed from the wake gate and the
 compaction sender.
+
+## Provider Limit Menu
+
+- Evidence: at 10:56 CT on 2026-10-08, 17 Claude panes sat on the
+  `/rate-limit-options` selector after Josh's usage limit, and only Esc plus a
+  continue line cleared them. Session 6c556ffb wrote a synthetic assistant row at
+  `2026-10-08T15:56:15.337Z` (`isApiErrorMessage: true`, `error: "rate_limit"`,
+  `apiError: "usage_limit_reached"`, text "You've hit your monthly spend limit …
+  resets Oct 11 at 11pm"), followed 10 ms later by a `turn_duration` row. The
+  transcript therefore reads the turn as settled while the pane shows a menu.
+- Risk: `_stop_failure_error` (`src/gobby/hooks/event_handlers/_misc.py:49`)
+  classes every `rate_limit` as retryable, and `_resume_provider_failure` sends
+  `PROVIDER_ERROR_RESUME_PROMPT` 1, 2 and 4 s later. Today only the pane probe
+  withholds that wake. Option 3 in the menu is "Add funds".
+- Design (Orchestrator ruling, 2026-10-08): a Claude StopFailure `rate_limit`, or a
+  transcript `apiError: "usage_limit_reached"`, becomes `error_type="usage_limit"`
+  with `retryable=False`. This records the provider error and raises an attention
+  item. The ledger blocks every automatic write to that terminal until the next
+  provider submit record, which is the operator's continue line, or a release. No
+  key is ever automated into a limit menu.
+
+## Stage 1 Implementation Plan (approved 2026-10-08)
+
+- `src/gobby/terminals/composer_ledger.py` (new, about 300 lines). An in-memory
+  ledger per terminal, owned by `WriteCoordinator` as `coordinator.composer_ledger`
+  and reached through `get_app_context().write_coordinator`. Each entry keeps
+  `session_id`, `clean_seq`, `human_seq`, an unsafe marker (`interrupt`, `gap`,
+  `epoch`, `unverified`, `provider_limit`) with its sequence number, the submit-flagged
+  write sequence numbers, the pending daemon text `(seq, text)`, and the dialog-input
+  sequence number. One monotonic ledger sequence orders all events.
+- Read result `LedgerRead(state, reason, pending)`:
+  - `blocked`: an unsafe marker newer than `clean_seq`, or an untracked terminal.
+    Untracked terminals include tmux rows and seats spawned before LAND.
+  - `draft`: human input newer than `clean_seq`. Refuse without typing.
+  - `held`: daemon text newer than `clean_seq`. The same payload is resubmitted with
+    bare Enter (ruling 1b); a wake with a different payload clears first.
+  - `empty`: none of the above.
+- Observations:
+  - Host `input_activity` events, through `_observe_input_activity`, are human input.
+    An interrupt key sets the unsafe marker. Input while a structured wait is open is
+    attributed to the dialog only if the entry was clean when the wait opened. On
+    `resolve_wait`, a resumed wait consumes it and any other outcome turns it into
+    human input.
+  - Coordinator writes:
+    - `operator` and `attention` origins are human input. Their submit is flagged:
+      `submit=True`, an `enter` key, or CR in an input payload.
+    - `automatic` and `daemon` text sets the pending text.
+    - A submit or `enter` from those origins is flagged.
+    - A clear sequence drops the pending text.
+- Submit records: `BEFORE_AGENT`, `PRE_COMPACT` (manual) and `SESSION_START`
+  (clear/compact). The clean point becomes the last flagged write at or before the
+  record. If any human input since the clean point lacked a host `submit` field (an
+  old host), the record itself becomes the clean point. A record with no new flagged
+  write proves nothing and does not move the clean point.
+- Spawned terminals are tracked clean at spawn. The operator valve
+  `release_composer`, available as an HTTP route and a gobby-sessions tool, sets the
+  clean point to now. It refuses a self-call from the target session, and the
+  attention item names it. There is no web button (Orchestrator ruling).
+- Persistence: a machine-local JSON state file holds the per-terminal states and the
+  host event cursor `(epoch, seq)`. The file is rewritten atomically at most once
+  per second when it has changed. At startup the ledger restores it. A one-shot
+  stream `since=cursor` then replays input events up to the inventory snapshot seq
+  in `recover_event_gap` (`src/gobby/terminals/host_event_reader.py`). A replay gap
+  or an epoch mismatch marks the entries `gap` or `epoch`. gterm upgrades carry the
+  epoch and ring (`HostEvents::restore`), so they do not dirty seats.
+- Gates (net-neutral edits; wake.py, compact_continuation.py and the other host
+  files are near the 1,000-line ceiling):
+  - `probe_terminal_activity` (`src/gobby/runner_init/wake_activity.py`): the composer
+    state comes from the ledger, and in-flight turns from transcript `turn_settled`.
+  - `composer_gate_for_write` (`src/gobby/terminals/pane_io.py:404`) reads the ledger
+    instead of a snapshot.
+  - `interactive_capacity.py` replaces its composer read.
+  - `codex` joins `_SETTLE_BEFORE_REFUSAL_SOURCES`.
+- Host hardening, a separate Rust commit whose promotion Josh decides:
+  - `NativeInput::submit()` reports CR outside bracketed paste, tracking paste state
+    per slot.
+  - `InputActivity.submit` is added.
+  - Update the wire golden `control_input_activity.json`,
+    `crates/gterminals/src/control.rs` and `protocol_contract.rs`.
+  - The Python decoder accepts a missing field.
+- First deploy: seats spawned before LAND read `unverified`. At LAND, Josh gives one
+  go and the Assistant releases each seat (Orchestrator ruling). The optional
+  `write_batch` expected-sequence hardening is excluded.
 
 ## Not Recommended
 
