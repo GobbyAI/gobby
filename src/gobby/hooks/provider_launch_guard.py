@@ -177,21 +177,17 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             elif quote == char or (quote == "$" and char == "'"):
                 quote = ""
         elif not data and not quote:
-            if char == "#" and (index == 0 or command[index - 1] in " \t\n;|&()"):
+            if char == "#" and (index == 0 or command[index - 1] in " \t\n;|&("):
                 end = command.find("\n", index)
                 index = len(command) if end < 0 else end
                 continue
             if char in "()":
                 char = ";"
             if char == "\n":
-                # Only the current logical line is rescanned. A trailing pipe
-                # delays heredoc consumption until its command is complete.
+                # Heredoc bodies begin at the newline even after a trailing
+                # pipe or logical operator; the continuation follows the body.
                 line = scan_shell_command("".join(output[line_start:]))
                 tokens = line.tokens
-                if tokens and tokens[-1].value in {"|", "&&", "||"}:
-                    output.append(" ")
-                    index += 1
-                    continue
                 output.append(char)
                 body_start = index + 1
                 index = _skip_heredocs(command, tokens, body_start)
@@ -545,6 +541,8 @@ def _shell_stdin(words: list[str]) -> bool:
 def _piped_to_shell(tokens: list[ShellToken], end: int, *, python: bool = False) -> bool:
     while end < len(tokens) and tokens[end].value == "|":
         start = end + 1
+        while start < len(tokens) and not tokens[start].quoted and tokens[start].value == "\n":
+            start += 1
         end = start
         while end < len(tokens) and not _separator(tokens[end]):
             end += 1

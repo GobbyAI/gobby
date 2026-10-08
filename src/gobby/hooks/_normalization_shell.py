@@ -82,14 +82,16 @@ class HeredocBody:
 
     ``quoted`` records a quoted delimiter (``<<'EOF'``), which disables
     expansion inside the body. ``opener`` is the index of the delimiter token
-    in the owning scan, which places the body in its consumer's segment even
-    when a pipeline continuation defers the body past later tokens.
+    in the owning scan. Source offsets cover the body and its closing
+    delimiter, which may precede a pipeline's next stage.
     """
 
     text: str
     quoted: bool
     terminated: bool
     opener: int
+    start: int
+    end: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,7 +146,6 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
     token_start: int | None = None
     pending_heredocs: list[_PendingHeredoc] = []
     heredoc_operator: str | None = None
-    logical_continuation = False
     comparison_operators: set[int] = set()
     in_backtick = False
     # Output redirects of substitutions inside the current double-quoted word.
@@ -156,14 +157,11 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
             token_start = index
 
     def flush(end: int) -> None:
-        nonlocal quoted, heredoc_operator, token_start, logical_continuation
+        nonlocal quoted, heredoc_operator, token_start
         if current or quoted:
             value = "".join(current)
             tokens.append(ShellToken(value, quoted=quoted))
             spans.append((end if token_start is None else token_start, end))
-            # A word after ``|``/``&&``/``||`` completes the continuation; the
-            # next newline ends the command and starts any pending heredoc body.
-            logical_continuation = False
             if heredoc_operator is not None:
                 pending_heredocs.append(
                     _PendingHeredoc(
@@ -302,12 +300,9 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
             tokens.append(ShellToken(operator))
             spans.append((index, index + len(operator)))
             if operator == "\n":
-                if pending_heredocs and not logical_continuation:
+                if pending_heredocs:
                     index = _skip_heredoc_bodies(command, index + 1, pending_heredocs, heredocs)
                     continue
-                logical_continuation = False
-            elif operator in {"&&", "||", "|"}:
-                logical_continuation = True
             if operator in _HEREDOC_OPERATORS:
                 heredoc_operator = operator
             index += len(operator)
@@ -477,11 +472,9 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
                 quote = ""
         elif not quote and not arithmetic and char == "\n":
             tokens = scan_shell_command("".join(line)).tokens
-            if not tokens or tokens[-1].value not in {"|", "&&", "||"}:
-                index = _skip_heredocs(text, tokens, index + 1)
-                line = []
-                continue
-            char = " "
+            index = _skip_heredocs(text, tokens, index + 1)
+            line = []
+            continue
         elif not quote and not backtick and char in "()":
             level += 1 if char == "(" else -1
             if level == 0:
@@ -546,6 +539,7 @@ def _skip_heredoc_bodies(
     still recorded, unterminated, so callers can treat it as live input.
     """
     body_lines: list[str] = []
+    body_start = index
     while pending_heredocs and index < len(command):
         pending = pending_heredocs[0]
         line_end = command.find("\n", index)
@@ -564,9 +558,12 @@ def _skip_heredoc_bodies(
                     quoted=pending.quoted,
                     terminated=True,
                     opener=pending.opener,
+                    start=body_start,
+                    end=next_index,
                 )
             )
             body_lines = []
+            body_start = next_index
         else:
             body_lines.append(stripped)
         index = next_index
@@ -579,6 +576,8 @@ def _skip_heredoc_bodies(
                 quoted=pending.quoted,
                 terminated=False,
                 opener=pending.opener,
+                start=body_start,
+                end=index,
             )
         )
     return index
