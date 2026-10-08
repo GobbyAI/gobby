@@ -1244,7 +1244,7 @@ so 4.1 must precede alerts. Communications may be disabled or its manager absent
   former is explicitly null and the latter explicitly false in an admitted
   same-scope event. Missing fields retain prior values. individual_limit is
   metadata, not a reached boolean. Persist both supplied reached fields,
-  their source clock and derived state. The original research's Tier1 predicate
+  their source clock and derived state. The original research's Tier 1 predicate
   names these exact fields; do not mistake individual_limit for a reached flag.
 - drawing_credits is true only when a fresh window in that same scope is
   exhausted, credits.has_credits is explicitly true, and a supplied valid
