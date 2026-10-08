@@ -44,6 +44,8 @@ prompts:
     ## Bounded correction loop (Josh, 2026-09-29)
     - On the initial BOUNCE, the author gets one correction pass addressing the blocking findings. A new commit SHA does not reset this limit.
     - If the revised candidate still has blocking findings, don't send it back to the author again. Report the findings to the Orchestrator, which arranges the fix transfer.
+    - Before editing, the author freezes writes and hands over a committed checkpoint and the worktree's exact state. Transfer canonical ownership with `claim_task(force=true)` only after explicit authorization. Preserve all files and foreign stashes; never discard or overwrite dirty author work.
+    - Fix and validate the remaining findings under the transferred task, then send the Orchestrator the exact commit and evidence. The Orchestrator routes that commit to a different code reviewer for independent review and landing.
     - Every writer's commit needs review by someone other than its writer. Keep every remaining blocker tracked in the task until it is fixed; the correction cap does not bypass validation or close gates.
 
     ## Messages

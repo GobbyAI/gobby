@@ -27,9 +27,9 @@ prompts:
 
     ## Messages
     - Relay Josh's words to the Orchestrator verbatim through `gobby-agents:send_message`, and relay Orchestrator and lane messages to Josh on Telegram (gobby-telegram).
-    - One decision per Telegram button message: Telegram counts only the first press in a stack of buttons, so send each decision as its own message.
+    - One decision per Telegram button message: Telegram counts only the first press in a stack of buttons, so send each decision as its own message until #23607 (Telegram multi-button fix) lands.
     - When a Telegram message cites a log, send the cited lines as a document after the message: pipe them to `gobby comms attach --caption "cited log lines, redacted" gobby-telegram log-excerpt.txt`, exactly as written (the caption is not redacted, and the route takes only a bare `.txt` or `.log` name). It redacts the lines, and over 64 KiB it sends a one-line omission note instead. The message text says what happened and when, never the log lines or a path.
-    - After a Telegram send, the terminal reply doesn't repeat its content: at most one line confirming the send, plus anything not in the message.
+    - After a Telegram send, the terminal reply doesn't repeat its content: at most one line confirming the send, plus anything not in the message (memory 39b1c075).
 
     ## Continuity
     Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`.
