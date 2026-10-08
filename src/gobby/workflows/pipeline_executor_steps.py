@@ -12,7 +12,12 @@ from opentelemetry.trace import Status, StatusCode
 
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.definitions import PipelineDefinition
-from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus, PipelineExecution
+from gobby.workflows.pipeline_state import (
+    ApprovalRequired,
+    ExecutionStatus,
+    PipelineExecution,
+    PipelineStepError,
+)
 
 logger = logging.getLogger("gobby.workflows.pipeline_executor")
 _FACADE_MODULE = "gobby.workflows.pipeline_executor"
@@ -238,6 +243,8 @@ class PipelineExecutorStepMixin:
                 raise
             execution = refreshed
             # Preserve approval state when execution itself fails after resolution.
+            if isinstance(e, PipelineStepError):
+                raise
 
         return execution
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 188,
+  "site_count": 187,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -1832,16 +1832,6 @@
         "method-assign"
       ],
       "statement": "handler . _evaluate_rules = evaluate"
-    },
-    {
-      "fingerprint": "88ee245d41762f5cf230f030a30ed8a8933fa90807595834ca51ea38de2fee49",
-      "path": "tests/workflows/test_pipeline_executor_approvals.py",
-      "symbol": "TestApproveReject.test_approve_uses_definition_snapshot_instead_of_edited_pipeline",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "executor . execute = AsyncMock ( return_value = mock_exec )"
     },
     {
       "fingerprint": "721c0c5aa34efdc6a678ecb5feee0014554e8960a7d845fa49da77884d5812ea",
