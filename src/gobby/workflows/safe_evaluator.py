@@ -433,6 +433,13 @@ def _get_project_path(context: dict[str, Any]) -> str | None:
     return path if isinstance(path, str) and path else None
 
 
+def _get_project_id(context: dict[str, Any]) -> str | None:
+    """Return the rule context's resolved project id when it carries one."""
+    project = context.get("project")
+    project_id = project.get("id") if isinstance(project, Mapping) else None
+    return project_id if isinstance(project_id, str) and project_id else None
+
+
 def _get_variables(context: dict[str, Any]) -> dict[str, Any]:
     """Extract variables dict from context, handling both dict and SimpleNamespace."""
     variables = context.get("variables", context.get("vars", {}))
@@ -578,6 +585,7 @@ def build_condition_helpers(
     )
     from .condition_helpers_paths import PATH_CONDITION_HELPERS
     from .condition_helpers_sessions import session_condition_helpers
+    from .lane_placement import creates_task_outside_lane, open_lane_epic_refs
     from .monolith_guard import (
         outstanding_monolith_paths,
         projected_monolith_paths,
@@ -678,12 +686,20 @@ def build_condition_helpers(
         funcs["task_type_in"] = lambda task_id_or_ids, *types: task_type_in(
             task_manager, task_id_or_ids, *types
         )
+        funcs["creates_task_outside_lane"] = lambda tool_input, event_data: (
+            creates_task_outside_lane(task_manager, _get_project_id(ctx), tool_input, event_data)
+        )
+        funcs["open_lane_epic_refs"] = lambda: open_lane_epic_refs(
+            task_manager, _get_project_id(ctx)
+        )
     else:
         funcs["all_tasks_have_label"] = lambda task_id_or_ids, label: False
         funcs["task_tree_complete"] = lambda task_id: False
         funcs["task_needs_human_review"] = lambda task_id: False
         funcs["task_state_in"] = lambda task_id, *states: False
         funcs["task_type_in"] = lambda task_id_or_ids, *types: False
+        funcs["creates_task_outside_lane"] = lambda tool_input, event_data: False
+        funcs["open_lane_epic_refs"] = lambda: ""
 
     # --- Stop signal helper ---
 
