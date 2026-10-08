@@ -302,6 +302,7 @@ TASK_ENFORCEMENT_RULES = {
     "block-native-task-tracker-unclaimed",
     "block-spawned-agent-create-task",
     "block-reopen-task",
+    "block-update-task",
     "nudge-native-tracker-after-claim",
     "require-tasks-skill-for-mutations",
     "require-task-before-edit",
