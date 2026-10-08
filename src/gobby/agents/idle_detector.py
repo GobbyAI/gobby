@@ -139,7 +139,11 @@ class IdleDetector:
         "Continue working on your task. When your work is complete, call "
         "gobby-agents:end_agent_run with current_state and next_steps to end this agent run."
     )
-    # Standing seats are never told to end their run.
+    IDLE_TTL_REPROMPT_MESSAGE = (
+        "Your interactive run has reached its idle time limit. Wrap up your work, save progress, "
+        "and call gobby-agents:end_agent_run with current_state and next_steps to end this run."
+    )
+    # Provider capacity recovery keeps standing seats available.
     INTERACTIVE_CAPACITY_REPROMPT_MESSAGE = (
         "Your last turn ended on a provider capacity error. Continue where you left off."
     )

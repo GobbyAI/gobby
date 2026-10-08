@@ -194,6 +194,18 @@ def _assert_step_workflow(name: str, seat: dict[str, Any]) -> None:
 
 
 @pytest.mark.parametrize("name", _seat_names())
+def test_seat_run_lifetime(name: str) -> None:
+    seat = _bundled()[name]
+    body = AgentDefinitionBody.model_validate(seat)
+    assert body.execution_mode == "interactive"
+    if name == "researcher":
+        assert body.idle_ttl_seconds == 900
+    else:
+        assert body.idle_ttl_seconds is None
+        assert "idle_ttl_seconds" not in seat
+
+
+@pytest.mark.parametrize("name", _seat_names())
 def test_seat_definitions_share_the_seat_contract(name: str) -> None:
     seat = _bundled()[name]
     prompt = _prompt(seat)

@@ -7,6 +7,7 @@ version: "1.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
+execution_mode: interactive
 checkout_mode: inherit
 timeout: 0
 send_message_targets: [parent, session]

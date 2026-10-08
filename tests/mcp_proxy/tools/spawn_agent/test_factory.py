@@ -559,6 +559,41 @@ class TestSpawnAgentParamOverrides:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        ("definition_mode", "ttl", "override", "expected_ttl"),
+        [
+            ("interactive", 900, None, 900),
+            ("interactive", None, None, None),
+            ("interactive", 900, "one_shot", None),
+            ("one_shot", None, "interactive", None),
+        ],
+    )
+    async def test_idle_ttl_is_persisted_only_for_interactive_runs(
+        self,
+        mock_runner: MagicMock,
+        definition_mode: str,
+        ttl: int | None,
+        override: str | None,
+        expected_ttl: int | None,
+    ) -> None:
+        body = make_agent_definition(
+            name="default",
+            provider="claude",
+            prompts={"agent": "Run the assigned task."},
+            execution_mode=definition_mode,
+            idle_ttl_seconds=ttl,
+        )
+        params: dict[str, object] = {}
+        if override is not None:
+            params["execution_mode"] = override
+        request = await self._spawn_request_for(mock_runner, body, params)
+        if expected_ttl is None:
+            assert "idle_ttl_seconds" not in request.resume_metadata_json
+        else:
+            assert request.resume_metadata_json["idle_ttl_seconds"] == expected_ttl
+        assert "idle_ttl_seconds" not in request.initial_variables
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
         ("definition_mode", "override", "expected"),
         [
             ("one_shot", None, "one_shot"),

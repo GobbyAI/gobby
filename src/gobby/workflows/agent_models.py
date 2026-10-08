@@ -8,6 +8,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PositiveInt,
     StrictBool,
     StrictStr,
     field_validator,
@@ -121,6 +122,10 @@ class AgentDefinitionBody(BaseModel):
         default="one_shot",
         description="Run lifetime: one task, or a standing seat that remains available between turns.",
     )
+    idle_ttl_seconds: PositiveInt | None = Field(
+        default=None,
+        description="Idle seconds after which an interactive run ends.",
+    )
     provider: str = "inherit"
     model: StrictStr | None = None
     reasoning_effort: StrictStr | None = None
@@ -198,6 +203,12 @@ class AgentDefinitionBody(BaseModel):
                 "instructions to prompts.agent"
             )
         return data
+
+    @model_validator(mode="after")
+    def require_interactive_idle_ttl(self) -> AgentDefinitionBody:
+        if self.idle_ttl_seconds is not None and self.execution_mode != "interactive":
+            raise ValueError("idle_ttl_seconds requires interactive execution_mode")
+        return self
 
     @model_validator(mode="after")
     def require_surface_prompt_blocks(self) -> AgentDefinitionBody:

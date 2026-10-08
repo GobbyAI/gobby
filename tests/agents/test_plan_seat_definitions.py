@@ -168,6 +168,20 @@ def test_writer_spawns_no_enhancer_enhancer_stays_live() -> None:
     assert "stay live" in _instructions(enhancer)
 
 
+@pytest.mark.parametrize(
+    ("name", "mode"),
+    [
+        ("plan-writer", "interactive"),
+        ("plan-adversary", "interactive"),
+        ("plan-enhancer", "one_shot"),
+    ],
+)
+def test_planning_run_lifetime(name: str, mode: str) -> None:
+    body = _load(name)
+    assert body.execution_mode == mode
+    assert body.idle_ttl_seconds is None
+
+
 def _spawn_event(caller_id: str, agent: str) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,

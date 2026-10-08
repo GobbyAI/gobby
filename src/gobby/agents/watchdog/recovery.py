@@ -472,6 +472,11 @@ class WatchdogRecoveryCoordinator:
         context_resolved: bool = False,
     ) -> str:
         """Return an idle continuation prompt tuned to active step workflows."""
+        if (
+            run.is_interactive
+            and (run.resume_metadata_json or {}).get("idle_ttl_seconds") is not None
+        ):
+            return IdleDetector.IDLE_TTL_REPROMPT_MESSAGE
         if not context_resolved:
             step_context, _lookup_succeeded = await self._load_step_workflow_context(run)
         return format_reprompt_message(

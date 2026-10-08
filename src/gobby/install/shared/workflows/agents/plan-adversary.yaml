@@ -9,6 +9,7 @@ enabled: true
 priority: 20
 surfaces: [spawn, persona]
 provider: grok
+execution_mode: interactive
 model: grok-4.7
 reasoning_effort: xhigh
 reasoning_required: false
