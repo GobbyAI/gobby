@@ -15,7 +15,10 @@ import pytest
 
 from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.hooks.terminal_handoff_delivery import schedule_terminal_handoff_delivery
+from gobby.hooks.terminal_handoff_delivery import (
+    _compensate_delivery_failure,
+    schedule_terminal_handoff_delivery,
+)
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import _terminal_clear
 from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
@@ -29,6 +32,7 @@ from gobby.sessions.handoff import (
     HANDOFF_DISPATCH_GATE_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
     HandoffAttemptState,
+    build_handoff_continue_prompt,
     claim_staged_handoff_delivery,
     consume_pending_handoff,
 )
@@ -40,7 +44,10 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.terminals.runtime import Delivered, TerminalWriteError
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.fixtures.isolated_checkout import write_project_marker
 from tests.fixtures.postgres import TEST_USER_ID
 
@@ -1076,6 +1083,71 @@ def _set_handoff_completion(session_id: str, result: dict[str, Any]) -> HookEven
     )
 
 
+_HANDOFF_GATE_RULES = (
+    "block-tools-after-handoff-compact",
+    "retry-terminal-handoff-after-delivery-failure",
+    "clear-handoff-gate-on-context-loss",
+)
+
+
+def _handoff_gate_engine(temp_db: HubDatabase, manager: SessionManager) -> WorkflowHookHandler:
+    """Evaluate the bundled handoff gate rules, and only those, over the real session store."""
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    with temp_db.transaction() as conn:
+        conn.execute("UPDATE rule_definitions SET source = 'installed', enabled = FALSE")
+        conn.execute(
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name IN (%s, %s, %s)",
+            _HANDOFF_GATE_RULES,
+        )
+    return WorkflowHookHandler(
+        rule_engine=RuleEngine(temp_db),
+        session_manager=manager,
+        config=SimpleNamespace(workflow=SimpleNamespace(enabled=True, timeout=5.0)),
+    )
+
+
+def _gate_event(session_id: str, event_type: HookEventType, data: dict[str, Any]) -> HookEvent:
+    return HookEvent(
+        event_type=event_type,
+        session_id="provider-session",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data=data,
+        metadata={"_platform_session_id": session_id, "session_type": "terminal"},
+    )
+
+
+def _gate_decision(
+    engine: WorkflowHookHandler, session_id: str, sessions_tool: str | None = None
+) -> tuple[str, str]:
+    """Return the gate's decision and reason for a gobby-sessions call, or for Bash."""
+    data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": "pwd"}}
+    if sessions_tool is not None:
+        data = {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-sessions",
+                "tool_name": sessions_tool,
+                "arguments": {},
+            },
+            "mcp_server": "gobby-sessions",
+            "mcp_tool": sessions_tool,
+        }
+    response = asyncio.run(
+        engine._evaluate_rules(_gate_event(session_id, HookEventType.BEFORE_TOOL, data))
+    )
+    return response.decision, response.reason or ""
+
+
+def _delivery_count(temp_db: HubDatabase, attempt_id: str) -> int:
+    row = temp_db.fetchone(
+        "SELECT COUNT(*) AS count FROM session_handoff_deliveries WHERE attempt_id = %s",
+        (attempt_id,),
+    )
+    assert row is not None
+    return int(row["count"])
+
+
 def test_set_handoff_retry_reuses_the_in_flight_compact_attempt(
     temp_db: HubDatabase, tmp_path: Path
 ) -> None:
@@ -1156,6 +1228,146 @@ def test_set_handoff_retry_reuses_the_in_flight_compact_attempt(
     assert settled[HANDOFF_DISPATCH_GATE_VARIABLE] == pending_gate
     assert FAILED_HANDOFF_VARIABLE not in settled
     assert HANDOFF_DELIVERY_FAILURES_VARIABLE not in settled
+    assert _delivery_count(temp_db, claimed.attempt_id) == 1
+
+    # Until the compact boundary lands, only the pending gate holds work, and it never
+    # asks for set_handoff. The compact SessionStart releases it, so the continuation's
+    # one named call, get_handoff, passes along with ordinary work.
+    engine = _handoff_gate_engine(temp_db, manager)
+    held, held_reason = _gate_decision(engine, session_id)
+    assert held == "block"
+    assert "set_handoff already staged" in held_reason
+    assert "Retry gobby-sessions:set_handoff" not in held_reason
+    asyncio.run(
+        engine._evaluate_rules(
+            _gate_event(session_id, HookEventType.SESSION_START, {"source": "compact"})
+        )
+    )
+    continuation = build_handoff_continue_prompt()
+    assert "Call `get_handoff()`" in continuation
+    assert "do not call `set_handoff` again" in continuation
+    assert _gate_decision(engine, session_id, "get_handoff")[0] == "allow"
+    assert _gate_decision(engine, session_id)[0] == "allow"
     consumed = consume_pending_handoff(temp_db, session_id)
     assert consumed is not None
     assert "First" in consumed.markdown
+
+
+def _failed_compact_attempt(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    error_code: str | None,
+    *,
+    prior_failures: int = 0,
+) -> tuple[WorkflowHookHandler, str, dict[str, Any]]:
+    """Stage, claim and fail one compact attempt; return its engine, session and gate."""
+    manager, session_id = _persistent_session(temp_db, tmp_path)
+    set_handoff = _feedback_registry(temp_db, manager, survey="off").get_tool("set_handoff")
+    assert set_handoff is not None
+    pane = MagicMock(backend="tmux", target="%12")
+    pane.snapshot = AsyncMock(return_value="ready")
+    variables = SessionVariableManager(temp_db)
+    with (
+        session_context_for_test(session_id),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal._resolve_pane_io",
+            return_value=(pane, None),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal._interrupt_observer",
+            return_value=(None, None),
+        ),
+    ):
+        staged = asyncio.run(set_handoff(current_state="Work", next_steps=["Continue"]))
+    claimed = claim_staged_handoff_delivery(
+        temp_db, session_id, staged["attempt_id"], recover_unarmed_gate=True
+    )
+    assert claimed is not None
+    variables.merge_variables(session_id, {HANDOFF_DELIVERY_FAILURES_VARIABLE: prior_failures})
+
+    _compensate_delivery_failure(temp_db, claimed, "delivery failed", error_code=error_code)
+
+    # A failed attempt is never delivered, so no continuation prompt competes with
+    # the gate; the failure's guidance and the gate's block reason are all it hears.
+    assert _delivery_count(temp_db, claimed.attempt_id) == 0
+    gate = variables.get_variables(session_id)[HANDOFF_DISPATCH_GATE_VARIABLE]
+    return _handoff_gate_engine(temp_db, manager), session_id, gate
+
+
+@pytest.mark.parametrize(
+    ("error_code", "legal_call", "reason_names", "guidance_omits", "refused_calls"),
+    [
+        pytest.param(
+            None,
+            "set_handoff",
+            "Retry gobby-sessions:set_handoff",
+            "Do not call set_handoff",
+            (),
+            id="delivery-failed",
+        ),
+        pytest.param(
+            "compact_failed",
+            "set_handoff",
+            "Retry gobby-sessions:set_handoff",
+            "Do not call set_handoff",
+            (),
+            id="compact-failed",
+        ),
+        pytest.param(
+            "composer_occupied",
+            "set_handoff",
+            "Retry gobby-sessions:set_handoff",
+            "Do not call set_handoff",
+            (),
+            id="composer-occupied",
+        ),
+        pytest.param(
+            "no_terminal_target",
+            "set_handoff",
+            "Retry gobby-sessions:set_handoff",
+            "Do not call set_handoff",
+            (),
+            id="seat-departed",
+        ),
+        pytest.param(
+            "compact_unconfirmed",
+            "get_handoff",
+            "get_handoff with failed_attempt_id and reconcile_late_compact=true",
+            "set_handoff",
+            ("set_handoff",),
+            id="compact-unconfirmed",
+        ),
+    ],
+)
+def test_each_compact_delivery_failure_names_one_call_its_gate_admits(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    error_code: str | None,
+    legal_call: str,
+    reason_names: str,
+    guidance_omits: str,
+    refused_calls: tuple[str, ...],
+) -> None:
+    """Every failure the overlap fix keeps names one next call, and the gate admits it."""
+    engine, session_id, gate = _failed_compact_attempt(temp_db, tmp_path, error_code)
+
+    assert f"gobby-sessions:{legal_call}" in gate["retry_guidance"]
+    assert guidance_omits not in gate["retry_guidance"]
+    work, work_reason = _gate_decision(engine, session_id)
+    assert work == "block"
+    assert reason_names in work_reason
+    assert _gate_decision(engine, session_id, legal_call)[0] == "allow"
+    assert [_gate_decision(engine, session_id, call)[0] for call in refused_calls] == [
+        "block" for _ in refused_calls
+    ]
+
+
+def test_abandoned_compact_delivery_arms_no_retry_gate(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    """The second consecutive failure abandons delivery: work continues, no retry is owed."""
+    engine, session_id, gate = _failed_compact_attempt(temp_db, tmp_path, None, prior_failures=1)
+
+    assert (gate["delivery_failed"], gate["delivery_abandoned"]) == (False, True)
+    assert "Do not call set_handoff again" in gate["retry_guidance"]
+    assert _gate_decision(engine, session_id)[0] == "allow"
