@@ -3558,6 +3558,49 @@ async def test_capability_neutral_tools_pass_step_allowlist(
     assert response.decision == "allow"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mcp_key", "decision"),
+    [
+        ("gobby-memory:update_memory", "allow"),
+        ("gobby-memory:create_memory", "allow"),
+        ("gobby-memory:delete_memory", "allow"),
+        ("gobby-agents:spawn_agent", "block"),
+        ("gobby-tasks:create_task", "block"),
+    ],
+)
+async def test_bundled_developer_claim_allows_post_close_memory_maintenance(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+    mcp_key: str,
+    decision: str,
+) -> None:
+    """After submit returns to claim, prescribed memory writes remain reachable."""
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "src/gobby/install/shared/workflows/agents/developer.yaml"
+    )
+    bundled = yaml.safe_load(path.read_text())
+    workflow_data = {
+        **{key: value for key, value in bundled.items() if key != "step_workflow"},
+        **bundled["step_workflow"],
+    }
+    _setup_step_workflow(
+        db, manager, instance_mgr, current_step="claim", workflow_data=workflow_data
+    )
+    server, tool = mcp_key.split(":")
+    event = _make_event(
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {"server_name": server, "tool_name": tool},
+        }
+    )
+    response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+    assert response.decision == decision
+
+
 _PLAN_ENHANCER_TASKLESS = (
     Path(__file__).resolve().parents[2]
     / "src/gobby/install/shared/workflows/agents/plan-enhancer-taskless-old.yaml"
