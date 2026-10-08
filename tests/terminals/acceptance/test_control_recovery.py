@@ -5,14 +5,20 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import suppress
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
+from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.interactive_attention_monitor import InteractiveAttentionMonitor
+from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
+from gobby.config.tmux import TmuxConfig
+from gobby.storage.agents import AgentRun
 from gobby.terminals.host_client import HostClient
+from gobby.terminals.runtime import SnapshotMode, SnapshotResult
 from gobby.utils.logging import ThrottledLogger
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.terminals.acceptance.conftest import (
@@ -82,6 +88,43 @@ async def test_control_interruption_recovers_multiple_panes_without_alert_burst(
         "gobby.agents.interactive_attention_monitor._host_outage_log", ThrottledLogger()
     )
 
+    runs = [
+        AgentRun(
+            id=session.id,
+            parent_session_id="acceptance-parent",
+            provider="claude",
+            prompt="test",
+            status="running",
+            terminal_id=pane.terminal.id,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        for session, pane in zip(sessions, panes, strict=True)
+    ]
+    prompt_snapshots: dict[str, str] = {}
+
+    async def prompt_snapshot(
+        run: AgentRun, lines: int, *, mode: SnapshotMode = "text"
+    ) -> SnapshotResult:
+        snapshot = await native_host.runtime.snapshot(rows[run.id], lines, mode=mode)
+        prompt_snapshots[run.id] = snapshot.text
+        return snapshot
+
+    detector = MagicMock()
+    detector.was_dismissed.return_value = False
+    detector.detect_trust_prompt.return_value = False
+    prompt_detector = MagicMock()
+    prompt_detector.for_provider.return_value = detector
+    prompt_monitor = TerminalPromptMonitor(
+        get_active_terminal_runs=lambda: runs,
+        prompt_detector=prompt_detector,
+        idle_detector=IdleDetector(BundledDetectionRegistry()),
+        loop_tracker=MagicMock(),
+        get_tmux_config=TmuxConfig,
+        handle_looping_agent=AsyncMock(),
+        terminal_services=SimpleNamespace(snapshot=prompt_snapshot),
+    )
+
     with (
         caplog.at_level(logging.DEBUG),
         patch.object(
@@ -97,6 +140,11 @@ async def test_control_interruption_recovers_multiple_panes_without_alert_burst(
             await monitor._check_attention_panes(active_runs=[])
             assert capture.await_count == 1
             assert sync.await_count == 0
+            capture.reset_mock()
+            prompt_snapshots.clear()
+            assert await prompt_monitor.check_trust_prompts() == 0
+            assert capture.await_count == len(runs)
+            assert prompt_snapshots == {}
 
             await permits.put(None)
             async with asyncio.timeout(10):
@@ -121,6 +169,11 @@ async def test_control_interruption_recovers_multiple_panes_without_alert_burst(
             assert sync.await_count == len(panes)
             for call, marker in zip(sync.await_args_list, markers, strict=True):
                 assert marker in call.args[2]
+            capture.reset_mock()
+            assert await prompt_monitor.check_trust_prompts() == 0
+            assert capture.await_count == len(runs)
+            for run, marker in zip(runs, markers, strict=True):
+                assert marker in prompt_snapshots[run.id]
 
             warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
             assert len(warnings) == outage + 1

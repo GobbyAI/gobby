@@ -12,6 +12,7 @@ from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector, plain
 from gobby.agents.loop_tracker import LoopTracker
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.terminals.error_classification import is_vanished_terminal_target
+from gobby.terminals.host_client import HostUnavailableError
 
 if TYPE_CHECKING:
     from gobby.config.tmux import TmuxConfig
@@ -34,11 +35,12 @@ def _log_prompt_probe_error(
         type(error).__name__,
         run_id,
         tmux_target,
-        error,
+        error.detail or error if isinstance(error, HostUnavailableError) else error,
     )
-    if is_vanished_terminal_target(error):
+    if isinstance(error, HostUnavailableError) or is_vanished_terminal_target(error):
+        # The host manager owns the outage signal; probes retry on the next pass.
         logger.debug(
-            "Prompt probe %s skipped: exception=%s run_id=%s tmux_target=%s error=%s",
+            "Prompt probe %s skipped: exception=%s run_id=%s tmux_target=%s error=%.200s",
             *values,
         )
         return
