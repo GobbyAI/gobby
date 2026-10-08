@@ -192,7 +192,10 @@ def main() -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
     module = sys.argv.pop(1)
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from tests.fixtures.external_write_audit import daemon_write_audit
+
     with (
+        daemon_write_audit(),
         watch_pytest_parent(),
         (log_dir / "startup-threads.log").open("w") as threads,
         (log_dir / "startup-tasks.log").open("w") as tasks,
