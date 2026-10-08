@@ -8,7 +8,7 @@ from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
-from types import ModuleType, SimpleNamespace
+from types import ModuleType, SimpleNamespace, UnionType
 from typing import ClassVar
 
 import pytest
@@ -629,6 +629,59 @@ def test_postgres_cursor_dumps_json_columns_without_python_walk(
         }
     ]
     assert walked == [run_times]
+
+
+class _CountingDescriptionResult(_FakeResult):
+    def __init__(self, rows: list[dict[str, object]], columns: list[_FakeColumn]) -> None:
+        super().__init__(rows)
+        self._columns = columns
+        self.description_reads = 0
+
+    def fetchone(self) -> dict[str, object] | None:
+        return self._rows.pop(0) if self._rows else None
+
+    @property
+    def description(self) -> list[_FakeColumn]:
+        # psycopg builds a fresh Column list on every read (#23359).
+        self.description_reads += 1
+        return self._columns
+
+
+@pytest.mark.parametrize("read", ["materialize", "fetchone"])
+def test_postgres_cursor_reads_the_description_once(read: str) -> None:
+    module = _postgres_pool_module()
+    result = _CountingDescriptionResult(
+        [{"doc": {"n": index}} for index in range(3)], [_FakeColumn("doc", 3802)]
+    )
+    cursor = module.PostgresCursor(result)
+
+    if read == "materialize":
+        rows = cursor.materialize().fetchall()
+    else:
+        rows = [cursor.fetchone() for _ in range(3)]
+
+    assert rows == [{"doc": f'{{"n":{index}}}'} for index in range(3)]
+    assert result.description_reads == 1
+
+
+def test_plain_scalars_skip_the_value_type_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Four isinstance checks per plain value were most of row normalization (#23359)."""
+    module = _postgres_pool_module()
+    scalars: dict[str, object] = {"s": "x", "i": 1, "f": 1.5, "b": True, "none": None}
+    checked: list[object] = []
+
+    def counting_isinstance(value: object, kinds: type | UnionType) -> bool:
+        checked.append(value)
+        return isinstance(value, kinds)
+
+    monkeypatch.setattr(module, "isinstance", counting_isinstance, raising=False)
+    stamp = datetime(2026, 5, 21, 5, 30, tzinfo=UTC)
+    row = {**scalars, "doc": '{"a": 1}', "at": stamp, "tags": ["a"]}
+
+    normalized = module._normalize_row(row, frozenset({"doc"}))
+
+    assert normalized == {**scalars, "doc": '{"a": 1}', "at": stamp, "tags": '["a"]'}
+    assert not [value for value in checked if any(value is s for s in scalars.values())]
 
 
 def test_postgres_cursor_preserves_datetime_values_as_aware_utc() -> None:

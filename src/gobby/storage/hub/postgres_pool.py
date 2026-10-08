@@ -22,10 +22,12 @@ from typing import Any, Protocol, cast
 
 import psycopg
 from psycopg import sql as psycopg_sql
+from psycopg.abc import Buffer
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.postgres import types as pg_types
 from psycopg.pq import TransactionStatus
 from psycopg.rows import dict_row
+from psycopg.types.string import TextLoader
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from gobby.storage.hub._ambient import TransactionOpener, enter_transaction
@@ -74,6 +76,7 @@ POOL_TIMEOUT_RETRY_JITTER_RATIO = 0.25
 
 # psycopg parses json/jsonb into plain JSON values, which need no datetime walk.
 _JSON_TYPE_OIDS = frozenset(pg_types[name].oid for name in ("json", "jsonb"))
+_PLAIN_SCALAR_TYPES = frozenset({str, int, float, bool, type(None)})
 
 _SQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -492,11 +495,18 @@ class PostgresCursor:
         self._rowcount = rowcount
         self._rows: list[Row] | None = None
         self._position = 0
+        # psycopg builds a new Column list on every description read, so it is
+        # read once per cursor (#23359).
+        self._json_column_names: frozenset[str] | None = None
 
     def materialize(self) -> PostgresCursor:
         if self._cursor is None:
             return self
-        rows = self.fetchall() if getattr(self._cursor, "description", None) is not None else []
+        description = getattr(self._cursor, "description", None)
+        rows: list[Row] = []
+        if description is not None:
+            self._json_column_names = _json_column_names(description)
+            rows = self.fetchall()
         self._rowcount = self.rowcount
         self._cursor = None
         self._rows = rows
@@ -532,12 +542,9 @@ class PostgresCursor:
         ]
 
     def _json_columns(self) -> frozenset[str]:
-        description = getattr(self._cursor, "description", None)
-        if not isinstance(description, list):
-            return frozenset()
-        # dict_row keeps the last column of a repeated name, so classify the same one.
-        is_json = {column.name: column.type_code in _JSON_TYPE_OIDS for column in description}
-        return frozenset(name for name, json_typed in is_json.items() if json_typed)
+        if self._json_column_names is None:
+            self._json_column_names = _json_column_names(getattr(self._cursor, "description", None))
+        return self._json_column_names
 
     @property
     def rowcount(self) -> int:
@@ -565,6 +572,14 @@ class _PostgresSavepoint:
         self._txn._deadline.restore_savepoint_state(self._deadline_state)
 
 
+def _json_column_names(description: object) -> frozenset[str]:
+    if not isinstance(description, list):
+        return frozenset()
+    # dict_row keeps the last column of a repeated name, so classify the same one.
+    is_json = {column.name: column.type_code in _JSON_TYPE_OIDS for column in description}
+    return frozenset(name for name, json_typed in is_json.items() if json_typed)
+
+
 def _normalize_row(row: Row | None, json_columns: frozenset[str] = frozenset()) -> Row | None:
     if row is None:
         return None
@@ -572,7 +587,11 @@ def _normalize_row(row: Row | None, json_columns: frozenset[str] = frozenset()) 
         return cast(
             Row,
             {
-                str(key): _dump_json_container(value)
+                str(key): value
+                # Most values are plain scalars both branches return unchanged;
+                # one exact-type lookup replaces their isinstance chain (#23359).
+                if type(value) in _PLAIN_SCALAR_TYPES
+                else _dump_json_container(value)
                 if key in json_columns
                 else _normalize_value(value)
                 for key, value in row.items()
@@ -583,7 +602,8 @@ def _normalize_row(row: Row | None, json_columns: frozenset[str] = frozenset()) 
 
 def _dump_json_container(value: Any) -> Any:
     # Storage model decoders consume serialized JSON for both JSONB and text columns.
-    # Keep that row boundary uniform rather than exposing driver-specific value types.
+    # Pool connections already hand containers over as server text; this serializes
+    # the rest (a json value after leading whitespace, a connection without the loaders).
     if isinstance(value, dict | list):
         return json.dumps(value, sort_keys=True, separators=(",", ":"))
     return value
@@ -609,6 +629,36 @@ def conninfo_with_utc_session_timezone(conninfo: str) -> str:
     if "-ctimezone=" not in lower_options and "-c timezone=" not in lower_options:
         parsed["options"] = " ".join(part for part in (options, "-ctimezone=UTC") if part)
     return make_conninfo("", **parsed)
+
+
+class _JsonContainerTextLoader(TextLoader):
+    """Keep JSON objects and arrays as the server's text; decode JSON scalars.
+
+    Rows already hand containers on as serialized JSON, so decoding one only to
+    re-dump it was pure GIL time on every read (#23359).
+    """
+
+    def load(self, data: Buffer) -> Any:
+        text = super().load(data)
+        if text[:1] in ("{", "["):
+            return text
+        # Anything else, including a container after leading whitespace in a
+        # json value, decodes; _dump_json_container serializes a container.
+        return json.loads(text)
+
+
+def configure_pool_connection(
+    connection: psycopg.Connection[Any],
+    runtime_role: str | None,
+) -> None:
+    """Install the row loaders on a newly opened pool connection, then its role."""
+    adapters = connection.adapters
+    adapters.register_loader("json", _JsonContainerTextLoader)
+    adapters.register_loader("jsonb", _JsonContainerTextLoader)
+    # Rows carry UUIDs as text; PostgreSQL's output is already str(UUID)'s form.
+    adapters.register_loader("uuid", TextLoader)
+    if runtime_role is not None:
+        configure_runtime_role(connection, runtime_role)
 
 
 def configure_runtime_role(

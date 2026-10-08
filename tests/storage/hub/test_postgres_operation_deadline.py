@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from collections.abc import Iterator
@@ -408,6 +409,58 @@ def test_writes_ambient_reads_and_deadline_reads_stay_transactional(
         assert database.fetchone(_NO_EARLIER_BEGIN) == {"fresh": False}
 
     assert len(opened_transactions) == 4
+
+
+_TYPED_ROW = (
+    'SELECT \'{"b":1,"a":[1]}\'::jsonb AS doc, \'[1, {"z": null}]\'::json AS raw, '
+    "'5'::jsonb AS n, '\"x\"'::jsonb AS s, 'null'::jsonb AS z, NULL::jsonb AS missing, "
+    "'0E8A1C5E-2B7D-4F00-9C1A-3D2E1F0A9B8C'::uuid AS id"
+)
+_TYPED_VALUES = {
+    "doc": '{"a": [1], "b": 1}',
+    "raw": '[1, {"z": null}]',
+    "n": 5,
+    "s": "x",
+    "z": None,
+    "missing": None,
+    "id": "0e8a1c5e-2b7d-4f00-9c1a-3d2e1f0a9b8c",
+}
+
+
+def test_pool_connections_keep_json_containers_and_uuids_as_server_text(
+    database: PostgresHubDatabase,
+) -> None:
+    """Decoding a container only to re-dump it was ~220 GIL samples/min (#23359)."""
+    with database._pool_connection() as connection:
+        row = connection.execute(_TYPED_ROW).fetchone()
+
+    assert row == _TYPED_VALUES
+
+
+def test_hub_reads_return_json_containers_without_a_python_round_trip(
+    database: PostgresHubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    real_dumps, real_loads = json.dumps, json.loads
+
+    def counting_dumps(*args: Any, **kwargs: Any) -> str:
+        calls.append("dumps")
+        return real_dumps(*args, **kwargs)
+
+    def counting_loads(*args: Any, **kwargs: Any) -> Any:
+        calls.append("loads")
+        return real_loads(*args, **kwargs)
+
+    monkeypatch.setattr(json, "dumps", counting_dumps)
+    monkeypatch.setattr(json, "loads", counting_loads)
+
+    assert database.fetchone(_TYPED_ROW) == _TYPED_VALUES
+    with database.transaction() as txn:
+        assert txn.execute(_TYPED_ROW).fetchall() == [_TYPED_VALUES]
+
+    # Only the three JSON scalars are decoded, once per read.
+    assert calls == ["loads"] * 6
 
 
 @pytest.mark.parametrize(

@@ -25,6 +25,25 @@ def test_runtime_pool_installs_configure_and_checkout_callbacks() -> None:
             database.close()
 
 
+@pytest.mark.parametrize("runtime_role", [None, "gobby_daemon_runtime"])
+def test_pool_connection_configure_installs_loaders_then_the_role(
+    runtime_role: str | None,
+) -> None:
+    connection = MagicMock()
+
+    postgres_pool.configure_pool_connection(connection, runtime_role)
+
+    registered = [call.args[0] for call in connection.adapters.register_loader.call_args_list]
+    assert registered == ["json", "jsonb", "uuid"]
+    if runtime_role is None:
+        connection.execute.assert_not_called()
+        connection.commit.assert_not_called()
+    else:
+        query = connection.execute.call_args.args[0]
+        assert query.as_string(None) == f'SET ROLE "{runtime_role}"'
+        connection.commit.assert_called_once_with()
+
+
 def test_configure_runtime_role_quotes_the_fixed_identifier() -> None:
     connection = MagicMock()
     postgres_pool.configure_runtime_role(connection, "gobby_daemon_runtime")
