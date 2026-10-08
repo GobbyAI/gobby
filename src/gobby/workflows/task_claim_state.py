@@ -165,11 +165,12 @@ def remove_claimed_task(variables: dict[str, Any], task_id: str) -> dict[str, An
     result["task_edited_files"] = task_files
     if "task_edited_file_checkouts" in variables:
         result["task_edited_file_checkouts"] = task_file_checkouts
-    if "task_edited_file_times" in variables:
-        raw_times = variables.get("task_edited_file_times")
-        task_file_times = dict(raw_times) if isinstance(raw_times, dict) else {}
-        task_file_times.pop(task_id, None)
-        result["task_edited_file_times"] = task_file_times
+    for key in ("task_edited_file_times", "task_live_edit_starts"):
+        if key in variables:
+            raw_times = variables.get(key)
+            task_file_times = dict(raw_times) if isinstance(raw_times, dict) else {}
+            task_file_times.pop(task_id, None)
+            result[key] = task_file_times
     return result
 
 
@@ -240,6 +241,8 @@ def assert_task_edit_paths_available(
     task_id: str | None,
     paths: list[str],
     checkout_root: str | None,
+    *,
+    commit_path_times: dict[str, float] | None = None,
 ) -> None:
     """Refuse live path overlap between claims instead of guessing edit ownership."""
     requested = set(paths)
@@ -252,6 +255,21 @@ def assert_task_edit_paths_available(
             else task_edited_file_set(variables, other_id)
         )
         overlap = requested & owned
+        if commit_path_times is not None:
+            starts = (
+                variables.get("task_live_edit_starts", {})
+                .get(other_id, {})
+                .get(normalize_task_checkout_root(checkout_root) or "", {})
+            )
+            overlap = {
+                path
+                for path in overlap
+                if not (
+                    isinstance(starts.get(path), (int, float))
+                    and path in commit_path_times
+                    and starts[path] > commit_path_times[path]
+                )
+            }
         if overlap:
             raise ValueError(
                 f"Paths {', '.join(sorted(overlap))} are live-attributed to {ref}; "
@@ -266,6 +284,34 @@ def task_live_checkout_files(variables: dict[str, Any], task_id: str) -> dict[st
         for root, files in _task_edited_file_checkouts(variables).get(task_id, {}).items()
         if files
     }
+
+
+def record_task_live_edit_starts(
+    variables: dict[str, Any], task_id: str, paths: list[str], root: str | None, stamp: float
+) -> None:
+    """Keep the first edit in each live checkout/path attribution interval."""
+    starts = variables.setdefault("task_live_edit_starts", {})
+    checkout = starts.setdefault(task_id, {}).setdefault(root or "", {})
+    for path in paths:
+        prior = checkout.get(path)
+        checkout[path] = min(prior, stamp) if isinstance(prior, (int, float)) else stamp
+
+
+def release_task_live_edit_starts(
+    variables: dict[str, Any], task_id: str, paths: list[str], root: str | None
+) -> None:
+    """A reconciled path's next edit begins a new live attribution interval."""
+    starts = variables.get("task_live_edit_starts", {})
+    checkouts = starts.get(task_id, {})
+    for checkout in list(checkouts):
+        if root is not None and checkout != root:
+            continue
+        for path in paths:
+            checkouts[checkout].pop(path, None)
+        if not checkouts[checkout]:
+            del checkouts[checkout]
+    if not checkouts:
+        starts.pop(task_id, None)
 
 
 def task_edited_checkout_paths(

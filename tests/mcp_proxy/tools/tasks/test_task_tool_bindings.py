@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.session_types import HookSessionManager
@@ -167,7 +168,7 @@ def test_completed_call_replay_retains_its_start_after_focus_changes(
 
 
 @pytest.mark.parametrize("boundary", ["interrupt", "turn_end", "session_end", "clear"])
-def test_boundary_cleanup_preserves_replay_and_releases_lost_calls(
+def test_boundary_cleanup_retires_replay_and_releases_lost_calls(
     temp_db: HubDatabase,
     canonical_task_session: Session,
     boundary: str,
@@ -196,10 +197,13 @@ def test_boundary_cleanup_preserves_replay_and_releases_lost_calls(
     bindings.clear_pending(boundary)
 
     calls = variables.get_variables(canonical_task_session.id)["task_tool_bindings"]
-    assert calls["codex:sync-call"]["pending"] is False
-    assert calls["codex:background-call"]["pending"] is (boundary in {"interrupt", "turn_end"})
-    assert bindings.started_at(before) == before.timestamp.timestamp()
-    assert bindings.started_at(background) == background.timestamp.timestamp()
+    assert "codex:sync-call" not in calls
+    keeps_background = boundary in {"interrupt", "turn_end"}
+    assert set(calls) == ({"codex:background-call"} if keeps_background else set())
+    assert bindings.started_at(before) is None
+    assert bindings.started_at(background) == (
+        background.timestamp.timestamp() if keeps_background else None
+    )
 
 
 @pytest.mark.parametrize(
@@ -228,7 +232,7 @@ def test_pre_rule_cleanup_updates_persisted_and_evaluation_state(
         canonical_task_session.id,
         evaluation,
     )
-    assert evaluation["task_tool_bindings"]["codex:abandoned-call"]["pending"] is False
+    assert evaluation["task_tool_bindings"] == {}
     assert (
         variables.get_variables(canonical_task_session.id)["task_tool_bindings"]
         == evaluation["task_tool_bindings"]
@@ -290,9 +294,12 @@ def test_force_steal_during_native_agent_refuses_unbound_child_edit(
             checkout_root="/checkout",
             started_at=before.timestamp.timestamp(),
         )
-        is False
+        is True
     )
-    assert variables.get_variables(canonical_task_session.id).get("session_edited_files", []) == []
+    assert variables.get_variables(canonical_task_session.id)["session_edited_files"] == [
+        "stale-child.py"
+    ]
+    assert variables.get_variables(canonical_task_session.id).get("task_edited_files", {}) == {}
 
 
 def test_failed_yielded_call_releases_pending_binding(
@@ -476,3 +483,101 @@ def test_tool_hooks_credit_only_edits_with_a_bound_start(
     else:
         assert "proven tool-start task binding" in caplog.text
         assert "claim_task" in caplog.text
+
+
+def test_turn_cleanup_prunes_completed_bindings(
+    temp_db: HubDatabase, canonical_task_session: Session
+) -> None:
+    variables = SessionVariableManager(temp_db)
+    bindings = TaskToolBindings(variables, canonical_task_session.id)
+    before = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        source=SessionSource.CODEX,
+        session_id=canonical_task_session.external_id,
+        request_id="background",
+        timestamp=datetime.now(UTC),
+        data={"tool_name": "Bash"},
+    )
+    bindings.start(before)
+    bindings.complete(replace(before, data={"_verification_pending": True}))
+    for index in range(30):
+        call = replace(before, request_id=f"completed-{index}")
+        bindings.start(call)
+        bindings.complete(replace(call, event_type=HookEventType.AFTER_TOOL))
+    bindings.clear_pending("turn_end")
+    calls = variables.get_variables(canonical_task_session.id)["task_tool_bindings"]
+    assert set(calls) == {"codex:background"}
+    assert calls["codex:background"]["pending"] is True
+
+
+@pytest.mark.parametrize("switch_selection", [False, True])
+def test_codex_after_only_file_change_uses_unchanged_turn_selection(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    canonical_task_session: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    switch_selection: bool,
+) -> None:
+    tasks = LocalTaskManager(temp_db)
+    first = tasks.create_task(sample_project["id"], "First", validation_criteria="Edit binding.")
+    second = tasks.create_task(sample_project["id"], "Second", validation_criteria="Edit binding.")
+    tasks.claim_task_for_agent(first.id, canonical_task_session.id)
+    variables = SessionVariableManager(temp_db)
+    handlers = EventHandlers(
+        session_manager=cast(HookSessionManager, SessionManager(temp_db)), task_manager=tasks
+    )
+    monkeypatch.setattr(
+        handlers, "_resolve_repo_edit_paths", lambda *args, **kw: (tmp_path, "p.py")
+    )
+    adapter = CodexAdapter()
+    monkeypatch.setattr(adapter, "_get_machine_id", lambda: canonical_task_session.machine_id)
+    turn = adapter.translate_to_hook_event(
+        {
+            "method": "turn/started",
+            "params": {
+                "threadId": canonical_task_session.external_id,
+                "turn": {"id": "turn-1"},
+                "prompt": "edit p.py",
+            },
+        }
+    )
+    assert turn is not None
+    turn.project_id = sample_project["id"]
+    turn.metadata["_platform_session_id"] = canonical_task_session.id
+    handlers.handle_before_agent(turn)
+    if switch_selection:
+        tasks.claim_task(second.id, canonical_task_session.id)
+    after = adapter.translate_to_hook_event(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": canonical_task_session.external_id,
+                "turnId": "turn-1",
+                "item": {"type": "fileChange", "id": "item-1", "tool_input": {"file_path": "p.py"}},
+            },
+        }
+    )
+    assert after is not None
+    after.project_id = sample_project["id"]
+    after.metadata["_platform_session_id"] = canonical_task_session.id
+    assert handlers.handle_after_tool(after).decision == "allow"
+    state = variables.get_variables(canonical_task_session.id)
+    assert state.get("task_edited_files", {}) == ({} if switch_selection else {first.id: ["p.py"]})
+    assert state["session_dirty_files"] == ["p.py"]
+
+
+def test_unclaimed_started_edit_keeps_session_dirty_ledger(
+    temp_db: HubDatabase, canonical_task_session: Session, tmp_path: Path
+) -> None:
+    variables = SessionVariableManager(temp_db)
+    variables.record_edited_files(
+        canonical_task_session.id,
+        ["exempt.py"],
+        checkout_root=str(tmp_path),
+        started_at=datetime.now(UTC).timestamp(),
+    )
+    state = variables.get_variables(canonical_task_session.id)
+    assert state["session_edited_files"] == ["exempt.py"]
+    assert state["session_dirty_files"] == ["exempt.py"]
+    assert state.get("task_edited_files", {}) == {}

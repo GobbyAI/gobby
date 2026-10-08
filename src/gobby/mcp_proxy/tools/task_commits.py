@@ -24,7 +24,7 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.tasks import close_receipts
-from gobby.tasks.commit_ownership import assert_task_commit_paths_available
+from gobby.tasks.commit_ownership import assert_task_commit_paths_available_async
 from gobby.tasks.diff_paging import (
     DEFAULT_GIT_TIMEOUT_SECONDS,
     MAX_COMMITS_LIMIT,
@@ -165,8 +165,12 @@ def create_commit_registry(
             paths = await collect_net_commit_paths_async(
                 [normalized], repo_path, candidate=normalized
             )
-            assert_task_commit_paths_available(
-                task_manager, current_task, set(paths.changed) | set(paths.deleted), repo_path
+            await assert_task_commit_paths_available_async(
+                task_manager,
+                current_task,
+                set(paths.changed) | set(paths.deleted),
+                repo_path,
+                [normalized],
             )
             task = task_manager.link_commit(resolved_task_id, normalized)
             return {

@@ -106,14 +106,17 @@ confirms that ownership and selection. Other claims retain their edit history.
 When the selected claim ends, remaining claims stay inactive until you select
 one with `claim_task` before editing or validating it.
 
-Finish or stop native shell/agent calls before explicitly switching tasks. Their
-results retain the selection from their start, even when delivery is delayed or
-replayed. A refused switch names the running calls; create-and-claim rolls back
+Finish or stop native shell/agent calls before explicitly switching tasks.
+Live calls retain the selection from their start, even when delivery is delayed.
+Completed replay bindings retire at turn end. A refused switch names running
+calls; create-and-claim rolls back
 without creating a task. If a native child loses ownership during a transfer,
 restore ownership with `claim_task` or stop the child before retrying its edits.
 
-An edit or linked commit cannot include paths still live-attributed to another
-active claim. Select their owning task or finish it, and split commits by task.
+An edit cannot overlap paths still live-attributed to another active claim.
+Select their owning task or finish it, and split commits by task. A later task
+may edit a committed path; those later edits do not block linking or closing the
+earlier commit when their live attribution began after that path's commit.
 Close uses validation runs started while its task was selected; edits to that
 task's owned paths always count and stale earlier green evidence.
 

@@ -36,6 +36,7 @@ SESSION_DIRTY_FILE_CHECKOUTS_VARIABLE = "session_dirty_file_checkouts"
 _TASK_LEDGER_VARIABLES = (
     "task_edited_files",
     "task_edited_file_times",
+    "task_live_edit_starts",
     "task_edited_file_checkouts",
 )
 

@@ -408,10 +408,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     "Refusing edit attribution without a proven tool-start task binding; "
                     "select the task with claim_task and retry the edit with a call ID."
                 )
-                return
             edited_at = event.timestamp.timestamp()
             variables = variable_manager.get_variables(session_id)
-            task_id = task_selected_at(variables, started_at)
+            task_id = task_selected_at(variables, started_at) if started_at is not None else None
             for checkout_root, paths in paths_by_checkout.items():
                 if task_id is not None:
                     landed = self._paths_landed_before_edit(
@@ -437,6 +436,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                         checkout_root=checkout_root,
                         edited_at=edited_at,
                         started_at=started_at,
+                        attribute_to_task=started_at is not None,
                     )
 
         self._mark_session_had_edits_if_claimed(session_id)

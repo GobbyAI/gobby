@@ -37,15 +37,18 @@ ends, remaining claims stay inactive: select one with `claim_task` before editin
 or validating it.
 
 Finish or stop native shell/agent calls before explicitly selecting another task.
-Their completion stays bound to the task selected at their start, including
-delayed or replayed results. A selection refusal names the running calls;
+Live calls stay bound to the task selected at their start, including delayed
+results. Completed replay bindings retire at turn end. A selection refusal names
+the running calls;
 create-and-claim rolls back without creating a task. If a native child loses
 ownership during a transfer, restore ownership with `claim_task` or stop that
 child before retrying its edits.
 
-Paths still live-attributed to another active claim cannot be edited or included
-in this task's commit. Select the owning task or finish it, and split commits by
-task. Close judges validation runs started while this task was selected, while
+Paths still live-attributed to another active claim cannot be edited. Select the
+owning task or finish it, and split commits by task. A later task may edit a
+committed path; linking or closing the earlier commit remains allowed when the
+later live attribution began after that path's commit. Close judges validation
+runs started while this task was selected, while
 all edits to its owned paths count and stale earlier green evidence.
 
 Cross-project claims are rejected. `TASK_CLAIM_CONFLICT` identifies foreign

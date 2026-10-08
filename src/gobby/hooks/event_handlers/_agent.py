@@ -162,6 +162,9 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     from gobby.workflows.state_manager import SessionVariableManager
 
                     sv_mgr = SessionVariableManager(self._session_manager.db)
+                    from gobby.workflows.task_tool_bindings import TaskToolBindings
+
+                    TaskToolBindings(sv_mgr, session_id).begin_turn(event)
                     sv_mgr.merge_variables(
                         session_id,
                         {"subagent_count": 0, "is_subagent": False},

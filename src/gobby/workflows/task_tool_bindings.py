@@ -157,6 +157,20 @@ class TaskToolBindings:
         self.manager = manager
         self.session_id = session_id
 
+    def begin_turn(self, event: HookEvent) -> None:
+        if event.source.value != "codex" or not event.data.get("turn_id"):
+            return
+
+        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
+            variables["task_tool_turn"] = {
+                "turn_id": event.data["turn_id"],
+                "started_at": event.timestamp.timestamp(),
+                "selection_count": len(variables.get("task_selection_history", [])),
+            }
+            return None, True
+
+        self.manager._mutate_variables(self.session_id, mutate)
+
     def assert_can_select(self, task_id: str | None) -> None:
         """Fence an explicit own switch under the caller's claim transaction."""
 
@@ -234,22 +248,23 @@ class TaskToolBindings:
         self.manager._mutate_variables(self.session_id, mutate)
 
     def clear_pending(self, boundary: str) -> None:
-        """Release abandoned calls while retaining their immutable replay bindings."""
+        """Retire completed/abandoned calls; only live background work crosses turns."""
         if boundary not in {"interrupt", "turn_end", "session_end", "clear"}:
             raise ValueError(f"Unsupported tool-binding cleanup boundary: {boundary}")
 
         def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
             calls = _bindings(variables)
-            changed = False
-            for call in calls.values():
-                if call.get("pending") is not True:
-                    continue
-                if call.get("background") is True and boundary in {"interrupt", "turn_end"}:
-                    continue
-                call["pending"] = False
-                changed = True
+            kept = {
+                key: call
+                for key, call in calls.items()
+                if call.get("pending") is True
+                and call.get("background") is True
+                and boundary in {"interrupt", "turn_end"}
+            }
+            changed = kept != calls or "task_tool_turn" in variables
             if changed:
-                variables["task_tool_bindings"] = calls
+                variables["task_tool_bindings"] = kept
+                variables.pop("task_tool_turn", None)
             return None, changed
 
         self.manager._mutate_variables(self.session_id, mutate)
@@ -259,6 +274,20 @@ class TaskToolBindings:
         key = _matching_key(event, variables)
         calls = _bindings(variables)
         call = calls.get(key, {}) if key else {}
+        if not call:
+            turn = variables.get("task_tool_turn", {})
+            if (
+                event.source.value == "codex"
+                and event.data.get("item_type") == "fileChange"
+                and isinstance(turn, dict)
+                and turn.get("turn_id") == event.data.get("turn_id")
+                and bool(turn.get("turn_id"))
+                and turn.get("selection_count") == len(variables.get("task_selection_history", []))
+            ):
+                value = turn.get("started_at")
+                if isinstance(value, (int, float)) and value <= event.timestamp.timestamp():
+                    return float(value)
+            return None
         task_id = call.get("task_id")
         if isinstance(task_id, str) and task_id not in variables.get("claimed_tasks", {}):
             return None

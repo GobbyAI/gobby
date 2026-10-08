@@ -636,6 +636,7 @@ class SessionVariableManager:
         checkout_root: str | None = None,
         edited_at: float | None = None,
         started_at: float | None = None,
+        attribute_to_task: bool = True,
     ) -> bool:
         """Atomically record one successful mutation observation and its paths.
 
@@ -652,6 +653,7 @@ class SessionVariableManager:
             active_task_id_for_edit,
             assert_task_edit_paths_available,
             normalize_task_checkout_root,
+            record_task_live_edit_starts,
             task_selected_at,
         )
 
@@ -663,6 +665,8 @@ class SessionVariableManager:
                 if started_at is None
                 else task_selected_at(variables, started_at)
             )
+            if not attribute_to_task:
+                task_id = None
             if started_at is not None and (
                 task_id is None or task_id not in variables.get("claimed_tasks", {})
             ):
@@ -671,10 +675,11 @@ class SessionVariableManager:
                     "to select the task before retrying the edit (session %s)",
                     session_id,
                 )
-                return False, False
-            assert_task_edit_paths_available(
-                variables, task_id, normalized_paths, normalized_checkout
-            )
+                task_id = None
+            if task_id is not None:
+                assert_task_edit_paths_available(
+                    variables, task_id, normalized_paths, normalized_checkout
+                )
             stored = variables.get("session_edited_files", [])
             if not isinstance(stored, list):
                 stored = [stored] if stored else []
@@ -702,6 +707,9 @@ class SessionVariableManager:
                 variables["session_dirty_file_checkouts"] = dirty_checkouts
 
             if task_id:
+                record_task_live_edit_starts(
+                    variables, task_id, normalized_paths, normalized_checkout, stamp
+                )
                 raw_task_files = variables.get("task_edited_files") or {}
                 task_files = raw_task_files if isinstance(raw_task_files, dict) else {}
                 stored_for_task = task_files.get(task_id, [])
@@ -833,6 +841,7 @@ class SessionVariableManager:
         from gobby.workflows.task_claim_state import (
             normalize_task_checkout_root,
             normalize_task_edited_path,
+            release_task_live_edit_starts,
         )
 
         requested = list(
@@ -900,6 +909,7 @@ class SessionVariableManager:
             else:
                 updated_task_files.pop(task_id, None)
             variables["task_edited_files"] = updated_task_files
+            release_task_live_edit_starts(variables, task_id, released, normalized_checkout)
             raw_times = variables.get("task_edited_file_times") or {}
             task_times = raw_times if isinstance(raw_times, dict) else {}
             if task_id in task_times:
