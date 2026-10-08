@@ -485,8 +485,13 @@ def _task_presence(
     start = _evidence_epoch(window_start)
     if start is None:
         return None
-    history = task_selection_events(selection_history)
-    if history is not None:
+    history = task_selection_events(selection_history) or []
+    # A session already working when selection history began gets its first entry
+    # at its next variable write (after a restart, say), not when it selected the
+    # task. History therefore speaks only from its first entry; claim links and
+    # transcript claims still cover the window before it (#23781).
+    history_start = min((epoch for epoch, _ in history), default=None)
+    if history_start is not None and history_start <= start:
         # Commit-ordered selection is authoritative, including automatic returns
         # after close/release. Provider result order can differ from commit order.
         selected: str | None = None
@@ -497,18 +502,23 @@ def _task_presence(
             else:
                 changes.append((selection_epoch, current == task_id))
         return [(start, selected == task_id), *changes]
+
+    def before_history(epoch: float) -> bool:
+        return epoch > start and (history_start is None or epoch < history_start)
+
     events = [
         (epoch, getattr(row.get("task"), "id", None) == task_id)
         for row in task_links
         if (row.get("action") or row.get("session_action")) == "claimed"
         and (epoch := _evidence_epoch(row.get("link_created_at"))) is not None
-        and epoch > start
+        and before_history(epoch)
     ]
     events.extend(
         (epoch, claimed_id == task_id)
         for claimed_id, claimed_at in transcript_claims
-        if (epoch := _evidence_epoch(claimed_at)) is not None and epoch > start
+        if (epoch := _evidence_epoch(claimed_at)) is not None and before_history(epoch)
     )
+    events.extend((epoch, current == task_id) for epoch, current in history)
     if all(returned for _, returned in events):
         return None
     return sorted(events)

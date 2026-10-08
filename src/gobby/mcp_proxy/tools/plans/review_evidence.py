@@ -74,13 +74,14 @@ def register_review_evidence_tools(
             if task_id is None and bound_session_id is None:
                 bound_session_id = get_current_session_id()
             prepared = await asyncio.to_thread(
-                service.prepare_plan_review_round,
-                project_id=resolve_project_id(project),
-                plan_path=plan_path,
-                round_number=round_number,
-                session_id=bound_session_id,
-                task_id=task_id,
-                stage=stage,
+                lambda: service.prepare_plan_review_round(
+                    project_id=resolve_project_id(project),
+                    plan_path=plan_path,
+                    round_number=round_number,
+                    session_id=bound_session_id,
+                    task_id=task_id,
+                    stage=stage,
+                ),
             )
         except (ReviewEvidenceError, ValueError, OSError) as exc:
             return _error_payload(exc, "prepare_plan_review_round_failed")
@@ -325,10 +326,11 @@ def register_review_evidence_tools(
     ) -> dict[str, object]:
         try:
             result = await asyncio.to_thread(
-                handoff_service.derive,
-                project_id=resolve_project_id(project),
-                plan_path=plan_path,
-                routing_decisions=routing_decisions,
+                lambda: handoff_service.derive(
+                    project_id=resolve_project_id(project),
+                    plan_path=plan_path,
+                    routing_decisions=routing_decisions,
+                ),
             )
         except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
             return _error_payload(exc, "derive_plan_handoff_manifest_failed")
@@ -361,13 +363,14 @@ def register_review_evidence_tools(
     ) -> dict[str, object]:
         try:
             result = await asyncio.to_thread(
-                handoff_service.apply,
-                project_id=resolve_project_id(project),
-                plan_path=plan_path,
-                routing_decisions=routing_decisions,
-                source_plan_hash=source_plan_hash,
-                rendered_plan_hash=rendered_plan_hash,
-                manifest_digest=manifest_digest,
+                lambda: handoff_service.apply(
+                    project_id=resolve_project_id(project),
+                    plan_path=plan_path,
+                    routing_decisions=routing_decisions,
+                    source_plan_hash=source_plan_hash,
+                    rendered_plan_hash=rendered_plan_hash,
+                    manifest_digest=manifest_digest,
+                ),
             )
         except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
             return _error_payload(exc, "apply_plan_handoff_manifest_failed")

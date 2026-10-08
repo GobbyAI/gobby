@@ -16,6 +16,33 @@ working-tree reads; it resolves from `--project` or the current directory.
 An explicit `binding` pins source bytes to that commit's Git blobs. Bound range
 reads can retrieve paths absent from the current checkout or index.
 
+Recover the current caller identity with this unbound metadata read (it does
+not depend on a source path existing in the current checkout):
+
+```bash
+gcode evidence --request-json '{"schema_version":1,"operation":"read","read":{"kind":"commit_metadata"}}'
+```
+
+Bound requests require all three fields inside `binding`:
+
+| Field | Value |
+| --- | --- |
+| `project_id` | `response.binding.project_id` from an unbound request in the same checkout |
+| `commit_oid` | Full commit OID from `git rev-parse <commit>` |
+| `tree_oid` | Tree OID from `git rev-parse '<commit>^{tree}'` |
+
+Replace the uppercase placeholders in this complete example:
+
+```bash
+gcode evidence --request-json '{"schema_version":1,"operation":"read","binding":{"project_id":"PROJECT_ID","commit_oid":"COMMIT_OID","tree_oid":"TREE_OID"},"read":{"kind":"range","path":"src/lib.rs","start_line":1,"end_line":1}}'
+```
+
+Use the current persisted caller identity; task project IDs or a binding copied
+from another checkout may differ. On `repository_binding_mismatch`, run an
+unbound request in the intended checkout to recover `binding.project_id`, then
+pin the desired commit and its tree. Keep all fields inside `binding`; a
+top-level `project_id` or commit-only binding is rejected.
+
 | Operation | Selector |
 | --- | --- |
 | `search` | `lane` (`symbol`, `lexical_symbol`, `literal`, `regex`, `content`, `hybrid`), `query`, optional `paths` (file or directory scopes), `language`, `kind`, `limit` |

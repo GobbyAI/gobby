@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import textwrap
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -42,6 +43,34 @@ def _regression_plan_path() -> Path:
 
 def _regression_plan_doc() -> PlanDocument:
     return parse_plan(_regression_plan_path(), parse_mode="expansion")
+
+
+async def test_compile_plan_validation_runs_off_event_loop(
+    service: ExpansionService,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = _parent(service, sample_project)
+    run = service.run_manager.create(
+        parent_task_id=parent.id,
+        project_id=sample_project["id"],
+        triggering_session_id=None,
+        input_source="plan",
+        plan_file=str(_regression_plan_path()),
+    )
+    caller_thread = threading.get_ident()
+    validation_threads: list[int] = []
+
+    def reject_plan(*args: object, **kwargs: object) -> dict[str, Any]:
+        validation_threads.append(threading.get_ident())
+        return {"valid": False, "errors": ["regression rejection"]}
+
+    monkeypatch.setattr(service, "validate_plan_file", reject_plan)
+    with pytest.raises(ValueError, match="Contract plan failed validation: regression rejection"):
+        await service.compile_run(run.id)
+
+    assert len(validation_threads) == 1
+    assert validation_threads[0] != caller_thread
 
 
 def _deps_for(spec: dict[str, Any], task_id: str) -> set[str]:

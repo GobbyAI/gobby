@@ -7,6 +7,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import _task_presence, _while_on_task
 from gobby.tasks.transcript_evidence_models import TranscriptEvidence
+from gobby.workflows.task_claim_state import record_task_selection
 from tests.tasks.test_close_checklist import BASE_TIME, _run
 
 pytestmark = pytest.mark.unit
@@ -51,3 +52,32 @@ def test_selection_at_window_start_retains_its_predecessor() -> None:
         (window_start.timestamp(), False),
         ((BASE_TIME + timedelta(seconds=6)).timestamp(), True),
     ]
+
+
+@pytest.mark.parametrize(
+    "selected_after_restart,expected_orders",
+    [("A", (2, 4, 8)), ("B", (2, 4))],
+)
+def test_history_begun_after_window_start_keeps_earlier_runs(
+    selected_after_restart: str, expected_orders: tuple[int, ...]
+) -> None:
+    # A session working on A before selection history existed gets its first
+    # entry at its first variable write after the restart (#23781).
+    variables: dict[str, object] = {"active_task_id": selected_after_restart}
+    restarted_at = BASE_TIME + timedelta(seconds=6)
+    record_task_selection(variables, "A", restarted_at.isoformat())
+    red = _run(2, outcome="failure")
+    green = _run(4)
+    after_restart = _run(8)
+    evidence = TranscriptEvidence(
+        validation_runs=(red, green, after_restart),
+        command_runs=(red, green, after_restart),
+    )
+
+    presence = _task_presence(
+        [], "A", BASE_TIME, [], selection_history=variables["task_selection_history"]
+    )
+    scoped = evidence if presence is None else _while_on_task(evidence, presence)
+
+    assert tuple(run.order for run in scoped.validation_runs) == expected_orders
+    assert scoped.command_runs == scoped.validation_runs

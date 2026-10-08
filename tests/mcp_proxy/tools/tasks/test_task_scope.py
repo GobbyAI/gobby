@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import gobby.mcp_proxy.tools.tasks._task_scope as task_scope
+from gobby.mcp_proxy.tools.task_repo_paths import resolve_task_repo_path
 from gobby.mcp_proxy.tools.tasks._task_scope import (
     TaskScopeEvaluation,
     collect_commit_paths,
@@ -552,6 +553,38 @@ async def test_net_commit_paths_use_candidate_presence_after_foreign_deletion(
     assert net.deleted == (
         frozenset({"tests/test_changed.py"}) if candidate_state == "deleted" else frozenset()
     )
+
+
+async def test_net_commit_paths_keep_tracked_tests_from_explicit_close_subdirectory(
+    tmp_path: Path,
+) -> None:
+    git = _git_repo(tmp_path)
+    test = tmp_path / "tests/test_changed.py"
+    test.parent.mkdir()
+    test.write_text("def test_it():\n    assert True\n")
+    git("add", ".")
+    git("commit", "-qm", "root")
+    test.write_text("def test_it():\n    assert 1 == 1\n")
+    git("commit", "-qam", "linked modification")
+    candidate = git("rev-parse", "HEAD")
+    manager = MagicMock(spec=LocalTaskManager)
+    manager.db = MagicMock(spec=HubDatabase)
+    with patch("gobby.mcp_proxy.tools.task_repo_paths.require_root", return_value=str(tmp_path)):
+        repo_path = resolve_task_repo_path(
+            task_manager=manager,
+            project_manager=None,
+            task=_task(),
+            project_path=str(test.parent),
+        )
+    assert repo_path is not None
+    assert repo_path == str(test.parent)
+
+    net = await task_scope.collect_net_commit_paths_async(
+        [candidate], repo_path, candidate=candidate
+    )
+
+    assert net.changed == frozenset({"tests/test_changed.py"})
+    assert net.deleted == frozenset()
 
 
 async def test_net_commit_paths_fail_closed_on_an_unknown_commit(tmp_path: Path) -> None:

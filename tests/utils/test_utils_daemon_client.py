@@ -36,11 +36,20 @@ class TestDaemonClientInit:
         assert client.url == "http://127.0.0.1:61999"
         assert client.timeout == 5.0
 
-    def test_custom_values(self) -> None:
+    @pytest.mark.parametrize(
+        ("host", "expected_url"),
+        [
+            ("192.168.1.1", "http://192.168.1.1:9000"),
+            ("hub.example.test", "http://hub.example.test:9000"),
+            ("2001:db8::1", "http://[2001:db8::1]:9000"),
+            ("[2001:db8::1]", "http://[2001:db8::1]:9000"),
+        ],
+    )
+    def test_custom_values(self, host: str, expected_url: str) -> None:
         """Test custom initialization values."""
-        client = DaemonClient(host="192.168.1.1", port=9000, timeout=10.0)
+        client = DaemonClient(host=host, port=9000, timeout=10.0)
 
-        assert client.url == "http://192.168.1.1:9000"
+        assert client.url == expected_url
         assert client.timeout == 10.0
 
     def test_explicit_localhost_uses_numeric_loopback(self) -> None:
