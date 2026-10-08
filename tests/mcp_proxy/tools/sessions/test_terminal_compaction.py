@@ -14,11 +14,12 @@ import json
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.agents.idle_detector import ComposerRead, ComposerState
+from gobby.agents.idle_detector import ComposerRead
 from gobby.mcp_proxy.tools.sessions._terminal_clear import CLEAR_COMMAND
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _COMPACTION_REJECTION_ERROR_CODE,
@@ -37,6 +38,7 @@ from gobby.sessions.transcript_cursor import (
     build_turn_settled_observer,
 )
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.composer_ledger import ComposerLedger, bind_composer_ledger
 from gobby.terminals.runtime import SnapshotMode
 
 pytestmark = pytest.mark.unit
@@ -51,11 +53,22 @@ _CLEAR_REJECTED_SCREEN = f"\n{_CLEAR_REJECTION}\n> "
 _DRAIN = composer_clear_sequence("grok")
 
 
+@pytest.fixture(autouse=True)
+def _tracked_seat(composer_ledger: ComposerLedger, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pane is a ledger-tracked seat whose composer starts empty."""
+    composer_ledger.record_spawn(_GrokPane.target, "")
+    monkeypatch.setattr(_GrokPane, "ledger", composer_ledger, raising=False)
+
+
 class _GrokPane:
-    """PaneIO fake: each Enter appends the next scripted pane output, if any."""
+    """PaneIO fake: each Enter appends the next scripted pane output, if any.
+
+    Its writes are native host batches, so the ledger records each one as daemon input.
+    """
 
     backend = "native"
     target = "term-grok"
+    ledger: ClassVar[ComposerLedger]
 
     def __init__(self, outputs_after_enter: list[str] | None = None) -> None:
         self.keys: list[str] = []
@@ -66,10 +79,12 @@ class _GrokPane:
 
     async def send_key(self, key: str) -> tuple[bool, str | None]:
         self.keys.append(key)
+        self.ledger.observe_write(self.target, origin="daemon", kind="key", payload=key)
         return True, None
 
     async def type_text(self, text: str) -> tuple[bool, str | None]:
         self.typed.append(text)
+        self.ledger.observe_write(self.target, origin="daemon", kind="text", payload=text)
         # The write carries its own newline, so the command submits here and the
         # CLI's answer to it lands on the next frame.
         if self._outputs:
@@ -262,7 +277,8 @@ async def test_grok_settled_turn_is_compacted_without_an_interrupt() -> None:
     result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: True)
 
     assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
-    assert pane.keys == [*_DRAIN, "enter"]
+    # The ledger reads the composer empty, so nothing is drained before the command.
+    assert pane.keys == ["enter"]
     assert "ctrl_c" not in pane.keys
     assert pane.typed == [f"{_COMMAND}\n"]
     mark.assert_called_once()
@@ -634,7 +650,7 @@ async def test_compaction_waits_for_a_live_turn_to_settle_before_submitting() ->
 
     assert polls["n"] >= 2
     assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
-    assert pane.keys == [*_DRAIN, "enter"]
+    assert pane.keys == ["enter"]
     assert "ctrl_c" not in pane.keys
     assert pane.typed == [f"{_COMMAND}\n"]
     mark.assert_called_once()
@@ -687,7 +703,8 @@ async def test_grok_rejection_after_a_settled_submission_interrupts_before_resub
     )
 
     assert result == (True, None, True, {"submit_unverified": True})
-    assert pane.keys == [*_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
+    # Ctrl+C may restore a prompt the ledger cannot see, so only that write is drained.
+    assert pane.keys == ["enter", "ctrl_c", *_DRAIN, "enter"]
     assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
     mark.assert_called_once()
     clear.assert_not_called()
@@ -701,36 +718,12 @@ async def test_grok_rejection_resubmission_checks_idle_before_first_ctrl_c() -> 
 
     assert "ctrl_c" not in pane.keys
     assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
+    # The rejection consumed the first command, so the resubmission types it again
+    # instead of pressing a bare Enter into an empty composer.
     assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
+    assert pane.keys == ["enter", "enter"]
     mark.assert_called_once()
     clear.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_compaction_refuses_occupied_composer_before_interrupt() -> None:
-    pane = _GrokPane()
-    mark = MagicMock(return_value=True)
-    clear = MagicMock(return_value=True)
-
-    ok, reason, pending, detail = await _send_terminal_compaction_command(
-        pane,
-        _COMMAND,
-        "session-grok",
-        cli_source="grok",
-        mark_continuation_pending=mark,
-        clear_continuation_pending=clear,
-        observe_interrupt=lambda: True,
-        settle_seconds=_SETTLE,
-        composer_read=lambda _text: ComposerRead("draft", "hello draft"),
-    )
-
-    assert (ok, pending) == (False, False)
-    assert reason == "composer holds an operator draft"
-    assert detail == {"error_code": _COMPOSER_OCCUPIED_ERROR_CODE, "continuation_pending": False}
-    assert pane.keys == [] and pane.typed == []
-    # Faint suggestion and placeholder text is only distinguishable with styling.
-    assert pane.snapshot_modes == ["ansi"]
-    mark.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -754,40 +747,58 @@ async def test_empty_composer_after_enter_compacts() -> None:
     assert pane.typed == [f"{_COMMAND}\n"]
 
 
+def _operator_draft(ledger: ComposerLedger) -> None:
+    ledger.observe_write(_GrokPane.target, origin="operator", kind="text", payload="hello")
+
+
+def _host_gap(ledger: ComposerLedger) -> None:
+    ledger.block(_GrokPane.target, "gap")
+
+
+def _untracked(_ledger: ComposerLedger) -> None:
+    bind_composer_ledger(ComposerLedger())
+
+
+_UNCONFIRMED = f"composer could not be confirmed empty before {_COMMAND}"
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["draft", "unknown"])
+@pytest.mark.parametrize(
+    ("seed", "reason", "error_code"),
+    [
+        (_operator_draft, "composer holds an operator draft", _COMPOSER_OCCUPIED_ERROR_CODE),
+        (_host_gap, _UNCONFIRMED, _COMPOSER_UNKNOWN_ERROR_CODE),
+        (_untracked, _UNCONFIRMED, _COMPOSER_UNKNOWN_ERROR_CODE),
+    ],
+    ids=["draft", "blocked", "untracked"],
+)
 async def test_compaction_refuses_any_non_empty_composer_before_interrupt(
-    state: ComposerState,
+    composer_ledger: ComposerLedger,
+    seed: Callable[[ComposerLedger], None],
+    reason: str,
+    error_code: str,
 ) -> None:
-    """Only a positively empty composer authorizes the compact command.
+    """Only an empty or daemon-held ledger entry authorizes the compact command.
 
     Josh's 2026-09-29 policy (memory 720f1129) supersedes the old blind-drain
-    fallback: an occupied or unreadable frame retains the message durably and
-    retries rather than risking a write into the operator's draft.
+    fallback: an operator draft, a host gap or an untracked seat retains the
+    message durably and retries rather than risking a write into the operator's draft.
     """
+    seed(composer_ledger)
     pane = _GrokPane()
     mark = MagicMock(return_value=True)
-    ok, reason, _pending, detail = await _send_terminal_compaction_command(
+    ok, actual_reason, pending, detail = await _send_terminal_compaction_command(
         pane,
         _COMMAND,
         "session-grok",
         cli_source="grok",
         mark_continuation_pending=mark,
         clear_continuation_pending=MagicMock(return_value=True),
+        observe_interrupt=lambda: True,
         settle_seconds=_SETTLE,
-        composer_read=lambda _text: ComposerRead(state),
     )
-    assert ok is False
-    assert pane.typed == []
+    assert (ok, actual_reason, pending) == (False, reason, False)
+    assert detail == {"error_code": error_code, "continuation_pending": False}
+    # The gate reads the ledger, so a refusal sends nothing and never reads the pane.
+    assert pane.keys == [] and pane.typed == [] and pane.snapshot_modes == []
     mark.assert_not_called()
-    expected = (
-        "composer holds an operator draft"
-        if state == "draft"
-        else f"composer could not be confirmed empty before {_COMMAND}"
-    )
-    assert reason == expected
-    if state == "unknown":
-        assert detail == {
-            "error_code": _COMPOSER_UNKNOWN_ERROR_CODE,
-            "continuation_pending": False,
-        }

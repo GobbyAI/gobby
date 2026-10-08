@@ -25,9 +25,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from gobby.agents.idle_detector import ComposerRead
 from gobby.paths import get_gobby_home
-from gobby.terminals.composer import COMPOSER_CLEAR_KEYS
+from gobby.terminals.composer import COMPOSER_CLEAR_KEYS, composer_clear_sequence
 from gobby.terminals.host_events import HostEvent, InputActivityEvent
+from gobby.terminals.runtime import NamedKey
 
 __all__ = [
     "ComposerLedger",
@@ -35,13 +37,22 @@ __all__ = [
     "LedgerState",
     "UnsafeReason",
     "WaitOutcome",
+    "WriteOrigin",
+    "bind_composer_ledger",
+    "composer_drain_keys",
     "composer_ledger_path",
     "load_ledger",
     "persist_ledger",
+    "read_composer",
+    "record_composer_drain",
+    "record_composer_submit",
     "write_ledger",
 ]
 
 logger = logging.getLogger(__name__)
+
+# The daemon's ledger, bound at terminal wiring; composer gates read it.
+_bound: ComposerLedger | None = None
 
 LedgerState = Literal["blocked", "draft", "held", "empty"]
 UnsafeReason = Literal["interrupt", "gap", "provider_limit"]
@@ -176,7 +187,10 @@ class ComposerLedger:
                 if payload == "enter":
                     entry.flagged_seq = seq
                 elif payload in COMPOSER_CLEAR_KEYS:
-                    entry.pending_seq, entry.pending_text = 0, None
+                    # A clear key removes an unknown amount (one Codex backspace is one
+                    # character), so only a sized drain's record empties the entry.
+                    if entry.pending_seq > entry.clean_seq:
+                        entry.pending_text = None
                 else:
                     # An interrupt may restore the prompt; another key may edit it.
                     entry.pending_seq, entry.pending_text = seq, None
@@ -187,6 +201,13 @@ class ComposerLedger:
             entry.pending_text = f"{prior}{payload}" if known else None
             if submit or (kind == "input" and "\r" in payload):
                 entry.flagged_seq = seq
+
+    def record_drain(self, terminal_id: str) -> None:
+        """The caller drained every character of the held daemon text it read."""
+        with self._lock:
+            entry = self._entries.get(terminal_id)
+            if entry is not None:
+                entry.pending_seq, entry.pending_text = 0, None
 
     def record_submit(self, terminal_id: str) -> None:
         """A provider recorded a submit: flagged input up to now left the composer.
@@ -313,6 +334,47 @@ def _read(entry: _Entry) -> LedgerRead:
     if entry.pending_seq > entry.clean_seq:
         return LedgerRead("held", pending=entry.pending_text)
     return LedgerRead("empty")
+
+
+def bind_composer_ledger(ledger: ComposerLedger | None) -> None:
+    """Bind the daemon's ledger for composer gates; ``None`` unbinds it."""
+    global _bound
+    _bound = ledger
+
+
+def read_composer(terminal_id: str) -> ComposerRead:
+    """The bound ledger's composer read; blocked, untracked and unbound read ``unknown``."""
+    if _bound is None:
+        return ComposerRead("unknown")
+    read = _bound.read(terminal_id)
+    if read.state == "blocked":
+        return ComposerRead("unknown")
+    return ComposerRead(read.state, read.pending)
+
+
+def composer_drain_keys(terminal_id: str, cli_source: str | None) -> tuple[NamedKey, ...]:
+    """The standard drain pass, led by one backspace per character of held daemon text.
+
+    Codex binds no line-clear key and one backspace removes one character, so only a
+    drain sized to the text the ledger holds can empty it. Read it before sending:
+    the first backspace makes the held text unknown.
+    """
+    read = read_composer(terminal_id)
+    backspace: NamedKey = "backspace"
+    sized = (backspace,) * len(read.line) if read.state == "held" and read.line else ()
+    return (*sized, *composer_clear_sequence(cli_source))
+
+
+def record_composer_drain(terminal_id: str) -> None:
+    """Record on the bound ledger that a drain sized to the held text emptied it."""
+    if _bound is not None:
+        _bound.record_drain(terminal_id)
+
+
+def record_composer_submit(terminal_id: str) -> None:
+    """Record on the bound ledger that the provider consumed the flagged input."""
+    if _bound is not None:
+        _bound.record_submit(terminal_id)
 
 
 def composer_ledger_path() -> Path:

@@ -23,7 +23,7 @@ from gobby.agents.watchdog.composer_probe import composer_holds_draft
 from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
 from gobby.storage.terminals import Terminal
 from gobby.tasks.state_semantics import projected_task_state
-from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.composer_ledger import composer_drain_keys
 from gobby.terminals.error_classification import is_vanished_terminal_target
 from gobby.terminals.runtime import Delivered, TerminalWriteError
 from gobby.terminals.write_coordinator import WriteCoordinator, WriteRequest
@@ -379,7 +379,7 @@ class WatchdogRecoveryCoordinator:
                 coordinator,
                 terminal.id,
                 f"idle-reprompt-clear:{run.id}",
-                [("key", key) for key in composer_clear_sequence(run.provider)],
+                [("key", key) for key in composer_drain_keys(str(terminal.id), run.provider)],
             )
             if not cleared:
                 logger.debug("Failed to clear queued prompt before reprompting agent %s", run.id)

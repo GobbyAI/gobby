@@ -225,6 +225,51 @@ compaction sender.
   go and the Assistant releases each seat (Orchestrator ruling). The optional
   `write_batch` expected-sequence hardening is excluded.
 
+### Deviations in the implementation
+
+- Ownership: terminal wiring binds the daemon's ledger with `bind_composer_ledger`,
+  and gates read it through `read_composer(terminal_id)`. The coordinator records
+  its own writes, and `NativeTerminalRuntime.write_batch` records native pane
+  writes, so each write is counted once.
+- Seats spawned before LAND, tmux rows and an unbound ledger read `blocked`
+  (`untracked`), and gates treat that as `unknown`. There is no `unverified`
+  marker.
+- `_SETTLE_BEFORE_REFUSAL_SOURCES` is gone. The gates read no frame, so a
+  frame painted mid-turn can no longer refuse a write, and no settle wait is
+  needed before a refusal.
+- Every daemon key outside the clear sequence, including an interrupt, leaves
+  `held` with unknown text, because an interrupt can restore the prompt. The next
+  gate reads it as stale daemon text and drains it.
+- Clear keys are inert in the ledger. A clear key removes an unknown amount of text
+  (Codex binds no line kill, and one backspace removes one character), so it only
+  makes held text unknown. A completed drain empties the entry through
+  `record_composer_drain`, which keeps a human draft and a block.
+- `composer_drain_keys` sizes every drain: one backspace per character of held
+  daemon text, then the standard pass. `clear_composer` and the four coordinator
+  sites (the wake batch, the wake clear, the capacity reprompt and the idle
+  reprompt) use it. The standard pass alone holds 8 backspaces, which left longer
+  Codex text in front of the next write.
+- A drain of unknown size refuses only on a positive draft frame (Orchestrator,
+  16:24). Examples are the drain after an interrupt and the stale continuation drain.
+  `clear_composer` polls the frame when the CLI has a reader, and a `held` or
+  `changed` verdict refuses. An empty or unreadable frame records the drain and
+  proceeds. Grok has no reader, so it drains blind and records the drain.
+- The continuation re-pastes a dropped prompt (Orchestrator, 16:16). It sends
+  Enter, and when BEFORE_AGENT does not arrive, it drains the held copy with a sized
+  drain. It re-pastes only on a `left` verdict, meaning the frame reads empty;
+  otherwise it falls back to the ISM. Codex can drop a prompt this way at a compact
+  boundary. The clear sequence is not trusted to have emptied the composer.
+  `before_agent_check` is required.
+- A Grok rejection of `/compact` or `/clear` proves the CLI consumed the command,
+  and no submit hook records that. The compaction sender records the submit
+  itself (`record_composer_submit`). Otherwise the ledger keeps the command held,
+  and the `/clear` resubmission would be a bare Enter into an empty composer.
+- A ledger refusal logs `snapshot_source=ledger` with no frame fields and no
+  draft length, because the ledger keeps a draft's provenance and not its text. The pane-frame
+  refusal log remains only for the read-back after a failed Enter.
+- A wake drains a cancelled staged `/compact`, which is daemon text, and then
+  delivers. It no longer skips the wake.
+
 ## Not Recommended
 
 - Reversing the 09-29 confirmed-empty policy (ruling 1a): rejected by Josh.

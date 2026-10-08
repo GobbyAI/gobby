@@ -8,10 +8,12 @@ from pathlib import Path
 
 import pytest
 
+from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.composer_ledger import (
     ComposerLedger,
     LedgerRead,
     WaitOutcome,
+    composer_drain_keys,
     load_ledger,
     persist_ledger,
     write_ledger,
@@ -169,13 +171,39 @@ def test_consecutive_daemon_text_writes_accumulate() -> None:
     assert ledger.read("t1") == LedgerRead("held", pending="/compact")
 
 
-def test_daemon_clear_keys_drop_held_text() -> None:
+def test_daemon_clear_keys_hold_unknown_text_until_a_drain_is_recorded() -> None:
+    # One Codex backspace removes one character, so no clear key proves the text gone.
     ledger = _tracked()
     ledger.observe_write("t1", origin="automatic", kind="text", payload="continue")
     for key in ("ctrl_u", "ctrl_k", "backspace", "delete"):
         ledger.observe_write("t1", origin="automatic", kind="key", payload=key)
 
+    assert ledger.read("t1") == LedgerRead("held", pending=None)
+    ledger.record_drain("t1")
     assert ledger.read("t1") == _EMPTY
+
+
+def test_a_recorded_drain_keeps_a_human_draft() -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="operator", kind="text", payload="private note")
+    ledger.record_drain("t1")
+
+    assert ledger.read("t1") == _DRAFT
+
+
+def test_drain_keys_lead_with_one_backspace_per_held_character(
+    composer_ledger: ComposerLedger,
+) -> None:
+    composer_ledger.record_spawn("t1", "")
+    assert composer_drain_keys("t1", "codex") == composer_clear_sequence("codex")
+    composer_ledger.observe_write("t1", origin="daemon", kind="text", payload="/compact\n")
+
+    assert composer_drain_keys("t1", "codex") == (
+        *("backspace",) * len("/compact\n"),
+        *composer_clear_sequence("codex"),
+    )
+    composer_ledger.observe_write("t1", origin="daemon", kind="key", payload="escape")
+    assert composer_drain_keys("t1", "codex") == composer_clear_sequence("codex")
 
 
 def test_daemon_interrupt_holds_unknown_content_without_blocking() -> None:

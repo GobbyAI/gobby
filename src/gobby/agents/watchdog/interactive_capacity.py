@@ -5,7 +5,6 @@ import logging
 import re
 from dataclasses import dataclass
 
-from gobby.agents.detection.provider import DetectionRegistry
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.watchdog.models import CapacityRecoveryState
 from gobby.agents.watchdog.registry import WatchdogReaderRegistry
@@ -14,8 +13,8 @@ from gobby.storage.attention import AttentionStateManager, session_attention_ent
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import Terminal
-from gobby.terminals.composer import composer_clear_sequence
-from gobby.terminals.runtime import Delivered, TerminalRuntimeRegistry, TerminalWriteError
+from gobby.terminals.composer_ledger import composer_drain_keys, read_composer
+from gobby.terminals.runtime import Delivered, TerminalWriteError
 from gobby.terminals.write_coordinator import WriteCoordinator, WriteRequest
 
 logger = logging.getLogger(__name__)
@@ -34,16 +33,12 @@ class InteractiveCapacityRecovery:
         self,
         sessions: SessionManager,
         attention: AttentionStateManager,
-        detection: DetectionRegistry,
-        registry: TerminalRuntimeRegistry,
         coordinator: WriteCoordinator | None,
         max_attempts: int,
     ) -> None:
         self._lifecycle = TurnLifecycleReducer(sessions, attention)
         self._attention = attention
         self._readers = WatchdogReaderRegistry()
-        self._idle = IdleDetector(detection)
-        self._registry = registry
         self._coordinator = coordinator
         self._max_attempts = max_attempts
         self._states: dict[str, RecoveryState] = {}
@@ -94,15 +89,10 @@ class InteractiveCapacityRecovery:
             and self._coordinator is not None
             and capacity.successful_reprompts < self._max_attempts
         ):
-            # Recheck under the shared logical-action lock before altering a composer.
+            # Recheck under the shared logical-action lock before altering a composer;
+            # the reprompt drains held daemon text, never a human draft.
             async with self._coordinator.logical_action_lock(terminal.id):
-                frame = await self._registry.resolve(terminal.backend).snapshot(
-                    terminal, 15, mode="ansi"
-                )
-                if (
-                    self._idle.for_provider(session.source or "").composer_read(frame.text).state
-                    != "empty"
-                ):
+                if read_composer(str(terminal.id)).state not in {"empty", "held"}:
                     await self._attention.transition_async(
                         asyncio.to_thread,
                         session_attention_entry_id(session.id),
@@ -180,7 +170,7 @@ class InteractiveCapacityRecovery:
                 kind="key",
                 payload=key,
             )
-            for key in composer_clear_sequence(session.source)
+            for key in composer_drain_keys(str(terminal.id), session.source)
         ]
         steps.extend(
             [
