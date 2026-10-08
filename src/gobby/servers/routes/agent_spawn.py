@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from gobby.agents.launcher_session import aget_or_create_launcher_session
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.agents.sandbox import web_chat_sandbox_policy_hash
+from gobby.agents.sandbox_network import apply_network_override
 from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.storage.project_checkouts import (
     CheckoutNotFoundError,
@@ -67,6 +68,7 @@ class AgentSpawnRequest(ReasoningEffortMixin):
     agent_name: str = "default"
     prompt: str | None = None
     web_chat: bool = False
+    network: Literal["none", "trusted"] | None = None
     checkout_mode: Literal["none", "worktree", "clone"] | None = None
     provider: str | None = None
     model: str | None = None
@@ -185,6 +187,11 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         req: AgentSpawnRequest, project_id: str | None = None
     ) -> AgentSpawnResponse:
         """Execute a single spawn request."""
+        if req.web_chat and req.network is not None:
+            return AgentSpawnResponse(
+                success=False,
+                error="network requires a managed agent spawn; web_chat is unsupported",
+            )
         if req.web_chat and req.extra_write_paths:
             return AgentSpawnResponse(
                 success=False, error="External write grants require a managed agent spawn"
@@ -316,6 +323,11 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 project_id=effective_project_id,
             )
         except AgentResolutionError as exc:
+            return AgentSpawnResponse(success=False, error=str(exc))
+
+        try:
+            agent_body = apply_network_override(agent_body, req.network)
+        except ValueError as exc:
             return AgentSpawnResponse(success=False, error=str(exc))
 
         # Compose prompt with preamble
