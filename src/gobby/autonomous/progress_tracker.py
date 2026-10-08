@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.hooks.normalization import canonicalize_shell_tool_name, is_shell_tool
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.utils.datetime import parse_stored_datetime, require_stored_datetime
+from gobby.utils.host_sleep import AWAKE_CLOCK, AwakeClock
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -323,14 +324,17 @@ class ProgressTracker:
         self,
         db: "HubDatabase",
         stagnation_threshold: float | None = None,
+        clock: AwakeClock | None = None,
     ):
         """Initialize the progress tracker.
 
         Args:
             db: Database connection for persistent storage
             stagnation_threshold: Seconds without any progress event before stagnant
+            clock: Measures idle time without host sleep (defaults to the process clock)
         """
         self.db = db
+        self._clock = clock or AWAKE_CLOCK
         self._task_close_review_store = TaskCloseReviewStore(db)
         self._lock = threading.Lock()
         self._consecutive_passive_waits: dict[str, int] = {}
@@ -634,7 +638,8 @@ class ProgressTracker:
         if total_events == 0 or last_event_at is None:
             return False, 0.0
 
-        duration = (datetime.now(UTC) - last_event_at).total_seconds()
+        # Host sleep is not stagnation: count only time the host was awake (#23772).
+        duration = self._clock.awake_seconds_since(last_event_at)
         if self._task_close_review_store.get_active_for_caller_session(session_id) is not None:
             logger.debug("Session %s is awaiting an active task-close review", session_id)
             return False, duration
