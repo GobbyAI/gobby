@@ -15,6 +15,7 @@ from gobby.adapters.grok_acp_client import GrokACPClient
 from gobby.adapters.qwen_acp_client import QwenACPClient
 from gobby.llm.claude_models import DoneEvent, ToolCallEvent
 from gobby.servers.websocket.chat.backends.qwen import QwenManagedChatSession
+from gobby.utils.child_supervisor import supervised_argv
 
 pytestmark = pytest.mark.unit
 
@@ -245,7 +246,8 @@ async def test_recorded_acp_fixture_stream_drives_client_flow(
         session_id=requested_session_id,
     )
 
-    assert create_process.call_args.args[:2] == (f"/usr/bin/{case.cli_name}", "--acp")
+    expected = supervised_argv([f"/usr/bin/{case.cli_name}", "--acp"])
+    assert create_process.call_args.args[: len(expected)] == tuple(expected)
     requests = _written_requests(process)
     assert [request["method"] for request in requests] == [
         "initialize",
@@ -351,12 +353,8 @@ async def test_grok_recorded_fixture_stream_drives_authenticated_client_flow() -
             await client.start()
             events = [event async for event in client.send(PROMPT_TEXT)]
 
-    assert create_process.call_args.args[:5] == (
-        "/usr/bin/grok",
-        "agent",
-        "--no-leader",
-        "--always-approve",
-        "stdio",
+    assert create_process.call_args.args == tuple(
+        supervised_argv(["/usr/bin/grok", "agent", "--no-leader", "--always-approve", "stdio"])
     )
     requests = _written_requests(process)
     assert [request.get("method") for request in requests] == [

@@ -49,6 +49,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_transcripts import (
     _read_transcript_tail_lines,
 )
 from gobby.prompts.loader import PromptLoader
+from gobby.sessions.compact_continuation_store import pending_compact_attempt
 from gobby.sessions.handoff import (
     FAILED_HANDOFF_VARIABLE,
     HANDOFF_DISPATCH_GATE_VARIABLE,
@@ -591,6 +592,27 @@ def register_terminal_tools(
                 "compacted": False,
                 "reason": f"{pane.backend} target {pane.target} is not live",
                 "error_code": "terminal_target_not_live",
+            }
+
+        pending_attempt_id = pending_compact_attempt(db, resolved_session_id)
+        if pending_attempt_id is not None:
+            # A sibling would race this attempt for one compact boundary; the
+            # in-flight attempt keeps the handoff it staged first.
+            logger.info(
+                "Reusing pending compact attempt %s for session %s",
+                pending_attempt_id,
+                resolved_session_id,
+            )
+            return {
+                **staged_handoff_tool_result(
+                    attempt_id=pending_attempt_id,
+                    session_id=resolved_session_id,
+                    clear_session=False,
+                    command=command,
+                    cli=source,
+                    via=pane.backend,
+                ),
+                "reused_attempt": True,
             }
 
         if getattr(session, "status", None) == "expired":

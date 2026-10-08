@@ -3,9 +3,13 @@
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from typing import Never, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.tasks import LocalTaskManager
 
 
 @pytest.mark.asyncio
@@ -64,6 +68,7 @@ class TestLinkCommit:
         )
 
         link = registry.get_tool("link_commit")
+        assert link is not None
         result = await link(task_id="task-1", commit_sha="abc123")
 
         assert result["task_id"] == "task-1"
@@ -82,6 +87,7 @@ class TestLinkCommit:
         )
 
         link = registry.get_tool("link_commit")
+        assert link is not None
         result = await link(task_id="task-1", commit_sha="abc123")
 
         assert "error" in result
@@ -102,6 +108,7 @@ class TestLinkCommit:
         )
 
         link = registry.get_tool("link_commit")
+        assert link is not None
         result = await link(task_id="task-uuid", commit_sha="abc123")
 
         assert result == {"error": "Task task-uuid not found"}
@@ -125,6 +132,7 @@ class TestLinkCommit:
         )
 
         link = registry.get_tool("link_commit")
+        assert link is not None
         result = await link(task_id="task-1", commit_sha="abc123")
 
         # Should handle None commits gracefully
@@ -157,6 +165,7 @@ class TestLinkCommit:
         )
 
         link = registry.get_tool("link_commit")
+        assert link is not None
         result = await link(
             task_id="task-1",
             commit_sha="abc123",
@@ -193,6 +202,7 @@ class TestLinkCommit:
         )
 
         link = registry.get_tool("link_commit")
+        assert link is not None
         with patch(
             "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
             side_effect=ValueError("project_path is outside the task project repo"),
@@ -223,6 +233,7 @@ class TestUnlinkCommit:
         )
 
         unlink = registry.get_tool("unlink_commit")
+        assert unlink is not None
         result = await unlink(task_id="task-1", commit_sha="abc123")
 
         assert result["task_id"] == "task-1"
@@ -241,6 +252,7 @@ class TestUnlinkCommit:
         )
 
         unlink = registry.get_tool("unlink_commit")
+        assert unlink is not None
         result = await unlink(task_id="task-1", commit_sha="abc123")
 
         assert "error" in result
@@ -261,6 +273,7 @@ class TestUnlinkCommit:
         )
 
         unlink = registry.get_tool("unlink_commit")
+        assert unlink is not None
         result = await unlink(task_id="task-uuid", commit_sha="abc123")
 
         assert result == {"error": "Task task-uuid not found"}
@@ -293,6 +306,7 @@ class TestUnlinkCommit:
         )
 
         unlink = registry.get_tool("unlink_commit")
+        assert unlink is not None
         result = await unlink(
             task_id="task-1",
             commit_sha="abc123",
@@ -332,6 +346,7 @@ class TestUnlinkCommit:
         )
 
         unlink = registry.get_tool("unlink_commit")
+        assert unlink is not None
         with patch(
             "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
             side_effect=ValueError("project_path is outside the task project repo"),
@@ -373,6 +388,7 @@ class TestAutoLinkCommits:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
+        assert auto_link is not None
         result = await auto_link()
 
         assert result["total_linked"] == 2
@@ -404,6 +420,7 @@ class TestAutoLinkCommits:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
+        assert auto_link is not None
         result = await auto_link(task_id="task-1")
 
         # Verify task_id was passed
@@ -444,6 +461,7 @@ class TestAutoLinkCommits:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
+        assert auto_link is not None
         result = await auto_link(task_id="task-1", project_path=str(repo_path))
 
         assert result["linked_tasks"] == ["task-1"]
@@ -478,6 +496,7 @@ class TestAutoLinkCommits:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
+        assert auto_link is not None
         with patch(
             "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
             side_effect=ValueError("project_path is outside the task project repo"),
@@ -505,6 +524,7 @@ class TestAutoLinkCommits:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
+        assert auto_link is not None
         result = await auto_link(task_id="task-uuid")
 
         assert result == {"error": "Task task-uuid not found"}
@@ -540,6 +560,7 @@ class TestAutoLinkCommits:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
+        assert auto_link is not None
         result = await auto_link(since="1 week ago")
 
         call_kwargs = mock_fn.call_args.kwargs
@@ -575,6 +596,7 @@ class TestAutoLinkCommits:
             )
 
             auto_link = registry.get_tool("auto_link_commits")
+            assert auto_link is not None
             result = await auto_link()
 
             # Should still work, just with cwd=None
@@ -602,6 +624,7 @@ class TestGitIntegrationEdgeCases:
         )
 
         link = registry.get_tool("link_commit")
+        assert link is not None
         full_sha = "abc123def456789abcdef123456789abcdef1234"
         await link(task_id="task-1", commit_sha=full_sha)
 
@@ -624,6 +647,7 @@ class TestGitIntegrationEdgeCases:
         )
 
         link = registry.get_tool("link_commit")
+        assert link is not None
         await link(task_id="task-1", commit_sha="abc123")
 
         task_manager.link_commit.assert_called_with("task-1", "abc123")
@@ -659,6 +683,7 @@ class TestGitIntegrationEdgeCases:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
+        assert auto_link is not None
         result = await auto_link()
 
         assert len(result["skipped"]) == 2
@@ -670,6 +695,11 @@ class TestGitIntegrationEdgeCases:
 def patched_project_context() -> Iterator[MagicMock]:
     """Fixture providing mock dependencies for registry creation."""
     with (
+        patch(
+            "gobby.mcp_proxy.tools.tasks._task_scope.collect_net_commit_paths_async",
+            new_callable=AsyncMock,
+            return_value=SimpleNamespace(changed=frozenset(), deleted=frozenset()),
+        ),
         patch("gobby.mcp_proxy.tools.task_commits.get_current_project_id") as mock_project_id,
         patch(
             "gobby.mcp_proxy.tools.task_commits.normalize_commit_sha",
@@ -681,7 +711,7 @@ def patched_project_context() -> Iterator[MagicMock]:
         ),
         patch(
             "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
-            side_effect=lambda **kwargs: kwargs["project_path"],
+            side_effect=lambda **kwargs: kwargs["project_path"] or "/repo",
         ),
     ):
         mock_project_id.return_value = "test-project-id"
@@ -721,19 +751,19 @@ async def test_task_git_helpers_follow_repo_path_resolution() -> None:
     auto_link_called = False
     get_task_diff_called = False
 
-    def auto_link_commits_fn(**kwargs: object) -> object:
+    def auto_link_commits_fn(**kwargs: object) -> Never:
         nonlocal auto_link_called
         auto_link_called = True
         raise AssertionError("auto_link_commits_fn should not run after repo path rejection")
 
-    def get_task_diff_page_fn(**kwargs: object) -> object:
+    def get_task_diff_page_fn(**kwargs: object) -> Never:
         nonlocal get_task_diff_called
         get_task_diff_called = True
         raise AssertionError("get_task_diff_page_fn should not run after repo path rejection")
 
     registry = create_commit_registry(
-        task_manager=task_manager,
-        project_manager=object(),
+        task_manager=cast(LocalTaskManager, task_manager),
+        project_manager=cast(LocalProjectManager, object()),
         auto_link_commits_fn=auto_link_commits_fn,
         get_task_diff_page_fn=get_task_diff_page_fn,
     )
@@ -742,11 +772,17 @@ async def test_task_git_helpers_follow_repo_path_resolution() -> None:
         "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
         side_effect=RepoPathValidationError("repo path blocked"),
     ):
+        link = registry.get_tool("link_commit")
+        unlink = registry.get_tool("unlink_commit")
+        auto_link = registry.get_tool("auto_link_commits")
+        get_diff = registry.get_tool("get_task_diff")
+        assert link is not None and unlink is not None
+        assert auto_link is not None and get_diff is not None
         results = [
-            await registry.get_tool("link_commit")(task_id="task-1", commit_sha="abc123"),
-            await registry.get_tool("unlink_commit")(task_id="task-1", commit_sha="abc123"),
-            await registry.get_tool("auto_link_commits")(task_id="task-1"),
-            await registry.get_tool("get_task_diff")(task_id="task-1"),
+            await link(task_id="task-1", commit_sha="abc123"),
+            await unlink(task_id="task-1", commit_sha="abc123"),
+            await auto_link(task_id="task-1"),
+            await get_diff(task_id="task-1"),
         ]
 
     assert results == [{"error": "repo path blocked"}] * 4

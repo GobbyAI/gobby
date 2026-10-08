@@ -209,10 +209,15 @@ def _bare_codex_composer(lines: list[str]) -> str:
         return ""
     if _CODEX_MODEL_RE.match(lines[-2]) is None:
         return ""
-    prompt_index = len(lines) - 4 if not lines[-3].strip() else len(lines) - 3
-    if prompt_index < 0 or _CODEX_PROMPT_RE.match(lines[prompt_index]) is None:
-        return ""
-    return lines[prompt_index]
+    for prompt_index in range(len(lines) - 3, -1, -1):
+        line = lines[prompt_index]
+        if _CODEX_PROMPT_RE.match(line) is not None:
+            return "\n".join(lines[prompt_index:-2]).rstrip("\n")
+        # Wrapped composer rows retain the prompt's two-column indentation.
+        # A turn/output marker between an old prompt and the footer is no composer.
+        if line.strip() and not line.startswith("  "):
+            return ""
+    return ""
 
 
 def _last_prompt_box(pane_snapshot: str) -> str:

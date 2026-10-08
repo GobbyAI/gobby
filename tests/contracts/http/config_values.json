@@ -88,7 +88,7 @@
           }
         },
         "bin_freshness": {
-          "enabled": true,
+          "enabled": false,
           "github_timeout_seconds": 30.0,
           "initial_delay_seconds": 30.0,
           "interval_seconds": 3600.0,
@@ -723,6 +723,9 @@
           ],
           "confidence_threshold": 0.75,
           "profile": "feature_mid"
+        },
+        "provider_capabilities": {
+          "refresh_enabled": false
         },
         "recommend_tools": {
           "candidates": [
@@ -1149,7 +1152,7 @@
           }
         },
         "bin_freshness": {
-          "enabled": true,
+          "enabled": false,
           "github_timeout_seconds": 30.0,
           "initial_delay_seconds": 30.0,
           "interval_seconds": 3600.0,
@@ -1784,6 +1787,9 @@
           ],
           "confidence_threshold": 0.75,
           "profile": "feature_mid"
+        },
+        "provider_capabilities": {
+          "refresh_enabled": false
         },
         "recommend_tools": {
           "candidates": [

@@ -9,7 +9,7 @@ from uuid import uuid4
 from gobby.events.wake_terminal_resolution import resolve_session_terminal_route
 from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
 from gobby.terminals.key_bytes import normalize_named_key
-from gobby.terminals.runtime import Delivered, IndeterminateWrite
+from gobby.terminals.runtime import Delivered, IndeterminateWrite, TerminalWriteError
 from gobby.terminals.write_coordinator import IdempotencyConflictError, WriteRequest
 
 if TYPE_CHECKING:
@@ -199,6 +199,15 @@ def register_send_keys_tool(
                             idempotency_key=resolved_key,
                         )
                     )
+                except TerminalWriteError as exc:
+                    return {
+                        "success": False,
+                        "error": str(exc),
+                        "error_code": "terminal_write_failed",
+                        "stage": exc.stage,
+                        "indeterminate": exc.stage == "partial",
+                        "idempotency_key": resolved_key,
+                    }
                 except IdempotencyConflictError as exc:
                     return {
                         "success": False,

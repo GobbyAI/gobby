@@ -12,6 +12,7 @@ import pytest
 
 from gobby.adapters.acp_hook_adapter import ACPHookAdapter
 from gobby.adapters.agy import AGY_APPROVAL_DENIED_REASON, AgyAdapter
+from gobby.adapters.base import ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 pytestmark = pytest.mark.unit
@@ -765,3 +766,44 @@ def test_an_undenied_permission_allow_still_allows() -> None:
     )
 
     assert result["decision"] == "allow"
+
+
+_FULL_DENY_REASON = (
+    "Rule enforced by Gobby: [require-development-discipline-skill]\n"
+    "The blocked tool call never executed.\n"
+    "Load and fully read the reference in its own outer tool result."
+)
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_reason"),
+    [
+        pytest.param(
+            HookResponse(decision="block", reason=_FULL_DENY_REASON),
+            _FULL_DENY_REASON,
+            id="rule-block",
+        ),
+        pytest.param(
+            HookResponse(decision="allow", permission_decision="deny", reason=_FULL_DENY_REASON),
+            _FULL_DENY_REASON,
+            id="permission-deny",
+        ),
+        pytest.param(
+            HookResponse(decision="block"),
+            ADAPTER_EMPTY_BLOCK_REASON_SENTINEL,
+            id="blank-block",
+        ),
+        pytest.param(
+            HookResponse(decision="allow", permission_decision="deny"),
+            ADAPTER_EMPTY_BLOCK_REASON_SENTINEL,
+            id="blank-permission-deny",
+        ),
+    ],
+)
+def test_every_pre_tool_deny_tells_the_agent_why(
+    response: HookResponse, expected_reason: str
+) -> None:
+    """AGY shows the agent only "tool call denied by pre-tool hook: <reason>" (#23771)."""
+    result = AgyAdapter().translate_from_hook_response(response, hook_type="PreToolUse")
+
+    assert result == {"decision": "deny", "reason": expected_reason}

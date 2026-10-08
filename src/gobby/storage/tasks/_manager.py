@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, cast
 
@@ -247,12 +247,10 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         assigned_agent: str | None = None,
         implementation_domain: str | None = None,
         additional_skills: list[str] | None = None,
-        handed_off_task_ids: Collection[str] = (),
     ) -> Task:
         """Atomically create and claim one task for an agent session."""
         task_id = _create_task_for_agent(
             self.db,
-            handed_off_task_ids=handed_off_task_ids,
             session_id=session_id,
             project_id=project_id,
             title=title,

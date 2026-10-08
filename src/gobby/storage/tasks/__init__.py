@@ -54,7 +54,6 @@ from gobby.storage.tasks._models import (
     UNSET,
     VALID_CATEGORIES,
     VALID_TASK_TYPES,
-    AgentTaskClaimConflictError,
     CheckoutMode,
     MaybeUnset,
     ParentTaskClosedError,
@@ -108,7 +107,6 @@ __all__ = [
     "StageState",
     "StageStatesManager",
     # Exceptions
-    "AgentTaskClaimConflictError",
     "SeqNumCollisionError",
     "TaskIDCollisionError",
     "TaskNotFoundError",

@@ -454,9 +454,9 @@ class TestComposerRead:
         read = self.detector.composer_read(_framed("❯ hello draft"))
         assert (read.state, read.line) == ("draft", "hello draft")
 
-    def test_multi_line_draft_reads_the_marker_row(self) -> None:
+    def test_multi_line_draft_reads_the_whole_composer(self) -> None:
         read = self.detector.composer_read(_framed("❯ first line", "  second line"))
-        assert (read.state, read.line) == ("draft", "first line")
+        assert (read.state, read.line) == ("draft", "first line\nsecond line")
 
     def test_no_frame_is_unknown(self) -> None:
         assert self.detector.composer_read("❯ \n   Fable 5.1  12%\n").state == "unknown"

@@ -223,6 +223,8 @@ class SessionVariableManager:
                 (session_id,),
             ).fetchone()
             variables = _decode_variables_payload(row["variables"]) if row else {}
+            previous_task_id = variables.get("active_task_id")
+            previous_history = variables.get("task_selection_history")
             if apply_defaults:
                 variables = self._apply_variable_defaults(
                     variables, resolve_session_project_id(self.db, session_id)
@@ -232,6 +234,13 @@ class SessionVariableManager:
                 return result
 
             now = datetime.now(UTC).isoformat()
+            from gobby.workflows.task_claim_state import record_task_selection
+
+            if previous_history is None:
+                variables.pop("task_selection_history", None)
+            else:
+                variables["task_selection_history"] = previous_history
+            record_task_selection(variables, previous_task_id, now)
             encoded = _encode_variables_payload(variables)
             if row:
                 conn.execute(
@@ -258,6 +267,7 @@ class SessionVariableManager:
         *,
         observed_claim_task_id: str | None = None,
         reconcile_claims: bool = False,
+        inherited_active_task_id: str | None = None,
     ) -> bool:
         """Atomically merge variable updates into session variables.
 
@@ -276,10 +286,22 @@ class SessionVariableManager:
         if reconcile_claims or observed_claim_task_id is not None:
             from gobby.workflows.task_claim_projection import merge_claimed_task_projection
 
-            return merge_claimed_task_projection(self, session_id, updates, observed_claim_task_id)
+            return merge_claimed_task_projection(
+                self, session_id, updates, observed_claim_task_id, inherited_active_task_id
+            )
 
         def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
             variables.update(updates)
+            return True, True
+
+        return self._mutate_variables(session_id, mutate)
+
+    def select_task_claim(self, session_id: str, task_id: str, ref: str) -> bool:
+        """Select a canonically owned task while the caller retains its task row lock."""
+        from gobby.workflows.task_claim_state import add_claimed_task
+
+        def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
+            variables.update(add_claimed_task(variables, task_id, ref))
             return True, True
 
         return self._mutate_variables(session_id, mutate)
@@ -613,6 +635,8 @@ class SessionVariableManager:
         *,
         checkout_root: str | None = None,
         edited_at: float | None = None,
+        started_at: float | None = None,
+        attribute_to_task: bool = True,
     ) -> bool:
         """Atomically record one successful mutation observation and its paths.
 
@@ -627,12 +651,35 @@ class SessionVariableManager:
 
         from gobby.workflows.task_claim_state import (
             active_task_id_for_edit,
+            assert_task_edit_paths_available,
             normalize_task_checkout_root,
+            record_task_live_edit_starts,
+            task_selected_at,
         )
 
         normalized_checkout = normalize_task_checkout_root(checkout_root)
 
         def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
+            task_id = (
+                active_task_id_for_edit(variables)
+                if started_at is None
+                else task_selected_at(variables, started_at)
+            )
+            if not attribute_to_task:
+                task_id = None
+            if started_at is not None and (
+                task_id is None or task_id not in variables.get("claimed_tasks", {})
+            ):
+                logger.warning(
+                    "Edit attribution has no owned selection at tool start; use claim_task(task_id) "
+                    "to select the task before retrying the edit (session %s)",
+                    session_id,
+                )
+                task_id = None
+            if task_id is not None:
+                assert_task_edit_paths_available(
+                    variables, task_id, normalized_paths, normalized_checkout
+                )
             stored = variables.get("session_edited_files", [])
             if not isinstance(stored, list):
                 stored = [stored] if stored else []
@@ -659,8 +706,10 @@ class SessionVariableManager:
                 dirty_checkouts[normalized_checkout] = files_for_dirty_checkout
                 variables["session_dirty_file_checkouts"] = dirty_checkouts
 
-            task_id = active_task_id_for_edit(variables)
             if task_id:
+                record_task_live_edit_starts(
+                    variables, task_id, normalized_paths, normalized_checkout, stamp
+                )
                 raw_task_files = variables.get("task_edited_files") or {}
                 task_files = raw_task_files if isinstance(raw_task_files, dict) else {}
                 stored_for_task = task_files.get(task_id, [])
@@ -792,6 +841,7 @@ class SessionVariableManager:
         from gobby.workflows.task_claim_state import (
             normalize_task_checkout_root,
             normalize_task_edited_path,
+            release_task_live_edit_starts,
         )
 
         requested = list(
@@ -859,6 +909,7 @@ class SessionVariableManager:
             else:
                 updated_task_files.pop(task_id, None)
             variables["task_edited_files"] = updated_task_files
+            release_task_live_edit_starts(variables, task_id, released, normalized_checkout)
             raw_times = variables.get("task_edited_file_times") or {}
             task_times = raw_times if isinstance(raw_times, dict) else {}
             if task_id in task_times:

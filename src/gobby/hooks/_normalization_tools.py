@@ -30,6 +30,28 @@ _TOOL_INPUT_FIELD_ALIASES = (
 )
 
 
+def provider_native_input_updates(
+    raw_tool_input: dict[str, Any], updates: dict[str, Any]
+) -> dict[str, Any]:
+    """Move canonical input updates onto the field names the CLI actually sent.
+
+    Normalization copies provider fields such as AGY's ``CommandLine`` onto
+    canonical keys, so rewrites are written against ``command``. A replacement
+    payload built from the raw input would otherwise keep the old provider value
+    and add a key the CLI never declared (#23771). An update that already names
+    the provider field wins over its canonical twin.
+    """
+    native = dict(updates)
+    for provider_name, canonical_name in _TOOL_INPUT_FIELD_ALIASES:
+        if (
+            canonical_name in native
+            and provider_name in raw_tool_input
+            and canonical_name not in raw_tool_input
+        ):
+            native.setdefault(provider_name, native.pop(canonical_name))
+    return native
+
+
 def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     """Normalize tool-related fields in hook event data.
 

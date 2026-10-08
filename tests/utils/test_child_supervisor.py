@@ -1,4 +1,4 @@
-"""The Chrome stdio supervisor reaps its browser tree across restarts."""
+"""The child supervisor reaps its child's tree across restarts."""
 
 import select
 import subprocess
@@ -8,10 +8,12 @@ from pathlib import Path
 import psutil
 import pytest
 
+from gobby.utils.child_supervisor import supervised_argv
+
 pytestmark = pytest.mark.unit
 
 
-def test_chrome_supervisor_reaps_child_tree_before_restart(tmp_path: Path) -> None:
+def test_supervisor_reaps_child_tree_before_restart(tmp_path: Path) -> None:
     child_script = tmp_path / "spawn_browser.py"
     child_script.write_text(
         "import subprocess, sys, time\n"
@@ -23,14 +25,8 @@ def test_chrome_supervisor_reaps_child_tree_before_restart(tmp_path: Path) -> No
 
     for _attempt in range(2):
         supervisor = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "gobby.mcp_proxy.transports.chrome_supervisor",
-                sys.executable,
-                str(child_script),
-            ],
-            stdin=subprocess.PIPE,
+            supervised_argv([sys.executable, str(child_script)]),
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -43,8 +39,8 @@ def test_chrome_supervisor_reaps_child_tree_before_restart(tmp_path: Path) -> No
             assert psutil.pid_exists(browser_pid)
             browser = psutil.Process(browser_pid)
 
-            assert supervisor.stdin is not None
-            supervisor.stdin.close()
+            # The MCP SDK's teardown stops the supervisor with SIGTERM.
+            supervisor.terminate()
             assert supervisor.wait(timeout=5) == 0
             _, alive = psutil.wait_procs([browser], timeout=5)
             assert not alive

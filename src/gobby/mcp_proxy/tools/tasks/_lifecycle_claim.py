@@ -12,7 +12,6 @@ from typing import Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._authorization import has_delegated_agent_run
 from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session_activity
-from gobby.mcp_proxy.tools.tasks._claim_handoff import handed_off_claim_ids
 from gobby.mcp_proxy.tools.tasks._context import (
     CHECKOUT_RESOLUTION_ERRORS,
     RegistryContext,
@@ -26,7 +25,6 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_paths import (
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import (
-    AgentTaskClaimConflictError,
     TaskAlreadyClaimedError,
     TaskClosedError,
     TaskNotFoundError,
@@ -45,15 +43,6 @@ from gobby.workflows.task_claim_state import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _edit_target_task_id(ctx: RegistryContext, session_id: str) -> str | None:
-    """Return the claimed task that receives the session's next edit, when known."""
-    try:
-        variables = ctx.session_var_manager.get_variables(session_id)
-    except KeyError:
-        return None
-    return active_task_id_for_edit(variables) if isinstance(variables, dict) else None
 
 
 _DECLARED_AFFECTED_FILE_SOURCES = frozenset({"manual", "expansion"})
@@ -252,25 +241,11 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             )
 
         current_owner = get_claimed_session_id(task)
-        # An owned task that does not receive this session's edits becomes active
-        # again only through the capacity check below (#23665).
-        if (
+        already_selected = (
             current_owner == resolved_session_id
-            and _edit_target_task_id(ctx, resolved_session_id) == resolved_id
-        ):
-            task_ref = f"#{task.seq_num}" if task.seq_num else resolved_id
-            return {
-                "success": True,
-                "task_id": resolved_id,
-                "title": task.title,
-                "already_claimed": True,
-                "message": (
-                    f"Task {task_ref} is already claimed by this session. Continue by reading "
-                    f'it with get_task(task_id="{task_ref}", brief=false); do not call '
-                    "claim_task again."
-                ),
-            }
-
+            and active_task_id_for_edit(ctx.session_var_manager.get_variables(resolved_session_id))
+            == resolved_id
+        )
         delegated_claim = False
         if current_owner and current_owner != resolved_session_id and not force:
             delegated_claim = has_delegated_agent_run(
@@ -331,32 +306,19 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 ],
             )
 
-        handed_off = handed_off_claim_ids(
-            ctx, resolved_session_id, task.project_id, target_task_id=resolved_id
-        )
         try:
             if delegated_claim:
                 updated = ctx.task_manager.claim_task_for_agent(
                     resolved_id,
                     session_id=resolved_session_id,
                     expected_owner=current_owner,
-                    handed_off_task_ids=handed_off,
                 )
             else:
                 updated = ctx.task_manager.claim_task_for_agent(
                     resolved_id,
                     session_id=resolved_session_id,
                     force=force,
-                    handed_off_task_ids=handed_off,
                 )
-        except AgentTaskClaimConflictError as e:
-            return task_error(
-                str(e),
-                TaskToolErrorCode.TASK_CLAIM_CONFLICT,
-                claimed_task_id=e.claimed_task_id,
-                claimed_task_ref=e.claimed_task_ref,
-                message=str(e),
-            )
         except TaskClosedError as e:
             return task_error(str(e), TaskToolErrorCode.TASK_CLOSED)
         except TaskAlreadyClaimedError as e:
@@ -381,30 +343,13 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         except Exception as e:
             logger.debug("Best-effort session claim linking failed: %s", e)
 
-        # Set claimed_tasks session variable (enables Edit/Write hooks)
-        # This mirrors create_task behavior in _crud.py
-        try:
-            from gobby.workflows.task_claim_state import add_claimed_task
-
-            with ctx.task_manager.db.transaction() as conn:
-                owner = conn.execute(
-                    "SELECT claimed_by_session_id FROM tasks WHERE id = %s FOR UPDATE",
-                    (resolved_id,),
-                ).fetchone()
-                # A later force-claim may have finished while session linking
-                # ran. Retain the task lock through this write so its result
-                # cannot re-add a claim after the new owner's cleanup.
-                if owner is not None and str(owner["claimed_by_session_id"]) == resolved_session_id:
-                    session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
-                    ref = f"#{task.seq_num}" if task.seq_num else resolved_id
-                    merge_dict = add_claimed_task(session_vars, resolved_id, ref)
-                    current_vars = {**session_vars, **merge_dict}
-                    merge_dict.update(
-                        build_claimed_task_extra_skill_state(current_vars, ctx.task_manager)
-                    )
-                    ctx.session_var_manager.merge_variables(resolved_session_id, merge_dict)
-        except Exception as e:
-            logger.debug("Best-effort session variable setting failed: %s", e)
+        # Storage commits ownership and selection together. A delayed MCP result
+        # must not overwrite a newer selection made by another concurrent claim.
+        session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
+        ctx.session_var_manager.merge_variables(
+            resolved_session_id,
+            build_claimed_task_extra_skill_state(session_vars, ctx.task_manager),
+        )
 
         try:
             from gobby.sessions.title_lifecycle import update_title_for_claim
@@ -415,7 +360,14 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
 
         # The title travels with the claim so memory surfacing can query the
         # task's subject without a second read.
-        return {"success": True, "task_id": resolved_id, "title": task.title}
+        result: dict[str, Any] = {"success": True, "task_id": resolved_id, "title": task.title}
+        if already_selected:
+            task_ref = f"#{task.seq_num}" if task.seq_num else resolved_id
+            result.update(
+                already_claimed=True,
+                message=f"Task {task_ref} is selected. Use claim_task to select another owned task.",
+            )
+        return result
 
     registry.register(
         name="claim_task",

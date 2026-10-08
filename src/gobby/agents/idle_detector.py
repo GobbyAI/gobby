@@ -108,6 +108,14 @@ class ComposerRead:
     state: ComposerState
     line: str | None = None
 
+    def holds_payload(self, payload: str) -> bool:
+        """Match the whole draft, ignoring whitespace introduced by visual wrapping."""
+        return (
+            self.state == "draft"
+            and self.line is not None
+            and " ".join(self.line.split()) == " ".join(payload.split())
+        )
+
 
 @dataclass
 class IdleState:
@@ -208,7 +216,7 @@ class IdleDetector:
     def composer_read(self, pane_output: str | None) -> ComposerRead:
         """Classify the composer frame at the bottom of ``pane_output``.
 
-        A ``draft`` carries the text after the prompt marker on the marker row.
+        A ``draft`` carries all text inside the composer, including wrapped rows.
         Anything short of a positive read is ``unknown``. Probes pass an ``ansi``
         snapshot so faint suggestion and placeholder text reads as empty.
         """
@@ -221,10 +229,17 @@ class IdleDetector:
         if manifest.match_rule("composer_draft", pane_output).match is not None:
             frame = composer_region(pane_output)
             rows = frame.splitlines()
-            for line in rows:
+            for index, line in enumerate(rows):
                 row = _COMPOSER_ROW_RE.match(line)
                 if row is not None and row.group("text"):
-                    return ComposerRead("draft", row.group("text"))
+                    draft = [row.group("text")]
+                    for continuation in rows[index + 1 :]:
+                        if continuation.lstrip().startswith(("╰", "└")):
+                            break
+                        draft.append(
+                            continuation.strip().removeprefix("│").removesuffix("│").strip()
+                        )
+                    return ComposerRead("draft", "\n".join(draft).rstrip())
             shape = tuple(len(row) for row in rows)
             if shape not in self._warned_unreadable_composer_shapes:
                 self._warned_unreadable_composer_shapes.add(shape)

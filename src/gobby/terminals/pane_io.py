@@ -227,8 +227,8 @@ class RuntimePaneIO:
     async def _send_native_input(
         self, runtime: NativeTerminalRuntime, operation: NativeBatchOperation
     ) -> SendResult:
-        # The ordinary host write acknowledges dropped input on a full/closed PTY.
-        # Batch delivery preserves its refusal; the shared ladder still sends Enter.
+        # Batch delivery preserves typed refusal details for the shared ladder.
+        # The ladder sends Enter separately after text.
         results = await runtime.write_batch(
             [NativeBatchTarget("pane-input", self._terminal, (operation,))]
         )
@@ -407,12 +407,14 @@ async def composer_gate_for_write(
     composer_read: ComposerReader | None,
     *,
     action: str,
+    pending_payload: str | None = None,
 ) -> tuple[bool, str | None, str]:
-    """Refuse a composer write unless a probe positively confirms the composer is empty.
+    """Admit an empty composer or an exact pending payload; refuse other drafts.
 
     A blind write into an unread composer is what let a daemon wake land inside an
     operator's half-typed word and let a staged ``/compact`` collide with a wake.
-    A ``draft`` is refused because the operator owns that text, and an ``unknown``
+    A ``draft`` is refused unless it exactly matches ``pending_payload``; that
+    held copy is submitted with bare Enter. An ``unknown``
     frame is refused for a provider whose manifest can classify a composer at all,
     because the frame may hold a draft the probe could not read. A provider whose
     manifest has no composer rules answers ``unknown`` to every probe, so
@@ -427,8 +429,30 @@ async def composer_gate_for_write(
     if read.state == "empty":
         return True, None, "empty"
     if read.state == "draft":
+        if pending_payload is not None and read.holds_payload(pending_payload):
+            return True, None, "held"
+        _log_composer_refusal(pane, read, pending_payload)
         return False, "composer holds an operator draft", "draft"
+    _log_composer_refusal(pane, read, pending_payload)
     return False, f"composer could not be confirmed empty before {action}", "unknown"
+
+
+def _log_composer_refusal(pane: PaneIO, read: ComposerRead, pending_payload: str | None) -> None:
+    draft_length = len(read.line or "")
+    matches_pending = pending_payload is not None and read.holds_payload(pending_payload)
+    logger.warning(
+        "Composer write refused: target=%s classification=%s draft_length=%d matches_pending_payload=%s",
+        pane.target,
+        read.state,
+        draft_length,
+        matches_pending,
+        extra={
+            "event": "composer_write_refused",
+            "composer_state": read.state,
+            "draft_length": draft_length,
+            "matches_pending_payload": matches_pending,
+        },
+    )
 
 
 def log_pane_failure(pane: PaneIO, session_id: str, action: str, reason: str | None) -> None:
@@ -480,6 +504,7 @@ async def composer_verdict(
     *,
     window_seconds: float,
     poll_seconds: float = _SUBMIT_VERIFY_POLL_SECONDS,
+    pending_payload: str | None = None,
 ) -> ComposerVerdict:
     """Poll the composer for a positive read of whether it still holds ``held_text``.
 
@@ -498,6 +523,8 @@ async def composer_verdict(
         if elapsed >= window_seconds:
             if read.state == "empty":
                 return "left"
+            if read.state == "draft" and pending_payload is not None:
+                return "held" if read.holds_payload(pending_payload) else "changed"
             if read.state == "draft" and read.line is not None and not read.line.startswith(prefix):
                 return "changed"
             return "held" if read.state == "draft" else "unreadable"
@@ -515,6 +542,7 @@ async def submit_text(
     cli_source: str | None,
     composer_read: ComposerReader | None,
     verify_seconds: float = SUBMIT_VERIFY_SECONDS,
+    pending_payload: str | None = None,
 ) -> SubmitResult:
     """Submit ``text`` into the composer, and prove it left or report it.
 
@@ -546,14 +574,29 @@ async def submit_text(
     Enter leaves that draft, not the text, at the head. Held is matched against
     the draft then; matching the text alone read the stuck draft as ``left``
     (#23730).
+
+    Protected callers supply ``pending_payload``: an existing exact copy gets
+    bare Enter without another text write, and every other draft is refused.
+    Protected retry verification also requires the entire pending payload to
+    match, so appended operator text cannot receive a retry Enter.
     """
     held_text = text
+    already_held = False
     if composer_read is not None:
         before = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
+        if pending_payload is not None and before.state != "empty":
+            already_held = before.holds_payload(pending_payload)
+            if not already_held:
+                _log_composer_refusal(pane, before, pending_payload)
+                return SubmitResult(
+                    False,
+                    "composer does not hold the pending payload",
+                    "composer_occupied" if before.state == "draft" else COMPOSER_UNKNOWN_ERROR_CODE,
+                )
         if before.state == "draft":
             held_text = before.line or ""
     try:
-        ok, reason = await pane.type_text(f"{text}\n")
+        ok, reason = (True, None) if already_held else await pane.type_text(f"{text}\n")
     except IndeterminateWrite as exc:
         # A short command's newline may already have started compaction.
         # Preserve its boundary waiter instead of allowing another submission.
@@ -570,6 +613,22 @@ async def submit_text(
     while True:
         ok, reason = await send_pane_key(pane, "enter", session_id, action=f"submitting {label}")
         if not ok:
+            read = (
+                composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
+                if composer_read is not None
+                else ComposerRead("unknown")
+            )
+            _log_composer_refusal(pane, read, text)
+            if read.holds_payload(text):
+                held_seconds += verify_window
+                if verify_window == 0:
+                    if retried_zero_window:
+                        break
+                    retried_zero_window = True
+                elif held_seconds + verify_window > SUBMIT_HELD_RETRY_SECONDS:
+                    break
+                await asyncio.sleep(verify_window)
+                continue
             # The newline in type_text may already have submitted a short command.
             # A failed follow-up Enter does not prove the provider rejected it.
             return SubmitResult(False, reason, ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE)
@@ -586,6 +645,7 @@ async def submit_text(
             held_text,
             composer_read,
             window_seconds=verify_window,
+            pending_payload=pending_payload,
         )
         if verdict == "held":
             held_seconds += verify_window
