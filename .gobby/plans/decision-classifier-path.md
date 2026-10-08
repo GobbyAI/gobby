@@ -14,6 +14,9 @@ decision capability. The only related code is five `decisions_*` keys on
 `code_index.community_label`, which nothing reads. They are reserved for #22604's
 unlanded gate.
 
+Task #23790 amended the plan on 2026-10-08 to add Cloudflare Clef as a
+backend, hosted and local (Decisions 15 and 16).
+
 This plan adds that path. It mirrors the four parts of the embedding path:
 - a config block, `ai.decisions`;
 - a capability, `AICapability.DECIDE`, with a registry binding that reports why
@@ -22,15 +25,17 @@ This plan adds that path. It mirrors the four parts of the embedding path:
 - per-consumer policy.
 
 The provider contract is the decision wire: `{model, state, questions}` in,
-typed answers per question key out. Two endpoints serve it, and both are
+typed answers per question key out. Three endpoints serve it, and all are
 first-class choices through one config shape, as local and hosted embedding
 endpoints are:
-- `POST /v1/systemone`, served by TypeSafe's direct API, Kev, and the other
-  open clones;
+- `POST /v1/systemone`, served by TypeSafe's direct API, Kev, the other
+  open clones, and a local Clef server;
 - OpenRouter's `POST /api/alpha/decisions`, which serves Jev and is the
-  external test target.
+  external test target;
+- Cloudflare Workers AI's `POST /ai/run/@cf/cloudflare/<model>`, which
+  serves hosted Clef and Clef-flash.
 
-Jev is one backend; the contract is the wire.
+Jev and Clef are backends; the contract is the wire.
 
 The plan also sets:
 - a shadow-capture and evaluation harness, so every consumer is promoted on
@@ -60,9 +65,18 @@ The plan also sets:
      "deny"}`, because OpenRouter documents that request-level flag and no
      source confirms that account-level guardrails apply to this alpha
      route. There is no knob for it.
+   - `workers-ai`: the service posts to
+     `{api_base}/ai/run/@cf/cloudflare/{model}`, with `api_base`
+     `https://api.cloudflare.com/client/v4/accounts/<account_id>` and
+     `model` `clef` or `clef-flash`, the two values Cloudflare's input
+     schema allows. The body carries the same `model`, `state`, and
+     `questions`, with no `provider` flags. Cloudflare wraps the decision
+     response in its REST envelope `{result, success, errors, messages}`,
+     and the service reads `result` (Decision 15).
 
    Consumers never branch on the wire. Everything after the URL, the request
-   extras, and the per-wire defaults below is one code path.
+   extras, the Workers AI envelope, and the per-wire defaults below is one
+   code path.
 2. **Local and hosted endpoints are equal choices, as in embeddings.** On
    2026-09-29 Josh dropped the loopback restriction and the `allow_remote`
    opt-in, superseding his 2026-09-24 pilot ruling and his earlier
@@ -73,7 +87,10 @@ The plan also sets:
    - Configuring a hosted `api_base` is the operator's choice to send
      consumer text off the machine, as with a hosted embedding endpoint. The
      OpenRouter wire's `zdr` and `data_collection` request flags (Decision 1)
-     are the privacy mechanism Gobby supplies.
+     are the privacy mechanism Gobby supplies. Cloudflare documents no
+     request-level privacy flag for the Workers AI route, so a `workers-ai`
+     endpoint sends consumer text under the operator's Cloudflare account
+     terms.
    - Every backend, local or hosted, reaches `enforce` only with a Decision
      10 backend identity and the Activation Gate's live capture. Without
      them it runs as `shadow`, fail closed.
@@ -86,6 +103,10 @@ The plan also sets:
      roles cover LM Studio, Ollama and vLLM, and Kev supports none of them.
    - The one-model-instance rule (memory a5ad8b5c) applies to any local
      decision server while the daemon runs.
+   - A local Clef server is the same case. The operator runs
+     `clef_mlx.py serve` from an mlx-community conversion (Decision 15),
+     and Gobby only points `api_base` at it. This plan adds no installer
+     option for it.
 4. **`ai.decisions` lives on `AIConfig`.** It is a new
    `AIConfig.decisions: DecisionsConfig` field, read directly with no
    translation layer.
@@ -98,8 +119,9 @@ The plan also sets:
    the enum, and `_decision_binding` in `ai/registry_builder.py` follows
    `_embedding_binding`:
    - it is `unavailable` with a reason when `api_base` or `model` is unset;
-   - otherwise it is available, with provider `systemone` or `openrouter`
-     from `wire_api`, adapter style `LLM_PROVIDER` for both wires, and
+   - otherwise it is available, with provider `systemone`, `openrouter`, or
+     `cloudflare` from `wire_api`, adapter style `LLM_PROVIDER` for every
+     wire, and
      `metadata = {model, wire_api, max_input_tokens}`. Embeddings likewise
      use one adapter style for local and hosted endpoints.
 
@@ -177,17 +199,40 @@ The plan also sets:
        whole input, state plus questions
        (`https://openrouter.ai/docs/guides/community/jev.md`, retrieved
        2026-09-30).
+     - 65,536 for `workers-ai`, Cloudflare's documented context window for
+       both Clef models
+       (`https://developers.cloudflare.com/workers-ai/models/clef/`,
+       retrieved 2026-10-08). Cloudflare documents that long text state is
+       truncated to fit. It documents neither the scope of
+       `usage.input_tokens` nor the truncation point, so the live capture
+       verifies both.
      - An explicit value overrides the default. TypeSafe direct documents
        64k for the whole request and 32k for state plus the longest question
        (`https://docs.typesafe.ai/models`), so a TypeSafe endpoint sets the
        value from those documented scopes, and its live capture records it.
+       A local Clef server sets 16,384, the whole-prompt limit of
+       `clef_mlx.py serve`, whose `usage.input_tokens` counts the whole
+       prompt (Decision 15).
    - OpenRouter's response to an oversize request is undocumented. A
      rejection fails as `http_status`. The guard counts as catching
      truncation only after the Activation Gate's live capture verifies the
      limit and the `usage.input_tokens` semantics it relies on, and that
      capture records which behavior occurs. Until then every consumer stays
      in `shadow`.
-   - Consumers batch to `service.max_input_tokens`.
+   - Request limits. Before sending, the service raises
+     `DecisionsUnavailable(reason="invalid_request")` when a request has
+     no questions or more than 64, a question key outside
+     `^[A-Za-z0-9_.-]{1,100}$`, or a Choice with fewer than 2 or more than
+     255 options. These limits are the union of the documented ones:
+     Workers AI documents all three (1 to 64 questions, that key pattern,
+     and 2 to 255 options), TypeSafe documents the 255-option maximum, and
+     the local `clef_mlx.py` server rejects an empty question map with
+     HTTP 400.
+     One rule set serves every wire, so no consumer's batching depends on
+     the wire. A request a backend would reject as a permanent 4xx therefore
+     never reaches it and never opens the cooldown shared by every consumer.
+   - Consumers batch to `service.max_input_tokens` and to 64 questions per
+     request.
    - The evaluation (2.1) measures quality at the state sizes each consumer
      actually sends, because every consumer runs far beyond Kev's training
      length.
@@ -210,9 +255,9 @@ The plan also sets:
      During it, calls fail fast with `reason="cooldown"` and never dial. This
      keeps a dead or misconfigured server from charging the found-work hook
      its timeout on every Stop.
-   - Local outcomes never open it: `unconfigured`, `oversize`, a `timeout`
-     under a caller budget shorter than `timeout_seconds`, and caller
-     cancellation. So one consumer's short budget or oversized input cannot
+   - Local outcomes never open it: `unconfigured`, `oversize`,
+     `invalid_request`, a `timeout` under a caller budget shorter than
+     `timeout_seconds`, and caller cancellation. So one consumer's short budget or oversized input cannot
      disable the shared service for the others. `asyncio.CancelledError`
      propagates unchanged.
    - `get_decision_service(config)` keeps one cached service, identified by a
@@ -261,7 +306,9 @@ The plan also sets:
     - `ai.decisions.identity_contract` names how identity is verified, and
       consumer code never branches on vendor:
       - `model_card`: the card hash above, the verified Kev contract. It
-        is valid only with `wire_api: systemone`.
+        is valid only with `wire_api: systemone`. A local Clef server's card
+        carries only `id` and `object`, so it yields no identity
+        (Decision 16).
       - `response_version`: identity is `response:` plus the response's
         `model`. TypeSafe answers `jev-latest` as `jev-1.13.0` and recommends
         pinning that ID for tuned thresholds
@@ -272,7 +319,8 @@ The plan also sets:
         pinned minor slug can move to a newer snapshot, and the identity then
         changes with it. No card is fetched. Kev echoes any requested name,
         so this contract gives Kev no version signal, and the Activation
-        Gate's alias check fails it there.
+        Gate's alias check fails it there. The same holds for both Clef
+        forms (Decision 16).
       - unset (the default): no identity, so every consumer stays in
         `shadow`, fail closed.
     - Residual gap: under `model_card`, the card fetch and the decision
@@ -369,6 +417,133 @@ The plan also sets:
       persisted outage mark, and is never a classifier decision.
     - The consumer contract and the activation gate are in "Activation Gate
       and #22075".
+15. **Cloudflare Clef is a backend in two forms (Josh, 2026-10-08).** Josh,
+    through the Assistant gobby#15070: "Update the plan to include Clef
+    (cloud and local, if it's possible to run locally)". Clef (27B) and
+    Clef-flash (9B) are Cloudflare's decision models. They were released on
+    2026-10-01 under Apache-2.0 and positioned against Jev, and they take
+    the same `{model, state, questions}` request and return the same typed
+    answers. The evidence is the #23788 research note
+    (`.gobby/plans/research/cloudflare-clef-23788.md`, commit 14013ced6c)
+    and the primary sources below, retrieved 2026-10-08.
+    - Hosted, on the `workers-ai` wire (Decision 1). Cloudflare documents
+      the endpoint
+      `https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/run/@cf/cloudflare/clef`
+      and its `clef-flash` twin, authenticated by a bearer API token with
+      Workers AI Read and Edit
+      (`https://developers.cloudflare.com/workers-ai/models/clef/`,
+      `https://developers.cloudflare.com/workers-ai/models/clef-flash/`,
+      and the REST guide
+      `https://developers.cloudflare.com/workers-ai/get-started/rest-api/`).
+      - Its input schema (`schema-input.json`) requires `model` (`clef` or
+        `clef-flash`), `state`, and 1 to 64 `questions`, describes question
+        keys as `^[A-Za-z0-9_.-]{1,100}$`, requires `instructions` on every
+        question, and states 2 to 255 Choice options.
+      - Its output schema (`schema-output.json`) requires `model`,
+        `answers`, and `usage` with `input_tokens` and `output_tokens`, and
+        its answer shapes match TypeSafe's.
+      - The context window is 65,536 tokens, and long text state is
+        truncated to fit.
+      - Prices are $0.24 per million input tokens for Clef and $0.09 for
+        Clef-flash, with no output price.
+      - Undocumented: error statuses and bodies on this route, rate limits,
+        the scope of `usage.input_tokens`, and any model versioning.
+        Cloudflare's announcement makes no versioning promise.
+    - Local, on the existing `systemone` wire. Cloudflare's release
+      (`https://huggingface.co/Cloudflare/clef` and `Cloudflare/clef-flash`)
+      ships BF16 weights and `joint_schema_model.py`. Its `systemone` is a
+      Python function with no HTTP server; it defaults to CUDA and was
+      tested on one H200. The mlx-community conversions ship an HTTP server:
+      - `mlx-community/clef-4bit`, `clef-8bit`, `clef-flash-4bit`, and
+        `clef-flash-8bit` are 4- or 8-bit, group size 64, with the decision
+        head kept in BF16. They need mlx 0.32.3 and mlx-vlm 0.7.4, and no
+        torch.
+      - Their `clef_mlx.py serve` binds `127.0.0.1:8000` by default and
+        serves `POST /v1/systemone`, `GET /v1/models`, and `GET /health`.
+
+      So local Clef needs no new wire. It is an operator-run server under
+      Decision 3, like Kev, and Gobby never downloads, starts, or stops it.
+    - Local feasibility on Josh's M5 Max with 128 GB. These figures are
+      community-reported on the conversion cards, measured on an M5 Max
+      with text input, and were not measured by Gobby:
+
+      | Conversion | Download | Peak memory at 1k / 16k tokens | Latency at 1k / 16k tokens |
+      | --- | --- | --- | --- |
+      | `clef-flash-4bit` (9B) | 6.2 GB | 7.0 / 8.6 GB | 0.31 s / 7.0 s |
+      | `clef-flash-8bit` (9B) | 10.7 GB | 11.4 / 13.0 GB | 0.34 s / 7.7 s |
+      | `clef-4bit` (27B) | 16.3 GB | 17.1 / 19.6 GB | 1.4 s / 26.0 s |
+      | `clef-8bit` (27B) | 29.8 GB | 30.5 / 33.0 GB | 1.5 s / 32.0 s |
+
+      Every conversion fits in 128 GB. Each card's parity spot-check
+      against the BF16 PyTorch reference on an M5 Max agreed on 10 of 10
+      text top answers. The maximum text probability difference was 0.006
+      for `clef-flash-8bit`, 0.007 for `clef-8bit`, 0.029 for
+      `clef-flash-4bit`, and 0.037 for `clef-4bit`
+      ([clef-flash-4bit parity](https://huggingface.co/mlx-community/clef-flash-4bit#parity-vs-official-pytorch-implementation-bf16),
+      [clef-4bit parity](https://huggingface.co/mlx-community/clef-4bit#parity-vs-official-pytorch-implementation-bf16)).
+      The cards call it a spot-check, not a benchmark. Local Clef
+      is therefore a supported local backend. This plan runs no download
+      and no local inference; the Activation Gate's live capture and 2.1
+      measure it on deployment.
+    - Latency consequence. Decision 12's p95 bar is 1 s, and the default
+      `timeout_seconds` is 2 s.
+      - The 27B conversions already take 1.4 to 1.5 s at 1k tokens, so local
+        27B Clef cannot pass that bar at any size the cards measured (1k
+        tokens and up).
+      - Flash meets it only on short states. Interpolating the cards' 1k
+        and 16k points, an 8,192-token request takes several seconds. That
+        figure is interpolated, not measured.
+      - `clef_mlx.py` runs one request at a time under a lock, so concurrent
+        consumers queue.
+
+      The evaluation decides, and this plan sets no Clef-specific bar.
+    - Facts the service relies on, read from the `clef_mlx.py` source:
+      - the default limit is 16,384 tokens for the whole prompt, and
+        `usage.input_tokens` counts the whole prompt;
+      - by default the state is silently truncated to fit, and with
+        `--no-truncate` the server answers 413 instead;
+      - `model` is echoed from the request;
+      - `/v1/models` returns only `{"id", "object"}`.
+
+      The operator sets `backend_max_state_tokens: 16384`, and the Decision
+      8 guard then catches truncation. The server has no authentication and
+      fetches any remote image URL a request names, so it stays bound to
+      `127.0.0.1`. Gobby sends text state only.
+    - Cloudflare's reference renders Choice options sorted by key, so the
+      2.1 criteria reversal changes nothing that reference sees. 2.1 still
+      measures the order-flip rate on the configured backend.
+    - Provider selection is `wire_api` plus `model`. Fallback is unchanged:
+      a Clef backend reaches consumers through the one service path, so an
+      unavailable Clef escalates to the incumbent exactly as any backend
+      does (Decision 11).
+16. **No Clef form reaches `enforce` under the existing identity contracts,
+    and no contract is added. Proposed for Josh's approval.**
+    - Hosted: Cloudflare documents no model versioning, and the request
+      `model` must be `clef` or `clef-flash`. Under `response_version` the
+      identity is `response:` plus whatever `model` the response reports.
+      Activation Gate item 4 fails while the scope of `usage.input_tokens`
+      is undocumented, and its alias check fails unless the live capture
+      shows Workers AI answering with a resolved version that differs from
+      the requested name.
+    - Local: a `clef_mlx.py` card has none of the Decision 10 fields, so
+      `model_card` yields no identity. The server echoes the requested
+      `model`, so `response_version` fails the alias check, as for Kev.
+    - Both forms remain full `shadow` and evaluation backends. Under
+      `response_version` each Clef answer carries one consistent identity,
+      so 2.1 replays and compares Clef with Jev, Kev, and the incumbent. A
+      local server's live capture records the conversion repository and its
+      Hugging Face commit as evidence.
+    - Item 4 also requires `ai.decisions.model` pinned to a version, and
+      Workers AI accepts only `clef` and `clef-flash`. Hosted Clef becomes
+      promotable only after Cloudflare documents pinnable versioned model
+      names and the scope of `usage.input_tokens`. That needs a plan
+      revision to admit those names in 1.1's `model` validator, and a live
+      capture that verifies both.
+    - The alternative Josh can choose instead is a `declared` identity
+      contract: the operator states the backend revision in config, and
+      enforce trusts it. It detects no change at all. For hosted Clef the
+      Deployment owner rule cannot hold, because Cloudflare can replace the
+      model without notice. This plan does not recommend it.
 
 ## As-Is Facts
 `kind: framing`
@@ -463,6 +638,9 @@ stamped M1, so that file is not edited. At expansion, the PD updates task
 - sizes each batch to `service.max_input_tokens`. At the 8,192-token ceiling and
   6.3's budget of about 500 tokens of state plus 250 per question per
   community, that is at most 10 communities per request instead of 20;
+- keeps each request within the Decision 8 request limits: 1 to 64
+  questions, question keys matching `^[A-Za-z0-9_.-]{1,100}$`, and 2 to 255
+  options per Choice;
 - records its two-arm wire spike as the Activation Gate's live capture
   (item 4), one capture per wire: a `/v1/systemone` server and OpenRouter's
   `/api/alpha/decisions`;
@@ -494,8 +672,9 @@ when every one of these holds:
    daemon from the main checkout.
 2. A decision endpoint is reachable, and `ai.decisions.wire_api`,
    `ai.decisions.api_base` and `ai.decisions.model` name it: a
-   `/v1/systemone` server, such as Kev from the post-0.6 installer option, or
-   OpenRouter's `/api/alpha/decisions`.
+   `/v1/systemone` server, such as Kev from the post-0.6 installer option or
+   a local `clef_mlx.py serve`, OpenRouter's `/api/alpha/decisions`, or
+   Workers AI's `/ai/run/@cf/cloudflare/<model>`.
 3. `GET /api/llm/status` reports `decide` available with that model.
 4. The PD has verified a live capture against that endpoint, committed as
    `docs/evidence/decisions/<wire_api>-live-<date>.md`:
@@ -509,13 +688,13 @@ when every one of these holds:
      - `model_card` (a server Josh runs): the server's source commit, its
        `/v1/models` card, and the limit and usage semantics read from that
        source;
-     - `response_version` (TypeSafe direct or OpenRouter):
+     - `response_version` (TypeSafe direct, OpenRouter, or Workers AI):
        `ai.decisions.model` pinned to a version (`jev-1.13.0`, or
        `typesafe/jev-1.13`), and every captured response reporting one
        resolved version; an alias check, where a request for the provider's
-       alias (`jev-latest`, or `~typesafe/jev-latest`) must come back as a
-       resolved version different from the alias, which a server that echoes
-       names fails; the provider's documented input limit, error codes, and
+       alias (`jev-latest`, `~typesafe/jev-latest`, or `clef` and
+       `clef-flash` on Workers AI) must come back as a resolved version
+       different from the alias, which a server that echoes names fails; the provider's documented input limit, error codes, and
        `usage.input_tokens` semantics, cited by URL and retrieval date; and
        two live checks: a request estimated just under
        `backend_max_state_tokens` answers with a `usage.input_tokens`
@@ -524,7 +703,8 @@ when every one of these holds:
        the observed behavior recorded. OpenRouter captures also record the
        model's `canonical_slug` from `GET
        https://openrouter.ai/api/v1/models?output_modalities=decisions` and
-       that the `zdr` and `data_collection` flags were sent.
+       that the `zdr` and `data_collection` flags were sent. Workers AI
+       captures also record one complete REST envelope.
 
      If the limit or the usage semantics are undocumented, unknown, or
      mismatched, this item does not hold.
@@ -603,13 +783,13 @@ as `_embedding_binding` uses one style for local and hosted endpoints.
 | Field | Type | Default |
 | --- | --- | --- |
 | `api_base` | `str \| None` | `None` |
-| `wire_api` | `Literal["systemone", "openrouter-decisions"]` | `"systemone"` |
+| `wire_api` | `Literal["systemone", "openrouter-decisions", "workers-ai"]` | `"systemone"` |
 | `identity_contract` | `Literal["model_card", "response_version"] \| None` | `None` |
 | `api_key` | `str \| None` | `None` |
 | `model` | `str \| None` | `None` |
 | `timeout_seconds` | `float` | `2.0`, `gt=0` |
 | `max_input_tokens` | `int` | `8192`, `ge=256`, below the resolved `backend_max_state_tokens` |
-| `backend_max_state_tokens` | `int \| None` | `None`, resolving to `65536` for `systemone` and `32000` for `openrouter-decisions`; an explicit value is `gt=0` |
+| `backend_max_state_tokens` | `int \| None` | `None`, resolving to `65536` for `systemone` and `workers-ai` and `32000` for `openrouter-decisions`; an explicit value is `gt=0` |
 | `failure_cooldown_seconds` | `float` | `60`, `ge=0` |
 | `community_label` | `ChoiceConsumerConfig` | `default_factory` |
 | `tool_rerank` | `RerankConsumerConfig` | `default_factory` |
@@ -637,6 +817,9 @@ Validators:
 - `api_base` passes `validate_optional_endpoint_url`, as in
   `EmbeddingsConfig`. Any host is accepted.
 - `model` is required when `api_base` is set.
+- Under `workers-ai`, `model` must be `clef` or `clef-flash`, the two values
+  Cloudflare's input schema allows (Decision 15), because the service builds
+  the URL path from it.
 - `mode == "enforce"` with `evaluated_model` or `evaluated_backend` unset is
   rejected, because enforcement needs a recorded evaluation.
 - `max_input_tokens` at or above the resolved `backend_max_state_tokens` is
@@ -668,8 +851,8 @@ precondition against the shared config. The rest of the test is unchanged.
 `_decision_binding(config)`:
 - `unavailable` with reason "Decision capability requires ai.decisions.api_base
   and ai.decisions.model." when either is unset;
-- otherwise available, with provider `systemone` or `openrouter` from
-  `wire_api`, `adapter_style=AIAdapterStyle.LLM_PROVIDER`,
+- otherwise available, with provider `systemone`, `openrouter`, or
+  `cloudflare` from `wire_api`, `adapter_style=AIAdapterStyle.LLM_PROVIDER`,
   `models=(config.ai.decisions.model,)`, and
   `metadata={"wire_api": ..., "max_input_tokens": ..., "api_base_configured": True}`.
 
@@ -703,8 +886,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 
 **Acceptance:**
 
-- 1.1.1 - A loopback `api_base` and a hosted `https://openrouter.ai/api`
-  both load, a malformed URL is rejected by `validate_optional_endpoint_url`,
+- 1.1.1 - A loopback `api_base`, a hosted `https://openrouter.ai/api`, and a
+  Workers AI `https://api.cloudflare.com/client/v4/accounts/<account_id>`
+  all load, a malformed URL is rejected by `validate_optional_endpoint_url`,
   and no `allow_remote` field exists. test:
   `tests/config/test_decisions_config.py::test_api_base_accepts_local_and_hosted`.
 - 1.1.2 - `model` is required with `api_base`, `enforce` requires
@@ -719,8 +903,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `tests/config/test_decisions_config.py::test_community_label_decision_keys_removed`.
 - 1.1.4 - `decide` reports unavailable with its reason when unconfigured and
   available with the model, `adapter_style` `llm_provider`, and provider
-  `systemone` or `openrouter` by `wire_api` when configured, and it appears
-  in the registry status snapshot. test:
+  `systemone`, `openrouter`, or `cloudflare` by `wire_api` when configured,
+  and it appears in the registry status snapshot. test:
   `tests/ai/test_capability_registry.py::test_decide_binding_reports_configuration`.
 - 1.1.5 - `api_base` row: defaults to `None`, and the capability is
   unavailable while it is unset. test:
@@ -728,7 +912,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 1.1.6 - `api_key` row: defaults to `None`, a `$secret:` reference loads
   resolved, and the value is never logged. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-- 1.1.7 - `model` row: defaults to `None`. test:
+- 1.1.7 - `model` row: defaults to `None`, and under `workers-ai` accepts
+  `clef` and `clef-flash` and rejects any other value. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 - 1.1.8 - `timeout_seconds` row: defaults to `2.0` and rejects `0`. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
@@ -736,8 +921,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   rejects a value at or above the resolved `backend_max_state_tokens`. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 - 1.1.10 - `backend_max_state_tokens` row: defaults to `None`, resolves to
-  `65536` under `systemone` and `32000` under `openrouter-decisions`, keeps
-  an explicit value, and rejects `0`. test:
+  `65536` under `systemone` and `workers-ai` and `32000` under
+  `openrouter-decisions`, keeps an explicit value, and rejects `0`. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 - 1.1.11 - `failure_cooldown_seconds` row: defaults to `60` and rejects `-1`.
   test:
@@ -755,10 +940,10 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   and rejects `enforce` without both. test:
   `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
 - 1.1.15 - `wire_api` row: defaults to `systemone`, accepts
-  `openrouter-decisions`, and rejects any other value. test:
+  `openrouter-decisions` and `workers-ai`, and rejects any other value. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 - 1.1.16 - `identity_contract` row: defaults to `None`, accepts
-  `response_version` with either wire, and accepts `model_card` only with
+  `response_version` with every wire, and accepts `model_card` only with
   `systemone`. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 
@@ -772,23 +957,25 @@ Targets:
 - `tests/ai/test_decisions_service.py`
 - `tests/ai/fixtures/systemone_choice_response.json`
 - `tests/ai/fixtures/openrouter_decisions_choice_response.json`
+- `tests/ai/fixtures/workers_ai_choice_response.json`
 - `docs/evidence/decisions/systemone-wire.md`
 
-**Granularity:** Eleven acceptance items, one outcome: a `choose` call that
+**Granularity:** Fourteen acceptance items, one outcome: a `choose` call that
 either returns validated answers with their backend identity metadata, which
 is `None` when identity is unverified, or raises a typed
 `DecisionsUnavailable`.
 - Transport limits (1.2.2, 1.2.7), the size ceiling and truncation guard
   (1.2.3), the shared cooldown and its service identity (1.2.4, 1.2.8),
   backend identity (1.2.9, 1.2.10), strict parsing (1.2.1), the
-  OpenRouter wire (1.2.11), and log redaction (1.2.5)
+  OpenRouter wire (1.2.11), the Workers AI wire (1.2.12), the request
+  limits (1.2.13), and log redaction (1.2.5)
   are all properties of that one call path, in one module and one test file.
 - No subset is independently closeable. A service without strict parsing
   hands consumers unvalidated answers, one without the ceiling lets Kev
   truncate silently, and one without the cooldown stalls every consumer on a
   dead server.
-- The pinned contract record (1.2.6) fixes the field names the parser and
-  its fixtures use, so it comes first inside the same leaf.
+- The pinned contract record (1.2.6, 1.2.14) fixes the field names the
+  parser and its fixtures use, so it comes first inside the same leaf.
 
 **Research context:** #22604's 6.3 specified a client that this module
 replaces. It used `ChoiceQuestion(criteria: dict[str, str])`,
@@ -822,6 +1009,30 @@ before any code, with no live server:
   503, 524 and 529 with the `{"error": {"code", "message"}}` body. It also
   records what stays unverified: oversize behavior, decision-specific rate
   limits, and whether a dated slug is accepted as a request model.
+- It records Cloudflare's documented Workers AI contract for Clef and
+  Clef-flash as retrieved on 2026-10-08 (Decision 15):
+  - the endpoint, the bearer token, and the `model` selector;
+  - the `{result, success, errors, messages}` REST envelope;
+  - the input schema's limits: 1 to 64 questions, the question key
+    pattern, `instructions` on every question, and 2 to 255 Choice options;
+  - the output schema, with `usage.input_tokens` and `output_tokens`
+    required;
+  - the 65,536-token context window, the truncation of long state, and the
+    prices.
+
+  It also records what stays unverified: error statuses and bodies on this
+  route, rate limits, the scope of `usage.input_tokens`, the truncation
+  point, and versioning.
+- It records the local Clef reference facts (Decision 15):
+  - Cloudflare's `joint_schema_model.py`: `systemone` is a function with no
+    server, and the default device is CUDA;
+  - `clef_mlx.py serve`: its routes, the 16,384-token whole-prompt limit,
+    the whole-prompt `usage.input_tokens`, truncation and 413 behavior, the
+    echoed `model`, the `/v1/models` body, the request lock, the missing
+    authentication, and the remote image fetching.
+- `tests/ai/fixtures/workers_ai_choice_response.json` is authored from
+  Cloudflare's output schema inside the REST envelope, with `model`,
+  `answers`, and `usage` carrying `input_tokens` and `output_tokens`.
 - `tests/ai/fixtures/systemone_choice_response.json` is authored from the
   TypeSafe schema, with `usage.input_tokens`.
   `tests/ai/fixtures/openrouter_decisions_choice_response.json` is authored
@@ -843,9 +1054,9 @@ Module contents:
   `instructions` is required, with no default; each consumer writes its own.
 - `ChoiceAnswer(choice, probabilities, confidence)`.
 - `DecisionsUnavailable(reason: Literal["unconfigured", "cooldown",
-  "oversize", "truncated", "timeout", "transport", "http_status", "parse"],
-  detail: str)`. `truncated` is a local outcome under Decision 9 and never
-  opens the cooldown.
+  "oversize", "invalid_request", "truncated", "timeout", "transport",
+  "http_status", "parse"], detail: str)`. `invalid_request` and `truncated`
+  are local outcomes under Decision 9 and never open the cooldown.
 - Every failure leaves the service as `DecisionsUnavailable`, and no `httpx`
   exception escapes. After retries, an `httpx.TransportError` maps to
   `transport`. Expiry of the service's own `asyncio.timeout` maps to
@@ -883,16 +1094,21 @@ Module contents:
 
 Transport, per Decisions 8 and 9:
 - the oversize check runs before sending;
+- the Decision 8 request limits are checked before sending. No questions,
+  more than 64, a question key outside `^[A-Za-z0-9_.-]{1,100}$`, or a Choice
+  with fewer than 2 or more than 255 options raises `invalid_request`
+  without dialing;
 - the client is `httpx.AsyncClient(trust_env=False,
   follow_redirects=False)`, so proxy environment variables and redirects can
   never carry a request to a host other than the configured `api_base`. This
   follows the local-daemon
   hardening in `utils/daemon_client.py:396-466`. There is no config knob to
   change it;
-- the URL is `{api_base}/v1/systemone` under `systemone` and
-  `{api_base}/alpha/decisions` under `openrouter-decisions`, and only the
-  latter adds `provider: {"zdr": true, "data_collection": "deny"}` to the
-  body;
+- the URL is `{api_base}/v1/systemone` under `systemone`,
+  `{api_base}/alpha/decisions` under `openrouter-decisions`, and
+  `{api_base}/ai/run/@cf/cloudflare/{model}` under `workers-ai`. Only
+  `openrouter-decisions` adds `provider: {"zdr": true, "data_collection":
+  "deny"}` to the body;
 - `Authorization: Bearer` is sent only when `api_key` is set;
 - every 3xx and every 4xx except 429 raise `http_status` without retry;
 - transport errors and 429, 529 and 5xx retry through `retry_async` with the
@@ -900,15 +1116,18 @@ Transport, per Decisions 8 and 9:
   `asyncio.timeout(budget)` around the whole call;
 - responses are parsed strictly. Any violation raises `parse` before any
   consumer policy sees it:
+  - under `workers-ai`, a 2xx body must be an object whose `success` is
+    `true` and whose `result` is an object. Anything else raises `parse`,
+    and `result` is then parsed as the decision response below;
   - the response `model` must be a non-empty string. It is returned as
-    `response_model` and never compared with the request, because both
-    documented APIs answer with a resolved version: `jev-1.13.0` for
+    `response_model` and never compared with the request. TypeSafe and
+    OpenRouter answer with a resolved version: `jev-1.13.0` for
     `jev-latest` on TypeSafe, and `typesafe/jev-1.13-20260917` for
-    `typesafe/jev-1.13` on OpenRouter. Backend identity is Decision 10's
-    job;
+    `typesafe/jev-1.13` on OpenRouter. Workers AI's versioning is
+    undocumented. Backend identity is Decision 10's job;
   - response fields outside the answer schemas and `usage.input_tokens`,
     such as OpenRouter's `id`, `provider`, `usage.output_tokens` and
-    `usage.cost`, are ignored;
+    `usage.cost`, and Workers AI's `errors` and `messages`, are ignored;
   - a Choice answer must carry `probabilities` and `confidence`. OpenRouter's
     reference marks them optional, TypeSafe's marks them required, and a
     Choice answer without them raises `parse`;
@@ -929,7 +1148,12 @@ Transport, per Decisions 8 and 9:
     `backend_max_state_tokens`. Kev at the pinned commit satisfies both for
     the encoded state. OpenRouter documents `usage.input_tokens` and a
     32,000-token whole-input limit, and its truncation behavior stays
-    unverified until the live capture. The Activation Gate's live capture verifies both for the
+    unverified until the live capture. Workers AI documents a 65,536-token
+    context and truncation of long state, and leaves the scope of
+    `usage.input_tokens` undocumented, so it also stays unverified until
+    the live capture. A local `clef_mlx.py` server satisfies both for the
+    whole prompt once the operator sets `backend_max_state_tokens: 16384`.
+    The Activation Gate's live capture verifies both for the
     configured server, and an unverified or mismatched server keeps every
     consumer in `shadow`;
 - the Decision 9 cooldown rules apply exactly: remote failures open it, and
@@ -1014,6 +1238,26 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   400, 402 and 413 make one call and raise `http_status`; 502, 503 and 524
   retry. A `systemone` request carries no `provider` field. test:
   `tests/ai/test_decisions_service.py::test_openrouter_wire_posts_and_parses`.
+- 1.2.12 - Under `workers-ai`, `choose` posts `{model, state, questions}`
+  to `{api_base}/ai/run/@cf/cloudflare/clef` with the bearer key and no
+  `provider` field, and a `clef-flash` model posts to
+  `{api_base}/ai/run/@cf/cloudflare/clef-flash`. It unwraps the REST
+  envelope and parses the Workers AI fixture while ignoring
+  `output_tokens`, `errors`, and `messages`, and under `response_version` it
+  returns identity `response:` plus the result's `model`. A 2xx body whose
+  `success` is `false`, or that has no object `result`, raises `parse`.
+  test: `tests/ai/test_decisions_service.py::test_workers_ai_wire_posts_and_parses`.
+- 1.2.13 - On every wire, a request with no questions, 65 questions, a
+  question key containing `/` or longer than 100 characters, or a Choice
+  with 1 or 256 options raises `invalid_request` without dialing and
+  without opening the cooldown. Requests with 1 question and with 64
+  questions dial, as do Choices with 2 and 255 options. test:
+  `tests/ai/test_decisions_service.py::test_request_limits_never_dial`.
+- 1.2.14 - The pinned contract record holds Cloudflare's documented Workers
+  AI contract for Clef and Clef-flash with its unverified items, and the
+  local Clef reference facts for `joint_schema_model.py` and
+  `clef_mlx.py serve`. behavior: "/ai/run/@cf/cloudflare/" in
+  `docs/evidence/decisions/systemone-wire.md`.
 
 ## P2: Evaluation
 `kind: framing`
@@ -1029,6 +1273,11 @@ Targets:
 - `scripts/decisions_eval.py`
 - `tests/ai/test_decisions_shadow.py`
 - `tests/scripts/test_decisions_eval.py`
+
+**Granularity:** Seven acceptance items, one outcome: a reproducible
+evaluation report per consumer. The backend comparison (2.1.7) replays the
+same splits through the same metric and gate code, so it cannot land or be
+tested apart from the harness.
 
 **Research context:** #22837 removed the relevance judge's replay and
 calibration code, so no harness remains to reuse. `scripts/` already holds
@@ -1083,8 +1332,19 @@ Labeling:
 - Separately, the Assistant presents 20 disagreements per consumer to Josh as
   a spot audit before any promotion. Audit records never enter the metrics.
 
-`scripts/decisions_eval.py --consumer <name> --dataset <jsonl> --out <md>`
-runs against `ai.decisions` loaded from the daemon config:
+`scripts/decisions_eval.py --consumer <name> --dataset <jsonl> --out <md>
+[--decisions <yaml>]...` runs against each backend that a repeatable
+`--decisions` names, or, with none, against `ai.decisions` loaded from the
+daemon config.
+- Each `--decisions` file holds one `ai.decisions` mapping. It is loaded
+  through `config/_loading.py::load_yaml` with the same secret resolver as
+  the daemon config, so a `$secret:` `api_key` resolves, and it is validated
+  as `DecisionsConfig`.
+- This compares Clef, Clef-flash, Jev, Kev, and the incumbent on one
+  dataset without reconfiguring the live daemon (Decision 15).
+- Every backend replays the same splits, and steps 2 to 5 run per backend.
+
+The steps:
 1. Split by `int(content_hash, 16) % 5 == 0` into a holdout, with the rest
    as the development set. Records with identical content share a hash, so a
    repeated example never lands in both splits.
@@ -1107,10 +1367,12 @@ runs against `ai.decisions` loaded from the daemon config:
    Choice, or on probability for Noul), and selective accuracy and coverage at
    thresholds from 0.50 to 0.95 in steps of 0.05.
 4. Compute the order-flip rate and p50 and p95 latency. Also compute cost:
-   estimated input tokens per call, and a hosted-equivalent cost at the
-   pinned OpenRouter Jev price ($0.042 per million input tokens, `jev.md`).
-   The local backend's per-call cost is zero, so this gives one
-   local-versus-hosted number per consumer.
+   estimated input tokens per call, and the per-call cost at each pinned
+   hosted price per million input tokens: Jev at $0.042 on OpenRouter
+   (`jev.md`), and Clef at $0.24 and Clef-flash at $0.09 on Workers AI
+   (Decision 15). A local backend bills nothing, so these give
+   local-versus-hosted numbers per consumer. Each provider bills its own
+   tokenizer's count, so the figures are estimates.
 5. Compute every Decision 12 metric for the consumer:
    - tool rerank, with the classifier's list being candidates at or above
      `min_probability`, ordered by probability:
@@ -1178,7 +1440,10 @@ runs against `ai.decisions` loaded from the daemon config:
    `response_model` values, the wire, the endpoint host, the backend
    identity, the
    dataset hash, and both splits, and ends in an explicit gate `PASS` or `FAIL` listing each measured
-   value against its threshold.
+   value against its threshold. With more than one backend, the report
+   gives each backend its own section and verdict, then one side-by-side
+   table with a column per backend and a row per gate metric, latency, and
+   cost.
 
 A labeled set holds at least 200 records per consumer. Reports live under
 `docs/evidence/decisions/<consumer>-<date>.md`.
@@ -1229,6 +1494,14 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   metrics equal the cohort's actual rates; audit records are excluded, and
   duplicate content lands in one split. test:
   `tests/scripts/test_decisions_eval.py::test_gate_uses_representative_cohort`.
+- 2.1.7 - Two `--decisions` backends replay one synthetic dataset over
+  identical splits. The report gives each its own identity, response model,
+  thresholds, metrics, and verdict, a side-by-side table, and the per-call
+  cost at $0.042, $0.24, and $0.09 per million input tokens. With no
+  `--decisions`, the daemon's `ai.decisions` is the one backend. A
+  `$secret:` `api_key` in a decisions file resolves and never appears in
+  the report. test:
+  `tests/scripts/test_decisions_eval.py::test_compares_backends_side_by_side`.
 
 ## P3: Consumers
 `kind: framing`
@@ -1247,6 +1520,7 @@ Targets:
 - `tests/ai/test_decisions_service.py`
 - `tests/ai/fixtures/systemone_noul_response.json`
 - `tests/ai/fixtures/openrouter_decisions_noul_response.json`
+- `tests/ai/fixtures/workers_ai_noul_response.json`
 - `docs/evidence/decisions/systemone-wire.md`
 - `tests/mcp_proxy/services/test_recommendation_decisions.py`
 
@@ -1269,20 +1543,24 @@ schema that 1.2 pinned in `docs/evidence/decisions/systemone-wire.md`:
   `tests/ai/fixtures/systemone_noul_response.json` from that schema, and
   `tests/ai/fixtures/openrouter_decisions_noul_response.json` from
   OpenRouter's schema with a dated `model`, `id`, `provider`, and `usage`
-  carrying `output_tokens` and `cost`, each with three propositions. The
-  `noul` parser tests read both fixtures.
+  carrying `output_tokens` and `cost`, and
+  `tests/ai/fixtures/workers_ai_noul_response.json` from Cloudflare's
+  output schema inside the REST envelope (Decision 15), each with three
+  propositions. The `noul` parser tests read all three fixtures.
 - Append to the evidence file a note naming the fixture and any field the
   consumer relies on. Runtime compatibility waits for the Activation Gate's
   live capture.
 
 Consumer: state is `{"request": task_description}`, with one proposition per
 candidate, "Tool `<server>/<tool>` (`<description>`) materially applies to the
-request."
+request." Proposition keys are positional (`c0`, `c1`, and so on), because a
+candidate id such as `server/tool` falls outside the Decision 8 key pattern.
+The consumer maps answers back to candidate ids.
 
 One logical classifier rerank has one budget, `ai.decisions.timeout_seconds`,
 covering its batches only, and one complete result or none:
 - Batching packs candidates in semantic order, greedily, into requests that
-  each fit the ceiling.
+  each fit the ceiling and hold at most 64 propositions (Decision 8).
 - If the state plus one candidate alone exceeds the ceiling, the whole
   classifier result is `oversize`. Nothing is truncated.
 - Batches run concurrently under one `asyncio.TaskGroup` and one deadline. If
@@ -1335,8 +1613,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 
 **Acceptance:**
 
-- 3.1.1 - `noul` posts per-proposition questions on either wire, parses
-  both documented-schema Noul fixtures, and returns probabilities by key
+- 3.1.1 - `noul` posts per-proposition questions on every wire, parses
+  the three documented-schema Noul fixtures, and returns probabilities by key
   under the same ceiling and cooldown. The fixture note is appended to
   `docs/evidence/decisions/systemone-wire.md`. test:
   `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`.
@@ -1358,6 +1636,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `tests/mcp_proxy/services/test_recommendation_decisions.py::test_model_mismatch_downgrades_to_shadow`.
 - 3.1.5 - One rerank is bounded and complete:
   - more than `top_k` passing candidates return exactly `top_k`;
+  - 65 candidates split into batches of at most 64 propositions, with
+    positional keys mapped back to candidate ids;
   - equal probabilities keep semantic order;
   - a failed second batch makes the whole result unavailable, so enforce falls
     back to the LLM rerank;
@@ -1516,12 +1796,14 @@ values. So the tool registers through `registry.register(name="evaluate",
 (`internal.py:139-169`) with an explicit schema that agents read through
 `get_tool_schema`:
 - `state`: an object.
-- `questions`: an object with at least one property, whose values are
+- `questions`: an object with 1 to 64 properties whose keys match
+  `^[A-Za-z0-9_.-]{1,100}$`, whose values are
   `oneOf` two closed shapes, the wire shapes 1.2 and 3.1 serialize:
   - Choice: `{"type": "choice", "instructions": <non-empty string>,
-    "criteria": <object, 1 to 255 properties, string values of length at
-    least 1>}`, the 255 bound being Jev's documented Choice maximum
-    (`docs/research/jev.md:31`);
+    "criteria": <object, 2 to 255 properties, string values of length at
+    least 1>}`. The question and option bounds are the Decision 8 request
+    limits: Workers AI documents all of them, and TypeSafe documents the
+    255-option maximum (`docs/research/jev.md:31`);
   - Noul: `{"type": "noul", "instructions": <non-empty string>}`.
 
   Neither shape admits other keys.
@@ -1532,12 +1814,13 @@ because the registry enforces no nested schema. Every failure returns
 `{"success": false, "reason": "invalid_request", "detail": ...}` without
 building a service, dialing, or touching the cooldown:
 - `state` that is not an object;
-- an empty question map, or a question key that is not a non-empty string;
+- an empty question map, more than 64 questions, or a question key outside
+  `^[A-Za-z0-9_.-]{1,100}$`;
 - a question that is not an object, or carries a key outside its shape;
 - an unknown or missing `type`, or mixed types across questions;
 - `instructions` that is missing, not a string, or empty;
 - on a Choice question, `criteria` that is missing, not an object,
-  empty, or above 255 options, or has an option key or text that is not a
+  below 2 or above 255 options, or has an option key or text that is not a
   non-empty string;
 - on a Noul question, any `criteria`;
 - a `timeout_seconds` that is a `bool`, not a number, non-finite, or not
@@ -1606,6 +1889,7 @@ Consumers unchanged:
 - `tests/dispatch/test_bundled_agent_contract.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
 - `tests/mcp_proxy/test_merge_integration.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
 - `tests/mcp_proxy/test_registries.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
+- `tests/mcp_proxy/test_registries_startup.py` — no-edit-reason: it calls `setup_internal_registries` with `config_resolver=lambda: None` and asserts only the startup steps of five named registries; the added `gobby-decisions` registry reads its config per tool call and adds no step those asserts name.
 - `tests/mcp_proxy/test_workspaces_registry.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
 - `tests/mcp_proxy/tools/sessions/test_mcp_proxy_tools_sessions_registration.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
 - `tests/mcp_proxy/tools/test_review_learning.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
@@ -1623,16 +1907,19 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `timeout_seconds` above the configured value is capped at it. test:
   `tests/mcp_proxy/tools/test_decisions_tools.py::test_evaluate_choice_and_noul_round_trip`.
 - 3.3.2 - Table-driven over every rejection the handler lists: a
-  non-object `state`, an empty question map, a non-object question, an
+  non-object `state`, an empty question map, 65 questions, a question key
+  containing `/`, a non-object question, an
   extra key, mixed types, an unknown or missing type, `instructions` that is
   missing, empty, or a list, Choice `criteria` that is missing, empty, holds
-  256 options, or has a non-string value such as `{"a": 42}`, Noul
+  1 or 256 options, or has a non-string value such as `{"a": 42}`, Noul
   `criteria`, and a `timeout_seconds` that is `true`, `0`, negative, `NaN`,
   or infinite. Each returns `invalid_request` with an `error` string, and no
   service is built, no request is sent, and the cooldown is unchanged. A
-  Choice question with exactly 255 options passes validation and reaches the
-  service. The fetched `evaluate` schema carries both nested question shapes
-  and `maxProperties: 255` on `criteria`. test:
+  call with 64 questions, and Choice questions with exactly 2 and 255
+  options, pass validation and reach the service. The fetched `evaluate`
+  schema carries both nested question shapes, `maxProperties: 64` and the
+  key pattern on `questions`, and `minProperties: 2` and
+  `maxProperties: 255` on `criteria`. test:
   `tests/mcp_proxy/tools/test_decisions_tools.py::test_evaluate_rejects_invalid_requests_without_dialing`.
 - 3.3.3 - A `None` config and an unset `api_base` return `unconfigured`.
   `cooldown`, `oversize`, and `http_status` return `success: false` with that
@@ -1673,9 +1960,13 @@ rows. `docs/guides/configuration.md` documents config sections and the
 `/api/config` routes.
 
 Edits:
-- Add an `ai.decisions` section to `configuration.md`. It covers the fields,
-  the two `wire_api` choices with a local Kev example and an OpenRouter
-  example, the OpenRouter privacy flags, the identity contracts, and
+- Add an `ai.decisions` section to `configuration.md`. It covers the fields;
+  the three `wire_api` choices, with a local Kev example, a local Clef
+  example (`clef_mlx.py serve` on `127.0.0.1` with
+  `backend_max_state_tokens: 16384`), an OpenRouter example, and a Workers
+  AI Clef example; the OpenRouter privacy flags; the request limits; the
+  identity contracts, including why neither Clef form reaches `enforce`
+  (Decision 16); the local Clef latency figures (Decision 15); and
   `GET /api/llm/status`.
 - Add rows to `llm-features.md` for `ai.decisions.tool_rerank` and
   `ai.decisions.found_work`, with their modes and fallbacks.
@@ -1687,38 +1978,48 @@ Edits:
 
 **Acceptance:**
 
-- 4.1.1 - The configuration guide documents `ai.decisions` with both
-  `wire_api` choices, a local and an OpenRouter example, and the identity
-  contracts. behavior: "openrouter-decisions" in
+- 4.1.1 - The configuration guide documents `ai.decisions` with all three
+  `wire_api` choices, local Kev and Clef examples, OpenRouter and Workers AI
+  examples, and the identity contracts. behavior: "openrouter-decisions" in
   `docs/guides/configuration.md`.
 - 4.1.2 - The features guide lists both consumers with their modes and
   fallbacks. behavior: "found_work" in `docs/guides/llm-features.md`.
 - 4.1.3 - The MCP tools guide lists the `gobby-decisions` server. behavior:
   "gobby-decisions" in `docs/guides/mcp-tools.md`.
+- 4.1.4 - The configuration guide documents hosted and local Clef: the
+  Workers AI `api_base` and `model` values, the local server's
+  `backend_max_state_tokens`, the latency figures, and the Decision 16
+  identity consequence. behavior: "workers-ai" in
+  `docs/guides/configuration.md`.
 
 ## V2: Verification
 `kind: verification`
 
+These are completion gates for the implementation. Except for plan
+validation, none has run yet. Each runs after the leaves it covers land, and
+each must hold before the epic closes.
+
 Each leaf runs its own `Verification planned` command after its final
 edit, because the combined command names test files that later leaves create.
 Run the combined command below after the last leaf (4.1) and again before the
-PD lands the branch:
+PD lands the branch; every command must pass:
 
 ```bash
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_decisions_config.py tests/ai/test_capability_registry.py tests/ai/test_decisions_service.py tests/ai/test_decisions_shadow.py tests/scripts/test_decisions_eval.py tests/mcp_proxy/services tests/mcp_proxy/tools/test_decisions_tools.py tests/mcp_proxy/test_registries.py tests/skills/test_reference_library.py tests/workflows/test_found_work_confirm.py -q
 uv run ruff format --check src/ scripts/ && uv run ruff check src/ scripts/ && uv run mypy src/
-uv run gobby plans validate /Users/josh/.gobby/worktrees/gobby/task-23024-classifier-path-plan/.gobby/plans/decision-classifier-path.md -p /Users/josh/Projects/gobby
+uv run gobby plans validate .gobby/plans/decision-classifier-path.md -p /Users/josh/Projects/gobby
 ```
 
-Plan validation takes the absolute worktree plan path, with the project root
-`/Users/josh/Projects/gobby`.
+Plan validation runs from the main checkout, with the project root
+`/Users/josh/Projects/gobby`. The plan's original worktree,
+`task-23024-classifier-path-plan`, no longer exists.
 
-Live check after the PD-owned restart, with a decision endpoint of either
-wire configured: `GET /api/llm/status` lists `decide` as
+Live check after the PD-owned restart, with a decision endpoint of any
+wire configured: `GET /api/llm/status` must list `decide` as
 available with the configured model. With the server stopped, a
-`recommend_tools` call in `shadow` mode returns its usual result, and a
-`gobby-decisions:evaluate` call through the proxy returns `success: false`
-with a typed reason. Do not run the full pytest suite.
+`recommend_tools` call in `shadow` mode must return its usual result, and a
+`gobby-decisions:evaluate` call through the proxy must return
+`success: false` with a typed reason. Do not run the full pytest suite.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1806,6 +2107,45 @@ with a typed reason. Do not run the full pytest suite.
 - 2026-09-30: Renewed consensus with Plan Adversary gobby#14579 on 7fe9a6f,
   which confirmed the 255-option maximum against the TypeSafe API reference
   and found every other obligation and route unchanged.
+- 2026-10-08: #23790, by Plan Writer gobby#15677. Josh, through the
+  Assistant gobby#15070 and the Orchestrator gobby#14972: "Update the plan
+  to include Clef (cloud and local, if it's possible to run locally)". The
+  sources were the #23788 note (14013ced6c) and the primary Cloudflare,
+  Hugging Face, and mlx-community pages retrieved 2026-10-08. No download or
+  local inference was run.
+  - Decision 15 adds Clef. Hosted Clef uses a new `workers-ai` wire. Local
+    Clef is feasible through the mlx-community `clef_mlx.py serve`, which
+    speaks the existing `systemone` wire. Latency limits which states can
+    pass the 1 s gate.
+  - Decision 16 is proposed for Josh's approval: no Clef form reaches
+    `enforce` under the existing identity contracts, and no contract is
+    added.
+  - Decision 8 adds request limits (1 to 64 questions, a key pattern, and
+    2 to 255 Choice options) with the local reason `invalid_request`, so a
+    request the stricter Workers AI schema rejects never opens the shared
+    cooldown. 3.1 batches to 64 with positional keys, and 3.3 validates the
+    same bounds.
+  - 1.1 and 1.2 add the wire (1.2.12 to 1.2.14), 2.1 compares backends
+    side by side with Clef prices (2.1.7), and 4.1 documents both forms
+    (4.1.4).
+  - Found work fixed: 3.3's unchanged inventory gains
+    `tests/mcp_proxy/test_registries_startup.py` (added by #23466, which
+    failed base validation). V2 now validates from the main checkout and
+    states that its checks are completion gates that have not run yet.
+  - The superseded M1 was retired for re-derivation.
+  - Plan Adversary gobby#15401's preliminary review of 3e9c2c15df
+    returned two findings, both applied. CF_REQUEST_NONEMPTY (blocking):
+    the request limits did not reject an empty question map, which
+    Workers AI and the local `clef_mlx.py` server both reject (its
+    `systemone` raises `ValueError`, which `serve` returns as HTTP 400).
+    Decision 8, the 1.2 transport, and 1.2.13 now require 1 to 64
+    questions. CF_PARITY_VARIANTS: Decision 15 now gives the parity
+    figure for each of the four conversions.
+- 2026-10-08: Consensus with Plan Adversary gobby#15401 on 5816051b41,
+  which verified both fixes and the Cloudflare schemas and found no
+  remaining finding. Adv1 derived and applied M1 (manifest digest
+  3f8ecc41, seven entries, 57 covers labels), and expansion validation
+  passed.
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -1815,8 +2155,9 @@ with a typed reason. Do not run the full pytest suite.
   category: code
   task_type: feature
   depends_on: []
-  validation_criteria: '1.1.1: A loopback `api_base` and a hosted `https://openrouter.ai/api`
-    both load, a malformed URL is rejected by `validate_optional_endpoint_url`, and
+  validation_criteria: '1.1.1: A loopback `api_base`, a hosted `https://openrouter.ai/api`,
+    and a Workers AI `https://api.cloudflare.com/client/v4/accounts/<account_id>`
+    all load, a malformed URL is rejected by `validate_optional_endpoint_url`, and
     no `allow_remote` field exists. test: `tests/config/test_decisions_config.py::test_api_base_accepts_local_and_hosted`.
 
     1.1.2: `model` is required with `api_base`, `enforce` requires `evaluated_model`
@@ -1829,9 +2170,9 @@ with a typed reason. Do not run the full pytest suite.
     test: `tests/config/test_decisions_config.py::test_community_label_decision_keys_removed`.
 
     1.1.4: `decide` reports unavailable with its reason when unconfigured and available
-    with the model, `adapter_style` `llm_provider`, and provider `systemone` or `openrouter`
-    by `wire_api` when configured, and it appears in the registry status snapshot.
-    test: `tests/ai/test_capability_registry.py::test_decide_binding_reports_configuration`.
+    with the model, `adapter_style` `llm_provider`, and provider `systemone`, `openrouter`,
+    or `cloudflare` by `wire_api` when configured, and it appears in the registry
+    status snapshot. test: `tests/ai/test_capability_registry.py::test_decide_binding_reports_configuration`.
 
     1.1.5: `api_base` row: defaults to `None`, and the capability is unavailable while
     it is unset. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
@@ -1839,7 +2180,8 @@ with a typed reason. Do not run the full pytest suite.
     1.1.6: `api_key` row: defaults to `None`, a `$secret:` reference loads resolved,
     and the value is never logged. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 
-    1.1.7: `model` row: defaults to `None`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+    1.1.7: `model` row: defaults to `None`, and under `workers-ai` accepts `clef`
+    and `clef-flash` and rejects any other value. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 
     1.1.8: `timeout_seconds` row: defaults to `2.0` and rejects `0`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 
@@ -1847,8 +2189,8 @@ with a typed reason. Do not run the full pytest suite.
     a value at or above the resolved `backend_max_state_tokens`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 
     1.1.10: `backend_max_state_tokens` row: defaults to `None`, resolves to `65536`
-    under `systemone` and `32000` under `openrouter-decisions`, keeps an explicit
-    value, and rejects `0`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+    under `systemone` and `workers-ai` and `32000` under `openrouter-decisions`, keeps
+    an explicit value, and rejects `0`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 
     1.1.11: `failure_cooldown_seconds` row: defaults to `60` and rejects `-1`. test:
     `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
@@ -1865,11 +2207,11 @@ with a typed reason. Do not run the full pytest suite.
     `0.9`, and unset `evaluated_model` and `evaluated_backend`, and rejects `enforce`
     without both. test: `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
 
-    1.1.15: `wire_api` row: defaults to `systemone`, accepts `openrouter-decisions`,
-    and rejects any other value. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+    1.1.15: `wire_api` row: defaults to `systemone`, accepts `openrouter-decisions`
+    and `workers-ai`, and rejects any other value. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 
     1.1.16: `identity_contract` row: defaults to `None`, accepts `response_version`
-    with either wire, and accepts `model_card` only with `systemone`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.'
+    with every wire, and accepts `model_card` only with `systemone`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.'
   labels:
   - covers:decision-classifier-path:1.1:1.1.1
   - covers:decision-classifier-path:1.1:1.1.2
@@ -1947,7 +2289,23 @@ with a typed reason. Do not run the full pytest suite.
     \ while ignoring `id`, `provider`, `output_tokens` and `cost`, and under `response_version`\
     \ returns identity `response:typesafe/jev-1.13-20260917`. 400, 402 and 413 make\
     \ one call and raise `http_status`; 502, 503 and 524 retry. A `systemone` request\
-    \ carries no `provider` field. test: `tests/ai/test_decisions_service.py::test_openrouter_wire_posts_and_parses`."
+    \ carries no `provider` field. test: `tests/ai/test_decisions_service.py::test_openrouter_wire_posts_and_parses`.\n\
+    1.2.12: Under `workers-ai`, `choose` posts `{model, state, questions}` to `{api_base}/ai/run/@cf/cloudflare/clef`\
+    \ with the bearer key and no `provider` field, and a `clef-flash` model posts\
+    \ to `{api_base}/ai/run/@cf/cloudflare/clef-flash`. It unwraps the REST envelope\
+    \ and parses the Workers AI fixture while ignoring `output_tokens`, `errors`,\
+    \ and `messages`, and under `response_version` it returns identity `response:`\
+    \ plus the result's `model`. A 2xx body whose `success` is `false`, or that has\
+    \ no object `result`, raises `parse`. test: `tests/ai/test_decisions_service.py::test_workers_ai_wire_posts_and_parses`.\n\
+    1.2.13: On every wire, a request with no questions, 65 questions, a question key\
+    \ containing `/` or longer than 100 characters, or a Choice with 1 or 256 options\
+    \ raises `invalid_request` without dialing and without opening the cooldown. Requests\
+    \ with 1 question and with 64 questions dial, as do Choices with 2 and 255 options.\
+    \ test: `tests/ai/test_decisions_service.py::test_request_limits_never_dial`.\n\
+    1.2.14: The pinned contract record holds Cloudflare's documented Workers AI contract\
+    \ for Clef and Clef-flash with its unverified items, and the local Clef reference\
+    \ facts for `joint_schema_model.py` and `clef_mlx.py serve`. behavior: \"/ai/run/@cf/cloudflare/\"\
+    \ in `docs/evidence/decisions/systemone-wire.md`."
   labels:
   - covers:decision-classifier-path:1.2:1.2.1
   - covers:decision-classifier-path:1.2:1.2.2
@@ -1960,6 +2318,9 @@ with a typed reason. Do not run the full pytest suite.
   - covers:decision-classifier-path:1.2:1.2.5
   - covers:decision-classifier-path:1.2:1.2.6
   - covers:decision-classifier-path:1.2:1.2.11
+  - covers:decision-classifier-path:1.2:1.2.12
+  - covers:decision-classifier-path:1.2:1.2.13
+  - covers:decision-classifier-path:1.2:1.2.14
   tdd: true
   source_section: '1.2'
   implementation_domain: backend
@@ -2004,7 +2365,14 @@ with a typed reason. Do not run the full pytest suite.
 
     2.1.6: On a synthetic skewed mix with a 5% disagreement rate, the gate metrics
     equal the cohort''s actual rates; audit records are excluded, and duplicate content
-    lands in one split. test: `tests/scripts/test_decisions_eval.py::test_gate_uses_representative_cohort`.'
+    lands in one split. test: `tests/scripts/test_decisions_eval.py::test_gate_uses_representative_cohort`.
+
+    2.1.7: Two `--decisions` backends replay one synthetic dataset over identical
+    splits. The report gives each its own identity, response model, thresholds, metrics,
+    and verdict, a side-by-side table, and the per-call cost at $0.042, $0.24, and
+    $0.09 per million input tokens. With no `--decisions`, the daemon''s `ai.decisions`
+    is the one backend. A `$secret:` `api_key` in a decisions file resolves and never
+    appears in the report. test: `tests/scripts/test_decisions_eval.py::test_compares_backends_side_by_side`.'
   labels:
   - covers:decision-classifier-path:2.1:2.1.1
   - covers:decision-classifier-path:2.1:2.1.2
@@ -2012,6 +2380,7 @@ with a typed reason. Do not run the full pytest suite.
   - covers:decision-classifier-path:2.1:2.1.4
   - covers:decision-classifier-path:2.1:2.1.5
   - covers:decision-classifier-path:2.1:2.1.6
+  - covers:decision-classifier-path:2.1:2.1.7
   tdd: true
   source_section: '2.1'
   implementation_domain: backend
@@ -2020,9 +2389,9 @@ with a typed reason. Do not run the full pytest suite.
   task_type: feature
   depends_on:
   - '2.1'
-  validation_criteria: '3.1.1: `noul` posts per-proposition questions on either wire,
-    parses both documented-schema Noul fixtures, and returns probabilities by key
-    under the same ceiling and cooldown. The fixture note is appended to `docs/evidence/decisions/systemone-wire.md`.
+  validation_criteria: '3.1.1: `noul` posts per-proposition questions on every wire,
+    parses the three documented-schema Noul fixtures, and returns probabilities by
+    key under the same ceiling and cooldown. The fixture note is appended to `docs/evidence/decisions/systemone-wire.md`.
     test: `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`.
 
     3.1.2: Shadow mode returns today''s result unchanged and writes one shadow record.
@@ -2040,14 +2409,15 @@ with a typed reason. Do not run the full pytest suite.
     reaches the next call through the same cached service. test: `tests/mcp_proxy/services/test_recommendation_decisions.py::test_model_mismatch_downgrades_to_shadow`.
 
     3.1.5: One rerank is bounded and complete: - more than `top_k` passing candidates
-    return exactly `top_k`; - equal probabilities keep semantic order; - a failed
-    second batch makes the whole result unavailable, so enforce falls back to the
-    LLM rerank; - two batches with different backend identities, with different response
-    models, or with one known and one unknown identity make the whole result unavailable,
-    so enforce falls back to the LLM rerank and shadow records the classifier as unavailable;
-    - an oversized singleton yields `oversize` without truncation; - a shadow classifier
-    exception leaves the incumbent''s result and failure semantics intact, with no
-    task pending after return. test: `tests/mcp_proxy/services/test_recommendation_decisions.py::test_rerank_batches_are_bounded_and_complete`.'
+    return exactly `top_k`; - 65 candidates split into batches of at most 64 propositions,
+    with positional keys mapped back to candidate ids; - equal probabilities keep
+    semantic order; - a failed second batch makes the whole result unavailable, so
+    enforce falls back to the LLM rerank; - two batches with different backend identities,
+    with different response models, or with one known and one unknown identity make
+    the whole result unavailable, so enforce falls back to the LLM rerank and shadow
+    records the classifier as unavailable; - an oversized singleton yields `oversize`
+    without truncation; - a shadow classifier exception leaves the incumbent''s result
+    and failure semantics intact, with no task pending after return. test: `tests/mcp_proxy/services/test_recommendation_decisions.py::test_rerank_batches_are_bounded_and_complete`.'
   labels:
   - covers:decision-classifier-path:3.1:3.1.1
   - covers:decision-classifier-path:3.1:3.1.2
@@ -2103,14 +2473,16 @@ with a typed reason. Do not run the full pytest suite.
     A `timeout_seconds` above the configured value is capped at it. test: `tests/mcp_proxy/tools/test_decisions_tools.py::test_evaluate_choice_and_noul_round_trip`.
 
     3.3.2: Table-driven over every rejection the handler lists: a non-object `state`,
-    an empty question map, a non-object question, an extra key, mixed types, an unknown
-    or missing type, `instructions` that is missing, empty, or a list, Choice `criteria`
-    that is missing, empty, holds 256 options, or has a non-string value such as `{"a":
-    42}`, Noul `criteria`, and a `timeout_seconds` that is `true`, `0`, negative,
-    `NaN`, or infinite. Each returns `invalid_request` with an `error` string, and
-    no service is built, no request is sent, and the cooldown is unchanged. A Choice
-    question with exactly 255 options passes validation and reaches the service. The
-    fetched `evaluate` schema carries both nested question shapes and `maxProperties:
+    an empty question map, 65 questions, a question key containing `/`, a non-object
+    question, an extra key, mixed types, an unknown or missing type, `instructions`
+    that is missing, empty, or a list, Choice `criteria` that is missing, empty, holds
+    1 or 256 options, or has a non-string value such as `{"a": 42}`, Noul `criteria`,
+    and a `timeout_seconds` that is `true`, `0`, negative, `NaN`, or infinite. Each
+    returns `invalid_request` with an `error` string, and no service is built, no
+    request is sent, and the cooldown is unchanged. A call with 64 questions, and
+    Choice questions with exactly 2 and 255 options, pass validation and reach the
+    service. The fetched `evaluate` schema carries both nested question shapes, `maxProperties:
+    64` and the key pattern on `questions`, and `minProperties: 2` and `maxProperties:
     255` on `criteria`. test: `tests/mcp_proxy/tools/test_decisions_tools.py::test_evaluate_rejects_invalid_requests_without_dialing`.
 
     3.3.3: A `None` config and an unset `api_base` return `unconfigured`. `cooldown`,
@@ -2146,18 +2518,24 @@ with a typed reason. Do not run the full pytest suite.
   - '3.2'
   - '3.3'
   validation_criteria: '4.1.1: The configuration guide documents `ai.decisions` with
-    both `wire_api` choices, a local and an OpenRouter example, and the identity contracts.
-    behavior: "openrouter-decisions" in `docs/guides/configuration.md`.
+    all three `wire_api` choices, local Kev and Clef examples, OpenRouter and Workers
+    AI examples, and the identity contracts. behavior: "openrouter-decisions" in `docs/guides/configuration.md`.
 
     4.1.2: The features guide lists both consumers with their modes and fallbacks.
     behavior: "found_work" in `docs/guides/llm-features.md`.
 
     4.1.3: The MCP tools guide lists the `gobby-decisions` server. behavior: "gobby-decisions"
-    in `docs/guides/mcp-tools.md`.'
+    in `docs/guides/mcp-tools.md`.
+
+    4.1.4: The configuration guide documents hosted and local Clef: the Workers AI
+    `api_base` and `model` values, the local server''s `backend_max_state_tokens`,
+    the latency figures, and the Decision 16 identity consequence. behavior: "workers-ai"
+    in `docs/guides/configuration.md`.'
   labels:
   - covers:decision-classifier-path:4.1:4.1.1
   - covers:decision-classifier-path:4.1:4.1.2
   - covers:decision-classifier-path:4.1:4.1.3
+  - covers:decision-classifier-path:4.1:4.1.4
   tdd: false
   source_section: '4.1'
   assigned_agent: tech-writer

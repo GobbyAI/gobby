@@ -362,14 +362,14 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "cat <<EOF\ncodex exec\nEOF\n",
         "cat <<EOF\n<(codex)\nEOF\n",
         "bash script.sh <<'EOF'\ncodex exec\nEOF\n",
-        "cat <<'EOF' |\n tee docs\n$(codex exec)\nEOF\n",
+        "cat <<'EOF' |\n$(codex exec)\nEOF\n tee docs\n",
         "echo hello | sh",
         "bash -c 'printf hello' <<'EOF'\ncodex\nEOF\n",
         "echo '# codex'; printf '%s' '# claude'",
         "echo \"$(printf '%s' 'codex exec')\"",
         "git commit -m \"$(cat <<'EOF'\nfix: the watchdog's hook (1M context\nEOF\n)\"",
         'git commit -m "$(cat <<EOF\nit\'s done\nEOF\n)"',
-        "x=\"$(cat <<-'EOF' |\n tr a b\n\tit's (text\n\tEOF\n)\"",
+        "x=\"$(cat <<-'EOF' |\n\tit's (text\n\tEOF\n tr a b\n)\"",
         # ANSI-C quoting escapes its apostrophe; the string is data (#23134).
         "echo $'it\\'s'",
         # `\c` does not consume the closing quote; the word is data.
@@ -463,7 +463,7 @@ def test_help_does_not_exempt_launch_operands(command: str) -> None:
         "cat <<EOF\n'$(codex exec hi)'\nEOF\n",
         "cat <<EOF\n`claude -p hi`\nEOF\n",
         "cat <<'EOF' | sh\ncodex exec\nEOF\n",
-        "cat <<'EOF' |\n sh\ncodex\nEOF\n",
+        "cat <<'EOF' |\ncodex\nEOF\n sh\n",
         "sh <<< 'codex exec'",
         "uv run python -c 'import subprocess; subprocess.run([\"codex\"])'",
         "printf '%s' 'codex exec' | sh",
@@ -577,6 +577,19 @@ def test_shell_aliases(name: str) -> None:
 @pytest.mark.parametrize("tool_input", [None, {}, {"command": 3}, {"cmd": ""}])
 def test_absent_command(tool_input: Any) -> None:
     assert not blocks_direct_provider_launch("Bash", tool_input)
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("echo $(true)#; codex exec hi", True),
+        ("cat <<EOF &&\n# $(codex exec hi)\nEOF\ntrue", True),
+        ("cat <<'EOF' &&\n# $(codex exec hi)\nEOF\ntrue", False),
+        ("echo \"$(cat <<'EOF' &&\n)\n# $(codex exec hi)\nEOF\ntrue\n)\"", False),
+    ],
+)
+def test_heredoc_continuation_and_substitution_word(command: str, blocked: bool) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is blocked
 
 
 def test_bounded_and_malformed_input() -> None:

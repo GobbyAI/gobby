@@ -1743,7 +1743,7 @@ fn spawn_managed_challenge(token: &str, grant: GrantBundle) -> Scripted {
 }
 
 #[test]
-fn refresh_destination_by_source_managed_writes_managed_file() {
+fn managed_refresh_preserves_daemon_launch_grant_and_interactive_cache() {
     let harness = Harness::new();
     let interactive = fixture_grant(PrincipalKind::Interactive);
     write_binding_for(
@@ -1791,11 +1791,63 @@ fn refresh_destination_by_source_managed_writes_managed_file() {
     );
     assert_eq!(acquired.source, GrantSource::ManagedFile);
     assert_eq!(fs::read(&cache_path).unwrap(), cache_before);
-    let written = load_grant_file(&managed_path).unwrap();
     assert_eq!(
-        written.credential_generation(),
+        acquired.bundle.credential_generation(),
         renewed.credential_generation()
     );
+    assert_eq!(load_grant_file(&managed_path).unwrap(), managed);
+}
+
+#[test]
+fn managed_renewal_never_writes_or_locks_daemon_assets() {
+    for mode in ["expired", "proactive", "presentation"] {
+        let harness = Harness::new();
+        let mut managed = fixture_grant(PrincipalKind::AgentRun);
+        managed.expires_at = match mode {
+            "expired" => NOW - 1,
+            "proactive" => NOW + 50,
+            _ => NOW + 3_500,
+        };
+        managed = managed.with_checksum();
+        let managed_path = harness.home.join("run.json");
+        write_grant_file(&managed_path, &managed).unwrap();
+        let before = fs::read(&managed_path).unwrap();
+        // An unusable lock path makes any client lock attempt fail or time out.
+        // Renewal must leave both this sentinel and the launch grant untouched.
+        let lock_path = grant_lock_path(&managed_path);
+        fs::create_dir(&lock_path).unwrap();
+        let mut renewed = fixture_grant(PrincipalKind::AgentRun);
+        if let PostgresCapability::Direct {
+            credential_generation,
+            ..
+        } = &mut renewed.capabilities.postgres
+        {
+            *credential_generation += 1;
+        }
+        renewed = renewed.with_checksum();
+        let token = envelope_token(NOW + 60, PROJECT);
+        let scripted = spawn_managed_challenge(&token, renewed.clone());
+        let mut request = harness.request(Some(scripted.url.clone()));
+        request.managed_bootstrap = Some(managed_path.clone());
+        request.managed_envelope = Some(token);
+        let acquired = if mode == "presentation" {
+            rehandshake(&request)
+        } else {
+            acquire_with(&request)
+        }
+        .expect("renew without client writes to daemon assets");
+        assert_eq!(join(scripted).len(), 3);
+        assert_eq!(acquired.bundle, renewed);
+        assert_eq!(
+            acquired
+                .settings
+                .expect("renewed runtime settings")
+                .config_revision,
+            renewed.config_revision
+        );
+        assert_eq!(fs::read(&managed_path).unwrap(), before);
+        assert!(lock_path.is_dir());
+    }
 }
 
 #[test]
@@ -1832,7 +1884,7 @@ fn stale_managed_schema_refreshes_with_capability_and_preserves_interactive_cach
     assert_eq!(acquired.bundle.principal, fresh.principal);
     assert_eq!(
         load_grant_file(&managed_path).unwrap().schema_identity,
-        expected_schema_identity()
+        stale.schema_identity
     );
     assert_eq!(fs::read(&cache_path).unwrap(), cache_before);
     assert!(requests.iter().any(|request| {
@@ -1844,6 +1896,8 @@ fn stale_managed_schema_refreshes_with_capability_and_preserves_interactive_cach
             .any(|request| request.contains(&format!("Bearer {TOKEN}")))
     );
 
+    // Only the daemon publishes the refreshed launch grant for offline reuse.
+    write_grant_file(&managed_path, &fresh).unwrap();
     request.daemon_url = Some("http://127.0.0.1:1".into());
     let offline = acquire_with(&request).expect("reuse refreshed managed cache offline");
     assert_eq!(offline.bundle.schema_identity, expected_schema_identity());
@@ -2122,7 +2176,7 @@ fn stale_maintenance_schema_refreshes_without_a_session_principal() {
     assert_eq!(acquired.bundle.principal, fresh.principal);
     assert_eq!(
         load_grant_file(&managed_path).unwrap().schema_identity,
-        expected_schema_identity()
+        stale.schema_identity
     );
 }
 

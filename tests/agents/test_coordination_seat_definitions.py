@@ -157,7 +157,7 @@ def test_orchestrator_coordinates_restarts_and_edits_tasks_as_needed() -> None:
         body.workflows.rule_selectors.include
     )
     assert set(body.workflows.rule_selectors.exclude) == {
-        f"name:{rule}" for rule in ORCHESTRATOR_AUTHORITY_RULES
+        f"name:{rule}" for rule in ORCHESTRATOR_AUTHORITY_RULES | {"block-update-task"}
     }
 
 

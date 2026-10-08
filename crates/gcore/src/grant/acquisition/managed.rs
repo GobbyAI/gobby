@@ -1,6 +1,6 @@
 //! Managed grant acquisition and capability-authenticated renewal.
 use super::super::bundle::validate_for_construction as validate_grant;
-use super::super::cache::{CachePair, inspect_cache_pair, newer_generation, persist_cache};
+use super::super::cache::{CachePair, inspect_cache_pair, newer_generation};
 use super::super::handshake::{challenge_and_handshake, parse_capability_token as parse_envelope};
 use super::super::inspection::annotate_source;
 use super::super::{
@@ -55,7 +55,7 @@ pub(super) fn acquire_managed(ctx: &AcquireCtx, path: &Path) -> Result<AcquiredG
             destination,
             true,
         ),
-        None if incoherent && ctx.reachable() => handshake_managed(ctx, Some(&grant), destination),
+        None if incoherent && ctx.reachable() => handshake_managed(ctx, Some(&grant)),
         _ => finish_loaded(ctx, grant, GrantSource::ManagedFile, destination, true),
     }
 }
@@ -99,9 +99,8 @@ pub(super) fn managed_envelope(
 pub(super) fn handshake_managed(
     ctx: &AcquireCtx,
     existing: Option<&GrantBundle>,
-    destination: PathBuf,
 ) -> Result<AcquiredGrant, GrantError> {
-    with_presentation_retry(|| handshake_managed_once(ctx, existing, destination.clone()))
+    with_presentation_retry(|| handshake_managed_once(ctx, existing))
 }
 
 pub(super) fn validate_managed_refresh(
@@ -130,7 +129,6 @@ pub(super) fn validate_managed_refresh(
 fn handshake_managed_once(
     ctx: &AcquireCtx,
     existing: Option<&GrantBundle>,
-    destination: PathBuf,
 ) -> Result<AcquiredGrant, GrantError> {
     let (envelope, claims) = managed_envelope(ctx, existing)?;
     let grant = challenge_and_handshake(
@@ -169,7 +167,9 @@ fn handshake_managed_once(
             "managed refresh refused a generation downgrade".to_string(),
         ));
     }
-    persist_cache(&destination, &grant, settings.as_ref())?;
+    // The daemon publishes the managed launch grant when it rotates credentials.
+    // Clients only read that asset; persisting here fails under the managed sandbox
+    // while the predecessor database credential is on its five-minute drain.
     Ok(AcquiredGrant {
         bundle: grant,
         source: GrantSource::ManagedFile,

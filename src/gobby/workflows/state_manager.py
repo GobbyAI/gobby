@@ -35,6 +35,12 @@ logger = logging.getLogger(__name__)
 
 _MutationResult = TypeVar("_MutationResult")
 
+# The blob is decoded here, so take the server's text and skip the pool's
+# canonical re-dump of jsonb containers (#23359).
+_SELECT_VARIABLES_TEXT = (
+    "SELECT variables::text AS variables FROM session_variables WHERE session_id = %s"
+)
+
 
 def _decode_variables_payload(variables: Any) -> dict[str, Any]:
     if isinstance(variables, dict):
@@ -202,10 +208,7 @@ class SessionVariableManager:
     ) -> _MutationResult:
         """Serialize one variable mutation and persist only changed payloads."""
         with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
+            row = conn.execute(_SELECT_VARIABLES_TEXT, (session_id,)).fetchone()
             variables = _decode_variables_payload(row["variables"]) if row else {}
             previous_task_id = variables.get("active_task_id")
             previous_history = variables.get("task_selection_history")
@@ -308,10 +311,7 @@ class SessionVariableManager:
             return False
 
         with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
+            row = conn.execute(_SELECT_VARIABLES_TEXT, (session_id,)).fetchone()
             if row is None:
                 return False
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import os
 import subprocess
+from collections import OrderedDict
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -46,6 +47,12 @@ from gobby.tasks.transcript_evidence_models import (
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
 EvidenceOutcome = Literal["success", "failure", "unknown"]
+
+
+@pytest.fixture(autouse=True)
+def _fresh_import_parses(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Parses are keyed by content, so tests writing the same test file would share them.
+    monkeypatch.setattr(close_test_coverage, "_PARSED_IMPORTS", OrderedDict())
 
 
 @pytest.mark.parametrize(
@@ -841,6 +848,25 @@ def test_related_source_selector_parse_cache_is_bounded(
 
     assert again == expected
     assert len(parse.call_args_list) == 2
+
+
+def test_related_source_selector_shares_test_parses_across_worktrees(tmp_path: Path) -> None:
+    """The same test file in another checkout reuses its parse; closes span worktrees."""
+    expected = {"src/gobby/widget.py": ("tests/test_widget.py",)}
+    for checkout in ("lane-a", "lane-b"):
+        (tmp_path / checkout / "src/gobby").mkdir(parents=True)
+        (tmp_path / checkout / "src/gobby/widget.py").write_text("VALUE = 1\n")
+        (tmp_path / checkout / "tests").mkdir()
+        (tmp_path / checkout / "tests/test_widget.py").write_text(
+            "from gobby.widget import VALUE\n"
+        )
+    first = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path / "lane-a")
+
+    with patch("gobby.tasks.close_test_coverage.ast.parse", wraps=ast.parse) as parse:
+        second = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path / "lane-b")
+
+    assert first == second == expected
+    assert parse.call_args_list == []
 
 
 def test_related_source_selector_reparses_an_edited_test(tmp_path: Path) -> None:

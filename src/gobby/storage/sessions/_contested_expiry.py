@@ -91,7 +91,8 @@ def read_session_variables_row(db: HubDatabase, session_id: str) -> Mapping[str,
         ("session_variables", session_id),
         _VARIABLES_ROW_TABLES,
         lambda: db.fetchone(
-            "SELECT sv.session_id IS NOT NULL AS stored, sv.variables, s.project_id"
+            "SELECT sv.session_id IS NOT NULL AS stored, sv.variables::text AS variables,"
+            " s.project_id"
             " FROM (SELECT 1) AS one"
             " LEFT JOIN session_variables sv ON sv.session_id = %s"
             " LEFT JOIN sessions s ON s.id = %s",

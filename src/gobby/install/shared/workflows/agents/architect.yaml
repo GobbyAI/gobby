@@ -71,6 +71,9 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
       - "tag:task-skill-gates"
+    # The Architecture Brief is written into the assigned task with update_task.
+    exclude:
+      - "name:block-update-task"
 step_workflow:
   variables:
     task_claimed: false
