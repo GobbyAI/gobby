@@ -760,3 +760,44 @@ class TestSessionEndHandling:
 
         assert response.decision == "allow"
         monitor.mark_recently_handled.assert_called_once_with("sess-123")
+
+    @pytest.mark.parametrize(
+        ("status", "hands_off"),
+        [("awaiting_handoff", True), ("active", False)],
+    )
+    def test_staged_clear_end_hands_run_to_successor(
+        self, mock_dependencies: dict[str, Any], status: str, hands_off: bool
+    ) -> None:
+        """A staged clear leaves its run and terminal to the successor; an unstaged one ends both."""
+        mock_session = MagicMock()
+        mock_session.created_at = "2024-01-01T00:00:00Z"
+        mock_session.agent_run_id = "run-456"
+        mock_session.status = status
+        mock_session.terminal_context = None
+        mock_dependencies["session_storage"].get.return_value = mock_session
+        terminals = MagicMock()
+        terminals.get_live_for_session.return_value = MagicMock(
+            id="term-1", ownership="gobby", agent_run_id="run-456"
+        )
+
+        handlers = EventHandlers(**mock_dependencies, terminal_manager=terminals)
+        event = make_event(
+            HookEventType.SESSION_END,
+            session_id="ext-123",
+            data={"reason": SessionEndReason.CLEAR.value},
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        with patch("gobby.workflows.step_instances.AgentStepInstanceManager") as manager_cls:
+            response = handlers.handle_session_end(event)
+
+        assert response.decision == "allow"
+        manager_cls.return_value.delete_for_session.assert_called_once_with("sess-123")
+        completions = mock_dependencies["session_coordinator"].complete_agent_run
+        if hands_off:
+            completions.assert_not_called()
+            terminals.mark_exited.assert_not_called()
+            terminals.release_session.assert_not_called()
+        else:
+            completions.assert_called_once_with(mock_session)
+            terminals.mark_exited.assert_called_once_with("term-1")

@@ -225,11 +225,29 @@ def _bind_clear_successor(
             exc,
         )
     try:
+        from gobby.storage.config_repository import ConfigRepository
         from gobby.workflows.state_manager import SessionVariableManager
 
-        SessionVariableManager(handler._session_manager.db).merge_variables(
+        db = handler._session_manager.db
+        # A seat crosses the clear; the base agent is resolved afresh, as for any session.
+        seat: dict[str, Any] = {}
+        agent_type = predecessor_vars.get("_agent_type")
+        if (
+            agent_type
+            and agent_type != "default"
+            and agent_type
+            != ConfigRepository(db).read(resolve_secrets=False).values.get("default_agent")
+        ):
+            seat["_agent_type"] = agent_type
+            if predecessor_vars.get("_agent_definition_hash"):
+                seat["_agent_definition_hash"] = predecessor_vars["_agent_definition_hash"]
+        SessionVariableManager(db).merge_variables(
             successor_id,
-            {HANDOFF_PULL_PENDING_VARIABLE: True, **inherited_mcp_proxy_ready(predecessor_vars)},
+            {
+                HANDOFF_PULL_PENDING_VARIABLE: True,
+                **inherited_mcp_proxy_ready(predecessor_vars),
+                **seat,
+            },
         )
     except Exception as exc:
         handler.logger.warning(
