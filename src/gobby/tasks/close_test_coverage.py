@@ -172,21 +172,25 @@ def _scan_tests(
 ) -> list[tuple[str, frozenset[str]]]:
     """Each collected test module with ``_test_imports``, read only when it changed."""
     tests_dir = base / "tests"
-    # rglob joins onto tests_dir, so slicing its string skips pathlib's relative_to.
+    # os.walk joins onto tests_dir, so slicing its string skips relative_to; like rglob,
+    # it lists symlinked files but never descends into symlinked directories.
     offset = len(str(tests_dir)) - len("tests")
     signatures: dict[str, tuple[int, ...]] = {}
-    for path in tests_dir.rglob("*.py"):
-        try:
-            info = path.stat()
-        except OSError:
-            continue
-        if stat.S_ISREG(info.st_mode):
-            signatures[str(path)[offset:]] = (
-                info.st_ino,
-                info.st_size,
-                info.st_mtime_ns,
-                info.st_ctime_ns,
-            )
+    for root, _, names in os.walk(tests_dir):
+        for name in names:
+            if not name.endswith(".py"):
+                continue
+            try:
+                info = os.stat(os.path.join(root, name))
+            except OSError:
+                continue
+            if stat.S_ISREG(info.st_mode):
+                signatures[f"{root[offset:]}/{name}"] = (
+                    info.st_ino,
+                    info.st_size,
+                    info.st_mtime_ns,
+                    info.st_ctime_ns,
+                )
     key = (tests_dir, frozenset(prefixes))
     with _TEST_SCANS_LOCK:
         previous = _TEST_SCANS.get(key, {})
@@ -271,22 +275,23 @@ def related_python_source_tests(
     leaves = {prefix.rpartition(".")[2] for prefix in prefixes}
     tests = _scan_tests(base, prefixes, leaves, parent_import)
     for source, family in families.items():
-        source_path = PurePosixPath(source)
-        module = _module_name(source)
-        package_parts = module.split(".")[:-1]
+        package_parts = _module_name(source).split(".")[:-1]
         if package_parts and package_parts[0] == "gobby":
             package_parts.pop(0)
-        mirror_parent = PurePosixPath("tests", *package_parts)
+        # Test paths are normalized "tests/..." strings ending in ".py", so string parts
+        # match their pathlib parent and stem without a path object per test (#23359).
+        mirror_parent = "/".join(("tests", *package_parts))
         ranked: list[tuple[int, str]] = []
         for test, imports in tests:
-            test_path = PurePosixPath(test)
             ranks = [2 * family[imported] + 1 for imported in imports.intersection(family)]
-            if test_path.parent == mirror_parent:
+            test_parent, _, test_name = test.rpartition("/")
+            if test_parent == mirror_parent:
+                test_stem = test_name.removesuffix(".py")
                 ranks.extend(
                     2 * distance
                     for member, distance in family.items()
                     if (stem := member.rpartition(".")[2].lstrip("_"))
-                    and (test_path.stem == f"{stem}_test" or test_path.stem == f"test_{stem}")
+                    and (test_stem == f"{stem}_test" or test_stem == f"test_{stem}")
                 )
             if ranks:
                 ranked.append((min(ranks), test))

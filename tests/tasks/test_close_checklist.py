@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import subprocess
 from collections.abc import Iterator
 from dataclasses import replace
@@ -696,14 +697,14 @@ def test_rootless_validation_probe_never_scans_tests() -> None:
 def test_related_source_selector_uses_one_test_tree_scan(tmp_path: Path) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests/test_widget.py").write_text("def test_widget(): pass\n")
-    original = Path.rglob
+    original = os.walk
     scanned: list[Path] = []
 
-    def record_scan(path: Path, pattern: str) -> Iterator[Path]:
+    def record_scan(path: Path) -> Iterator[tuple[str, list[str], list[str]]]:
         scanned.append(path)
-        return original(path, pattern)
+        return original(str(path))
 
-    with patch.object(Path, "rglob", record_scan):
+    with patch.object(os, "walk", record_scan):
         selected = related_python_source_tests(
             ("src/widget.py", "src/gadget.py"), base_dir=tmp_path
         )
