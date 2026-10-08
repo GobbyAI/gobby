@@ -57,6 +57,7 @@ from gobby.hooks.provider_launch_guard import (
     _piped_to_shell,
     _prepare,
     _python_name,
+    _python_program,
     _shell_stdin,
     _unwrap,
     option_word_count,
@@ -339,12 +340,9 @@ def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) ->
                     next_expression = index + end + 2
             continue
         if _python_name(name):
-            for index, word in enumerate(unwrapped[1:], 1):
-                if word == "-m" and unwrapped[index + 1 : index + 2] == ["gobby"]:
-                    scripts.append(shlex.join(unwrapped[index + 1 :]))
-                    break
-                if not word.startswith("-") or word in {"-c", "-m", "--"}:
-                    break
+            module_args = _python_program(unwrapped)[2]
+            if module_args[:1] == ["gobby"]:
+                scripts.append(shlex.join(module_args))
         if name == "su":
             for index, word in enumerate(unwrapped[1:], 1):
                 if word in {"-c", "--command"} and index + 1 < len(unwrapped):
@@ -352,6 +350,9 @@ def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) ->
                     break
                 if word.startswith("--command="):
                     scripts.append(word.partition("=")[2])
+                    break
+                if word.startswith("-c") and len(word) > 2:
+                    scripts.append(word[2:])
                     break
         if name in _SHELLS:
             execution = shell_execution(unwrapped)
@@ -670,7 +671,12 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
         if char in "\"'":
             quote = "" if quote == char else quote or char
         if char == "\n" and not quote:
-            line = scan_shell_command(subject[line_start:index])
+            try:
+                line = scan_shell_command(subject[line_start:index])
+            except ValueError:
+                # Comments and ANSI-C quotes can diverge from this lightweight
+                # tracker. Keep the complete subject for conservative matching.
+                return [subject]
             if not line.tokens or line.tokens[-1].value not in _CONTINUATION_OPERATORS:
                 end = _skip_heredocs(subject, line.tokens, index + 1)
                 out.append(subject[index:end])

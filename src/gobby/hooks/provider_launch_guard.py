@@ -554,39 +554,42 @@ def _piped_to_shell(tokens: list[ShellToken], end: int, *, python: bool = False)
     return False
 
 
-def _python_program(words: list[str]) -> tuple[str | None, bool]:
-    """The Python code operand or whether stdin is code, stopping at a file operand."""
+def _python_program(words: list[str]) -> tuple[str | None, bool, list[str]]:
+    """Return Python code, stdin mode and module argv, stopping at a file operand."""
     parts = _inline_interpreter_parts(words)
     if not parts and words[:2] == ["uv", "run"]:
         parts = next((words[index:] for index, word in enumerate(words) if _python_name(word)), [])
     if not parts or not _python_name(parts[0]):
-        return None, False
+        return None, False, []
     args = parts[1:]
     while args:
         option = args[0]
         if option == "-":
-            return None, True
+            return None, True, []
         if option == "--":
-            return None, len(args) == 1 or args[1] == "-"
+            return None, len(args) == 1 or args[1] == "-", []
         if option == "--check-hash-based-pycs":
             args = args[2:]
             continue
         if option.startswith("--") or not option.startswith("-"):
-            return None, False
+            return None, False, []
         consumed = 1
         for index, flag in enumerate(option[1:], 2):
-            if flag in "hV?m":
-                return None, False
+            if flag in "hV?":
+                return None, False, []
+            if flag == "m":
+                module_args = [option[index:], *args[1:]] if option[index:] else args[1:]
+                return None, False, module_args
             if flag == "c":
                 code = option[index:] or (args[1] if len(args) > 1 else None)
-                return code, False
+                return code, False, []
             if flag in "WX":
                 consumed = 1 if option[index:] else 2
                 break
             if flag not in "bBdEiIOPqRsSuvx":
-                return None, False
+                return None, False, []
         args = args[consumed:]
-    return None, True
+    return None, True, []
 
 
 def _python_name(word: str) -> bool:
@@ -708,7 +711,7 @@ def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
                 return True
             # Budget executable words; code operands and heredoc payloads belong
             # to their consumers, whose process operands are checked recursively.
-            python_script, python_stdin = _python_program(words)
+            python_script, python_stdin, _ = _python_program(words)
             inspected_length += sum(len(word) for word in words) - len(python_script or "")
             if python_script is not None and _python_launch(python_script, depth + 1, dialect):
                 return True
