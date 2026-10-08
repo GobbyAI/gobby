@@ -272,10 +272,11 @@ async def test_failed_keyboard_send_discards_registered_callbacks() -> None:
     )
     post_json = AsyncMock(return_value={"ok": False, "description": "send denied"})
 
-    with patch.object(adapter, "_post_json", post_json):
-        result = await adapter.send_message(message)
-
-    assert result is None
+    with (
+        patch.object(adapter, "_post_json", post_json),
+        pytest.raises(RuntimeError, match="send denied"),
+    ):
+        await adapter.send_message(message)
     post_call = post_json.await_args
     assert post_call is not None
     payload = post_call.args[1]

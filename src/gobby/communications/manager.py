@@ -152,6 +152,7 @@ class CommunicationsManager:
 
     async def start(self) -> None:
         """Load enabled channels from DB, initialize adapters, configure rate limiter."""
+        self._outbound.start()
         try:
             await self._lifecycle.start()
             self._restore_telegram_targets()
@@ -183,7 +184,12 @@ class CommunicationsManager:
 
     async def stop(self) -> None:
         """Shutdown all adapters and clear state."""
-        await self.responder.stop()
+        try:
+            await self.responder.stop()
+        except asyncio.CancelledError:
+            await self._outbound.stop(drain_seconds=0)
+            raise
+        await self._outbound.stop()
         await self._lifecycle.stop()
         if self._vision_extract_service is not None:
             await self._vision_extract_service.stop()
@@ -211,7 +217,9 @@ class CommunicationsManager:
     ) -> CommsMessage:
         """Send a message to a named channel."""
         await self._wait_for_channel_startup(channel_name)
-        return await self._outbound.send_message(channel_name, content, session_id, metadata)
+        return await self._outbound.run(
+            self._outbound.send_message(channel_name, content, session_id, metadata)
+        )
 
     async def _wait_for_channel_startup(self, channel_name: str) -> None:
         """Wait for an enabled channel when a send races adapter initialization."""
@@ -342,14 +350,16 @@ class CommunicationsManager:
     ) -> tuple[CommsMessage, CommsAttachment]:
         """Send a file attachment to a named channel."""
         await self._wait_for_channel_startup(channel_name)
-        return await self._outbound.send_attachment(
-            channel_name,
-            file_path,
-            filename,
-            content_type,
-            content,
-            session_id,
-            metadata,
+        return await self._outbound.run(
+            self._outbound.send_attachment(
+                channel_name,
+                file_path,
+                filename,
+                content_type,
+                content,
+                session_id,
+                metadata,
+            )
         )
 
     def _bridge_identity(self, identity_id: str, session_id: str) -> None:
@@ -655,8 +665,8 @@ class CommunicationsManager:
         self, channel_name: str, conversation_id: str, content: str, content_type: str = "text"
     ) -> CommsMessage:
         """Send a proactive message via an adapter that supports it."""
-        return await self._outbound.send_proactive(
-            channel_name, conversation_id, content, content_type
+        return await self._outbound.run(
+            self._outbound.send_proactive(channel_name, conversation_id, content, content_type)
         )
 
     def list_messages(

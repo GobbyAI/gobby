@@ -27,8 +27,8 @@ def channel_config() -> ChannelConfig:
         name="Test Telegram",
         enabled=True,
         config_json={"bot_token": "$secret:TELEGRAM_BOT_TOKEN"},
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         webhook_secret="test_secret_token",
     )
 
@@ -236,7 +236,7 @@ async def test_send_message_basic(
     mock_post = AsyncMock()
 
     # Mock behavior depending on the url called
-    async def side_effect(url, **kwargs):
+    async def side_effect(url: str, **kwargs: object) -> MagicMock:
         resp = MagicMock()
         resp.status_code = 200
         resp.raise_for_status = MagicMock()
@@ -261,7 +261,7 @@ async def test_send_message_basic(
             content="Hello world",
             platform_thread_id="123",
             metadata_json={"platform_destination": "chat999"},
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=datetime.now(UTC),
         )
 
         msg_id = await adapter.send_message(message)
@@ -290,7 +290,7 @@ async def test_send_message_http_status_error_redacts_bot_token(
     channel_config.config_json["proxy_url"] = "http://127.0.0.1:8080"
     mock_post = AsyncMock()
 
-    async def side_effect(url, **kwargs):
+    async def side_effect(url: str, **kwargs: object) -> httpx.Response:
         request = httpx.Request("POST", url)
         if "deleteWebhook" in url:
             return httpx.Response(200, request=request, json={"ok": True})
@@ -318,7 +318,7 @@ async def test_send_message_http_status_error_redacts_bot_token(
             direction="outbound",
             content="Hello world",
             metadata_json={"platform_destination": "chat999"},
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=datetime.now(UTC),
         )
 
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
@@ -341,7 +341,7 @@ async def test_send_message_chunking(
     sent_message_ids = iter((901, 902))
 
     # Mock behavior depending on the url called
-    async def side_effect(url, **kwargs):
+    async def side_effect(url: str, **kwargs: object) -> MagicMock:
         resp = MagicMock()
         resp.status_code = 200
         resp.raise_for_status = MagicMock()
@@ -381,7 +381,7 @@ async def test_send_message_chunking(
                 "callback_action": "session_action",
                 "inline_keyboard": [[{"text": "Continue", "value": "Continue"}]],
             },
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=datetime.now(UTC),
         )
 
         await adapter.send_message(message)
@@ -422,10 +422,13 @@ async def test_send_message_stops_after_first_failed_chunk(
         created_at=datetime.now(UTC),
     )
 
-    with patch.object(adapter, "_post_json", post_json):
-        result = await adapter.send_message(message)
+    with (
+        patch.object(adapter, "_post_json", post_json),
+        pytest.raises(RuntimeError, match="send denied"),
+    ):
+        await adapter.send_message(message)
 
-    assert result is None
+    assert message.metadata_json["platform_message_ids"] == ["100"]
     assert post_json.await_count == 2
 
 
@@ -463,6 +466,93 @@ async def test_send_message_renders_telegram_safe_html(adapter: TelegramAdapter)
         ),
         "parse_mode": "HTML",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attachment", [False, True], ids=["text", "attachment"])
+async def test_read_error_retries_only_failed_outbound_request(
+    adapter: TelegramAdapter,
+    tmp_path: Path,
+    attachment: bool,
+) -> None:
+    requests: list[str] = []
+    client = MagicMock()
+
+    async def post(url: str, **kwargs: object) -> httpx.Response:
+        requests.append(url.rsplit("/", 1)[-1])
+        if len(requests) == 2:
+            raise httpx.ReadError("")
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={"ok": True, "result": {"message_id": len(requests)}},
+        )
+
+    client.post = AsyncMock(side_effect=post)
+    adapter._client = client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    message = CommsMessage(
+        id="retry-message",
+        channel_id="channel1",
+        direction="outbound",
+        content="a" * (1100 if attachment else 4200),
+        metadata_json={"platform_destination": "chat999"},
+        created_at=datetime.now(UTC),
+    )
+    with patch("gobby.communications.adapters.base.asyncio.sleep", new_callable=AsyncMock):
+        if attachment:
+            file_path = tmp_path / "retry.txt"
+            file_path.write_text("attachment content")
+            media = CommsAttachment(
+                id="attachment1",
+                message_id=message.id,
+                filename=file_path.name,
+                content_type="text/plain",
+                size_bytes=file_path.stat().st_size,
+                created_at=datetime.now(UTC),
+            )
+            result = await adapter.send_attachment(message, media, file_path)
+        else:
+            result = await adapter.send_message(message)
+
+    assert result == "1"
+    assert requests == (
+        ["sendDocument", "sendMessage", "sendMessage"] if attachment else ["sendMessage"] * 3
+    )
+    assert client.post.await_args_list[1] == client.post.await_args_list[2]
+
+
+@pytest.mark.asyncio
+async def test_outbound_read_error_exhausts_bound_and_logs_identity(
+    adapter: TelegramAdapter,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = MagicMock()
+    client.post = AsyncMock(side_effect=httpx.ReadError(""))
+    adapter._client = client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    message = CommsMessage(
+        id="bounded-retry-message",
+        channel_id="channel1",
+        direction="outbound",
+        content="response",
+        metadata_json={"platform_destination": "chat999"},
+        created_at=datetime.now(UTC),
+    )
+    with (
+        patch(
+            "gobby.communications.adapters.base.asyncio.sleep", new_callable=AsyncMock
+        ) as sleeping,
+        pytest.raises(httpx.ReadError),
+    ):
+        await adapter.send_message(message)
+    assert client.post.await_count == 4
+    assert [call.args[0] for call in sleeping.await_args_list] == [1.0, 2.0, 4.0]
+    retry_lines = [
+        record.getMessage() for record in caplog.records if "retrying" in record.getMessage()
+    ]
+    assert len(retry_lines) == 3
+    assert all(message.id in line and "ReadError" in line for line in retry_lines)
 
 
 @pytest.mark.asyncio
