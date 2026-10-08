@@ -65,15 +65,22 @@ def check_runbook_seats(
     workspace: str,
     requested: str,
     catalogue: Sequence[Mapping[str, Any]],
+    report_to: str | None = None,
+    require_report_to: bool = False,
 ) -> AdmittedSeats:
     """Admit ``requested`` seats or raise ``RunbookSeatRefusal``.
 
     ``requested`` is the comma-separated seat names; each must be exactly a catalogue
-    name. Checks run in order: a live execution of the caller's runbook in the same
-    workspace on the same machine, then each seat's agent definition. A storage error, a
+    name. Runbooks requiring session reports set ``require_report_to``; an empty ref refuses
+    before storage lookup. Checks run in order: a live execution of the caller's runbook
+    in the same workspace on the same machine, then each seat's agent definition. A storage error, a
     truncated read, or a live sibling whose machine or workspace is unknown refuses with
     its cause.
     """
+    if (require_report_to and report_to is None) or (
+        report_to is not None and not report_to.strip()
+    ):
+        raise RunbookSeatRefusal("report_to must be a nonempty session ref")
     seats = _requested_seats(requested, catalogue)
     try:
         return _admit(stores, seats, caller_session_id=caller_session_id, workspace=workspace)

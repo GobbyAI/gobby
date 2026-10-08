@@ -8,6 +8,7 @@ at most one active claim, and that claim receives its edits.
 from __future__ import annotations
 
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +20,12 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.close_receipts import INDEPENDENT_REVIEW_APPROVAL, record_close_receipt
+from gobby.tasks.transcript_evidence_models import TranscriptTaskClaim
+from gobby.tasks.transcript_evidence_snapshots import PendingTool
+from gobby.tasks.transcript_task_claims import task_claim
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_claim_state import claims_without_edit_target
 
 pytestmark = pytest.mark.unit
 
@@ -260,38 +265,118 @@ async def test_edits_after_the_new_claim_attribute_only_to_it(
     assert edited[nxt.id] == ["b.py"]
 
 
+async def _release_the_newer_claim(
+    db: HubDatabase,
+    registry: Any,
+    session: Session,
+    reviewer: Session,
+    handed_off: list[Task],
+    newer: Task,
+) -> None:
+    """Hand off each task in turn, claim the newer task, then release that claim."""
+    for task in handed_off:
+        await _claim(registry, session, task)
+        _approve(db, task, reviewer)
+    await _claim(registry, session, newer)
+    escalated = await _call(
+        registry,
+        session,
+        "escalate_task",
+        task_id=newer.id,
+        reason="Blocked on an external decision",
+    )
+    assert escalated == {}
+
+
 @pytest.mark.asyncio
-async def test_releasing_the_newer_claim_makes_the_sole_survivor_the_edit_target(
+async def test_releasing_the_newer_claim_leaves_the_survivor_without_an_edit_target(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
     reviewer: Session,
     tmp_path: Path,
 ) -> None:
-    """No claim call marks this return, so close evidence keeps the owner's edits."""
+    """Only a reclaim makes a handed-off claim active again, so no edit reaches it first."""
     manager = LocalTaskManager(temp_db)
     registry = create_task_registry(manager)
-    variables = SessionVariableManager(temp_db)
     landed = _task(manager, sample_project, "Landed")
-    nxt = _task(manager, sample_project, "Next")
-    await _claim(registry, canonical_task_session, landed)
-    _approve(temp_db, landed, reviewer)
-    await _claim(registry, canonical_task_session, nxt)
-
-    escalated = await _call(
-        registry,
-        canonical_task_session,
-        "escalate_task",
-        task_id=nxt.id,
-        reason="Blocked on an external decision",
+    newer = _task(manager, sample_project, "Next")
+    await _release_the_newer_claim(
+        temp_db, registry, canonical_task_session, reviewer, [landed], newer
     )
     checkout = _repo_with_committed_file(tmp_path / "repo")
-    variables.record_edited_files(canonical_task_session.id, ["a.py"], checkout_root=str(checkout))
+    SessionVariableManager(temp_db).record_edited_files(
+        canonical_task_session.id, ["a.py"], checkout_root=str(checkout)
+    )
 
-    assert escalated == {}
-    assert manager.get_task(nxt.id).claimed_by_session_id is None
-    assert _variables(temp_db, canonical_task_session)["active_task_id"] == landed.id
-    assert _variables(temp_db, canonical_task_session)["task_edited_files"] == {landed.id: ["a.py"]}
+    state = _variables(temp_db, canonical_task_session)
+    assert state["claimed_tasks"] == {landed.id: f"#{landed.seq_num}"}
+    assert state["active_task_id"] is None
+    assert claims_without_edit_target(state)
+    assert landed.id not in (state.get("task_edited_files") or {})
+
+
+@pytest.mark.asyncio
+async def test_reclaiming_the_sole_survivor_is_a_full_claim_that_close_evidence_counts(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    canonical_task_session: Session,
+    reviewer: Session,
+    tmp_path: Path,
+) -> None:
+    """The reclaim runs the capacity check, and its result marks the owner's return."""
+    manager = LocalTaskManager(temp_db)
+    registry = create_task_registry(manager)
+    landed = _task(manager, sample_project, "Landed")
+    newer = _task(manager, sample_project, "Next")
+    await _release_the_newer_claim(
+        temp_db, registry, canonical_task_session, reviewer, [landed], newer
+    )
+
+    reclaimed = await _call(registry, canonical_task_session, "claim_task", task_id=landed.id)
+    checkout = _repo_with_committed_file(tmp_path / "repo")
+    SessionVariableManager(temp_db).record_edited_files(
+        canonical_task_session.id, ["a.py"], checkout_root=str(checkout)
+    )
+    at = datetime.now(UTC)
+    call = PendingTool(
+        name="mcp__gobby__call_tool",
+        arguments={
+            "server_name": "gobby-tasks",
+            "tool_name": "claim_task",
+            "arguments": {"task_id": f"#{landed.seq_num}"},
+        },
+        timestamp=at,
+        order=1,
+    )
+
+    assert reclaimed == {"success": True, "task_id": landed.id, "title": "Landed"}
+    state = _variables(temp_db, canonical_task_session)
+    assert state["active_task_id"] == landed.id
+    assert state["task_edited_files"] == {landed.id: ["a.py"]}
+    assert task_claim(call, reclaimed, at) == TranscriptTaskClaim(task_ref=landed.id, claimed_at=at)
+
+
+@pytest.mark.asyncio
+async def test_a_reclaim_activates_one_of_several_handed_off_claims(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    canonical_task_session: Session,
+    reviewer: Session,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    registry = create_task_registry(manager)
+    first = _task(manager, sample_project, "First")
+    second = _task(manager, sample_project, "Second")
+    newer = _task(manager, sample_project, "Next")
+    await _release_the_newer_claim(
+        temp_db, registry, canonical_task_session, reviewer, [first, second], newer
+    )
+
+    reclaimed = await _call(registry, canonical_task_session, "claim_task", task_id=second.id)
+
+    assert reclaimed == {"success": True, "task_id": second.id, "title": "Second"}
+    assert _variables(temp_db, canonical_task_session)["active_task_id"] == second.id
 
 
 @pytest.mark.asyncio

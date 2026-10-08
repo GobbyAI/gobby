@@ -591,6 +591,9 @@ class TestClaimTaskTool:
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionVariableManager"
+            ) as MockSessionVariableManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -602,6 +605,11 @@ class TestClaimTaskTool:
                 project_id="11111111-1111-4111-8111-111111110001"
             )
             MockSessionManager.return_value = mock_session_manager
+            # The task already receives this session's edits.
+            MockSessionVariableManager.return_value.get_variables.return_value = {
+                "claimed_tasks": {task_claimed_by_self.id: "#1"},
+                "active_task_id": task_claimed_by_self.id,
+            }
 
             registry = create_task_registry(mock_task_manager)
 

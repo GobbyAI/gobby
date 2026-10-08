@@ -373,6 +373,9 @@ def reconcile_claimed_tasks(
         if db_tasks:
             for task in db_tasks:
                 claimed_tasks[task.id] = f"#{task.seq_num}" if task.seq_num else task.id[:8]
+            # With no claim state to say which claim was active, a sole claim is.
+            if len(claimed_tasks) == 1:
+                variables["active_task_id"] = next(iter(claimed_tasks))
             logger.debug(
                 "Session %s: reconcile - rebuilt claimed_tasks from DB: %s",
                 session_id,

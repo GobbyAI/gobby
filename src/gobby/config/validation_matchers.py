@@ -130,6 +130,10 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
                 "--disable-pip",
                 "--local",
                 "-l",
+                "--requirement",
+                "-r",
+                "--path",
+                "--locked",
             ],
         ),
         _matcher(

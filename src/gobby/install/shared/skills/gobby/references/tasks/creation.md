@@ -32,8 +32,9 @@ Create with `claim=true` or claim existing work before edits. A session may hold
 any number of active claims. Each successful claim selects that task for new
 edits and validation commands. Call `claim_task(task_id)` on an already-owned
 task to select it again; `already_claimed` confirms ownership and selection.
-Other claims retain their ownership and edit history. If several claims remain
-without a selected task, select one with `claim_task` before editing.
+Other claims retain their ownership and edit history. When the selected claim
+ends, remaining claims stay inactive: select one with `claim_task` before editing
+or validating it.
 
 Finish or stop native shell/agent calls before explicitly selecting another task.
 Their completion stays bound to the task selected at their start, including

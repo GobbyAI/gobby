@@ -78,12 +78,6 @@ def _task_edited_file_checkouts(
     return result
 
 
-def _active_task_id_after_removal(tasks: dict[str, str]) -> str | None:
-    if len(tasks) == 1:
-        return next(iter(tasks))
-    return None
-
-
 def add_claimed_task(variables: dict[str, Any], task_id: str, ref: str) -> dict[str, Any]:
     """Return merge dict that adds a task to the claimed set (idempotent)."""
     tasks = _claimed_tasks(variables)
@@ -144,9 +138,11 @@ def release_claimed_task(variables: dict[str, Any], task_id: str) -> dict[str, A
     tasks = _claimed_tasks(variables)
     tasks.pop(task_id, None)
 
+    # The claims left behind wait on review, landing or close; one receives edits
+    # again only through a reclaim (#23665).
     active_task_id = variables.get("active_task_id")
-    if active_task_id == task_id or active_task_id not in tasks:
-        active_task_id = _active_task_id_after_removal(tasks)
+    if active_task_id not in tasks:
+        active_task_id = None
 
     result: dict[str, Any] = {
         "task_claimed": len(tasks) > 0,
@@ -178,16 +174,14 @@ def remove_claimed_task(variables: dict[str, Any], task_id: str) -> dict[str, An
 
 
 def active_task_id_for_edit(variables: dict[str, Any]) -> str | None:
-    """Return the task that should receive a new edited-file attribution."""
-    tasks = _claimed_tasks(variables)
-    if not tasks:
-        return None
+    """Return the task that should receive a new edited-file attribution.
 
+    Only a claim makes a task active, so a claim left behind when the active one
+    ended receives no edits until it is reclaimed (#23665).
+    """
     active_task_id = variables.get("active_task_id")
-    if isinstance(active_task_id, str) and active_task_id in tasks:
+    if isinstance(active_task_id, str) and active_task_id in _claimed_tasks(variables):
         return active_task_id
-    if len(tasks) == 1:
-        return next(iter(tasks))
     return None
 
 

@@ -77,6 +77,8 @@ steps:
       arguments:
         workspace: "${{ inputs.workspace }}"
         requested: "${{ inputs.seats }}"
+        report_to: "${{ inputs.report_to }}"
+        require_report_to: true
         catalogue:
           - name: developer
             title: "${{ 'Lane ' + inputs.lane + ' developer' }}"

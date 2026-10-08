@@ -103,7 +103,8 @@ explicit recovery situations. A session may hold any number of active claims.
 Each successful claim selects its task for new edits and validation commands;
 call `claim_task` on an already-owned task to switch back. `already_claimed`
 confirms that ownership and selection. Other claims retain their edit history.
-If several claims remain without a selection, select one before editing.
+When the selected claim ends, remaining claims stay inactive until you select
+one with `claim_task` before editing or validating it.
 
 Finish or stop native shell/agent calls before explicitly switching tasks. Their
 results retain the selection from their start, even when delivery is delayed or
