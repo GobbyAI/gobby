@@ -33,6 +33,13 @@ if TYPE_CHECKING:
     from gobby.terminals.composer_ledger import ComposerLedger
     from gobby.workflows.hooks import WorkflowHookHandler
 
+# How a turn end leaves a dialog still open on the composer; ``unknown`` leaves it open.
+_TURN_END_WAIT_OUTCOMES: dict[TurnDisposition, WaitResolution] = {
+    "completed": "resumed",
+    "user_interrupted": "abandoned",
+    "ended_non_user": "ambiguous",
+}
+
 # The final bool is set_awaiting_handoff for handoff-gated summary dispatches.
 DispatchSessionSummariesFn = Callable[[str, bool, threading.Event | None, bool], None]
 
@@ -123,6 +130,7 @@ class EventHandlersBase:
             self._turn_lifecycle.resumed_work(session_id, self._turn_evidence(event))
         except Exception:
             self.logger.warning("Failed to resume turn lifecycle", exc_info=True)
+        self._close_composer_wait(session_id, "resumed")
 
     def _end_turn_lifecycle(self, event: HookEvent, disposition: TurnDisposition) -> None:
         session_id = event.metadata.get("_platform_session_id")
@@ -136,6 +144,9 @@ class EventHandlersBase:
             )
         except Exception:
             self.logger.warning("Failed to end turn lifecycle", exc_info=True)
+        outcome = _TURN_END_WAIT_OUTCOMES.get(disposition)
+        if outcome is not None:
+            self._close_composer_wait(session_id, outcome)
 
     def _enter_turn_wait(self, event: HookEvent, kind: WaitKind) -> None:
         session_id = event.metadata.get("_platform_session_id")
@@ -182,9 +193,7 @@ class EventHandlersBase:
             )
         except Exception:
             self.logger.warning("Failed to resolve turn wait", exc_info=True)
-        composer = self._composer_terminal(session_id)
-        if composer is not None:
-            composer[0].close_wait(composer[1], resolution)
+        self._close_composer_wait(session_id, resolution)
 
     def _record_composer_submit(self, session_id: str) -> None:
         """A provider submit record: the session's composer input up to now was consumed."""
@@ -192,12 +201,27 @@ class EventHandlersBase:
         if composer is not None:
             composer[0].record_submit(composer[1])
 
-    def _composer_terminal(self, session_id: str) -> tuple[ComposerLedger, str] | None:
-        """The composer ledger and the live terminal bound to ``session_id``, if both exist."""
+    def _close_composer_wait(self, session_id: str, outcome: WaitResolution) -> None:
+        """Close the dialog open on the session's composer, as the turn lifecycle clears waits."""
+        ledger = self._composer_ledger()
+        # Every tool event lands here; with no dialog open anywhere, skip the terminal lookup.
+        if ledger is None or not ledger.has_open_waits:
+            return
+        composer = self._composer_terminal(session_id)
+        if composer is not None:
+            composer[0].close_wait(composer[1], outcome)
+
+    @staticmethod
+    def _composer_ledger() -> ComposerLedger | None:
         app = get_app_context()
         coordinator = app.write_coordinator if app is not None else None
+        return None if coordinator is None else coordinator.composer_ledger
+
+    def _composer_terminal(self, session_id: str) -> tuple[ComposerLedger, str] | None:
+        """The composer ledger and the live terminal bound to ``session_id``, if both exist."""
+        ledger = self._composer_ledger()
         manager = getattr(self, "terminal_manager", None)
-        if coordinator is None or manager is None:
+        if ledger is None or manager is None:
             return None
         try:
             row = manager.get_live_for_session(session_id)
@@ -206,7 +230,7 @@ class EventHandlersBase:
                 "Failed to resolve the composer terminal for session %s", session_id, exc_info=True
             )
             return None
-        return None if row is None else (coordinator.composer_ledger, str(row.id))
+        return None if row is None else (ledger, str(row.id))
 
     def _resolve_message_processor(self) -> Any | None:
         return self._message_processor_resolver()

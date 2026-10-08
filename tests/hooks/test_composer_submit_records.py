@@ -12,7 +12,7 @@ import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.sessions.turn_lifecycle import WaitResolution
+from gobby.sessions.turn_lifecycle import TurnDisposition, WaitResolution
 from gobby.terminals.composer_ledger import ComposerLedger, LedgerRead
 
 pytestmark = pytest.mark.unit
@@ -33,11 +33,16 @@ def ledger() -> Iterator[ComposerLedger]:
 
 
 @pytest.fixture
-def handlers(mock_dependencies: dict[str, Any]) -> EventHandlers:
+def terminals() -> MagicMock:
     terminals = MagicMock(name="terminal_manager")
     terminals.get_live_for_session.side_effect = lambda session_id: (
         SimpleNamespace(id=_TERMINAL) if session_id == _SESSION else None
     )
+    return terminals
+
+
+@pytest.fixture
+def handlers(mock_dependencies: dict[str, Any], terminals: MagicMock) -> EventHandlers:
     return EventHandlers(terminal_manager=terminals, **mock_dependencies)
 
 
@@ -116,6 +121,57 @@ def test_dialog_input_follows_how_the_wait_resolved(
     )
 
     assert ledger.read(_TERMINAL) == expected
+
+
+def test_tool_work_after_an_approval_closes_the_dialog(
+    handlers: EventHandlers, ledger: ComposerLedger
+) -> None:
+    handlers.handle_permission_request(_event(HookEventType.PERMISSION_REQUEST))
+    ledger.observe_write(_TERMINAL, origin="operator", kind="key", payload="enter")
+
+    handlers.handle_before_tool(_event(HookEventType.BEFORE_TOOL, {"tool_name": "Bash"}))
+
+    assert ledger.read(_TERMINAL) == _EMPTY
+    ledger.observe_write(_TERMINAL, origin="operator", kind="text", payload="fix it")
+    assert ledger.read(_TERMINAL) == _DRAFT
+
+
+@pytest.mark.parametrize(
+    ("disposition", "after_end", "after_later_input"),
+    [
+        ("completed", _EMPTY, _DRAFT),
+        ("user_interrupted", _DRAFT, _DRAFT),
+        ("ended_non_user", _DRAFT, _DRAFT),
+        # The lifecycle keeps its wait on unknown evidence, so the dialog stays open.
+        ("unknown", _EMPTY, _EMPTY),
+    ],
+)
+def test_turn_end_closes_the_dialog_by_how_the_turn_ended(
+    handlers: EventHandlers,
+    ledger: ComposerLedger,
+    disposition: TurnDisposition,
+    after_end: LedgerRead,
+    after_later_input: LedgerRead,
+) -> None:
+    handlers.handle_permission_request(_event(HookEventType.PERMISSION_REQUEST))
+    ledger.observe_write(_TERMINAL, origin="operator", kind="key", payload="enter")
+    stop = _event(HookEventType.STOP)
+    stop.turn_disposition = disposition
+
+    handlers.handle_stop(stop)
+
+    assert ledger.read(_TERMINAL) == after_end
+    ledger.observe_write(_TERMINAL, origin="operator", kind="text", payload="fix it")
+    assert ledger.read(_TERMINAL) == after_later_input
+
+
+def test_tool_work_with_no_dialog_open_skips_the_terminal_lookup(
+    handlers: EventHandlers, ledger: ComposerLedger, terminals: MagicMock
+) -> None:
+    handlers.handle_before_tool(_event(HookEventType.BEFORE_TOOL, {"tool_name": "Bash"}))
+
+    terminals.get_live_for_session.assert_not_called()
+    assert ledger.read(_TERMINAL) == _EMPTY
 
 
 def test_unbound_session_records_nothing(

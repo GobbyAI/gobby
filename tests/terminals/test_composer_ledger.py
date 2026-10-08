@@ -223,6 +223,18 @@ def test_dialog_interrupt_blocks_when_the_wait_is_abandoned() -> None:
     assert ledger.read("t1") == LedgerRead("blocked", "interrupt")
 
 
+def test_submit_record_closes_a_wait_no_resolution_reached() -> None:
+    ledger = _tracked()
+    ledger.open_wait("t1")
+    ledger.observe_host_event(_host(1, submit=True))
+    ledger.record_submit("t1")
+
+    assert ledger.read("t1") == _EMPTY
+    assert not ledger.has_open_waits
+    ledger.observe_host_event(_host(2))
+    assert ledger.read("t1") == _DRAFT
+
+
 def test_input_during_a_wait_opened_dirty_stays_human_input() -> None:
     ledger = _tracked()
     ledger.observe_host_event(_host(1))

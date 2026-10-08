@@ -101,6 +101,11 @@ class ComposerLedger:
     def host_cursor(self) -> tuple[str, int] | None:
         return self._host
 
+    @property
+    def has_open_waits(self) -> bool:
+        with self._lock:
+            return any(entry.wait_clean is not None for entry in self._entries.values())
+
     def read(self, terminal_id: str) -> LedgerRead:
         with self._lock:
             entry = self._entries.get(terminal_id)
@@ -168,11 +173,15 @@ class ComposerLedger:
                 entry.flagged_seq = seq
 
     def record_submit(self, terminal_id: str) -> None:
-        """A provider recorded a submit: flagged input up to now left the composer."""
+        """A provider recorded a submit: flagged input up to now left the composer.
+
+        The prompt reached the composer, so no dialog held the input before it.
+        """
         with self._lock:
             entry = self._entries.get(terminal_id)
             if entry is None:
                 return
+            _close_wait(entry, "resumed")
             seq = self._next()
             if entry.unflagged_seq > entry.clean_seq:
                 # A host without the submit flag cannot say which chunk submitted.
@@ -193,14 +202,8 @@ class ComposerLedger:
         """A resumed wait consumed its dialog input; any other outcome leaves it human."""
         with self._lock:
             entry = self._entries.get(terminal_id)
-            if entry is None or entry.wait_clean is None:
-                return
-            self.version += 1
-            if entry.dialog_seq and outcome != "resumed":
-                entry.human_seq = max(entry.human_seq, entry.dialog_seq)
-                if entry.dialog_interrupt:
-                    entry.unsafe, entry.unsafe_seq = "interrupt", entry.dialog_seq
-            entry.wait_clean, entry.dialog_seq, entry.dialog_interrupt = None, 0, False
+            if entry is not None and _close_wait(entry, outcome):
+                self.version += 1
 
     def block(self, terminal_id: str, reason: UnsafeReason) -> None:
         with self._lock:
@@ -272,6 +275,18 @@ class ComposerLedger:
         seq = self._next()
         for entry in self._entries.values():
             entry.unsafe, entry.unsafe_seq = reason, seq
+
+
+def _close_wait(entry: _Entry, outcome: WaitOutcome) -> bool:
+    """Close ``entry``'s open wait; whether one was open."""
+    if entry.wait_clean is None:
+        return False
+    if entry.dialog_seq and outcome != "resumed":
+        entry.human_seq = max(entry.human_seq, entry.dialog_seq)
+        if entry.dialog_interrupt:
+            entry.unsafe, entry.unsafe_seq = "interrupt", entry.dialog_seq
+    entry.wait_clean, entry.dialog_seq, entry.dialog_interrupt = None, 0, False
+    return True
 
 
 def _read(entry: _Entry) -> LedgerRead:
