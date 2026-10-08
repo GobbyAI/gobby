@@ -850,7 +850,7 @@ async def test_run_review_respects_task_cap_and_notes_overflow(
     assert run.actions["skipped"] == ["task cap reached; 1 proposal(s) deferred"]
 
 
-async def test_run_review_guidance_gap_gets_needs_decision_label(
+async def test_run_review_guidance_gap_files_without_hold_label(
     temp_db: HubDatabase, session_id: str
 ) -> None:
     first = _insert_feedback(temp_db, session_id)
@@ -872,12 +872,7 @@ async def test_run_review_guidance_gap_gets_needs_decision_label(
     await service.run_review()
 
     task = task_manager.created[0]
-    assert task.labels == [
-        "feedback-review",
-        "llm-reviewed",
-        "awaiting-human-review",
-        "needs-decision",
-    ]
+    assert task.labels == ["feedback-review", "llm-reviewed", "awaiting-human-review"]
     assert task.priority == 3
 
 

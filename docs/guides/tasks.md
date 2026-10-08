@@ -99,14 +99,31 @@ call_tool(server_name="gobby-tasks", tool_name="claim_task", arguments={
 
 `claim_task` sets canonical ownership for the current session and detects claim
 conflicts. `force=true` overrides another owner and should be reserved for
-explicit recovery situations. A session holds at most one active claim: finish
-its existing claim, or hand it off, before claiming another task. A claim is
-handed off once a reviewer recorded an `independent_review_approval` receipt for
-it and none of its attributed files is uncommitted. It stays claimed while it
-waits on landing or close, and the new claim receives the session's edits.
-Reclaiming a handed-off task makes it active again only when no other active
-claim exists. An `already_claimed` response means read the task and continue,
-rather than claiming it again.
+explicit recovery situations. A session may hold any number of active claims.
+Each successful claim selects its task for new edits and validation commands;
+call `claim_task` on an already-owned task to switch back. `already_claimed`
+confirms that ownership and selection. Other claims retain their edit history.
+When the selected claim ends, remaining claims stay inactive until you select
+one with `claim_task` before editing or validating it.
+
+Finish or stop native shell/agent calls before explicitly switching tasks.
+Live calls retain the selection from their start, even when delivery is delayed.
+Completed replay bindings retire at turn end. A refused switch names running
+calls; create-and-claim rolls back without creating a task. If a native child
+loses ownership during a transfer, restore ownership with `claim_task` or stop
+the child before retrying its edits.
+
+Codex file changes without a tool-start event use the matching turn's selection
+only when it hasn't changed. Unbound or unclaimed edits still enter the session
+dirty ledger, without task attribution.
+
+An edit cannot overlap paths still live-attributed to another active claim.
+Select their owning task or finish it, and split commits by task. A later task
+may edit a committed path; those later edits do not block linking or closing the
+earlier commit when their live attribution began after that path's commit.
+Git records whole seconds, so same-second ordering is treated as unproven.
+Close uses validation runs started while its task was selected; edits to that
+task's owned paths always count and stale earlier green evidence.
 
 ### Close
 

@@ -46,6 +46,7 @@ from gobby.adapters.acp_stream import (
 from gobby.adapters.acp_terminal import ACPTerminalManager
 from gobby.adapters.subprocess_stderr import SubprocessStderrDrain
 from gobby.utils import spawn
+from gobby.utils.child_supervisor import supervised_argv
 
 logger = logging.getLogger(__name__)
 
@@ -294,8 +295,9 @@ class ACPClient:
             cmd, env = launch.compose_subprocess(cmd, env)
             self._sandbox_launch = launch
 
+        # The supervisor ends the CLI if the runner dies without stopping it, even by SIGKILL.
         self._process = await spawn.create_subprocess_exec(
-            *cmd,
+            *supervised_argv(cmd),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

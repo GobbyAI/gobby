@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,7 +35,6 @@ LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 ROLES_DIR = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/rules/roles"
 GUIDANCE_HEADING = "## Seat Guidance"
 
-RECEIPT = "enhancer-pass-spent"
 ENHANCER_CALL = {"agent": "plan-enhancer-taskless-old", "checkout_mode": "none"}
 DEVELOPER: dict[str, Any] = {"_agent_type": "developer"}
 ASSISTANT: dict[str, Any] = {"_agent_type": "assistant"}
@@ -150,7 +148,7 @@ async def test_seat_common_rearms_after_compact(engine: RuleEngine) -> None:
 
 @pytest.mark.asyncio
 async def test_seats_cannot_spawn(engine: RuleEngine) -> None:
-    for seat in (DEVELOPER, ASSISTANT, PLAN_ENHANCER):
+    for seat in (DEVELOPER, ASSISTANT, PLAN_WRITER, PLAN_ENHANCER):
         for tool in ("spawn_agent", "dispatch_batch"):
             blocked = await _decide(
                 engine, _proxy_call("gobby-agents", tool, {"agent": "developer"}), seat
@@ -227,25 +225,6 @@ async def test_seat_write_scope_is_path_aware(
     assert await decision(DEVELOPER, _write(project, "src/app.py")) == "allow"
 
 
-class _ReceiptDispatcher:
-    """Inline mcp_call dispatcher that writes task labels through storage."""
-
-    def __init__(self, tasks: LocalTaskManager) -> None:
-        self.tasks = tasks
-        self.receipt_calls = 0
-        self.fail = False
-
-    async def __call__(
-        self, server: str, tool: str, arguments: dict[str, Any], event: Any
-    ) -> dict[str, Any]:
-        assert (server, tool) == ("gobby-tasks", "add_label")
-        self.receipt_calls += 1
-        if self.fail:
-            return {"success": False, "result": {"error": "receipt store unavailable"}}
-        task = self.tasks.add_label(arguments["task_id"], arguments["label"])
-        return {"success": True, "result": {"task_id": task.id}}
-
-
 class _ProxyHarness:
     """Drive the proxy before_tool boundary with the real event builder."""
 
@@ -256,13 +235,11 @@ class _ProxyHarness:
         )
         self.project_id = checkout.project.id
         self.project_path = root.resolve()
-        self.db = db
         self.tasks = LocalTaskManager(db)
-        self.dispatcher = _ReceiptDispatcher(self.tasks)
         self.variables = SessionVariableManager(db)
         self.session_manager = SessionManager(db)
         self.workflow_handler = WorkflowHookHandler(
-            rule_engine=RuleEngine(db, mcp_dispatcher=self.dispatcher, task_manager=self.tasks),
+            rule_engine=RuleEngine(db, task_manager=self.tasks),
             enabled=True,
             evaluation_runtime=runtime,
         )
@@ -331,9 +308,6 @@ class _ProxyHarness:
         claimed = {task_id: f"#{self.tasks.get_task(task_id).seq_num}" for task_id in task_ids}
         self.variables.merge_variables(session_id, {"task_claimed": True, "claimed_tasks": claimed})
 
-    def receipted(self, task_id: str) -> bool:
-        return RECEIPT in (self.tasks.get_task(task_id).labels or [])
-
     async def call(
         self, session_id: str, server: str, tool: str, arguments: dict[str, Any]
     ) -> dict[str, Any] | None:
@@ -341,9 +315,6 @@ class _ProxyHarness:
             self, server, tool, arguments=dict(arguments), session_id=session_id
         )
         return error
-
-    async def spawn(self, session_id: str, **arguments: Any) -> dict[str, Any] | None:
-        return await self.call(session_id, "gobby-agents", "spawn_agent", arguments)
 
     def _hook_event(self, session_id: str, event_type: HookEventType, data: dict[str, Any]) -> Any:
         return HookEvent(
@@ -366,10 +337,6 @@ class _ProxyHarness:
         )
         return (await self.workflow_handler.evaluate_async(event)).decision
 
-    async def session_start(self, session_id: str, source: str) -> None:
-        event = self._hook_event(session_id, HookEventType.SESSION_START, {"source": source})
-        await self.workflow_handler.evaluate_async(event)
-
 
 @pytest.fixture
 def workflow_runtime() -> Iterator[WorkflowEvaluationRuntime]:
@@ -389,137 +356,14 @@ def harness(
 
 
 @pytest.mark.asyncio
-async def test_plan_writer_enhancer_pass_is_per_task(harness: _ProxyHarness) -> None:
-    first, second, third = (harness.task(f"plan {n}") for n in (1, 2, 3))
-    writer = harness.session("writer", PLAN_WRITER, claim=first)
-    unclaimed = harness.session("unclaimed", PLAN_WRITER)
+async def test_plan_writer_cannot_spawn_plan_enhancer_taskless_old(harness: _ProxyHarness) -> None:
+    """The planning runbook launches the live Enhancer; the Writer spawns no pass."""
+    writer = harness.session("writer", PLAN_WRITER, claim=harness.task("plan"))
 
-    # A different agent, another isolation, or no claimed task is refused.
-    for arguments in (
-        {"agent": "developer", "checkout_mode": "none"},
-        {"agent": "plan-enhancer-taskless-old", "checkout_mode": "worktree"},
-        {"agent": "plan-enhancer-taskless-old"},
-    ):
-        refused = await harness.spawn(writer, **arguments)
-        assert refused is not None and "plan-writer-enhancer-only" in refused["error"]
-    # The exception is spawn_agent alone: dispatch_batch with the enhancer arguments
-    # would spawn without a receipt.
-    batch = await harness.call(writer, "gobby-agents", "dispatch_batch", dict(ENHANCER_CALL))
-    assert batch is not None and "plan-writer-enhancer-only" in batch["error"]
-    assert await harness.spawn(unclaimed, **ENHANCER_CALL) is not None
-    assert harness.dispatcher.receipt_calls == 0
-
-    # One call evaluated by the provider hook, then the proxy: one receipt, one dispatch.
-    assert await harness.provider_hook(writer) == "allow"
-    assert not harness.receipted(first)
-    assert await harness.spawn(writer, **ENHANCER_CALL) is None
-    assert harness.receipted(first)
-    assert harness.dispatcher.receipt_calls == 1
-
-    # A reclaim answered already_claimed or a create_task(claim=true) keeps the same
-    # claim; a compact keeps the session; a /clear successor inherits claimed_tasks;
-    # a fresh session claims the released task. Each is refused by the task label.
     assert await harness.provider_hook(writer) == "block"
-    assert await harness.spawn(writer, **ENHANCER_CALL) is not None
-    await harness.session_start(writer, "compact")
-    assert await harness.spawn(writer, **ENHANCER_CALL) is not None
-    successor = harness.session("clear-successor", PLAN_WRITER, claim=first)
-    assert await harness.spawn(successor, **ENHANCER_CALL) is not None
-    fresh = harness.session("fresh", PLAN_WRITER, claim=first)
-    assert await harness.spawn(fresh, **ENHANCER_CALL) is not None
-    assert harness.dispatcher.receipt_calls == 1
-
-    # A different planning task admits exactly one pass, even for concurrent calls.
-    harness.claim(writer, second)
-    results = await asyncio.gather(
-        harness.spawn(writer, **ENHANCER_CALL), harness.spawn(writer, **ENHANCER_CALL)
-    )
-    assert sum(result is None for result in results) == 1
-    assert harness.receipted(second)
-    assert harness.dispatcher.receipt_calls == 2
-
-    # A failed receipt write refuses the spawn; a spawn that fails after its
-    # receipt keeps the pass spent.
-    harness.claim(writer, third)
-    harness.dispatcher.fail = True
-    failed = await harness.spawn(writer, **ENHANCER_CALL)
-    assert failed is not None and "add_label" in failed["error"]
-    assert not harness.receipted(third)
-    harness.dispatcher.fail = False
-    assert await harness.spawn(writer, **ENHANCER_CALL) is None
-    assert await harness.spawn(writer, **ENHANCER_CALL) is not None
-    assert harness.receipted(third)
-
-    # A seat holding several claims is refused: one receipt cannot spend them all.
-    fourth = harness.task("plan 4")
-    multi = harness.session("multi", PLAN_WRITER)
-    receipts_before = harness.dispatcher.receipt_calls
-    for claims in ((first, fourth), (fourth, first)):
-        harness.claim(multi, *claims)
-        refused = await harness.spawn(multi, **ENHANCER_CALL)
-        assert refused is not None and "plan-writer-enhancer-only" in refused["error"]
-    assert not harness.receipted(fourth)
-    assert harness.dispatcher.receipt_calls == receipts_before
-
-    # Only the Orchestrator removes a receipt.
-    remove: dict[str, Any] = {"task_id": first, "label": RECEIPT}
-    relabel: dict[str, Any] = {"task_id": first, "labels": ["plan"]}
-    for name, seat in (("writer-2", PLAN_WRITER), ("developer", DEVELOPER)):
-        other = harness.session(name, seat)
-        for tool, arguments in (("remove_label", remove), ("update_task", relabel)):
-            refused = await harness.call(other, "gobby-tasks", tool, arguments)
-            assert refused is not None and "only the Orchestrator" in refused["error"], tool
-    keep = {"task_id": first, "labels": ["plan", RECEIPT]}
-    assert await harness.call(writer, "gobby-tasks", "update_task", keep) is None
-    orchestrator = harness.session("orchestrator", ORCHESTRATOR)
-    assert await harness.call(orchestrator, "gobby-tasks", "remove_label", remove) is None
-    assert await harness.call(orchestrator, "gobby-tasks", "update_task", relabel) is None
-
-
-@pytest.mark.asyncio
-async def test_receipt_retention_resolves_supported_task_refs(
-    harness: _ProxyHarness, tmp_path: Path
-) -> None:
-    """Receipt retention protects the task update_task targets for every ref form."""
-    plan = harness.task("plan")
-    receipted = harness.tasks.create_task(
-        project_id=harness.project_id,
-        title="planning task",
-        validation_criteria="Plan is enhanced once.",
-        parent_task_id=plan,
-    )
-    harness.tasks.add_label(receipted.id, RECEIPT)
-    path = harness.tasks.update_path_cache(receipted.id)
-    assert path is not None and "." in path
-    # Another project reuses both sequence numbers, so an unscoped #N lookup is ambiguous.
-    other = install_isolated_checkout_project(
-        harness.db, tmp_path / "other", name="other-project", machine_id=LOCAL_MACHINE_ID
-    )
-    for title in ("other plan", "other task"):
-        harness.tasks.create_task(
-            project_id=other.project.id, title=title, validation_criteria="Unrelated."
-        )
-    refs = [receipted.id, f"#{receipted.seq_num}", str(receipted.seq_num), path]
-
-    writer = harness.session("writer", PLAN_WRITER, claim=receipted.id)
-    developer = harness.session("developer", DEVELOPER)
-    for session_id in (writer, developer):
-        for ref in [*refs, "#999", "9.9.9"]:
-            relabel = {"task_id": ref, "labels": ["plan"]}
-            refused = await harness.call(session_id, "gobby-tasks", "update_task", relabel)
-            assert refused is not None and "only the Orchestrator" in refused["error"], ref
-    assert harness.receipted(receipted.id)
-    assert await harness.spawn(writer, **ENHANCER_CALL) is not None
-
-    for ref in refs:
-        keep = {"task_id": ref, "labels": ["plan", RECEIPT]}
-        assert await harness.call(writer, "gobby-tasks", "update_task", keep) is None, ref
-    unreceipted = {"task_id": f"#{harness.tasks.get_task(plan).seq_num}", "labels": ["plan"]}
-    assert await harness.call(developer, "gobby-tasks", "update_task", unreceipted) is None
-    orchestrator = harness.session("orchestrator", ORCHESTRATOR)
-    for ref in refs:
-        relabel = {"task_id": ref, "labels": ["plan"]}
-        assert await harness.call(orchestrator, "gobby-tasks", "update_task", relabel) is None
+    for tool in ("spawn_agent", "dispatch_batch"):
+        refused = await harness.call(writer, "gobby-agents", tool, dict(ENHANCER_CALL))
+        assert refused is not None and "[seat-no-spawn]" in refused["error"], tool
 
 
 @pytest.mark.asyncio
@@ -540,9 +384,6 @@ async def test_persona_name_alone_matches_no_seat_rule(harness: _ProxyHarness) -
         ("gobby-agents", "spawn_agent", {"agent": "developer"}),
         ("gobby-agents", "dispatch_batch", dict(ENHANCER_CALL)),
         ("gobby-workflows", "run_pipeline", {"name": "nightly"}),
-        ("gobby-tasks", "remove_label", {"task_id": plan, "label": RECEIPT}),
         ("gobby-agents", "spawn_agent", dict(ENHANCER_CALL)),
     ):
         assert await harness.call(persona, server, tool, arguments) is None, tool
-    assert harness.dispatcher.receipt_calls == 0
-    assert not harness.receipted(plan)

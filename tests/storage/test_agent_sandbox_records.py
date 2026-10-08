@@ -98,6 +98,7 @@ def test_managed_execution_log_is_counted_but_other_run_assets_are_refused(
     detail = sandbox_record(metadata, include_events=False)
     listed = sandbox_list_record(metadata["sandbox"], active=True)
     assert detail is not None and detail["violation_count"] == 1
+    assert detail["violation_path"] == str(log)
     assert listed is not None and listed["violation_count"] == 1
 
     metadata["sandbox"]["violation_path"] = str(asset)
@@ -105,6 +106,7 @@ def test_managed_execution_log_is_counted_but_other_run_assets_are_refused(
     assert detail is not None
     assert detail["violation_count"] == 0
     assert detail["violations"] == []
+    assert "violation_path" not in detail
 
 
 def test_sandbox_record_skips_corrupt_utf8_violation_lines(

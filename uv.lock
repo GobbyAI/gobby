@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 's390x' and sys_platform == 'win32'",
@@ -1054,7 +1054,7 @@ requires-dist = [
     { name = "aioimaplib", marker = "extra == 'email'", specifier = ">=1.0" },
     { name = "aiosmtplib", marker = "extra == 'email'", specifier = ">=5.1.1" },
     { name = "argon2-cffi", specifier = ">=23.1.0" },
-    { name = "chatterbox-tts" },
+    { name = "chatterbox-tts", specifier = "==0.1.7" },
     { name = "claude-agent-sdk", specifier = ">=0.2.144" },
     { name = "clawcare", specifier = ">=0.9.0" },
     { name = "click", specifier = ">=8.3.3" },

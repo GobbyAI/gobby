@@ -166,6 +166,9 @@ quarantine, which is the only proof it gets that the operator typed.
 reconnect the ledger is new: `spawn` reconciles, `kill`/`resize` may retry,
 `write` is indeterminate and must not be blind-retried.
 
+Single `write` refuses a full or closed PTY writer with `ok:false`, `written:false`,
+`error` and `code` set to `pty_busy` or `terminal_gone`, and `stage:"none"`.
+
 `write_batch` is the native wake-specific bounded write surface. One request has
 at most 64 targets with unique `recipient_id` and `host_terminal_id` values. Each
 target has 1–128 ordered `text` or `key` operations. Operation bytes use

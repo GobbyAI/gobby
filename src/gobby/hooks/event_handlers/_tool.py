@@ -20,10 +20,12 @@ from gobby.skills.capability_routing import capability_menu, route_gobby_request
 from gobby.skills.parser import ParsedSkill
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
-    active_task_id_for_edit,
+    assert_task_edit_paths_available,
     task_edited_file_set_for_checkout,
+    task_selected_at,
 )
 from gobby.workflows.task_dirty_state import paths_committed_after_async
+from gobby.workflows.task_tool_bindings import TaskToolBindings
 
 if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
@@ -106,7 +108,49 @@ class ToolEventHandlerMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.warning("Failed to record autonomous tool start: %s", e)
 
+        db = getattr(self._session_manager, "db", None)
+        if session_id and db is not None:
+            try:
+                self._assert_edit_path_selection(event, session_id)
+                TaskToolBindings(SessionVariableManager(db), session_id).start(event)
+            except ValueError as exc:
+                return HookResponse(decision="block", reason=str(exc))
+
         return HookResponse(decision="allow")
+
+    def _assert_edit_path_selection(self, event: HookEvent, session_id: str) -> None:
+        """Reject an edit to another active claim's live checkout/path pairs."""
+        data = event.data
+        if str(data.get("tool_name", "")).lower() not in EDIT_TOOLS and not (
+            data.get("canonical_tool_kind") == "write"
+            and data.get("canonical_repo_mutation") is True
+        ):
+            return
+        tool_input = data.get("tool_input")
+        paths = data.get("canonical_file_paths")
+        if not isinstance(paths, list):
+            path = None
+            if isinstance(tool_input, dict):
+                path = (
+                    tool_input.get("file_path")
+                    or tool_input.get("target_file")
+                    or tool_input.get("path")
+                )
+            paths = [path] if isinstance(path, str) else []
+        db = getattr(self._session_manager, "db", None)
+        if db is None:
+            return
+        variables = SessionVariableManager(db).get_variables(session_id)
+        task_id = task_selected_at(variables, event.timestamp.timestamp())
+        for path in paths:
+            if not isinstance(path, str):
+                continue
+            resolved = self._resolve_repo_edit_paths(path, event.cwd, project_id=event.project_id)
+            if resolved is not None:
+                root, relative_path = resolved
+                assert_task_edit_paths_available(
+                    variables, task_id, [relative_path], os.fspath(root)
+                )
 
     def _resolve_skill_tool_call(
         self,
@@ -283,6 +327,10 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     # Don't fail the event if tracking fails
                     self.logger.warning("Failed to process file edit: %s", e, exc_info=True)
 
+            db = getattr(self._session_manager, "db", None)
+            if db is not None:
+                TaskToolBindings(SessionVariableManager(db), session_id).complete(event)
+
         else:
             self.logger.debug("AFTER_TOOL [%s]: %s", status, tool_name)
 
@@ -354,9 +402,15 @@ class ToolEventHandlerMixin(EventHandlersBase):
         db = getattr(self._session_manager, "db", None)
         if db is not None:
             variable_manager = SessionVariableManager(db)
+            started_at = TaskToolBindings(variable_manager, session_id).started_at(event)
+            if started_at is None:
+                self.logger.warning(
+                    "Refusing edit attribution without a proven tool-start task binding; "
+                    "select the task with claim_task and retry the edit with a call ID."
+                )
             edited_at = event.timestamp.timestamp()
             variables = variable_manager.get_variables(session_id)
-            task_id = active_task_id_for_edit(variables)
+            task_id = task_selected_at(variables, started_at) if started_at is not None else None
             for checkout_root, paths in paths_by_checkout.items():
                 if task_id is not None:
                     landed = self._paths_landed_before_edit(
@@ -381,6 +435,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
                         paths,
                         checkout_root=checkout_root,
                         edited_at=edited_at,
+                        started_at=started_at,
+                        attribute_to_task=started_at is not None,
                     )
 
         self._mark_session_had_edits_if_claimed(session_id)

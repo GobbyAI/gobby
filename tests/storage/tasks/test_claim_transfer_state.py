@@ -113,7 +113,13 @@ def test_transfer_releases_only_the_prior_owners_transferred_claim(
         )
         remaining[other.id] = f"#{other.seq_num}"
         state = variables.get_variables(owner)
-        variables.merge_variables(owner, {"claimed_tasks": {**state["claimed_tasks"], **remaining}})
+        variables.merge_variables(
+            owner,
+            {
+                "claimed_tasks": {**state["claimed_tasks"], **remaining},
+                "active_task_id": task_id,
+            },
+        )
 
     assert _claim_gates_block(variables.get_variables(owner)) == (True, True)
     claim_task(
@@ -128,7 +134,8 @@ def test_transfer_releases_only_the_prior_owners_transferred_claim(
     assert tasks.get_task(task_id).claimed_by_session_id == replacement
     assert released["claimed_tasks"] == remaining
     assert released["task_claimed"] is retain_other_claim
-    assert released["active_task_id"] == next(iter(remaining), None)
+    # A retained claim receives edits again only through a reclaim (#23665).
+    assert released["active_task_id"] is None
     assert released["task_edited_files"] == {task_id: ["src/prior.py"]}
     assert released["session_dirty_files"] == ["src/prior.py"]
     assert _claim_gates_block(released) == (retain_other_claim, retain_other_claim)
@@ -145,20 +152,19 @@ def test_reconciliation_repairs_an_active_id_left_by_an_earlier_transfer(
     tasks = LocalTaskManager(temp_db)
     claim_task(temp_db, task_id, replacement, force=True)
     state: dict[str, Any] = {"claimed_tasks": {}, "task_claimed": False, "active_task_id": task_id}
-    expected: str | None = None
     if retain_other_claim:
         other = tasks.create_task(
             sample_project["id"],
             title="Unrelated retained work",
-            validation_criteria="Retain the legitimate active task.",
+            validation_criteria="Retain the claim the transfer left behind.",
             claimed_by_session_id=owner,
         )
         state["claimed_tasks"] = {other.id: f"#{other.seq_num}"}
-        expected = other.id
 
     reconcile_claimed_tasks(state, owner, task_manager=tasks)
 
-    assert state["active_task_id"] == expected
+    # The retained claim stays claimed and receives edits only after a reclaim (#23665).
+    assert state["active_task_id"] is None
     assert state["task_claimed"] is retain_other_claim
 
 
@@ -325,10 +331,9 @@ async def test_after_tool_claim_observation_cannot_restore_transferred_ownership
     state = variables.get_variables(caller)
     assert state["claimed_tasks"] == expected_claims
     assert state["task_claimed"] is bool(expected_claims)
-    if expected_claims:
-        assert state["active_task_id"] in expected_claims
-    else:
-        assert state["active_task_id"] is None
+    assert state["active_task_id"] == (
+        task_id if transfer_at in ("no_transfer", "locked_persistence") else None
+    )
     assert _claim_gates_block(state) == (bool(expected_claims), bool(expected_claims))
     assert state["task_edited_files"] == {task_id: ["src/caller.py"]}
     assert state["unrelated_marker"] == "preserved"

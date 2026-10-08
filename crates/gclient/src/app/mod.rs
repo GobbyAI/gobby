@@ -42,9 +42,9 @@ pub use live_loop::mouse::{
 };
 pub use live_loop::projects::{
     close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
-    open_new_project_dialog, open_new_worktree_dialog, open_open_worktree_dialog,
-    open_remove_worktree_dialog, open_worktree, project_dialog_key, remove_worktree,
-    rename_project, submit_new_project,
+    open_new_project_dialog, open_new_worktree_dialog, open_open_project_dialog,
+    open_open_worktree_dialog, open_remove_worktree_dialog, open_worktree, project_dialog_key,
+    remove_worktree, rename_project, submit_new_project, submit_open_project,
 };
 pub use live_loop::run_live_loop;
 pub use live_loop::sync_live_chrome;

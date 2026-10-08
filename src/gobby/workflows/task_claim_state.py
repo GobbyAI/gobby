@@ -8,6 +8,7 @@ Sessions can claim N tasks simultaneously. The state is a single dict
 from __future__ import annotations
 
 import posixpath
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -77,17 +78,53 @@ def _task_edited_file_checkouts(
     return result
 
 
-def _active_task_id_after_removal(tasks: dict[str, str]) -> str | None:
-    if len(tasks) == 1:
-        return next(iter(tasks))
-    return None
-
-
 def add_claimed_task(variables: dict[str, Any], task_id: str, ref: str) -> dict[str, Any]:
     """Return merge dict that adds a task to the claimed set (idempotent)."""
     tasks = _claimed_tasks(variables)
     tasks[task_id] = ref
     return {"task_claimed": True, "claimed_tasks": tasks, "active_task_id": task_id}
+
+
+def record_task_selection(variables: dict[str, Any], previous_task_id: object, epoch: str) -> None:
+    """Retain selection changes in the same transaction as their current projection.
+
+    Entries remain for the session's lifetime: even a closed task may be the
+    predecessor that establishes selection at another open task's window start.
+    """
+    task_id = variables.get("active_task_id")
+    if task_id == previous_task_id and ("task_selection_history" in variables or task_id is None):
+        return
+    history = variables.get("task_selection_history", [])
+    history = list(history) if isinstance(history, list) else []
+    history.append({"task_id": task_id, "epoch": epoch})
+    variables["task_selection_history"] = history
+
+
+def task_selection_events(history: object) -> list[tuple[float, str | None]] | None:
+    """Decode the canonical history shared by edit and close attribution."""
+    if not isinstance(history, list):
+        return None
+    events: list[tuple[float, str | None]] = []
+    for entry in history:
+        if not isinstance(entry, dict) or not isinstance(entry.get("epoch"), str):
+            continue
+        try:
+            at = datetime.fromisoformat(entry["epoch"])
+        except ValueError:
+            continue
+        at = at if at.tzinfo is not None else at.replace(tzinfo=UTC)
+        task_id = entry.get("task_id")
+        events.append((at.timestamp(), task_id if isinstance(task_id, str) else None))
+    return events
+
+
+def task_selected_at(variables: dict[str, Any], epoch: float) -> str | None:
+    """Resolve selection at tool start, preserving delayed and replayed results."""
+    selected: str | None = None
+    for at, task_id in task_selection_events(variables.get("task_selection_history")) or []:
+        if at <= epoch:
+            selected = task_id
+    return selected
 
 
 def release_claimed_task(variables: dict[str, Any], task_id: str) -> dict[str, Any]:
@@ -101,9 +138,11 @@ def release_claimed_task(variables: dict[str, Any], task_id: str) -> dict[str, A
     tasks = _claimed_tasks(variables)
     tasks.pop(task_id, None)
 
+    # The claims left behind wait on review, landing or close; one receives edits
+    # again only through a reclaim (#23665).
     active_task_id = variables.get("active_task_id")
-    if active_task_id == task_id or active_task_id not in tasks:
-        active_task_id = _active_task_id_after_removal(tasks)
+    if active_task_id not in tasks:
+        active_task_id = None
 
     result: dict[str, Any] = {
         "task_claimed": len(tasks) > 0,
@@ -126,25 +165,24 @@ def remove_claimed_task(variables: dict[str, Any], task_id: str) -> dict[str, An
     result["task_edited_files"] = task_files
     if "task_edited_file_checkouts" in variables:
         result["task_edited_file_checkouts"] = task_file_checkouts
-    if "task_edited_file_times" in variables:
-        raw_times = variables.get("task_edited_file_times")
-        task_file_times = dict(raw_times) if isinstance(raw_times, dict) else {}
-        task_file_times.pop(task_id, None)
-        result["task_edited_file_times"] = task_file_times
+    for key in ("task_edited_file_times", "task_live_edit_starts"):
+        if key in variables:
+            raw_times = variables.get(key)
+            task_file_times = dict(raw_times) if isinstance(raw_times, dict) else {}
+            task_file_times.pop(task_id, None)
+            result[key] = task_file_times
     return result
 
 
 def active_task_id_for_edit(variables: dict[str, Any]) -> str | None:
-    """Return the task that should receive a new edited-file attribution."""
-    tasks = _claimed_tasks(variables)
-    if not tasks:
-        return None
+    """Return the task that should receive a new edited-file attribution.
 
+    Only a claim makes a task active, so a claim left behind when the active one
+    ended receives no edits until it is reclaimed (#23665).
+    """
     active_task_id = variables.get("active_task_id")
-    if isinstance(active_task_id, str) and active_task_id in tasks:
+    if isinstance(active_task_id, str) and active_task_id in _claimed_tasks(variables):
         return active_task_id
-    if len(tasks) == 1:
-        return next(iter(tasks))
     return None
 
 
@@ -198,6 +236,48 @@ def task_edited_file_set_for_checkout(
     return set(_task_edited_file_checkouts(variables).get(task_id, {}).get(root, []))
 
 
+def assert_task_edit_paths_available(
+    variables: dict[str, Any],
+    task_id: str | None,
+    paths: list[str],
+    checkout_root: str | None,
+    *,
+    commit_path_times: dict[str, float] | None = None,
+) -> None:
+    """Refuse live path overlap between claims instead of guessing edit ownership."""
+    requested = set(paths)
+    for other_id, ref in _claimed_tasks(variables).items():
+        if other_id == task_id:
+            continue
+        owned = (
+            task_edited_file_set_for_checkout(variables, other_id, checkout_root)
+            if checkout_root is not None
+            else task_edited_file_set(variables, other_id)
+        )
+        overlap = requested & owned
+        if commit_path_times is not None:
+            starts = (
+                variables.get("task_live_edit_starts", {})
+                .get(other_id, {})
+                .get(normalize_task_checkout_root(checkout_root) or "", {})
+            )
+            overlap = {
+                path
+                for path in overlap
+                if not (
+                    isinstance(starts.get(path), (int, float))
+                    and path in commit_path_times
+                    # Git timestamps cover a whole second; same-second order is unproven.
+                    and starts[path] >= commit_path_times[path] + 1
+                )
+            }
+        if overlap:
+            raise ValueError(
+                f"Paths {', '.join(sorted(overlap))} are live-attributed to {ref}; "
+                f"select {ref} with claim_task or finish that task before editing them."
+            )
+
+
 def task_live_checkout_files(variables: dict[str, Any], task_id: str) -> dict[str, set[str]]:
     """Return this task's live attributed paths by checkout root, without released pairs."""
     return {
@@ -205,6 +285,34 @@ def task_live_checkout_files(variables: dict[str, Any], task_id: str) -> dict[st
         for root, files in _task_edited_file_checkouts(variables).get(task_id, {}).items()
         if files
     }
+
+
+def record_task_live_edit_starts(
+    variables: dict[str, Any], task_id: str, paths: list[str], root: str | None, stamp: float
+) -> None:
+    """Keep the first edit in each live checkout/path attribution interval."""
+    starts = variables.setdefault("task_live_edit_starts", {})
+    checkout = starts.setdefault(task_id, {}).setdefault(root or "", {})
+    for path in paths:
+        prior = checkout.get(path)
+        checkout[path] = min(prior, stamp) if isinstance(prior, (int, float)) else stamp
+
+
+def release_task_live_edit_starts(
+    variables: dict[str, Any], task_id: str, paths: list[str], root: str | None
+) -> None:
+    """A reconciled path's next edit begins a new live attribution interval."""
+    starts = variables.get("task_live_edit_starts", {})
+    checkouts = starts.get(task_id, {})
+    for checkout in list(checkouts):
+        if root is not None and checkout != root:
+            continue
+        for path in paths:
+            checkouts[checkout].pop(path, None)
+        if not checkouts[checkout]:
+            del checkouts[checkout]
+    if not checkouts:
+        starts.pop(task_id, None)
 
 
 def task_edited_checkout_paths(

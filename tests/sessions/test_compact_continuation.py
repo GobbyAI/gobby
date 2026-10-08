@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import textwrap
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -50,6 +51,12 @@ from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.key_bytes import tmux_key_name
+from gobby.terminals.native_runtime import (
+    NativeBatchFailure,
+    NativeBatchResult,
+    NativeBatchTarget,
+    NativeTerminalRuntime,
+)
 from gobby.terminals.pane_io import RuntimePaneIO, SubmitResult, TmuxPaneIO
 from gobby.terminals.runtime import Delivered, SnapshotMode
 from gobby.workflows.state_manager import SessionVariableManager
@@ -478,22 +485,31 @@ def test_codex_compaction_status_line(status: str, expected: int) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["• Context compacted", "• Context compacted · 2m 03s"])
-async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
+async def test_codex_waits_for_delivery_receipt_before_continuing(
     session_db: HubDatabase,
     status: str,
 ) -> None:
     prompt = "Continue the claimed task."
+    attempt_id = "a" * 32
+    staged = stage_handoff_attempt(
+        session_db,
+        SESSION_ID,
+        attempt_id=attempt_id,
+        handoff=build_handoff_payload(current_state="Compacting", next_steps=["Continue"]),
+        clear_session=False,
+    )
     mark_handoff_compact_continuation_pending(
         session_db,
         SESSION_ID,
         prompt=prompt,
-        attempt_id="current-attempt",
+        attempt_id=attempt_id,
     )
     before_command = f"Earlier output\n{status}\n›"
 
     class ReadinessTmux(_FakeTmux):
         def __init__(self) -> None:
             super().__init__()
+            self.capture_count = 0
             self.outputs = iter(
                 [
                     before_command,
@@ -505,6 +521,15 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
         async def capture_pane(self, pane_id: str, *, lines: int) -> str:
             assert pane_id == "%12"
             assert lines == 100
+            self.capture_count += 1
+            if self.capture_count == 3:
+                record_handoff_delivery(
+                    session_db,
+                    handoff_id=staged.handoff_record_id,
+                    attempt_id=attempt_id,
+                    boundary_kind="compact",
+                    continuation_session_id=SESSION_ID,
+                )
             return next(self.outputs)
 
     tmux = ReadinessTmux()
@@ -526,12 +551,13 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
             pending_session_id=SESSION_ID,
             before_command=before_command,
             poll_seconds=0,
-            attempt_id="current-attempt",
+            attempt_id=attempt_id,
         )
 
     # The confirmed-empty composer is not drained. Its empty read after Enter
     # proves the prompt left it.
     assert tmux.sent_keys == [("%12", f"{prompt}\n", True), _ENTER]
+    assert tmux.capture_count == 3
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables
 
@@ -643,6 +669,60 @@ async def test_delivered_codex_readiness_timeout_releases_tools_for_recovery(
     remaining = variables.get_variables(SESSION_ID)
     assert HANDOFF_DISPATCH_GATE_VARIABLE not in remaining
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in remaining
+
+
+@pytest.mark.parametrize("gate_present", [False, True])
+@pytest.mark.asyncio
+async def test_codex_delivered_boundary_continues_without_visible_status_marker(
+    session_db: HubDatabase,
+    gate_present: bool,
+) -> None:
+    attempt_id = "a" * 32
+    staged = stage_handoff_attempt(
+        session_db,
+        SESSION_ID,
+        attempt_id=attempt_id,
+        handoff=build_handoff_payload(current_state="Compacted", next_steps=["Continue"]),
+        clear_session=False,
+    )
+    record_handoff_delivery(
+        session_db,
+        handoff_id=staged.handoff_record_id,
+        attempt_id=attempt_id,
+        boundary_kind="compact",
+        continuation_session_id=SESSION_ID,
+    )
+    mark_handoff_compact_continuation_pending(
+        session_db, SESSION_ID, prompt="Call get_handoff", attempt_id=attempt_id
+    )
+    variables = SessionVariableManager(session_db)
+    variables.set_variable(
+        SESSION_ID,
+        HANDOFF_DISPATCH_GATE_VARIABLE,
+        {"attempt_id": attempt_id, "delivery_pending": True} if gate_present else None,
+    )
+
+    class IdleTmux(_FakeTmux):
+        async def capture_pane(self, pane_id: str, *, lines: int) -> str:
+            return _EMPTY_CODEX_COMPOSER
+
+    tmux = IdleTmux()
+    with patch(
+        "gobby.sessions.continuation_retry.await_before_agent",
+        AsyncMock(return_value=True),
+    ):
+        await _continue_after_codex_compaction_ready(
+            session_db,
+            pane=TmuxPaneIO(tmux, "%12"),
+            pending_session_id=SESSION_ID,
+            before_command=_EMPTY_CODEX_COMPOSER,
+            poll_seconds=0.01,
+            attempt_id=attempt_id,
+            fresh_seconds=1,
+        )
+
+    assert sum(text == "Call get_handoff\n" for _, text, literal in tmux.sent_keys if literal) == 1
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables.get_variables(SESSION_ID)
 
 
 @pytest.mark.asyncio
@@ -1248,6 +1328,16 @@ def _claude_frame(row: str) -> str:
     return f"⏺ done\n{rule}\n{row}\n{rule}\n   Fable 5.1  12%\n"
 
 
+def _wrapped_continuation_frame(draft: str, cli_source: str, width: int) -> str:
+    rows = textwrap.wrap(draft, width=width - 2, break_long_words=False)
+    marker = "❯" if cli_source == "claude" else "›"
+    frame = marker + " " + (rows[0] if rows else "")
+    frame += "".join("\n  " + row for row in rows[1:])
+    if cli_source == "claude":
+        return _claude_frame(frame)
+    return frame + "\n\n  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n  ? for shortcuts\n"
+
+
 class _StickyComposerTmux(_FakeTmux):
     """Tmux fake whose composer keeps the pull prompt until enough Enters land.
 
@@ -1502,6 +1592,173 @@ async def test_confirmed_empty_pull_prompt_types_without_draining() -> None:
 
     assert [text for _pane, text, literal in tmux.sent_keys if literal] == [f"{_PULL_PROMPT}\n"]
     assert [key for _pane, key, literal in tmux.sent_keys if not literal] == ["Enter"]
+
+
+@pytest.mark.parametrize(
+    "initial",
+    ["empty", "held", "foreign", "prefix", "prefix-only", "changed", "before-write-changed"],
+)
+@pytest.mark.parametrize("cli_source", ["claude", "codex"])
+@pytest.mark.parametrize("width", [120, 200])
+async def test_native_continuation_retries_only_its_exact_held_payload(
+    monkeypatch: pytest.MonkeyPatch, initial: str, cli_source: str, width: int
+) -> None:
+    prompt = build_handoff_continue_prompt()
+    composer = {
+        "empty": "",
+        "held": prompt,
+        "foreign": "operator private draft",
+        "prefix": prompt + " operator addition",
+        "prefix-only": textwrap.wrap(prompt, width=width - 2)[0],
+        "changed": "",
+        "before-write-changed": "",
+    }[initial]
+    operations: list[tuple[str, str]] = []
+    enter_attempts = 0
+    snapshot_calls = 0
+    runtime = NativeTerminalRuntime(cast(Any, object()))
+
+    async def batch(targets: list[NativeBatchTarget]) -> list[NativeBatchResult]:
+        nonlocal composer, enter_attempts
+        operation = targets[0].operations[0]
+        operations.append((operation.kind, operation.payload))
+        if operation.kind == "text":
+            composer = prompt
+        else:
+            assert operation.payload == "enter"
+            enter_attempts += 1
+            if enter_attempts == 1:
+                if initial == "changed":
+                    composer = prompt + " operator addition"
+                    return [NativeBatchResult("pane-input", Delivered())]
+                return [
+                    NativeBatchResult(
+                        "pane-input", NativeBatchFailure("none", "pty_busy", "queue full")
+                    )
+                ]
+            composer = ""
+        return [NativeBatchResult("pane-input", Delivered())]
+
+    async def snapshot(lines: int = 12, *, mode: SnapshotMode = "text") -> str:
+        nonlocal composer, snapshot_calls
+        snapshot_calls += 1
+        if initial == "before-write-changed" and snapshot_calls == 2:
+            composer = "private operator note"
+        return _wrapped_continuation_frame(composer, cli_source, width)
+
+    monkeypatch.setattr(runtime, "write_batch", batch)
+    pane = RuntimePaneIO(runtime, SimpleNamespace(id="continuation-terminal"))
+    monkeypatch.setattr(pane, "snapshot", snapshot)
+    monkeypatch.setattr("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0)
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0)
+    failures: list[int] = []
+    sent = await _send_handoff_compact_continuation(
+        pane,
+        prompt,
+        SESSION_ID,
+        delay_seconds=0,
+        cli_source=cli_source,
+        composer_read=_CLAUDE_READ if cli_source == "claude" else _CODEX_READ,
+        on_send_failure=lambda: failures.append(0),
+    )
+    if initial == "before-write-changed":
+        assert sent is False
+        assert operations == []
+        assert failures == [0]
+        assert composer == "private operator note"
+    elif initial == "changed":
+        assert sent is False
+        assert operations == [("text", prompt + "\n"), ("key", "enter")]
+        assert failures == [0]
+        assert composer == prompt + " operator addition"
+    elif initial in {"foreign", "prefix", "prefix-only"}:
+        assert sent is False
+        assert operations == []
+        assert failures == [0]
+        expected = {
+            "foreign": "operator private draft",
+            "prefix": prompt + " operator addition",
+            "prefix-only": textwrap.wrap(prompt, width=width - 2)[0],
+        }[initial]
+        assert composer == expected
+    else:
+        assert sent is True
+        assert composer == ""
+        assert failures == []
+        assert operations == ([("text", prompt + "\n")] if initial == "empty" else []) + [
+            ("key", "enter"),
+            ("key", "enter"),
+        ]
+
+
+@pytest.mark.parametrize("draft", ["private operator note", _PULL_PROMPT + " operator addition"])
+async def test_continuation_lifecycle_retry_refuses_every_other_draft(draft: str) -> None:
+    tmux = _FakeTmux()
+    tmux.composer_text = _claude_frame("❯ " + draft)
+    assert _CLAUDE_READ(tmux.composer_text).state == "draft"
+    sent = await continuation_retry.resubmit_continuation(
+        TmuxPaneIO(tmux, "%12"),
+        _PULL_PROMPT,
+        SESSION_ID,
+        cli_source="claude",
+        composer_read=_CLAUDE_READ,
+        verify_seconds=0,
+    )
+    assert sent is False
+    assert tmux.sent_keys == []
+    assert tmux.composer_text == _claude_frame("❯ " + draft)
+
+
+@pytest.mark.parametrize("cli_source", ["claude", "codex"])
+@pytest.mark.parametrize("draft_kind", ["held", "suffix", "prefix-only"])
+async def test_lifecycle_retry_matches_whole_wrapped_continuation(
+    cli_source: str, draft_kind: str
+) -> None:
+    prompt = build_handoff_continue_prompt()
+    draft = {
+        "held": prompt,
+        "suffix": prompt + " operator addition",
+        "prefix-only": textwrap.wrap(prompt, width=118)[0],
+    }[draft_kind]
+    tmux = _FakeTmux()
+    tmux.composer_text = _wrapped_continuation_frame(draft, cli_source, 120)
+    sent = await continuation_retry.resubmit_continuation(
+        TmuxPaneIO(tmux, "%12"),
+        prompt,
+        SESSION_ID,
+        cli_source=cli_source,
+        composer_read=_CLAUDE_READ if cli_source == "claude" else _CODEX_READ,
+        verify_seconds=0,
+    )
+    assert sent is (draft_kind == "held")
+    assert tmux.sent_keys == ([("%12", "Enter", False)] if draft_kind == "held" else [])
+    assert tmux.composer_text == _wrapped_continuation_frame(draft, cli_source, 120)
+
+
+@pytest.mark.parametrize("cli_source", ["claude", "codex"])
+async def test_lifecycle_repaste_preserves_draft_that_appears_before_write(cli_source: str) -> None:
+    class DraftBeforeWriteTmux(_FakeTmux):
+        probes = 0
+
+        async def snapshot_lines(
+            self, pane_id: str, lines: int = 5, *, mode: SnapshotMode = "text"
+        ) -> str:
+            self.probes += 1
+            return _wrapped_continuation_frame(
+                "private operator note" if self.probes >= 3 else "", cli_source, 120
+            )
+
+    tmux = DraftBeforeWriteTmux()
+    sent = await continuation_retry.resubmit_continuation(
+        TmuxPaneIO(tmux, "%12"),
+        build_handoff_continue_prompt(),
+        SESSION_ID,
+        cli_source=cli_source,
+        composer_read=_CLAUDE_READ if cli_source == "claude" else _CODEX_READ,
+        verify_seconds=0,
+    )
+    assert sent is False
+    assert tmux.sent_keys == [("%12", "Enter", False)]
 
 
 class TestPullPromptFallback:

@@ -1,8 +1,10 @@
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 
@@ -22,6 +24,13 @@ from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 pytestmark = pytest.mark.integration
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
+
+def _complete_tool(handlers: EventHandlers, event: HookEvent) -> None:
+    """Deliver the matching start that real hook ingress supplies before completion."""
+    event.request_id = str(uuid4())
+    handlers.handle_before_tool(replace(event, event_type=HookEventType.BEFORE_TOOL))
+    handlers.handle_after_tool(event)
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +103,7 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
         metadata={"_platform_session_id": session.id},
     )
 
-    handlers.handle_after_tool(event)
+    _complete_tool(handlers, event)
 
     # 6. Verify had_edits is True
     session = session_manager.get(session.id)
@@ -118,7 +127,7 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
         data={"tool_name": "read_file"},
         metadata={"_platform_session_id": session.id},
     )
-    handlers.handle_after_tool(event_read)
+    _complete_tool(handlers, event_read)
 
     session = session_manager.get(session.id)
     assert not session.had_edits
@@ -169,7 +178,7 @@ def test_shell_edit_history_tracks_task_files(temp_db, tmp_path) -> None:
         metadata={"_platform_session_id": session.id},
     )
 
-    handlers.handle_after_tool(event)
+    _complete_tool(handlers, event)
 
     variables = session_var_manager.get_variables(session.id)
     assert variables["session_edited_files"] == ["src/edited.py", "docs/edited.md"]
@@ -217,7 +226,7 @@ def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
         metadata={"_platform_session_id": session.id},
     )
 
-    handlers.handle_after_tool(event)
+    _complete_tool(handlers, event)
 
     session = session_manager.get(session.id)
     assert not session.had_edits
@@ -259,7 +268,7 @@ def test_edit_history_not_set_if_task_not_claimed(temp_db) -> None:
         metadata={"_platform_session_id": session.id},
     )
 
-    handlers.handle_after_tool(event)
+    _complete_tool(handlers, event)
 
     session = session_manager.get(session.id)
     assert not session.had_edits
@@ -297,10 +306,11 @@ def test_edit_history_without_claim_records_no_task_scoped_edits(temp_db, tmp_pa
         metadata={"_platform_session_id": session.id},
     )
 
-    handlers.handle_after_tool(event)
+    _complete_tool(handlers, event)
 
     variables = session_var_manager.get_variables(session.id)
     assert variables["session_edited_files"] == ["src/edited.py"]
+    assert variables["session_dirty_files"] == ["src/edited.py"]
     assert "task_edited_files" not in variables
 
 
@@ -357,7 +367,7 @@ def test_edit_history_multiple_claims_use_active_task_id(temp_db, tmp_path) -> N
         metadata={"_platform_session_id": session.id},
     )
 
-    handlers.handle_after_tool(event)
+    _complete_tool(handlers, event)
 
     variables = session_var_manager.get_variables(session.id)
     assert variables["session_edited_files"] == ["src/edited.py"]
@@ -422,7 +432,7 @@ def test_codex_patch_ledger_survives_commit_observer_and_compaction_resume(
         metadata={"_platform_session_id": session.id},
     )
 
-    handlers.handle_after_tool(patch_event)
+    _complete_tool(handlers, patch_event)
 
     expected_task_map = {task.id: ["src/first.py", "docs/plan.md"]}
     variables = variables_manager.get_variables(session.id)

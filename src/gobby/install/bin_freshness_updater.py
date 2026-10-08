@@ -31,7 +31,7 @@ from gobby.install.bin_freshness_promotion import stage_and_promote_release_bina
 from gobby.storage.bin_update_state import BinUpdateRecord, BinUpdateStateStore, BinUpdateStatus
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.machine_id import get_machine_id
-from gobby.utils.native_bin import native_bin_dir
+from gobby.utils.native_bin import SET_MEMBERS, native_bin_dir
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,9 @@ def update_all_managed_bins(
     records: list[BinUpdateRecord] = []
     release_client = client or GithubReleaseClient(timeout_seconds=config.github_timeout_seconds)
     for spec in managed_bin_specs():
+        # Set members move only as a coherent set, through promote_workspace_binary_set.
+        if spec.name in SET_MEMBERS:
+            continue
         try:
             record = update_managed_bin(
                 db,
@@ -89,6 +92,10 @@ def update_managed_bin(
     Returns ``None`` only when the per-tool lock is already held; lock-held
     cycles intentionally leave the previous DB state untouched.
     """
+    if spec.name in SET_MEMBERS:
+        raise ValueError(
+            f"{spec.name} is a binary set member; promote_workspace_binary_set installs it"
+        )
     root = bin_dir or native_bin_dir()
     root.mkdir(parents=True, exist_ok=True)
     lock = try_acquire_native_bin_lock(spec.name, bin_dir=root)
@@ -180,6 +187,17 @@ def update_managed_bin(
                 target=target,
                 status="up_to_date",
                 error=inspection.sidecar_error,
+                source_url=asset.asset_url,
+            )
+
+        if not is_at_least_version(asset.version, spec.floor_version):
+            return _record_state(
+                store,
+                inspection=inspection,
+                latest_version=asset.version,
+                target=target,
+                status="floor_violated",
+                error=f"latest release {asset.version} is below floor {spec.floor_version}",
                 source_url=asset.asset_url,
             )
 

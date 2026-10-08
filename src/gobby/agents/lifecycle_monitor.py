@@ -35,6 +35,7 @@ from gobby.config.tmux import TmuxConfig
 from gobby.storage import pipeline_subscribers as completion_subscribers
 from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.telemetry.instruments import inc_counter
+from gobby.terminals.runtime import TerminalWriteError
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
@@ -677,12 +678,17 @@ class AgentLifecycleMonitor:
                 if await composer_holds_draft(self._terminal_services, self._idle_detector, run):
                     logger.debug("Skipped stuck Enter for agent %s: composer holds a draft", run.id)
                 else:
-                    await self._terminal_services.write(
-                        run,
-                        action_key=f"stuck-enter:{run.id}",
-                        kind="key",
-                        payload="enter",
-                    )
+                    try:
+                        await self._terminal_services.write(
+                            run,
+                            action_key=f"stuck-enter:{run.id}",
+                            kind="key",
+                            payload="enter",
+                        )
+                    except TerminalWriteError as exc:
+                        if exc.stage == "none":
+                            self._stuck_interventions.pop(run.id, None)
+                        logger.warning("Stuck Enter refused for agent %s: %s", run.id, exc)
 
         if handled:
             inc_counter("agent_lifecycle_autonomous_stuck_detected_total", handled)

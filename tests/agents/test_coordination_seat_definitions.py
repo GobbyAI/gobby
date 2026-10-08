@@ -266,3 +266,5 @@ def test_inbox_manager_is_read_only_and_routes_urgent_messages() -> None:
     assert "Never spawn agents, create or update tasks, edit files, restart the daemon" in prompt
     assert "~/.gobby/local_cli_token" in prompt
     assert "~/.gobby/bootstrap.yaml" in prompt
+    role = Path(__file__).resolve().parents[2] / ".gobby/roles/inbox-manager.md"
+    assert flat(role.read_text()) in prompt

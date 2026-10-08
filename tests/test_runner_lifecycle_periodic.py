@@ -11,6 +11,7 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.config.provider_capabilities import ProviderCapabilitiesConfig
 from gobby.runner import GobbyRunner
 from gobby.runner_lifecycle_periodic import _default_loops, start_periodic_tasks
 from tests.config_runtime_helpers import static_runtime_capture
@@ -131,3 +132,15 @@ async def test_standalone_and_hub_start_every_periodic_task(
 
     assert started == HUB_ONLY | MACHINE_LOCAL
     assert _skip_messages(caplog) == []
+
+
+@pytest.mark.asyncio
+async def test_disabled_capability_refresh_launches_no_provider_clis() -> None:
+    runner = _runner(BootstrapConfig())
+    config = DaemonConfig(provider_capabilities=ProviderCapabilitiesConfig(refresh_enabled=False))
+    runner.config_runtime = SimpleNamespace(capture=static_runtime_capture(config))
+
+    started = await _started_task_names(runner)
+
+    assert started == (HUB_ONLY | MACHINE_LOCAL) - {"provider-capability-refresh"}
+    assert runner._provider_capability_refresh_task is None

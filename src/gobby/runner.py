@@ -585,6 +585,13 @@ def _raise_fd_limit(target: int = 10240) -> None:
         logger.warning("Could not raise fd limit from %s: %s", soft, e)
 
 
+def _standalone_exit_code() -> int:
+    exc = sys.exception()
+    if isinstance(exc, SystemExit):
+        return exc.code if isinstance(exc.code, int) else 0 if exc.code is None else 1
+    return 0 if exc is None or isinstance(exc, KeyboardInterrupt) else 1
+
+
 def _force_exit_after_expired_settlement() -> None:
     """Force process death when shutdown abandoned wedged settlement workers.
 
@@ -598,18 +605,35 @@ def _force_exit_after_expired_settlement() -> None:
 
     if not finalizer_expiry_backstop_required():
         return
-    exc = sys.exception()
-    if isinstance(exc, SystemExit):
-        code = exc.code if isinstance(exc.code, int) else 0 if exc.code is None else 1
-    elif exc is None or isinstance(exc, KeyboardInterrupt):
-        code = 0
-    else:
-        code = 1
+    code = _standalone_exit_code()
     logger.error(
         "Terminal-delivery settlement expired at shutdown; forcing process exit (code %s)",
         code,
     )
     logging.shutdown()
+    os._exit(code)
+
+
+def _exit_after_standalone_shutdown() -> None:
+    """Finish process cleanup without traversing Python's module graph at exit.
+
+    The standalone runner has already awaited daemon teardown and released its
+    ownership claim. CPython module finalization can exceed the process-stop
+    deadline even with no remaining workers. Run registered exit cleanup before
+    terminating; embedded callers of run_daemon keep their normal return path.
+    """
+    import atexit
+
+    # Expired settlement workers require the existing immediate exit path.
+    _force_exit_after_expired_settlement()
+    code = _standalone_exit_code()
+    atexit._run_exitfuncs()
+    logging.shutdown()
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except (OSError, ValueError):
+            pass
     os._exit(code)
 
 
@@ -720,6 +744,24 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
         _force_exit_after_expired_settlement()
 
 
+def _standalone_main(config_path: Path | None = None, verbose: bool = False) -> None:
+    """Own process termination only for the module's standalone entry point."""
+    try:
+        main(config_path=config_path, verbose=verbose)
+    except BaseException as exc:
+        # Hard exit bypasses the interpreter's usual uncaught-exception report.
+        if isinstance(exc, SystemExit):
+            if exc.code is not None and not isinstance(exc.code, int):
+                print(exc.code, file=sys.stderr)
+        elif not isinstance(exc, KeyboardInterrupt):
+            import traceback
+
+            traceback.print_exception(exc)
+        raise
+    finally:
+        _exit_after_standalone_shutdown()
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -728,4 +770,4 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=Path, help="Path to config file")
 
     args = parser.parse_args()
-    main(config_path=args.config, verbose=args.verbose)
+    _standalone_main(config_path=args.config, verbose=args.verbose)

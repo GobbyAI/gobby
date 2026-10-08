@@ -256,6 +256,15 @@ class AgyAdapter(ACPHookAdapter):
             decision = "deny"
         elif response.permission_decision in {"allow", "deny"}:
             decision = response.permission_decision
+            if decision == "deny" and not reason:
+                # A permission deny carries no blocking rule's reason, and AGY
+                # shows the agent only "denied by pre-tool hook: <reason>".
+                reason = normalize_adapter_response_reason(
+                    replace(response, decision="deny"),
+                    adapter_name=self.__class__.__name__,
+                    hook_type=hook_type,
+                    logger=logger,
+                )
         elif response.permission_decision:
             # ``HookResponse`` is a plain dataclass and a permission effect's
             # decision reaches it unvalidated, so ``ask`` can arrive here. AGY

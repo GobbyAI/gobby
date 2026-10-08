@@ -11,6 +11,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from gobby.mcp_proxy.bundled import prefers_offline_npx, resolve_runtime_stdio_args
 from gobby.mcp_proxy.transports.base import OwnerTaskTransportConnection
+from gobby.utils.child_supervisor import supervised_argv
 from gobby.utils.env import expand_env_mapping, expand_env_variables
 
 
@@ -86,13 +87,7 @@ class StdioTransportConnection(OwnerTaskTransportConnection):
 
         command = self.config.command
         if self.config.runtime_hook == "chrome_executable_path":
-            expanded_args = [
-                "-m",
-                "gobby.mcp_proxy.transports.chrome_supervisor",
-                command,
-                *expanded_args,
-            ]
-            command = sys.executable
+            command, *expanded_args = supervised_argv([command, *expanded_args])
 
         params = StdioServerParameters(
             command=command,

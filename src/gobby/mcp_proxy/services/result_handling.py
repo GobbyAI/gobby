@@ -55,9 +55,7 @@ def build_before_tool_event(
                 "arguments": deepcopy(arguments),
             },
         },
-        # The proxy evaluation is the one boundary every call crosses exactly
-        # once, just before dispatch; rules that must act once key on this marker.
-        metadata={**metadata, "_mcp_proxy_dispatch": True},
+        metadata=metadata,
         cwd=cwd,
         project_id=project_id,
     )

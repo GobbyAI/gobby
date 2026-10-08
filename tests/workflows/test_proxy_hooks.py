@@ -1205,7 +1205,15 @@ async def test_wrong_package_collision_passes_through(
     assert response.modified_input is None
 
 
-@pytest.mark.parametrize("source", [SessionSource.UNKNOWN, SessionSource.PIPELINE])
+@pytest.mark.parametrize(
+    "source",
+    [
+        SessionSource.UNKNOWN,
+        SessionSource.PIPELINE,
+        # AGY denied Gobby's bare overwrite with an empty reason (#23771).
+        SessionSource.AGY,
+    ],
+)
 async def test_unsupported_provider_skips_rtk(
     source: SessionSource,
     db: HubDatabase,

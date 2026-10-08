@@ -35,6 +35,8 @@ from gobby.tasks.transcript_evidence_models import (
 )
 from gobby.tasks.transcript_exclusions import derive_prelink_runs
 from gobby.tasks.transcript_sync import transcript_sync_point
+from gobby.utils import spawn
+from gobby.workflows.task_claim_state import task_selection_events
 from gobby.workflows.task_dirty_state import (
     committable_task_paths,
     committable_task_paths_async,
@@ -347,7 +349,11 @@ async def derive_close_transcript_evidence(
                 task_checkout_paths,
                 archive_dir=archive_dir,
             )
-            if session_id not in required or session_id == owner_session_id:
+            if (
+                "task_selection_history" in variables
+                or session_id not in required
+                or session_id == owner_session_id
+            ):
                 # The owner leaves too: once this task is handed off it may claim newer
                 # work, whose runs must neither fail nor pass this close (#23665). It
                 # still holds this task, so its edits to the task's files always count.
@@ -360,7 +366,13 @@ async def derive_close_transcript_evidence(
                 claims = await _resolve_transcript_claims(
                     ctx, session, task_links, task_id, session_evidence.task_claims
                 )
-                presence = _task_presence(task_links, task_id, effective_window, claims)
+                presence = _task_presence(
+                    task_links,
+                    task_id,
+                    effective_window,
+                    claims,
+                    selection_history=variables.get("task_selection_history"),
+                )
                 if presence is not None:
                     session_evidence = _while_on_task(
                         session_evidence,
@@ -460,6 +472,8 @@ def _task_presence(
     task_id: str,
     window_start: str | datetime | None,
     transcript_claims: Iterable[tuple[str | None, datetime]],
+    *,
+    selection_history: object = None,
 ) -> list[tuple[float, bool]] | None:
     """When a linked session left this task for another and when it returned.
 
@@ -471,6 +485,18 @@ def _task_presence(
     start = _evidence_epoch(window_start)
     if start is None:
         return None
+    history = task_selection_events(selection_history)
+    if history is not None:
+        # Commit-ordered selection is authoritative, including automatic returns
+        # after close/release. Provider result order can differ from commit order.
+        selected: str | None = None
+        changes: list[tuple[float, bool]] = []
+        for selection_epoch, current in history:
+            if selection_epoch <= start:
+                selected = current
+            else:
+                changes.append((selection_epoch, current == task_id))
+        return [(start, selected == task_id), *changes]
     events = [
         (epoch, getattr(row.get("task"), "id", None) == task_id)
         for row in task_links
@@ -653,7 +679,7 @@ def _same_git_checkout(root: str, repo_path: str) -> bool:
     common: list[str] = []
     for checkout in (root, repo_path):
         try:
-            result = subprocess.run(
+            result = spawn.run(
                 ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
                 cwd=checkout,
                 check=True,

@@ -22,6 +22,7 @@ from gobby.mcp_proxy.tools.tasks._authorization import (
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_delete import register_delete_task
 from gobby.mcp_proxy.tools.tasks._session import create_session_registry
+from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths
 from gobby.storage.tasks import LocalTaskManager, Task, TaskArtifacts
 from gobby.utils.session_context import session_context_for_test
 
@@ -281,6 +282,18 @@ def _build_commit_tool(tool_name: str) -> Callable[[MagicMock, ExitStack], Build
             patch(
                 "gobby.mcp_proxy.tools.task_commits.normalize_commit_sha",
                 new=AsyncMock(side_effect=lambda sha, cwd=None: sha),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
+                return_value="/fixture/repo",
+            )
+        )
+        stack.enter_context(
+            patch(
+                "gobby.mcp_proxy.tools.tasks._task_scope.collect_net_commit_paths_async",
+                new=AsyncMock(return_value=NetCommitPaths()),
             )
         )
         registry = create_commit_registry(task_manager=manager)

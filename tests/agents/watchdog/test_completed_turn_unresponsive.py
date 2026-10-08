@@ -1,11 +1,13 @@
 """A delivered completed-turn reprompt that never starts a new turn is bounded."""
 
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import pytest
 
+from gobby.agents.watchdog import completed_turn_recovery
 from gobby.agents.watchdog.completed_turn_recovery import (
     CompletedTurnRecoveryHost,
     recover_completed_turn,
@@ -17,6 +19,7 @@ from gobby.agents.watchdog.models import (
 )
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
+from gobby.utils.host_sleep import AwakeClock
 from gobby.workflows.step_context import StepWorkflowContext
 
 _IDLE_TIMEOUT_SECONDS = 300
@@ -162,6 +165,24 @@ async def test_duplicate_completed_turn_within_deadline_stays_quiet() -> None:
     assert host.reprompts == ["reprompt"]
     assert host.failures == []
     assert host.completions == 0
+
+
+@pytest.mark.asyncio
+async def test_host_sleep_after_reprompt_does_not_fail_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    slept = [0.0]
+    clock = AwakeClock(wall=time.time, monotonic=lambda: time.monotonic() - slept[0])
+    monkeypatch.setattr(completed_turn_recovery, "AWAKE_CLOCK", clock)
+    host = _FakeHost()
+
+    assert await _recover(host) == 1
+    # The host sleeps through the whole idle timeout: wall time moves, monotonic time does not.
+    _age_reprompt(host, _IDLE_TIMEOUT_SECONDS + 1)
+    slept[0] = _IDLE_TIMEOUT_SECONDS + 1
+
+    assert await _recover(host) == 0
+    assert host.failures == []
 
 
 @pytest.mark.asyncio

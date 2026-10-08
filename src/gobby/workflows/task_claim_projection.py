@@ -31,6 +31,7 @@ def merge_claimed_task_projection(
     session_id: str,
     updates: dict[str, Any],
     observed_claim_task_id: str | None,
+    inherited_active_task_id: str | None = None,
 ) -> bool:
     """Merge a snapshot without restoring lost claims or replacing newer claims.
 
@@ -72,18 +73,22 @@ def merge_claimed_task_projection(
                     return False, False
 
                 current_active = variables.get("active_task_id")
+                if (
+                    not current_ids
+                    and "task_selection_history" not in variables
+                    and inherited_active_task_id in owned
+                ):
+                    current_active = inherited_active_task_id
                 variables.update(updates)
                 variables["claimed_tasks"] = owned
                 variables["task_claimed"] = bool(owned)
-                # An observed successful claim may select its owned task. Other
-                # snapshots retain a still-owned, newer active attribution.
-                if (
-                    isinstance(current_active, str)
-                    and current_active in owned
-                    and observed_claim_task_id not in owned
-                ):
-                    variables["active_task_id"] = current_active
+                # Storage selects at commit time. A delayed provider result or
+                # reconcile snapshot never reselects its older claim.
+                variables["active_task_id"] = current_active
                 variables["active_task_id"] = active_task_id_for_edit(variables)
+                # With no claim state to say which claim was active, a sole claim is.
+                if not current_ids and len(owned) == 1 and variables["active_task_id"] is None:
+                    variables["active_task_id"] = next(iter(owned))
                 if not owned:
                     variables["task_has_commits"] = False
                 refresh_claimed_task_extra_skills(variables, tasks)

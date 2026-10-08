@@ -505,6 +505,52 @@ def _metadata_run(run_id: str, metadata: object, task_id: str | None = None) -> 
     )
 
 
+async def test_stuck_enter_refusal_does_not_abort_other_runs(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    detector = MagicMock()
+    detector.is_stuck.return_value = StuckDetectionResult(
+        is_stuck=True,
+        reason="same tool pattern",
+        layer="tool_loop",
+        details={"tool_pattern": "Read:abc"},
+        suggested_action="change_approach",
+    )
+    runtime = LifecycleRuntime(write_failures=[True, False])
+    monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        stuck_detector=detector,
+        terminal_services=_fake_terminal_services(temp_db, runtime),
+    )
+    first = _make_terminal_run(
+        agent_run_manager,
+        sample_session,
+        run_id=_rid("refused-first"),
+        terminal_id="first",
+    )
+    second = agent_run_manager.create(
+        parent_session_id=sample_session["id"],
+        provider="claude",
+        prompt="test",
+        run_id=_rid("accepted-second"),
+    )
+    agent_run_manager.start(second.id)
+    make_live_terminal(second, db=temp_db, session_name="second", pane_id="%2")
+    with patch.object(monitor, "_get_active_terminal_runs", return_value=[first, second]):
+        assert await monitor.check_autonomous_stuck_agents() == 2
+        assert runtime.write_targets == [first.terminal_id, second.terminal_id]
+        assert first.id not in monitor._stuck_interventions
+        assert second.id in monitor._stuck_interventions
+        assert await monitor.check_autonomous_stuck_agents() == 1
+    assert runtime.write_targets == [first.terminal_id, second.terminal_id, first.terminal_id]
+    assert any("Stuck Enter refused" in record.getMessage() for record in caplog.records)
+
+
 async def test_check_autonomous_stuck_agents_nudges_change_approach(
     agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,

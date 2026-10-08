@@ -60,6 +60,7 @@ def run_observers(
         detect_turn_interrupt,
         reconcile_claimed_tasks,
     )
+    from .task_tool_bindings import cleanup_task_tool_bindings
 
     failures: set[str] = set()
 
@@ -84,6 +85,14 @@ def run_observers(
             )
 
     run_observer("detect_turn_interrupt", detect_turn_interrupt, event, variables)
+    run_observer(
+        "cleanup_task_tool_bindings",
+        cleanup_task_tool_bindings,
+        event,
+        getattr(handler, "_session_var_manager", None),
+        session_id,
+        variables,
+    )
 
     # Tool and stop payloads carry the provider's live permission mode;
     # turn-start events (e.g. Claude UserPromptSubmit) omit it and manual

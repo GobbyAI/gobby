@@ -5,7 +5,7 @@ tags: [roles, seat, enforcement, gobby, default]
 # (`apply_persona`) never matches a seat rule.
 rules:
   seat-no-spawn:
-    description: "Seats do not spawn agents; the Plan Writer's enhancer pass has its own rule"
+    description: "Seats, the Plan Writer included, do not spawn agents"
     event: before_tool
     enabled: true
     priority: 10
@@ -13,7 +13,6 @@ rules:
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary']
-      and variables.get('_agent_type') != 'plan-writer'
     effects:
       - type: block
         mcp_tools: ["gobby-agents:spawn_agent", "gobby-agents:dispatch_batch"]
@@ -59,79 +58,3 @@ rules:
           Seats do not spawn agents or launch pipelines from the shell. Runbooks
           launch from Josh's CLI, web, gclient, or cron surfaces; send the request
           to the Orchestrator.
-
-  plan-writer-enhancer-only:
-    description: "The Plan Writer spawns only one plan-enhancer-taskless-old pass per planning task"
-    event: before_tool
-    enabled: true
-    priority: 10
-    when: >
-      variables.get('_agent_type') == 'plan-writer'
-      and not (
-        tool_input.get('tool_name') == 'spawn_agent'
-        and tool_input.get('agent') == 'plan-enhancer-taskless-old'
-        and tool_input.get('checkout_mode') == 'none'
-        and len(variables.get('claimed_tasks') or {}) == 1
-        and not all_tasks_have_label(list(variables.get('claimed_tasks')), 'enhancer-pass-spent')
-      )
-    effects:
-      - type: block
-        mcp_tools: ["gobby-agents:spawn_agent", "gobby-agents:dispatch_batch"]
-        reason: >-
-          The Plan Writer's only permitted spawn is
-          spawn_agent(agent="plan-enhancer-taskless-old", checkout_mode="none") while holding
-          the planning task as its only claim. One pass per planning task is permitted; the task's
-          `enhancer-pass-spent` label means this task's pass is spent, and only the
-          Orchestrator can re-grant it.
-
-  plan-writer-enhancer-receipt:
-    description: "Receipt the Plan Writer's enhancer pass on its task before the spawn runs"
-    event: before_tool
-    enabled: true
-    # After every seat block rule, and only at the proxy evaluation that
-    # immediately precedes dispatch, so one logical call writes one receipt.
-    priority: 95
-    when: >
-      event.metadata.get('_mcp_proxy_dispatch')
-      and variables.get('_agent_type') == 'plan-writer'
-      and tool_input.get('server_name') == 'gobby-agents'
-      and tool_input.get('tool_name') == 'spawn_agent'
-      and tool_input.get('agent') == 'plan-enhancer-taskless-old'
-      and tool_input.get('checkout_mode') == 'none'
-      and len(variables.get('claimed_tasks') or {}) == 1
-      and not all_tasks_have_label(list(variables.get('claimed_tasks')), 'enhancer-pass-spent')
-    effects:
-      - type: mcp_call
-        server: gobby-tasks
-        tool: add_label
-        arguments:
-          task_id: "{{ claimed_tasks | list | first }}"
-          label: enhancer-pass-spent
-        inject_result: true
-        block_on_failure: true
-
-  seat-keep-enhancer-receipt:
-    description: "Only the Orchestrator removes an enhancer receipt"
-    event: before_tool
-    enabled: true
-    priority: 10
-    when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary']
-      and variables.get('_agent_type') != 'orchestrator'
-      and tool_input.get('server_name') == 'gobby-tasks'
-      and (
-        (tool_input.get('tool_name') == 'remove_label'
-          and tool_input.get('label') == 'enhancer-pass-spent')
-        or (tool_input.get('tool_name') == 'update_task'
-          and isinstance(tool_input.get('labels'), list)
-          and 'enhancer-pass-spent' not in tool_input.get('labels')
-          and task_may_carry_label(tool_input.get('task_id'), 'enhancer-pass-spent',
-            event.project_id))
-      )
-    effects:
-      - type: block
-        reason: >-
-          The `enhancer-pass-spent` label receipts the Plan Writer's enhancer pass;
-          only the Orchestrator removes an enhancer receipt. Ask the Orchestrator.

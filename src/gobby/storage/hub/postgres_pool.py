@@ -55,6 +55,8 @@ from gobby.storage.hub.protocol import (
     SessionRecoveryByProject,
     SessionRegistration,
     SessionSeqMutation,
+    SessionVariableMutation,
+    SessionVariableTransfer,
     StageReviewApprovalMutation,
     StageReviewRejectionMutation,
     SystemSessionBootstrap,
@@ -467,6 +469,11 @@ class _PostgresTransaction:
             raise RuntimeError("additional locks require an immediate transaction")
         if lock in self._locks:
             return
+        if isinstance(lock, SessionVariableMutation) and any(
+            isinstance(held, SessionVariableTransfer) and lock.session_id in held.session_ids
+            for held in self._locks
+        ):
+            return
 
         _acquire_lock(self._locks, lock)
         try:
@@ -815,6 +822,12 @@ async def _close_advisory_lock_connection(
 
 
 def advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
+    if isinstance(lock, SessionVariableTransfer):
+        return tuple(
+            key
+            for session_id in sorted(set(lock.session_ids))
+            for key in advisory_lock_keys(SessionVariableMutation(session_id))
+        )
     if isinstance(lock, MainCheckoutLanding):
         return (f"main_checkout_landing:{lock.project_id}",)
     if isinstance(lock, BuildDryRunMutation):

@@ -578,7 +578,6 @@ def build_condition_helpers(
     )
     from .condition_helpers_paths import PATH_CONDITION_HELPERS
     from .condition_helpers_sessions import session_condition_helpers
-    from .condition_helpers_tasks import task_condition_helpers
     from .monolith_guard import (
         outstanding_monolith_paths,
         projected_monolith_paths,
@@ -659,7 +658,6 @@ def build_condition_helpers(
             "claims_without_edit_target": claims_without_edit_target,
             "touches_ui_design_path": touches_ui_design_path,
             **PATH_CONDITION_HELPERS,
-            **task_condition_helpers(task_manager),
             **session_condition_helpers(session_manager),
         }
     )

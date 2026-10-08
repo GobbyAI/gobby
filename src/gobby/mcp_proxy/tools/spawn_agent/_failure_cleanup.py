@@ -30,8 +30,9 @@ class SpawnCleanupOnce:
     after it settles, so each cleanup step runs exactly once.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, resume_metadata: dict[str, Any] | None = None) -> None:
         self._task: asyncio.Task[None] | None = None
+        self.resume_metadata = dict(resume_metadata) if resume_metadata is not None else None
 
     async def run(self, cleanup: Callable[[], Coroutine[Any, Any, None]]) -> None:
         if self._task is None:
@@ -158,6 +159,7 @@ async def cleanup_failed_spawn(
             terminal_id=terminal_id,
             prior_attempt=prior_attempt,
             attempt_terminal_known=attempt_terminal_known,
+            resume_metadata=once.resume_metadata,
         )
     )
 
@@ -177,6 +179,7 @@ async def _cleanup_failed_spawn(
     terminal_id: str | None,
     prior_attempt: tuple[int, datetime] | None,
     attempt_terminal_known: bool,
+    resume_metadata: dict[str, Any] | None,
 ) -> None:
     run_storage = getattr(runner, "run_storage", None)
     terminal_manager = getattr(runner, "terminal_manager", None)
@@ -278,11 +281,18 @@ async def _cleanup_failed_spawn(
         )
     except Exception as exc:
         _log_step_failure("isolation", run_id, terminal_id, exc)
-    if foreign_run:
+    if foreign_run or (run_unread and resume_metadata is None):
         return
     delete_child = functools.partial(
         _delete_child_step, runner, run_id, child_session_id, terminal_id
     )
+    metadata = (
+        resume_metadata
+        if resume_metadata is not None
+        else getattr(run, "resume_metadata_json", None)
+    )
+    if isinstance(metadata, dict) and metadata.get("resume_existing_session") is True:
+        delete_child = functools.partial(delete_child, resume_metadata=metadata)
     if not (
         held
         and terminal_id is not None
@@ -337,13 +347,21 @@ async def _roll_back_run(
 
 
 async def _delete_child_step(
-    runner: Any, run_id: str, child_session_id: str | None, terminal_id: str | None
+    runner: Any,
+    run_id: str,
+    child_session_id: str | None,
+    terminal_id: str | None,
+    *,
+    resume_metadata: dict[str, Any] | None = None,
 ) -> None:
     run_storage = getattr(runner, "run_storage", None)
     try:
-        await asyncio.to_thread(
+        delete = functools.partial(
             _delete_child_session, runner, run_storage, run_id, child_session_id
         )
+        if resume_metadata is not None:
+            delete = functools.partial(delete, resume_metadata=resume_metadata)
+        await asyncio.to_thread(delete)
     except Exception as exc:
         _log_step_failure("delete_child_session", run_id, terminal_id, exc)
 
@@ -477,11 +495,29 @@ def _delete_child_session(
     run_storage: Any,
     run_id: str,
     child_session_id: str | None,
+    *,
+    resume_metadata: dict[str, Any] | None = None,
 ) -> None:
     if child_session_id is None:
         return
     session_storage = getattr(getattr(runner, "child_session_manager", None), "_storage", None)
     if session_storage is None:
+        return
+    metadata = resume_metadata
+    if isinstance(metadata, dict) and metadata.get("resume_existing_session") is True:
+        session_storage.db.execute(
+            """UPDATE sessions SET agent_run_id = %s, parent_session_id = %s,
+                      status = %s, workflow_name = %s, updated_at = CURRENT_TIMESTAMP
+               WHERE id = %s AND agent_run_id = %s""",
+            (
+                metadata.get("resume_previous_run_id"),
+                metadata.get("resume_previous_parent_session_id"),
+                metadata.get("resume_previous_status"),
+                metadata.get("resume_previous_workflow_name"),
+                child_session_id,
+                run_id,
+            ),
+        )
         return
     # Failures reach the delete_child_session step, which logs them with context.
     db = getattr(run_storage, "db", None) or getattr(session_storage, "db", None)

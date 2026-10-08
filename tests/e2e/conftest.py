@@ -409,6 +409,12 @@ def prepare_daemon_env(
     owner = psutil.Process(os.getpid())
     env["GOBBY_E2E_OWNER_PID"] = str(owner.pid)
     env["GOBBY_E2E_OWNER_CREATE_TIME"] = str(owner.create_time())
+    from tests.fixtures.e2e_run_cleanup import RUN_ID_ENV
+
+    if run_id := os.environ.get(RUN_ID_ENV):
+        env[RUN_ID_ENV] = run_id
+    else:
+        env.pop(RUN_ID_ENV, None)
 
     # Set PYTHONPATH so the daemon can import gobby modules
     root_dir = Path(__file__).parent.parent.parent
@@ -560,6 +566,11 @@ def _seed_e2e_runtime_state(
         "gobby-tasks.expansion.enabled": False,
         "gobby-tasks.validation.enabled": False,
         "code_index.enabled": False,
+        # The updater downloads absent managed binaries from GitHub into the
+        # isolated bin dir, which would break the stamped set `gobby restart` proves.
+        "bin_freshness.enabled": False,
+        # The refresh launches the user's real provider CLIs from the e2e daemon.
+        "provider_capabilities.refresh_enabled": False,
     }
     if terminal_host_socket_dir is not None:
         values["terminal_host.socket_dir"] = str(terminal_host_socket_dir)

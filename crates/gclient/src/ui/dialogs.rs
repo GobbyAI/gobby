@@ -151,8 +151,14 @@ pub enum Dialog {
         title: String,
         scope: CloseScope,
     },
-    /// Register a checkout as a project; the daemon's refusal shows inline.
+    /// Create a git checkout and register it; refusals show inline.
     NewProject {
+        path: String,
+        cursor: usize,
+        error: Option<String>,
+    },
+    /// Open a git checkout, registering it only when needed.
+    OpenProject {
         path: String,
         cursor: usize,
         error: Option<String>,
@@ -240,7 +246,22 @@ pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect
             path,
             cursor,
             error,
-        }) => project::render_new_project(frame, area, chrome, path, *cursor, error.as_deref()),
+        }) => {
+            project::render_project_path(frame, area, chrome, path, *cursor, error.as_deref(), true)
+        }
+        Some(Dialog::OpenProject {
+            path,
+            cursor,
+            error,
+        }) => project::render_project_path(
+            frame,
+            area,
+            chrome,
+            path,
+            *cursor,
+            error.as_deref(),
+            false,
+        ),
         Some(Dialog::NewWorktree {
             branch,
             base,
