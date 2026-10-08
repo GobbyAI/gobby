@@ -32,6 +32,7 @@ from gobby.workflows.pipeline_state import (
     ApprovalRequired,
     ExecutionStatus,
     PipelineExecution,
+    PipelineStepError,
     StepExecution,
     StepStatus,
 )
@@ -684,8 +685,9 @@ class PipelineExecutor(
                             output_json=json_dumps(step_output),
                             error=f"Exit code {step_output['exit_code']}: {error_msg}",
                         )
-                        raise RuntimeError(
-                            f"Step '{step.id}' failed with exit code {step_output['exit_code']}"
+                        raise PipelineStepError(
+                            f"Step '{step.id}' failed with exit code {step_output['exit_code']}: "
+                            f"{error_msg}"
                         )
 
                     # A null error is no error: spawn_agent's success reply carries one.
@@ -699,7 +701,7 @@ class PipelineExecutor(
                             output_json=json_dumps(step_output),
                             error=error_msg,
                         )
-                        raise RuntimeError(f"Step '{step.id}' failed: {error_msg}")
+                        raise PipelineStepError(f"Step '{step.id}' failed: {error_msg}")
 
                     # For exec steps with JSON stdout, merge parsed data into output
                     if isinstance(step_output, dict) and "stdout" in step_output:
@@ -749,7 +751,7 @@ class PipelineExecutor(
                         status=ExecutionStatus.FAILED,
                         outputs_json=json_dumps(outputs),
                     )
-                    raise RuntimeError(f"Pipeline has failed steps: {', '.join(failed_ids)}")
+                    raise PipelineStepError(f"Pipeline has failed steps: {', '.join(failed_ids)}")
 
                 # Mark execution as completed
                 outputs = self._build_outputs(pipeline, context)
