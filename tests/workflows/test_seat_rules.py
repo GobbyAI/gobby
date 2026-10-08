@@ -178,6 +178,28 @@ async def test_seats_cannot_spawn(engine: RuleEngine) -> None:
         assert (await _decide(engine, call, non_seat)).decision == "allow"
 
 
+def _seat_definitions() -> list[str]:
+    agents_dir = ROLES_DIR.parents[1] / "agents"
+    definitions = (yaml.safe_load(path.read_text()) for path in sorted(agents_dir.glob("*.yaml")))
+    return [raw["name"] for raw in definitions if "seat" in raw.get("tags", [])]
+
+
+@pytest.mark.asyncio
+async def test_seats_ask_through_send_message(engine: RuleEngine) -> None:
+    ask = {"tool_name": "AskUserQuestion", "tool_input": {"questions": [{"question": "Land?"}]}}
+    seats = _seat_definitions()
+    assert {"assistant", "orchestrator", "inbox-manager", "merge-manager"} <= set(seats)
+
+    for agent_type in (*seats, "plan-writer", "plan-enhancer", "plan-adversary"):
+        blocked = await _decide(engine, ask, {"_agent_type": agent_type})
+        assert blocked.decision == "block", agent_type
+        assert "Use `gobby-agents:send_message` to send your question" in (blocked.reason or "")
+    assert (await _decide(engine, _shell("ls"), DEVELOPER)).decision == "allow"
+
+    for non_seat in ({"_agent_type": "default"}, {}):
+        assert (await _decide(engine, ask, non_seat)).decision == "allow", non_seat
+
+
 def _write(project: Path, file_path: str) -> dict[str, Any]:
     return {
         "tool_name": "Write",

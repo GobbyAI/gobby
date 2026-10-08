@@ -1,0 +1,25 @@
+tags: [roles, seat, enforcement, gobby, default]
+
+# Nobody answers a seat's AskUserQuestion selector, so the seat stalls until
+# someone sends keys. The catalogue matches `_agent_type` as in the peer seat
+# rules and also lists the Inbox and Merge Manager seats. Josh's own sessions
+# run no seat definition and keep the tool.
+rules:
+  seat-no-ask-user-question:
+    description: "Seats ask questions through send_message, never AskUserQuestion"
+    event: before_tool
+    enabled: true
+    priority: 10
+    when: >
+      variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
+        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
+        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
+        'merge-manager']
+    effects:
+      - type: block
+        tools: [AskUserQuestion]
+        reason: >-
+          Use `gobby-agents:send_message` to send your question to your Lane Manager
+          or the Orchestrator. Nobody answers a seat's AskUserQuestion selector, so
+          the seat stalls. A decision for Josh goes through the Assistant, as
+          Telegram buttons or plain text at the end of its turn.
