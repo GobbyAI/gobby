@@ -13,6 +13,7 @@ from gobby.workflows.pipeline_state import (
     ApprovalRequired,
     ExecutionStatus,
     PipelineExecution,
+    PipelineStepRefusal,
     StepExecution,
     StepStatus,
 )
@@ -178,7 +179,8 @@ async def _execute_pipeline_background(
         # Expected — pipeline paused for approval, not an error
         pass
     except Exception as e:
-        logger.exception("Background pipeline '%s' failed: %s", pipeline_name, e)
+        if not isinstance(e, PipelineStepRefusal):
+            logger.exception("Background pipeline '%s' failed: %s", pipeline_name, e)
         # Ensure execution is marked failed even if executor.execute didn't catch it
         try:
             from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
