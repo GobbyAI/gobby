@@ -101,9 +101,14 @@ def test_claim_selection_and_release_are_persisted_in_one_history(
     variables.release_task_claim(canonical_task_session.id, second.id)
 
     state = variables.get_variables(canonical_task_session.id)
+    assert state["active_task_id"] is None
+    history = state["task_selection_history"]
+    assert [entry["task_id"] for entry in history] == [first.id, second.id, None]
+    manager.claim_task_for_agent(first.id, canonical_task_session.id)
+    state = variables.get_variables(canonical_task_session.id)
     assert state["active_task_id"] == first.id
     history = state["task_selection_history"]
-    assert [entry["task_id"] for entry in history] == [first.id, second.id, first.id]
+    assert [entry["task_id"] for entry in history] == [first.id, second.id, None, first.id]
     epochs = [datetime.fromisoformat(entry["epoch"]) for entry in history]
     assert epochs == sorted(epochs)
     assert all(epoch.tzinfo is not None for epoch in epochs)

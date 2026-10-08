@@ -271,7 +271,7 @@ def test_force_steal_during_native_agent_refuses_unbound_child_edit(
     )
     assert receiver
     tasks.claim_task(first.id, receiver, force=True)
-    assert variables.get_variables(canonical_task_session.id)["active_task_id"] == second.id
+    assert variables.get_variables(canonical_task_session.id)["active_task_id"] is None
     child = replace(
         before,
         timestamp=datetime.now(UTC),

@@ -37,6 +37,7 @@ from gobby.workflows.commit_guard import (
     foreign_owned_dirty_paths,
 )
 from gobby.workflows.task_claim_state import (
+    active_task_id_for_edit,
     normalize_task_edited_path,
     task_edited_file_set_for_checkout,
 )
@@ -240,6 +241,11 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             )
 
         current_owner = get_claimed_session_id(task)
+        already_selected = (
+            current_owner == resolved_session_id
+            and active_task_id_for_edit(ctx.session_var_manager.get_variables(resolved_session_id))
+            == resolved_id
+        )
         delegated_claim = False
         if current_owner and current_owner != resolved_session_id and not force:
             delegated_claim = has_delegated_agent_run(
@@ -355,7 +361,7 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         # The title travels with the claim so memory surfacing can query the
         # task's subject without a second read.
         result: dict[str, Any] = {"success": True, "task_id": resolved_id, "title": task.title}
-        if current_owner == resolved_session_id:
+        if already_selected:
             task_ref = f"#{task.seq_num}" if task.seq_num else resolved_id
             result.update(
                 already_claimed=True,

@@ -395,8 +395,7 @@ async def test_reclaim_selects_a_task_while_another_claim_remains_active(
     await _claim(registry, canonical_task_session, active)
 
     selected = await _call(registry, canonical_task_session, "claim_task", task_id=landed.id)
-    assert selected["success"] is True
-    assert selected["already_claimed"] is True
+    assert selected == {"success": True, "task_id": landed.id, "title": "Landed"}
     assert _variables(temp_db, canonical_task_session)["active_task_id"] == landed.id
     assert manager.get_task(active.id).claimed_by_session_id == canonical_task_session.id
 
