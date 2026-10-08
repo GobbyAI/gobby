@@ -78,6 +78,12 @@ def preserve_task_claim_state(
         return
 
     claimed_tasks = _as_claimed_tasks(task_handoff.get("claimed_tasks"))
+    selected_task_id = predecessor_vars.get("active_task_id")
+    if isinstance(selected_task_id, str) and selected_task_id in claimed_tasks:
+        # Claim transfer selects at commit time; restore the predecessor's
+        # focus last, recording a fresh successor selection epoch.
+        selected_ref = claimed_tasks.pop(selected_task_id)
+        claimed_tasks[selected_task_id] = selected_ref
     merged_claims: dict[str, Any] = {}
 
     filtered_claims: dict[str, str] = {}
