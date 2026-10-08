@@ -28,6 +28,181 @@ from tests.fixtures.agent_definitions import make_agent_definition
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("network", ["none", "trusted", None])
+async def test_single_spawn_network_is_launch_local(network: str | None) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent import _factory
+
+    body = make_agent_definition(
+        name="default", provider="claude", network="trusted", prompts={"agent": "Work."}
+    )
+    launch = AsyncMock(return_value={"success": True, "run_id": "network-launch"})
+    registry = _factory.create_spawn_agent_registry(MagicMock())
+    with (
+        patch.object(_factory, "_load_agent_body", return_value=body),
+        patch.object(_factory, "spawn_agent_impl", launch),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.get_request_principal",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.get_current_session_id",
+            return_value=None,
+        ),
+    ):
+        result = await registry.call("spawn_agent", {"prompt": "work", "network": network})
+        assert result["success"] is True
+        assert launch.await_args is not None
+        selected = launch.await_args.kwargs["agent_body"]
+        assert selected.network == (network or "trusted")
+        assert body.network == "trusted"
+        if network is not None:
+            assert selected is not body
+        omitted = await registry.call("spawn_agent", {"prompt": "later"})
+        assert omitted["success"] is True
+        assert launch.await_args.kwargs["agent_body"] is body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("original, final", [("none", "trusted"), ("trusted", "none")])
+@pytest.mark.parametrize("network", [None, "omitted", "none", "trusted"])
+async def test_network_applies_after_fallback(
+    original: str, final: str, network: str | None
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent import _factory
+
+    primary = make_agent_definition(
+        name="primary",
+        provider="claude",
+        network=original,
+        fallback_agent="backup",
+        prompts={"agent": "Work."},
+    )
+    backup = make_agent_definition(
+        name="backup",
+        provider="codex",
+        network=final,
+        prompts={"agent": "Work."},
+    )
+    launch = AsyncMock(return_value={"success": True})
+    registry = _factory.create_spawn_agent_registry(
+        MagicMock(), db=MagicMock(), detection_registry=MagicMock()
+    )
+    with (
+        patch.object(_factory, "_load_agent_body", side_effect=[primary, backup]),
+        patch.object(_factory, "spawn_agent_impl", launch),
+        patch(
+            "gobby.agents.provider_rotation.get_failed_providers_for_task",
+            return_value={"claude"},
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.get_request_principal",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.get_current_session_id",
+            return_value=None,
+        ),
+    ):
+        arguments: dict[str, Any] = {"prompt": "work", "agent": "primary", "task_id": "task"}
+        if network != "omitted":
+            arguments["network"] = network
+        result = await registry.call("spawn_agent", arguments)
+    assert result["success"] is True
+    assert launch.await_args is not None
+    selected = launch.await_args.kwargs["agent_body"]
+    assert selected.name == "backup"
+    assert selected.network == (final if network == "omitted" else network or final)
+    assert primary.network == original
+    assert backup.network == final
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("network", ["all", "trusted", "none"])
+async def test_internal_network_override_refuses_before_launch(network: str) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent import _factory
+
+    launch = AsyncMock()
+    registry = _factory.create_spawn_agent_registry(MagicMock())
+    with (
+        patch.object(_factory, "_load_agent_body") as load,
+        patch.object(_factory, "spawn_agent_impl", launch),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.get_request_principal",
+            AsyncMock(side_effect=LookupError("internal")),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.get_current_session_id",
+            return_value=None,
+        ),
+    ):
+        result = await registry.call("spawn_agent", {"prompt": "work", "network": network})
+    assert result["success"] is False
+    assert "network" in result["error"]
+    load.assert_not_called()
+    launch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_network_override_needs_resolved_definition() -> None:
+    from gobby.mcp_proxy.tools.spawn_agent import _factory
+
+    launch = AsyncMock()
+    registry = _factory.create_spawn_agent_registry(MagicMock())
+    with (
+        patch.object(_factory, "_load_agent_body", return_value=None),
+        patch.object(_factory, "spawn_agent_impl", launch),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.get_request_principal",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.get_current_session_id",
+            return_value=None,
+        ),
+    ):
+        result = await registry.call("spawn_agent", {"prompt": "work", "network": "trusted"})
+    assert result["success"] is False
+    assert "resolved agent definition" in result["error"]
+    launch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_network_unreadable_seed_refuses_before_allocations() -> None:
+    from gobby.mcp_proxy.tools.spawn_agent import _factory, _implementation
+
+    body = make_agent_definition(name="default", provider="claude", prompts={"agent": "Work."})
+    registry = _factory.create_spawn_agent_registry(MagicMock())
+    project = {"id": "11111111-1111-4111-8111-111111110123", "project_path": "/test"}
+    with (
+        patch.object(_factory, "_load_agent_body", return_value=body),
+        patch.object(_factory, "get_project_context", return_value=project),
+        patch.object(_implementation, "get_project_context", return_value=project),
+        patch(
+            "gobby.agents.sandbox_network.trusted_domains", side_effect=OSError("seed unavailable")
+        ),
+        patch.object(_implementation, "preflight_placement", AsyncMock()) as placement,
+        patch.object(_implementation, "get_isolation_handler") as checkout,
+        patch.object(_implementation, "prepare_terminal_spawn") as child,
+        patch.object(_implementation, "execute_spawn", AsyncMock()) as launch,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.get_request_principal",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.get_current_session_id",
+            return_value=None,
+        ),
+    ):
+        result = await registry.call("spawn_agent", {"prompt": "work", "network": "trusted"})
+    assert result["success"] is False
+    assert "Trusted seed is unreadable" in result["error"]
+    placement.assert_not_awaited()
+    checkout.assert_not_called()
+    child.assert_not_called()
+    launch.assert_not_awaited()
+
+
 async def _drain_spawn_background_tasks() -> None:
     from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
 

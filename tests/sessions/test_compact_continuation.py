@@ -671,6 +671,75 @@ async def test_delivered_codex_readiness_timeout_releases_tools_for_recovery(
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in remaining
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["awaiting_handoff", "active", "paused", "expired"])
+@pytest.mark.parametrize("conflict", [None, "no_receipt", "new_gate", "new_marker"])
+async def test_readiness_timeout_recovers_only_matching_awaiting_session(
+    session_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+    status: str,
+    conflict: str | None,
+) -> None:
+    attempt_id = "a" * 32
+    staged = stage_handoff_attempt(
+        session_db,
+        SESSION_ID,
+        attempt_id=attempt_id,
+        handoff=build_handoff_payload(current_state="Recover me", next_steps=["Continue"]),
+        clear_session=False,
+    )
+    if conflict != "no_receipt":
+        record_handoff_delivery(
+            session_db,
+            handoff_id=staged.handoff_record_id,
+            attempt_id=attempt_id,
+            boundary_kind="compact",
+            continuation_session_id=SESSION_ID,
+        )
+    mark_handoff_compact_continuation_pending(
+        session_db,
+        SESSION_ID,
+        prompt="Call get_handoff",
+        attempt_id="b" * 32 if conflict == "new_marker" else attempt_id,
+    )
+    variables = SessionVariableManager(session_db)
+    variables.set_variable(
+        SESSION_ID,
+        HANDOFF_DISPATCH_GATE_VARIABLE,
+        {"attempt_id": "b" * 32 if conflict == "new_gate" else attempt_id},
+    )
+    session_db.execute("UPDATE sessions SET status = %s WHERE id = %s", (status, SESSION_ID))
+    before = variables.get_variables(SESSION_ID)
+    tmux = _FakeTmux()
+
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        pane=TmuxPaneIO(tmux, "%12"),
+        pending_session_id=SESSION_ID,
+        before_command="Before /compact\n›",
+        poll_seconds=0,
+        attempt_id=attempt_id,
+        fresh_seconds=-1,
+    )
+
+    row = session_db.fetchone("SELECT status FROM sessions WHERE id = %s", (SESSION_ID,))
+    assert row is not None
+    recover = status == "awaiting_handoff" and conflict is None
+    assert row["status"] == ("paused" if recover else status)
+    after = variables.get_variables(SESSION_ID)
+    assert after[HANDOFF_COMPACT_CONTINUE_VARIABLE] == before[HANDOFF_COMPACT_CONTINUE_VARIABLE]
+    assert tmux.sent_keys == []
+    if recover:
+        assert "Released awaiting_handoff after Codex readiness timeout" in caplog.text
+        recovered = consume_pending_handoff(session_db, SESSION_ID)
+        assert recovered is not None
+        assert recovered.attempt_id == attempt_id
+        assert "Recover me" in recovered.markdown
+        assert consume_pending_handoff(session_db, SESSION_ID) is None
+    elif conflict is not None:
+        assert after == before
+
+
 @pytest.mark.parametrize("gate_present", [False, True])
 @pytest.mark.asyncio
 async def test_codex_delivered_boundary_continues_without_visible_status_marker(

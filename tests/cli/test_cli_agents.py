@@ -24,6 +24,37 @@ from gobby.cli import cli
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.mark.parametrize("network", [None, "none", "trusted"])
+def test_spawn_network_forwarding(runner: CliRunner, network: str | None) -> None:
+    with (
+        patch("gobby.cli.agents.resolve_session_id", return_value="parent"),
+        patch("gobby.cli.agents.get_daemon_url", return_value="http://localhost:60887"),
+        patch("gobby.cli.agents.httpx.post") as post,
+    ):
+        post.return_value.json.return_value = {"success": True, "result": {"run_id": "network-run"}}
+        args = ["agents", "spawn", "work", "--session", "parent"]
+        if network is not None:
+            args.extend(["--network", network])
+        result = runner.invoke(cli, args)
+        assert result.exit_code == 0, result.output
+        sent = post.call_args.kwargs["json"]
+        if network is None:
+            assert "network" not in sent
+        else:
+            assert sent["network"] == network
+
+
+def test_spawn_invalid_network_never_posts(runner: CliRunner) -> None:
+    with patch("gobby.cli.agents.httpx.post") as post:
+        result = runner.invoke(
+            cli, ["agents", "spawn", "work", "--session", "parent", "--network", "all"]
+        )
+    assert result.exit_code == 2
+    assert "Invalid value for '--network'" in result.output
+    post.assert_not_called()
+
+
 # ==============================================================================
 # Fixtures
 # ==============================================================================

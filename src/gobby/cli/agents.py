@@ -176,6 +176,9 @@ def agents() -> None:
 @click.option("--provider", "-p", default="claude", help="LLM provider (claude, qwen, etc.)")
 @click.option("--model", help="Model override")
 @click.option(
+    "--network", type=click.Choice(["none", "trusted"]), help="SRT profile for this launch"
+)
+@click.option(
     "--reasoning-effort", help="Reasoning effort override (e.g. low, medium, high, xhigh)"
 )
 @click.option(
@@ -192,6 +195,7 @@ def spawn_agent_cmd(
     task: str | None,
     provider: str,
     model: str | None,
+    network: str | None,
     reasoning_effort: str | None,
     reasoning_required: bool,
     timeout: float,
@@ -235,6 +239,8 @@ def spawn_agent_cmd(
         arguments["task_id"] = task
     if model:
         arguments["model"] = model
+    if network is not None:
+        arguments["network"] = network
     if reasoning_effort:
         arguments["reasoning_effort"] = reasoning_effort
         arguments["reasoning_required"] = reasoning_required

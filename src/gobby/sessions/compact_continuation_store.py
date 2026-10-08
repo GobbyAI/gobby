@@ -56,6 +56,20 @@ def _fail_delivered_readiness(db: HubDatabase, session_id: str, attempt_id: str)
             "UPDATE session_variables SET variables = %s, updated_at = %s WHERE session_id = %s",
             (json.dumps(variables), datetime.now(UTC).isoformat(), session_id),
         )
+        # Keep the attempt check and recovery atomic: a newer marker must not
+        # release its predecessor's wait, and fresh activity must stay active.
+        released = conn.execute(
+            "UPDATE sessions SET status = 'paused', updated_at = %s "
+            "WHERE id = %s AND status = 'awaiting_handoff'",
+            (datetime.now(UTC).isoformat(), session_id),
+        ).rowcount
+    if released:
+        logger.warning(
+            "Released awaiting_handoff after Codex readiness timeout for session %s "
+            "attempt %s; staged handoff preserved for get_handoff",
+            session_id,
+            attempt_id,
+        )
 
 
 def _merge_session_variable(

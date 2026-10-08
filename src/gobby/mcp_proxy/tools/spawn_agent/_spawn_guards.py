@@ -26,6 +26,7 @@ from gobby.utils.session_context import get_current_session_id, get_request_prin
 from gobby.workflows.condition_helpers_sessions import _spawn_caller, spawn_target_allowed
 
 from ._idempotency import active_task_spawn_response, non_actionable_task_spawn_response
+from ._network_override import enforce_network_override
 from ._runtime import _normalize_string_list
 from ._step_state import (
     preclaimed_task_instruction,
@@ -45,6 +46,8 @@ async def enforce_spawn_caller(
     session_manager: SessionManager | None,
     agent: str,
     target_project_id: str | None,
+    *,
+    network: str | None = None,
 ) -> str | None:
     """Enforce spawnable_agents at admission, including calls that skip tool rules.
 
@@ -52,10 +55,12 @@ async def enforce_spawn_caller(
     never the spawn's parent argument. Sessionless operator/internal calls retain
     their authority. Return the verified caller for launch attribution.
     """
+    internal = False
     try:
         principal = await get_request_principal()
     except LookupError:
         principal = None
+        internal = True
     if principal is False:
         raise ValueError("spawnable_agents: rejected request credentials")
     context_session_id = get_current_session_id()
@@ -63,6 +68,7 @@ async def enforce_spawn_caller(
         principal.session_id if isinstance(principal, AgentApiTokenClaims) else context_session_id
     )
     if not caller_ref:
+        enforce_network_override(session_manager, None, network, internal=internal)
         return None
 
     def authorize() -> str:
@@ -91,6 +97,7 @@ async def enforce_spawn_caller(
             target_project_id=target_project_id,
         ):
             raise ValueError(f"caller may not spawn {agent!r} or its target-project fallback chain")
+        enforce_network_override(session_manager, caller.id, network)
         return caller.id
 
     try:
