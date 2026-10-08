@@ -362,6 +362,67 @@ def test_validate_rejects_symbol_scope_for_unindexed_file(tmp_path: Path) -> Non
     assert UNRESOLVED_SYMBOL in _issue_codes(result)
 
 
+DELETE_LINES_PROOF = (
+    "`scripts/schema_tool.py::*` — operation: delete-lines — base-blob: "
+    + "a" * 40
+    + " — lines: 1 — scope-reason: drop the unused import"
+)
+
+
+def test_validate_accepts_delete_lines_proof_for_unindexed_file(tmp_path: Path) -> None:
+    result = validate_symbol_targets(
+        _parse(tmp_path, f"- {DELETE_LINES_PROOF}"),
+        project_context=_project_context(tmp_path),
+        code_index=_Index(),
+        required=True,
+    )
+
+    assert result.status == "passed"
+    assert result.issues == ()
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "`scripts/schema_tool.py::*` — scope-reason: drop the unused import",
+        DELETE_LINES_PROOF.replace("::*", "::run"),
+    ],
+    ids=["wildcard-without-proof", "proof-with-exact-symbol"],
+)
+def test_validate_unindexed_file_rejects_symbol_scope_outside_a_proof_wildcard(
+    tmp_path: Path, target: str
+) -> None:
+    result = validate_symbol_targets(
+        _parse(tmp_path, f"- {target}"),
+        project_context=_project_context(tmp_path),
+        code_index=_Index(),
+        required=True,
+    )
+
+    assert result.status == "failed"
+    assert UNRESOLVED_SYMBOL in _issue_codes(result)
+
+
+def test_validate_delete_lines_proof_on_indexed_file_keeps_index_checks(tmp_path: Path) -> None:
+    source = tmp_path / "scripts" / "schema_tool.py"
+    source.parent.mkdir()
+    source.write_text("def run() -> None: ...\n", encoding="utf-8")
+    index = _Index(
+        files={"scripts/schema_tool.py": _IndexedFile(content_hash="stale", symbol_count=1)},
+        symbols={"scripts/schema_tool.py": [_Symbol("run")]},
+    )
+
+    result = validate_symbol_targets(
+        _parse(tmp_path, f"- {DELETE_LINES_PROOF}"),
+        project_context=_project_context(tmp_path),
+        code_index=index,
+        required=True,
+    )
+
+    assert result.status == "failed"
+    assert _issue_codes(result) == {INDEX_STALE}
+
+
 def test_validate_reports_unresolved_and_ambiguous_symbols(tmp_path: Path) -> None:
     source_path = tmp_path / "src" / "example.py"
     source_path.parent.mkdir()
