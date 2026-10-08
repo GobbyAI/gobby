@@ -137,6 +137,8 @@ def test_assistant_routes_and_edits_tasks_only_when_josh_asks() -> None:
     assert "assistant-write-scope" in prompt
     assert "two consecutive five-minute load readings above 30" in prompt
     assert "two consecutive readings below 24" in prompt
+    assert "Recover stalled sessions: Josh gave you standing permission" in prompt
+    assert "report the stalled seat to the Orchestrator instead" in prompt
     assert not READ_ONLY_BLOCKED_TOOLS & set(body.blocked_tools)
 
 
@@ -152,6 +154,8 @@ def test_orchestrator_coordinates_restarts_and_edits_tasks_as_needed() -> None:
     assert "buttons through the Assistant" in prompt
     assert "Edit tasks as needed" in prompt
     assert "other seats' edit requests" in prompt
+    assert "Recover stalled sessions: Josh gave you standing permission" in prompt
+    assert "report the stalled seat to the Assistant instead" in prompt
     assert body.workflows.rule_selectors is not None
     assert {"name:no-force-push-interactive", "name:no-destructive-git-interactive"} <= set(
         body.workflows.rule_selectors.include
