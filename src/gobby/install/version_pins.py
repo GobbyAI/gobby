@@ -6,9 +6,9 @@ MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     # Floors track published helper release tags.
     "ghook": "0.7.3",
     "gcode": "1.5.0",
-    "gdaemon": "0.4.7",
+    "gdaemon": "0.4.8",
     "gterm": "0.1.7",
-    "gclient": "0.1.22",
+    "gclient": "0.1.23",
 }
 
 UNPUBLISHED_MANAGED_BINS: frozenset[str] = frozenset({"gterm", "gclient"})
