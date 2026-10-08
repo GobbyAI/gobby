@@ -631,6 +631,7 @@ class TestToolHandlerEdgeCases:
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
             started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
 
     def test_stale_edit_of_an_attributed_path_leaves_the_ledger_to_record(
@@ -674,6 +675,7 @@ class TestToolHandlerEdgeCases:
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
             started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
 
     @pytest.mark.parametrize(
@@ -741,6 +743,7 @@ class TestToolHandlerEdgeCases:
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
             started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
@@ -773,6 +776,7 @@ class TestToolHandlerEdgeCases:
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
             started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
@@ -816,6 +820,7 @@ class TestToolHandlerEdgeCases:
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
             started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
         assert response.decision == "allow"
         assert notify_code_index.call_count == 2
@@ -945,6 +950,7 @@ class TestToolHandlerEdgeCases:
             checkout_root=str(worktree_root.resolve()),
             edited_at=event.timestamp.timestamp(),
             started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
 
     def test_cp_from_primary_to_worktree_attributes_only_destination(
@@ -997,6 +1003,7 @@ class TestToolHandlerEdgeCases:
             checkout_root=str(worktree_root.resolve()),
             edited_at=event.timestamp.timestamp(),
             started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
 
     def test_after_tool_notifies_code_index_with_project_root_path(
@@ -1086,6 +1093,7 @@ class TestToolHandlerEdgeCases:
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
             started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
         notify_code_index.assert_not_called()
@@ -1150,6 +1158,7 @@ class TestToolHandlerEdgeCases:
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
             started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 

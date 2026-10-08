@@ -309,7 +309,8 @@ def test_edit_history_without_claim_records_no_task_scoped_edits(temp_db, tmp_pa
     _complete_tool(handlers, event)
 
     variables = session_var_manager.get_variables(session.id)
-    assert "session_edited_files" not in variables
+    assert variables["session_edited_files"] == ["src/edited.py"]
+    assert variables["session_dirty_files"] == ["src/edited.py"]
     assert "task_edited_files" not in variables
 
 

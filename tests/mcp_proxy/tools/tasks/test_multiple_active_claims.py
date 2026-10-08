@@ -193,6 +193,11 @@ def test_unbound_replay_refuses_attribution_and_names_selection_recovery(
         canonical_task_session.id, ["src/unbound.py"], started_at=started_at
     )
 
-    assert recorded is False
-    assert variables.get_variables(canonical_task_session.id) == before
+    assert recorded is True
+    after = variables.get_variables(canonical_task_session.id)
+    assert after["session_edited_files"] == ["src/unbound.py"]
+    assert after["session_dirty_files"] == ["src/unbound.py"]
+    assert after.get("task_edited_files", {}) == {}
+    assert after["task_selection_history"] == before["task_selection_history"]
+    assert after["claimed_tasks"] == before["claimed_tasks"]
     assert "claim_task" in caplog.text

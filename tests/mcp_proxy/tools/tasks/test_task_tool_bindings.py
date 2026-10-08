@@ -239,7 +239,7 @@ def test_pre_rule_cleanup_updates_persisted_and_evaluation_state(
     )
 
 
-def test_force_steal_during_native_agent_refuses_unbound_child_edit(
+def test_force_steal_during_native_agent_records_unbound_session_edit(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
@@ -508,6 +508,40 @@ def test_turn_cleanup_prunes_completed_bindings(
     calls = variables.get_variables(canonical_task_session.id)["task_tool_bindings"]
     assert set(calls) == {"codex:background"}
     assert calls["codex:background"]["pending"] is True
+
+
+def test_turn_binding_failure_still_resets_subagent_state(
+    temp_db: HubDatabase,
+    canonical_task_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    variables = SessionVariableManager(temp_db)
+    variables.merge_variables(canonical_task_session.id, {"subagent_count": 3, "is_subagent": True})
+    handlers = EventHandlers(session_manager=cast(HookSessionManager, SessionManager(temp_db)))
+    adapter = CodexAdapter()
+    monkeypatch.setattr(adapter, "_get_machine_id", lambda: canonical_task_session.machine_id)
+    turn = adapter.translate_to_hook_event(
+        {
+            "method": "turn/started",
+            "params": {
+                "threadId": canonical_task_session.external_id,
+                "turn": {"id": "turn-binding-failure"},
+                "prompt": "continue",
+            },
+        }
+    )
+    assert turn is not None
+    turn.metadata["_platform_session_id"] = canonical_task_session.id
+
+    def fail_begin_turn(self: TaskToolBindings, event: HookEvent) -> None:
+        raise ValueError("turn binding unavailable")
+
+    monkeypatch.setattr(TaskToolBindings, "begin_turn", fail_begin_turn)
+    handlers.handle_before_agent(turn)
+
+    state = variables.get_variables(canonical_task_session.id)
+    assert state["subagent_count"] == 0
+    assert state["is_subagent"] is False
 
 
 @pytest.mark.parametrize("switch_selection", [False, True])
