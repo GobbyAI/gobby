@@ -800,11 +800,33 @@ def test_related_source_selector_reuses_unchanged_test_parses(tmp_path: Path) ->
     assert parse.call_args_list == []
 
 
+def test_related_source_selector_rereads_only_changed_test_files(tmp_path: Path) -> None:
+    """A repeated close reads no unchanged test file and rereads an edited one (#23359)."""
+    (tmp_path / "src/gobby").mkdir(parents=True)
+    (tmp_path / "src/gobby/widget.py").write_text("VALUE = 1\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_consumer.py").write_text("from gobby.widget import VALUE\n")
+    (tmp_path / "tests/test_other.py").write_text("OTHER = 1\n")
+    first = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path)
+
+    with patch.object(
+        close_test_coverage, "_test_imports", wraps=close_test_coverage._test_imports
+    ) as reads:
+        unchanged = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path)
+        (tmp_path / "tests/test_other.py").write_text("from gobby.widget import VALUE as V\n")
+        edited = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path)
+
+    assert first == unchanged == {"src/gobby/widget.py": ("tests/test_consumer.py",)}
+    assert edited == {"src/gobby/widget.py": ("tests/test_consumer.py", "tests/test_other.py")}
+    assert [call.args[0] for call in reads.call_args_list] == [tmp_path / "tests/test_other.py"]
+
+
 def test_related_source_selector_parse_cache_is_bounded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Least recently used parses past the cap are evicted, never kept forever."""
     monkeypatch.setattr("gobby.tasks.close_test_coverage._PARSED_IMPORTS_MAX", 1)
+    monkeypatch.setattr("gobby.tasks.close_test_coverage._TEST_SCANS_MAX", 0)
     (tmp_path / "src/gobby").mkdir(parents=True)
     (tmp_path / "src/gobby/widget.py").write_text("VALUE = 1\n")
     (tmp_path / "tests").mkdir()

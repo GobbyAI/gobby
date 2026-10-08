@@ -10,6 +10,7 @@ import os
 import posixpath
 import re
 import shlex
+import stat
 import threading
 from collections import OrderedDict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -156,6 +157,57 @@ def _test_imports(
     return _parsed_imports(path, module, text)
 
 
+# A test tree's imports per prefix set, reused per file while its stat matches (#23359):
+# close retries rescan the same tree for the same changed modules. The least recently
+# used prefix sets past the cap go.
+_TEST_SCANS_MAX = 32
+_TEST_SCANS: OrderedDict[
+    tuple[Path, frozenset[str]], dict[str, tuple[tuple[int, ...] | None, frozenset[str]]]
+] = OrderedDict()
+_TEST_SCANS_LOCK = threading.Lock()
+
+
+def _scan_tests(
+    base: Path, prefixes: set[str], leaves: set[str], parent_import: re.Pattern[str] | None
+) -> list[tuple[str, frozenset[str]]]:
+    """Each collected test module with ``_test_imports``, read only when it changed."""
+    tests_dir = base / "tests"
+    # rglob joins onto tests_dir, so slicing its string skips pathlib's relative_to.
+    offset = len(str(tests_dir)) - len("tests")
+    signatures: dict[str, tuple[int, ...]] = {}
+    for path in tests_dir.rglob("*.py"):
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode):
+            signatures[str(path)[offset:]] = (
+                info.st_ino,
+                info.st_size,
+                info.st_mtime_ns,
+                info.st_ctime_ns,
+            )
+    key = (tests_dir, frozenset(prefixes))
+    with _TEST_SCANS_LOCK:
+        previous = _TEST_SCANS.get(key, {})
+    scan: dict[str, tuple[tuple[int, ...] | None, frozenset[str]]] = {}
+    for test in pytest_module_paths(signatures):
+        signature = signatures.get(test)
+        entry = previous.get(test)
+        if signature is None or entry is None or entry[0] != signature:
+            entry = (
+                signature,
+                _test_imports(base / test, _module_name(test), prefixes, leaves, parent_import),
+            )
+        scan[test] = entry
+    with _TEST_SCANS_LOCK:
+        _TEST_SCANS[key] = scan
+        _TEST_SCANS.move_to_end(key)
+        while len(_TEST_SCANS) > _TEST_SCANS_MAX:
+            _TEST_SCANS.popitem(last=False)
+    return [(test, imports) for test, (_, imports) in scan.items()]
+
+
 def related_python_source_tests(
     changed_paths: Iterable[str], base_dir: str | Path
 ) -> dict[str, tuple[str, ...]]:
@@ -217,16 +269,7 @@ def related_python_source_tests(
         else None
     )
     leaves = {prefix.rpartition(".")[2] for prefix in prefixes}
-    tests_dir = base / "tests"
-    # rglob joins onto tests_dir, so slicing its string skips pathlib's relative_to.
-    offset = len(str(tests_dir)) - len("tests")
-    candidates = pytest_module_paths(
-        str(path)[offset:] for path in tests_dir.rglob("*.py") if path.is_file()
-    )
-    tests = [
-        (test, _test_imports(base / test, _module_name(test), prefixes, leaves, parent_import))
-        for test in candidates
-    ]
+    tests = _scan_tests(base, prefixes, leaves, parent_import)
     for source, family in families.items():
         source_path = PurePosixPath(source)
         module = _module_name(source)
