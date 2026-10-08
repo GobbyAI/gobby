@@ -315,14 +315,16 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # (test_bin_freshness_git_is_reached_only_from_cli_status below).
     ("src/gobby/install/bin_freshness_promotion.py", "last_source_commit_time"),
     # Sync plan tools run through InternalToolRegistry.call's worker; async plan
-    # tools resolve projects inside _run_db_call (test_plans_tools).
+    # tools resolve projects inside _run_db_call or their complete review-evidence
+    # service worker (test_plans_tools covers sync and async checkout forms).
     ("src/gobby/mcp_proxy/tools/plans/__init__.py", "_optional_project_id"),
     # _legacy_task_checkout_proof awaits this helper through asyncio.to_thread.
     ("src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py", "_same_git_checkout"),
     # commit_close awaits linking through asyncio.to_thread.
     ("src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_preview.py", "link_close_commit_shas"),
-    # Explicit synchronous storage facade, with no production callers. New
-    # daemon callers are checked by the synchronous-facade inventory below.
+    # The HTTP close route passes this synchronous storage facade to server.run_db.
+    # The facade inventory below guards new direct daemon calls; it does not
+    # inspect higher-order uses such as run_db(facade, ...).
     (
         "src/gobby/storage/tasks/_transitions_facade.py",
         "TaskTransitionsMixin.close_task_with_commit",

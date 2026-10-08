@@ -507,20 +507,39 @@ async def test_plan_tool_schemas_and_happy_path(
     assert archived["plan"]["state"] == "archived"
 
 
+@pytest.mark.parametrize("form", ["main_checkout", "linked_worktree"])
 async def test_snapshot_returns_complete_decoded_document(
     temp_db: HubDatabase,
     tmp_path: Path,
+    form: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    project_id = _create_project(temp_db, tmp_path, "review-evidence-tools")
+    main = tmp_path / "main"
+    linked = tmp_path / "linked"
+    project_id = _create_project(temp_db, main, "review-evidence-tools")
     session = SessionManager(temp_db).register(
         external_id="review-evidence-tools",
         machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
     )
-    plan_path = _write_plan(tmp_path)
+    _write_plan(main)
+    _git(main, "init", "-q")
+    _git(main, "add", ".")
+    _git(main, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "x")
+    _git(main, "worktree", "add", "-q", "--detach", str(linked))
+    checkout = main if form == "main_checkout" else linked
+    plan_path = main / ".gobby/plans/task-100-demo.md"
     expected = plan_path.read_text()
     registry = create_plan_registry(temp_db, default_project_id=project_id)
+    caller_thread = threading.get_ident()
+    git_threads: list[int] = []
+
+    def checked_git(*args: Any, **kwargs: Any) -> str | None:
+        git_threads.append(threading.get_ident())
+        return run_git_command(*args, **kwargs)
+
+    monkeypatch.setattr(plans_tools, "run_git_command", checked_git)
 
     prepared = await registry.call(
         "prepare_plan_review_round",
@@ -528,6 +547,7 @@ async def test_snapshot_returns_complete_decoded_document(
             "plan_path": str(plan_path),
             "round_number": 1,
             "session_id": session.id,
+            "project": str(checkout),
         },
     )
     snapshot = await registry.call(
@@ -539,6 +559,8 @@ async def test_snapshot_returns_complete_decoded_document(
     assert snapshot["evidence_id"] == prepared["evidence_id"]
     assert snapshot["snapshot"] == expected
     assert snapshot["sections"] == prepared["sections"]
+    assert git_threads
+    assert all(thread_id != caller_thread for thread_id in git_threads)
 
 
 async def test_plan_tools_return_invalid_ref_for_blank_plan_ref(
