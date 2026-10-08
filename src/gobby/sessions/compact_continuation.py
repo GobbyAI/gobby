@@ -42,6 +42,7 @@ from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.terminals.pane_io import (
+    COMPOSER_UNKNOWN_ERROR_CODE,
     ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE,
     SUBMIT_UNVERIFIED_ERROR_CODE,
     SUBMIT_VERIFY_SECONDS,
@@ -670,17 +671,18 @@ async def _type_handoff_compact_continuation(
         ):
             return _refuse_continuation(session_id, refusal)
         # An operator draft in the composer would be submitted with the pull
-        # prompt, so require a positively empty composer before typing anything.
+        # prompt, so require an empty composer or the exact pending prompt.
         # Only an unprobed composer keeps the blind drain: after a confirmed-empty
         # read it could only delete keystrokes the operator typed since.
         # SessionStart(compact) can arrive before Claude redraws its composer, so an
-        # unclassifiable frame is re-read after it settles; a draft is never retried.
+        # unclassifiable frame is re-read after it settles; foreign drafts are refused.
         for probe in range(1, CONTINUATION_COMPOSER_PROBES + 1):
             writable, refuse_reason, composer_state = await composer_gate_for_write(
                 pane,
                 cli_source,
                 composer_read,
                 action="the set_handoff continuation",
+                pending_payload=prompt,
             )
             if writable or composer_state != "unknown" or probe == CONTINUATION_COMPOSER_PROBES:
                 break
@@ -690,7 +692,9 @@ async def _type_handoff_compact_continuation(
                 session_id, f"{refuse_reason} (composer {composer_state} after {probe} probe(s))"
             )
         ok, reason = (
-            (True, None) if composer_state == "empty" else await clear_composer(pane, cli_source)
+            (True, None)
+            if composer_state in {"empty", "held"}
+            else await clear_composer(pane, cli_source)
         )
         if not ok:
             logger.warning(
@@ -711,15 +715,18 @@ async def _type_handoff_compact_continuation(
             cli_source=cli_source,
             composer_read=composer_read,
             verify_seconds=verify_seconds,
+            pending_payload=prompt,
         )
         if result.ok:
             return result
         if result.error_code in {
+            "composer_occupied",
+            COMPOSER_UNKNOWN_ERROR_CODE,
             SUBMIT_UNVERIFIED_ERROR_CODE,
             ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE,
         }:
-            # Enter may have submitted. Clearing now could erase operator text,
-            # while falling back now would strand an awaiting_handoff seat.
+            # A protected refusal or uncertain Enter must preserve the composer:
+            # clearing now could erase operator text.
             return result
         logger.error(
             "Failed to submit the set_handoff compact continuation prompt for session %s: %s",

@@ -50,6 +50,12 @@ from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.key_bytes import tmux_key_name
+from gobby.terminals.native_runtime import (
+    NativeBatchFailure,
+    NativeBatchResult,
+    NativeBatchTarget,
+    NativeTerminalRuntime,
+)
 from gobby.terminals.pane_io import RuntimePaneIO, SubmitResult, TmuxPaneIO
 from gobby.terminals.runtime import Delivered, SnapshotMode
 from gobby.workflows.state_manager import SessionVariableManager
@@ -1575,6 +1581,114 @@ async def test_confirmed_empty_pull_prompt_types_without_draining() -> None:
 
     assert [text for _pane, text, literal in tmux.sent_keys if literal] == [f"{_PULL_PROMPT}\n"]
     assert [key for _pane, key, literal in tmux.sent_keys if not literal] == ["Enter"]
+
+
+@pytest.mark.parametrize(
+    "initial", ["empty", "held", "foreign", "prefix", "changed", "before-write-changed"]
+)
+async def test_native_continuation_retries_only_its_exact_held_payload(
+    monkeypatch: pytest.MonkeyPatch, initial: str
+) -> None:
+    prompt = _PULL_PROMPT
+    composer = {
+        "empty": "",
+        "held": prompt,
+        "foreign": "operator private draft",
+        "prefix": prompt + " operator addition",
+        "changed": "",
+        "before-write-changed": "",
+    }[initial]
+    operations: list[tuple[str, str]] = []
+    enter_attempts = 0
+    snapshot_calls = 0
+    runtime = NativeTerminalRuntime(cast(Any, object()))
+
+    async def batch(targets: list[NativeBatchTarget]) -> list[NativeBatchResult]:
+        nonlocal composer, enter_attempts
+        operation = targets[0].operations[0]
+        operations.append((operation.kind, operation.payload))
+        if operation.kind == "text":
+            composer = prompt
+        else:
+            assert operation.payload == "enter"
+            enter_attempts += 1
+            if enter_attempts == 1:
+                if initial == "changed":
+                    composer = prompt + " operator addition"
+                    return [NativeBatchResult("pane-input", Delivered())]
+                return [
+                    NativeBatchResult(
+                        "pane-input", NativeBatchFailure("none", "pty_busy", "queue full")
+                    )
+                ]
+            composer = ""
+        return [NativeBatchResult("pane-input", Delivered())]
+
+    async def snapshot(lines: int = 12, *, mode: SnapshotMode = "text") -> str:
+        nonlocal composer, snapshot_calls
+        snapshot_calls += 1
+        if initial == "before-write-changed" and snapshot_calls == 2:
+            composer = "private operator note"
+        return composer
+
+    monkeypatch.setattr(runtime, "write_batch", batch)
+    pane = RuntimePaneIO(runtime, SimpleNamespace(id="continuation-terminal"))
+    monkeypatch.setattr(pane, "snapshot", snapshot)
+    monkeypatch.setattr("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0)
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0)
+    failures: list[int] = []
+    sent = await _send_handoff_compact_continuation(
+        pane,
+        prompt,
+        SESSION_ID,
+        delay_seconds=0,
+        cli_source="claude",
+        composer_read=lambda output: ComposerRead("draft", output)
+        if output
+        else ComposerRead("empty"),
+        on_send_failure=lambda: failures.append(0),
+    )
+    if initial == "before-write-changed":
+        assert sent is False
+        assert operations == []
+        assert failures == [0]
+        assert composer == "private operator note"
+    elif initial == "changed":
+        assert sent is False
+        assert operations == [("text", prompt + "\n"), ("key", "enter")]
+        assert failures == [0]
+        assert composer == prompt + " operator addition"
+    elif initial in {"foreign", "prefix"}:
+        assert sent is False
+        assert operations == []
+        assert failures == [0]
+        assert composer.endswith("draft" if initial == "foreign" else "addition")
+    else:
+        assert sent is True
+        assert composer == ""
+        assert failures == []
+        assert operations == ([("text", prompt + "\n")] if initial == "empty" else []) + [
+            ("key", "enter"),
+            ("key", "enter"),
+        ]
+
+
+@pytest.mark.parametrize("draft", ["private operator note", _PULL_PROMPT + " operator addition"])
+async def test_continuation_lifecycle_retry_refuses_every_other_draft(draft: str) -> None:
+    tmux = _FakeTmux()
+    tmux.composer_text = _claude_frame("❯ " + draft)
+    assert _CLAUDE_READ(tmux.composer_text).state == "draft"
+    sent = await continuation_retry.resubmit_continuation(
+        TmuxPaneIO(tmux, "%12"),
+        _PULL_PROMPT,
+        SESSION_ID,
+        cli_source="claude",
+        composer_read=_CLAUDE_READ,
+        verify_seconds=0,
+    )
+    assert sent is False
+    assert tmux.sent_keys == []
+    assert tmux.composer_text == _claude_frame("❯ " + draft)
 
 
 class TestPullPromptFallback:
