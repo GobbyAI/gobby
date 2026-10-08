@@ -74,6 +74,9 @@ _COMPACTION_REJECTION_POLL_SECONDS = 0.1
 # When a turn_settled observer exists, poll it this long before the first interrupt.
 _TURN_SETTLE_WAIT_SECONDS = 30.0
 _TURN_SETTLE_POLL_SECONDS = 0.25
+# Claude repaints its composer while a turn runs, and a narrow pane stacks stale status
+# rows into that frame, so a refused mid-turn read is retaken once the turn settles (#23784).
+_SETTLE_BEFORE_REFUSAL_SOURCES = frozenset({"claude"})
 # Droid 0.219.0 answers a submitted /compress (never /clear) with a "Confirm /compress"
 # modal that waits for Enter; poll the pane this long for it before watching for a rejection.
 _CLI_COMPACT_CONFIRM_PROMPTS: dict[tuple[str, str], str] = {
@@ -576,6 +579,8 @@ async def _send_terminal_compaction_command_locked(
     text write. Every other draft refuses the whole delivery with
     ``composer_occupied`` before any key is sent, so the operator's draft and the
     live turn are both left alone; the agent retries once the draft is submitted.
+    Claude repaints its composer mid-turn, so its refused first read is retaken
+    once the turn settles; a turn still running after the wait keeps the refusal.
     It then reads the composer back after Enter, so a command the CLI typed but
     never submitted fails with ``command_not_submitted`` instead of reporting
     success on the strength of the write outcome. ``seat_left`` is checked
@@ -590,6 +595,21 @@ async def _send_terminal_compaction_command_locked(
         writable, refuse_reason, composer_state = await composer_gate_for_write(
             pane, cli_source, composer_read, action=command, pending_payload=command
         )
+        settle_wait_seconds, settle_poll_seconds = _turn_settle_wait_budget(settle_seconds)
+        if (
+            not writable
+            and cli_source in _SETTLE_BEFORE_REFUSAL_SOURCES
+            and await _wait_for_turn_to_settle(
+                turn_settled,
+                session_id,
+                command,
+                wait_seconds=settle_wait_seconds,
+                poll_seconds=settle_poll_seconds,
+            )
+        ):
+            writable, refuse_reason, composer_state = await composer_gate_for_write(
+                pane, cli_source, composer_read, action=command, pending_payload=command
+            )
         if not writable:
             logger.info(
                 "Refusing %s for session %s: %s",
@@ -616,7 +636,6 @@ async def _send_terminal_compaction_command_locked(
             _COMPACTION_CONFIRM_SETTLE_SECONDS if settle_seconds is None else settle_seconds
         )
         verify_seconds = _SUBMIT_VERIFY_SETTLE_SECONDS if settle_seconds is None else settle_seconds
-        settle_wait_seconds, settle_poll_seconds = _turn_settle_wait_budget(settle_seconds)
         if observe_interrupt is not None:
             continuation_pending = bool(mark_continuation_pending())
             if not continuation_pending:
