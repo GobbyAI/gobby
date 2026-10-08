@@ -281,7 +281,9 @@ async def collect_net_commit_paths_async(
             deleted.add(paths[0])
     if candidate is not None and changed:
         tracked = await daemon_git.run(
-            ["ls-tree", "-r", "--name-only", "-z", candidate], cwd=repo_path, timeout=10
+            ["ls-tree", "--full-tree", "-r", "--name-only", "-z", candidate],
+            cwd=repo_path,
+            timeout=10,
         )
         if not isinstance(tracked, GitOk) or tracked.stderr:
             raise RuntimeError("Cannot determine changed paths absent from the close candidate.")
