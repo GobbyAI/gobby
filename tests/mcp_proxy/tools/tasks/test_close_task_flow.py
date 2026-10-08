@@ -39,6 +39,7 @@ from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as no
 from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths, TaskScopeEvaluation
 from gobby.sessions.machine_scope import RemoteSessionOwnershipError
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task, TaskHasOpenChildrenError
@@ -234,6 +235,96 @@ async def _evaluate_named_test_close(
         )
 
     return evaluation, tdd_check
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deleted", [False, True])
+async def test_close_refuses_another_active_claims_net_paths(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    canonical_task_session: Session,
+    tmp_path: Path,
+    deleted: bool,
+) -> None:
+    tasks = LocalTaskManager(temp_db)
+    first = tasks.create_task(
+        sample_project["id"], "First", validation_criteria="Close isolates paths."
+    )
+    second = tasks.create_task(
+        sample_project["id"], "Second", validation_criteria="Close isolates paths."
+    )
+    tasks.claim_task_for_agent(first.id, canonical_task_session.id)
+    variables = SessionVariableManager(temp_db)
+    variables.record_edited_files(
+        canonical_task_session.id, ["src/first.py"], checkout_root=str(tmp_path)
+    )
+    tasks.claim_task_for_agent(second.id, canonical_task_session.id)
+    paths = frozenset({"src/first.py"})
+    net = NetCommitPaths(deleted=paths) if deleted else NetCommitPaths(changed=paths)
+    with patch("gobby.tasks.commit_ownership.SessionVariableManager", return_value=variables):
+        evaluation, tdd_check = await _evaluate_named_test_close(
+            tasks.get_task(second.id),
+            tdd_result=TddEvidenceResult(passed=True, skipped=False, findings=()),
+            net_paths=net,
+            repo_path=str(tmp_path),
+        )
+    assert evaluation.error == "commit_task_path_conflict"
+    assert f"#{first.seq_num}" in str(evaluation.message)
+    tdd_check.assert_not_called()
+    assert not evaluation.ready
+
+
+@pytest.mark.asyncio
+async def test_close_allows_commit_before_other_claim_live_edit(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    canonical_task_session: Session,
+    tmp_path: Path,
+) -> None:
+    from gobby.utils.daemon_git import GitOk
+
+    tasks = LocalTaskManager(temp_db)
+    first = tasks.create_task(sample_project["id"], "First", validation_criteria="Close isolation.")
+    second = tasks.create_task(
+        sample_project["id"], "Second", validation_criteria="Close isolation."
+    )
+    tasks.claim_task_for_agent(first.id, canonical_task_session.id)
+    variables = SessionVariableManager(temp_db)
+    variables.record_edited_files(
+        canonical_task_session.id, ["src/shared.py"], checkout_root=str(tmp_path), edited_at=100
+    )
+    variables.release_task_edited_files(
+        canonical_task_session.id, first.id, ["src/shared.py"], checkout_root=str(tmp_path)
+    )
+    tasks.claim_task_for_agent(second.id, canonical_task_session.id)
+    for stamp in (300, 400):
+        variables.record_edited_files(
+            canonical_task_session.id,
+            ["src/shared.py"],
+            checkout_root=str(tmp_path),
+            edited_at=stamp,
+        )
+    with (
+        patch("gobby.tasks.commit_ownership.SessionVariableManager", return_value=variables),
+        patch(
+            "gobby.tasks.commit_ownership.daemon_git.run",
+            new_callable=AsyncMock,
+            return_value=GitOk("ok", (), "200\x00src/shared.py\x00", ""),
+        ),
+    ):
+        evaluation, _ = await _evaluate_named_test_close(
+            tasks.get_task(first.id),
+            tdd_result=TddEvidenceResult(passed=True, skipped=False, findings=()),
+            net_paths=NetCommitPaths(changed=frozenset({"src/shared.py"})),
+            repo_path=str(tmp_path),
+        )
+    assert evaluation.error != "commit_task_path_conflict"
+    assert all(gate.passed for gate in evaluation.gates if gate.item == 7), [
+        gate.to_dict() for gate in evaluation.gates if gate.item == 7
+    ]
+    assert variables.get_variables(canonical_task_session.id)["task_edited_files"] == {
+        second.id: ["src/shared.py"]
+    }
 
 
 @pytest.mark.asyncio

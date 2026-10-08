@@ -78,6 +78,7 @@ def preserve_task_claim_state(
         return
 
     claimed_tasks = _as_claimed_tasks(task_handoff.get("claimed_tasks"))
+    selected_task_id = predecessor_vars.get("active_task_id")
     merged_claims: dict[str, Any] = {}
 
     filtered_claims: dict[str, str] = {}
@@ -97,7 +98,16 @@ def preserve_task_claim_state(
         )
     if merged_claims and sv_mgr is not None:
         try:
-            sv_mgr.merge_variables(successor_id, merged_claims, reconcile_claims=True)
+            sv_mgr.merge_variables(
+                successor_id,
+                merged_claims,
+                reconcile_claims=True,
+                inherited_active_task_id=(
+                    selected_task_id
+                    if isinstance(selected_task_id, str) and selected_task_id in filtered_claims
+                    else None
+                ),
+            )
         except Exception as e:
             _log(handler).warning(
                 "Failed to merge successor claim variables for session=%s: %s",
@@ -173,6 +183,7 @@ def _transfer_claimed_task(
             claimed_id,
             session_id=successor_id,
             expected_owner=predecessor_id,
+            select_claim=False,
         )
     except (TaskAlreadyClaimedError, TaskClosedError) as e:
         log.debug(

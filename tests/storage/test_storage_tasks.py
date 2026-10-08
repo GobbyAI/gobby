@@ -8,7 +8,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import (
-    AgentTaskClaimConflictError,
     LocalTaskManager,
     StageManifestSpec,
     TaskIDCollisionError,
@@ -1448,7 +1447,7 @@ class TestLocalTaskManager:
         assert released.claimed_by_session_id is None
         assert released.claimed_by_session_id is None
 
-    def test_agent_claim_is_idempotent_and_close_releases_capacity(
+    def test_agent_claim_is_idempotent_and_close_preserves_other_claims(
         self,
         task_manager: LocalTaskManager,
         project_id: str,
@@ -1472,11 +1471,11 @@ class TestLocalTaskManager:
 
         assert claimed.claimed_by_session_id == session.id
         assert reclaimed.claimed_by_session_id == session.id
-        with pytest.raises(AgentTaskClaimConflictError) as exc_info:
-            task_manager.claim_task_for_agent(second.id, session.id)
-        assert exc_info.value.claimed_task_id == first.id
-        assert exc_info.value.claimed_task_ref == f"#{first.seq_num}"
-        assert task_manager.get_task(second.id).claimed_by_session_id is None
+        assert (
+            task_manager.claim_task_for_agent(second.id, session.id).claimed_by_session_id
+            == session.id
+        )
+        assert task_manager.get_task(first.id).claimed_by_session_id == session.id
 
         task_manager.close_task(first.id)
         assert task_manager.claim_task_for_agent(second.id, session.id).claimed_by_session_id == (
@@ -1484,7 +1483,7 @@ class TestLocalTaskManager:
         )
 
     @pytest.mark.parametrize("recovery", ["escalation", "transfer"])
-    def test_agent_claim_recovery_releases_capacity(
+    def test_agent_claim_recovery_preserves_the_sessions_other_claims(
         self,
         task_manager: LocalTaskManager,
         project_id: str,
@@ -1511,12 +1510,15 @@ class TestLocalTaskManager:
         )
         task_manager.claim_task_for_agent(first.id, owner.id)
 
-        # Force cannot bypass the receiving session's capacity guard.
         for force in (False, True):
-            with pytest.raises(AgentTaskClaimConflictError):
-                task_manager.claim_task_for_agent(second.id, owner.id, force=force)
+            assert (
+                task_manager.claim_task_for_agent(
+                    second.id, owner.id, force=force
+                ).claimed_by_session_id
+                == owner.id
+            )
         assert task_manager.get_task(first.id).claimed_by_session_id == owner.id
-        assert task_manager.get_task(second.id).claimed_by_session_id is None
+        assert task_manager.get_task(second.id).claimed_by_session_id == owner.id
 
         if recovery == "escalation":
             escalated = task_manager.escalate_task(first.id, reason="Blocked by external decision")
@@ -1533,7 +1535,7 @@ class TestLocalTaskManager:
         )
         assert not is_task_closed(task_manager.get_task(first.id))
 
-    def test_agent_create_and_claim_refusal_does_not_create_task(
+    def test_agent_create_and_claim_accumulates_tasks(
         self,
         task_manager: LocalTaskManager,
         project_id: str,
@@ -1554,15 +1556,15 @@ class TestLocalTaskManager:
         assert existing.claimed_by_session_id == session.id
         task_count = task_manager.count_tasks(project_id=project_id)
 
-        with pytest.raises(AgentTaskClaimConflictError):
-            task_manager.create_task_for_agent(
-                session.id,
-                project_id=project_id,
-                title="Must not exist",
-                validation_criteria=VALIDATION_CRITERIA,
-            )
-
-        assert task_manager.count_tasks(project_id=project_id) == task_count
+        created = task_manager.create_task_for_agent(
+            session.id,
+            project_id=project_id,
+            title="Additional active claim",
+            validation_criteria=VALIDATION_CRITERIA,
+        )
+        assert created.claimed_by_session_id == session.id
+        assert task_manager.get_task(existing.id).claimed_by_session_id == session.id
+        assert task_manager.count_tasks(project_id=project_id) == task_count + 1
 
     def test_internal_claim_path_remains_unrestricted(
         self,
@@ -1587,7 +1589,7 @@ class TestLocalTaskManager:
 
         assert [task.claimed_by_session_id for task in claimed] == [session.id, session.id]
 
-    def test_concurrent_agent_claims_allow_only_one_task(
+    def test_concurrent_agent_claims_accumulate_both_tasks(
         self,
         task_manager: LocalTaskManager,
         project_id: str,
@@ -1612,20 +1614,17 @@ class TestLocalTaskManager:
 
         def _claim(task_id: str) -> str:
             barrier.wait()
-            try:
-                task_manager.claim_task_for_agent(task_id, session.id)
-            except AgentTaskClaimConflictError:
-                return "conflict"
+            task_manager.claim_task_for_agent(task_id, session.id)
             return "claimed"
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             outcomes = list(pool.map(_claim, [task.id for task in tasks]))
 
-        assert sorted(outcomes) == ["claimed", "conflict"]
+        assert outcomes == ["claimed", "claimed"]
         open_claims = task_manager.list_tasks(claimed_by_session_id=session.id)
-        assert len(open_claims) == 1
+        assert {task.id for task in open_claims} == {task.id for task in tasks}
 
-    def test_concurrent_claims_beside_a_handed_off_claim_allow_only_one_task(
+    def test_concurrent_claims_beside_an_existing_claim_accumulate_all_tasks(
         self,
         task_manager: LocalTaskManager,
         project_id: str,
@@ -1654,24 +1653,17 @@ class TestLocalTaskManager:
 
         def _claim(task_id: str) -> str:
             barrier.wait()
-            try:
-                task_manager.claim_task_for_agent(
-                    task_id, session.id, handed_off_task_ids={handed_off.id}
-                )
-            except AgentTaskClaimConflictError:
-                return "conflict"
+            task_manager.claim_task_for_agent(task_id, session.id)
             return task_id
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             outcomes = list(pool.map(_claim, [task.id for task in tasks]))
 
-        winners = [outcome for outcome in outcomes if outcome != "conflict"]
-        assert len(winners) == 1
-        assert outcomes.count("conflict") == 1
+        assert set(outcomes) == {task.id for task in tasks}
         open_claims = task_manager.list_tasks(claimed_by_session_id=session.id)
-        assert {task.id for task in open_claims} == {handed_off.id, winners[0]}
+        assert {task.id for task in open_claims} == {handed_off.id, *(task.id for task in tasks)}
 
-    def test_delegated_agent_claim_needs_the_receivers_other_claim_handed_off(
+    def test_delegated_agent_claim_preserves_the_receivers_other_claim(
         self,
         task_manager: LocalTaskManager,
         project_id: str,
@@ -1698,13 +1690,8 @@ class TestLocalTaskManager:
         task_manager.claim_task_for_agent(held.id, child.id)
         task_manager.claim_task_for_agent(delegated.id, parent.id)
 
-        with pytest.raises(AgentTaskClaimConflictError) as conflict:
-            task_manager.claim_task_for_agent(delegated.id, child.id, expected_owner=parent.id)
-        assert conflict.value.claimed_task_id == held.id
-        assert task_manager.get_task(delegated.id).claimed_by_session_id == parent.id
-
         claimed = task_manager.claim_task_for_agent(
-            delegated.id, child.id, expected_owner=parent.id, handed_off_task_ids={held.id}
+            delegated.id, child.id, expected_owner=parent.id
         )
 
         assert claimed.claimed_by_session_id == child.id

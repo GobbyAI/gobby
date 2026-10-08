@@ -3498,6 +3498,17 @@
       "visibility": "public"
     },
     {
+      "activation": "restart_required",
+      "default": true,
+      "description": "Refresh provider capability catalogs at daemon start and every 24 hours. Each refresh launches the installed provider CLIs.",
+      "key": "provider_capabilities.refresh_enabled",
+      "machineExport": false,
+      "namespace": "provider_capabilities",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
       "activation": "live",
       "default": [
         {

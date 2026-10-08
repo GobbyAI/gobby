@@ -280,6 +280,7 @@ async def test_escalates_when_session_variable_state_is_missing(
     project_id = _project_id(temp_db, tmp_path)
     session = _session(temp_db, project_id, tmp_path)
     task = _live_task(temp_db, project_id, session.id, title="Missing state live task")
+    temp_db.execute("DELETE FROM session_variables WHERE session_id = %s", (session.id,))
 
     result = await recover_expired_live_session_claims(temp_db, project_id=project_id)
 

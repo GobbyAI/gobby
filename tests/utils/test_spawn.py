@@ -65,7 +65,7 @@ _MAY_SPAWN = re.compile(
     r"subprocess|\bsystem\b|\bpopen\b|\bfork(?:pty)?\b|\bpty\b|\bspawn[lv]"
     r"|ProcessPool|multiprocessing"
 )
-# CLI commands, processes of their own (the stdio MCP proxy, Chrome's supervisor)
+# CLI commands, processes of their own (the stdio MCP proxy)
 # and bundled templates. Daemon code also calls into some of these modules, so
 # every module a daemon module imports, transitively, is scanned as well.
 _NOT_DAEMON = (
@@ -76,7 +76,6 @@ _NOT_DAEMON = (
     "ui_exposure.py",
     "mcp_proxy/daemon_control.py",
     "mcp_proxy/stdio",
-    "mcp_proxy/transports/chrome_supervisor.py",
 )
 # Scanned sites that still fork, keyed path::qualname, each with its reason: the
 # daemon sites that need an option neither helper gives (spawn.create_session_exec
@@ -184,6 +183,9 @@ _MUST_FORK = {
     ),
     "utils/daemon_git.py::_spawn_git": (
         "the Popen session fallback only runs where spawn.can_posix_spawn() is false"
+    ),
+    "utils/child_supervisor.py::main": (
+        "runs in its own `python -m` process; the daemon imports only supervised_argv"
     ),
 }
 

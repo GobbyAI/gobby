@@ -20,7 +20,6 @@ from gobby.storage.attention import AttentionStateManager, session_attention_ent
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, PROTECTED_SESSION_STATUSES, SessionManager
 from gobby.terminals.pane_io import (
-    COMPOSER_MATCH_CHARS,
     ComposerReader,
     PaneIO,
     send_pane_key,
@@ -183,13 +182,14 @@ async def resubmit_continuation(
         cli_source=cli_source,
         composer_read=composer_read,
         verify_seconds=verify_seconds,
+        pending_payload=prompt,
     )
     return result.ok
 
 
 def _holds_our_prompt(read: ComposerRead, prompt: str) -> bool:
-    """True when the classified draft starts with our continuation prompt."""
-    return read.line is not None and read.line.startswith(prompt[:COMPOSER_MATCH_CHARS])
+    """True only when the classified draft is exactly our pending prompt."""
+    return read.holds_payload(prompt)
 
 
 async def _send_enter(pane: PaneIO, session_id: str) -> bool:

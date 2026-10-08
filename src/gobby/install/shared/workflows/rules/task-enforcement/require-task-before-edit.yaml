@@ -20,9 +20,13 @@ rules:
       - type: block
         reason: |
           Use create_task(title, category, claim=True) or claim_task(task_id) to
-          unlock file edits — then retry this edit. If you already hold claims
-          that wait on review, landing or close and none is active, reclaim the
-          one this edit belongs to with claim_task(task_id), then retry.
+          unlock file edits — then retry this edit. You may hold multiple active
+          claims; claim_task(task_id) selects which one receives new edits and
+          validation. If none is selected, select this edit's task and retry.
+          Finish or stop its running native shell/agent calls before switching.
+          If a native child lost ownership, restore it with claim_task(task_id)
+          or stop that child before retrying. Paths attributed to another active
+          claim require selecting their owner or finishing it; split commits by task.
 
           A shell script file (`bash x.sh`, or a path-invoked script without a
           non-shell #! interpreter) is classified by its body like a literal

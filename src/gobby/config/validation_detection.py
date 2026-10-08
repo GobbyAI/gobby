@@ -606,7 +606,8 @@ def normalize_validation_evidence_command(command: str) -> str:
     if len(parsed.segments) == 1 and not parsed.operators:
         unwrapped = _unwrap_nice_tokens(list(parsed.segments[0]))
         if unwrapped is not None:
-            return shlex.join(unwrapped)
+            # Native execution can insert RTK inside uv after the nice prefix.
+            return _EVIDENCE_RTK_PREFIX.sub(r"\1", shlex.join(unwrapped), count=1)
     return core
 
 

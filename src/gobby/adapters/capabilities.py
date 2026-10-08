@@ -500,7 +500,9 @@ def _agy_capabilities() -> ProviderCapabilities:
         hook_events=events,
         hook_aliases=AGY_HOOK_ALIASES,
         supports_permissions=True,
-        supports_permission_neutral_rewrite=True,
+        # The only recorded honored ``overwrite`` rides on ``decision: allow``;
+        # AGY 1.1.x denied Gobby's bare overwrite with an empty reason (#23771).
+        supports_permission_neutral_rewrite=False,
     )
 
 

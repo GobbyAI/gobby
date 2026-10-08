@@ -885,6 +885,8 @@ async def auto_link_commits_async(
     Returns:
         AutoLinkResult with details of linked and skipped commits.
     """
+    from gobby.tasks.commit_ownership import assert_auto_link_commit_available
+
     if task_id:
         task_filter = _resolve_task_filter(task_manager, task_id, project_id)
         if task_filter is None:
@@ -920,6 +922,7 @@ async def auto_link_commits_async(
                 result.skipped += 1
                 continue
             try:
+                await assert_auto_link_commit_available(task_manager, task, commit_sha, cwd)
                 task_manager.link_commit(task.id, commit_sha)
             except ValueError as error:
                 logger.debug("Skipping commit %s for task %s: %s", commit_sha, task_ref, error)
@@ -963,6 +966,7 @@ async def auto_link_commits_async(
 
             try:
                 # Link the commit using UUID
+                await assert_auto_link_commit_available(task_manager, task, commit_sha, cwd)
                 task_manager.link_commit(task.id, commit_sha)
             except ValueError as error:
                 logger.debug("Skipping commit %s for task %s: %s", commit_sha, tid, error)

@@ -9,7 +9,6 @@ from typing import Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._authorization import require_claim_authority
 from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session_activity
-from gobby.mcp_proxy.tools.tasks._claim_handoff import handed_off_claim_ids
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._formatters import (
@@ -27,7 +26,6 @@ from gobby.storage.task_dependencies import DependencyCycleError
 from gobby.storage.tasks import (
     TASK_TYPE_CHOICES,
     VALID_CATEGORIES,
-    AgentTaskClaimConflictError,
     ParentTaskClosedError,
     TaskNotFoundError,
 )
@@ -243,20 +241,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if claim:
                 task = ctx.task_manager.create_task_for_agent(
                     session_id=resolved_session_id,
-                    handed_off_task_ids=handed_off_claim_ids(ctx, resolved_session_id, project_id),
                     **task_fields,
                 )
             else:
                 create_result = ctx.task_manager.create_task_with_decomposition(**task_fields)
                 task = ctx.task_manager.get_task(create_result["task"]["id"])
-        except AgentTaskClaimConflictError as e:
-            return task_error(
-                str(e),
-                TaskToolErrorCode.TASK_CLAIM_CONFLICT,
-                claimed_task_id=e.claimed_task_id,
-                claimed_task_ref=e.claimed_task_ref,
-                message=f"Task was not created. {e}",
-            )
         except ParentTaskClosedError as e:
             return task_error(
                 str(e),
@@ -269,6 +258,9 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "under it, or create it under an open parent."
                 ),
             )
+
+        except ValueError as e:
+            return {"error": str(e)}
 
         if affected_files:
             TaskAffectedFileManager(ctx.task_manager.db).set_files(
@@ -300,21 +292,12 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             except Exception as e:
                 logger.warning("Failed to link claimed task %s: %s", task.id, e)
 
-            # Set session variables for Claude Code (CC doesn't include tool results in PostToolUse)
-            # This mirrors claim_task behavior in _lifecycle.py
-            try:
-                from gobby.workflows.task_claim_state import add_claimed_task
-
-                session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
-                ref = f"#{task.seq_num}" if task.seq_num else task.id
-                merge_dict = add_claimed_task(session_vars, task.id, ref)
-                current_vars = {**session_vars, **merge_dict}
-                merge_dict.update(
-                    build_claimed_task_extra_skill_state(current_vars, ctx.task_manager)
-                )
-                ctx.session_var_manager.merge_variables(resolved_session_id, merge_dict)
-            except Exception as e:
-                logger.debug("Best-effort session variable update failed: %s", e)
+            # Storage commits ownership and selection together.
+            session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
+            ctx.session_var_manager.merge_variables(
+                resolved_session_id,
+                build_claimed_task_extra_skill_state(session_vars, ctx.task_manager),
+            )
 
             try:
                 from gobby.sessions.title_lifecycle import update_title_for_claim

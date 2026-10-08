@@ -20,11 +20,17 @@ _BACKGROUND = re.compile(
 )
 
 
+def background_job_receipt(output: object) -> dict[str, str] | None:
+    """Decode Claude's exact background handoff without treating it as an exit."""
+    receipt = _BACKGROUND.match(output) if isinstance(output, str) else None
+    return receipt.groupdict() if receipt is not None else None
+
+
 def pending_background_run(
     run: TranscriptValidationRun, call_id: str | None
 ) -> TranscriptValidationRun:
     """The successful tool delivery announces a job, not a command exit."""
-    receipt = _BACKGROUND.match(run.output or "") if run.source == "claude" else None
+    receipt = background_job_receipt(run.output) if run.source == "claude" else None
     if receipt is None:
         return run
     return replace(

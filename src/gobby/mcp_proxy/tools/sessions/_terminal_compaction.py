@@ -329,6 +329,7 @@ async def _submit_command(
         cli_source=cli_source,
         composer_read=composer_read,
         verify_seconds=verify_seconds,
+        pending_payload=command,
     )
     if result.error_code == _COMMAND_NOT_SUBMITTED_ERROR_CODE:
         logger.error(
@@ -571,7 +572,8 @@ async def _send_terminal_compaction_command_locked(
     command because its turn is still running (Grok) fails a compact command at
     once, since it may have started; ``/clear`` is interrupted again and resubmitted
     once before the delivery fails. ``composer_read`` probes
-    the composer first: a positive operator draft refuses the whole delivery with
+    the composer first: an exact pending command gets bare Enter without another
+    text write. Every other draft refuses the whole delivery with
     ``composer_occupied`` before any key is sent, so the operator's draft and the
     live turn are both left alone; the agent retries once the draft is submitted.
     It then reads the composer back after Enter, so a command the CLI typed but
@@ -586,7 +588,7 @@ async def _send_terminal_compaction_command_locked(
         pane = _SeatGuardedPane(pane, seat_left)
     try:
         writable, refuse_reason, composer_state = await composer_gate_for_write(
-            pane, cli_source, composer_read, action=command
+            pane, cli_source, composer_read, action=command, pending_payload=command
         )
         if not writable:
             logger.info(
@@ -606,6 +608,7 @@ async def _send_terminal_compaction_command_locked(
                 False,
                 {"error_code": error_code, "continuation_pending": False},
             )
+        held_command = composer_state == "held"
         interrupt_key = _compact_interrupt_key(cli_source)
         interrupt_seconds = interrupt_settle_seconds if settle_seconds is None else settle_seconds
         rejection_seconds = rejection_settle_seconds if settle_seconds is None else settle_seconds
@@ -647,7 +650,7 @@ async def _send_terminal_compaction_command_locked(
             # A rejection may race with a turn ending, so only the first submission waits.
             # The wait also returns once the armed turn has ended and goal mode has
             # already started the next one. That successor is still interrupted.
-            if not resubmission:
+            if not resubmission and not held_command:
                 await _wait_for_turn_to_settle(
                     turn_settled,
                     session_id,
@@ -655,7 +658,9 @@ async def _send_terminal_compaction_command_locked(
                     wait_seconds=settle_wait_seconds,
                     poll_seconds=settle_poll_seconds,
                 )
-            if turn_settled is None or (await asyncio.to_thread(turn_settled)) is not True:
+            if not held_command and (
+                turn_settled is None or (await asyncio.to_thread(turn_settled)) is not True
+            ):
                 interrupted, reason, detail = await _interrupt_turn(
                     pane,
                     interrupt_key,
@@ -700,7 +705,7 @@ async def _send_terminal_compaction_command_locked(
             # cannot authorize this write: probe again, refuse a draft or unknown frame,
             # and drain only a composer no probe could read.
             writable, refuse_reason, composer_state = await composer_gate_for_write(
-                pane, cli_source, composer_read, action=command
+                pane, cli_source, composer_read, action=command, pending_payload=command
             )
             if not writable:
                 if continuation_pending:
@@ -718,7 +723,7 @@ async def _send_terminal_compaction_command_locked(
                 )
             cleared, clear_reason = (
                 (True, None)
-                if composer_state == "empty"
+                if composer_state in {"empty", "held"}
                 else await clear_composer(pane, cli_source)
             )
             if not cleared:

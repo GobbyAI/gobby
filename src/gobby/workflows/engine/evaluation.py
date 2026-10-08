@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from gobby.hooks._normalization_tools import provider_native_input_updates
 from gobby.hooks.events import (
     CONTEXT_SEPARATOR,
     ContextPart,
@@ -186,7 +187,9 @@ def _replacement_tool_input(event: HookEvent, updates: dict[str, Any]) -> dict[s
     lost its ``timeout`` and ran under the CLI default. ``normalize_tool_fields``
     keeps the payload the CLI sent as ``_raw_tool_input``, untouched by aliases
     such as a backfilled ``file_path``; the normalized ``tool_input`` is the
-    fallback for data that never passed through normalization.
+    fallback for data that never passed through normalization. Updates written
+    against a canonical alias land on the provider's own field; AGY's overwrite
+    kept the old ``CommandLine`` beside a stray ``command`` (#23771).
     """
     data = event.data if isinstance(event.data, dict) else {}
     base = data.get("_raw_tool_input")
@@ -194,7 +197,7 @@ def _replacement_tool_input(event: HookEvent, updates: dict[str, Any]) -> dict[s
         base = data.get("tool_input")
     if not isinstance(base, dict):
         return updates
-    return {**base, **updates}
+    return {**base, **provider_native_input_updates(base, updates)}
 
 
 class EvaluationMixin:

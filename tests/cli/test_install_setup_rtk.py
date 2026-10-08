@@ -548,11 +548,12 @@ def test_supported_sources_match_v1_adapter_matrix() -> None:
         SessionSource.QWEN,
         SessionSource.GROK,
         SessionSource.DROID,
-        SessionSource.AGY,
     }
 
     assert all(
         get_provider_capabilities(source).supports_permission_neutral_rewrite
         for source in supported
     )
-    assert not get_provider_capabilities(SessionSource.UNKNOWN).supports_permission_neutral_rewrite
+    # AGY denied Gobby's bare overwrite with an empty reason (#23771).
+    for source in (SessionSource.AGY, SessionSource.UNKNOWN):
+        assert not get_provider_capabilities(source).supports_permission_neutral_rewrite

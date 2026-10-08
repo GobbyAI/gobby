@@ -716,6 +716,56 @@ def test_resolve_pane_io_requires_a_managed_terminal() -> None:
     ) == (None, error)
 
 
+@pytest.mark.parametrize("draft_kind", ["own", "foreign", "prefix"])
+async def test_compact_retry_submits_only_its_exact_pending_command(
+    draft_kind: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    draft = {
+        "own": "/compact",
+        "foreign": "private operator note",
+        "prefix": "/compact with operator addition",
+    }[draft_kind]
+
+    class HeldPane(_ComposerPane):
+        async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
+            return _claude_frame(draft)
+
+        async def send_key(self, key: str) -> tuple[bool, str | None]:
+            nonlocal draft
+            self.keys.append(key)
+            if len(self.keys) == 1:
+                return False, "pty_busy"
+            assert key == "enter"
+            draft = ""
+            return True, None
+
+    pane = HeldPane()
+    result, mark, clear = await _send(
+        pane, lambda: True, command="/compact", composer_read=_CLAUDE_READ
+    )
+    if draft_kind == "own":
+        assert result[0] is True
+        assert pane.keys == ["enter", "enter"]
+        assert pane.typed == []
+        mark.assert_called_once()
+        clear.assert_not_called()
+    else:
+        assert result[0] is False
+        assert result[3] == {"error_code": "composer_occupied", "continuation_pending": False}
+        assert pane.keys == [] and pane.typed == []
+        mark.assert_not_called()
+        records = [
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "composer_write_refused"
+        ]
+        assert len(records) == 1
+        assert records[0].__dict__["composer_state"] == "draft"
+        assert records[0].__dict__["draft_length"] == len(draft)
+        assert records[0].__dict__["matches_pending_payload"] is False
+        assert draft not in records[0].getMessage()
+
+
 class _DraftAfterInterruptPane(_ComposerPane):
     """Claude pane that reads empty until the interrupt, then holds an operator draft."""
 

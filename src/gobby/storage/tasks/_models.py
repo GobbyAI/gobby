@@ -213,36 +213,6 @@ class TaskAlreadyClaimedError(ValueError):
         super().__init__(f"Task {task_id} is already claimed by session '{claimed_by}'")
 
 
-class AgentTaskClaimConflictError(ValueError):
-    """Raised when an agent session already owns a different open task."""
-
-    def __init__(
-        self, claimed_task_id: str, claimed_task_ref: str, *, escalated: bool = False
-    ) -> None:
-        self.claimed_task_id = claimed_task_id
-        self.claimed_task_ref = claimed_task_ref
-        if escalated:
-            super().__init__(
-                f"Session already owns open claimed task {claimed_task_ref}, which is "
-                "already escalated. Release it with "
-                f'escalate_task(task_id="{claimed_task_ref}", reason="<concrete reason>"), '
-                "which keeps the escalation, or close it deliberately with "
-                f'close_task(task_id="{claimed_task_ref}", '
-                'override_justification="<why it is done>").'
-            )
-            return
-        super().__init__(
-            f"Session already owns open claimed task {claimed_task_ref}. "
-            "Finish and close it. To start other work while it waits on review, landing or "
-            "close, commit its attributed files and get a reviewer's independent_review_approval "
-            "receipt. For a genuine blocker or explicitly directed recovery use "
-            f'escalate_task(task_id="{claimed_task_ref}", reason="<concrete reason>") '
-            "to release ownership. Alternatively, arrange an authorized transfer to another "
-            "session with claim capacity. force=true does not bypass your existing claim. "
-            "Do not escalate to bypass validation, committing, or closing."
-        )
-
-
 class TaskHasChildrenError(ValueError):
     """Raised when deleting a task that has children without cascade."""
 

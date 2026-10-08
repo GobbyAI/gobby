@@ -6,6 +6,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
+from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -27,10 +28,17 @@ def task_registry(mock_task_manager: MagicMock) -> InternalToolRegistry:
 def _commit_tool_boundaries() -> Iterator[None]:
     """Stub the repository lookup and Git so the tool's delegation is what is tested."""
     with (
-        patch("gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path", return_value=None),
+        patch(
+            "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
+            return_value="/fixture/repo",
+        ),
         patch(
             "gobby.mcp_proxy.tools.task_commits.normalize_commit_sha",
             side_effect=lambda sha, cwd=None: sha,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._task_scope.collect_net_commit_paths_async",
+            return_value=NetCommitPaths(),
         ),
     ):
         yield
