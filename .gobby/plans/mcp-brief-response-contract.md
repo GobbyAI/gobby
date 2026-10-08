@@ -327,12 +327,13 @@ Consumers unchanged:
 - `src/gobby/install/shared/workflows/agents/developer.yaml` — no-edit-reason: the `route_skills` and `submit` `get_task` handlers read `id`, `ref`, and `state`, all kept.
 - `src/gobby/mcp_proxy/services/result_offload.py` — no-edit-reason: an offloaded card's envelope keeps `id` and `state` when the card carries them.
 - `tests/mcp_proxy/tools/tasks/test_get_task_response_shape.py` — no-edit-reason: its `task_summary_payload` test asserts `ref`, `id`, `title`, and `validation_criteria`, all kept.
+- `tests/mcp_proxy/services/test_result_offload.py` — no-edit-reason: `_summary_card` builds a `task_summary_payload` card, and `test_oversized_task_card_preserves_its_identity_and_flat_state` asserts the offloaded envelope keeps `id` and `state`, both kept.
 
 **Research context:**
 - `_formatters.py::task_summary_payload` emits `ref, id, seq_num, title, task_type, category,
   priority, path_cache, description, validation_criteria, labels, parent_task_id, created_at,
   updated_at, state{...}, dependencies{blocked_by, blocking}` (rows carry `ref, id, title, state,
-  dep_type`), and `allow_automation, unattended, isolation, assigned_agent,
+  dep_type`), and `allow_automation, unattended, checkout_mode, assigned_agent,
   implementation_domain, additional_skills`.
 - `ref` is derived from `seq_num`, so `seq_num` and `path_cache` duplicate it. No rule,
   observer, web, or skill consumer reads `seq_num` or `path_cache` from brief `get_task`, and
@@ -378,7 +379,7 @@ Consumers unchanged:
 - 1.5.2 - `src/gobby/mcp_proxy/tools/tasks/_crud_tree.py` holds `build_task_tree`, and `_crud.py` is below 950 lines. file: `src/gobby/mcp_proxy/tools/tasks/_crud_tree.py`.
 - 1.5.3 - The `get_task` `brief` parameter description in `src/gobby/mcp_proxy/tools/tasks/_crud.py` contains "only for debugging". file: `src/gobby/mcp_proxy/tools/tasks/_crud.py`.
 
-**Verification:** run `tests/mcp_proxy/tools/test_tasks_crud_coverage.py`, `tests/mcp_proxy/tools/tasks/`, and `tests/mcp_proxy/tools/test_tasks_schema_coverage.py` with `GOBBY_TEST_PROTECT=1`; ruff and mypy on the touched sources.
+**Verification:** run `tests/mcp_proxy/tools/test_tasks_crud_coverage.py`, `tests/mcp_proxy/tools/tasks/`, `tests/mcp_proxy/tools/test_tasks_schema_coverage.py`, and `tests/mcp_proxy/services/test_result_offload.py::test_oversized_task_card_preserves_its_identity_and_flat_state` with `GOBBY_TEST_PROTECT=1`; ruff and mypy on the touched sources.
 
 ### 1.6 Brief close_task replaces response_detail [category: code]
 `kind: deliverable`
