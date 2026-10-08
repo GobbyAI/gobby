@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import filecmp
 import hashlib
+import io
 import logging
 import os
 import posixpath
@@ -12,6 +13,7 @@ import re
 import shlex
 import stat
 import threading
+import tokenize
 from collections import OrderedDict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -138,6 +140,38 @@ def _parsed_imports(path: Path, module: str, text: str) -> frozenset[str]:
     return imports
 
 
+_IMPORT_KEYWORD = re.compile(r"\b(?:from|import)\b")
+_IMPORT_MODULE = re.compile(r"(?m)^[ \t]*(?:from|import)[ \t]+([\w.]+)")
+
+
+def _import_header_mentions(text: str, prefixes: set[str], leaves: set[str]) -> bool:
+    """Conservatively reject body-only mentions before building a full-file AST.
+
+    Start at each possible import keyword, including inline/nested statements.
+    Tokenize only its logical line, preserving parentheses and continuations.
+    Matches in strings/comments may admit an extra parse; uncertain tokenization
+    always falls back to the existing parser rather than losing a related test.
+    """
+    # Most real consumers use a simple absolute import; admit those in C without
+    # tokenizing the other imports in a large test file.
+    if any(match[1] in prefixes for match in _IMPORT_MODULE.finditer(text)):
+        return True
+    reader = io.StringIO(text)
+    for match in _IMPORT_KEYWORD.finditer(text):
+        reader.seek(match.start())
+        try:
+            for token in tokenize.generate_tokens(reader.readline):
+                if token.type in (tokenize.NEWLINE, tokenize.ENDMARKER) or token.string == ";":
+                    break
+                if token.type == tokenize.NAME and (
+                    token.string in leaves or not token.string.isascii()
+                ):
+                    return True
+        except (SyntaxError, tokenize.TokenError):
+            return True
+    return False
+
+
 def _test_imports(
     path: Path,
     module: str,
@@ -155,6 +189,8 @@ def _test_imports(
         any(prefix in text for prefix in prefixes)
         or (parent_import is not None and parent_import.search(text) is not None)
     ):
+        return frozenset()
+    if not _import_header_mentions(text, prefixes, leaves):
         return frozenset()
     return _parsed_imports(path, module, text)
 
