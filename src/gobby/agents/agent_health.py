@@ -195,7 +195,7 @@ class AgentHealthMonitor:
         )
 
     async def _dead_terminal_reason(self, run: AgentRun) -> str | None:
-        """Why a run's terminal died, or ``None`` once a clean exit went to SessionEnd's classifier.
+        """Why a run's terminal died, or ``None`` once SessionEnd's classifier settled a clean exit.
 
         AGY ``--print`` exits after its final turn and has no SessionEnd hook, so its
         clean exit arrives here as a dead terminal (#23778).
@@ -232,7 +232,16 @@ class AgentHealthMonitor:
             )
         # Blocks on the daemon loop and the terminal-delivery executor.
         await asyncio.to_thread(coordinator.complete_agent_run, session)
-        return None
+        current = await self._run_db(self._agent_run_manager.get, run.id)
+        if (
+            current is None
+            or current.status not in ("pending", "running")
+            # Reconciliation re-drives the termination owner's persisted action.
+            or current.pending_terminal_action
+        ):
+            return None
+        # complete_agent_run swallows its errors; fail now instead of retrying every pass.
+        return "agent exited after its last turn completed, but its completion did not settle"
 
     async def check_unhealthy_agents(self) -> int:
         """Detect and clean up dead or expired agents."""
@@ -304,7 +313,7 @@ class AgentHealthMonitor:
                     else:
                         reason = await self._dead_terminal_reason(run)
                         if reason is None:
-                            # A deferred completion stays active and is retried next pass.
+                            # Settled by session-end completion, or left to its termination owner.
                             current = await self._run_db(self._agent_run_manager.get, run.id)
                             if current is not None and current.status not in ("pending", "running"):
                                 cleaned += 1

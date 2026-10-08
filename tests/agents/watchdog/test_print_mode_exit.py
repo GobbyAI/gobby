@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -110,6 +111,42 @@ async def test_clean_print_exit_completes_with_the_answer(
     assert stored.result == ANSWER
     assert stored.error is None
     assert await monitor.check_unhealthy_agents() == 0
+
+
+@pytest.mark.asyncio
+async def test_unsettled_completion_fails_instead_of_retrying_every_pass(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch_local_machine_id(monkeypatch, LOCAL_MACHINE_ID)
+    monitor, runs, run = _exited_run(
+        temp_db,
+        session_manager,
+        sample_project["id"],
+        provider="agy",
+        disposition="completed",
+    )
+
+    # complete_agent_run swallows this, so the run stays running after the call.
+    with patch.object(
+        SessionCoordinator,
+        "_terminate_agent_run",
+        autospec=True,
+        side_effect=RuntimeError("terminal delivery unavailable"),
+    ) as terminate:
+        assert await monitor.check_unhealthy_agents() == 1
+        assert await monitor.check_unhealthy_agents() == 0
+
+    assert terminate.call_count == 1
+    stored = runs.get(run.id)
+    assert stored is not None
+    assert stored.status == "error"
+    assert stored.error is not None
+    assert stored.error.startswith(
+        "agent exited after its last turn completed, but its completion did not settle"
+    )
 
 
 @pytest.mark.asyncio
