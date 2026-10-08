@@ -100,7 +100,9 @@ class _RecordingAdapter(TelegramAdapter):
         super().__init__()
         self._recorder = post_json
 
-    async def _post_json(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _post_json(
+        self, method: str, payload: dict[str, Any], *, message_id: str | None = None
+    ) -> dict[str, Any]:
         result: dict[str, Any] = await self._recorder(method, payload)
         return result
 
