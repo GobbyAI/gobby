@@ -33,7 +33,7 @@ from gobby.storage.workspaces import WorkspaceManager
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
-from gobby.workflows.pipeline_state import ExecutionStatus
+from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 from gobby.workflows.templates import TemplateEngine
 from tests.agents.conftest import AGENT_TEST_MACHINE_ID
 
@@ -219,6 +219,64 @@ def test_runbook_refuses_only_a_launch_in_the_same_place(
     else:
         seats = _check(env, caller)
         assert [seat.name for seat in seats] == ["lead", "dev"]
+
+
+@pytest.mark.parametrize("same_workspace", [False, True])
+def test_inferred_sibling_uses_completed_guard_workspace(env: _Env, same_workspace: bool) -> None:
+    sibling = _pipeline_child(env)
+    session = SessionManager(env.db).get(sibling)
+    assert session is not None
+    execution_id = session.external_id.removeprefix("pipeline-")
+    env.db.execute(
+        "UPDATE pipeline_executions SET inputs_json = %s WHERE id = %s",
+        (json.dumps({"lane": "3", "seats": "developer"}), execution_id),
+    )
+    workspace = (
+        env.workspace_id
+        if same_workspace
+        else WorkspaceManager(env.db).create(AGENT_TEST_MACHINE_ID, "other-lane")[0].id
+    )
+    executions = LocalPipelineExecutionManager(env.db, env.project_id)
+    guard = executions.create_step_execution(execution_id, "guard")
+    executions.update_step_execution(
+        guard.id,
+        status=StepStatus.COMPLETED,
+        output_json=json.dumps({"success": True, "workspace": workspace}),
+    )
+    caller = _pipeline_child(env)
+    if same_workspace:
+        with pytest.raises(RunbookSeatRefusal, match=f"another '{RUNBOOK}' execution is live"):
+            _check(env, caller)
+    else:
+        assert [seat.name for seat in _check(env, caller)] == ["lead", "dev"]
+
+
+@pytest.mark.parametrize(
+    ("status", "output"),
+    [
+        (StepStatus.RUNNING, {"success": True}),
+        (StepStatus.COMPLETED, {"success": False}),
+        (StepStatus.COMPLETED, []),
+    ],
+)
+def test_inferred_sibling_without_successful_guard_refuses(
+    env: _Env, status: StepStatus, output: dict[str, Any] | list[object]
+) -> None:
+    sibling = _pipeline_child(env)
+    session = SessionManager(env.db).get(sibling)
+    assert session is not None
+    execution_id = session.external_id.removeprefix("pipeline-")
+    env.db.execute(
+        "UPDATE pipeline_executions SET inputs_json = %s WHERE id = %s",
+        (json.dumps({"lane": "3", "seats": "developer"}), execution_id),
+    )
+    if isinstance(output, dict):
+        output = {**output, "workspace": env.workspace_id}
+    executions = LocalPipelineExecutionManager(env.db, env.project_id)
+    guard = executions.create_step_execution(execution_id, "guard")
+    executions.update_step_execution(guard.id, status=status, output_json=json.dumps(output))
+    with pytest.raises(RunbookSeatRefusal, match="has no workspace input"):
+        _check(env, _pipeline_child(env))
 
 
 def test_concurrent_executions_admit_at_most_one(env: _Env) -> None:
@@ -423,7 +481,7 @@ def test_registered_tool_replies_in_mcp_step_shape(env: _Env) -> None:
 
 @pytest.mark.parametrize("report_to", [None, "", " \t", "operator"])
 def test_crew_lane_guard_validates_rendered_report_target(env: _Env, report_to: str | None) -> None:
-    """Missing inputs must refuse at admission, before a seat can receive target_id=None."""
+    """Outside lane inference, report targets still require explicit valid input."""
     path = Path(__file__).parents[2] / ".gobby/workflows/pipelines/crew-lane.yaml"
     definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
     guard = definition.steps[0].mcp
@@ -437,6 +495,8 @@ def test_crew_lane_guard_validates_rendered_report_target(env: _Env, report_to: 
     arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
         guard.arguments, {"inputs": inputs, "steps": {}}, drop_none=True
     )
+    # The lane resolver has its own integration tests; isolate explicit report validation.
+    arguments.pop("lane")
     _install_agent(env.db, "developer", env.project_id)
     caller = _pipeline_child(env)
     registry = create_agents_registry(
