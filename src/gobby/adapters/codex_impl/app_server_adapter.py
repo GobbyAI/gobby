@@ -743,6 +743,7 @@ class CodexAdapter(BaseAdapter):
             # Only translate tool-related items
             if self._looks_like_tool_item(item):
                 item_data = self._build_completed_tool_data(item)
+                item_data["turn_id"] = params.get("turnId", "")
 
                 event = HookEvent(
                     event_type=HookEventType.AFTER_TOOL,

@@ -435,7 +435,7 @@ class TestAutoLinkCommits:
         assert result.total_linked == 1
         mock_task_manager.link_commit.assert_called_once_with("task-1", "good22")
 
-    def test_task_filter_reuses_resolved_task(self, mock_task_manager: MagicMock) -> None:
+    def test_task_filter_rechecks_canonical_ownership(self, mock_task_manager: MagicMock) -> None:
         task = MagicMock(id="task-1", seq_num=1, commits=[])
         mock_task_manager.get_task.return_value = task
 
@@ -451,7 +451,7 @@ class TestAutoLinkCommits:
             )
 
         assert result.total_linked == 1
-        mock_task_manager.get_task.assert_called_once_with("task-1")
+        assert mock_task_manager.get_task.call_args_list == [call("task-1"), call("task-1")]
 
     def test_task_filter_uses_resolved_uuid_for_branch_lookup(
         self, mock_task_manager: MagicMock

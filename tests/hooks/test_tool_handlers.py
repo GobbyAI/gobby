@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -12,11 +13,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
-from gobby.hooks.events import HookEventType
+from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.skills.parser import ParsedSkill
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 from tests.fixtures.isolated_checkout import (
     insert_isolated_machine,
     patch_local_machine_id,
@@ -29,6 +31,23 @@ pytestmark = pytest.mark.unit
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
+
+
+@pytest.fixture(autouse=True)
+def _proven_tool_start() -> Iterator[None]:
+    """Binding lifecycle is covered separately; these tests exercise edit handlers."""
+
+    def started_at(event: HookEvent) -> float:
+        return event.timestamp.timestamp()
+
+    with (
+        patch(
+            "gobby.hooks.event_handlers._tool.TaskToolBindings.started_at",
+            side_effect=started_at,
+        ),
+        patch("gobby.hooks.event_handlers._tool.TaskToolBindings.complete"),
+    ):
+        yield
 
 
 class TestToolHandlers:
@@ -541,7 +560,12 @@ class TestToolHandlerEdgeCases:
 
     @staticmethod
     def _claimed(task_id: str, **extra: Any) -> dict[str, Any]:
-        return {"claimed_tasks": {task_id: "#123"}, "active_task_id": task_id, **extra}
+        return {
+            "claimed_tasks": {task_id: "#123"},
+            "active_task_id": task_id,
+            "task_selection_history": [{"task_id": task_id, "epoch": "1970-01-01T00:00:00+00:00"}],
+            **extra,
+        }
 
     def test_replayed_edit_predating_a_later_commit_is_not_attributed(
         self, mock_dependencies: dict[str, Any], tmp_path: Path
@@ -606,6 +630,8 @@ class TestToolHandlerEdgeCases:
             [rel_path],
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
+            started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
 
     def test_stale_edit_of_an_attributed_path_leaves_the_ledger_to_record(
@@ -648,6 +674,8 @@ class TestToolHandlerEdgeCases:
             [rel_path],
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
+            started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
 
     @pytest.mark.parametrize(
@@ -714,6 +742,8 @@ class TestToolHandlerEdgeCases:
             ["target/output.bin"],
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
+            started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
@@ -745,6 +775,8 @@ class TestToolHandlerEdgeCases:
             ["src/main.py"],
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
+            started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
@@ -787,6 +819,8 @@ class TestToolHandlerEdgeCases:
             ["src/first.py", "docs/plan.md"],
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
+            started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
         assert response.decision == "allow"
         assert notify_code_index.call_count == 2
@@ -915,6 +949,8 @@ class TestToolHandlerEdgeCases:
             ["src/owned.py"],
             checkout_root=str(worktree_root.resolve()),
             edited_at=event.timestamp.timestamp(),
+            started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
 
     def test_cp_from_primary_to_worktree_attributes_only_destination(
@@ -966,6 +1002,8 @@ class TestToolHandlerEdgeCases:
             ["src/destination.py"],
             checkout_root=str(worktree_root.resolve()),
             edited_at=event.timestamp.timestamp(),
+            started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
 
     def test_after_tool_notifies_code_index_with_project_root_path(
@@ -982,6 +1020,12 @@ class TestToolHandlerEdgeCases:
         machine_id = insert_isolated_machine(temp_db)
         patch_local_machine_id(monkeypatch, machine_id)
         project = LocalProjectManager(temp_db).create(name="nested-index-root")
+        session = SessionManager(temp_db).register(
+            external_id="nested-index-session",
+            machine_id=machine_id,
+            source="codex",
+            project_id=project.id,
+        )
         write_project_marker(repo_root, project_id=project.id, name=project.name)
         mock_dependencies["session_manager"].db = temp_db
         mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
@@ -996,7 +1040,7 @@ class TestToolHandlerEdgeCases:
                 "tool_name": "Write",
                 "tool_input": {"file_path": "edited.py"},
             },
-            metadata={"_platform_session_id": "sess-123"},
+            metadata={"_platform_session_id": session.id},
         )
         event.cwd = str(deep_cwd)
 
@@ -1048,6 +1092,8 @@ class TestToolHandlerEdgeCases:
             [".gobby/tasks.jsonl"],
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
+            started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
         notify_code_index.assert_not_called()
@@ -1111,6 +1157,8 @@ class TestToolHandlerEdgeCases:
             [".gobby/memories.jsonl"],
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
+            started_at=event.timestamp.timestamp(),
+            attribute_to_task=True,
         )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
