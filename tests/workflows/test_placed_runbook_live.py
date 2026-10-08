@@ -1004,6 +1004,9 @@ def test_live_partial_redeploy(live: Live, failing: str) -> None:
     execution = _launch(live, place)
     if shared:
         _until(live.rig.barrier.reached, 240, f"{earlier[-1].id}'s completion write")
+        # The completion write can precede the retained provider's exec.
+        for step in earlier:
+            _await_seat(live, place, execution, step)
         set_executable(standin, False)
         live.rig.barrier.release()
     assert shutil.which(provider, path=live.rig.path) is None

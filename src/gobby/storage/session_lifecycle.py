@@ -51,15 +51,38 @@ def rebind_agent_run(
     db: HubDatabase,
     *,
     session_id: str,
-    expected_run_id: str,
+    expected_run_id: str | None,
     new_run_id: str,
     workflow_name: str | None,
+    relaunch_parent_session_id: str | None = None,
 ) -> bool:
     """Atomically move a durable session's run back-pointer to a successor.
 
     A ``None`` workflow_name preserves the session's existing workflow binding;
     only a concrete value overwrites it.
     """
+    if relaunch_parent_session_id is not None:
+        from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
+
+        cursor = db.execute(
+            """
+            UPDATE sessions
+            SET agent_run_id = %s, parent_session_id = %s,
+                workflow_name = COALESCE(%s, workflow_name), status = 'active',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s AND agent_run_id IS NOT DISTINCT FROM %s
+              AND status <> 'deleted' AND NOT (status = ANY(%s))
+            """,
+            (
+                new_run_id,
+                relaunch_parent_session_id,
+                workflow_name,
+                session_id,
+                expected_run_id,
+                list(LIVE_SESSION_STATUS_ORDER),
+            ),
+        )
+        return bool(cursor.rowcount)
     cursor = db.execute(
         """
         UPDATE sessions

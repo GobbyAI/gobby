@@ -802,12 +802,12 @@ def test_append_to_set_variable_and_conditional_merge_skips_updates_when_guard_f
     assert variables["audit_events"] == [{"event": "old"}]
 
 
-def test_record_edited_file_tracks_sole_claimed_task(db: Any, tmp_path: Path) -> None:
+def test_record_edited_file_tracks_the_active_claimed_task(db: Any, tmp_path: Path) -> None:
     """Edited files are recorded in both session and task-scoped ledgers."""
     from gobby.workflows.state_manager import SessionVariableManager
 
     mgr = SessionVariableManager(db)
-    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
+    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}, "active_task_id": "task-1"})
 
     mgr.record_edited_file(S1, "src/app.py", checkout_root=str(tmp_path))
 
@@ -825,6 +825,7 @@ def test_record_edited_files_atomically_preserves_order_and_deduplicates(db: Any
         S1,
         {
             "claimed_tasks": {"task-1": "#1"},
+            "active_task_id": "task-1",
             "session_edited_files": ["existing.py"],
             "task_edited_files": {"task-1": ["existing.py"]},
         },
@@ -957,7 +958,7 @@ def test_release_task_edited_files_preserves_same_path_in_other_checkout(
     first_checkout.mkdir()
     second_checkout.mkdir()
     mgr = SessionVariableManager(db)
-    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
+    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}, "active_task_id": "task-1"})
     mgr.record_edited_file(S1, "src/shared.py", checkout_root=str(first_checkout))
     mgr.record_edited_file(S1, "src/shared.py", checkout_root=str(second_checkout))
 
@@ -985,7 +986,7 @@ def test_release_task_edited_files_pops_last_task_path(db: Any, tmp_path: Path) 
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     mgr = SessionVariableManager(db)
-    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
+    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}, "active_task_id": "task-1"})
     mgr.record_edited_file(S1, "src/only.py", checkout_root=str(checkout))
 
     released, remaining = mgr.release_task_edited_files(
@@ -1034,7 +1035,7 @@ def test_record_edited_files_stamps_the_newest_edit_per_task_path(db: Any, tmp_p
     from gobby.workflows.state_manager import SessionVariableManager
 
     mgr = SessionVariableManager(db)
-    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
+    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}, "active_task_id": "task-1"})
 
     before = time.time()
     mgr.record_edited_files(S1, ["src/app.py", "src/lib.py"], checkout_root=str(tmp_path))
@@ -1057,7 +1058,7 @@ def test_record_edited_files_uses_the_event_time_and_keeps_the_newest_stamp(
     from gobby.workflows.state_manager import SessionVariableManager
 
     mgr = SessionVariableManager(db)
-    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
+    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}, "active_task_id": "task-1"})
 
     mgr.record_edited_files(S1, ["src/app.py"], checkout_root=str(tmp_path), edited_at=1_000.0)
     assert mgr.get_variables(S1)["task_edited_file_times"] == {"task-1": {"src/app.py": 1_000.0}}
@@ -1084,7 +1085,7 @@ def test_release_task_edited_files_drops_released_stamps(db: Any, tmp_path: Path
     from gobby.workflows.state_manager import SessionVariableManager
 
     mgr = SessionVariableManager(db)
-    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
+    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}, "active_task_id": "task-1"})
     mgr.record_edited_files(S1, ["src/app.py", "src/lib.py"], checkout_root=str(tmp_path))
 
     released, _remaining = mgr.release_task_edited_files(

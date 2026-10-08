@@ -68,7 +68,8 @@ class TestRemoveClaimedTask:
         result = remove_claimed_task(variables, "uuid-1")
         assert result["task_claimed"] is True
         assert result["claimed_tasks"] == {"uuid-2": "#2"}
-        assert result["active_task_id"] == "uuid-2"
+        # The claim left behind receives edits only after a reclaim (#23665).
+        assert result["active_task_id"] is None
         assert (variables | result)["task_has_commits"] is True
         assert result["task_edited_files"] == {"uuid-2": ["b.py"]}
 
@@ -177,7 +178,7 @@ class TestReleaseClaimedTask:
 
         merged = variables | released
         assert released["claimed_tasks"] == removed["claimed_tasks"] == {"uuid-2": "#2"}
-        assert released["active_task_id"] == removed["active_task_id"] == "uuid-2"
+        assert released["active_task_id"] is removed["active_task_id"] is None
         assert released["task_claimed"] == removed["task_claimed"] is True
         assert merged["task_edited_files"] == {"uuid-1": ["a.py"], "uuid-2": ["b.py"]}
         assert merged["task_edited_file_checkouts"] == {"uuid-1": {"/repo": ["a.py"]}}
@@ -218,15 +219,16 @@ class TestActiveTaskIdForEdit:
 
         assert active_task_id_for_edit(variables) == "uuid-2"
 
-    def test_sole_claim_fallback(self) -> None:
-        variables = {"claimed_tasks": {"uuid-1": "#1"}}
-
-        assert active_task_id_for_edit(variables) == "uuid-1"
-
-    def test_multiple_claims_without_active_does_not_guess(self) -> None:
-        variables = {"claimed_tasks": {"uuid-1": "#1", "uuid-2": "#2"}}
-
-        assert active_task_id_for_edit(variables) is None
+    @pytest.mark.parametrize(
+        "claimed_tasks",
+        [{"uuid-1": "#1"}, {"uuid-1": "#1", "uuid-2": "#2"}],
+        ids=["sole-claim", "several-claims"],
+    )
+    def test_claims_without_an_active_task_do_not_guess(
+        self, claimed_tasks: dict[str, str]
+    ) -> None:
+        """Only a claim makes a task active, so a claim left behind waits for a reclaim."""
+        assert active_task_id_for_edit({"claimed_tasks": claimed_tasks}) is None
 
     def test_no_claim_records_no_task(self) -> None:
         assert active_task_id_for_edit({}) is None

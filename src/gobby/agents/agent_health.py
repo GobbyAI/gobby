@@ -88,7 +88,11 @@ class AgentHealthMonitor:
             )
 
         services = self._terminal_services
-        terminal = None if services is None else services.terminal_for(run)
+        terminal = (
+            await self._run_db(services.manager.get, run.terminal_id)
+            if services is not None and run.terminal_id
+            else None
+        )
         if services is None or terminal is None:
             return False
         result = await terminate_managed_runtime_async(
@@ -215,7 +219,13 @@ class AgentHealthMonitor:
                         )
 
                 services = self._terminal_services
-                terminal = None if services is None else services.terminal_for(run)
+                # Host reconciliation can settle the terminal before this health pass.
+                # The active-only lookup hides that exit and strands the running agent.
+                terminal = (
+                    await self._run_db(services.manager.get, run.terminal_id)
+                    if services is not None and run.terminal_id
+                    else None
+                )
                 if reason is None and services is not None and terminal is not None:
                     tmux_alive = await services.is_live(run)
                     if tmux_alive:

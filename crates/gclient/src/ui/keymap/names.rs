@@ -14,6 +14,7 @@ pub enum Action {
     Settings,
     NewTerminal,
     NewProject,
+    OpenProject,
     RenameTerminal,
     CloseTerminal,
     TerminalPicker,
@@ -123,7 +124,8 @@ pub const BINDINGS: &[BindingSpec] = &[
     spec("help", "Open keybinding help", &["prefix+?"]),
     spec("settings", "Open settings", &["prefix+s"]),
     spec("new_terminal", "Open a new terminal", &[]),
-    spec("new_project", "Add a workspace", &["prefix+shift+n"]),
+    spec("new_project", "Create project", &["prefix+shift+n"]),
+    spec("open_project", "Open project", &[]),
     spec(
         "rename_terminal",
         "Rename the selected terminal",
@@ -339,7 +341,7 @@ macro_rules! action_names {
 
 action_names! {
     "help" => Help, "settings" => Settings, "new_terminal" => NewTerminal,
-    "new_project" => NewProject, "rename_terminal" => RenameTerminal, "close_terminal" => CloseTerminal,
+    "new_project" => NewProject, "open_project" => OpenProject, "rename_terminal" => RenameTerminal, "close_terminal" => CloseTerminal,
     "terminal_picker" => TerminalPicker, "goto" => Goto, "navigate_up" => NavigateUp,
     "navigate_down" => NavigateDown, "navigate_pane_left" => NavigatePaneLeft,
     "navigate_pane_down" => NavigatePaneDown, "navigate_pane_up" => NavigatePaneUp,

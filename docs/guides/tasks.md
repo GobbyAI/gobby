@@ -104,9 +104,10 @@ its existing claim, or hand it off, before claiming another task. A claim is
 handed off once a reviewer recorded an `independent_review_approval` receipt for
 it and none of its attributed files is uncommitted. It stays claimed while it
 waits on landing or close, and the new claim receives the session's edits.
-Reclaiming a handed-off task makes it active again only when no other active
-claim exists. An `already_claimed` response means read the task and continue,
-rather than claiming it again.
+When the active claim ends, the claims left behind receive no edits until one is
+reclaimed, and reclaiming a handed-off task makes it active again only when no
+other active claim exists. An `already_claimed` response means the task already
+receives the session's edits: read it and continue, rather than claiming it again.
 
 ### Close
 

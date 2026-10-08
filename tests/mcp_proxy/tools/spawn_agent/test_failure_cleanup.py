@@ -1305,9 +1305,12 @@ async def test_cleanup_steps_are_independent(
             child_session_id="child-7",
         )
 
-    # A failed terminate proves nothing, so isolation is kept for it.
+    # Failed termination keeps isolation; an unread run keeps its durable session.
     expected = [
-        phase for phase in _CLEANUP_PHASES if failing != "terminate" or phase != "isolation"
+        phase
+        for phase in _CLEANUP_PHASES
+        if not (failing == "terminate" and phase == "isolation")
+        and not (failing == "read_run" and phase == "delete_child_session")
     ]
     assert ran == expected
     failures = [record for record in caplog.records if "RuntimeError" in record.getMessage()]

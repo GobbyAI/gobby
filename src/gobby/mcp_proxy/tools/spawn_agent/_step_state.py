@@ -163,8 +163,11 @@ def persist_initial_step_instance_if_resolved(
     session_id: str,
     project_id: str | None,
     initial_variables: dict[str, Any] | None = None,
+    preserve_existing: bool = False,
 ) -> bool:
-    """Persist the initial snapshot only when the agent definition still exists."""
+    """Seed an absent snapshot; a resumed seat retains its current step and variables."""
+    if preserve_existing and AgentStepInstanceManager(db).get_for_session(session_id) is not None:
+        return True
     from gobby.workflows.agent_resolver import resolve_agent_with_row
 
     resolved = resolve_agent_with_row(agent_body.name, db, project_id=project_id)

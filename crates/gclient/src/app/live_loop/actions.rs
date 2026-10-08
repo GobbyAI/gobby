@@ -41,7 +41,8 @@ use super::mouse::{MouseOutcome, Placement};
 use super::orphans::destroy_orphans;
 use super::projects::{
     close_live_terminal, close_project_confirmed, create_worktree, focus_agent, focus_project,
-    focus_terminal, open_new_project_dialog, open_worktree, remove_worktree, submit_new_project,
+    focus_terminal, open_new_project_dialog, open_open_project_dialog, open_worktree,
+    remove_worktree, submit_new_project, submit_open_project,
 };
 use super::sync_live_chrome;
 
@@ -195,6 +196,7 @@ pub(super) async fn apply_live_modal_outcome(
             }
         }
         ModalOutcome::InitProject(path) => submit_new_project(workspace, chrome, &path).await?,
+        ModalOutcome::OpenProject(path) => submit_open_project(workspace, chrome, &path).await?,
         ModalOutcome::CreateWorktree {
             project_id,
             branch,
@@ -256,6 +258,7 @@ pub(super) async fn handle_live_action(
             sync_live_chrome(workspace, chrome);
         }
         Action::NewProject => open_new_project_dialog(chrome),
+        Action::OpenProject => open_open_project_dialog(chrome),
         Action::CloseTerminal => {
             if let Some(pane_id) = chrome.focused_pane() {
                 if chrome.prefs.confirm_close {

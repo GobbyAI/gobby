@@ -84,12 +84,23 @@ when those conditions are absent. Slashes below separate alternative labels:
 | Menu | Items |
 | --- | --- |
 | Gobby | Settings, Reload config, Quit |
-| File | New terminal, New tab, New workspace…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
+| File | New terminal, New tab, New project…, Open project…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
 | Edit | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name (when named), Send right-clicks to pane / Use gclient menu |
 | View | Appearance: Dark / Light / System ▸, Theme: Restored ▸, Monochrome, Sidebar ▸ |
 | Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (Even horizontal, Even vertical, Main horizontal, Main vertical, Tiled, New grid…) |
 | Agent | Respond, Mark seen, Take control, Release control, Take back, Detach, Open alert target, Next attention, Previous attention |
 | Help | Keys, Alerts…, Daemon, About Gobby |
+
+**File › New project…** creates a directory (or uses an existing empty one),
+initializes Git, registers the checkout with Gobby, and attaches its default
+workspace. Enter the full directory path; `tab` completes directories. A
+nonempty directory is refused. Initialization or registration errors stay in
+the dialog and preserve the directory. If registration fails after Git
+initialization, retry with **Open project…**.
+
+**File › Open project…** accepts an existing Git checkout, registers it if
+needed, and attaches its default workspace. Registered checkouts open without
+another registration. A path inside the checkout resolves to its root.
 
 A row ending in `▸` opens a submenu beside its menu, which stays drawn with
 that row lit. `→` or `l` opens the submenu under the cursor, `←` or `h`
@@ -524,7 +535,8 @@ and only work after you bind them; every action also appears in the help popup
 | `prefix+b` | Open or close the sidebar overlay; unpin a pinned sidebar | `toggle_sidebar` |
 | `up` / `down` | Select the previous / next sidebar row (enters navigate mode) | `navigate_up` / `navigate_down` |
 | `h` / `j` / `k` / `l` | Focus the neighbouring pane (navigate mode only) | `navigate_pane_*` |
-| `prefix+shift+n` | Add a workspace | `new_project` |
+| `prefix+shift+n` | Create project | `new_project` |
+| *unset* | Open project | `open_project` |
 | *unset* | Focus the next / previous project | `next_project` / `previous_project` |
 | *unset* | Focus project 1–9 | `switch_project` |
 | *unset* | Collapse or expand the project's worktrees | `toggle_group` |
@@ -854,9 +866,9 @@ close.
 | Project card | Rename, Close, New worktree, Open worktree…, Collapse / Expand |
 | Worktree row | Rename, Close, Delete worktree checkout… |
 | Agent or bare terminal row | Focus, Open in new tab, Respond (when it needs you), Mark seen, Take / Release control, Close terminal / Destroy orphaned terminal (when orphaned) |
-| Empty tab bar or empty sidebar | New terminal, New tab, New workspace…, Settings, Keybinding help, Reload config, Toggle sidebar, Destroy orphaned terminals…, Detach, Quit |
+| Empty tab bar or empty sidebar | New terminal, New tab, New project…, Open project…, Settings, Keybinding help, Reload config, Toggle sidebar, Destroy orphaned terminals…, Detach, Quit |
 | **Gobby** on the menu bar (click) | Settings, Reload config, Quit |
-| **File** on the menu bar (click) | New terminal, New tab, New workspace…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
+| **File** on the menu bar (click) | New terminal, New tab, New project…, Open project…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
 | **Edit** on the menu bar (click) | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name, Send right-clicks to pane / Use gclient menu |
 | **View** on the menu bar (click) | Appearance ▸, Theme ▸, Monochrome, Sidebar ▸ (Show sidebar, Pin sidebar, Machines ▸, Projects ▸, Agents ▸, Terminals ▸) |
 | **Window** on the menu bar (click) | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (five layouts, New grid…) |

@@ -18,18 +18,21 @@ from gobby.plans.review_evidence_store import (
     MAX_REVIEW_EVIDENCE_LIST_LIMIT,
     PlanReviewEvidenceStore,
 )
+from gobby.storage.hub.managed import managed_grant_path
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
 from gobby.storage.project_checkouts import require_root, resolve_operation_root
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.workspace_machine_scope import require_local_machine_id
-from gobby.tasks.expansion._validate import validate_plan_file
+from gobby.tasks.expansion._validate import CompletionTaskLookup, validate_plan_file
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.project_context import get_project_context
 
+from ._plan_daemon_tasks import DaemonTaskLookup
 from ._plan_validation_output import emit_plan_validation_messages, raise_plan_validation_failed
 from .utils import resolve_project_ref
+from .utils_config import get_daemon_client
 
 _ROOT_TASK_REF_RE = re.compile(r"^\s*root_task_ref\s*:\s*(?P<value>.+?)\s*$")
 
@@ -418,13 +421,25 @@ def _validate_plan_for_cli(
             **structural_result,
             "errors": [f"completed-section exemptions unavailable: task database: {exc}"],
         }
+    task_lookup: CompletionTaskLookup
+    if managed_grant_path() is None:
+        task_lookup = LocalTaskManager(db)
+    else:
+        # Agent grants cannot read tasks; agents ask the daemon instead.
+        try:
+            task_lookup = DaemonTaskLookup(get_daemon_client())
+        except (OSError, ValueError) as exc:
+            return {
+                **structural_result,
+                "errors": [f"completed-section exemptions unavailable: daemon: {exc}"],
+            }
     result = validate_plan_file(
         None,
         plan_path,
         project_context=project_context,
         expected_project_id=expected_project_id,
         code_index=CodeIndexStorage(db),
-        task_manager=LocalTaskManager(db),
+        task_manager=task_lookup,
         require_symbol_validation=require_symbol_validation,
         consumer_coverage_blocking=mode == "expansion",
         parse_mode=parse_mode,
