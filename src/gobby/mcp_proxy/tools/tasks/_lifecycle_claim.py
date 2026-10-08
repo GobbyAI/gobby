@@ -252,11 +252,12 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             )
 
         current_owner = get_claimed_session_id(task)
-        # While another owned task receives this session's edits, a reclaim reactivates
-        # this one only through the capacity check below (#23665).
-        if current_owner == resolved_session_id and _edit_target_task_id(
-            ctx, resolved_session_id
-        ) in (None, resolved_id):
+        # An owned task that does not receive this session's edits becomes active
+        # again only through the capacity check below (#23665).
+        if (
+            current_owner == resolved_session_id
+            and _edit_target_task_id(ctx, resolved_session_id) == resolved_id
+        ):
             task_ref = f"#{task.seq_num}" if task.seq_num else resolved_id
             return {
                 "success": True,

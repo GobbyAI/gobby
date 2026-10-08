@@ -1104,7 +1104,7 @@ class TestCloseTaskTool:
                 {
                     "task_claimed": True,
                     "claimed_tasks": {other_task_uuid: "#43"},
-                    "active_task_id": other_task_uuid,
+                    "active_task_id": None,
                     "task_edited_files": {other_task_uuid: ["src/other.py"]},
                 },
             )
@@ -1257,7 +1257,7 @@ class TestCloseTaskTool:
             {
                 "task_claimed": True,
                 "claimed_tasks": {concurrent_uuid: "#99"},
-                "active_task_id": concurrent_uuid,
+                "active_task_id": None,
                 "task_edited_files": {concurrent_uuid: ["src/concurrent.py"]},
             },
         )

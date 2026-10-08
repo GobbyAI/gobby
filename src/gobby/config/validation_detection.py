@@ -690,6 +690,11 @@ def _matcher_matches_segment(matcher: ValidationCommandMatcher, tokens: list[str
             continue
         if any(_tokens_include_arg(tokens, arg) for arg in matcher.non_executing_args_any):
             continue
+        if matcher.id == "python-dependency-audit" and _pip_audit_has_nonchecking_option(
+            tokens[len(prefix_tokens) :],
+            [*matcher.forbidden_args_any, *matcher.non_executing_args_any],
+        ):
+            continue
         if matcher.required_args_all and not all(
             _tokens_include_arg(tokens, arg) for arg in matcher.required_args_all
         ):
@@ -742,6 +747,60 @@ def _strip_wrapper_options(tokens: list[str], options_with_values: set[str]) -> 
             return tokens[index:]
         index += 2 if token in options_with_values else 1
     return []
+
+
+def _pip_audit_has_nonchecking_option(args: list[str], forbidden: list[str]) -> bool:
+    """Credit only environment audits, consuming option values before finding project paths."""
+    value_options = (
+        "--format",
+        "--vulnerability-service",
+        "--osv-url",
+        "--cache-dir",
+        "--progress-spinner",
+        "--timeout",
+        "--index-url",
+        "--extra-index-url",
+        "--output",
+    )
+    optional_options = ("--desc", "--aliases")
+    flag_options = ("--strict", "--verbose", "--require-hashes")
+    cursor = 0
+    while cursor < len(args):
+        token = args[cursor]
+        cursor += 1
+        if token == "--":
+            return cursor < len(args)
+        if token.startswith("--"):
+            option, separator, _value = token.partition("=")
+            if any(arg.startswith(option) for arg in forbidden):
+                return True
+            matches = [
+                arg
+                for arg in (*value_options, *optional_options, *flag_options)
+                if arg.startswith(option)
+            ]
+            if len(matches) != 1:
+                return True
+            matched = matches[0]
+            if matched in value_options and not separator:
+                cursor += 1
+            elif matched in optional_options and not separator:
+                if cursor < len(args) and args[cursor] in {"on", "off", "auto"}:
+                    cursor += 1
+            continue
+        if token == "-" or not token.startswith("-"):
+            return True
+        for index, option in enumerate(token[1:], start=1):
+            if option in "dVlhr":
+                return True
+            if option in "fso":
+                # An attached value consumes the rest of a short-option bundle.
+                if index == len(token) - 1:
+                    cursor += 1
+                break
+            if option not in "vS":
+                return True
+    return False
 
 
 def _tokens_include_arg(tokens: list[str], arg: str) -> bool:

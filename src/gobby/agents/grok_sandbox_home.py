@@ -117,6 +117,7 @@ def prepare_grok_sandbox_home(
         if original.is_file():
             shutil.copyfile(original, home / name)
             (home / name).chmod(0o600)
+    _declare_gobby_mcp_server(home / "config.toml")
     hooks = home / "hooks"
     hooks.mkdir(mode=0o700)
     original_hooks = source / "hooks"
@@ -149,3 +150,24 @@ def prepare_grok_sandbox_home(
     receipt_path.write_text(json.dumps({"source": str(source)}))
     receipt_path.chmod(0o600)
     return GrokSandboxHome(home, tuple(protected), runtime)
+
+
+def _declare_gobby_mcp_server(config_path: Path) -> None:
+    """Give the run the installed Gobby server Grok used to inherit from ~/.claude.json.
+
+    Credential reads now deny that file, and config.toml outranks every
+    Claude-compat source, so this entry replaces any operator ``gobby`` server.
+    """
+    import tomlkit
+    from tomlkit.exceptions import ParseError
+
+    from gobby.cli.installers.mcp_config_shared import _resolved_gobby_mcp_command
+
+    try:
+        config = tomlkit.parse(config_path.read_text() if config_path.is_file() else "")
+    except ParseError as exc:
+        raise ValueError(f"Grok config is not valid TOML: {config_path}") from exc
+    servers = config.setdefault("mcp_servers", tomlkit.table())
+    servers["gobby"] = {"command": _resolved_gobby_mcp_command(), "args": ["mcp-server"]}
+    config_path.write_text(tomlkit.dumps(config))
+    config_path.chmod(0o600)

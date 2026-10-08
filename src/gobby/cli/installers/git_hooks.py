@@ -152,7 +152,8 @@ if command -v pre-commit >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
     # POSIX sh: path sets go through files in a scratch directory. The subshell
     # owns its EXIT trap, so cleanup never replaces a trap of chained hook content.
     (
-    GOBBY_SCRATCH=$(mktemp -d) || exit 1
+    # macOS bare mktemp ignores TMPDIR; use the sandbox's writable temp explicitly.
+    GOBBY_SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/gobby-pre-commit.XXXXXX") || exit 1
     trap 'rm -rf "$GOBBY_SCRATCH"' EXIT
 
     # git reads GIT_INDEX_FILE, the index this commit is built from, so plain,

@@ -13,7 +13,6 @@ import pytest
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.tasks.agentic_close_review import build_agentic_review_prompt
 from gobby.tasks.close_checklist import (
-    REVIEW_COMMAND_BUDGET,
     evaluate_validation_commands,
 )
 from gobby.tasks.transcript_evidence_models import (
@@ -21,6 +20,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptValidationRun,
 )
+from gobby.tasks.validation_diagnostics import REVIEW_COMMAND_BUDGET
 
 pytestmark = pytest.mark.unit
 

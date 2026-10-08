@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -48,26 +45,23 @@ from gobby.tasks.transcript_evidence_models import (
 )
 from gobby.tasks.transcript_outcomes import (
     EvidenceOutcome,
-    classify_validation_command_equivalence,
     infer_failure_categories,
+)
+from gobby.tasks.validation_diagnostics import (
+    bound_diagnostic_record,
+    bound_review_details,
+    failure_command_description,
+    unsatisfied_criterion_records,
 )
 
 GateStatus = Literal["passed", "failed", "skipped", "not_run"]
 
 _TEST_REQUIRED_CATEGORIES = frozenset({"code", "refactor", "test"})
 _AUTO_PASS_CATEGORIES = frozenset({"docs", "planning", "research", "manual"})
-# Character budget shared by every bounded evidence section of one gate-10 record.
-REVIEW_COMMAND_BUDGET = 48_000
 _OBSERVED_MESSAGE_BUDGET = 1_000
-_REVIEW_COMMAND_LIMIT = 64
-_DIAGNOSTIC_COMMAND_LIMIT = 2_048
 _TEST_TYPES_AUDIT_COMMAND = (
     "uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new"
 )
-_GENERIC_COMMAND_WORDS = frozenset(
-    {"uv", "run", "npx", "npm", "python", "python3", "bash", "sh", "git", "check", "test", "ci"}
-)
-_CRITERIA_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
 
 
 @dataclass(frozen=True)
@@ -178,7 +172,7 @@ def evaluate_validation_commands(
 
     records = excluded_validation_records(evidence, uncovered, tuple(changed_tests))
     gaps = gate.details.get("criterion_command_gaps", [])
-    for gap in _unsatisfied_criterion_records(gate.details):
+    for gap in unsatisfied_criterion_records(gate.details):
         for observation in gap.get("observed_forms", []):
             if not str(observation.get("reason", "")).startswith(SCOPE_MISMATCH_REASON):
                 continue
@@ -231,19 +225,19 @@ def evaluate_validation_commands(
     elif task_category in _TEST_REQUIRED_CATEGORIES:
         relevant = [record for record in records if "test" in record["categories"]]
     nearest = relevant[0] if relevant else None
-    excluded_runs = [_bound_diagnostic_record(record) for record in records[:16]]
-    nearest_observed = None if nearest is None else _bound_diagnostic_record(nearest)
+    excluded_runs = [bound_diagnostic_record(record) for record in records[:16]]
+    nearest_observed = None if nearest is None else bound_diagnostic_record(nearest)
     details = {
         **gate.details,
         "excluded_runs": excluded_runs,
         "nearest_observed_run": nearest_observed,
         "foreign_scope_runs": [
-            _failure_command_description(command) for command in dict.fromkeys(foreign)
+            failure_command_description(command) for command in dict.fromkeys(foreign)
         ],
     }
     if len(records) > 16:
         details["omitted_excluded_run_count"] = len(records) - 16
-    details = _bound_review_details(details, validation_criteria)
+    details = bound_review_details(details, validation_criteria)
     message = gate.message
     if gate.status == "failed" and gaps:
         messages = []
@@ -254,7 +248,7 @@ def evaluate_validation_commands(
                 None,
             )
             if observation is not None:
-                explanation = observed_message(_bound_diagnostic_record(observation))
+                explanation = observed_message(bound_diagnostic_record(observation))
                 messages.append(explanation.split("Run `", 1)[0].rstrip())
         kept, omitted, _ = fit_sentences(messages, _OBSERVED_MESSAGE_BUDGET)
         if omitted:
@@ -382,7 +376,7 @@ def _evaluate_validation_commands(
     unresolved_failures = [
         {
             "category": run_category,
-            "command": _failure_command_description(run.command),
+            "command": failure_command_description(run.command),
             "completed_at": run.completed_at.isoformat(),
         }
         for run_category, run in sorted(unresolved.items())
@@ -390,7 +384,11 @@ def _evaluate_validation_commands(
     criterion_commands = criterion_command_records(validation_criteria, evidence)
     criterion_command_gaps = [record for record in criterion_commands if not record["satisfied"]]
     uncovered_web = uncovered_vitest_related_paths(
-        passing_runs, changed_web_paths, close_root=close_root
+        passing_runs,
+        changed_web_paths,
+        close_root=close_root,
+        changed_paths=changed_paths,
+        candidate=candidate,
     )
     details = {
         **details,
@@ -554,7 +552,11 @@ def _evaluate_validation_commands(
     ):
         details["pytest_copy_differing_paths"] = list(differing)
     coverage_failure = coverage_failure_message(
-        uncovered_pytest, uncovered_sources, uncovered_web, differing_paths=differing
+        uncovered_pytest,
+        uncovered_sources,
+        uncovered_web,
+        differing_paths=differing,
+        close_root=close_root,
     )
     if coverage_failure:
         return CloseGateResult(
@@ -618,243 +620,6 @@ def _fresh_runs(evidence: TranscriptEvidence) -> list[TranscriptValidationRun]:
         for run in (*evidence.validation_runs, *evidence.command_runs)
         if first_invalidating_edit(evidence, run) is None
     ]
-
-
-def _failure_command_description(command: str) -> str:
-    """Keep failure diagnostics bounded without representing an excerpt as an exact run."""
-    if len(command) <= _DIAGNOSTIC_COMMAND_LIMIT:
-        return command
-    digest = hashlib.sha256(command.encode()).hexdigest()
-    return f"{command[:256]}… [command excerpt; sha256={digest}]"
-
-
-def _bound_diagnostic_record(record: Mapping[str, Any]) -> dict[str, Any]:
-    """Clamp diagnostic command text; keep reason, remedy, and invalidating_edit."""
-    bounded = dict(record)
-    command = str(bounded.get("command") or "")
-    bounded_command = _failure_command_description(command)
-    bounded["command"] = bounded_command
-    core = bounded.get("core_command")
-    if core == command:
-        del bounded["core_command"]
-    elif isinstance(core, str):
-        bounded_core = _failure_command_description(core)
-        bounded["core_command"] = bounded_core
-        if bounded_core != core:
-            for key in ("reason", "remedy"):
-                value = bounded.get(key)
-                if isinstance(value, str) and core in value:
-                    bounded[key] = value.replace(core, bounded_core)
-    if bounded_command != command:
-        for key in ("reason", "remedy"):
-            value = bounded.get(key)
-            if isinstance(value, str) and command in value:
-                bounded[key] = value.replace(command, bounded_command)
-    return bounded
-
-
-def _command_priority(
-    record: Mapping[str, object],
-    criteria: str,
-    criterion_cores: frozenset[str],
-) -> int:
-    """Prefer exact raw/core commands, then invoked tools and explicit path arguments.
-
-    Inline script contents and ordinary prose are never command-name evidence.
-    This affects selection only; the original equivalence/outcome still controls credit.
-    """
-    command = str(record["command"])
-    core = record.get("core_command")
-    if not isinstance(core, str):
-        core = classify_validation_command_equivalence(command).core_command
-    criteria = criteria.casefold()
-    if core is not None and core.casefold() in criterion_cores:
-        return 3
-    if any(value and value.casefold().strip() in criteria for value in (command, core)):
-        return 3
-    criterion_words = {word.rstrip(".") for word in re.findall(r"[\w./-]+", criteria)}
-    priority = 0
-    for segment in parse_shell_command(core or command).segments:
-        arguments = list(segment)
-        while arguments and arguments[0] in {"uv", "run", "npx", "--yes", "-y"}:
-            arguments.pop(0)
-        if not arguments:
-            continue
-        executable = arguments[0].rsplit("/", 1)[-1].casefold()
-        if executable in {"python", "python3"} and arguments[1:2] == ["-m"]:
-            arguments = arguments[2:]
-            if not arguments:
-                continue
-            executable = arguments[0].casefold()
-        if executable in {"python", "python3", "bash", "sh", "zsh", "echo", "printf"}:
-            continue
-        if executable not in _GENERIC_COMMAND_WORDS and executable in criterion_words:
-            priority = max(priority, 2)
-        if len(arguments) > 1 and " ".join(arguments[:2]).casefold() in criteria:
-            priority = max(priority, 2)
-        if any(
-            argument.casefold() in criterion_words and ("/" in argument or "." in argument)
-            for argument in arguments[1:]
-        ):
-            priority = max(priority, 1)
-    return priority
-
-
-def _select_command_records(
-    records: list[dict[str, object]],
-    *,
-    priorities: Mapping[int, int],
-    budget: int,
-    limit: int,
-    priority: int,
-) -> tuple[list[dict[str, object]], int]:
-    selected: list[tuple[int, dict[str, object]]] = []
-    for index, record in reversed(list(enumerate(records))):
-        command = str(record["command"])
-        if priorities[id(record)] != priority:
-            continue
-        if len(command) > _DIAGNOSTIC_COMMAND_LIMIT and priority < 3:
-            continue
-        size = len(json.dumps(record, separators=(",", ":")))
-        if size > budget or len(selected) >= limit:
-            continue
-        selected.append((index, record))
-        budget -= size
-    return [record for _, record in sorted(selected)], budget
-
-
-def _unsatisfied_criterion_records(details: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Return the full record behind each compact ``criterion_command_gaps`` entry."""
-    records = details.get("criterion_commands")
-    if not isinstance(records, list):
-        return []
-    return [record for record in records if not record.get("satisfied")]
-
-
-def _record_size(record: Mapping[str, Any]) -> int:
-    """Measure a record as the response serializes it, not in compact form."""
-    return len(json.dumps(record, default=str))
-
-
-def _bound_criterion_commands(
-    records: list[dict[str, Any]],
-    budget: int,
-) -> tuple[list[dict[str, Any]], int, int]:
-    """Fit the criterion verdicts into ``budget`` by shedding observed evidence only.
-
-    Every criterion keeps its own record, so a satisfied entry stays authoritative
-    and no required command silently disappears. Only the diagnostic
-    ``observed_forms`` list shrinks, oldest form first, and each record counts what
-    it dropped in ``omitted_observed_form_count``.
-    """
-    bounded: list[dict[str, Any]] = []
-    for record in records:
-        copied = dict(record)
-        forms = copied.get("observed_forms")
-        if isinstance(forms, list):
-            copied["observed_forms"] = list(forms)
-        bounded.append(copied)
-    sizes = [_record_size(record) for record in bounded]
-    shrinkable = {
-        index
-        for index, record in enumerate(bounded)
-        if isinstance(record.get("observed_forms"), list) and record["observed_forms"]
-    }
-    total = sum(sizes)
-    omitted = 0
-    while total > budget and shrinkable:
-        index = max(shrinkable, key=lambda key: (sizes[key], key))
-        record = bounded[index]
-        forms = record["observed_forms"]
-        forms.pop(0)
-        record["omitted_observed_form_count"] = (
-            int(record.get("omitted_observed_form_count") or 0) + 1
-        )
-        omitted += 1
-        if not forms:
-            del record["observed_forms"]
-            shrinkable.discard(index)
-        size = _record_size(record)
-        total += size - sizes[index]
-        sizes[index] = size
-    return bounded, omitted, max(0, budget - total)
-
-
-def _bound_review_details(details: dict[str, Any], criteria: str) -> dict[str, Any]:
-    """Bound presentation only; gate decisions retain all definitive category outcomes.
-
-    Complete referenced commands are selected first. Never shorten a credited
-    command: an omitted script cannot accidentally compare equal to a criterion.
-    """
-    records: dict[str, list[dict[str, object]]] = {
-        "latest_runs": details["latest_runs"],
-        "uncredited_runs": details["uncredited_runs"],
-    }
-    limits: dict[str, int] = {
-        "latest_runs": _REVIEW_COMMAND_LIMIT,
-        "uncredited_runs": 16,
-    }
-    if "excluded_runs" in details:
-        records["excluded_runs"] = details["excluded_runs"]
-        limits["excluded_runs"] = 16
-    selected: dict[str, list[dict[str, object]]] = {key: [] for key in records}
-    criterion_cores = frozenset(
-        equivalence.core_command.casefold()
-        for match in _CRITERIA_CODE_SPAN_RE.finditer(criteria)
-        if (
-            equivalence := classify_validation_command_equivalence(match.group(1).strip())
-        ).core_command
-    )
-    priorities = {
-        id(record): _command_priority(record, criteria, criterion_cores)
-        for entries in records.values()
-        for record in entries
-    }
-    remaining = REVIEW_COMMAND_BUDGET
-    criterion_records = details.get("criterion_commands")
-    if isinstance(criterion_records, list):
-        details["criterion_commands"], omitted_forms, remaining = _bound_criterion_commands(
-            criterion_records, remaining
-        )
-        if omitted_forms:
-            details["omitted_criterion_observed_form_count"] = omitted_forms
-    key_order = [
-        key for key in ("excluded_runs", "latest_runs", "uncredited_runs") if key in records
-    ]
-    for priority in (3, 2, 1, 0):
-        for key in key_order:
-            additions, remaining = _select_command_records(
-                records[key],
-                priorities=priorities,
-                budget=remaining,
-                limit=limits[key] - len(selected[key]),
-                priority=priority,
-            )
-            selected[key].extend(additions)
-    for key, entries in records.items():
-        selected_ids = {id(record) for record in selected[key]}
-        details[key] = [record for record in entries if id(record) in selected_ids]
-    omitted_latest = len(records["latest_runs"]) - len(details["latest_runs"])
-    omitted_uncredited = len(records["uncredited_runs"]) - len(details["uncredited_runs"])
-    if omitted_latest or omitted_uncredited:
-        details.update(
-            {
-                "omitted_latest_run_count": omitted_latest,
-                "omitted_uncredited_run_count": omitted_uncredited,
-                "evidence_selection": (
-                    "Bounded task-command evidence: referenced commands precede recent diagnostics. "
-                    "Omitted commands are not proof of failure or absence. Only complete listed "
-                    "commands support exact-command credit; category outcomes use all fresh runs."
-                ),
-            }
-        )
-    if "excluded_runs" in records:
-        omitted_excluded = len(records["excluded_runs"]) - len(details["excluded_runs"])
-        if omitted_excluded:
-            details["omitted_excluded_run_count"] = (
-                int(details.get("omitted_excluded_run_count") or 0) + omitted_excluded
-            )
-    return details
 
 
 def _latest_definitive_by_category(
@@ -987,7 +752,6 @@ def _degraded_message(evidence: TranscriptEvidence) -> str:
 
 
 __all__ = [
-    "REVIEW_COMMAND_BUDGET",
     "CloseChecklist",
     "CloseGateResult",
     "GateStatus",

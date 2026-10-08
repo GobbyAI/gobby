@@ -39,6 +39,73 @@ PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("seat", "step"),
+    [
+        ("developer", "load_skills"),
+        ("developer", "claim"),
+        ("code-reviewer", "load_skills"),
+        ("code-reviewer", "await"),
+    ],
+)
+async def test_runbook_unassigned_seat_can_bootstrap_and_report(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+    seat: str,
+    step: str,
+) -> None:
+    """Role reads and live-owner reports work before assignment; writes stay gated."""
+    shared = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents"
+    definition = yaml.safe_load((shared / f"{seat}.yaml").read_text())
+    workflow = definition.pop("step_workflow")
+    _setup_step_workflow(
+        db, manager, instance_mgr, current_step=step, workflow_data={**definition, **workflow}
+    )
+    body = AgentDefinitionBody.model_validate({**definition, "step_workflow": workflow})
+    assert "session" in body.send_message_targets
+    for native, arguments in [
+        ("Bash", {"command": "cat /Users/josh/Projects/gobby/.gobby/roles/_common.md"}),
+        ("Read", {"file_path": "/Users/josh/Projects/gobby/.gobby/roles/lane-4-runbooks.md"}),
+    ]:
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": native, "tool_input": arguments}),
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert response.decision != "block", response.reason
+    for tool, coordination_arguments in [
+        ("send_message", {"target": "session", "target_id": "gobby#14972", "content": "Ready"}),
+        ("wait_for_coordination", {"owner_session": "gobby#14972", "reply": True}),
+    ]:
+        response = await engine.evaluate(
+            _make_event(
+                data={
+                    "tool_name": "mcp__gobby__call_tool",
+                    "tool_input": {
+                        "server_name": "gobby-agents",
+                        "tool_name": tool,
+                        "arguments": coordination_arguments,
+                    },
+                }
+            ),
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert response.decision != "block", response.reason
+    for native in ("Edit", "Write", "apply_patch"):
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": native, "tool_input": {}}),
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert response.decision == "block"
+    current = instance_mgr.get_for_session(SESSION_ID)
+    assert current is not None and current.current_step == step
+
+
+@pytest.mark.asyncio
 async def test_reviewer_required_load_transition_releases_deferred_preflight(
     db: "HubDatabase",
     manager: AgentDefinitionManager,

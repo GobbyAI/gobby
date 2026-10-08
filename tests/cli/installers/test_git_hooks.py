@@ -177,6 +177,39 @@ def _committed_paths(repo: Path) -> list[str]:
     return _git_out(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").splitlines()
 
 
+@pytest.mark.parametrize("linked_worktree", [False, True])
+def test_precommit_scratch_stays_in_managed_tmpdir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, linked_worktree: bool
+) -> None:
+    repo = _init_hook_repo(tmp_path, ["staged.txt"], linked_worktree=linked_worktree)
+    managed_tmp = tmp_path / "managed temp with spaces"
+    managed_tmp.mkdir()
+    monkeypatch.setenv("TMPDIR", str(managed_tmp))
+    receipt = tmp_path / "scratch-receipt"
+    monkeypatch.setenv("SCRATCH_RECEIPT", str(receipt))
+    _write_executable(
+        tmp_path / "bin" / "pre-commit",
+        "#!/bin/sh\n"
+        'for entry in "$TMPDIR"/*; do\n'
+        '    if [ -d "$entry" ]; then\n'
+        '        printf "%s\\n" "$entry" > "$SCRATCH_RECEIPT"\n'
+        "        exit 0\n"
+        "    fi\n"
+        "done\n"
+        'echo "pre-commit scratch escaped managed TMPDIR" >&2\n'
+        "exit 1\n",
+    )
+    (repo / "staged.txt").write_text("changed\n", encoding="utf-8")
+    _git_out(repo, "add", "staged.txt")
+
+    result = _git(repo, "commit", "--only", "-m", "managed scratch", "--", "staged.txt")
+
+    assert result.returncode == 0, result.stderr
+    assert Path(receipt.read_text().strip()).parent == managed_tmp
+    assert list(managed_tmp.iterdir()) == []
+    assert _git_out(repo, "show", "HEAD:staged.txt") == "changed\n"
+
+
 class TestPreCommitAutoFixBoundary:
     """The generated pre-commit section keeps auto-fixes inside the caller's commit."""
 

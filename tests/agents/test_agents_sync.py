@@ -1217,10 +1217,13 @@ class TestSyncBundledAgents:
 # Decision 7).
 _STEPLESS_BUNDLED_AGENTS = frozenset(
     {
+        "archivist",
         "assistant",
         "comms-agent",
         "default",
+        "inbox-manager",
         "lane-manager",
+        "merge-manager",
         "memory-curator",
         "orchestrator",
         "triage-agent",
