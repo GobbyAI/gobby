@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections import defaultdict
@@ -98,15 +99,22 @@ async def compile_run(
 
     plan_doc = self._parse_contract_plan(run, task)
     if plan_doc is not None:
-        project_context = _plan_validation_project_context(self, plan_doc.source_path, task)
-        plan_validation = self.validate_plan_file(
-            plan_doc.source_path,
-            project_context=project_context,
-            expected_project_id=task.project_id,
-            code_index=CodeIndexStorage(self.db),
-            require_symbol_validation=True,
-            consumer_coverage_blocking=True,
-        )
+
+        def validate_plan() -> dict[str, Any]:
+            project_context = _plan_validation_project_context(self, plan_doc.source_path, task)
+            return cast(
+                dict[str, Any],
+                self.validate_plan_file(
+                    plan_doc.source_path,
+                    project_context=project_context,
+                    expected_project_id=task.project_id,
+                    code_index=CodeIndexStorage(self.db),
+                    require_symbol_validation=True,
+                    consumer_coverage_blocking=True,
+                ),
+            )
+
+        plan_validation = await asyncio.to_thread(validate_plan)
         if not plan_validation["valid"]:
             errors = "; ".join(plan_validation["errors"])
             raise ValueError(f"Contract plan failed validation: {errors}")

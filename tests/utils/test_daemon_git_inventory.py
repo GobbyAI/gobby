@@ -201,6 +201,7 @@ def _sync_git_inventory() -> list[SyncGitUse]:
 
 _SYNC_GIT_FACADES = {
     "clone_skill_repo",
+    "close_task_with_commit",
     "committable_task_paths",
     "get_dirty_files",
     "get_dirty_files_categorized",
@@ -313,6 +314,28 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # Reached only from the `gobby status` Click command
     # (test_bin_freshness_git_is_reached_only_from_cli_status below).
     ("src/gobby/install/bin_freshness_promotion.py", "last_source_commit_time"),
+    # Sync plan tools run through InternalToolRegistry.call's worker; async plan
+    # tools resolve projects inside _run_db_call (test_plans_tools).
+    ("src/gobby/mcp_proxy/tools/plans/__init__.py", "_optional_project_id"),
+    # _legacy_task_checkout_proof awaits this helper through asyncio.to_thread.
+    ("src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py", "_same_git_checkout"),
+    # commit_close awaits linking through asyncio.to_thread.
+    ("src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_preview.py", "link_close_commit_shas"),
+    # Explicit synchronous storage facade, with no production callers. New
+    # daemon callers are checked by the synchronous-facade inventory below.
+    (
+        "src/gobby/storage/tasks/_transitions_facade.py",
+        "TaskTransitionsMixin.close_task_with_commit",
+    ),
+    # Close validation calls evaluate_validation_commands on a worker. Its
+    # initial empty-evidence check returns before candidate-tree access.
+    ("src/gobby/tasks/close_test_coverage.py", "_candidate_blobs"),
+    # Plan validation runs on MCP/coverage workers and the compile offload;
+    # offline validation remains synchronous (test_expansion_service_compile).
+    ("src/gobby/tasks/expansion/_validate.py", "_task_has_landed_commit"),
+    # FoundWorkGateAnalyzer offloads the complete cover calculation through
+    # _uncovered_failure_commands (test_found_work_gate's off-loop regression).
+    ("src/gobby/workflows/validation_cover.py", "_tracked_at_head"),
 }
 
 _ALLOWED_SYNC_FACADE_CALLERS = {

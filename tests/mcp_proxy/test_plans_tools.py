@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -37,6 +38,7 @@ from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.git import run_git_command
 from gobby.utils.project_context import reset_project_context, set_project_context
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.isolated_checkout import write_project_marker
@@ -624,6 +626,7 @@ async def test_plan_tools_resolve_project_from_checkout_path_name_or_uuid(
     temp_db: HubDatabase,
     tmp_path: Path,
     form: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     main = tmp_path / "main"
     linked = tmp_path / "linked"
@@ -648,6 +651,14 @@ async def test_plan_tools_resolve_project_from_checkout_path_name_or_uuid(
         "name": "plans-checkout",
         "uuid": project_id,
     }[form]
+    caller_thread = threading.get_ident()
+    git_threads: list[int] = []
+
+    def checked_git(*args: Any, **kwargs: Any) -> str | None:
+        git_threads.append(threading.get_ident())
+        return run_git_command(*args, **kwargs)
+
+    monkeypatch.setattr(plans_tools, "run_git_command", checked_git)
 
     result = await create_plan_registry(temp_db).call(
         "get_plan", {"plan_id_or_ref": "task-100-demo", "project": project}
@@ -655,6 +666,9 @@ async def test_plan_tools_resolve_project_from_checkout_path_name_or_uuid(
 
     assert result["ok"] is True
     assert result["plan"]["project_id"] == project_id
+    if form in {"main_checkout", "linked_worktree"}:
+        assert git_threads
+        assert all(thread_id != caller_thread for thread_id in git_threads)
 
 
 @pytest.mark.asyncio
