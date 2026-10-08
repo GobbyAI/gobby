@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -558,6 +559,68 @@ class TestSpawnAgentParamOverrides:
     """Tests for tool params overriding agent definition values."""
 
     @pytest.mark.asyncio
+    async def test_state_dispatch_developer_is_one_shot(
+        self,
+        mock_runner: MagicMock,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        from gobby.dispatch.actions import SpawnAgentAction
+        from gobby.dispatch.spawn import spawn_agent
+        from gobby.storage.sessions import SessionManager
+        from gobby.storage.tasks import LocalTaskManager
+        from tests.dispatch.test_dispatcher import _task
+
+        body = make_agent_definition(
+            name="developer",
+            provider="claude",
+            execution_mode="interactive",
+            prompts={"agent": "Implement the task."},
+        )
+        task = _task(temp_db, sample_project, checkout_mode="none")
+        services = SimpleNamespace(
+            database=temp_db,
+            task_manager=LocalTaskManager(temp_db),
+            session_manager=SessionManager(temp_db),
+            agent_runner=mock_runner,
+        )
+
+        async def invoke() -> dict[str, Any]:
+            with patch("gobby.workflows.agent_resolver.resolve_agent", return_value=body):
+                run_id = await spawn_agent(
+                    SpawnAgentAction(
+                        task_id=task.id,
+                        task_ref=f"#{task.seq_num}",
+                        agent_slug="developer",
+                        prompt="Implement the task.",
+                    ),
+                    db=temp_db,
+                    services=services,
+                )
+            return {"success": True, "run_id": run_id}
+
+        request = await self._spawn_request_for(mock_runner, body, {}, invoke=invoke)
+        assert request.resume_metadata_json["execution_mode"] == "one_shot"
+        assert "Remain available between turns" not in request.prompt
+
+    @pytest.mark.asyncio
+    async def test_dispatch_batch_worker_is_one_shot(self, mock_runner: MagicMock) -> None:
+        body = make_agent_definition(
+            name="developer",
+            provider="claude",
+            execution_mode="interactive",
+            prompts={"agent": "Implement the task."},
+        )
+        request = await self._spawn_request_for(
+            mock_runner,
+            body,
+            {"suggestions": [{"ref": "#1", "prompt": "Implement the task."}]},
+            tool_name="dispatch_batch",
+        )
+        assert request.resume_metadata_json["execution_mode"] == "one_shot"
+        assert "Remain available between turns" not in request.prompt
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("definition_mode", "ttl", "override", "expected_ttl"),
         [
@@ -629,6 +692,9 @@ class TestSpawnAgentParamOverrides:
         mock_runner: MagicMock,
         agent_body: AgentDefinitionBody,
         call_params: dict[str, object],
+        *,
+        tool_name: str = "spawn_agent",
+        invoke: Callable[[], Awaitable[dict[str, Any]]] | None = None,
     ) -> Any:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -674,15 +740,18 @@ class TestSpawnAgentParamOverrides:
                 status="pending",
             )
 
-            params: dict[str, object] = {
-                "prompt": "Test prompt",
-                "parent_session_id": "parent-789",
-            }
+            params: dict[str, object] = {"parent_session_id": "parent-789"}
+            if tool_name == "spawn_agent":
+                params["prompt"] = "Test prompt"
             params.update(call_params)
-            result = await registry.call("spawn_agent", params)
+            result = (
+                await invoke() if invoke is not None else await registry.call(tool_name, params)
+            )
+            if tool_name == "dispatch_batch":
+                result = result["results"][0]
             await _drain_spawn_background_tasks()
 
-            assert result["success"] is True
+            assert result["success"] is True, result
             return mock_execute.call_args[0][0]
 
     @pytest.mark.asyncio

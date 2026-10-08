@@ -805,6 +805,7 @@ def create_spawn_agent_registry(
                     write_paths_reason=suggestion.get("write_paths_reason", write_paths_reason),
                     prompt=prompt,
                     agent=suggestion_agent or "developer",
+                    execution_mode="one_shot",
                     task_id=task_id,
                     worktree_id=_coalesce_string(suggestion, "worktree_id", worktree_id),
                     clone_id=_coalesce_string(suggestion, "clone_id", clone_id),
