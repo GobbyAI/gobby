@@ -77,11 +77,14 @@ impl HostState {
             Err(code) => return err(code),
         };
         match deliver_native(slot, input) {
-            // The control verb keeps its bounded-write contract: a saturated or
-            // closed PTY writer drops the bytes and still answers written.
-            Ok(()) | Err("pty_busy") | Err("terminal_gone") => {
-                json!({"ok": true, "written": true})
-            }
+            Ok(()) => json!({"ok": true, "written": true}),
+            Err(code @ ("pty_busy" | "terminal_gone")) => json!({
+                "ok": false,
+                "written": false,
+                "error": code,
+                "code": code,
+                "stage": "none",
+            }),
             Err(code) => err(code),
         }
     }
@@ -573,6 +576,79 @@ mod tests {
             .expect("terminal slot")
             .child = Some(child);
         received
+    }
+
+    #[cfg(feature = "vt-engine")]
+    #[tokio::test]
+    async fn native_write_refuses_enter_when_compact_is_queued() {
+        let state = state();
+        crate::host::state::insert_native_slot(&state, "ht-1", 24, 80).await;
+        let mut received = attach_accepting_child(&state, "ht-1").await;
+        for text in ["/compact", "a", "b", "c"] {
+            let request = json!({"host_terminal_id": "ht-1", "kind": "text",
+                "data": base64::engine::general_purpose::STANDARD.encode(text)});
+            assert_eq!(
+                state.write(request.as_object().unwrap()).await["written"],
+                true
+            );
+        }
+        let request = json!({"host_terminal_id": "ht-1", "kind": "key",
+            "data": base64::engine::general_purpose::STANDARD.encode("enter")});
+        let response = state.write(request.as_object().unwrap()).await;
+        assert_eq!(
+            response,
+            json!({"ok": false, "written": false,
+            "error": "pty_busy", "code": "pty_busy", "stage": "none"})
+        );
+        assert_eq!(received.try_recv().unwrap().as_ref(), b"/compact");
+        for text in [b"a", b"b", b"c"] {
+            assert_eq!(received.try_recv().unwrap().as_ref(), text);
+        }
+        assert!(received.try_recv().is_err());
+    }
+
+    #[cfg(feature = "vt-engine")]
+    #[tokio::test]
+    async fn native_write_refuses_closed_or_missing_writer() {
+        for closed in [false, true] {
+            for kind in ["text", "key", "paste"] {
+                let state = state();
+                crate::host::state::insert_native_slot(&state, "ht-1", 24, 80).await;
+                if closed {
+                    drop(attach_accepting_child(&state, "ht-1").await);
+                }
+                let request = json!({"host_terminal_id": "ht-1", "kind": kind,
+                    "data": base64::engine::general_purpose::STANDARD.encode("enter")});
+                let response = state.write(request.as_object().unwrap()).await;
+                assert_eq!(
+                    response,
+                    json!({"ok": false, "written": false,
+                    "error": "terminal_gone", "code": "terminal_gone", "stage": "none"})
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "vt-engine")]
+    #[tokio::test]
+    async fn native_write_accepts_text_key_and_paste() {
+        for (kind, payload, expected) in [
+            ("text", "/compact", &b"/compact"[..]),
+            ("key", "enter", &b"\r"[..]),
+            ("paste", "hello", &b"hello"[..]),
+        ] {
+            let state = state();
+            crate::host::state::insert_native_slot(&state, "ht-1", 24, 80).await;
+            let mut received = attach_accepting_child(&state, "ht-1").await;
+            let request = json!({"host_terminal_id": "ht-1", "kind": kind,
+                "data": base64::engine::general_purpose::STANDARD.encode(payload)});
+            assert_eq!(
+                state.write(request.as_object().unwrap()).await,
+                json!({"ok": true, "written": true})
+            );
+            assert_eq!(received.try_recv().unwrap().as_ref(), expected);
+            assert!(received.try_recv().is_err());
+        }
     }
 
     #[tokio::test]
