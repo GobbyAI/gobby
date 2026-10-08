@@ -116,15 +116,11 @@ class QwenTranscriptParser(BaseTranscriptParser):
         """Expand one Qwen envelope into sequential normalized messages."""
         if not line.strip():
             return []
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as exc:
-            self.error_log.log_decode_failure(index, self.session_id, line, exc)
-            return []
-        if not isinstance(record, dict):
-            self.error_log.log_decode_failure(index, self.session_id, line, None)
-            return []
+        record = self._decode_record(line, index)
+        return [] if record is None else self._expand_record(record, index)
 
+    def _expand_record(self, record: dict[str, Any], index: int) -> list[ParsedMessage]:
+        """Expand one decoded Qwen envelope into sequential normalized messages."""
         timestamp = _parse_timestamp(record.get("timestamp"))
         raw_model = record.get("model")
         model = raw_model if isinstance(raw_model, str) else None
@@ -343,9 +339,8 @@ class QwenTranscriptParser(BaseTranscriptParser):
         """Stream Qwen envelopes with one sequential index per expanded part."""
         current_index = start_index
         for raw in raw_lines:
-            if not raw.text.strip():
-                continue
-            expanded = self._expand_line(raw.text, current_index)
+            record = self._raw_record(raw, current_index)
+            expanded = [] if record is None else self._expand_record(record, current_index)
             if not expanded:
                 continue
             start_idx = current_index

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -47,6 +48,13 @@ _SETTLE_LISTENERS_STATE_KEY = "_gobby_hook_inbox_settle_listeners"
 # daemon and is handed back to the inbox instead of being lost.
 _RECEIPT_CLAIM_SUFFIX: Final = ".claimed.tmp"
 _RECEIPT_CLAIM_OWNER = uuid.uuid4().hex
+
+# Inbox files are renamed into place whole and never rewritten, so a file that
+# decoded as some other kind stays that kind. The per-hook receipt sweep skips
+# those paths instead of decoding them again on every hook (#23359). Each sweep
+# keeps only paths still listed, so a path leaves once the drain removes its file.
+_NON_RECEIPT_PATHS: set[Path] = set()
+_NON_RECEIPT_PATHS_LOCK = threading.Lock()
 
 
 def get_hook_inbox_dir() -> Path:
@@ -247,12 +255,22 @@ def consume_pending_delivery_receipts(app: Any, inbox_dir: Path | None = None) -
     _restore_orphaned_receipt_claims(pending_dir)
     consumed = 0
     processed_dir = get_processed_envelope_dir(pending_dir)
-    for path in _iter_inbox_files(pending_dir):
+    paths = _iter_inbox_files(pending_dir)
+    with _NON_RECEIPT_PATHS_LOCK:
+        _NON_RECEIPT_PATHS.intersection_update(paths)
+        known_non_receipts = set(_NON_RECEIPT_PATHS)
+    for path in paths:
+        if path in known_non_receipts:
+            continue
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue
-        if not isinstance(raw, dict) or raw.get("kind") != "delivery-receipt":
+        if not isinstance(raw, dict):
+            continue
+        if raw.get("kind") != "delivery-receipt":
+            with _NON_RECEIPT_PATHS_LOCK:
+                _NON_RECEIPT_PATHS.add(path)
             continue
         receipt_id = raw.get("receipt_id")
         generation = raw.get("delivery_generation")

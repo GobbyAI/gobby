@@ -9,7 +9,7 @@ from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.sessions.transcripts.base import ParsedMessage, raw_lines_from_texts
+from gobby.sessions.transcripts.base import ParsedMessage, raw_lines_from_records
 from gobby.sessions.transcripts.tool_activity import (
     ToolActivityEntry,
     canonical_tool_name,
@@ -50,9 +50,9 @@ def analyzer_turns_from_transcript(
     calls: dict[int, _AdaptedCall] = {}
     calls_by_id: dict[str, _AdaptedCall] = {}
     user_record_indexes: list[int] = []
-    texts = (json.dumps(turn, default=str) for turn in turns)
 
-    for event in scan.iter_parse_events(raw_lines_from_texts(texts)):
+    # The turns are already decoded; hand them over instead of re-encoding (#23359).
+    for event in scan.iter_parse_events(raw_lines_from_records(turns)):
         record_index = event.raw_line_no
         for record in event.records:
             if not isinstance(record, ParsedMessage):

@@ -206,11 +206,14 @@ class RawLine:
     parser. ``byte_offset`` is the start byte of the line in the source file when
     streaming a seekable JSONL file, or ``None`` in batch mode (where byte offsets
     are unused). ``raw_line_no`` is the 0-based index of the line in the source.
+    ``record`` carries the line's JSON object when the reader already decoded it;
+    parsers then use it instead of decoding ``text`` again (#23359).
     """
 
     byte_offset: int | None
     raw_line_no: int
     text: str
+    record: dict[str, Any] | None = None
 
 
 @dataclass
@@ -387,6 +390,12 @@ def raw_lines_from_texts(texts: Iterable[str]) -> Iterator[RawLine]:
         yield RawLine(byte_offset=None, raw_line_no=i, text=text)
 
 
+def raw_lines_from_records(records: Iterable[dict[str, Any]]) -> Iterator[RawLine]:
+    """Wrap already-decoded JSON objects as positionless :class:`RawLine`s."""
+    for i, record in enumerate(records):
+        yield RawLine(byte_offset=None, raw_line_no=i, text="", record=record)
+
+
 def annotate_record_source(
     records: Iterable[ParsedMessage | ParsedToolEvent],
     *,
@@ -467,9 +476,12 @@ class BaseTranscriptParser:
         for raw in raw_lines:
             idx = start_index + offset
             offset += 1
-            if not raw.text.strip():
+            if raw.record is not None:
+                record = self.parse_record(raw.record, idx)
+            elif not raw.text.strip():
                 continue
-            record = self.parse_line(raw.text, idx)
+            else:
+                record = self.parse_line(raw.text, idx)
             records: list[ParsedMessage | ParsedToolEvent] = [record] if record else []
             records = annotate_record_source(
                 records,
@@ -522,6 +534,32 @@ class BaseTranscriptParser:
     def parse_line(self, line: str, index: int) -> ParsedMessage | ParsedToolEvent | None:
         """To be implemented by subclasses."""
         raise NotImplementedError("Subclasses must implement parse_line")
+
+    def parse_record(
+        self, record: dict[str, Any], index: int
+    ) -> ParsedMessage | ParsedToolEvent | None:
+        """Parse an already-decoded line; subclasses fed decoded records implement it."""
+        raise NotImplementedError("Subclasses fed decoded records must implement parse_record")
+
+    def _decode_record(self, line: str, index: int) -> dict[str, Any] | None:
+        """Return the JSON object on ``line``, logging an undecodable or non-object line."""
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            self.error_log.log_decode_failure(index, self.session_id, line, exc)
+            return None
+        if not isinstance(record, dict):
+            self.error_log.log_decode_failure(index, self.session_id, line, None)
+            return None
+        return record
+
+    def _raw_record(self, raw: RawLine, index: int) -> dict[str, Any] | None:
+        """Return the line's JSON object, decoding ``raw.text`` only when needed."""
+        if raw.record is not None:
+            return raw.record
+        if not raw.text.strip():
+            return None
+        return self._decode_record(raw.text, index)
 
 
 class TranscriptReadError(ValueError):
