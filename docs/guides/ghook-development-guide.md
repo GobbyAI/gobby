@@ -181,8 +181,8 @@ Schema:
 
 ```json
 {
-  "install_method": "github-release",
-  "install_source_url": "https://github.com/GobbyAI/gobby/releases/download/ghook-v0.7.2/ghook-aarch64-apple-darwin.tar.gz",
+  "install_method": "workspace",
+  "install_source_url": null,
   "installed_version": "0.7.2",
   "installed_at": "2026-04-22T18:30:00Z"
 }
@@ -190,8 +190,8 @@ Schema:
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `install_method` | string \| null | Conventional values: `github-release`, `crates-binstall`, `cargo-install`, `manual`, `unknown`. `ghook` does not validate the value — installers are free to add new ones, but any consumer should fall back to `unknown` for values it doesn't recognize. |
-| `install_source_url` | string \| null | URL the binary was fetched from. `null` for `cargo install` (no URL); the asset URL for `github-release`; a crate URL for `cargo-binstall` if available. |
+| `install_method` | string \| null | Gobby writes `workspace` (`gobby install`) or `workspace-cutover` (`gobby cutover`); ghook is a binary-set member, so Gobby installs it only from the workspace build. Older sidecars may carry `github-release`, `crates-binstall`, `cargo-install`, `manual`, or `unknown`. `ghook` does not validate the value — any consumer should fall back to `unknown` for values it doesn't recognize. |
+| `install_source_url` | string \| null | URL the binary was fetched from. `null` for workspace builds (no URL). |
 | `installed_version` | string | The version the installer believed it was placing. Currently informational only (not surfaced via `--diagnose` in v2) — kept in the file so future schema versions can detect installer/binary version mismatches. |
 | `installed_at` | string | UTC ISO-8601 timestamp. Currently informational only. |
 

@@ -11,7 +11,10 @@ from urllib.request import Request
 from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_models import compare_versions
-from gobby.install.bin_set_coherence import promote_workspace_binary_set
+from gobby.install.bin_set_coherence import (
+    promote_workspace_binary_set,
+    workspace_build_only,
+)
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.install.version_probe import probe_native_bin_version
 
@@ -78,26 +81,6 @@ def write_gcode_version_stamp(module: Any, bin_dir: Path, version: str) -> None:
         raise
 
 
-def install_gcode_from_github(
-    module: Any,
-    bin_dir: Path,
-    target: str,
-    version: str | None = None,
-) -> bool:
-    """Download and extract gcode from GitHub Releases."""
-    return bool(
-        install_release._download_release_binary(
-            bin_dir,
-            binary_name=module._GCODE_BIN_NAME,
-            artifact_name="gcode",
-            target=target,
-            version=version,
-            tag_prefix=module._GCODE_RELEASE_TAG_PREFIX,
-            label="gcode",
-        )
-    )
-
-
 def install_gcode_from_submodule(module: Any, bin_dir: Path) -> bool:
     """Build gcode from the local Rust workspace when available."""
     if not module.shutil.which("cargo"):
@@ -149,89 +132,8 @@ def install_gcode_from_submodule(module: Any, bin_dir: Path) -> bool:
         return False
 
 
-def install_gcode_from_cargo_git(module: Any, bin_dir: Path) -> bool:
-    """Install gcode from source via cargo install --git."""
-    if not module.shutil.which("cargo"):
-        return False
-    try:
-        module.click.echo("  Compiling gcode from source (this may take 30-60 seconds)...")
-        result = module.subprocess.run(
-            [
-                "cargo",
-                "install",
-                "--git",
-                "https://github.com/GobbyAI/gobby",
-                "-p",
-                "gobby-code",
-                "--root",
-                str(bin_dir.parent),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-        return bool(result.returncode == 0)
-    except (FileNotFoundError, module.subprocess.TimeoutExpired) as e:
-        module.logger.warning("gcode: cargo install --git failed: %s", e)
-        return False
-
-
-def install_gcode_from_cargo_binstall(
-    module: Any,
-    bin_dir: Path,
-    version: str | None = None,
-) -> bool:
-    """Install gcode via cargo-binstall."""
-    if not module.shutil.which("cargo-binstall"):
-        return False
-    try:
-        crate = f"gobby-code@{version}" if version else "gobby-code"
-        result = module.subprocess.run(
-            [
-                "cargo-binstall",
-                crate,
-                "--install-path",
-                str(bin_dir),
-                "--no-confirm",
-                "--no-symlinks",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        return bool(result.returncode == 0)
-    except (FileNotFoundError, module.subprocess.TimeoutExpired) as e:
-        module.logger.warning("gcode: cargo-binstall failed: %s", e)
-        return False
-
-
-def install_gcode_from_cargo_install(
-    module: Any,
-    bin_dir: Path,
-    version: str | None = None,
-) -> bool:
-    """Compile and install gcode from source via cargo install."""
-    if not module.shutil.which("cargo"):
-        return False
-    try:
-        cmd = ["cargo", "install", "gobby-code", "--root", str(bin_dir.parent)]
-        if version:
-            cmd.extend(["--version", version])
-        module.click.echo("  Compiling gcode from source (this may take 30-60 seconds)...")
-        result = module.subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-        return bool(result.returncode == 0)
-    except (FileNotFoundError, module.subprocess.TimeoutExpired) as e:
-        module.logger.warning("gcode: cargo install failed: %s", e)
-        return False
-
-
 def install_gcode(module: Any, force: bool = False) -> dict[str, Any]:
-    """Install or upgrade gcode with dev-first fallback chain."""
+    """Install or upgrade gcode from the workspace build, its only source."""
     bin_dir = module.Path.home() / ".gobby" / "bin"
     gcode_path = bin_dir / module._GCODE_BIN_NAME
 
@@ -257,20 +159,8 @@ def install_gcode(module: Any, force: bool = False) -> dict[str, Any]:
     if compare_versions(installed_version, pinned_version) == 1:
         target_version = installed_version
     bin_dir.mkdir(parents=True, exist_ok=True)
-    method = None
-
-    if module._install_gcode_from_submodule(bin_dir):
-        method = "workspace"
-    elif module._install_gcode_from_github(bin_dir, target, target_version):
-        method = "github"
-    elif module._install_gcode_from_cargo_binstall(bin_dir, target_version):
-        method = "cargo-binstall"
-    elif module._install_gcode_from_cargo_install(bin_dir, target_version):
-        method = "cargo-install"
-    elif module._install_gcode_from_cargo_git(bin_dir):
-        method = "cargo-git"
-    else:
-        return {"installed": False, "skipped": False, "reason": "all installation methods failed"}
+    if not module._install_gcode_from_submodule(bin_dir):
+        return {"installed": False, "skipped": False, "reason": workspace_build_only("gcode")}
 
     gcode_path.chmod(0o755)
 
@@ -284,5 +174,5 @@ def install_gcode(module: Any, force: bool = False) -> dict[str, Any]:
         "installed": True,
         "upgraded": is_upgrade,
         "version": resolved_version,
-        "method": method,
+        "method": "workspace",
     }

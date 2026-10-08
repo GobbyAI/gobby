@@ -34,6 +34,14 @@ class BinarySetCoherenceError(RuntimeError):
     """Raised when a workspace binary promotion would create a mixed set."""
 
 
+def workspace_build_only(member: str) -> str:
+    """Refusal for a set-member install that cannot use its only source."""
+    return (
+        f"{member} installs only from the Gobby workspace build; run `gobby install` "
+        "from a Gobby source checkout with cargo on PATH"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class WorkspacePromotionMetadata:
     """Install provenance written after a complete workspace set promotes."""

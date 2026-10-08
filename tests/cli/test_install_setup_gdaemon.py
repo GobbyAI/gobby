@@ -37,7 +37,7 @@ def test_default_bin_dir_follows_gobby_home(
         probed.append(binary)
         return _GDAEMON_PIN
 
-    def install_binary(binary: Path, _pin: str) -> str:
+    def install_binary(binary: Path) -> str:
         installed.append(binary)
         binary.write_bytes(b"test binary")
         return "test"

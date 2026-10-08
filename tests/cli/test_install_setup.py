@@ -33,9 +33,6 @@ from gobby.cli.install_setup import (
     _get_installed_gcode_version,
     _get_latest_gcode_version,
     _install_gcode,
-    _install_gcode_from_cargo_binstall,
-    _install_gcode_from_cargo_install,
-    _install_gcode_from_github,
     _install_gcode_from_submodule,
     _run_npm_install,
     _write_gcode_version_stamp,
@@ -985,86 +982,6 @@ class TestGcodeHelpers:
         assert res["installed"] is True
         assert res["version"] == MANAGED_BIN_VERSION_PINS["gcode"]
 
-    def test_install_gcode_uses_managed_pin_for_download_and_cargo_paths(
-        self, tmp_path: Path
-    ) -> None:
-        pin = MANAGED_BIN_VERSION_PINS["gcode"]
-
-        with (
-            patch("gobby.cli.install_setup.sys.platform", "darwin"),
-            patch("gobby.cli.install_setup.platform.machine", return_value="arm64"),
-            patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch("gobby.cli.install_setup._get_installed_gcode_version", return_value="0.1.0"),
-            patch("gobby.cli.install_setup._install_gcode_from_submodule", return_value=False),
-            patch(
-                "gobby.cli.install_setup._install_gcode_from_github", return_value=False
-            ) as github,
-            patch(
-                "gobby.cli.install_setup._install_gcode_from_cargo_binstall",
-                return_value=False,
-            ) as binstall,
-            patch(
-                "gobby.cli.install_setup._install_gcode_from_cargo_install",
-                return_value=True,
-            ) as cargo_install,
-            patch(
-                "gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}
-            ) as ensure_path,
-        ):
-            bin_dir = tmp_path / ".gobby" / "bin"
-            bin_dir.mkdir(parents=True, exist_ok=True)
-            (bin_dir / "gcode").write_bytes(b"\x00")
-
-            res = _install_gcode()
-
-        assert res["installed"] is True
-        assert res["version"] == pin
-        github.assert_called_once_with(bin_dir, "aarch64-apple-darwin", pin)
-        binstall.assert_called_once_with(bin_dir, pin)
-        cargo_install.assert_called_once_with(bin_dir, pin)
-        ensure_path.assert_called_once_with(bin_dir)
-
-    def test_install_gcode_uses_newer_installed_version_as_install_target(
-        self, tmp_path: Path
-    ) -> None:
-        newer_version = "9.9.9"
-
-        with (
-            patch("gobby.cli.install_setup.sys.platform", "darwin"),
-            patch("gobby.cli.install_setup.platform.machine", return_value="arm64"),
-            patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch(
-                "gobby.cli.install_setup._get_installed_gcode_version", return_value=newer_version
-            ),
-            patch("gobby.cli.install_setup._install_gcode_from_submodule", return_value=False),
-            patch(
-                "gobby.cli.install_setup._install_gcode_from_github", return_value=False
-            ) as github,
-            patch(
-                "gobby.cli.install_setup._install_gcode_from_cargo_binstall",
-                return_value=False,
-            ) as binstall,
-            patch(
-                "gobby.cli.install_setup._install_gcode_from_cargo_install",
-                return_value=True,
-            ) as cargo_install,
-            patch(
-                "gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}
-            ) as ensure_path,
-        ):
-            bin_dir = tmp_path / ".gobby" / "bin"
-            bin_dir.mkdir(parents=True, exist_ok=True)
-            (bin_dir / "gcode").write_bytes(b"\x00")
-
-            res = _install_gcode(force=True)
-
-        assert res["installed"] is True
-        assert res["version"] == newer_version
-        github.assert_called_once_with(bin_dir, "aarch64-apple-darwin", newer_version)
-        binstall.assert_called_once_with(bin_dir, newer_version)
-        cargo_install.assert_called_once_with(bin_dir, newer_version)
-        ensure_path.assert_called_once_with(bin_dir)
-
     @patch("gobby.cli.install_release.urlopen")
     def test_get_latest_gcode_version(self, mock_url: MagicMock) -> None:
         fake_resp = MagicMock()
@@ -1077,72 +994,6 @@ class TestGcodeHelpers:
     @patch("gobby.cli.install_release.urlopen", side_effect=URLError("timeout"))
     def test_get_latest_gcode_version_fail(self, mock_url: MagicMock) -> None:
         assert _get_latest_gcode_version() is None
-
-    @patch("gobby.cli.install_release.urlopen")
-    def test_install_gcode_from_github_uses_binary_specific_tag_prefix(
-        self, mock_urlopen: MagicMock, tmp_path: Path
-    ) -> None:
-        buf = BytesIO()
-        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            info = tarfile.TarInfo(name="gcode")
-            info.size = 5
-            tar.addfile(info, BytesIO(b"fake!"))
-
-        buf.seek(0)
-        fake_resp = MagicMock()
-        fake_resp.read.return_value = buf.read()
-        fake_resp.__enter__.return_value = fake_resp
-        mock_urlopen.return_value = fake_resp
-
-        with patch("gobby.cli.install_release._verify_release_artifact", return_value=True):
-            assert _install_gcode_from_github(tmp_path, "aarch64-apple-darwin", "0.2.3") is True
-        url_called = mock_urlopen.call_args[0][0]
-        if hasattr(url_called, "full_url"):
-            url_called = url_called.full_url
-        assert "gcode-v0.2.3" in url_called
-
-    @patch("shutil.which", return_value="/usr/bin/cargo-binstall")
-    @patch("subprocess.run")
-    def test_install_gcode_from_cargo_binstall(
-        self, mock_run: MagicMock, mock_which: MagicMock, tmp_path: Path
-    ) -> None:
-        mock_run.return_value = MagicMock(returncode=0)
-        assert _install_gcode_from_cargo_binstall(tmp_path) is True
-        cmd = mock_run.call_args[0][0]
-        assert "gobby-code" in cmd
-
-    @patch("shutil.which", return_value="/usr/bin/cargo-binstall")
-    @patch("subprocess.run")
-    def test_install_gcode_from_cargo_binstall_with_version(
-        self, mock_run: MagicMock, mock_which: MagicMock, tmp_path: Path
-    ) -> None:
-        mock_run.return_value = MagicMock(returncode=0)
-        _install_gcode_from_cargo_binstall(tmp_path, "0.2.3")
-        cmd = mock_run.call_args[0][0]
-        assert "gobby-code@0.2.3" in cmd
-
-    @patch("shutil.which", return_value="/usr/bin/cargo")
-    @patch("subprocess.run")
-    @patch("gobby.cli.install_setup.click")
-    def test_install_gcode_from_cargo_install(
-        self, mock_click: MagicMock, mock_run: MagicMock, mock_which: MagicMock, tmp_path: Path
-    ) -> None:
-        mock_run.return_value = MagicMock(returncode=0)
-        assert _install_gcode_from_cargo_install(tmp_path) is True
-        cmd = mock_run.call_args[0][0]
-        assert "gobby-code" in cmd
-
-    @patch("shutil.which", return_value="/usr/bin/cargo")
-    @patch("subprocess.run")
-    @patch("gobby.cli.install_setup.click")
-    def test_install_gcode_from_cargo_install_with_version(
-        self, mock_click: MagicMock, mock_run: MagicMock, mock_which: MagicMock, tmp_path: Path
-    ) -> None:
-        mock_run.return_value = MagicMock(returncode=0)
-        _install_gcode_from_cargo_install(tmp_path, "0.2.3")
-        cmd = mock_run.call_args[0][0]
-        assert "--version" in cmd
-        assert "0.2.3" in cmd
 
 
 class TestEnsurePath:

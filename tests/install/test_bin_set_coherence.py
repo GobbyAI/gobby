@@ -3,14 +3,18 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from gobby.cli import install_setup
+from gobby.cli.install_setup_gdaemon import GdaemonInstallError, ensure_gdaemon
 from gobby.install import bin_freshness_promotion
 from gobby.install.bin_set_coherence import (
     BinarySetCoherenceError,
     promote_workspace_binary_set,
 )
+from gobby.storage.schema_divergence import binary_set_apply_refusal
 
 PIN_NAME = ".gdaemon-schema-identity.json"
 SET_MEMBERS = ("gcode", "gdaemon", "ghook")
@@ -192,3 +196,36 @@ def test_mid_set_failure_reports_promoted_and_unpromoted_members(
     assert (bin_dir / "gdaemon").read_bytes() == candidates["gdaemon"].read_bytes()
     assert (bin_dir / "ghook").read_text(encoding="utf-8") == "old-ghook"
     assert json.loads((bin_dir / PIN_NAME).read_text(encoding="utf-8")) == installed_identity
+
+
+def test_set_member_installs_without_workspace_build_keep_stamped_set_coherent(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / ".gobby" / "bin"
+    bin_dir.mkdir(parents=True)
+    identity = _identity(420)
+    for member in SET_MEMBERS:
+        _write_stub(bin_dir / member, identity)
+    _write_pin(bin_dir, identity)
+    before = {path.name: path.read_bytes() for path in bin_dir.iterdir()}
+
+    with (
+        patch("gobby.cli.install_setup.sys.platform", "darwin"),
+        patch("gobby.cli.install_setup.platform.machine", return_value="arm64"),
+        patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
+        patch("gobby.cli.install_setup.shutil.which", return_value=None),
+        patch(
+            "gobby.cli.install_release.urlopen",
+            side_effect=AssertionError("set members never download release artifacts"),
+        ),
+    ):
+        gcode = install_setup._install_gcode(force=True)
+        ghook = install_setup._install_ghook(force=True)
+        with pytest.raises(GdaemonInstallError, match="gdaemon installs only from"):
+            ensure_gdaemon(bin_dir=bin_dir, force=True)
+
+    for member, result in (("gcode", gcode), ("ghook", ghook)):
+        assert result["installed"] is False
+        assert f"{member} installs only from the Gobby workspace build" in result["reason"]
+    assert {path.name: path.read_bytes() for path in bin_dir.iterdir()} == before
+    assert binary_set_apply_refusal(bin_dir) is None
