@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import time
 from collections.abc import Iterator
@@ -20,6 +19,7 @@ from gobby.storage.hub.operation_deadline import (
 )
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import Transaction
+from gobby.utils.datetime import to_json_safe
 
 
 @pytest.fixture
@@ -413,12 +413,14 @@ def test_writes_ambient_reads_and_deadline_reads_stay_transactional(
 
 _TYPED_ROW = (
     'SELECT \'{"b":1,"a":[1]}\'::jsonb AS doc, \'[1, {"z": null}]\'::json AS raw, '
+    '\'{"é": 1.50, "aa": "ü", "n": 10000000000000000000}\'::jsonb AS wide, '
     "'5'::jsonb AS n, '\"x\"'::jsonb AS s, 'null'::jsonb AS z, NULL::jsonb AS missing, "
     "'0E8A1C5E-2B7D-4F00-9C1A-3D2E1F0A9B8C'::uuid AS id"
 )
 _TYPED_VALUES = {
-    "doc": '{"a": [1], "b": 1}',
-    "raw": '[1, {"z": null}]',
+    "doc": '{"a":[1],"b":1}',
+    "raw": '[1,{"z":null}]',
+    "wide": '{"aa":"\\u00fc","n":10000000000000000000,"\\u00e9":1.5}',
     "n": 5,
     "s": "x",
     "z": None,
@@ -427,40 +429,40 @@ _TYPED_VALUES = {
 }
 
 
-def test_pool_connections_keep_json_containers_and_uuids_as_server_text(
+def test_pool_connections_return_the_canonical_json_text_rows_always_had(
     database: PostgresHubDatabase,
 ) -> None:
-    """Decoding a container only to re-dump it was ~220 GIL samples/min (#23359)."""
+    """Containers keep the sorted compact form that stored hashes and edit checks
+    compare (stage registry row_hash), now without the to_json_safe walk (#23359)."""
+    dsn = os.environ["DATABASE_URL"]
+    with psycopg.connect(dsn, row_factory=psycopg.rows.dict_row) as default_loaders:
+        before = default_loaders.execute(_TYPED_ROW).fetchone()
     with database._pool_connection() as connection:
         row = connection.execute(_TYPED_ROW).fetchone()
 
+    assert before is not None
+    assert row == {key: postgres_pool._normalize_value(value) for key, value in before.items()}
     assert row == _TYPED_VALUES
 
 
-def test_hub_reads_return_json_containers_without_a_python_round_trip(
+def test_hub_reads_canonicalize_json_containers_without_the_safe_value_walk(
     database: PostgresHubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[str] = []
-    real_dumps, real_loads = json.dumps, json.loads
+    walked: list[object] = []
 
-    def counting_dumps(*args: Any, **kwargs: Any) -> str:
-        calls.append("dumps")
-        return real_dumps(*args, **kwargs)
+    def spy_to_json_safe(value: object) -> object:
+        walked.append(value)
+        return to_json_safe(value)
 
-    def counting_loads(*args: Any, **kwargs: Any) -> Any:
-        calls.append("loads")
-        return real_loads(*args, **kwargs)
-
-    monkeypatch.setattr(json, "dumps", counting_dumps)
-    monkeypatch.setattr(json, "loads", counting_loads)
+    monkeypatch.setattr("gobby.storage.hub.postgres_pool.to_json_safe", spy_to_json_safe)
 
     assert database.fetchone(_TYPED_ROW) == _TYPED_VALUES
     with database.transaction() as txn:
         assert txn.execute(_TYPED_ROW).fetchall() == [_TYPED_VALUES]
 
-    # Only the three JSON scalars are decoded, once per read.
-    assert calls == ["loads"] * 6
+    # Decoded jsonb holds only JSON-native values, so the walk had nothing to convert.
+    assert walked == []
 
 
 @pytest.mark.parametrize(

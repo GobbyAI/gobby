@@ -603,8 +603,8 @@ def _normalize_row(row: Row | None, json_columns: frozenset[str] = frozenset()) 
 
 def _dump_json_container(value: Any) -> Any:
     # Storage model decoders consume serialized JSON for both JSONB and text columns.
-    # Pool connections already hand containers over as server text; this serializes
-    # the rest (a json value after leading whitespace, a connection without the loaders).
+    # Pool connections' loaders already call this; rows from a connection without
+    # them reach it through _normalize_row.
     if isinstance(value, dict | list):
         return json.dumps(value, sort_keys=True, separators=(",", ":"))
     return value
@@ -633,19 +633,19 @@ def conninfo_with_utc_session_timezone(conninfo: str) -> str:
 
 
 class _JsonContainerTextLoader(TextLoader):
-    """Keep JSON objects and arrays as the server's text; decode JSON scalars.
+    """Hand JSON objects and arrays on in canonical text; decode JSON scalars.
 
-    Rows already hand containers on as serialized JSON, so decoding one only to
-    re-dump it was pure GIL time on every read (#23359).
+    Rows carry containers as sorted compact JSON, which stored hashes and edit
+    checks compare (stage registry row_hash), so the server's own text will not
+    do. Decoded jsonb holds only JSON-native values, so dumping it here skips
+    the per-value to_json_safe walk and type dispatch of _normalize_row (#23359).
     """
 
     def load(self, data: Buffer) -> Any:
-        text = super().load(data)
-        if text[:1] in ("{", "["):
-            return text
-        # Anything else, including a container after leading whitespace in a
-        # json value, decodes; _dump_json_container serializes a container.
-        return json.loads(text)
+        value = json.loads(super().load(data))
+        if isinstance(value, dict | list):
+            return _dump_json_container(value)
+        return value
 
 
 def configure_pool_connection(
