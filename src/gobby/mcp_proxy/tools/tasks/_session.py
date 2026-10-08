@@ -150,9 +150,12 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
         task = ctx.task_manager.get_task(resolved_id)
         if task is None:
             return {"error": f"Task {task_id} not found"}
-        denied = require_claim_authority(ctx.task_manager, task, "link_task_to_session")
-        if denied:
-            return denied
+        # A discovered link only records the caller's own finding and is no close
+        # evidence, so the found-work ladder's exit works on an owner-claimed task.
+        if action != "discovered":
+            denied = require_claim_authority(ctx.task_manager, task, "link_task_to_session")
+            if denied:
+                return denied
 
         # Resolve session_id to UUID (accepts #N, N, UUID, or prefix)
         try:

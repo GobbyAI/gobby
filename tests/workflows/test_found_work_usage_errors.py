@@ -145,6 +145,35 @@ def test_deliberate_red_in_a_scratchpad_extract_does_not_hold_the_stop(
     assert unresolved_validation_failures(runs, owner_handoff=False, project_path=project) == ()
 
 
+@pytest.mark.parametrize("project_option", ["--project {project} ", ""], ids=["project", "bare"])
+def test_scratchpad_probe_named_by_its_targets_and_pythonpath_does_not_hold_the_stop(
+    project: str, tmp_path: Path, project_option: str
+) -> None:
+    # Reviewer 15410's extract runs: the cwd stays in the checkout while the
+    # targets, PYTHONPATH and --rootdir all point into the scratchpad.
+    extract = tmp_path / "scratchpad" / "c23758" / "red"
+    command = (
+        f"PYTHONPATH={extract}/src uv run --no-sync {project_option.format(project=project)}"
+        f"pytest {extract / _ALIVE} -k alive -o pythonpath= -p no:cacheprovider "
+        f"--rootdir={extract} --no-cov -q"
+    )
+    runs = [_run(1, command, exit_code=1, output=_REAL_FAILURE)]
+
+    assert unresolved_validation_failures(runs, owner_handoff=False, project_path=project) == ()
+
+
+def test_scratchpad_tests_run_against_the_checkouts_own_source_still_block(
+    project: str, tmp_path: Path
+) -> None:
+    probe = tmp_path / "scratchpad" / "probe"
+    command = f"PYTHONPATH={project}/src uv run pytest {probe / _ALIVE} -q"
+    runs = [_run(1, command, exit_code=1, output=_REAL_FAILURE)]
+
+    assert unresolved_validation_failures(runs, owner_handoff=False, project_path=project) == (
+        runs[0],
+    )
+
+
 def test_real_failure_still_blocks_when_the_checkout_itself_lies_in_a_scratchpad(
     tmp_path: Path,
 ) -> None:

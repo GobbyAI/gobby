@@ -4,7 +4,7 @@ import asyncio
 import inspect
 from collections.abc import Callable
 from contextlib import ExitStack
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -525,3 +525,32 @@ class TestUpdateTaskLeavesAuthorityToRules:
         assert result.get("error_code") is None
         mutation.assert_called_once()
         assert mutation.call_args.kwargs == {"title": "Retitled"}
+
+
+_DISCOVERED_LINK = ToolSpec(
+    name="link_task_to_session",
+    build=_build_link_task_to_session,
+    kwargs={"task_id": TASK_UUID, "action": "discovered"},
+)
+
+
+class TestDiscoveredLink:
+    """The found-work ladder's exit links an owner-filed task, which its owner claims."""
+
+    def test_foreign_claim_allows_a_discovered_link_of_the_callers_own_session(self) -> None:
+        result, link_task = _invoke(
+            _DISCOVERED_LINK, claimed_by=OWNER_SESSION, context_session=CALLER_SESSION
+        )
+
+        assert result.get("error_code") is None
+        link_task.assert_called_once_with(CALLER_SESSION, TASK_UUID, "discovered")
+
+    def test_discovered_link_of_another_session_still_needs_lineage(self) -> None:
+        spec = replace(
+            _DISCOVERED_LINK, kwargs={**_DISCOVERED_LINK.kwargs, "session_id": OWNER_SESSION}
+        )
+
+        result, link_task = _invoke(spec, claimed_by=OWNER_SESSION, context_session=CALLER_SESSION)
+
+        assert result["error_code"] == "TASK_CLAIM_CONFLICT"
+        link_task.assert_not_called()

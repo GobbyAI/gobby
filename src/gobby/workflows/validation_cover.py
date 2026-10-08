@@ -309,17 +309,30 @@ def surviving_path_failure(
 
 
 def ran_in_scratchpad(run: TranscriptValidationRun, project_path: str | None) -> bool:
-    """Whether a run targets an agent scratchpad tree outside the session's checkout.
+    """Whether a run exercised an agent scratchpad tree outside the session's checkout.
 
-    Such a red, as in a reviewer's base extract, is a deliberate probe, so it is
-    no terminal failure of the session's own validation. A checkout that itself
-    lies in a scratchpad still owns the runs inside it.
+    The tree is the run's path targets, or its directory when it names none,
+    plus its pythonpath when set. Such a red, as in a reviewer's base extract,
+    is a deliberate probe, so it is no terminal failure of the session's own
+    validation. Scratchpad tests run with the checkout's source on an explicit
+    PYTHONPATH still count, and a checkout that itself lies in a scratchpad
+    still owns its runs.
     """
-    directory = _source_tree(run.command, project_path)[0]
-    if directory is None or not _is_temp_agent_scratchpad_path(Path(directory)):
+    directory, pythonpath = _source_tree(run.command, project_path)
+    if directory is None:
         return False
-    return project_path is None or not Path(directory).resolve().is_relative_to(
-        Path(project_path).resolve()
+    paths = [
+        os.path.join(directory, target.split("::", 1)[0])
+        for target in run_targets(run)
+        if not target.startswith("-")
+    ] or [directory]
+    if pythonpath is not None:
+        paths.append(pythonpath)
+    checkout = Path(project_path).resolve() if project_path else None
+    return all(
+        _is_temp_agent_scratchpad_path(path)
+        and (checkout is None or not path.is_relative_to(checkout))
+        for path in (Path(raw).resolve() for raw in paths)
     )
 
 
