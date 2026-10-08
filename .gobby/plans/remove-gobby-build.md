@@ -78,6 +78,8 @@ The spawn path is the only surviving code that imports `gobby.config.build` and 
 Targets:
 - `src/gobby/config/app.py::*` — scope-reason: add the top-level `max_active_agents` field to `DaemonConfig`
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier for the new `DaemonConfig` key
+- `tests/contracts/http/config_schema.json::*` — scope-reason: re-recorded public config schema response with the new key
+- `tests/contracts/http/config_values.json::*` — scope-reason: re-recorded config values response with the new key's desired and active values
 - `src/gobby/storage/tasks/_runtime_mutex.py::*` — scope-reason: becomes the home of `DISPATCH_TTL_SECONDS` beside `RuntimeDispatchMutex`
 - `src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py::*` — scope-reason: read the cap from live daemon config and import the mutex and TTL from storage
 - `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: move the batch tool out and register it through the new module
@@ -95,6 +97,7 @@ Add `max_active_agents: int = Field(default=20, ge=1, description=...)` to `Daem
 `CONFIG_REGISTRY` derives keys by walking `DaemonConfig` (`_walk_daemon_model` in `gobby.config.registry`), so no registry entry is hand-written.
 Regenerate `crates/gcore/assets/config/runtime_config_contract.json` with the contract generator.
 The generator command is `uv run python scripts/generate_runtime_config_contract.py`.
+The HTTP contract corpus records full `/api/config/schema` and `/api/config/values` responses, and `test_case_replays_equal` compares them exactly. Re-record it against the isolated test hub with `GOBBY_RECORD_HTTP_CONTRACTS=1 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_http_corpus.py -k test_record_http_contracts` (the corpus README's command), record twice to confirm the output is stable, and keep only the `config_schema.json` and `config_values.json` changes. Then run `tests/contracts/test_http_corpus.py` without the variable.
 
 In `_spawn_guards.py`, replace `max_active_agents_for_project(project_path)` with a new `configured_max_active_agents() -> int`.
 It reads the live config through `get_app_context()`: when the container's `config_runtime` is present and ready, it returns `config_runtime.capture().snapshot.active.max_active_agents`, the same capture pattern that `pipeline_config_resolver` uses in `gobby.app_context`.
@@ -128,7 +131,7 @@ In `docs/reference-audit/config.json`, the `build-defaults` anchor becomes `spaw
 - `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry` checks that the checked-in contract matches the registry.
 - Size: the spawn factory has 876 lines, so editing it needs a named split (Decision Record item 8). The spawn implementation has 967 lines and stays untouched because the reader keeps the guard signatures.
 - Rejected: threading `daemon_config` through `reserve_agent_slot` and `slot_cap_response`. That would edit the spawn implementation and the agents query tools, both large, for no behavioral gain over the live-config capture.
-- Planned checks: focused pytest on the five test Targets, `tests/mcp_proxy/tools/spawn_agent/test_factory.py`, `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py`, `tests/config/test_runtime_config_contract.py`, `tests/config/test_config_authority_audit.py` and `tests/skills/test_reference_library.py`; `uv run ruff check` and `uv run mypy` on the touched modules.
+- Planned checks: focused pytest on the five test Targets, `tests/mcp_proxy/tools/spawn_agent/test_factory.py`, `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py`, `tests/config/test_runtime_config_contract.py`, `tests/config/test_config_authority_audit.py` and `tests/skills/test_reference_library.py`; `uv run ruff check` and `uv run mypy` on the touched modules. Config corpus replay: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_http_corpus.py -k "test_case_replays_equal and config"`.
 
 **Acceptance:**
 
@@ -137,6 +140,7 @@ In `docs/reference-audit/config.json`, the `build-defaults` anchor becomes `spaw
 - 1.1.3 - `_spawn_guards.py` imports nothing from `gobby.config.build` or `gobby.dispatch`, and `DISPATCH_TTL_SECONDS` lives in `gobby.storage.tasks._runtime_mutex`. file: `src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py`. test: `tests/mcp_proxy/tools/spawn_agent/test_spawn_guards.py::test_spawn_guards_import_no_build_or_dispatch`.
 - 1.1.4 - `dispatch_batch` is registered from its own module and bounds its concurrency with `configured_max_active_agents()`. symbol: `register_dispatch_batch`. test: `tests/mcp_proxy/tools/test_parallel_dispatch.py::test_dispatch_batch_respects_configured_cap`.
 - 1.1.5 - The configuration guide documents `max_active_agents` under Spawn Cap, no longer describes the per-project build config file, and its audit pins the new anchor. behavior: "max_active_agents" in `docs/guides/configuration.md`. behavior: "build-defaults" absent from `docs/reference-audit/config.json`. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
+- 1.1.6 - The recorded config schema and values responses carry `max_active_agents`, and the config corpus cases replay equal. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
 
 ### 1.2 Spawn drops its dispatch-only hooks (depends: 1.1) [category: code]
 `kind: deliverable`
@@ -403,6 +407,7 @@ Targets:
 - `src/gobby/storage/cron_children.py::*` — scope-reason: drop the `dispatcher` child action type
 - `src/gobby/config/system_loops.py::*` — scope-reason: describe the automation loop without task dispatch
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier for the reworded loop descriptions
+- `tests/contracts/http/config_schema.json::*` — scope-reason: re-recorded public config schema response with the reworded loop description
 - `src/gobby/hooks/event_handlers/_dispatch.py::*` — operation: delete — scope-reason: handles only stage-pipeline terminal events, which only the dispatcher creates
 - `src/gobby/runner_broadcasting.py::*` — scope-reason: drop the stage-pipeline terminal forwarding to the deleted handler
 - `src/gobby/agents/agent_cleanup.py::*` — scope-reason: drop the dispatcher tick after agent cleanup
@@ -446,7 +451,7 @@ The cron executor drops the `dispatcher` action branch, `_execute_dispatcher` an
 
 Split `src/gobby/storage/cron.py` (867 lines): move the job-name policy, `REMOVED_AUTOMATION_JOB_NAMES`, `CODEWIKI_NIGHTLY_JOB_PREFIX`, `RETIRED_AUTOMATION_JOB_NAME_PREFIXES`, `CRON_JOB_NAME_PRIORITIES`, `DEFAULT_CRON_JOB_PRIORITY`, `is_removed_automation_job` and `_cron_job_priority` (renamed `cron_job_priority`), into the new module `cron_job_policy.py`. `cron.py`, `scheduler.py` and the cron routes import them from there.
 
-`system_loops.py` rewords the two descriptions that mention task dispatch, and the runtime config contract is regenerated with `uv run python scripts/generate_runtime_config_contract.py`.
+`system_loops.py` rewords the two descriptions that mention task dispatch: the `enabled` field reads "Enable daemon-owned stale-claim sweeps and pipeline maintenance." and the model reads "Stale-claim sweep and pipeline maintenance automation loop." The runtime config contract is regenerated with `uv run python scripts/generate_runtime_config_contract.py`, and the HTTP config corpus is re-recorded with 1.1's command, which changes only `config_schema.json`.
 
 Hidden consumers:
 
@@ -475,7 +480,7 @@ Messaging and relay tests: in `test_mailbox.py`, delete `test_build_target_only_
 - The `"dispatcher"` lease-holder strings in `gobby.agents.lifecycle_reconciliation` and `gobby.runner_lifecycle_agents` name a mutex holder, not the dispatcher module, and stay.
 - Build-history readers outside the two packages (2026-10-08): `mailbox.py` (the `build` target and the coordinator allowance), the `_stage_review.py` signoff relay, the build observability tools and routes that 2.3 deletes, and `gobby.tasks.lifecycle_repair`, which 2.3 also deletes. After this leaf, 2.5 can delete `gobby.storage.build_history`. No bundled definition lists `build` in `send_message_targets`, and no skill or rule sends to it.
 - `mailbox.py` has 809 lines and `agent_messaging.py` 487, so neither needs a split.
-- Planned checks: focused pytest on every edited test Target, `tests/scheduler/`, `tests/storage/test_cron*.py`, `tests/hooks/`, `tests/sessions/`, `tests/mcp_proxy/tools/test_agent_messaging.py` and `tests/config/test_runtime_config_contract.py`; ruff, format check and mypy on the changed source files.
+- Planned checks: focused pytest on every edited test Target, `tests/scheduler/`, `tests/storage/test_cron*.py`, `tests/hooks/`, `tests/sessions/`, `tests/mcp_proxy/tools/test_agent_messaging.py` and `tests/config/test_runtime_config_contract.py`; ruff, format check and mypy on the changed source files. Config corpus replay: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_http_corpus.py -k "test_case_replays_equal and config"`.
 
 **Acceptance:**
 
@@ -484,6 +489,7 @@ Messaging and relay tests: in `test_mailbox.py`, delete `test_build_target_only_
 - 2.4.3 - Closing a task and moving a stage schedule no dispatcher wake. symbol: `close_task`. behavior: "wake_dispatcher_for_task_change" absent from `src/gobby/storage/tasks/_lifecycle.py`.
 - 2.4.4 - Outside `gobby.build` and `gobby.dispatch`, no production module imports either package. file: `src/gobby/system_automation.py`. behavior: "gobby.build" absent from `src/gobby/mcp_proxy/tools/tasks/_stage_review.py`.
 - 2.4.5 - `send_message` rejects `target="build"` as an unknown target, and its schema lists five targets. test: `tests/sessions/test_mailbox.py::TestMailboxBroadcast::test_rejects_unknown_target`. test: `tests/mcp_proxy/tools/test_agent_messaging.py::TestSendMessage::test_send_message_schema_documents_target_parameters`.
+- 2.4.6 - The loop descriptions name no task dispatch, and the config corpus cases replay equal. behavior: "automation dispatch" absent from `tests/contracts/http/config_schema.json`. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
 
 
 ### 2.5 Build and dispatch packages and build profiles go (depends: 2.4) [category: code]
@@ -1738,3 +1744,4 @@ These are completion gates for the implementation. Except for plan validation, n
 
 - 2026-10-08: First draft by Plan Writer gobby#15528.
 - 2026-10-08: Writer repairs for Plan Adversary gobby#15401 F1 (3.2 review guidance, plus the matching contract and guide text in 5.2) and F2 (3.3 keeps the discovery methodology skill test).
+- 2026-10-08: Writer repair for F3: 1.1 and 2.4 re-record the HTTP config corpus, and 2.4 names its new loop descriptions.
