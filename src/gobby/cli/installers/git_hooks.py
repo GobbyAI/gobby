@@ -96,7 +96,16 @@ if [ -n "$GOBBY_PROTECTED_REF" ]; then
         [ "$gobby_ref" = "$GOBBY_PROTECTED_REF" ] || continue
         case $gobby_new in
         *[!0]*) ;;
-        *) gobby_refuse "the protected branch cannot be deleted" ;;
+        *)
+            # pack-refs prunes the loose copy of a ref it has just packed: the old
+            # value is already in packed-refs, and unlike every real deletion it
+            # holds no packed-refs lock while the hook runs.
+            if [ ! -e "$GOBBY_COMMON_DIR/packed-refs.lock" ] &&
+                grep -qxF "$gobby_old $gobby_ref" "$GOBBY_COMMON_DIR/packed-refs" 2>/dev/null
+            then
+                continue
+            fi
+            gobby_refuse "the protected branch cannot be deleted" ;;
         esac
         # A zero old value is a creation or a forced update; read the ref to tell.
         case $gobby_old in

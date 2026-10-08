@@ -233,7 +233,7 @@ class TestGetTaskTool:
                 current_stage=linked_stage,
             )
 
-            def get_task_side_effect(task_id):
+            def get_task_side_effect(task_id: str) -> Task | SimpleNamespace | None:
                 if task_id == sample_task.id:
                     return sample_task
                 if task_id == "550e8400-e29b-41d4-a716-446655440001":
@@ -994,6 +994,8 @@ class TestListTasksTool:
                 parent_task_id="550e8400-e29b-41d4-a716-446655440010",
                 title_like="feature",
                 limit=10,
+                offset=0,
+                sort_by=None,
                 project_id="11111111-1111-4111-8111-111111110001",
             )
             assert mock_task_manager.list_tasks.call_count >= 1

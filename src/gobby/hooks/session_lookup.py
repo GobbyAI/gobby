@@ -700,18 +700,11 @@ class SessionLookupService:
         if explicit_task_id is not None:
             event.metadata["_task_id_origin"] = "explicit"
         try:
-            # Get tasks linked with 'worked_on' action which implies active focus
-            session_tasks = self._session_task_manager.get_session_tasks(platform_session_id)
-            # Filter for active 'worked_on' tasks - taking the most recent one
-            active_tasks = [t for t in session_tasks if t.get("action") == "worked_on"]
-            task = None
-            if explicit_task_id is not None:
-                task = next(
-                    (link["task"] for link in active_tasks if link["task"].id == explicit_task_id),
-                    None,
-                )
-            elif active_tasks:
-                task = active_tasks[0]["task"]
+            # A 'worked_on' link implies active focus; the most recent one wins.
+            task = self._session_task_manager.get_worked_on_task(
+                platform_session_id, explicit_task_id
+            )
+            if task is not None and explicit_task_id is None:
                 event.task_id = task.id
                 event.metadata["_task_id_origin"] = "session_context"
 

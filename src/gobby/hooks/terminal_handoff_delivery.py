@@ -80,10 +80,11 @@ _COMPOSER_OCCUPIED_GUIDANCE = (
 )
 # The recorded CLI no longer owns its pane: no terminal can take the command, so the
 # attempt settles without counting toward abandonment and stays readable (#23095).
+# Its retry gate stays armed, so the guidance names the retry that gate admits (#23495).
 _NO_TERMINAL_TARGET_GUIDANCE = (
     "Terminal handoff delivery found no live terminal seat for this session; no keys "
-    "were sent. Do not call set_handoff again; its payload stays recoverable as "
-    "recovery_guidance describes."
+    "were sent. A resumed seat retries gobby-sessions:set_handoff; the payload stays "
+    "recoverable as recovery_guidance describes."
 )
 # Consecutive failures per session before terminal delivery is abandoned: a CLI
 # that cannot take the command twice will not take it a ninth time (#22364).

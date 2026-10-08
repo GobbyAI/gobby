@@ -25,12 +25,9 @@ from ._field_update import _FieldUpdateMixin
 from ._identity_reconciliation import AmbiguousSessionIdentityError
 from ._lifecycle_delegate import _LifecycleDelegateMixin
 from ._query import _QueryMixin
-from ._registration_cache import (
-    SessionMappingKey,
-    _put_session_mapping,
-    _RegistrationCacheMixin,
-)
+from ._registration_cache import _RegistrationCacheMixin
 from ._renumber import _RenumberMixin
+from ._session_mapping_cache import SessionMappingKey, _put_session_mapping
 from ._terminal import _TerminalMixin
 from ._title_defaults import (
     MANUAL_TITLE_SOURCE,

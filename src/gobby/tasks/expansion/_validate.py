@@ -42,7 +42,9 @@ class CompletedSectionExemptionsUnavailable(ValueError):
 class CompletionTaskLookup(Protocol):
     """Task reads that resolve completed-section owners by coverage label."""
 
-    def list_tasks(self, *, project_id: str, label: str, limit: int, sort_by: str) -> list[Task]:
+    def list_tasks(
+        self, *, project_id: str, label: str, limit: int, offset: int, sort_by: str
+    ) -> list[Task]:
         """Return up to ``limit`` project tasks carrying ``label``."""
         ...
 
@@ -110,14 +112,15 @@ def _completed_plan_sections(
     task_manager: CompletionTaskLookup | None,
     project_context: Mapping[str, Any] | None,
     project_root: Path | None,
-) -> frozenset[str]:
-    """Resolve completion from unique, complete project-scoped coverage identity."""
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Resolve symbol exemptions and fully executed sections from coverage owners."""
     project_id = project_context.get("id") if project_context is not None else None
     if task_manager is None:
         raise CompletedSectionExemptionsUnavailable("no task manager")
     if not isinstance(project_id, str) or not project_id or not plan_doc.plan_id:
         raise CompletedSectionExemptionsUnavailable("no project or plan identity")
     completed: set[str] = set()
+    executed: set[str] = set()
     for section in plan_doc.sections:
         if section.kind is not Kind.deliverable or not section.acceptance_items:
             continue
@@ -126,16 +129,37 @@ def _completed_plan_sections(
             for item in section.acceptance_items
         ]
         try:
-            owners = [
-                task_manager.list_tasks(
-                    project_id=project_id, label=label, limit=2, sort_by="updated_at"
-                )
-                for label in labels
-            ]
+            owners: list[list[Task]] = []
+            for label in labels:
+                tasks: list[Task] = []
+                while True:
+                    page = task_manager.list_tasks(
+                        project_id=project_id,
+                        label=label,
+                        limit=50,
+                        offset=len(tasks),
+                        sort_by="created_at",
+                    )
+                    tasks.extend(page)
+                    if len(page) < 50:
+                        break
+                owners.append(tasks)
         except psycopg.Error as exc:
             raise CompletedSectionExemptionsUnavailable(
                 f"task lookup failed for section {section.section_id}: {exc}"
             ) from exc
+        if all(owners) and all(
+            all(
+                task.project_id == project_id
+                and label in (task.labels or [])
+                and task.task_type != "epic"
+                and task.closed_at is not None
+                for task in tasks
+            )
+            and any(task.closed_reason in {"completed", "already_implemented"} for task in tasks)
+            for label, tasks in zip(labels, owners, strict=True)
+        ):
+            executed.add(section.section_id)
         if any(len(tasks) != 1 for tasks in owners):
             continue
         task = owners[0][0]
@@ -148,7 +172,7 @@ def _completed_plan_sections(
         delivered = task.closed_at and task.closed_reason in {"completed", "already_implemented"}
         if delivered or (project_root and _task_has_landed_commit(task, project_root)):
             completed.add(section.section_id)
-    return frozenset(completed)
+    return frozenset(completed), frozenset(executed)
 
 
 def validate_plan_file(
@@ -239,7 +263,7 @@ def validate_plan_file(
             "symbol_validation": skipped_symbols,
         }
     try:
-        completed_section_ids = _completed_plan_sections(
+        completed_section_ids, executed_section_ids = _completed_plan_sections(
             plan_doc,
             task_manager if task_manager is not None else getattr(self, "task_manager", None),
             project_context,
@@ -254,7 +278,7 @@ def validate_plan_file(
             "symbol_validation": skipped_symbols,
         }
     semantic_lint = lint_plan_document(
-        plan_doc, project_root=project_root, completed_section_ids=completed_section_ids
+        plan_doc, project_root=project_root, completed_section_ids=executed_section_ids
     )
     warnings.extend(semantic_lint.warnings)
     if not semantic_lint.valid:
@@ -272,7 +296,7 @@ def validate_plan_file(
         code_index=code_index,
         required=require_symbol_validation,
         consumer_coverage_blocking=consumer_coverage_blocking or bool(plan_doc.manifest_entries),
-        completed_section_ids=completed_section_ids,
+        completed_section_ids=completed_section_ids | executed_section_ids,
     )
     consumer_warnings = [
         issue.message

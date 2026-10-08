@@ -29,6 +29,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeVersionError,
 )
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+from gobby.utils import spawn
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 GCODE_PIN = MANAGED_BIN_VERSION_PINS["gcode"]
@@ -744,42 +745,61 @@ async def test_gateway_raises_for_timeout(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group contract")
-async def test_gateway_timeout_reaps_child_holding_pipes(tmp_path: Path) -> None:
-    pgid_file = tmp_path / "pgid"
-    program = (
-        "import os,signal,sys\n"
-        "if os.getpid() != os.getpgrp():\n"
-        "    os.setsid()\n"
-        f"open({str(pgid_file)!r},'w').write(str(os.getpgrp()))\n"
-        "print('partial-output',flush=True)\n"
-        "print('stage=child-held-pipes',file=sys.stderr,flush=True)\n"
-        "os.fork()\n"
-        "signal.pause()\n"
-    )
-    gateway = GcodeGateway(binary=sys.executable, timeout_seconds=0.25)
+async def test_gateway_timeout_reaps_child_holding_pipes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ready = asyncio.Event()
 
-    try:
-        with pytest.raises(GcodeTimeoutError) as exc_info:
-            await asyncio.wait_for(
-                gateway._run_command(
-                    [sys.executable, "-c", program],
-                    check_version=False,
-                ),
-                timeout=2.0,
-            )
+    def child_ready(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        ready.set()
+        writer.close()
 
-        assert exc_info.value.stdout == "partial-output"
-        assert exc_info.value.stderr == "stage=child-held-pipes"
-        pgid = int(pgid_file.read_text(encoding="utf-8"))
-        with pytest.raises(ProcessLookupError):
-            os.killpg(pgid, 0)
-    finally:
-        if pgid_file.exists():
-            pgid = int(pgid_file.read_text(encoding="utf-8"))
+    async with await asyncio.start_server(child_ready, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        program = (
+            "import os,signal,socket,sys\n"
+            "if os.getpid() != os.getpgrp():\n"
+            "    os.setsid()\n"
+            "print('partial-output',flush=True)\n"
+            "print('stage=child-held-pipes',file=sys.stderr,flush=True)\n"
+            "if os.fork() == 0:\n"
+            "    signal.pause()\n"
+            f"socket.create_connection(('127.0.0.1',{port})).close()\n"
+            "signal.pause()\n"
+        )
+        gateway = GcodeGateway(binary=sys.executable, timeout_seconds=0.25)
+        process = await spawn.create_session_exec(sys.executable, "-c", program)
+
+        async def ready_process(*_args: str, **_kwargs: Any) -> spawn.SessionProcess:
+            return process
+
+        monkeypatch.setattr("gobby.utils.spawn.create_session_exec", ready_process)
+
+        try:
+            # The signal follows both output writes and the pipe-holding fork.
+            # Bound startup separately from the unchanged communication timeout.
+            async with asyncio.timeout(10.0):
+                await ready.wait()
+            with pytest.raises(GcodeTimeoutError) as exc_info:
+                await asyncio.wait_for(
+                    gateway._run_command(
+                        [sys.executable, "-c", program],
+                        check_version=False,
+                    ),
+                    timeout=2.0,
+                )
+
+            assert exc_info.value.stdout == "partial-output"
+            assert exc_info.value.stderr == "stage=child-held-pipes"
+            assert process.returncode is not None and process.returncode < 0
+            with pytest.raises(ProcessLookupError):
+                os.killpg(process.pid, 0)
+        finally:
             try:
-                os.killpg(pgid, signal.SIGKILL)
+                os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            await process.wait()
 
 
 async def test_gateway_cleans_up_process_when_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -862,6 +882,45 @@ async def test_gateway_does_not_misclassify_unstructured_exit_three(
 
     assert type(exc_info.value) is GcodeCommandError
     assert exc_info.value.stderr == "real failure"
+
+
+async def test_gateway_classifies_grant_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stderr = b'{"error":"timeout","message":"grant operation timed out"}'
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(returncode=2, stderr=stderr),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeTimeoutError, match="grant operation timed out") as caught:
+        await gateway.vector_sync_file(Path("/tmp/project"), "src/app.py")
+
+    assert caught.value.stderr == stderr.decode()
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("error_code", ["managed_capability_missing", "io", "expired"])
+async def test_gateway_preserves_permanent_grant_error_classification(
+    error_code: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stderr = f'{{"error":"{error_code}","message":"grant rejected"}}'.encode()
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(returncode=2, stderr=stderr),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeCommandError, match="grant rejected") as caught:
+        await gateway.vector_sync_file(Path("/tmp/project"), "src/app.py")
+
+    assert caught.value.stderr == stderr.decode()
+    assert processes == []
 
 
 async def test_gateway_classifies_daemon_config_transport_without_forwarding_stderr(

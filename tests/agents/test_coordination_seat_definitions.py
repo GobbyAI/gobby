@@ -137,6 +137,8 @@ def test_assistant_routes_and_edits_tasks_only_when_josh_asks() -> None:
     assert "assistant-write-scope" in prompt
     assert "two consecutive five-minute load readings above 30" in prompt
     assert "two consecutive readings below 24" in prompt
+    assert "Recover stalled sessions: Josh gave you standing permission" in prompt
+    assert "report the stalled seat to the Orchestrator instead" in prompt
     assert not READ_ONLY_BLOCKED_TOOLS & set(body.blocked_tools)
 
 
@@ -152,12 +154,14 @@ def test_orchestrator_coordinates_restarts_and_edits_tasks_as_needed() -> None:
     assert "buttons through the Assistant" in prompt
     assert "Edit tasks as needed" in prompt
     assert "other seats' edit requests" in prompt
+    assert "Recover stalled sessions: Josh gave you standing permission" in prompt
+    assert "report the stalled seat to the Assistant instead" in prompt
     assert body.workflows.rule_selectors is not None
     assert {"name:no-force-push-interactive", "name:no-destructive-git-interactive"} <= set(
         body.workflows.rule_selectors.include
     )
     assert set(body.workflows.rule_selectors.exclude) == {
-        f"name:{rule}" for rule in ORCHESTRATOR_AUTHORITY_RULES
+        f"name:{rule}" for rule in ORCHESTRATOR_AUTHORITY_RULES | {"block-update-task"}
     }
 
 
@@ -245,7 +249,13 @@ def test_merge_manager_tracks_activation_and_preserves_foreign_work() -> None:
     assert "This seat never restarts, cuts over or promotes live binaries" in prompt
     assert "Never push or merge into `main`" in prompt
     role = Path(__file__).resolve().parents[2] / ".gobby/roles/merge-manager.md"
-    assert flat(role.read_text()) in prompt
+    pointer = role.read_text()
+    assert "Definition: `merge-manager`." in pointer
+    assert 'gobby-agents:apply_agent_definition(agent="merge-manager")' in pointer
+    assert "Keep the landed-but-unactivated ledger" not in pointer
+    assert "Preserve source attribution" in prompt
+    assert "each finding to the source whose commit introduced" in prompt
+    assert "without a stash" in prompt
 
 
 def test_inbox_manager_is_read_only_and_routes_urgent_messages() -> None:
@@ -267,4 +277,10 @@ def test_inbox_manager_is_read_only_and_routes_urgent_messages() -> None:
     assert "~/.gobby/local_cli_token" in prompt
     assert "~/.gobby/bootstrap.yaml" in prompt
     role = Path(__file__).resolve().parents[2] / ".gobby/roles/inbox-manager.md"
-    assert flat(role.read_text()) in prompt
+    pointer = role.read_text()
+    assert "Definition: `inbox-manager`." in pointer
+    assert 'gobby-agents:apply_agent_definition(agent="inbox-manager")' in pointer
+    assert "Every five minutes" not in pointer
+    assert "Keep one five-minute recurring reminder" in prompt
+    assert "Lane, order, landing and close decisions belong to the Orchestrator" in prompt
+    assert "anything from Josh" in prompt

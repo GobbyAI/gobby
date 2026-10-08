@@ -1,8 +1,10 @@
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from gobby.storage.session_models import Session
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -127,3 +129,30 @@ class TestSessionTaskManager:
         actions = {t["action"] for t in tasks}
         assert "mentioned" in actions
         assert "worked_on" in actions
+
+
+def test_worked_on_task_is_the_latest_worked_on_link_or_the_named_one(
+    session_task_manager: SessionTaskManager,
+    task_manager: LocalTaskManager,
+    sample_project: dict[str, Any],
+    sample_session: Session,
+) -> None:
+    older, newer, mentioned = (
+        task_manager.create_task(
+            project_id=sample_project["id"],
+            title=title,
+            validation_criteria="Test task completion is observable.",
+        )
+        for title in ("Older", "Newer", "Mentioned")
+    )
+    session_id = sample_session.id
+    for task, action in ((older, "worked_on"), (newer, "worked_on"), (mentioned, "mentioned")):
+        session_task_manager.link_task(session_id, task.id, action)
+
+    latest = session_task_manager.get_worked_on_task(session_id)
+    named = session_task_manager.get_worked_on_task(session_id, older.id)
+
+    assert latest is not None and latest.id == newer.id
+    assert named is not None and named.id == older.id
+    assert session_task_manager.get_worked_on_task(session_id, mentioned.id) is None
+    assert session_task_manager.get_worked_on_task(session_id, "#123") is None

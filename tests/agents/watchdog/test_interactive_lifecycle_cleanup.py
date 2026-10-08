@@ -99,7 +99,10 @@ async def test_missing_interactive_terminal_resumes_after_task_close(
         task_id=task.id,
     )
     mode = "interactive" if is_interactive else "one_shot"
-    stored = agent_run_manager.update_resume_metadata(run.id, {"execution_mode": mode})
+    metadata: dict[str, Any] = {"execution_mode": mode}
+    if is_interactive:
+        metadata["idle_ttl_seconds"] = 900
+    stored = agent_run_manager.update_resume_metadata(run.id, metadata)
     assert stored is not None
     if task_state == "closed":
         tasks.close_task(task.id)
@@ -127,6 +130,7 @@ async def test_missing_interactive_terminal_resumes_after_task_close(
         )
         resume.assert_awaited_once()
         assert resume.call_args.kwargs["resume_metadata"]["execution_mode"] == "interactive"
+        assert resume.call_args.kwargs["resume_metadata"]["idle_ttl_seconds"] == 900
     else:
         runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_not_awaited()
         resume.assert_not_awaited()

@@ -10,6 +10,7 @@ import pytest
 
 from gobby.adapters.claude_code import _ACTION_FIRST_PREFIXES, is_action_first_reason
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.skills.formatting import skill_fetch_batch_directive
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -328,6 +329,42 @@ class TestMCPRewriteNesting:
             "command": "uv run python script.py",
             "timeout": 300000,
         }
+
+    @pytest.mark.asyncio
+    async def test_rewrite_lands_on_agys_own_command_field(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """AGY's overwrite rewrites ``CommandLine`` and declares no ``command`` (#23771)."""
+        _insert_rule(
+            manager,
+            "agy-command-line",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="rewrite_input",
+                        input_updates={"command": "rtk read /tmp/probe"},
+                    )
+                ],
+            ),
+        )
+        # The run_command arguments of run 87562f7b's step 22.
+        raw = {
+            "CommandLine": "cat /tmp/probe",
+            "Cwd": "/repo",
+            "WaitMsBeforeAsync": 5000,
+            "toolAction": "Running probe command 2",
+            "toolSummary": "Probe command 2",
+        }
+        event = _make_event(
+            data=normalize_tool_fields({"tool_name": "Bash", "tool_input": dict(raw)}),
+            source=SessionSource.AGY,
+        )
+
+        engine = RuleEngine(db)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+        assert response.modified_input == {**raw, "CommandLine": "rtk read /tmp/probe"}
 
     @pytest.mark.asyncio
     async def test_rewrite_mcp_string_arguments(

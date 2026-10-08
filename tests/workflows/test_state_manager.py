@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.workflows import state_manager
 from gobby.workflows.state_manager import (
-    _LIVE_VARIABLE_MANAGERS,
     SessionVariableManager,
     _clear_variable_defaults_caches,
     _decode_variables_payload,
@@ -35,9 +36,25 @@ def test_decode_variables_payload_returns_empty_for_non_object_json(
     assert "Ignoring non-object workflow variables payload: list" in caplog.text
 
 
-def test_session_variable_manager_registers_under_cache_lock() -> None:
-    manager = SessionVariableManager(MagicMock())
-    assert manager in tuple(_LIVE_VARIABLE_MANAGERS)
+def test_defaults_load_once_per_hub_across_managers_until_a_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loads: list[tuple[object, str | None]] = []
+
+    def load(db: object, project_id: str | None) -> dict[str, Any]:
+        loads.append((db, project_id))
+        return {"loaded_skills": []}
+
+    monkeypatch.setattr(state_manager, "load_variable_defaults", load)
+    hub, other_hub = MagicMock(), MagicMock()
     _clear_variable_defaults_caches()
-    assert manager._defaults_cache == {}
-    assert manager._defaults_cache_times == {}
+
+    first = SessionVariableManager(hub)._get_variable_defaults("project")
+    second = SessionVariableManager(hub)._get_variable_defaults("project")
+    SessionVariableManager(other_hub)._get_variable_defaults("project")
+    _clear_variable_defaults_caches()
+    SessionVariableManager(hub)._get_variable_defaults("project")
+
+    assert loads == [(hub, "project"), (other_hub, "project"), (hub, "project")]
+    assert first == second == {"loaded_skills": []}
+    assert first["loaded_skills"] is not second["loaded_skills"]

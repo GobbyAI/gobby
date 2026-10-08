@@ -8,8 +8,13 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request
 
+from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_models import compare_versions
+from gobby.install.bin_set_coherence import (
+    promote_workspace_binary_set,
+    workspace_build_only,
+)
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.install.version_probe import probe_native_bin_version
 
@@ -100,32 +105,6 @@ def ghook_installed_at_utc(module: Any) -> str:
     )
 
 
-def ghook_install_source_url(
-    module: Any,
-    method: str,
-    *,
-    target: str,
-    version: str | None,
-) -> str | None:
-    """Return public install source URL for ghook provenance."""
-    if method == "github":
-        if not version:
-            return None
-        return str(
-            install_release._build_release_download_url(
-                "ghook",
-                target,
-                version=version,
-                tag_prefix=module._GHOOK_RELEASE_TAG_PREFIX,
-            )
-        )
-    if method == "cargo-binstall":
-        if version and version != "unknown":
-            return f"https://crates.io/crates/gobby-hooks/{version}"
-        return "https://crates.io/crates/gobby-hooks"
-    return None
-
-
 def write_ghook_install_sidecar(
     module: Any,
     bin_dir: Path,
@@ -164,99 +143,48 @@ def write_ghook_install_sidecar(
         module.logger.warning("ghook: failed writing install sidecar %s: %s", sidecar, e)
 
 
-def install_ghook_from_github(
-    module: Any,
-    bin_dir: Path,
-    target: str,
-    version: str | None = None,
-) -> bool:
-    """Download and extract ghook from GitHub Releases."""
-    return bool(
-        install_release._download_release_binary(
-            bin_dir,
-            binary_name=module._GHOOK_BIN_NAME,
-            artifact_name="ghook",
-            target=target,
-            version=version,
-            tag_prefix=module._GHOOK_RELEASE_TAG_PREFIX,
-            label="ghook",
-        )
-    )
-
-
-def install_ghook_from_cargo_binstall(
-    module: Any,
-    bin_dir: Path,
-    version: str | None = None,
-) -> bool:
-    """Install ghook via cargo-binstall."""
-    if not module.shutil.which("cargo-binstall"):
-        return False
-    try:
-        crate = f"gobby-hooks@{version}" if version else "gobby-hooks"
-        result = module.subprocess.run(
-            [
-                "cargo-binstall",
-                crate,
-                "--install-path",
-                str(bin_dir),
-                "--no-confirm",
-                "--no-symlinks",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        return bool(result.returncode == 0)
-    except (FileNotFoundError, module.subprocess.TimeoutExpired) as e:
-        module.logger.warning("ghook: cargo-binstall failed: %s", e)
-        return False
-
-
-def install_ghook_from_cargo_install(
-    module: Any,
-    bin_dir: Path,
-    version: str | None = None,
-) -> bool:
-    """Compile and install ghook from source via cargo install."""
+def install_ghook_from_workspace(module: Any, bin_dir: Path) -> bool:
+    """Build ghook from the local Rust workspace and promote it into the set."""
     if not module.shutil.which("cargo"):
         return False
+    current = Path(__file__).resolve().parent
+    manifest = next(
+        (
+            parent / "Cargo.toml"
+            for parent in (current, *current.parents)
+            if (parent / "Cargo.toml").is_file()
+            and (parent / "crates" / "ghook" / "Cargo.toml").is_file()
+        ),
+        None,
+    )
+    if manifest is None:
+        return False
     try:
-        cmd = ["cargo", "install", "gobby-hooks", "--root", str(bin_dir.parent)]
-        if version:
-            cmd.extend(["--version", version])
-        module.click.echo("  Compiling ghook from source (this may take 30-60 seconds)...")
+        module.click.echo("  Building ghook from local workspace (this may take 30-60 seconds)...")
         result = module.subprocess.run(
-            cmd,
+            [
+                "cargo",
+                "build",
+                "--release",
+                "-p",
+                "gobby-hooks",
+                "--manifest-path",
+                str(manifest),
+            ],
             capture_output=True,
             text=True,
             timeout=180,
         )
-        return bool(result.returncode == 0)
-    except (FileNotFoundError, module.subprocess.TimeoutExpired) as e:
-        module.logger.warning("ghook: cargo install failed: %s", e)
+        if result.returncode != 0:
+            return False
+        source = cargo_release_dir(manifest.parent) / module._GHOOK_BIN_NAME
+        if not source.exists():
+            return False
+        promote_workspace_binary_set({"ghook": source}, bin_dir=bin_dir)
+        return True
+    except (FileNotFoundError, module.subprocess.TimeoutExpired, OSError) as e:
+        module.logger.warning("ghook: local workspace build failed: %s", e)
         return False
-
-
-def get_ghook_version_override(module: Any) -> str | None:
-    """Return explicit ghook version override from environment."""
-    value = str(module.os.environ.get(module._GHOOK_INSTALL_VERSION_ENV, "")).strip()
-    return value or None
-
-
-def get_ghook_method_override(module: Any) -> str | None:
-    """Return explicit ghook install-method override from environment."""
-    value = str(module.os.environ.get(module._GHOOK_INSTALL_METHOD_ENV, "")).strip().lower()
-    if not value or value == "auto":
-        return None
-    if value not in module._GHOOK_ALLOWED_METHODS:
-        module.logger.warning(
-            "ghook: ignoring unsupported %s=%s",
-            module._GHOOK_INSTALL_METHOD_ENV,
-            value,
-        )
-        return None
-    return str(value)
 
 
 def probe_ghook_version(module: Any, ghook_path: Path) -> str | None:
@@ -270,7 +198,7 @@ def probe_ghook_version(module: Any, ghook_path: Path) -> str | None:
 
 
 def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
-    """Install or upgrade ghook with public release fallback chain."""
+    """Install or upgrade ghook from the workspace build, its only source."""
     bin_dir = module.Path.home() / ".gobby" / "bin"
     ghook_path = bin_dir / module._GHOOK_BIN_NAME
 
@@ -298,49 +226,22 @@ def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
             module._write_ghook_version_stamp(bin_dir, installed_version)
             return {"installed": False, "skipped": True, "version": installed_version}
 
-    requested_version = module._get_ghook_version_override()
-    target_version = requested_version or pinned_version
-    comparison = compare_versions(installed_version, pinned_version)
-    if requested_version is None and comparison == 1:
+    target_version = pinned_version
+    if compare_versions(installed_version, pinned_version) == 1:
         target_version = installed_version
-    method_override = module._get_ghook_method_override()
 
     bin_dir.mkdir(parents=True, exist_ok=True)
-    method = None
-
-    if method_override == "github":
-        if module._install_ghook_from_github(bin_dir, target, target_version):
-            method = "github"
-    elif method_override == "cargo-binstall":
-        if module._install_ghook_from_cargo_binstall(bin_dir, target_version):
-            method = "cargo-binstall"
-    elif method_override == "cargo-install":
-        if module._install_ghook_from_cargo_install(bin_dir, target_version):
-            method = "cargo-install"
-    else:
-        if module._install_ghook_from_github(bin_dir, target, target_version):
-            method = "github"
-        elif module._install_ghook_from_cargo_binstall(bin_dir, target_version):
-            method = "cargo-binstall"
-        elif module._install_ghook_from_cargo_install(bin_dir, target_version):
-            method = "cargo-install"
-
-    if method is None:
-        return {"installed": False, "skipped": False, "reason": "all installation methods failed"}
+    if not module._install_ghook_from_workspace(bin_dir):
+        return {"installed": False, "skipped": False, "reason": workspace_build_only("ghook")}
 
     ghook_path.chmod(0o755)
 
     resolved_version = module._probe_ghook_version(ghook_path) or target_version or "unknown"
     module._write_ghook_version_stamp(bin_dir, resolved_version)
-    sidecar_version = resolved_version if resolved_version != "unknown" else target_version
     module._write_ghook_install_sidecar(
         bin_dir,
-        install_method=module._GHOOK_PUBLIC_INSTALL_METHODS[method],
-        install_source_url=module._ghook_install_source_url(
-            method,
-            target=target,
-            version=sidecar_version,
-        ),
+        install_method="workspace",
+        install_source_url=None,
         installed_version=resolved_version,
         installed_at=module._ghook_installed_at_utc(),
     )
@@ -356,7 +257,7 @@ def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
         "installed": True,
         "upgraded": is_upgrade,
         "version": resolved_version,
-        "method": method,
+        "method": "workspace",
     }
     runtime_stamp = bin_dir / module._GHOOK_RUNTIME_STAMP
     if runtime_stamp.exists():

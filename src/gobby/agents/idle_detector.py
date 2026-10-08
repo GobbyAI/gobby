@@ -43,20 +43,27 @@ def plain_text(snapshot: str) -> str:
 
 
 def composer_text(snapshot: str) -> str:
-    """Return ``snapshot`` as plain text with faint-rendered text blanked.
+    """Return ``snapshot`` as plain text with faint composer text blanked.
 
     Claude Code's prompt suggestion and the Codex and Droid placeholders sit in
     an empty composer drawn faint (SGR 2), while typed text is never faint, so an
     ``ansi`` snapshot tells them apart where plain text cannot. Droid draws its
     cursor as a reverse-video cell over the placeholder's first character, so a
     reverse cell followed by faint text is blanked with it. A snapshot without
-    escape sequences is returned unchanged.
+    escape sequences is returned unchanged. Preserve the surrounding frame:
+    Codex's model and shortcut rows can also be faint, and blanking them loses
+    the evidence that the prompt is a composer rather than ordinary output.
     """
     if "\x1b" not in snapshot:
         return snapshot
+    snapshot = snapshot.replace("\r\n", "\n")
+    unstyled = plain_text(snapshot)
+    frame = composer_region(unstyled)
+    frame_start = unstyled[: unstyled.rfind(frame)].count("\n") if frame else 0
+    frame_end = frame_start + frame.count("\n") if frame else 0
     faint = reverse = False
     rendered: list[str] = []
-    for line in snapshot.split("\n"):
+    for row_index, line in enumerate(snapshot.split("\n")):
         cells: list[tuple[str, bool, bool]] = []
         position = 0
         for escape in _ESCAPE_RE.finditer(line):
@@ -66,9 +73,13 @@ def composer_text(snapshot: str) -> str:
             if escape.group("final") == "m" and _SGR_PARAMS_RE.fullmatch(params):
                 faint, reverse = _apply_sgr(params, faint, reverse)
         cells.extend((char, faint, reverse) for char in line[position:])
+        blank_faint = not frame or frame_start <= row_index <= frame_end
         rendered.append(
             "".join(
-                " " if dim or (inverse and index + 1 < len(cells) and cells[index + 1][1]) else char
+                " "
+                if blank_faint
+                and (dim or (inverse and index + 1 < len(cells) and cells[index + 1][1]))
+                else char
                 for index, (char, dim, inverse) in enumerate(cells)
             )
         )
@@ -139,7 +150,11 @@ class IdleDetector:
         "Continue working on your task. When your work is complete, call "
         "gobby-agents:end_agent_run with current_state and next_steps to end this agent run."
     )
-    # Standing seats are never told to end their run.
+    IDLE_TTL_REPROMPT_MESSAGE = (
+        "Your interactive run has reached its idle time limit. Wrap up your work, save progress, "
+        "and call gobby-agents:end_agent_run with current_state and next_steps to end this run."
+    )
+    # Provider capacity recovery keeps standing seats available.
     INTERACTIVE_CAPACITY_REPROMPT_MESSAGE = (
         "Your last turn ended on a provider capacity error. Continue where you left off."
     )

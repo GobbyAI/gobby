@@ -374,7 +374,9 @@ Validate the same plan through both principals.
             {
                 "project": str(fixture.project_id),
                 "label": "covers:agent-role-acceptance:1.1:1.1.1",
-                "limit": 2,
+                "limit": 50,
+                "offset": 0,
+                "sort_by": "created_at",
             },
         )
     ]

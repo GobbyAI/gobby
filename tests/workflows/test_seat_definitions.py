@@ -82,6 +82,7 @@ ORCHESTRATOR_EXCLUDES = [
     "name:no-daemon-management",
     "name:no-daemon-management-http",
     "name:block-git-worktree-mutations",
+    "name:block-update-task",
 ]
 
 # Steps that wait on another session report and wait from the step itself.
@@ -191,6 +192,18 @@ def _assert_step_workflow(name: str, seat: dict[str, Any]) -> None:
     for step_name in ROLE_BOOTSTRAP_STEPS.get(name, ()):
         for tool in ("Bash", "Read"):
             assert _lists(steps[step_name], "allowed_tools", tool), (name, step_name, tool)
+
+
+@pytest.mark.parametrize("name", _seat_names())
+def test_seat_run_lifetime(name: str) -> None:
+    seat = _bundled()[name]
+    body = AgentDefinitionBody.model_validate(seat)
+    assert body.execution_mode == "interactive"
+    if name == "researcher":
+        assert body.idle_ttl_seconds == 900
+    else:
+        assert body.idle_ttl_seconds is None
+        assert "idle_ttl_seconds" not in seat
 
 
 @pytest.mark.parametrize("name", _seat_names())

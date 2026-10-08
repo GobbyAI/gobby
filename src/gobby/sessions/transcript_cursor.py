@@ -10,7 +10,8 @@ registered ``updates.jsonl`` transcript.
 
 The same files say whether there is a turn to interrupt at all: Codex brackets a
 turn with ``task_started`` and ``task_complete``/``turn_aborted``, Grok with
-``turn_started`` and ``turn_ended``. A settled turn is compacted without an
+``turn_started`` and ``turn_ended``, and Claude Code closes an unblocked turn with
+a ``turn_duration`` system record. A settled turn is compacted without an
 interrupt key, because Ctrl+C on an idle Codex composer quits and on an idle Grok
 composer escalates toward quit (#22364).
 """
@@ -52,7 +53,7 @@ TurnSettledObserver = Callable[[], bool | None]
 # CLIs whose transcripts record interrupts; every other CLI keeps the blind path.
 INTERRUPT_OBSERVED_SOURCES = frozenset({"claude", "codex", "grok"})
 # CLIs whose transcripts record turn boundaries; every other CLI is interrupted first.
-TURN_SETTLED_SOURCES = frozenset({"codex", "grok"})
+TURN_SETTLED_SOURCES = frozenset({"claude", "codex", "grok"})
 # Turn state is decided from the newest records only.
 _TURN_STATE_TAIL_BYTES = 64 * 1024
 _CODEX_TURN_STARTED_TYPE = "task_started"
@@ -60,6 +61,10 @@ _CODEX_TURN_ENDED_TYPES = frozenset({"task_complete", "turn_aborted"})
 
 CLAUDE_INTERRUPT_PREFIX = "[Request interrupted by user"
 CLAUDE_USER_REJECTED = "user-rejected"
+# Claude Code writes this system record once no Stop hook holds the turn open.
+_CLAUDE_TURN_ENDED_SUBTYPE = "turn_duration"
+# Local slash commands (``/model``, ``/compact``) record these user rows outside any turn.
+_CLAUDE_LOCAL_COMMAND_PREFIXES = ("<command-name>", "<local-command-")
 # Grok registers ``updates.jsonl`` as its transcript; turn outcomes land in this
 # sibling file of the same session directory.
 GROK_EVENTS_FILENAME = "events.jsonl"
@@ -259,33 +264,62 @@ def codex_compact_boundary_between(
     return None
 
 
+def _claude_user_texts(record: dict[str, Any]) -> list[str]:
+    """Return a Claude user record's string content or the text of its text blocks."""
+    message = record.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return [content]
+    if not isinstance(content, list):
+        return []
+    return [
+        str(block.get("text", ""))
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
+
+
+def _claude_interrupt_record(record: dict[str, Any]) -> bool:
+    """Return whether a Claude user record shows the turn was stopped by the user."""
+    return record.get("toolDenialKind") == CLAUDE_USER_REJECTED or any(
+        text.startswith(CLAUDE_INTERRUPT_PREFIX) for text in _claude_user_texts(record)
+    )
+
+
 @dataclass
 class ClaudeTranscriptCursor(TranscriptTailCursor):
     """Claude Code transcript cursor: an interrupted-user record confirms the interrupt."""
 
     def saw_fresh_interrupt(self) -> bool:
         """Return whether newly appended records show the turn was interrupted."""
-        for record in self.fresh_records():
-            if record.get("type") != "user":
-                continue
-            if record.get("toolDenialKind") == CLAUDE_USER_REJECTED:
+        return any(
+            record.get("type") == "user" and _claude_interrupt_record(record)
+            for record in self.fresh_records()
+        )
+
+    def turn_settled(self) -> bool | None:
+        """Return whether the last turn ended; ``None`` without a turn record.
+
+        ``turn_duration`` closes a turn no Stop hook held open, and an interrupt ends
+        one without it. A newer prompt, tool result or assistant record means a turn
+        is running; a scheduled task starts its turn with a meta prompt row. Local
+        slash commands, including their meta caveat row, are written outside turns.
+        """
+        for record in reversed(self.tail_records()):
+            kind = record.get("type")
+            if kind == "system" and record.get("subtype") == _CLAUDE_TURN_ENDED_SUBTYPE:
                 return True
-            message = record.get("message")
-            content = message.get("content") if isinstance(message, dict) else None
-            if isinstance(content, str):
-                if content.startswith(CLAUDE_INTERRUPT_PREFIX):
-                    return True
+            if kind == "assistant":
+                return False
+            if kind != "user":
                 continue
-            if not isinstance(content, list):
+            if _claude_interrupt_record(record):
+                return True
+            texts = _claude_user_texts(record)
+            if texts and texts[0].lstrip().startswith(_CLAUDE_LOCAL_COMMAND_PREFIXES):
                 continue
-            for block in content:
-                if (
-                    isinstance(block, dict)
-                    and block.get("type") == "text"
-                    and str(block.get("text", "")).startswith(CLAUDE_INTERRUPT_PREFIX)
-                ):
-                    return True
-        return False
+            return False
+        return None
 
 
 @dataclass
@@ -422,7 +456,11 @@ def build_turn_settled_observer(
         return None
     if source == "grok":
         return _GrokTurnProbe(GrokEventsCursor.beside_transcript(transcript_path), session_id)
-    cursor = CodexRolloutCursor.at_eof(transcript_path)
+    cursor: ClaudeTranscriptCursor | CodexRolloutCursor = (
+        ClaudeTranscriptCursor.at_eof(transcript_path)
+        if source == "claude"
+        else CodexRolloutCursor.at_eof(transcript_path)
+    )
 
     def turn_settled() -> bool | None:
         try:

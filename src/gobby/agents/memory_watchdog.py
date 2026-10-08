@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -85,6 +86,9 @@ class MemoryWatchdogHandler:
         tmux_config: TmuxConfig,
         run_db: Callable[..., Awaitable[Any]] | None = None,
         process_factory: Callable[[int], Any] = psutil.Process,
+        # The {pid: ppid} map Process.children() builds; psutil exports no
+        # public equivalent of the same cost (6.1.1).
+        ppid_map_fn: Callable[[], dict[int, int]] = psutil._ppid_map,
         virtual_memory_fn: Callable[[], Any] = psutil.virtual_memory,
         process_iter_fn: Callable[..., Any] = psutil.process_iter,
         monotonic: Callable[[], float] = time.monotonic,
@@ -97,6 +101,7 @@ class MemoryWatchdogHandler:
         self._config = tmux_config
         self._run_db_callback = run_db
         self._process_factory = process_factory
+        self._ppid_map = ppid_map_fn
         self._virtual_memory = virtual_memory_fn
         self._process_iter = process_iter_fn
         self._monotonic = monotonic
@@ -119,14 +124,62 @@ class MemoryWatchdogHandler:
             return 0
         return total // 2
 
-    def _measure_tree(self, root_pid: int, start_time: float) -> tuple[int, list[_ProcessSample]]:
-        try:
-            root = self._process_factory(root_pid)
-            if abs(float(root.create_time()) - start_time) > 1.0:
-                return 0, []
-            candidates = [root, *root.children(recursive=True)]
-        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-            return 0, []
+    def _measure_trees(
+        self, roots: list[tuple[int, float]]
+    ) -> list[tuple[int, list[_ProcessSample]]]:
+        # One scan of every process on the machine serves every run this tick;
+        # Process.children(recursive=True) repeated it per run, ~70 ms of GIL
+        # time for ~1300 pids each (#23359).
+        children_of: dict[int, list[int]] | None = None
+
+        def scan() -> dict[int, list[int]]:
+            tree: dict[int, list[int]] = defaultdict(list)
+            for pid, ppid in self._ppid_map().items():
+                tree[ppid].append(pid)
+            return tree
+
+        measured: list[tuple[int, list[_ProcessSample]]] = []
+        for root_pid, start_time in roots:
+            try:
+                root = self._process_factory(root_pid)
+                created = float(root.create_time())
+                if abs(created - start_time) > 1.0:
+                    measured.append((0, []))
+                    continue
+                if children_of is None:
+                    children_of = scan()
+                candidates = [root, *self._descendants(root_pid, created, children_of)]
+            except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                measured.append((0, []))
+                continue
+            measured.append(self._sample(candidates))
+        return measured
+
+    def _descendants(
+        self, root_pid: int, created: float, children_of: dict[int, list[int]]
+    ) -> list[Any]:
+        # Process.children(recursive=True)'s walk: a child older than the root
+        # holds a reused pid, and a pid reused mid-scan can close a cycle.
+        found: list[Any] = []
+        seen: set[int] = set()
+        stack = [root_pid]
+        while stack:
+            pid = stack.pop()
+            if pid in seen:
+                continue
+            seen.add(pid)
+            for child_pid in children_of.get(pid, ()):
+                try:
+                    child = self._process_factory(child_pid)
+                    if created <= child.create_time():
+                        found.append(child)
+                        stack.append(child_pid)
+                except psutil.NoSuchProcess:
+                    pass
+        return found
+
+    @staticmethod
+    def _sample(candidates: list[Any]) -> tuple[int, list[_ProcessSample]]:
         samples: list[_ProcessSample] = []
         for proc in candidates:
             try:
@@ -233,7 +286,7 @@ class MemoryWatchdogHandler:
             self._agent_run_manager.list_active_for_machine,
             require_machine_id(),
         )
-        samples: list[_TreeSample] = []
+        measurable: list[tuple[AgentRun, int, float]] = []
         for run in runs:
             terminal = (
                 None
@@ -253,9 +306,14 @@ class MemoryWatchdogHandler:
             ):
                 self._breach_counts.pop(run.id, None)
                 continue
-            total_rss, processes = await asyncio.to_thread(
-                self._measure_tree, root_pid, float(start_time)
-            )
+            measurable.append((run, root_pid, float(start_time)))
+        if not measurable:
+            return []
+        measured = await asyncio.to_thread(
+            self._measure_trees, [(root_pid, start_time) for _, root_pid, start_time in measurable]
+        )
+        samples: list[_TreeSample] = []
+        for (run, _, _), (total_rss, processes) in zip(measurable, measured, strict=True):
             if not processes:
                 self._breach_counts.pop(run.id, None)
                 continue

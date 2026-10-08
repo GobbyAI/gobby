@@ -23,6 +23,36 @@ from tests.fixtures.agent_definitions import make_agent_definition, make_agent_w
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize(
+    ("execution_mode", "idle_ttl_seconds", "valid"),
+    [
+        ("interactive", 900, True),
+        ("interactive", 0, False),
+        ("interactive", -1, False),
+        ("one_shot", 900, False),
+    ],
+)
+def test_idle_ttl_requires_interactive_execution_mode(
+    execution_mode: str, idle_ttl_seconds: int, valid: bool
+) -> None:
+    if valid:
+        body = make_agent_definition(
+            name="idle-seat",
+            prompts={"agent": "Research the task."},
+            execution_mode=execution_mode,
+            idle_ttl_seconds=idle_ttl_seconds,
+        )
+        assert body.model_dump()["idle_ttl_seconds"] == idle_ttl_seconds
+    else:
+        with pytest.raises(ValidationError):
+            make_agent_definition(
+                name="idle-seat",
+                prompts={"agent": "Research the task."},
+                execution_mode=execution_mode,
+                idle_ttl_seconds=idle_ttl_seconds,
+            )
+
+
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
     database = temp_db
@@ -107,7 +137,8 @@ class TestAgentDefinitionBodyModel:
         from gobby.workflows.definitions import AgentDefinitionBody, AgentStepWorkflowBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 26, f"Expected 26 fields, got {len(fields)}: {list(fields.keys())}"
+        assert len(fields) == 27, f"Expected 27 fields, got {len(fields)}: {list(fields.keys())}"
+        assert "idle_ttl_seconds" in fields
         assert "checkout_mode" in fields
         assert "isolation" not in fields
         assert "network" in fields

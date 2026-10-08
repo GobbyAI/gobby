@@ -24,6 +24,7 @@ REDIRECT_RULES = frozenset(
         "block-native-task-tracker-unclaimed",
         "block-needs-review-interactive",
         "block-reopen-task",
+        "block-update-task",
         "enforce-tdd-block",
         "guard-plan-memory-writes",
         "no-bash-sleep",

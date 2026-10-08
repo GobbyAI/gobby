@@ -2099,8 +2099,8 @@ class TestHookManagerSessionLookup:
 
         with patch.object(
             manager._session_task_manager,
-            "get_session_tasks",
-            return_value=[{"action": "worked_on", "task": mock_task}],
+            "get_worked_on_task",
+            return_value=mock_task,
         ):
             response = manager.handle(tool_event)
 
@@ -2136,7 +2136,7 @@ class TestHookManagerSessionLookup:
 
         with patch.object(
             manager._session_task_manager,
-            "get_session_tasks",
+            "get_worked_on_task",
             side_effect=Exception("Database error"),
         ):
             response = manager.handle(tool_event)

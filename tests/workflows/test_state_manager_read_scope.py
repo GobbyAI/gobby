@@ -7,15 +7,20 @@ from typing import Any
 
 import pytest
 
+from gobby.sessions.compact_continuation_store import pending_compact_attempt
+from gobby.storage.hub.postgres_pool import _JsonContainerTextLoader
 from gobby.storage.hub.read_scope import hub_read_scope
 from gobby.storage.sessions import SessionManager
-from gobby.storage.sessions._contested_expiry import read_session_variables
+from gobby.storage.sessions._contested_expiry import (
+    read_session_variables,
+    read_session_variables_row,
+)
 from gobby.utils.machine_id import get_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
-VARIABLES_SELECT = "SELECT variables FROM session_variables"
+VARIABLES_SELECT = "SELECT sv.session_id IS NOT NULL AS stored"
 PROJECT_ID_SELECT = "SELECT project_id FROM sessions"
 
 
@@ -60,8 +65,9 @@ def test_scope_reads_variables_once(
         second = variables.get_variables(session_id)
         stored = read_session_variables(variables.db, session_id)
 
+    # One statement serves the blob and the project for defaults (#23359).
     assert [sql.startswith(VARIABLES_SELECT) for sql in reads].count(True) == 1
-    assert [sql.startswith(PROJECT_ID_SELECT) for sql in reads].count(True) == 1
+    assert [sql.startswith(PROJECT_ID_SELECT) for sql in reads].count(True) == 0
     assert first["probe"] == second["probe"] == 1
     assert stored is not None and stored["probe"] == 1
 
@@ -89,3 +95,50 @@ def test_scoped_blob_copies_are_independent(
         again = variables.get_variables(session_id)
 
     assert again["probe"]["nested"] == 1
+
+
+def test_shared_row_carries_project_without_stored_variables(
+    variables: SessionVariableManager, session_id: str, sample_project: dict[str, Any]
+) -> None:
+    with hub_read_scope():
+        row = read_session_variables_row(variables.db, session_id)
+        stored = read_session_variables(variables.db, session_id)
+
+    assert row["stored"] is False
+    assert str(row["project_id"]) == sample_project["id"]
+    assert stored is None
+
+
+@pytest.fixture
+def container_loads(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    loads: list[object] = []
+    original = _JsonContainerTextLoader.load
+
+    def counting_load(self: _JsonContainerTextLoader, data: Any) -> Any:
+        loads.append(data)
+        return original(self, data)
+
+    monkeypatch.setattr(_JsonContainerTextLoader, "load", counting_load)
+    return loads
+
+
+def test_variable_reads_hand_the_server_text_to_their_decoders(
+    variables: SessionVariableManager,
+    session_id: str,
+    container_loads: list[object],
+) -> None:
+    """Hot variable reads decode the blob once, not decode, re-dump, then decode."""
+    variables.merge_variables(session_id, {"probe": {"b": 1, "a": [1, "é"]}})
+    container_loads.clear()
+
+    with hub_read_scope():
+        assert variables.get_variables(session_id)["probe"] == {"b": 1, "a": [1, "é"]}
+        assert read_session_variables(variables.db, session_id) == {
+            "probe": {"b": 1, "a": [1, "é"]}
+        }
+    variables.set_variable(session_id, "next", True)
+    assert variables.merge_existing_variables(session_id, {"later": 2}) is True
+    assert pending_compact_attempt(variables.db, session_id) is None
+
+    assert container_loads == []
+    assert variables.get_variables(session_id)["later"] == 2

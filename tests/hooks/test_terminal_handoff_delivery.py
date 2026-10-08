@@ -809,7 +809,7 @@ async def test_missing_seat_settles_without_counting_toward_abandonment(
     assert failure["delivery_abandoned"] is False
     assert failure["delivery_pending"] is False
     assert failure["error_code"] == "no_terminal_target"
-    assert "Do not call set_handoff again" in failure["retry_guidance"]
+    assert "retries gobby-sessions:set_handoff" in failure["retry_guidance"]
     assert f"failed_attempt_id={ATTEMPT_ID!r}" in failure["recovery_guidance"]
     variable_manager.merge_variables.assert_not_called()
     assert _warnings(caplog) == [

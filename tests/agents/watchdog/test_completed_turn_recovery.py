@@ -1,8 +1,9 @@
 """Standing spawned seats may wait at the prompt without ending their run."""
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -66,6 +67,103 @@ async def test_interactive_spawned_seat_idle_is_not_reprompted_or_completed(
     assert stored is not None
     assert stored.status == "running"
     assert stored.completed_at is None
+    assert "idle_ttl_seconds" not in (stored.resume_metadata_json or {})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ttl", [900, 1800])
+@pytest.mark.parametrize("has_transcript", [True, False])
+async def test_interactive_seat_idle_past_ttl_is_reprompted_then_ended(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+    ttl: int,
+    has_transcript: bool,
+) -> None:
+    transcript_path = tmp_path / "idle-ttl-seat.jsonl" if has_transcript else None
+    if transcript_path is not None:
+        _write_codex_lifecycle_transcript(transcript_path, age_seconds=1200)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd3509",
+        transcript_path=transcript_path,
+        session_age_seconds=1200,
+        max_reprompt_attempts=3,
+        made_gobby_mcp_call=True,
+    )
+    agent_run_manager.update_resume_metadata(
+        run.id, {"execution_mode": "interactive", "idle_ttl_seconds": ttl}
+    )
+
+    with _pane_text(monitor, "❯\n"):
+        for attempt in range(4):
+            if transcript_path is not None:
+                _write_codex_lifecycle_transcript(transcript_path, age_seconds=1200 + attempt)
+            state = monitor._idle_detector.get_state(run.id)
+            state.first_idle_at = 0
+            await monitor.check_idle_agents()
+
+    reprompts = [text for kind, text in _runtime_of(monitor).write_log if kind == "text"]
+    stored = agent_run_manager.get(run.id)
+    assert stored is not None
+    if ttl < 1200:
+        assert len(reprompts) == 3
+        assert all("end_agent_run" in text for text in reprompts)
+        assert all("idle" in text.lower() for text in reprompts)
+        assert stored.status != "running"
+    else:
+        assert reprompts == []
+        assert stored.status == "running"
+        assert stored.completed_at is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("session_age", "hook_age", "ttl"),
+    [(1200, 100, 900), (100, 1200, 900), (5, None, 1)],
+)
+async def test_interactive_ttl_preserves_current_session_liveness(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    session_age: int,
+    hook_age: int | None,
+    ttl: int,
+) -> None:
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd3510",
+        transcript_path=None,
+        session_age_seconds=session_age,
+        max_reprompt_attempts=3,
+        made_gobby_mcp_call=True,
+    )
+    agent_run_manager.update_resume_metadata(
+        run.id, {"execution_mode": "interactive", "idle_ttl_seconds": ttl}
+    )
+    hook_activity = (
+        datetime.now(UTC) - timedelta(seconds=hook_age) if hook_age is not None else None
+    )
+    with (
+        patch("gobby.agents.idle_check_handler.last_session_activity", return_value=hook_activity),
+        _pane_text(monitor, "❯\n"),
+    ):
+        monitor._idle_detector.get_state(run.id).first_idle_at = 0
+        assert await monitor.check_idle_agents() == 0
+
+    assert _runtime_of(monitor).write_log == []
+    stored = agent_run_manager.get(run.id)
+    assert stored is not None
+    assert stored.status == "running"
 
 
 @pytest.mark.asyncio

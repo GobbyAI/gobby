@@ -152,6 +152,7 @@ class CommunicationsManager:
 
     async def start(self) -> None:
         """Load enabled channels from DB, initialize adapters, configure rate limiter."""
+        self._outbound.start()
         try:
             await self._lifecycle.start()
             self._restore_telegram_targets()
@@ -183,7 +184,12 @@ class CommunicationsManager:
 
     async def stop(self) -> None:
         """Shutdown all adapters and clear state."""
-        await self.responder.stop()
+        try:
+            await self.responder.stop()
+        except asyncio.CancelledError:
+            await self._outbound.stop(drain_seconds=0)
+            raise
+        await self._outbound.stop()
         await self._lifecycle.stop()
         if self._vision_extract_service is not None:
             await self._vision_extract_service.stop()

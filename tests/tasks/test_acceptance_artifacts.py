@@ -953,7 +953,8 @@ def test_structured_evidence_rejects_postdated_sha_and_missing_workflow(
     assert len(findings) == 2
 
 
-def test_structured_evidence_accepts_locally_provable_run(tmp_path: Path) -> None:
+@pytest.mark.parametrize("repo_subdir", [".", "docs"])
+def test_structured_evidence_accepts_locally_provable_run(tmp_path: Path, repo_subdir: str) -> None:
     repo = _init_repo(tmp_path)
     workflow = Path(repo, ".github", "workflows", "weekly.yml")
     workflow.parent.mkdir(parents=True)
@@ -974,7 +975,7 @@ def test_structured_evidence_accepts_locally_provable_run(tmp_path: Path) -> Non
 
     findings = validate_structured_file_evidence(
         evidence_files=("docs/evidence.md",),
-        repo_path=str(repo),
+        repo_path=str(Path(repo, repo_subdir)),
         commit_shas=[evidence_sha],
     )
 

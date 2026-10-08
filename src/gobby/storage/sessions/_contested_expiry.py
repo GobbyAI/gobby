@@ -21,6 +21,8 @@ from gobby.storage.hub.protocol import HubDatabase, SessionVariableMutation
 from gobby.storage.hub.read_scope import SESSION_VARIABLES_TABLES, scoped_read
 from gobby.utils.datetime import utc_now
 
+_VARIABLES_ROW_TABLES = SESSION_VARIABLES_TABLES | {"sessions"}
+
 
 def record_contested_terminal_expiry(
     db: HubDatabase,
@@ -77,18 +79,33 @@ def clear_contested_terminal_expiry(db: HubDatabase, session_id: str) -> None:
         )
 
 
-def read_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any] | None:
-    """Return a session's stored variables, or None when it has no row."""
+def read_session_variables_row(db: HubDatabase, session_id: str) -> Mapping[str, Any]:
+    """Return ``stored``, ``variables`` and the session's ``project_id`` in one row.
+
+    Every hook-path reader of a session's variables shares this statement, so
+    one event pays for one read. The state manager also needs the project to
+    layer definition defaults (#23359).
+    """
     row = scoped_read(
         db,
         ("session_variables", session_id),
-        SESSION_VARIABLES_TABLES,
+        _VARIABLES_ROW_TABLES,
         lambda: db.fetchone(
-            "SELECT variables FROM session_variables WHERE session_id = %s",
-            (session_id,),
+            "SELECT sv.session_id IS NOT NULL AS stored, sv.variables::text AS variables,"
+            " s.project_id"
+            " FROM (SELECT 1) AS one"
+            " LEFT JOIN session_variables sv ON sv.session_id = %s"
+            " LEFT JOIN sessions s ON s.id = %s",
+            (session_id, session_id),
         ),
     )
-    if row is None:
+    return row or {"stored": False, "variables": None, "project_id": None}
+
+
+def read_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any] | None:
+    """Return a session's stored variables, or None when it has no row."""
+    row = read_session_variables_row(db, session_id)
+    if not row["stored"]:
         return None
     return _stored_variables(row)
 
@@ -117,5 +134,6 @@ __all__ = [
     "session_has_active_native_subagent",
     "clear_contested_terminal_expiry",
     "read_session_variables",
+    "read_session_variables_row",
     "record_contested_terminal_expiry",
 ]

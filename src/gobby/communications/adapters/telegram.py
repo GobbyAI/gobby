@@ -181,13 +181,17 @@ class TelegramAdapter(BaseChannelAdapter):
         except httpx.HTTPStatusError as exc:
             raise self._redacted_status_error(exc) from None
 
-    async def _post_json(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _post_json(
+        self, method: str, payload: dict[str, Any], *, message_id: str | None = None
+    ) -> dict[str, Any]:
         if not self._client or not self._api_base:
             raise RuntimeError("Adapter not initialized")
         url = f"{self._api_base}/{method}"
         try:
             response = await self._retry_request(
-                functools.partial(self._client.post, url, json=payload)
+                functools.partial(self._client.post, url, json=payload),
+                retry_read_errors=message_id is not None,
+                message_id=message_id,
             )
         except httpx.HTTPStatusError as exc:
             raise self._redacted_status_error(exc) from None
@@ -361,12 +365,12 @@ class TelegramAdapter(BaseChannelAdapter):
                         message.platform_thread_id
                     )
 
-                data = await self._post_json("sendMessage", payload)
+                data = await self._post_json("sendMessage", payload, message_id=message.id)
                 if not data.get("ok"):
-                    if reply_markup is not None:
-                        self._callback_registry.discard_keyboard(reply_markup)
-                    return None
+                    description = str(data.get("description", "unknown Telegram API error"))
+                    raise RuntimeError(f"Telegram sendMessage failed: {description}")
                 message_ids.append(str(data["result"]["message_id"]))
+                message.metadata_json["platform_message_ids"] = message_ids.copy()
         except BaseException:
             if reply_markup is not None:
                 self._callback_registry.discard_keyboard(reply_markup)
@@ -374,7 +378,6 @@ class TelegramAdapter(BaseChannelAdapter):
 
         if not message_ids:
             return None
-        message.metadata_json["platform_message_ids"] = message_ids
         root_message_id = message_ids[0]
         message_key = (str(chat_id), root_message_id)
         if reply_markup is not None:
@@ -673,7 +676,9 @@ class TelegramAdapter(BaseChannelAdapter):
         url = f"{self._api_base}/{method}"
         try:
             response = await self._retry_request(
-                functools.partial(client.post, url, data=data, files=files)
+                functools.partial(client.post, url, data=data, files=files),
+                retry_read_errors=True,
+                message_id=message.id,
             )
         except httpx.HTTPStatusError as exc:
             raise self._redacted_status_error(exc) from None
@@ -693,7 +698,7 @@ class TelegramAdapter(BaseChannelAdapter):
                     message.platform_thread_id
                 )
             try:
-                follow = await self._post_json("sendMessage", payload)
+                follow = await self._post_json("sendMessage", payload, message_id=message.id)
             except Exception as exc:
                 raise RuntimeError(
                     f"Telegram caption continuation failed after media message {media_id}"

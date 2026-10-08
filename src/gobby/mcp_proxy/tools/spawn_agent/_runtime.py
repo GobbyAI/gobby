@@ -36,6 +36,7 @@ async def build_spawn_context(
     agent_display_name: str | None,
     prewarm_pre_commit_store: bool,
     execution_mode: Literal["one_shot", "interactive"] = "one_shot",
+    idle_ttl_seconds: int | None = None,
     placement: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build workflow variables and the matching durable launch snapshot."""
@@ -132,6 +133,8 @@ async def build_spawn_context(
     )
     resume_metadata.update(context_updates)
     resume_metadata["execution_mode"] = execution_mode
+    if idle_ttl_seconds is not None:
+        resume_metadata["idle_ttl_seconds"] = idle_ttl_seconds
     return effective_initial_variables, resume_metadata
 
 

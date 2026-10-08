@@ -6,6 +6,8 @@ version: "1.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
+execution_mode: interactive
+idle_ttl_seconds: 900
 checkout_mode: inherit
 timeout: 0
 # A sandboxed researcher reaches the web through the trusted egress allowlist.

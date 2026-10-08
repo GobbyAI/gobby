@@ -177,21 +177,17 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             elif quote == char or (quote == "$" and char == "'"):
                 quote = ""
         elif not data and not quote:
-            if char == "#" and (index == 0 or command[index - 1] in " \t\n;|&()"):
+            if char == "#" and (index == 0 or command[index - 1] in " \t\n;|&("):
                 end = command.find("\n", index)
                 index = len(command) if end < 0 else end
                 continue
             if char in "()":
                 char = ";"
             if char == "\n":
-                # Only the current logical line is rescanned. A trailing pipe
-                # delays heredoc consumption until its command is complete.
+                # Heredoc bodies begin at the newline even after a trailing
+                # pipe or logical operator; the continuation follows the body.
                 line = scan_shell_command("".join(output[line_start:]))
                 tokens = line.tokens
-                if tokens and tokens[-1].value in {"|", "&&", "||"}:
-                    output.append(" ")
-                    index += 1
-                    continue
                 output.append(char)
                 body_start = index + 1
                 index = _skip_heredocs(command, tokens, body_start)
@@ -432,6 +428,7 @@ def _unwrap(words: list[str]) -> list[str]:
                 "time": {"-f", "-o", "--format", "--output"},
                 "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
                 "xargs": {
+                    "-a",
                     "-I",
                     "-J",
                     "-n",
@@ -440,8 +437,13 @@ def _unwrap(words: list[str]) -> list[str]:
                     "-s",
                     "-E",
                     "-d",
+                    "-R",
+                    "-S",
+                    "--arg-file",
                     "--max-args",
+                    "--max-chars",
                     "--max-procs",
+                    "--process-slot-var",
                     "--delimiter",
                 },
             }.get(name, set())
@@ -539,6 +541,8 @@ def _shell_stdin(words: list[str]) -> bool:
 def _piped_to_shell(tokens: list[ShellToken], end: int, *, python: bool = False) -> bool:
     while end < len(tokens) and tokens[end].value == "|":
         start = end + 1
+        while start < len(tokens) and not tokens[start].quoted and tokens[start].value == "\n":
+            start += 1
         end = start
         while end < len(tokens) and not _separator(tokens[end]):
             end += 1
@@ -548,39 +552,42 @@ def _piped_to_shell(tokens: list[ShellToken], end: int, *, python: bool = False)
     return False
 
 
-def _python_program(words: list[str]) -> tuple[str | None, bool]:
-    """The Python code operand or whether stdin is code, stopping at a file operand."""
+def _python_program(words: list[str]) -> tuple[str | None, bool, list[str]]:
+    """Return Python code, stdin mode and module argv, stopping at a file operand."""
     parts = _inline_interpreter_parts(words)
     if not parts and words[:2] == ["uv", "run"]:
         parts = next((words[index:] for index, word in enumerate(words) if _python_name(word)), [])
     if not parts or not _python_name(parts[0]):
-        return None, False
+        return None, False, []
     args = parts[1:]
     while args:
         option = args[0]
         if option == "-":
-            return None, True
+            return None, True, []
         if option == "--":
-            return None, len(args) == 1 or args[1] == "-"
+            return None, len(args) == 1 or args[1] == "-", []
         if option == "--check-hash-based-pycs":
             args = args[2:]
             continue
         if option.startswith("--") or not option.startswith("-"):
-            return None, False
+            return None, False, []
         consumed = 1
         for index, flag in enumerate(option[1:], 2):
-            if flag in "hV?m":
-                return None, False
+            if flag in "hV?":
+                return None, False, []
+            if flag == "m":
+                module_args = [option[index:], *args[1:]] if option[index:] else args[1:]
+                return None, False, module_args
             if flag == "c":
                 code = option[index:] or (args[1] if len(args) > 1 else None)
-                return code, False
+                return code, False, []
             if flag in "WX":
                 consumed = 1 if option[index:] else 2
                 break
             if flag not in "bBdEiIOPqRsSuvx":
-                return None, False
+                return None, False, []
         args = args[consumed:]
-    return None, True
+    return None, True, []
 
 
 def _python_name(word: str) -> bool:
@@ -702,7 +709,7 @@ def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
                 return True
             # Budget executable words; code operands and heredoc payloads belong
             # to their consumers, whose process operands are checked recursively.
-            python_script, python_stdin = _python_program(words)
+            python_script, python_stdin, _ = _python_program(words)
             inspected_length += sum(len(word) for word in words) - len(python_script or "")
             if python_script is not None and _python_launch(python_script, depth + 1, dialect):
                 return True

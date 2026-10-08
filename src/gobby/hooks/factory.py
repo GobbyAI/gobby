@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.autonomous.progress_tracker import ProgressTracker
@@ -276,7 +277,9 @@ class HookManagerFactory:
             skill_manager=workflow_components.skill_manager,
             call_tool=call_tool_fn,
             workflow_config=config.workflow if config else None,
-            workflow_config_resolver=lambda: cls._resolve_config(config, config_runtime).workflow,
+            workflow_config_resolver=partial(
+                cls._resolve_config_section, config, config_runtime, "workflow"
+            ),
             get_machine_id=get_machine_id,
             resolve_project_id=resolve_project_id,
             code_index_trigger=code_index_trigger,
@@ -327,6 +330,19 @@ class HookManagerFactory:
             return config
         bootstrap = load_bootstrap(resolve_database_url=True)
         return DaemonConfig(**bootstrap.to_config_dict())
+
+    @staticmethod
+    def _resolve_config_section(
+        config: Any | None, config_runtime: ConfigRuntimeReader | None, name: str
+    ) -> Any:
+        """Resolve one configuration section without copying the whole config (#23359)."""
+        if config_runtime is not None:
+            try:
+                return config_runtime.snapshot.active_section(name)
+            except Exception:
+                if config is not None:
+                    return getattr(config, name)
+        return getattr(HookManagerFactory._resolve_config(config, None), name)
 
     @staticmethod
     def _build_sync_call_tool(
@@ -676,6 +692,9 @@ class HookManagerFactory:
                 session_task_manager=storage.session_task,
                 config=config,
                 config_resolver=lambda: HookManagerFactory._resolve_config(config, config_runtime),
+                config_section_resolver=partial(
+                    HookManagerFactory._resolve_config_section, config, config_runtime
+                ),
                 llm_service_resolver=llm_service_resolver,
                 evaluation_runtime=evaluation_runtime,
             )

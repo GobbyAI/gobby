@@ -29,7 +29,6 @@ from gobby.agents.sandbox_policy import (
     SRT_VIOLATIONS_RELATIVE_PATH,
     assert_sensitive_path_contract,
     canonical_path,
-    managed_grant_lock_path,
     prepare_sandbox_run_paths,
     previous_run_write_paths,
     sandbox_cache_path,
@@ -740,10 +739,6 @@ async def prepare_sandbox_launch(
         for path in config.extra_write_paths
         if canonical_path(path, base=Path(workspace_path)) not in superseded_writes
     ]
-    # gcode refreshes a managed grant under `<grant>.lock`, which sits in the run
-    # root beside grant.json while only the root's four siblings are writable.
-    # Without this the refresh fails with EPERM instead of waiting for the lock.
-    grant_lock = managed_grant_lock_path(env)
     effective_config = config.model_copy(
         update={
             "extra_write_paths": [
@@ -752,7 +747,6 @@ async def prepare_sandbox_launch(
                 *(str(path) for path in run_paths.writable),
                 str(run_paths.cargo_home),
                 str(run_paths.cargo_target),
-                *([str(grant_lock)] if grant_lock is not None else []),
             ],
             "extra_deny_write_paths": [*config.extra_deny_write_paths, *home_denies],
         }

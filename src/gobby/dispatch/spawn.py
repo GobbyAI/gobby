@@ -358,6 +358,7 @@ async def spawn_agent(
             prompt=prompt,
             runner=runner,
             agent_body=agent_body,
+            execution_mode="one_shot",
             agent_lookup_name=action.agent_slug,
             task_id=action.task_id,
             task_manager=task_manager,

@@ -298,6 +298,7 @@ class IdleCheckHandler:
 
         session_stale = False
         session_recent = False
+        last_activity: datetime | None = None
         session_id = run.child_session_id
         if session_id:
             try:
@@ -326,6 +327,7 @@ class IdleCheckHandler:
                 try:
                     last_update = parse_stored_datetime(session.updated_at)
                     if last_update is not None:
+                        last_activity = last_update
                         elapsed = (datetime.now(UTC) - last_update).total_seconds()
                         if elapsed < idle_timeout_seconds:
                             session_recent = True
@@ -337,9 +339,19 @@ class IdleCheckHandler:
         if session_id:
             activity_at = last_session_activity(session_id)
             if activity_at is not None:
+                if last_activity is None or activity_at > last_activity:
+                    last_activity = activity_at
                 elapsed = (datetime.now(UTC) - activity_at).total_seconds()
                 if elapsed < idle_timeout_seconds:
                     session_recent = True
+
+        idle_ttl = (run.resume_metadata_json or {}).get("idle_ttl_seconds")
+        idle_ttl_expired = (
+            isinstance(idle_ttl, int)
+            and idle_ttl > 0
+            and last_activity is not None
+            and (datetime.now(UTC) - last_activity).total_seconds() >= idle_ttl
+        )
 
         session_source = session.source if session is not None else None
         provider_id = session_source or run.provider
@@ -440,6 +452,7 @@ class IdleCheckHandler:
             # (the reprompt path clears the draft with Escape before typing).
             if (
                 not session_recent
+                and (not run.is_interactive or idle_ttl_expired)
                 and transcript_path is not None
                 and transcript_snapshot is not None
                 and completed_turn_recovery_due(
@@ -478,7 +491,7 @@ class IdleCheckHandler:
                 snapshot=transcript_snapshot,
             )
 
-        if run.is_interactive:
+        if run.is_interactive and not idle_ttl_expired:
             idle_detector.reset_idle(run.id)
             self._recovery.discard(run.id)
             return 0

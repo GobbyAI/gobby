@@ -149,13 +149,18 @@ def acceptance_workdir() -> Iterator[Path]:
 
 @pytest.fixture
 async def native_host(
-    gterm_host_binary: Path, acceptance_workdir: Path
+    gterm_host_binary: Path, acceptance_workdir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> AsyncIterator[AcceptanceHost]:
     """Start one freshly built ``gterm host`` for a single test."""
     socket_dir = short_dir("h")
     (socket_dir / "bootstrap.yaml").write_text(
         "api_key: acceptance-frame-token\n", encoding="utf-8"
     )
+    (socket_dir / "bootstrap.yaml").chmod(0o600)
+    # Frames authenticate against GOBBY_HOME, independently of --socket-dir.
+    # Bind both host and Python client to this fixture's temporary credential.
+    monkeypatch.setenv("GOBBY_HOME", str(socket_dir))
+    monkeypatch.setattr("gobby.utils.local_token._daemon_bootstrap", socket_dir / "bootstrap.yaml")
     manager = TerminalHostManager(
         config=TerminalHostConfig(
             enabled=True,

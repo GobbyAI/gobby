@@ -90,7 +90,6 @@ hook protocol and installed binary contract:
 - `tests/integration/sandbox/test_runner_infrastructure.py`
 - `tests/integration/sandbox/test_diagnose_schema.py`
 - `tests/integration/sandbox/run_{claude,codex,qwen}_sandbox.py`
-- `tests/integration/sandbox/test_public_ghook_install.py`
 
 These are operator-only host checks. Use isolated daemon state and the test hub;
 they are not routine agent documentation-validation commands.
@@ -111,23 +110,6 @@ DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/integration/sandbox/run_codex_sandbox.py --collect-only
 uv run mypy tests/integration/sandbox
 ```
-
-## Public `ghook` Artifact Validation
-
-The public-artifact validator installs a requested `gobby-hooks` release into a
-temporary home and runs the same diagnose contract. The caller supplies both
-version and installation source. For example:
-
-```bash
-GOBBY_INSTALL_GHOOK_VERSION=0.1.1 \
-GOBBY_INSTALL_GHOOK_METHOD=github \
-DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest \
-  tests/integration/sandbox/test_public_ghook_install.py -v --run-sandbox
-```
-
-Supported methods are `github`, `cargo-binstall`, and `cargo-install`. The test
-checks the isolated `~/.gobby/bin/ghook`, installation stamps, and live diagnose
-matrix for Claude, Codex, and Qwen.
 
 ## Compatibility Gate
 

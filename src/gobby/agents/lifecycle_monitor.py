@@ -189,6 +189,7 @@ class AgentLifecycleMonitor:
             run_db=run_db,
             checkpoint_agent_work=lambda run: self._checkpoint_agent_work(run),
             terminal_services=self._terminal_services,
+            get_session_coordinator=lambda: self._session_coordinator,
         )
         self._memory_watchdog = MemoryWatchdogHandler(
             agent_run_manager=agent_run_manager,

@@ -11,6 +11,7 @@ from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 
+from gobby.hooks._path_scope import _is_temp_agent_scratchpad_path
 from gobby.tasks.command_equivalence import canonical_command, target_covers
 from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationRun,
@@ -262,7 +263,8 @@ def surviving_path_failure(
     """Narrow a pytest run that collected nothing because named paths are gone.
 
     Pytest stops with ``file or directory not found`` before collecting when a
-    path argument does not exist. When the output shows no collected test, that
+    path argument does not exist. When the output shows no collected test (its
+    summary, or usage-error exit 4 where compaction dropped the summary), that
     is the run's only error, and each reported path is one of its targets and
     is absent from both its source tree's working copy and HEAD, the red says
     nothing about the surviving targets, so it narrows to them. HEAD absence
@@ -273,7 +275,7 @@ def surviving_path_failure(
     if (
         not output
         or failure.output_truncated
-        or not _NO_TESTS_RE.search(output)
+        or not (failure.exit_code == 4 or _NO_TESTS_RE.search(output))
         or _COLLECTED_RE.search(output)
     ):
         return None
@@ -303,6 +305,33 @@ def surviving_path_failure(
         failure,
         command=_drop_targets(failure.command, missing),
         validation_segments=segments if failure.validation_segments else (),
+    )
+
+
+def ran_in_scratchpad(run: TranscriptValidationRun, project_path: str | None) -> bool:
+    """Whether a run exercised an agent scratchpad tree outside the session's checkout.
+
+    The tree is the run's path targets, or its directory when it names none,
+    plus every pythonpath entry. Such a red, as in a reviewer's base extract,
+    is a deliberate probe, so it is no terminal failure of the session's own
+    validation. Scratchpad tests run with the checkout's source on an explicit
+    PYTHONPATH still count, and a checkout that itself lies in a scratchpad
+    still owns its runs.
+    """
+    directory, pythonpath = _source_tree(run.command, project_path)
+    if directory is None:
+        return False
+    paths = [
+        os.path.join(directory, target.split("::", 1)[0])
+        for target in run_targets(run)
+        if not target.startswith("-")
+    ] or [directory]
+    paths.extend(pythonpath)
+    checkout = Path(project_path).resolve() if project_path else None
+    return all(
+        _is_temp_agent_scratchpad_path(path)
+        and (checkout is None or not path.is_relative_to(checkout))
+        for path in (Path(raw).resolve() for raw in paths)
     )
 
 
@@ -340,19 +369,23 @@ def _drop_targets(command: str, targets: set[str]) -> str:
 
 
 @lru_cache(maxsize=4096)
-def _source_tree(command: str, base: str | None) -> tuple[str | None, str | None]:
-    """Return the ``(directory, pythonpath)`` a validation command runs against.
+def _source_tree(command: str, base: str | None) -> tuple[str | None, tuple[str, ...]]:
+    """Return the ``(directory, pythonpath entries)`` a validation command runs against.
 
     The directory starts at ``base`` and follows ``cd`` and uv's ``--directory``
-    or ``--project``, before or after ``run``. The pythonpath comes from a
-    ``PYTHONPATH=`` assignment or pytest's ``-o pythonpath=``. Relative values
-    resolve against the directory in effect when they appear.
+    or ``--project``, before or after ``run``. ``--directory`` sets uv's working
+    directory, so it outranks ``--project`` in either order, as in
+    ``run_location``. The pythonpath entries come from a ``PYTHONPATH=``
+    assignment, split on ``os.pathsep`` with an empty entry meaning the
+    directory, or pytest's whitespace-separated ``-o pythonpath=``. Relative
+    values resolve against the directory in effect when they appear.
     """
     try:
         tokens = shlex.split(command)
     except ValueError:
-        return base, None
-    directory, pythonpath = base, None
+        return base, ()
+    directory: str | None = base
+    pythonpath: tuple[str, ...] = ()
     index = 0
     while index < len(tokens):
         token = tokens[index]
@@ -361,9 +394,12 @@ def _source_tree(command: str, base: str | None) -> tuple[str | None, str | None
         if token == "cd" and following is not None and _starts_segment(tokens, index):
             directory = _resolve(directory, following)
         elif option in _UV_DIRECTORY_OPTIONS and (inline or following):
-            directory = _resolve(directory, inline or following or "")
+            if option == "--directory" or not _segment_passes_directory(tokens, index):
+                directory = _resolve(directory, inline or following or "")
         elif option == "PYTHONPATH" and inline:
-            pythonpath = _resolve(directory, inline)
+            pythonpath = tuple(
+                _resolve(directory, entry or ".") for entry in inline.split(os.pathsep)
+            )
         elif token in _INI_OVERRIDE_OPTIONS and following is not None:
             pythonpath = _ini_pythonpath(following, directory) or pythonpath
         elif token.startswith(_INI_OVERRIDE_PREFIXES):
@@ -377,9 +413,22 @@ def _starts_segment(tokens: Sequence[str], index: int) -> bool:
     return index == 0 or tokens[index - 1] in _SHELL_SEPARATORS
 
 
-def _ini_pythonpath(override: str, directory: str | None) -> str | None:
+def _segment_passes_directory(tokens: Sequence[str], index: int) -> bool:
+    """Whether the shell segment holding ``tokens[index]`` passes uv's ``--directory``."""
+    start = index
+    while start and tokens[start - 1] not in _SHELL_SEPARATORS:
+        start -= 1
+    end = index
+    while end < len(tokens) and tokens[end] not in _SHELL_SEPARATORS:
+        end += 1
+    return any(token.partition("=")[0] == "--directory" for token in tokens[start:end])
+
+
+def _ini_pythonpath(override: str, directory: str | None) -> tuple[str, ...]:
     key, _, value = override.partition("=")
-    return _resolve(directory, value) if key.strip() == "pythonpath" and value else None
+    if key.strip() != "pythonpath":
+        return ()
+    return tuple(_resolve(directory, entry) for entry in value.split())
 
 
 def _resolve(directory: str | None, value: str) -> str:

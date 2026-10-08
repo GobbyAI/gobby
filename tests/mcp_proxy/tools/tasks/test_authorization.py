@@ -4,7 +4,7 @@ import asyncio
 import inspect
 from collections.abc import Callable
 from contextlib import ExitStack
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -347,11 +347,6 @@ def _build_append_description_section(manager: MagicMock, stack: ExitStack) -> B
 
 TOOL_SPECS = [
     ToolSpec(
-        name="update_task",
-        build=_build_task_registry_tool("update_task", "update_task"),
-        kwargs={"task_id": TASK_UUID, "title": "Retitled"},
-    ),
-    ToolSpec(
         name="delete_task",
         build=_build_task_registry_tool("delete_task", "delete_task"),
         kwargs={"task_id": TASK_UUID},
@@ -505,3 +500,57 @@ class TestGuardedToolMatrix:
         )
         assert result.get("error_code") is None
         assert mutation.called
+
+
+UPDATE_TASK = ToolSpec(
+    name="update_task",
+    build=_build_task_registry_tool("update_task", "update_task"),
+    kwargs={"task_id": TASK_UUID, "title": "Retitled"},
+)
+
+
+class TestUpdateTaskLeavesAuthorityToRules:
+    """update_task has no claim check; the block-update-task rule decides who may edit."""
+
+    @pytest.mark.parametrize(
+        "context_session", [CALLER_SESSION, OWNER_SESSION, None], ids=["foreign", "owner", "none"]
+    )
+    def test_claimed_task_edit_writes_only_the_edited_field(
+        self, context_session: str | None
+    ) -> None:
+        result, mutation = _invoke(
+            UPDATE_TASK, claimed_by=OWNER_SESSION, context_session=context_session
+        )
+
+        assert result.get("error_code") is None
+        mutation.assert_called_once()
+        assert mutation.call_args.kwargs == {"title": "Retitled"}
+
+
+_DISCOVERED_LINK = ToolSpec(
+    name="link_task_to_session",
+    build=_build_link_task_to_session,
+    kwargs={"task_id": TASK_UUID, "action": "discovered"},
+)
+
+
+class TestDiscoveredLink:
+    """The found-work ladder's exit links an owner-filed task, which its owner claims."""
+
+    def test_foreign_claim_allows_a_discovered_link_of_the_callers_own_session(self) -> None:
+        result, link_task = _invoke(
+            _DISCOVERED_LINK, claimed_by=OWNER_SESSION, context_session=CALLER_SESSION
+        )
+
+        assert result.get("error_code") is None
+        link_task.assert_called_once_with(CALLER_SESSION, TASK_UUID, "discovered")
+
+    def test_discovered_link_of_another_session_still_needs_lineage(self) -> None:
+        spec = replace(
+            _DISCOVERED_LINK, kwargs={**_DISCOVERED_LINK.kwargs, "session_id": OWNER_SESSION}
+        )
+
+        result, link_task = _invoke(spec, claimed_by=OWNER_SESSION, context_session=CALLER_SESSION)
+
+        assert result["error_code"] == "TASK_CLAIM_CONFLICT"
+        link_task.assert_not_called()

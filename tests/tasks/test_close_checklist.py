@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ast
+import os
 import subprocess
+from collections import OrderedDict
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -45,6 +47,12 @@ from gobby.tasks.transcript_evidence_models import (
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
 EvidenceOutcome = Literal["success", "failure", "unknown"]
+
+
+@pytest.fixture(autouse=True)
+def _fresh_import_parses(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Parses are keyed by content, so tests writing the same test file would share them.
+    monkeypatch.setattr(close_test_coverage, "_PARSED_IMPORTS", OrderedDict())
 
 
 @pytest.mark.parametrize(
@@ -669,6 +677,138 @@ def test_related_pytest_must_cover_each_source_and_preserve_test_type_audit(
     assert evaluate((widget_run, audit_run, gadget_run)).status == "passed"
 
 
+_AUDIT_MISSING_MESSAGE = (
+    "The required Python test type audit has no credited run. Run `uv run gobby test-types "
+    "audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new` clean after the "
+    "final task edit."
+)
+_CHANGED_TEST_MESSAGE = (
+    "Changed Python tests have no credited fresh passing pytest target. "
+    "Uncovered paths: `tests/test_gadget.py`."
+)
+_RELATED_SOURCE_MESSAGE = (
+    "Changed Python sources have related tests with no credited fresh passing pytest target. "
+    "Uncovered sources and tests: `src/widget.py`: `tests/test_widget.py`."
+)
+
+
+def _evaluate_widget_source_and_gadget_test(
+    tmp_path: Path, *runs: TranscriptValidationRun
+) -> CloseGateResult:
+    """Evaluate a close that changed ``src/widget.py`` and ``tests/test_gadget.py``."""
+    for path in ("src/widget.py", "tests/test_widget.py", "tests/test_gadget.py"):
+        (tmp_path / path).parent.mkdir(exist_ok=True)
+        (tmp_path / path).write_text("value = 1\n")
+    return evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=runs),
+        has_attributed_edits=True,
+        changed_paths=("src/widget.py", "tests/test_gadget.py"),
+        close_root=str(tmp_path),
+    )
+
+
+def test_one_preview_lists_every_unmet_test_requirement(tmp_path: Path) -> None:
+    unrelated_run = _run(1, command="uv run pytest tests/test_unrelated.py -q")
+
+    gate = _evaluate_widget_source_and_gadget_test(tmp_path, unrelated_run)
+
+    assert gate.status == "failed"
+    assert gate.message == (
+        f"3 validation requirements are unmet: (1) {_AUDIT_MISSING_MESSAGE} "
+        f"(2) {_CHANGED_TEST_MESSAGE} (3) {_RELATED_SOURCE_MESSAGE}"
+    )
+    assert gate.details["unmet_requirements"] == [
+        "test_types_audit",
+        "pytest_changed_tests",
+        "pytest_related_source_tests",
+    ]
+    assert gate.details["test_types_audit_uncovered_paths"] == ["tests/test_gadget.py"]
+    assert gate.details["pytest_uncovered_paths"] == ["tests/test_gadget.py"]
+    assert gate.details["python_source_uncovered_tests"] == {
+        "src/widget.py": ["tests/test_widget.py"]
+    }
+    combined_runs = (
+        _run(2, command="uv run pytest tests/test_gadget.py tests/test_widget.py -q"),
+        _scoped_audit_run(3, "tests/test_gadget.py"),
+    )
+    satisfied = _evaluate_widget_source_and_gadget_test(tmp_path, unrelated_run, *combined_runs)
+    assert satisfied.status == "passed"
+    assert satisfied.details["unmet_requirements"] == []
+
+
+@pytest.mark.parametrize(
+    ("runs", "requirement", "message"),
+    [
+        (
+            (_run(1, command="uv run pytest tests/test_gadget.py tests/test_widget.py -q"),),
+            "test_types_audit",
+            _AUDIT_MISSING_MESSAGE,
+        ),
+        (
+            (
+                _run(1, command="uv run pytest tests/test_widget.py -q"),
+                _scoped_audit_run(2, "tests/test_gadget.py"),
+            ),
+            "pytest_changed_tests",
+            _CHANGED_TEST_MESSAGE,
+        ),
+        (
+            (
+                _run(1, command="uv run pytest tests/test_gadget.py -q"),
+                _scoped_audit_run(2, "tests/test_gadget.py"),
+            ),
+            "pytest_related_source_tests",
+            _RELATED_SOURCE_MESSAGE,
+        ),
+        (
+            (
+                _run(1, command="uv run pytest tests/test_gadget.py tests/test_widget.py -q"),
+                _audit_run(2, outcome="failure"),
+            ),
+            "test_types_audit",
+            "The required Python test type audit last failed at 2026-07-27T12:00:02+00:00. "
+            "Run `uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+            "--fail-on-new` clean after the final task edit. Observed `uv run gobby test-types "
+            "audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new` at "
+            "2026-07-27T12:00:02+00:00: Validation assertions or findings failed (exit 1) "
+            "(assertion-failed). Fix the reported assertions or validation findings. Run `uv run "
+            "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+            "--fail-on-new` directly and clean after the final task edit.",
+        ),
+    ],
+)
+def test_single_unmet_test_requirement_reports_only_its_own_message(
+    tmp_path: Path,
+    runs: tuple[TranscriptValidationRun, ...],
+    requirement: str,
+    message: str,
+) -> None:
+    gate = _evaluate_widget_source_and_gadget_test(tmp_path, *runs)
+
+    assert gate.status == "failed"
+    assert gate.message == message
+    assert gate.details["unmet_requirements"] == [requirement]
+
+
+def test_changed_test_gap_alone_omits_the_test_category_cure(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_gadget.py").write_text("value = 1\n")
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_scoped_audit_run(1, "tests/test_gadget.py"),)
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/test_gadget.py",),
+        close_root=str(tmp_path),
+    )
+
+    assert gate.message == _CHANGED_TEST_MESSAGE
+    assert gate.details["unmet_requirements"] == ["pytest_changed_tests"]
+
+
 def test_source_without_related_tests_preserves_no_edit_skip(tmp_path: Path) -> None:
     gate = evaluate_validation_commands(
         task_category="code",
@@ -696,14 +836,14 @@ def test_rootless_validation_probe_never_scans_tests() -> None:
 def test_related_source_selector_uses_one_test_tree_scan(tmp_path: Path) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests/test_widget.py").write_text("def test_widget(): pass\n")
-    original = Path.rglob
+    original = os.walk
     scanned: list[Path] = []
 
-    def record_scan(path: Path, pattern: str) -> Iterator[Path]:
+    def record_scan(path: Path) -> Iterator[tuple[str, list[str], list[str]]]:
         scanned.append(path)
-        return original(path, pattern)
+        return original(str(path))
 
-    with patch.object(Path, "rglob", record_scan):
+    with patch.object(os, "walk", record_scan):
         selected = related_python_source_tests(
             ("src/widget.py", "src/gadget.py"), base_dir=tmp_path
         )
@@ -800,11 +940,33 @@ def test_related_source_selector_reuses_unchanged_test_parses(tmp_path: Path) ->
     assert parse.call_args_list == []
 
 
+def test_related_source_selector_rereads_only_changed_test_files(tmp_path: Path) -> None:
+    """A repeated close reads no unchanged test file and rereads an edited one (#23359)."""
+    (tmp_path / "src/gobby").mkdir(parents=True)
+    (tmp_path / "src/gobby/widget.py").write_text("VALUE = 1\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_consumer.py").write_text("from gobby.widget import VALUE\n")
+    (tmp_path / "tests/test_other.py").write_text("OTHER = 1\n")
+    first = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path)
+
+    with patch.object(
+        close_test_coverage, "_test_imports", wraps=close_test_coverage._test_imports
+    ) as reads:
+        unchanged = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path)
+        (tmp_path / "tests/test_other.py").write_text("from gobby.widget import VALUE as V\n")
+        edited = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path)
+
+    assert first == unchanged == {"src/gobby/widget.py": ("tests/test_consumer.py",)}
+    assert edited == {"src/gobby/widget.py": ("tests/test_consumer.py", "tests/test_other.py")}
+    assert [call.args[0] for call in reads.call_args_list] == [tmp_path / "tests/test_other.py"]
+
+
 def test_related_source_selector_parse_cache_is_bounded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Least recently used parses past the cap are evicted, never kept forever."""
     monkeypatch.setattr("gobby.tasks.close_test_coverage._PARSED_IMPORTS_MAX", 1)
+    monkeypatch.setattr("gobby.tasks.close_test_coverage._TEST_SCANS_MAX", 0)
     (tmp_path / "src/gobby").mkdir(parents=True)
     (tmp_path / "src/gobby/widget.py").write_text("VALUE = 1\n")
     (tmp_path / "tests").mkdir()
@@ -818,6 +980,25 @@ def test_related_source_selector_parse_cache_is_bounded(
 
     assert again == expected
     assert len(parse.call_args_list) == 2
+
+
+def test_related_source_selector_shares_test_parses_across_worktrees(tmp_path: Path) -> None:
+    """The same test file in another checkout reuses its parse; closes span worktrees."""
+    expected = {"src/gobby/widget.py": ("tests/test_widget.py",)}
+    for checkout in ("lane-a", "lane-b"):
+        (tmp_path / checkout / "src/gobby").mkdir(parents=True)
+        (tmp_path / checkout / "src/gobby/widget.py").write_text("VALUE = 1\n")
+        (tmp_path / checkout / "tests").mkdir()
+        (tmp_path / checkout / "tests/test_widget.py").write_text(
+            "from gobby.widget import VALUE\n"
+        )
+    first = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path / "lane-a")
+
+    with patch("gobby.tasks.close_test_coverage.ast.parse", wraps=ast.parse) as parse:
+        second = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path / "lane-b")
+
+    assert first == second == expected
+    assert parse.call_args_list == []
 
 
 def test_related_source_selector_reparses_an_edited_test(tmp_path: Path) -> None:
@@ -917,6 +1098,59 @@ def test_related_source_selector_on_real_module_paths() -> None:
         for paths in selected.values()
         for path in paths
     )
+
+
+@pytest.mark.parametrize("runner", ["pytest", "rtk pytest"])
+def test_nice_pytest_node_credits_changed_file_after_native_rtk_rewrite(
+    tmp_path: Path, runner: str
+) -> None:
+    test = "tests/e2e/test_terminal_client_stack.py"
+    command = (
+        "CARGO_BUILD_JOBS=4 "
+        "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test "
+        f"GOBBY_TEST_PROTECT=1 nice -n 15 uv run {runner} "
+        f"{test}::test_gclient_survives_daemon_restart_with_usable_native_pane "
+        "--basetemp=/tmp/gobby-23760-usable-pane-15381-1 --no-cov --tb=short"
+    )
+    result = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, test),
+                _run(2, command=command, workdir=str(tmp_path)),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=(test,),
+        close_root=str(tmp_path),
+    )
+
+    assert result.passed, result.message
+    assert result.details["pytest_uncovered_paths"] == []
+
+
+def test_deleted_test_exemption_credits_existing_parent_pytest_target(tmp_path: Path) -> None:
+    gone = "tests/dispatch/test_spawn_forwarding.py"
+    kept = "tests/dispatch/test_dispatch.py"
+    (tmp_path / "tests/dispatch").mkdir(parents=True)
+    (tmp_path / kept).write_text("def test_dispatch():\n    assert True\n")
+    result = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, "tests/dispatch"),
+                _run(2, command="uv run pytest tests/dispatch/ -q", workdir=str(tmp_path)),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=(gone, kept),
+        deleted_paths=(gone,),
+        close_root=str(tmp_path),
+    )
+
+    assert result.passed, result.message
+    assert result.details["pytest_exempt_deleted_paths"] == [gone]
+    assert result.details["pytest_uncovered_paths"] == []
 
 
 def _deleted_test_gate(*audit_targets: str) -> CloseGateResult:

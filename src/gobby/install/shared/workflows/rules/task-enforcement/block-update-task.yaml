@@ -1,0 +1,17 @@
+tags: [task-enforcement, enforcement, tasks, gobby, default]
+
+# Task edits are granted by agent definition: a definition that may edit tasks
+# excludes this rule through its rule_selectors.
+rules:
+  block-update-task:
+    description: "Block update_task for agents whose definition does not grant task edits"
+    event: before_tool
+    enabled: true
+    priority: 30
+    effects:
+      - type: block
+        mcp_tools: ["gobby-tasks:update_task"]
+        reason: >-
+          Use gobby-agents:send_message to send the task edit to the Orchestrator.
+          Your agent definition does not grant task edits, including edits to your
+          own assigned task.

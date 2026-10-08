@@ -1,12 +1,20 @@
 """Tests for ToolMetricsManager."""
 
+import time
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.metrics import ToolMetrics, ToolMetricsManager
+from gobby.storage.hub import operation_deadline
+from gobby.storage.hub.operation_deadline import (
+    DatabaseOperationDeadlineExceeded,
+    current_database_operation_deadline,
+    database_operation_deadline,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -16,6 +24,7 @@ pytestmark = pytest.mark.unit
 PROJECT_1 = "66666666-6666-4666-8666-666666666666"
 PROJECT_2 = "77777777-7777-4777-8777-777777777777"
 OLD_METRICS_ID = "55555555-5555-4555-8555-555555555555"
+SESSION_ID = "99999999-9999-4999-9999-999999999994"
 
 
 @pytest.fixture
@@ -46,6 +55,130 @@ def metrics_manager(temp_db: "HubDatabase", mock_telemetry) -> ToolMetricsManage
         (PROJECT_2, "Test Project 2"),
     )
     return ToolMetricsManager(temp_db)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("success", [True, False])
+def test_record_call_persists_after_expired_parent_deadline(
+    metrics_manager: ToolMetricsManager,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    success: bool,
+) -> None:
+    now = time.monotonic()
+    monkeypatch.setattr(operation_deadline, "time", SimpleNamespace(monotonic=lambda: now))
+
+    with database_operation_deadline(timeout_seconds=0.04):
+        now += 0.06
+        metrics_manager.record_call(
+            server_name="deadline-server",
+            tool_name="deadline_tool",
+            project_id=PROJECT_1,
+            session_id=SESSION_ID,
+            latency_ms=125.0,
+            success=success,
+        )
+
+    result = metrics_manager.get_metrics(project_id=PROJECT_1)
+    assert result["summary"]["total_calls"] == 1
+    assert len(result["tools"]) == 1
+    aggregate = result["tools"][0]
+    assert aggregate["project_id"] == PROJECT_1
+    assert aggregate["server_name"] == "deadline-server"
+    assert aggregate["tool_name"] == "deadline_tool"
+    assert aggregate["success_count"] == int(success)
+    assert aggregate["failure_count"] == int(not success)
+    assert aggregate["total_latency_ms"] == 125.0
+    assert aggregate["avg_latency_ms"] == 125.0
+
+    events = metrics_manager.event_store.query_events(event_type="tool_call")
+    assert len(events) == 1
+    event = events[0]
+    assert event["project_id"] == PROJECT_1
+    assert event["session_id"] == SESSION_ID
+    assert event["server_name"] == "deadline-server"
+    assert event["name"] == "deadline_tool"
+    assert event["success"] is success
+    assert event["latency_ms"] == 125.0
+    assert "Failed to record call to hub database" not in caplog.text
+    assert "Failed to record event" not in caplog.text
+
+
+@pytest.mark.integration
+def test_record_call_restores_expired_parent_deadline(
+    metrics_manager: ToolMetricsManager,
+    temp_db: "HubDatabase",
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = time.monotonic()
+    monkeypatch.setattr(operation_deadline, "time", SimpleNamespace(monotonic=lambda: now))
+
+    with database_operation_deadline(timeout_seconds=0.04) as parent:
+        now += 0.06
+        metrics_manager.record_call("deadline-server", "deadline_tool", PROJECT_1, 125.0)
+        assert current_database_operation_deadline() is parent
+        with pytest.raises(DatabaseOperationDeadlineExceeded, match="deadline"):
+            temp_db.fetchone("SELECT 1 AS value")
+
+    assert metrics_manager.get_metrics(project_id=PROJECT_1)["summary"]["total_calls"] == 1
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("failed_table", ["tool_metrics", "metrics_events"])
+def test_record_call_keeps_database_failures_best_effort(
+    metrics_manager: ToolMetricsManager,
+    temp_db: "HubDatabase",
+    mock_telemetry: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+    failed_table: str,
+) -> None:
+    # Reject one actual persistence write in the isolated PostgreSQL schema.
+    temp_db.execute(
+        f"ALTER TABLE {failed_table} ADD CONSTRAINT reject_test_call "
+        "CHECK (server_name <> 'rejected-server')"
+    )
+    try:
+        with database_operation_deadline(timeout_seconds=5.0) as parent:
+            metrics_manager.record_call(
+                "rejected-server",
+                "rejected_tool",
+                PROJECT_1,
+                125.0,
+                success=False,
+                session_id=SESSION_ID,
+            )
+            assert current_database_operation_deadline() is parent
+            assert temp_db.fetchone("SELECT 1 AS value") == {"value": 1}
+    finally:
+        temp_db.execute(f"ALTER TABLE {failed_table} DROP CONSTRAINT reject_test_call")
+
+    aggregate_failed = failed_table == "tool_metrics"
+    result = metrics_manager.get_metrics(project_id=PROJECT_1)
+    assert result["summary"]["total_calls"] == int(not aggregate_failed)
+    assert result["summary"]["total_failure"] == int(not aggregate_failed)
+    events = metrics_manager.event_store.query_events(event_type="tool_call")
+    assert len(events) == int(aggregate_failed)
+    if aggregate_failed:
+        assert events[0]["session_id"] == SESSION_ID
+        assert events[0]["success"] is False
+    expected_log = (
+        "Failed to record call to hub database" if aggregate_failed else "Failed to record event"
+    )
+    assert expected_log in caplog.text
+    assert "reject_test_call" in caplog.text
+    attributes = {
+        "server_name": "rejected-server",
+        "tool_name": "rejected_tool",
+        "project_id": PROJECT_1,
+        "session_id": SESSION_ID,
+        "success": "false",
+    }
+    mock_telemetry.inc_counter.assert_any_call("mcp_tool_calls_total", attributes=attributes)
+    mock_telemetry.inc_counter.assert_any_call("mcp_tool_calls_failed_total", attributes=attributes)
+    assert mock_telemetry.inc_counter.call_count == 2
+    mock_telemetry.observe_histogram.assert_called_once_with(
+        "mcp_tool_call_duration_seconds", 0.125, attributes=attributes
+    )
 
 
 class TestToolMetrics:

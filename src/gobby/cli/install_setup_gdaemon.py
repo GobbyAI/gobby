@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import platform
 import shutil
 import subprocess
 import sys
@@ -15,6 +14,7 @@ from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_set_coherence import (
     BinarySetCoherenceError,
     promote_workspace_binary_set,
+    workspace_build_only,
 )
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.paths import get_gobby_home
@@ -26,14 +26,6 @@ from gobby.storage.schema_contract import (
 _BINARY_NAME = "gdaemon.exe" if sys.platform == "win32" else "gdaemon"
 _VERSION_STAMP = ".gdaemon-version"
 _IDENTITY_STAMP = ".gdaemon-schema-identity.json"
-_TARGETS = {
-    ("darwin", "arm64"): "aarch64-apple-darwin",
-    ("darwin", "x86_64"): "x86_64-apple-darwin",
-    ("linux", "x86_64"): "x86_64-unknown-linux-gnu",
-    ("linux", "aarch64"): "aarch64-unknown-linux-gnu",
-    ("win32", "amd64"): "x86_64-pc-windows-msvc",
-    ("win32", "arm64"): "aarch64-pc-windows-msvc",
-}
 
 
 class GdaemonInstallError(RuntimeError):
@@ -115,25 +107,6 @@ def _install_from_workspace(binary: Path) -> bool:
     return True
 
 
-def _install_from_release(binary: Path, version: str) -> bool:
-    target = _TARGETS.get((sys.platform, platform.machine().lower()))
-    if target is None:
-        return False
-    from gobby.cli.install_release import _download_release_binary
-
-    return bool(
-        _download_release_binary(
-            binary.parent,
-            binary_name=_BINARY_NAME,
-            artifact_name="gdaemon",
-            target=target,
-            version=version,
-            tag_prefix="gdaemon-v",
-            label="gdaemon",
-        )
-    )
-
-
 def _codesign(binary: Path) -> None:
     if sys.platform != "darwin" or shutil.which("codesign") is None:
         return
@@ -153,15 +126,11 @@ def _codesign(binary: Path) -> None:
         raise GdaemonInstallError(f"{binary.name} ad-hoc signing failed: {result.stderr.strip()}")
 
 
-def _install_gdaemon(binary: Path, version: str) -> str:
-    if _install_from_workspace(binary):
-        method = "workspace"
-    elif _install_from_release(binary, version):
-        method = "github"
-    else:
-        raise GdaemonInstallError("all gdaemon installation methods failed")
+def _install_gdaemon(binary: Path) -> str:
+    if not _install_from_workspace(binary):
+        raise GdaemonInstallError(workspace_build_only("gdaemon"))
     _codesign(binary)
-    return method
+    return "workspace"
 
 
 def ensure_gdaemon(*, bin_dir: Path | None = None, force: bool = False) -> dict[str, object]:
@@ -183,7 +152,7 @@ def ensure_gdaemon(*, bin_dir: Path | None = None, force: bool = False) -> dict[
         return {"installed": False, "version": version, "method": "existing"}
 
     directory.mkdir(parents=True, exist_ok=True)
-    method = _install_gdaemon(binary, pin)
+    method = _install_gdaemon(binary)
     version = _probe_version(binary)
     identity = _probe_identity(binary)
     if version is None or not managed_version_satisfies_pin("gdaemon", version):

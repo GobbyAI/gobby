@@ -10,6 +10,7 @@ import os
 import posixpath
 import re
 import shlex
+import stat
 import threading
 from collections import OrderedDict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -111,25 +112,27 @@ def _module_imports(path: Path, module: str, text: str) -> set[str]:
     return imports
 
 
-# Parsed imports by path, valid while the file's content digest matches (#23359). The
-# least recently used entries past the cap go, so deleted tests and removed worktrees
-# cannot grow it for the daemon's lifetime. Closes evaluate on worker threads.
+# Parsed imports by module, package-ness and content digest, the parse's only inputs,
+# so the same test in every worktree shares one entry; path keys made each of the many
+# checkouts evict the others' parses (#23359). The least recently used entries past
+# the cap go, so deleted tests cannot grow it for the daemon's lifetime. Closes
+# evaluate on worker threads.
 _PARSED_IMPORTS_MAX = 8192
-_PARSED_IMPORTS: OrderedDict[Path, tuple[bytes, frozenset[str]]] = OrderedDict()
+_PARSED_IMPORTS: OrderedDict[tuple[str, bool, bytes], frozenset[str]] = OrderedDict()
 _PARSED_IMPORTS_LOCK = threading.Lock()
 
 
 def _parsed_imports(path: Path, module: str, text: str) -> frozenset[str]:
-    digest = hashlib.blake2b(text.encode(), digest_size=16).digest()
+    key = (module, path.stem == "__init__", hashlib.blake2b(text.encode(), digest_size=16).digest())
     with _PARSED_IMPORTS_LOCK:
-        cached = _PARSED_IMPORTS.get(path)
-        if cached is not None and cached[0] == digest:
-            _PARSED_IMPORTS.move_to_end(path)
-            return cached[1]
+        cached = _PARSED_IMPORTS.get(key)
+        if cached is not None:
+            _PARSED_IMPORTS.move_to_end(key)
+            return cached
     imports = frozenset(_module_imports(path, module, text))
     with _PARSED_IMPORTS_LOCK:
-        _PARSED_IMPORTS[path] = (digest, imports)
-        _PARSED_IMPORTS.move_to_end(path)
+        _PARSED_IMPORTS[key] = imports
+        _PARSED_IMPORTS.move_to_end(key)
         while len(_PARSED_IMPORTS) > _PARSED_IMPORTS_MAX:
             _PARSED_IMPORTS.popitem(last=False)
     return imports
@@ -154,6 +157,61 @@ def _test_imports(
     ):
         return frozenset()
     return _parsed_imports(path, module, text)
+
+
+# A test tree's imports per prefix set, reused per file while its stat matches (#23359):
+# close retries rescan the same tree for the same changed modules. The least recently
+# used prefix sets past the cap go.
+_TEST_SCANS_MAX = 32
+_TEST_SCANS: OrderedDict[
+    tuple[Path, frozenset[str]], dict[str, tuple[tuple[int, ...] | None, frozenset[str]]]
+] = OrderedDict()
+_TEST_SCANS_LOCK = threading.Lock()
+
+
+def _scan_tests(
+    base: Path, prefixes: set[str], leaves: set[str], parent_import: re.Pattern[str] | None
+) -> list[tuple[str, frozenset[str]]]:
+    """Each collected test module with ``_test_imports``, read only when it changed."""
+    tests_dir = base / "tests"
+    # os.walk joins onto tests_dir, so slicing its string skips relative_to; like rglob,
+    # it lists symlinked files but never descends into symlinked directories.
+    offset = len(str(tests_dir)) - len("tests")
+    signatures: dict[str, tuple[int, ...]] = {}
+    for root, _, names in os.walk(tests_dir):
+        for name in names:
+            if not name.endswith(".py"):
+                continue
+            try:
+                info = os.stat(os.path.join(root, name))
+            except OSError:
+                continue
+            if stat.S_ISREG(info.st_mode):
+                signatures[f"{root[offset:]}/{name}"] = (
+                    info.st_ino,
+                    info.st_size,
+                    info.st_mtime_ns,
+                    info.st_ctime_ns,
+                )
+    key = (tests_dir, frozenset(prefixes))
+    with _TEST_SCANS_LOCK:
+        previous = _TEST_SCANS.get(key, {})
+    scan: dict[str, tuple[tuple[int, ...] | None, frozenset[str]]] = {}
+    for test in pytest_module_paths(signatures):
+        signature = signatures.get(test)
+        entry = previous.get(test)
+        if signature is None or entry is None or entry[0] != signature:
+            entry = (
+                signature,
+                _test_imports(base / test, _module_name(test), prefixes, leaves, parent_import),
+            )
+        scan[test] = entry
+    with _TEST_SCANS_LOCK:
+        _TEST_SCANS[key] = scan
+        _TEST_SCANS.move_to_end(key)
+        while len(_TEST_SCANS) > _TEST_SCANS_MAX:
+            _TEST_SCANS.popitem(last=False)
+    return [(test, imports) for test, (_, imports) in scan.items()]
 
 
 def related_python_source_tests(
@@ -217,33 +275,25 @@ def related_python_source_tests(
         else None
     )
     leaves = {prefix.rpartition(".")[2] for prefix in prefixes}
-    tests_dir = base / "tests"
-    # rglob joins onto tests_dir, so slicing its string skips pathlib's relative_to.
-    offset = len(str(tests_dir)) - len("tests")
-    candidates = pytest_module_paths(
-        str(path)[offset:] for path in tests_dir.rglob("*.py") if path.is_file()
-    )
-    tests = [
-        (test, _test_imports(base / test, _module_name(test), prefixes, leaves, parent_import))
-        for test in candidates
-    ]
+    tests = _scan_tests(base, prefixes, leaves, parent_import)
     for source, family in families.items():
-        source_path = PurePosixPath(source)
-        module = _module_name(source)
-        package_parts = module.split(".")[:-1]
+        package_parts = _module_name(source).split(".")[:-1]
         if package_parts and package_parts[0] == "gobby":
             package_parts.pop(0)
-        mirror_parent = PurePosixPath("tests", *package_parts)
+        # Test paths are normalized "tests/..." strings ending in ".py", so string parts
+        # match their pathlib parent and stem without a path object per test (#23359).
+        mirror_parent = "/".join(("tests", *package_parts))
         ranked: list[tuple[int, str]] = []
         for test, imports in tests:
-            test_path = PurePosixPath(test)
             ranks = [2 * family[imported] + 1 for imported in imports.intersection(family)]
-            if test_path.parent == mirror_parent:
+            test_parent, _, test_name = test.rpartition("/")
+            if test_parent == mirror_parent:
+                test_stem = test_name.removesuffix(".py")
                 ranks.extend(
                     2 * distance
                     for member, distance in family.items()
                     if (stem := member.rpartition(".")[2].lstrip("_"))
-                    and (test_path.stem == f"{stem}_test" or test_path.stem == f"test_{stem}")
+                    and (test_stem == f"{stem}_test" or test_stem == f"test_{stem}")
                 )
             if ranks:
                 ranked.append((min(ranks), test))
@@ -524,49 +574,64 @@ def _candidate_blobs(root: str, commit: str) -> Mapping[str, str]:
     return blobs
 
 
-def coverage_failure_message(
+def coverage_failure_messages(
     python_tests: tuple[str, ...],
     python_sources: Mapping[str, Sequence[str]],
     web_paths: tuple[str, ...],
     *,
     differing_paths: tuple[str, ...] = (),
     close_root: str | None = None,
-) -> str | None:
-    """Describe the first uncovered test obligation in checklist priority order."""
-    copies = (
-        " A run from another tree is credited only when that tree matches the close "
-        "candidate commit, or the close checkout without one; these paths differ: "
-        f"{', '.join(f'`{path}`' for path in differing_paths)}."
-        if differing_paths
-        else ""
-    )
+) -> list[tuple[str, str]]:
+    """Name and describe every uncovered test obligation in checklist priority order.
+
+    The differing-copy note closes the last pytest obligation, since its paths can
+    come from either one.
+    """
+    failures: list[tuple[str, str]] = []
     if python_tests:
         display = ", ".join(f"`{path}`" for path in python_tests)
-        return (
-            "Changed Python tests have no credited fresh passing pytest target. "
-            f"Uncovered paths: {display}.{copies}"
+        failures.append(
+            (
+                "pytest_changed_tests",
+                "Changed Python tests have no credited fresh passing pytest target. "
+                f"Uncovered paths: {display}.",
+            )
         )
     if python_sources:
         display = "; ".join(
             f"`{source}`: " + ", ".join(f"`{test}`" for test in tests)
             for source, tests in python_sources.items()
         )
-        return (
-            "Changed Python sources have related tests with no credited fresh passing pytest target. "
-            f"Uncovered sources and tests: {display}.{copies}"
+        failures.append(
+            (
+                "pytest_related_source_tests",
+                "Changed Python sources have related tests with no credited fresh passing "
+                f"pytest target. Uncovered sources and tests: {display}.",
+            )
+        )
+    if failures and differing_paths:
+        name, message = failures[-1]
+        failures[-1] = (
+            name,
+            f"{message} A run from another tree is credited only when that tree matches the "
+            "close candidate commit, or the close checkout without one; these paths differ: "
+            f"{', '.join(f'`{path}`' for path in differing_paths)}.",
         )
     if web_paths:
         # Direct binary avoids wrappers that rewrite `vitest related` into `vitest run`.
         display = ", ".join(f"`{path}`" for path in web_paths)
         workdir = shlex.quote(os.path.join(close_root, "web")) if close_root else "web"
-        return (
-            "Changed web/src files have no credited fresh passing `vitest related` run. "
-            f"Uncovered paths: {display}. Run `cd {workdir} && node_modules/.bin/vitest "
-            "related <each path relative to web/> --run` clean after the final task edit; "
-            "add `--passWithNoTests` when a path has no runtime importer (type-only "
-            "modules, declarations, assets)."
+        failures.append(
+            (
+                "vitest_related",
+                "Changed web/src files have no credited fresh passing `vitest related` run. "
+                f"Uncovered paths: {display}. Run `cd {workdir} && node_modules/.bin/vitest "
+                "related <each path relative to web/> --run` clean after the final task edit; "
+                "add `--passWithNoTests` when a path has no runtime importer (type-only "
+                "modules, declarations, assets).",
+            )
         )
-    return None
+    return failures
 
 
 def changed_web_source_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:

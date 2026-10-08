@@ -62,6 +62,7 @@ from ._provider_resolution import (
 )
 from ._request import build_spawn_request
 from ._resume import resolve_resume_target
+from ._run_lifetime import resolve_run_lifetime
 from ._runtime import (
     _normalize_optional_model,
     build_spawn_context,
@@ -156,11 +157,10 @@ async def spawn_agent_impl(
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
         provider = resume_target.source
-    effective_execution_mode = execution_mode or (
-        agent_body.execution_mode if agent_body else "one_shot"
-    )
-    if effective_execution_mode not in {"one_shot", "interactive"}:
-        return {"success": False, "error": "execution_mode must be one_shot or interactive"}
+    try:
+        run_lifetime = resolve_run_lifetime(agent_body, execution_mode)
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
     try:
         write_grant = await asyncio.to_thread(
             authorize_write_grant,
@@ -613,7 +613,7 @@ async def spawn_agent_impl(
         task_category=task_category,
     )
     enhanced_prompt = context_handler.build_context_prompt(prompt, isolation_ctx)
-    if effective_execution_mode == "interactive":
+    if run_lifetime.execution_mode == "interactive":
         enhanced_prompt += (
             "\n\nThis is an interactive standing seat. Remain available between turns and tasks. "
             "An idle prompt, completed task, or finished runbook does not end this seat. "
@@ -643,7 +643,8 @@ async def spawn_agent_impl(
         effective_workflow=effective_workflow,
         agent_display_name=agent_display_name,
         prewarm_pre_commit_store=prewarm_pre_commit_store,
-        execution_mode=effective_execution_mode,
+        execution_mode=run_lifetime.execution_mode,
+        idle_ttl_seconds=run_lifetime.idle_ttl_seconds,
         placement=placement_snapshot(placed.resolved) if placed is not None else None,
     )
 

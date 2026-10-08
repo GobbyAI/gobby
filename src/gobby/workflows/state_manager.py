@@ -17,8 +17,8 @@ from gobby.storage.hub.protocol import (
     HubDatabase,
     SessionVariableMutation,
 )
-from gobby.storage.hub.read_scope import SESSION_VARIABLES_TABLES, scoped_read
 from gobby.storage.sessions import startup_claim as _startup_claim
+from gobby.storage.sessions._contested_expiry import read_session_variables_row
 from gobby.storage.sessions.startup_claim import StartupClaimState, StartupContextClaim
 from gobby.workflows.variable_defaults import (
     load_variable_defaults,
@@ -34,6 +34,12 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _MutationResult = TypeVar("_MutationResult")
+
+# The blob is decoded here, so take the server's text and skip the pool's
+# canonical re-dump of jsonb containers (#23359).
+_SELECT_VARIABLES_TEXT = (
+    "SELECT variables::text AS variables FROM session_variables WHERE session_id = %s"
+)
 
 
 def _decode_variables_payload(variables: Any) -> dict[str, Any]:
@@ -80,16 +86,18 @@ def _normalize_string_list(value: Any) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
-_LIVE_VARIABLE_MANAGERS: weakref.WeakSet["SessionVariableManager"] = weakref.WeakSet()
+# Defaults per hub, shared by every manager on it: callers build a manager per
+# call, so a per-instance cache almost never hit (#23359).
+_DEFAULTS_CACHE: weakref.WeakKeyDictionary[
+    HubDatabase, dict[tuple[str | None, int], tuple[float, dict[str, Any]]]
+] = weakref.WeakKeyDictionary()
 _VARIABLE_CACHE_LOCK = threading.Lock()
 
 
 def _clear_variable_defaults_caches() -> None:
-    """Drop every SessionVariableManager defaults cache on a variables revision."""
+    """Drop every hub's cached defaults on a variables revision."""
     with _VARIABLE_CACHE_LOCK:
-        for manager in tuple(_LIVE_VARIABLE_MANAGERS):
-            manager._defaults_cache.clear()
-            manager._defaults_cache_times.clear()
+        _DEFAULTS_CACHE.clear()
 
 
 register_revision_listener("variables", _clear_variable_defaults_caches)
@@ -119,10 +127,6 @@ class SessionVariableManager:
 
     def __init__(self, db: HubDatabase):
         self.db = db
-        self._defaults_cache: dict[tuple[str | None, int], dict[str, Any]] = {}
-        self._defaults_cache_times: dict[tuple[str | None, int], float] = {}
-        with _VARIABLE_CACHE_LOCK:
-            _LIVE_VARIABLE_MANAGERS.add(self)
 
     def get_variables(self, session_id: str) -> dict[str, Any]:
         """Get all session variables with definition defaults applied.
@@ -131,21 +135,11 @@ class SessionVariableManager:
         This ensures presets are always available even if they were never
         explicitly materialized into the session row.
         """
-        row = scoped_read(
-            self.db,
-            ("session_variables", session_id),
-            SESSION_VARIABLES_TABLES,
-            lambda: self.db.fetchone(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ),
-        )
-        session_vars = {}
-        if row:
-            session_vars = _decode_variables_payload(row["variables"])
-
+        row = read_session_variables_row(self.db, session_id)
+        session_vars = _decode_variables_payload(row["variables"]) if row["stored"] else {}
+        project_id = row["project_id"]
         return self._apply_variable_defaults(
-            session_vars, resolve_session_project_id(self.db, session_id)
+            session_vars, None if project_id is None else str(project_id)
         )
 
     def _get_variable_defaults(self, project_id: str | None) -> dict[str, Any]:
@@ -157,18 +151,14 @@ class SessionVariableManager:
         revision = get_definitions_revision("variables")
         cache_key = (project_id, revision)
         now = time.monotonic()
-        cached = self._defaults_cache.get(cache_key)
-        cached_at = self._defaults_cache_times.get(cache_key)
-        if (
-            cached is not None
-            and cached_at is not None
-            and (now - cached_at) < self._DEFAULTS_CACHE_TTL
-        ):
-            return deepcopy(cached)
+        with _VARIABLE_CACHE_LOCK:
+            cached = _DEFAULTS_CACHE.get(self.db, {}).get(cache_key)
+        if cached is not None and (now - cached[0]) < self._DEFAULTS_CACHE_TTL:
+            return deepcopy(cached[1])
 
         defaults = load_variable_defaults(self.db, project_id)
-        self._defaults_cache[cache_key] = defaults
-        self._defaults_cache_times[cache_key] = now
+        with _VARIABLE_CACHE_LOCK:
+            _DEFAULTS_CACHE.setdefault(self.db, {})[cache_key] = (now, defaults)
         return deepcopy(defaults)
 
     def _apply_variable_defaults(
@@ -218,10 +208,7 @@ class SessionVariableManager:
     ) -> _MutationResult:
         """Serialize one variable mutation and persist only changed payloads."""
         with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
+            row = conn.execute(_SELECT_VARIABLES_TEXT, (session_id,)).fetchone()
             variables = _decode_variables_payload(row["variables"]) if row else {}
             previous_task_id = variables.get("active_task_id")
             previous_history = variables.get("task_selection_history")
@@ -324,10 +311,7 @@ class SessionVariableManager:
             return False
 
         with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ).fetchone()
+            row = conn.execute(_SELECT_VARIABLES_TEXT, (session_id,)).fetchone()
             if row is None:
                 return False
 

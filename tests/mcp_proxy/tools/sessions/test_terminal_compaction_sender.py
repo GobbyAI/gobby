@@ -889,3 +889,216 @@ async def test_composer_is_rechecked_before_each_interrupt_after_waits(
     else:
         mark.assert_called_once_with()
         clear.assert_called_once_with()
+
+
+class _MidTurnFramePane(_ComposerPane):
+    """Claude pane whose running turn paints a frame the probe cannot trust (#23784).
+
+    A narrow pane stacks stale status and prompt rows while a turn runs; the clean
+    composer is painted again only once the turn ends.
+    """
+
+    def __init__(self, mid_turn_frame: str, settled_composer: str = "") -> None:
+        super().__init__()
+        self.settled = False
+        self.mid_turn_frame = mid_turn_frame
+        self.settled_composer = settled_composer
+        self.typed_while_settled: list[bool] = []
+
+    async def type_text(self, text: str) -> tuple[bool, str | None]:
+        self.typed_while_settled.append(self.settled)
+        return await super().type_text(text)
+
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
+        return _claude_frame(self.settled_composer) if self.settled else self.mid_turn_frame
+
+
+_UNREADABLE_MID_TURN_FRAME = (
+    "  gobby | ~/Projects/gobby…\n✻ Crunching…\n  gobby | ~/Projects/gobby…"
+)
+_DEBRIS_MID_TURN_FRAME = _claude_frame("gobby | ~/Projects/gobby…")
+
+
+def _turn_settling_on_second_poll(pane: _MidTurnFramePane) -> Callable[[], bool]:
+    polls: list[None] = []
+
+    def turn_settled() -> bool:
+        polls.append(None)
+        pane.settled = len(polls) > 1
+        return pane.settled
+
+    return turn_settled
+
+
+async def _send_mid_turn(
+    pane: _MidTurnFramePane,
+    turn_settled: Callable[[], bool | None],
+    *,
+    cli_source: str = "claude",
+) -> tuple[tuple[bool, str | None, bool, dict[str, object] | None], MagicMock, MagicMock]:
+    mark = MagicMock(return_value=True)
+    clear = MagicMock(return_value=True)
+    result = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source=cli_source,
+        mark_continuation_pending=mark,
+        clear_continuation_pending=clear,
+        observe_interrupt=MagicMock(return_value=False),
+        turn_settled=turn_settled,
+        settle_seconds=_SETTLE,
+        composer_read=_CLAUDE_READ,
+    )
+    return result, mark, clear
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mid_turn_frame", [_UNREADABLE_MID_TURN_FRAME, _DEBRIS_MID_TURN_FRAME])
+async def test_claude_compact_requested_mid_turn_is_sent_once_after_the_turn_settles(
+    mid_turn_frame: str,
+) -> None:
+    """An unknown or draft read taken mid-turn defers /compact instead of refusing it."""
+    pane = _MidTurnFramePane(mid_turn_frame)
+
+    result, mark, clear = await _send_mid_turn(pane, _turn_settling_on_second_poll(pane))
+
+    assert result == (True, None, True, {"interrupted": False})
+    assert pane.typed == ["/compact\n"]
+    assert pane.typed_while_settled == [True]
+    assert pane.keys == ["enter"]
+    mark.assert_called_once_with()
+    clear.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_claude_draft_found_after_the_turn_settles_refuses_without_input() -> None:
+    pane = _MidTurnFramePane(_UNREADABLE_MID_TURN_FRAME, settled_composer="half-typed wor")
+
+    result, mark, clear = await _send_mid_turn(pane, _turn_settling_on_second_poll(pane))
+
+    assert result == (
+        False,
+        "composer holds an operator draft",
+        False,
+        {"error_code": "composer_occupied", "continuation_pending": False},
+    )
+    assert pane.settled is True
+    assert pane.keys == []
+    assert pane.typed == []
+    mark.assert_not_called()
+    clear.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_claude_turn_still_running_after_the_settle_budget_keeps_the_refusal() -> None:
+    pane = _MidTurnFramePane(_UNREADABLE_MID_TURN_FRAME)
+    turn_settled = MagicMock(return_value=False)
+
+    result, mark, _clear = await _send_mid_turn(pane, turn_settled)
+
+    assert result == (
+        False,
+        "composer could not be confirmed empty before /compact",
+        False,
+        {"error_code": "composer_unknown", "continuation_pending": False},
+    )
+    assert turn_settled.call_count >= 1
+    assert pane.keys == []
+    assert pane.typed == []
+    mark.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cli_source", ["codex", "grok"])
+async def test_codex_and_grok_still_refuse_an_unreadable_first_read_at_once(
+    cli_source: str,
+) -> None:
+    pane = _MidTurnFramePane(_UNREADABLE_MID_TURN_FRAME)
+    turn_settled = MagicMock(return_value=False)
+
+    result, _mark, _clear = await _send_mid_turn(pane, turn_settled, cli_source=cli_source)
+
+    assert result[0] is False
+    assert result[3] == {"error_code": "composer_unknown", "continuation_pending": False}
+    turn_settled.assert_not_called()
+    assert pane.keys == []
+    assert pane.typed == []
+
+
+class _CodexPlaceholderPane(_ComposerPane):
+    def __init__(
+        self,
+        draft: str | None = None,
+        *,
+        partial: bool = False,
+        newline: str = "\n",
+        wrapped: bool = False,
+    ) -> None:
+        super().__init__()
+        self.draft = draft
+        self.partial = partial
+        self.newline = newline
+        self.wrapped = wrapped
+
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
+        if self.partial:
+            return "\n› Ask Codex to do anything"
+        prompt = (
+            f"› {self.draft}"
+            if self.draft is not None
+            else "\x1b[1m›\x1b[0m \x1b[2m"
+            + ("Ask Codex\n  to do anything" if self.wrapped else "Ask Codex to do anything")
+            + "\x1b[0m"
+        )
+        return (
+            f"done\n{prompt}\n\n"
+            "\x1b[2m  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n"
+            "  ← for agents · ? for shortcuts\x1b[0m"
+        ).replace("\n", self.newline)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("draft", [None, "operator draft", "Ask Codex to do anything"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("wrapped", [False, True])
+async def test_codex_placeholder_submits_once_and_real_draft_refuses(
+    draft: str | None, newline: str, wrapped: bool
+) -> None:
+    pane = _CodexPlaceholderPane(draft, newline=newline, wrapped=wrapped)
+    read = IdleDetector(BundledDetectionRegistry(), "codex").composer_read
+    result, _, _ = await _send(
+        pane, lambda: True, cli_source="codex", command="/compact", composer_read=read
+    )
+    if draft is None:
+        assert result[0] is True
+        assert pane.typed == ["/compact\n"]
+        assert pane.keys == ["escape", "enter"]
+    else:
+        assert result[0] is False
+        assert pane.typed == []
+        assert pane.keys == []
+
+
+@pytest.mark.asyncio
+async def test_partial_codex_snapshot_refusal_records_frame_shape(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pane = _CodexPlaceholderPane(partial=True)
+    read = IdleDetector(BundledDetectionRegistry(), "codex").composer_read
+    with caplog.at_level(logging.WARNING, logger="gobby.terminals.pane_io"):
+        result, _, _ = await _send(
+            pane, lambda: True, cli_source="codex", command="/compact", composer_read=read
+        )
+    assert result[0] is False
+    assert pane.typed == []
+    assert pane.keys == []
+    record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "composer_write_refused"
+    )
+    assert getattr(record, "snapshot_source", None) == "native"
+    assert getattr(record, "snapshot_mode", None) == "ansi"
+    assert getattr(record, "snapshot_row_count", None) == 2
+    assert getattr(record, "snapshot_row_widths", None) == (0, 26)

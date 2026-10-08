@@ -103,9 +103,8 @@ class TestExecutableCommandSubjects:
         assert executable_command_subjects("cat <<'EOF' | sed s/x/y/ > docs/ops.md\nbody\nEOF") == [
             "cat <<'EOF' | sed s/x/y/ > docs/ops.md"
         ]
-        # A pipeline continuation defers the body past the next stage; the
-        # pipeline is still one segment and its downstream shell runs the body.
-        assert executable_command_subjects("cat <<'EOF' |\n  bash\nbody\nEOF") == [
+        # The body precedes the next stage even when the pipeline continues.
+        assert executable_command_subjects("cat <<'EOF' |\nbody\nEOF\n  bash") == [
             "cat <<'EOF' |\n  bash",
             "body",
         ]

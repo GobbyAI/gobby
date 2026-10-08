@@ -19,6 +19,7 @@ from gobby.storage.hub.operation_deadline import (
 )
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import Transaction
+from gobby.utils.datetime import to_json_safe
 
 
 @pytest.fixture
@@ -206,6 +207,59 @@ def test_existing_stricter_timeouts_are_preserved(database: PostgresHubDatabase)
             scoped = _connection_state(txn)
         restored = _connection_state(txn)
     assert scoped[1:] == restored[1:] == ("20ms", "10ms")
+
+
+def _record_statements(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    statements: list[str] = []
+    real_execute = psycopg.Connection.execute
+
+    def recording_execute(
+        self: psycopg.Connection[Any], query: Any, *args: Any, **kwargs: Any
+    ) -> psycopg.Cursor[Any]:
+        statements.append(query if isinstance(query, str) else repr(query))
+        return real_execute(self, query, *args, **kwargs)
+
+    monkeypatch.setattr(psycopg.Connection, "execute", recording_execute)
+    return statements
+
+
+def test_deadline_reads_the_session_timeouts_once_per_connection(
+    database: PostgresHubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SHOW pair cost ~125 us of GIL time per deadline transaction (#23359)."""
+    statements = _record_statements(monkeypatch)
+    states = []
+    with database_operation_deadline(timeout_seconds=0.4):
+        for _ in range(3):
+            with database.transaction() as txn:
+                states.append(_connection_state(txn))
+
+    assert statements.count("SHOW statement_timeout") == 1
+    assert statements.count("SHOW lock_timeout") == 1
+    assert len({pid for pid, _, _ in states}) == 1
+    assert all(
+        0 < int(value.removesuffix("ms")) <= 400 for _, *values in states for value in values
+    )
+
+
+def test_a_session_timeout_change_is_read_again_by_later_transactions(
+    database: PostgresHubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements = _record_statements(monkeypatch)
+    with database_operation_deadline(timeout_seconds=600):
+        with database.transaction() as txn:
+            _connection_state(txn)
+        with database.transaction() as txn:
+            # Session level, below the deadline's 5 s per-operation cap.
+            txn.execute("SET statement_timeout = '3s'")
+        with database.transaction() as txn:
+            _, statement_timeout, lock_timeout = _connection_state(txn)
+
+    assert statement_timeout == "3s"
+    assert lock_timeout != "3s"
+    assert statements.count("SHOW statement_timeout") == 2
 
 
 def test_bounded_transaction_composes_with_deadline_and_restores_outer_settings(
@@ -408,6 +462,60 @@ def test_writes_ambient_reads_and_deadline_reads_stay_transactional(
         assert database.fetchone(_NO_EARLIER_BEGIN) == {"fresh": False}
 
     assert len(opened_transactions) == 4
+
+
+_TYPED_ROW = (
+    'SELECT \'{"b":1,"a":[1]}\'::jsonb AS doc, \'[1, {"z": null}]\'::json AS raw, '
+    '\'{"é": 1.50, "aa": "ü", "n": 10000000000000000000}\'::jsonb AS wide, '
+    "'5'::jsonb AS n, '\"x\"'::jsonb AS s, 'null'::jsonb AS z, NULL::jsonb AS missing, "
+    "'0E8A1C5E-2B7D-4F00-9C1A-3D2E1F0A9B8C'::uuid AS id"
+)
+_TYPED_VALUES = {
+    "doc": '{"a":[1],"b":1}',
+    "raw": '[1,{"z":null}]',
+    "wide": '{"aa":"\\u00fc","n":10000000000000000000,"\\u00e9":1.5}',
+    "n": 5,
+    "s": "x",
+    "z": None,
+    "missing": None,
+    "id": "0e8a1c5e-2b7d-4f00-9c1a-3d2e1f0a9b8c",
+}
+
+
+def test_pool_connections_return_the_canonical_json_text_rows_always_had(
+    database: PostgresHubDatabase,
+) -> None:
+    """Containers keep the sorted compact form that stored hashes and edit checks
+    compare (stage registry row_hash), now without the to_json_safe walk (#23359)."""
+    dsn = os.environ["DATABASE_URL"]
+    with psycopg.connect(dsn, row_factory=psycopg.rows.dict_row) as default_loaders:
+        before = default_loaders.execute(_TYPED_ROW).fetchone()
+    with database._pool_connection() as connection:
+        row = connection.execute(_TYPED_ROW).fetchone()
+
+    assert before is not None
+    assert row == {key: postgres_pool._normalize_value(value) for key, value in before.items()}
+    assert row == _TYPED_VALUES
+
+
+def test_hub_reads_canonicalize_json_containers_without_the_safe_value_walk(
+    database: PostgresHubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    walked: list[object] = []
+
+    def spy_to_json_safe(value: object) -> object:
+        walked.append(value)
+        return to_json_safe(value)
+
+    monkeypatch.setattr("gobby.storage.hub.postgres_pool.to_json_safe", spy_to_json_safe)
+
+    assert database.fetchone(_TYPED_ROW) == _TYPED_VALUES
+    with database.transaction() as txn:
+        assert txn.execute(_TYPED_ROW).fetchall() == [_TYPED_VALUES]
+
+    # Decoded jsonb holds only JSON-native values, so the walk had nothing to convert.
+    assert walked == []
 
 
 @pytest.mark.parametrize(

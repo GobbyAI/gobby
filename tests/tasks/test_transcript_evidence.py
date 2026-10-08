@@ -496,6 +496,18 @@ def _claude_tool_pair(
     result: Any,
     is_error: bool = False,
 ) -> list[dict[str, Any]]:
+    transport: Any = None
+    if isinstance(result, dict) and "exit_code" in result:
+        # Render an {exit_code, stdout} shorthand as Claude records Bash: the
+        # status lives only in an error content's "Exit code N" header.
+        text = result.get("stdout", result.get("output", ""))
+        if result["exit_code"]:
+            result = f"Exit code {result['exit_code']}\n{text}"
+            is_error = True
+            transport = f"Error: {result}"
+        else:
+            result = text
+            transport = {"stdout": text, "stderr": "", "interrupted": False, "isImage": False}
     return [
         {
             "type": "assistant",
@@ -526,6 +538,7 @@ def _claude_tool_pair(
                     }
                 ],
             },
+            **({"toolUseResult": transport} if transport is not None else {}),
         },
     ]
 
@@ -1285,7 +1298,7 @@ async def test_claude_pairs_shell_results_and_tracks_task_edits(tmp_path: Path) 
     )
 
     assert [(run.outcome, run.exit_code, run.categories) for run in evidence.validation_runs] == [
-        ("success", 0, ("test",))
+        ("success", None, ("test",))
     ]
     assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [("src/changed.py", "Edit")]
     assert evidence.validation_runs[0].completed_at < evidence.edits[0].timestamp
@@ -1765,9 +1778,11 @@ async def test_shell_commands_without_validation_categories_remain_review_eviden
         str(tmp_path),
     )
     merged = merge_transcript_evidence(evidence)
+    # Claude records no exit code for a successful Bash call.
+    recorded_exit = None if (source, exit_code) == ("claude", 0) else exit_code
     assert merged.validation_runs == ()
     assert [(run.command, run.outcome, run.exit_code) for run in merged.command_runs] == [
-        (command, outcome, exit_code)
+        (command, outcome, recorded_exit)
     ]
     assert bool(merged.degraded_capabilities) is (outcome == "unknown")
 
@@ -4778,7 +4793,7 @@ async def test_wrapper_zeroed_exit_code_still_yields_a_failure_run(
         str(tmp_path),
     )
 
-    assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("failure", 0)]
+    assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("failure", None)]
     assert evidence.degraded_capabilities == ()
 
 
@@ -4804,7 +4819,7 @@ async def test_uncompounded_passing_run_is_still_a_success(tmp_path: Path) -> No
         str(tmp_path),
     )
 
-    assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("success", 0)]
+    assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("success", None)]
 
 
 _TEST_TYPES_AUDIT_COMMAND = (
@@ -4860,8 +4875,8 @@ async def test_passing_test_types_audit_is_recorded_as_a_successful_type_check(
     )
 
     assert [(run.categories, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
-        (("type_check",), "success", 0),
-        (("type_check",), "success", 0),
+        (("type_check",), "success", None),
+        (("type_check",), "success", None),
     ]
 
 

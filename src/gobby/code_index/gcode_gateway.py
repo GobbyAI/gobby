@@ -27,7 +27,7 @@ from gobby.utils import spawn
 from gobby.utils.native_bin import resolve_native_bin
 
 MIN_GCODE_GRAPH_VERSION = MANAGED_BIN_VERSION_PINS["gcode"]
-MIN_GCODE_PRUNE_BUDGET_VERSION = "1.9.14"
+MIN_GCODE_PRUNE_BUDGET_VERSION = "1.9.16"
 GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION = "0.9.5"
 _VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+(?:\.\d+)?)\b")
 _PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")
@@ -177,7 +177,7 @@ class GcodeVersionError(GcodeGatewayError):
 
 
 class GcodeTimeoutError(GcodeGatewayError):
-    """Raised when a gcode subprocess exceeds its timeout."""
+    """Raised when gcode or one of its grant operations exceeds its timeout."""
 
     def __init__(self, message: str, *, stdout: str = "", stderr: str = "") -> None:
         self.stdout = stdout
@@ -333,7 +333,7 @@ def _classify_gcode_command_error(
     returncode: int,
     stderr_text: str,
     stdout_text: str = "",
-) -> GcodeCommandError:
+) -> GcodeCommandError | GcodeTimeoutError:
     if returncode == 3:
         try:
             payload = json.loads(stdout_text)
@@ -373,6 +373,12 @@ def _classify_gcode_command_error(
             stdout=stdout_text,
         )
     payload = _typed_gcode_error(stderr_text)
+    if payload is not None and payload.get("error") == "timeout":
+        return GcodeTimeoutError(
+            f"gcode exited {returncode}: {stderr_text}",
+            stdout=stdout_text,
+            stderr=stderr_text,
+        )
     if payload is not None and payload.get("error") in _CHECKOUT_ERROR_CODES:
         project_path = _command_project_path(command)
         if project_path is not None:

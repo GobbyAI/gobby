@@ -17,6 +17,9 @@ use super::{
     refresh_with_partition_builder,
 };
 
+#[path = "serial_db_persistence_tests.rs"]
+mod serial_db_persistence_tests;
+
 #[test]
 #[serial_test::serial(serial_db)]
 fn input_digest_skips_partition_build_and_rebuilds_changed_imports() {

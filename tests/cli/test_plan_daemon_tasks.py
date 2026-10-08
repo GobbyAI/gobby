@@ -64,7 +64,9 @@ class FakeTaskClient:
                 for task in self.tasks.values()
                 if arguments["label"] in task["labels"]
                 and task["project_id"] == arguments["project"]
-            ][: arguments["limit"]]
+            ]
+            offset = arguments.get("offset", 0)
+            rows = rows[offset : offset + arguments["limit"]]
             return {"success": True, "result": {"tasks": rows, "count": len(rows)}}
         return {"success": True, "result": self.tasks[arguments["task_id"]]}
 
@@ -73,8 +75,12 @@ def test_lookup_rebuilds_full_owner_records_and_fetches_each_once() -> None:
     client = FakeTaskClient([task_record()])
     lookup = DaemonTaskLookup(client)
 
-    first = lookup.list_tasks(project_id="project-1", label=LABEL, limit=2, sort_by="updated_at")
-    second = lookup.list_tasks(project_id="project-1", label=LABEL, limit=2, sort_by="updated_at")
+    first = lookup.list_tasks(
+        project_id="project-1", label=LABEL, limit=2, offset=0, sort_by="updated_at"
+    )
+    second = lookup.list_tasks(
+        project_id="project-1", label=LABEL, limit=2, offset=0, sort_by="updated_at"
+    )
 
     assert first == second
     [task] = first
@@ -82,9 +88,29 @@ def test_lookup_rebuilds_full_owner_records_and_fetches_each_once() -> None:
     assert (task.closed_reason, task.commits, task.seq_num) == ("completed", ["abc1234"], 7)
     assert task.closed_at == datetime(2026, 10, 7, 3, tzinfo=UTC)
     assert client.calls == [
-        ("gobby-tasks", "list_tasks", {"project": "project-1", "label": LABEL, "limit": 2}),
+        (
+            "gobby-tasks",
+            "list_tasks",
+            {
+                "project": "project-1",
+                "label": LABEL,
+                "limit": 2,
+                "offset": 0,
+                "sort_by": "updated_at",
+            },
+        ),
         ("gobby-tasks", "get_task", {"task_id": "task-1", "brief": False}),
-        ("gobby-tasks", "list_tasks", {"project": "project-1", "label": LABEL, "limit": 2}),
+        (
+            "gobby-tasks",
+            "list_tasks",
+            {
+                "project": "project-1",
+                "label": LABEL,
+                "limit": 2,
+                "offset": 0,
+                "sort_by": "updated_at",
+            },
+        ),
     ]
 
 
@@ -92,7 +118,7 @@ def test_lookup_keeps_open_owners_open() -> None:
     client = FakeTaskClient([task_record(closed_at=None, closed_reason=None)])
 
     [task] = DaemonTaskLookup(client).list_tasks(
-        project_id="project-1", label=LABEL, limit=2, sort_by="updated_at"
+        project_id="project-1", label=LABEL, limit=2, offset=0, sort_by="updated_at"
     )
 
     assert (task.closed_at, task.closed_reason) == (None, None)
@@ -133,7 +159,7 @@ def test_lookup_keeps_open_owners_open() -> None:
 def test_lookup_failures_raise_the_named_condition(client: FakeTaskClient, message: str) -> None:
     with pytest.raises(CompletedSectionExemptionsUnavailable) as raised:
         DaemonTaskLookup(client).list_tasks(
-            project_id="project-1", label=LABEL, limit=2, sort_by="updated_at"
+            project_id="project-1", label=LABEL, limit=2, offset=0, sort_by="updated_at"
         )
 
     assert str(raised.value).startswith(message)

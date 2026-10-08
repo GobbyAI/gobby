@@ -7,6 +7,7 @@ import json
 import logging
 import random
 import re
+import select
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
@@ -22,10 +23,12 @@ from typing import Any, Protocol, cast
 
 import psycopg
 from psycopg import sql as psycopg_sql
+from psycopg.abc import Buffer
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.postgres import types as pg_types
 from psycopg.pq import TransactionStatus
 from psycopg.rows import dict_row
+from psycopg.types.string import TextLoader
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from gobby.storage.hub._ambient import TransactionOpener, enter_transaction
@@ -76,6 +79,7 @@ POOL_TIMEOUT_RETRY_JITTER_RATIO = 0.25
 
 # psycopg parses json/jsonb into plain JSON values, which need no datetime walk.
 _JSON_TYPE_OIDS = frozenset(pg_types[name].oid for name in ("json", "jsonb"))
+_PLAIN_SCALAR_TYPES = frozenset({str, int, float, bool, type(None)})
 
 _SQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -422,12 +426,14 @@ class _PostgresTransaction:
             # exiting synchronizes the result/error before this operation returns.
             with self._conn.pipeline() if self._deadline.active else nullcontext():
                 result = self._conn.execute(sql, params) if params else self._conn.execute(sql)
+            self._deadline.observe(sql)
             return PostgresCursor(result)
         finally:
             record_query(time.perf_counter() - started_at)
 
     def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:
         self._note_write(sql)
+        self._deadline.observe(sql)
         if self._deadline.active:
             # Driver pipelining gives every row the same stale server bound.
             rowcount = 0
@@ -499,11 +505,18 @@ class PostgresCursor:
         self._rowcount = rowcount
         self._rows: list[Row] | None = None
         self._position = 0
+        # psycopg builds a new Column list on every description read, so it is
+        # read once per cursor (#23359).
+        self._json_column_names: frozenset[str] | None = None
 
     def materialize(self) -> PostgresCursor:
         if self._cursor is None:
             return self
-        rows = self.fetchall() if getattr(self._cursor, "description", None) is not None else []
+        description = getattr(self._cursor, "description", None)
+        rows: list[Row] = []
+        if description is not None:
+            self._json_column_names = _json_column_names(description)
+            rows = self.fetchall()
         self._rowcount = self.rowcount
         self._cursor = None
         self._rows = rows
@@ -539,12 +552,9 @@ class PostgresCursor:
         ]
 
     def _json_columns(self) -> frozenset[str]:
-        description = getattr(self._cursor, "description", None)
-        if not isinstance(description, list):
-            return frozenset()
-        # dict_row keeps the last column of a repeated name, so classify the same one.
-        is_json = {column.name: column.type_code in _JSON_TYPE_OIDS for column in description}
-        return frozenset(name for name, json_typed in is_json.items() if json_typed)
+        if self._json_column_names is None:
+            self._json_column_names = _json_column_names(getattr(self._cursor, "description", None))
+        return self._json_column_names
 
     @property
     def rowcount(self) -> int:
@@ -572,6 +582,14 @@ class _PostgresSavepoint:
         self._txn._deadline.restore_savepoint_state(self._deadline_state)
 
 
+def _json_column_names(description: object) -> frozenset[str]:
+    if not isinstance(description, list):
+        return frozenset()
+    # dict_row keeps the last column of a repeated name, so classify the same one.
+    is_json = {column.name: column.type_code in _JSON_TYPE_OIDS for column in description}
+    return frozenset(name for name, json_typed in is_json.items() if json_typed)
+
+
 def _normalize_row(row: Row | None, json_columns: frozenset[str] = frozenset()) -> Row | None:
     if row is None:
         return None
@@ -579,7 +597,11 @@ def _normalize_row(row: Row | None, json_columns: frozenset[str] = frozenset()) 
         return cast(
             Row,
             {
-                str(key): _dump_json_container(value)
+                str(key): value
+                # Most values are plain scalars both branches return unchanged;
+                # one exact-type lookup replaces their isinstance chain (#23359).
+                if type(value) in _PLAIN_SCALAR_TYPES
+                else _dump_json_container(value)
                 if key in json_columns
                 else _normalize_value(value)
                 for key, value in row.items()
@@ -590,7 +612,8 @@ def _normalize_row(row: Row | None, json_columns: frozenset[str] = frozenset()) 
 
 def _dump_json_container(value: Any) -> Any:
     # Storage model decoders consume serialized JSON for both JSONB and text columns.
-    # Keep that row boundary uniform rather than exposing driver-specific value types.
+    # Pool connections' loaders already call this; rows from a connection without
+    # them reach it through _normalize_row.
     if isinstance(value, dict | list):
         return json.dumps(value, sort_keys=True, separators=(",", ":"))
     return value
@@ -618,6 +641,54 @@ def conninfo_with_utc_session_timezone(conninfo: str) -> str:
     return make_conninfo("", **parsed)
 
 
+class _JsonContainerTextLoader(TextLoader):
+    """Hand JSON objects and arrays on in canonical text; decode JSON scalars.
+
+    Rows carry containers as sorted compact JSON, which stored hashes and edit
+    checks compare (stage registry row_hash), so the server's own text will not
+    do. Decoded jsonb holds only JSON-native values, so dumping it here skips
+    the per-value to_json_safe walk and type dispatch of _normalize_row (#23359).
+    """
+
+    def load(self, data: Buffer) -> Any:
+        value = json.loads(super().load(data))
+        if isinstance(value, dict | list):
+            return _dump_json_container(value)
+        return value
+
+
+def configure_pool_connection(
+    connection: psycopg.Connection[Any],
+    runtime_role: str | None,
+) -> None:
+    """Install the row loaders on a newly opened pool connection, then its role."""
+    adapters = connection.adapters
+    adapters.register_loader("json", _JsonContainerTextLoader)
+    adapters.register_loader("jsonb", _JsonContainerTextLoader)
+    # Rows carry UUIDs as text; PostgreSQL's output is already str(UUID)'s form.
+    adapters.register_loader("uuid", TextLoader)
+    if runtime_role is not None:
+        configure_runtime_role(connection, runtime_role)
+        assert_runtime_role(connection, runtime_role)
+
+
+def check_connection_alive(connection: psycopg.Connection[Any]) -> None:
+    """Pool check: reject a pooled connection whose server end went away.
+
+    An idle connection's socket has nothing to read until the server sends a
+    FATAL notice or closes it, so a zero-timeout poll finds the connections a
+    hub restart killed without a round trip on every checkout (#23359). Only
+    a readable socket pays for psycopg_pool's own query check.
+    """
+    poll = getattr(select, "poll", None)
+    if poll is not None:
+        readable = poll()
+        readable.register(connection.fileno(), select.POLLIN)
+        if not readable.poll(0):
+            return
+    ConnectionPool.check_connection(connection)
+
+
 def configure_runtime_role(
     connection: psycopg.Connection[Any],
     runtime_role: str,
@@ -633,17 +704,15 @@ def assert_runtime_role(
     connection: psycopg.Connection[Any],
     runtime_role: str,
 ) -> None:
-    """Reject a checked-out connection whose effective identity changed.
+    """Reject a connection whose effective identity is not the runtime role.
 
-    This runs on every checkout, so its cost is charged to every database
-    operation in the process. The query itself is unavoidable -- PostgreSQL
-    does not push the role: on server 18, parameter_status('role') is None
-    before and after SET ROLE, and session_authorization stays at the login
-    user. The transaction around it was avoidable, and was two thirds of the
-    cost: the pool's connections are not autocommit, so the SELECT opened a
-    transaction and the commit existed only to close it, verifying nothing.
-    Checking out and running one statement measured 0.620 ms with that commit
-    and 0.420 ms without, against 0.320 ms for no check at all (#20853).
+    The pool runs this once per connection, right after SET ROLE, and
+    verify_runtime_identity runs it on demand. It used to run on every
+    checkout, which charged a round trip to every database operation (#23359).
+    The query itself is unavoidable -- PostgreSQL does not push the role: on
+    server 18, parameter_status('role') is None before and after SET ROLE, and
+    session_authorization stays at the login user. Autocommit keeps the SELECT
+    from opening a transaction that would need a commit to close it (#20853).
     """
     validate_identifier(runtime_role)
     previous_autocommit = connection.autocommit

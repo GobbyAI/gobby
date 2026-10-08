@@ -8,11 +8,15 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
+from gobby.adapters.capabilities import get_provider_capabilities
 from gobby.agents.capture import terminate_managed_runtime_async
 from gobby.agents.kill import inspect_agent_process_identity, pid_matches_agent_identity
 from gobby.agents.recovery_state import is_recovery_protected
 from gobby.agents.run_completion import bound_task_is_closed, cooperative_close_handoff_pending
 from gobby.agents.stall_classifier import StallStatus
+from gobby.hooks.events import HookEventType
+from gobby.sessions.turn_lifecycle import TurnLifecycleState
+from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.terminals.lookup import active_terminal_for_run
 from gobby.utils.datetime import parse_stored_datetime
 from gobby.utils.machine_id import require_machine_id
@@ -21,6 +25,7 @@ if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
     from gobby.agents.stall_classifier import StallClassifier
     from gobby.config.tmux import TmuxConfig
+    from gobby.hooks.session_coordinator import SessionCoordinator
     from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
@@ -33,6 +38,16 @@ def _session_counter(session: Any, name: str) -> int:
     if isinstance(value, int) and not isinstance(value, bool):
         return max(value, 0)
     return 0
+
+
+def _exits_without_session_end(provider: str) -> bool:
+    """True for a CLI whose turns end through Stop but which has no SessionEnd hook."""
+    try:
+        hooks = get_provider_capabilities(provider).hook_events.values()
+    except ValueError:
+        return False
+    events = {hook.event_type for hook in hooks}
+    return HookEventType.STOP in events and HookEventType.SESSION_END not in events
 
 
 class AgentHealthMonitor:
@@ -49,16 +64,20 @@ class AgentHealthMonitor:
         run_db: Callable[..., Awaitable[Any]] | None = None,
         checkpoint_agent_work: Callable[[AgentRun], Awaitable[None]] | None = None,
         terminal_services: Any | None = None,
+        get_session_coordinator: Callable[[], SessionCoordinator | None] | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
         self._get_session_manager = get_session_manager
+        self._get_session_coordinator = get_session_coordinator
         self._stall_classifier = stall_classifier
         self._cleanup_handler = cleanup_handler
         self._tmux_config = tmux_config
         self._run_db_callback = run_db
         self._checkpoint_agent_work = checkpoint_agent_work
         self._terminal_services = terminal_services
+        # Runs whose session-end completion left them active; they fail if still active next pass.
+        self._unsettled_completions: set[str] = set()
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -177,6 +196,62 @@ class AgentHealthMonitor:
             f"session_created_at={session_created_at}, session_updated_at={session_updated_at})"
         )
 
+    async def _dead_terminal_reason(self, run: AgentRun) -> str | None:
+        """Why a run's terminal died, or ``None`` while SessionEnd's classifier settles a clean exit.
+
+        AGY ``--print`` exits after its final turn and has no SessionEnd hook, so its
+        clean exit arrives here as a dead terminal (#23778).
+        """
+        died = "terminal session died unexpectedly"
+        coordinator = self._get_session_coordinator() if self._get_session_coordinator else None
+        session_manager = self._get_session_manager()
+        if (
+            run.is_interactive
+            or not run.child_session_id
+            or coordinator is None
+            or session_manager is None
+            or not _exits_without_session_end(run.provider)
+        ):
+            return died
+        session = await self._run_db(session_manager.get, run.child_session_id)
+        attention = await self._run_db(
+            AttentionStateManager(self._db).get,
+            session_attention_entry_id(run.child_session_id),
+        )
+        lifecycle = TurnLifecycleState.from_payload(attention.payload if attention else None)
+        if (
+            session is None
+            or session.agent_run_id != run.id
+            or lifecycle.generation == 0
+            or lifecycle.turn_state != "terminal"
+            or lifecycle.disposition is None
+        ):
+            return died
+        if lifecycle.disposition != "completed":
+            return (
+                "agent exited after its last turn ended without completing "
+                f"({lifecycle.disposition})"
+            )
+        if run.id in self._unsettled_completions:
+            self._unsettled_completions.discard(run.id)
+            # A queued completion had a full pass to land; only a termination owner remains.
+            if run.pending_terminal_action:
+                return None
+            return "agent exited after its last turn completed, but its completion did not settle"
+        # Blocks on the daemon loop and the terminal-delivery executor.
+        await asyncio.to_thread(coordinator.complete_agent_run, session)
+        current = await self._run_db(self._agent_run_manager.get, run.id)
+        if (
+            current is not None
+            and current.status in ("pending", "running")
+            # Reconciliation re-drives the termination owner's persisted action.
+            and not current.pending_terminal_action
+        ):
+            # complete_agent_run swallows its errors, and a delivery that timed out
+            # leaves its completion queued, so give it one pass before failing.
+            self._unsettled_completions.add(run.id)
+        return None
+
     async def check_unhealthy_agents(self) -> int:
         """Detect and clean up dead or expired agents."""
         runs = [
@@ -187,6 +262,7 @@ class AgentHealthMonitor:
             )
             if not is_recovery_protected(run)
         ]
+        self._unsettled_completions &= {run.id for run in runs}
         now = datetime.now(UTC)
         cleaned = 0
 
@@ -245,7 +321,13 @@ class AgentHealthMonitor:
                                 )
                                 logger.info("Agent %s %s - cleaning up", run.id, reason)
                     else:
-                        reason = "terminal session died unexpectedly"
+                        reason = await self._dead_terminal_reason(run)
+                        if reason is None:
+                            # Settled, left to its termination owner, or given one more pass.
+                            current = await self._run_db(self._agent_run_manager.get, run.id)
+                            if current is not None and current.status not in ("pending", "running"):
+                                cleaned += 1
+                            continue
                         logger.info(
                             "Detected dead terminal '%s' for agent %s",
                             terminal.id,

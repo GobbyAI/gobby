@@ -173,6 +173,202 @@ _MUTATION = "gobby " + "tasks close 1"
 
 
 @pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+def test_find_exec_echo_keeps_arguments_as_data(
+    db: HubDatabase, effect: RuleEffect, tool_name: str
+) -> None:
+    command = f"find . -exec echo -exec {_MUTATION} \\;"
+    assert RuleEngine(db)._should_block(effect, _shell_event(tool_name, command)) is False
+
+
+@pytest.mark.parametrize("prefix", ["echo", "echo -n"])
+def test_shell_executes_joined_echo_arguments(
+    db: HubDatabase, effect: RuleEffect, prefix: str
+) -> None:
+    command = f"{prefix} {_MUTATION} | bash"
+    assert RuleEngine(db)._should_block(effect, _shell_event("Bash", command)) is True
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize(
+    "prefix",
+    ["--python-preference only-system", "--preview-features audit-command", "--python-fetch never"],
+)
+@pytest.mark.parametrize("before_run", [True, False])
+@pytest.mark.parametrize("blocked", [True, False])
+def test_uv_hidden_global_value_options(
+    db: HubDatabase,
+    effect: RuleEffect,
+    tool_name: str,
+    prefix: str,
+    before_run: bool,
+    blocked: bool,
+) -> None:
+    target = _MUTATION if blocked else "echo " + _MUTATION
+    command = f"uv {prefix} run {target}" if before_run else f"uv run {prefix} {target}"
+    assert RuleEngine(db)._should_block(effect, _shell_event(tool_name, command)) is blocked
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        (f"echo '{_MUTATION}' | bash", True),
+        (f"printf '{_MUTATION}\\n' | sh", True),
+        (f"bash <<< '{_MUTATION}'", True),
+        (f"find . -exec {_MUTATION} \\;", True),
+        (f"find . -exec {_MUTATION} {{}} +", True),
+        (f"python -m {_MUTATION}", True),
+        (f"python -X dev -m {_MUTATION}", True),
+        (f"python -W ignore -m {_MUTATION}", True),
+        (f"python -Im {_MUTATION}", True),
+        (f"python -m{_MUTATION}", True),
+        (f"uv run python -X dev -m {_MUTATION}", True),
+        (f"uv run python -W ignore -m {_MUTATION}", True),
+        (f"uv run python -Im {_MUTATION}", True),
+        (f"uv run python -m{_MUTATION}", True),
+        (f"uv run python -m {_MUTATION}", True),
+        (f"su -c '{_MUTATION}'", True),
+        (f"su -c'{_MUTATION}'", True),
+        pytest.param(f"su -lc '{_MUTATION}'", True, id="review_su_lc"),
+        pytest.param(f"su -mc '{_MUTATION}'", True, id="review_su_mc"),
+        pytest.param(f"su -flc '{_MUTATION}'", True, id="review_su_flc"),
+        pytest.param(f"su -lc'{_MUTATION}'", True, id="review_su_attached_lc"),
+        pytest.param("su -s /bin/sh root", False, id="review_su_shell_data"),
+        (f"echo '{_MUTATION}'", False),
+        (f"printf '{_MUTATION}\\n'", False),
+        (f"find . -name '{_MUTATION}'", False),
+        (f"python -m echo {_MUTATION}", False),
+        (f"python -X '{_MUTATION}' report.py", False),
+        (f"python -W '{_MUTATION}' report.py", False),
+        (f"python -c 'print(1)' -m {_MUTATION}", False),
+        (f"python -m echo -m {_MUTATION}", False),
+        (f"python report.py -m {_MUTATION}", False),
+        (f"uv run echo python -m{_MUTATION}", False),
+        (f"X=$(python3 - <<'PY'\nprint(1)\nPY\n) true # it's\necho 'a\nb'\n{_MUTATION}", True),
+        (f"X=$(python3 - <<'PY'\nprint(1)\nPY\n) echo $'it\\'s'\necho 'a\nb'\n{_MUTATION}", True),
+        pytest.param(
+            f"X=$(python3 - <<'PY'\nprint(1)\nPY\n) {_MUTATION} # it's\necho 'a\nb'",
+            True,
+            id="review_trailing_comment",
+        ),
+        pytest.param(
+            "X=$(python3 - <<'PY'\nprint(1)\nPY\n) true # it's\necho 'a\nb'",
+            False,
+            id="review_trailing_comment_data",
+        ),
+        pytest.param(
+            f"X=$(python3 - <<'PY'\nprint(1)\nPY\n) true # then; {_MUTATION}\necho ok",
+            False,
+            id="review_comment_mutation_data",
+        ),
+        pytest.param(
+            f"X=$(python3 - <<'PY'\nprint(1)\nPY\n) echo $(true)#; {_MUTATION}",
+            True,
+            id="review_substitution_hash_word",
+        ),
+        pytest.param(
+            f"cat <<EOF &&\n# $({_MUTATION})\nEOF\ntrue",
+            True,
+            id="review_continuation_heredoc_expansion",
+        ),
+        pytest.param(
+            f"cat <<'EOF' &&\n# $({_MUTATION})\nEOF\ntrue",
+            False,
+            id="review_continuation_heredoc_data",
+        ),
+        pytest.param(
+            f"cat <<'EOF' |\n{_MUTATION}\nEOF\ntee /dev/null",
+            False,
+            id="review_pipeline_continuation_heredoc_data",
+        ),
+        pytest.param(
+            f"X=$(python3 - <<'PY'\nprint(1)\nPY\n) cat <<'EOF' &&\n# $({_MUTATION})\nEOF\ntrue",
+            False,
+            id="review_nested_continuation_heredoc_data",
+        ),
+        pytest.param(
+            f"echo \"$(cat <<'EOF' &&\n)\n# $({_MUTATION})\nEOF\ntrue\n)\"",
+            False,
+            id="review_substitution_continuation_heredoc_data",
+        ),
+        (f"X=$(python3 - <<'PY'\nprint('ok')\nPY\n) {_MUTATION}", True),
+        (f"X=$({_ODD_PYTHON_SOURCE}) {_MUTATION}", True),
+    ],
+)
+def test_blocks_shell_fed_and_indirect_task_cli(
+    db: HubDatabase, effect: RuleEffect, tool_name: str, command: str, blocked: bool
+) -> None:
+    assert RuleEngine(db)._should_block(effect, _shell_event(tool_name, command)) is blocked
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize(
+    ("body", "blocked"),
+    [
+        (f"node <<'JS'\n// don't\nJS\n{_MUTATION}", True),
+        (_ODD_PYTHON_SOURCE + _MUTATION, True),
+        (f"timeout 5 {_MUTATION}", True),
+        (f"env A=1 {_MUTATION}", True),
+        (f"sudo --login {_MUTATION}", True),
+        ('"gobby" tasks close 1', True),
+        (f"cat <<'DATA'\n{_MUTATION}\nDATA", False),
+    ],
+)
+def test_executed_heredoc_body_segments_match_separately(
+    db: HubDatabase, effect: RuleEffect, tool_name: str, body: str, blocked: bool
+) -> None:
+    command = "bash <<'EOF'\n" + body + "\nEOF"
+    assert RuleEngine(db)._should_block(effect, _shell_event(tool_name, command)) is blocked
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+def test_ruby_variable_named_cat_heredoc_executes(
+    db: HubDatabase, effect: RuleEffect, tool_name: str
+) -> None:
+    command = f"ruby <<'RB'\ncat = <<X\n{_MUTATION}\nX\nsystem(cat)\nRB"
+    assert RuleEngine(db)._should_block(effect, _shell_event(tool_name, command)) is True
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize(
+    "options",
+    [
+        "-a /tmp/input",
+        "-a/tmp/input",
+        "-0a /tmp/input",
+        "-0a/tmp/input",
+        "--arg-file /tmp/input",
+        "--arg-file=/tmp/input",
+        "--arg-f /tmp/input",
+        "--arg-f=/tmp/input",
+        "--max-chars 4096",
+        "--max-chars=4096",
+        "--max-char 4096",
+        "--max-char=4096",
+        "--process-slot-var SLOT",
+        "--process-slot-var=SLOT",
+        "--process-slot SLOT",
+        "--process-slot=SLOT",
+        "-I {} -R 2",
+        "-I{} -R2",
+        "-I {} -0R2",
+        "-I {} -S 4096",
+        "-I{} -S4096",
+        "-I {} -0S4096",
+        "--max-lines",
+        "--max-lines=3",
+    ],
+)
+@pytest.mark.parametrize("blocked", [True, False])
+def test_xargs_required_operands(
+    db: HubDatabase, effect: RuleEffect, tool_name: str, options: str, blocked: bool
+) -> None:
+    target = _MUTATION if blocked else "echo " + _MUTATION
+    event = _shell_event(tool_name, f"xargs {options} {target}")
+    assert RuleEngine(db)._should_block(effect, event) is blocked
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
 @pytest.mark.parametrize(
     "command",
     [

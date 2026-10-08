@@ -179,7 +179,7 @@ async def recover_completed_turn(
     idle_timeout_seconds: int,
     pane_tail: str | None = None,
 ) -> int:
-    if run.is_interactive:
+    if run.is_interactive and (run.resume_metadata_json or {}).get("idle_ttl_seconds") is None:
         host._completed_turn_recovery.pop(run.id, None)
         return 0
     event = snapshot.latest_turn_event

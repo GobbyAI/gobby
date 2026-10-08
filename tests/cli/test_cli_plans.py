@@ -437,12 +437,53 @@ def test_validate_helper_reads_agent_completion_through_the_daemon(
     assert client.calls[0] == (
         "gobby-tasks",
         "list_tasks",
-        {"project": "project-1", "label": LABEL, "limit": 2},
+        {"project": "project-1", "label": LABEL, "limit": 50, "offset": 0, "sort_by": "created_at"},
     )
     if not valid:
         assert result["errors"] == [
             "Target `docs/demo.md::*` names symbol scope for a file with no index record"
         ]
+
+
+@pytest.mark.parametrize("late_owner_closed", [False, True], ids=["late-open", "all-closed"])
+def test_validate_helper_pages_all_agent_completion_owners(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, late_owner_closed: bool
+) -> None:
+    plan = _write_contract_plan(tmp_path, target_line="Target: `large.py`\nTarget: `docs/demo.md`")
+    (tmp_path / "large.py").write_text("# line\n" * 850, encoding="utf-8")
+    owners = [task_record(id=f"task-{number}") for number in range(50)]
+    owners.append(
+        task_record(
+            id="late-owner",
+            closed_at="2026-10-07T03:00:00+00:00" if late_owner_closed else None,
+            closed_reason="duplicate" if late_owner_closed else None,
+            commits=[],
+        )
+    )
+    client = FakeTaskClient(owners)
+    _use_agent_validation(tmp_path, monkeypatch, client)
+    monkeypatch.setattr(_FakeIndex, "get_file", lambda *_args: None)
+
+    result = plans_module._validate_plan_for_cli(plan, None, mode="standard")
+
+    assert result["valid"] is late_owner_closed
+    assert any("production-size-growth" in error for error in result.get("errors", [])) is (
+        not late_owner_closed
+    )
+    assert [arguments for _, tool, arguments in client.calls if tool == "list_tasks"] == [
+        {
+            "project": "project-1",
+            "label": LABEL,
+            "limit": 50,
+            "offset": offset,
+            "sort_by": "created_at",
+        }
+        for offset in (0, 50)
+    ]
+    assert any(
+        tool == "get_task" and arguments["task_id"] == "late-owner"
+        for _, tool, arguments in client.calls
+    )
 
 
 def test_validate_helper_reports_unreachable_daemon_for_agents(

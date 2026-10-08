@@ -728,6 +728,66 @@ async def test_unexpected_dirty_edit_ownership_inspection_failure_propagates(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["functions.apply_patch", "Write"])
+@pytest.mark.parametrize("placement", ["tool_input", "event"])
+async def test_commit_text_in_non_shell_tool_data_is_allowed(
+    guard_harness: GuardHarness, tool_name: str, placement: str
+) -> None:
+    command = "git " + "commit -m $(uv run pytest)"
+    event = guard_harness.event(command)
+    event.data["tool_name"] = tool_name
+    if placement == "event":
+        event.data["tool_input"] = {"content": command}
+        event.data["command"] = command
+
+    response = await guard_harness.handler._evaluate_rules(event)
+
+    assert response.decision == "allow"
+
+
+_ROLE_PROSE_PATCH = """*** Begin Patch
+*** Add File: tests/test_role_prose.py
++ROLE_PROSE = "Use git commit --only -- <paths> for ordinary commits."
++
++
++def test_role_prose_names_the_scoped_commit() -> None:
++    # Run git commit -m 'wip' only after staging owned paths.
++    assert "git commit --only" in ROLE_PROSE
+*** End Patch
+"""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "tool_input"),
+    [
+        ("functions.apply_patch", {"patch": _ROLE_PROSE_PATCH}),
+        ("Write", {"patch": _ROLE_PROSE_PATCH, "file_path": "tests/test_role_prose.py"}),
+    ],
+    ids=["codex-apply-patch", "normalized-write"],
+)
+async def test_commit_prose_in_patch_content_allows_while_a_real_commit_blocks(
+    guard_harness: GuardHarness, tool_name: str, tool_input: dict[str, str]
+) -> None:
+    (guard_harness.repo / "owned.txt").write_text("current change\n", encoding="utf-8")
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "owned.txt", "foreign.txt")
+    patch_event = guard_harness.event("", workdir=guard_harness.repo)
+    patch_event.data["tool_name"] = tool_name
+    patch_event.data["tool_input"] = tool_input
+
+    patch_response = await guard_harness.handler.evaluate_async(patch_event)
+    commit_response = await guard_harness.handler.evaluate_async(
+        guard_harness.event("git commit -m 'unsafe'", workdir=guard_harness.repo)
+    )
+
+    assert patch_response.decision == "allow"
+    assert commit_response.decision == "block"
+    assert commit_response.reason is not None
+    assert "foreign.txt" in commit_response.reason
+
+
+@pytest.mark.asyncio
 async def test_unscoped_commit_blocks_foreign_staged_path_with_owner_diagnostic(
     guard_harness: GuardHarness,
 ) -> None:

@@ -226,6 +226,8 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         extra["canonical_script_bodies"] = sorted(script_bodies)
     if mutation_scope_unknown:
         extra["_canonical_repo_mutation_scope_unknown"] = True
+    if any(item.unverified_write_scope for item in active):
+        extra["_canonical_repo_mutation_scope_unverified"] = True
     if saw_unexpanded_mutation_path and mutation_scope_resolved_by_loop_binding:
         extra["_canonical_repo_mutation_scope_resolved_by_loop_binding"] = True
     if navigation_scope_unknown and not paths:

@@ -390,7 +390,6 @@ def _ensure_gobby_bin_on_path(bin_dir: Path) -> dict[str, Any]:
     return result
 
 
-_GCODE_RELEASE_TAG_PREFIX = "gcode-v"
 _GCODE_VERSION_STAMP = ".gcode-version"
 _GCODE_BIN_NAME = "gcode.exe" if sys.platform == "win32" else "gcode"
 _GCODE_TARGETS = _PLATFORM_TARGETS
@@ -409,45 +408,20 @@ def _write_gcode_version_stamp(bin_dir: Path, version: str) -> None:
     _gcode_impl.write_gcode_version_stamp(_module(), bin_dir, version)
 
 
-def _install_gcode_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
-    return _gcode_impl.install_gcode_from_github(_module(), bin_dir, target, version)
-
-
 def _install_gcode_from_submodule(bin_dir: Path) -> bool:
     return _gcode_impl.install_gcode_from_submodule(_module(), bin_dir)
-
-
-def _install_gcode_from_cargo_git(bin_dir: Path) -> bool:
-    return _gcode_impl.install_gcode_from_cargo_git(_module(), bin_dir)
-
-
-def _install_gcode_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
-    return _gcode_impl.install_gcode_from_cargo_binstall(_module(), bin_dir, version)
-
-
-def _install_gcode_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
-    return _gcode_impl.install_gcode_from_cargo_install(_module(), bin_dir, version)
 
 
 def _install_gcode(force: bool = False) -> dict[str, Any]:
     return _gcode_impl.install_gcode(_module(), force)
 
 
-_GHOOK_RELEASE_TAG_PREFIX = "ghook-v"
 _GHOOK_CRATES_API = "https://crates.io/api/v1/crates/gobby-hooks"
 _GHOOK_VERSION_STAMP = ".ghook-version"
 _GHOOK_INSTALL_SIDECAR = ".ghook-install.json"
 _GHOOK_RUNTIME_STAMP = ".ghook-runtime.json"
 _GHOOK_BIN_NAME = "ghook.exe" if sys.platform == "win32" else "ghook"
 _GHOOK_TARGETS = _PLATFORM_TARGETS
-_GHOOK_INSTALL_VERSION_ENV = "GOBBY_INSTALL_GHOOK_VERSION"
-_GHOOK_INSTALL_METHOD_ENV = "GOBBY_INSTALL_GHOOK_METHOD"
-_GHOOK_ALLOWED_METHODS = {"auto", "github", "cargo-binstall", "cargo-install"}
-_GHOOK_PUBLIC_INSTALL_METHODS = {
-    "github": "github-release",
-    "cargo-binstall": "crates-binstall",
-    "cargo-install": "cargo-install",
-}
 
 
 def _get_latest_ghook_version() -> str | None:
@@ -470,10 +444,6 @@ def _ghook_installed_at_utc() -> str:
     return _ghook_impl.ghook_installed_at_utc(_module())
 
 
-def _ghook_install_source_url(method: str, *, target: str, version: str | None) -> str | None:
-    return _ghook_impl.ghook_install_source_url(_module(), method, target=target, version=version)
-
-
 def _write_ghook_install_sidecar(
     bin_dir: Path,
     *,
@@ -492,24 +462,8 @@ def _write_ghook_install_sidecar(
     )
 
 
-def _install_ghook_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
-    return _ghook_impl.install_ghook_from_github(_module(), bin_dir, target, version)
-
-
-def _install_ghook_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
-    return _ghook_impl.install_ghook_from_cargo_binstall(_module(), bin_dir, version)
-
-
-def _install_ghook_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
-    return _ghook_impl.install_ghook_from_cargo_install(_module(), bin_dir, version)
-
-
-def _get_ghook_version_override() -> str | None:
-    return _ghook_impl.get_ghook_version_override(_module())
-
-
-def _get_ghook_method_override() -> str | None:
-    return _ghook_impl.get_ghook_method_override(_module())
+def _install_ghook_from_workspace(bin_dir: Path) -> bool:
+    return _ghook_impl.install_ghook_from_workspace(_module(), bin_dir)
 
 
 def _probe_ghook_version(ghook_path: Path) -> str | None:

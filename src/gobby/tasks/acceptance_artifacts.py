@@ -790,7 +790,7 @@ async def _workflow_exists(sha: str, workflow_name: str, repo_path: str) -> bool
     try:
         paths = (
             await _run_command(
-                ["ls-tree", "-r", "--name-only", sha, "--", ".github/workflows"],
+                ["ls-tree", "--full-tree", "-r", "--name-only", sha, "--", ".github/workflows"],
                 repo_path,
             )
         ).splitlines()
