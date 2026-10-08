@@ -215,7 +215,9 @@ def test_landed_or_closed_section_keeps_original_targets(
             "[gobby-#999] fix: split module",
         )
     result = _validate(plan, index, [_task(closed=closed)])
-    assert result["valid"] is True, result
+    assert result["valid"] is closed, result
+    if not closed:
+        assert "production-size-growth" in str(result["errors"])
     assert plan.read_bytes() == before
 
 
@@ -278,7 +280,7 @@ def test_closed_section_requires_delivered_reason_or_landing(
     result = _validate(plan, index, [task])
     delivered = reason in {"completed", "already_implemented"}
     abandoned = reason in {"duplicate", "wont_fix", "obsolete", "out_of_repo"}
-    expected = not abandoned and (delivered or landed)
+    expected = not abandoned and (delivered or (landed and bare_only))
     assert result["valid"] is expected, result
     if not expected:
         assert (MISSING_SYMBOL_SCOPE if bare_only else "production-size-growth") in str(result)
@@ -302,7 +304,8 @@ def test_completion_evidence_fails_closed(landed_plan: tuple[Path, _Index], prob
         task.closed_reason = "wont_fix"
     result = _validate(plan, index, tasks)
     assert result["valid"] is False
-    assert "production-size-growth" in str(result["errors"])
+    expected_error = MISSING_SYMBOL_SCOPE if problem == "duplicate" else "production-size-growth"
+    assert expected_error in str(result)
 
 
 def test_unmerged_worktree_commit_is_not_landed(
@@ -401,8 +404,9 @@ def test_cli_rechecks_size_growth_with_completion_evidence(
         assert call.kwargs == {
             "project_id": PROJECT_ID,
             "label": f"covers:landed-lint:1.1:1.1.{item}",
-            "limit": 2,
-            "sort_by": "updated_at",
+            "limit": 50,
+            "offset": 0,
+            "sort_by": "created_at",
         }
 
 
@@ -421,4 +425,69 @@ def test_duplicate_owner_on_later_acceptance_item_is_not_completion(
         require_symbol_validation=True,
     )
     assert result["valid"] is False
-    assert "production-size-growth" in str(result["errors"])
+    assert MISSING_SYMBOL_SCOPE in str(result)
+
+
+@pytest.mark.parametrize("repair_closed", [False, True], ids=["repair-open", "all-closed"])
+def test_size_growth_requires_every_covering_leaf_closed(
+    landed_plan: tuple[Path, _Index], repair_closed: bool
+) -> None:
+    plan, index = landed_plan
+    plan.write_text(
+        plan.read_text().replace("`tests/test_created.py`", "`tests/test_created.py::test_created`")
+    )
+    original = _task(closed=True)
+    repair = _task(closed=repair_closed)
+    repair.id = "repair-id"
+    repair.labels = ["covers:landed-lint:1.1:1.1.2"]
+    manager = MagicMock(spec=LocalTaskManager)
+
+    def covering_tasks(*, label: str, **kwargs: Any) -> list[Task]:
+        return [task for task in (original, repair) if label in (task.labels or [])]
+
+    manager.list_tasks.side_effect = covering_tasks
+    result = validate_plan_file(
+        SimpleNamespace(task_manager=manager),
+        plan,
+        project_context={"id": PROJECT_ID, "project_path": str(plan.parent)},
+        code_index=index,
+        require_symbol_validation=True,
+    )
+    growth_issues = [
+        error for error in result.get("errors", []) if "production-size-growth" in error
+    ]
+    assert bool(growth_issues) is not repair_closed, result
+    assert result["valid"] is repair_closed, result
+
+
+@pytest.mark.parametrize("last_closed", [False, True], ids=["late-open", "all-pages-closed"])
+def test_size_growth_checks_covering_leaves_beyond_first_page(
+    landed_plan: tuple[Path, _Index], last_closed: bool
+) -> None:
+    plan, index = landed_plan
+    plan.write_text(
+        plan.read_text().replace("`tests/test_created.py`", "`tests/test_created.py::test_created`")
+    )
+    tasks = [_task(closed=True) for _ in range(51)]
+    for number, task in enumerate(tasks):
+        task.id = f"leaf-{number}"
+    tasks[-1].closed_at = datetime.now(UTC) if last_closed else None
+    tasks[-1].closed_reason = "completed" if last_closed else None
+    manager = MagicMock(spec=LocalTaskManager)
+
+    def covering_tasks(*, offset: int, limit: int, **kwargs: Any) -> list[Task]:
+        return tasks[offset : offset + limit]
+
+    manager.list_tasks.side_effect = covering_tasks
+    result = validate_plan_file(
+        SimpleNamespace(task_manager=manager),
+        plan,
+        project_context={"id": PROJECT_ID, "project_path": str(plan.parent)},
+        code_index=index,
+        require_symbol_validation=True,
+    )
+    growth_issues = [
+        error for error in result.get("errors", []) if "production-size-growth" in error
+    ]
+    assert bool(growth_issues) is not last_closed, result
+    assert result["valid"] is last_closed, result
