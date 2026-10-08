@@ -21,6 +21,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeIndexedFileNotFoundError,
     GcodeProjectNotFoundError,
     GcodeTimeoutError,
+    _classify_gcode_command_error,
 )
 from gobby.code_index.models import IndexedFile, IndexedProject, IndexWriteMode
 from gobby.code_index.storage import CodeIndexStorage
@@ -58,6 +59,7 @@ class RecordingGcodeGateway(GcodeGateway):
         vector_timeout: bool = False,
         vector_result: dict[str, Any] | None = None,
         graph_errors: list[BaseException] | None = None,
+        vector_errors: list[BaseException] | None = None,
     ) -> None:
         self.fail = fail
         self.result = result or {"success": True}
@@ -66,6 +68,7 @@ class RecordingGcodeGateway(GcodeGateway):
         self.vector_timeout = vector_timeout
         self.vector_result = vector_result or {"success": True}
         self.graph_errors = list(graph_errors or [])
+        self.vector_errors = list(vector_errors or [])
         self.synced_files: list[tuple[Path, str]] = []
         self.vector_synced_files: list[tuple[Path, str]] = []
         self.graph_sync_timeouts: list[float | None] = []
@@ -97,6 +100,8 @@ class RecordingGcodeGateway(GcodeGateway):
     ) -> dict[str, Any]:
         self.vector_synced_files.append((project_root, file_path))
         self.vector_sync_timeouts.append(timeout)
+        if self.vector_errors:
+            raise self.vector_errors.pop(0)
         if self.vector_timeout:
             raise GcodeTimeoutError("gcode timed out: vector sync-file")
         if self.vector_fail:
@@ -1138,6 +1143,64 @@ async def test_sync_file_warns_and_retries_when_vector_sync_times_out(
     errors = [record for record in caplog.records if record.levelno == logging.ERROR]
     assert len(errors) == 1
     assert "vector sync retries exhausted for src/app.py" in errors[0].getMessage()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failures", [1, 3])
+async def test_grant_timeout_retries_and_keeps_exhausted_file_pending(
+    failures: int,
+    code_storage: CodeIndexStorage,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Grant contention retries in the burst or on the next poll, preserving the file."""
+    monkeypatch.setattr(
+        "gobby.code_index.sync_worker._VECTOR_SYNC_RETRY_BACKOFF_SECONDS",
+        (0.0, 0.0),
+    )
+    _write_source(tmp_path)
+    pending = _indexed_file(vectors_synced=False, graph_synced=True)
+    code_storage.upsert_project_stats(_indexed_project(tmp_path), mode=IndexWriteMode.OVERLAY)
+    code_storage.upsert_file(pending, root_path=str(tmp_path), mode=IndexWriteMode.OVERLAY)
+    error = _classify_gcode_command_error(
+        ["gcode", "vector", "sync-file"],
+        2,
+        '{"error":"timeout","message":"grant operation timed out"}',
+    )
+    gateway = RecordingGcodeGateway(vector_errors=[error] * failures)
+    config = CodeIndexConfig(embedding_enabled=True, graph_enabled=False)
+
+    did_work = await _sync_file(
+        storage=code_storage,
+        gcode_gateway=gateway,
+        config=config,
+        project_id=PROJECT_ID,
+        root=tmp_path,
+        file=pending,
+    )
+
+    assert len(gateway.vector_synced_files) == min(failures + 1, 3)
+    if failures == 3:
+        assert did_work is False
+        queued = code_storage.get_pending_sync_files(PROJECT_ID, vectors=True, graph=False)
+        assert [file.id for file in queued] == [pending.id]
+        assert queued[0].vector_sync_attempted_at is None
+        did_work = await _sync_file(
+            storage=code_storage,
+            gcode_gateway=gateway,
+            config=config,
+            project_id=PROJECT_ID,
+            root=tmp_path,
+            file=queued[0],
+        )
+
+    assert did_work is True
+    synced = code_storage.get_file(PROJECT_ID, pending.file_path)
+    assert synced is not None
+    assert synced.id == pending.id
+    assert synced.content_hash == pending.content_hash
+    assert synced.vectors_synced is True
+    assert code_storage.get_pending_sync_files(PROJECT_ID, vectors=True, graph=False) == []
 
 
 class HubHandshakeTimeoutOnceGateway(RecordingGcodeGateway):
