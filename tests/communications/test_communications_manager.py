@@ -440,6 +440,317 @@ async def test_send_message_success() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_stop_drains_in_flight_send_before_transport_close() -> None:
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    adapter = make_adapter()
+    entered = asyncio.Event()
+    released = asyncio.Event()
+    transport_closed = False
+
+    async def send(message: CommsMessage) -> str:
+        entered.set()
+        await released.wait()
+        if transport_closed:
+            raise httpx.ReadError("")
+        return "delivered-before-close"
+
+    async def close() -> None:
+        nonlocal transport_closed
+        transport_closed = True
+
+    adapter.send_message.side_effect = send
+    adapter.shutdown.side_effect = close
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=adapter),
+    ):
+        await manager.start()
+    sending = asyncio.create_task(manager.send_message("test-channel", "shutdown response"))
+    await entered.wait()
+    with patch.object(manager.responder, "stop", AsyncMock(side_effect=released.set)):
+        await manager.stop()
+    message = await sending
+
+    assert message.status == "sent"
+    assert message.platform_message_id == "delivered-before-close"
+    assert transport_closed
+    store.create_message.assert_called_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["text", "attachment", "proactive"])
+async def test_stop_deadline_keeps_durable_send_and_logs_id(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    adapter = make_adapter()
+    entered = asyncio.Event()
+    never = asyncio.Event()
+    messages: list[CommsMessage] = []
+
+    def reserve(message: CommsMessage) -> CommsMessage:
+        messages.append(message)
+        return message
+
+    store.create_message.side_effect = reserve
+
+    async def send(*args: object) -> str:
+        entered.set()
+        await never.wait()
+        return "unreachable"
+
+    adapter.send_message.side_effect = send
+    adapter.send_attachment = AsyncMock(side_effect=send)
+    adapter.send_proactive.side_effect = send
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=adapter),
+    ):
+        await manager.start()
+
+    async def deliver() -> CommsMessage:
+        if kind == "attachment":
+            file_path = tmp_path / "deadline.txt"
+            file_path.write_text("deadline file")
+            message, _ = await manager.send_attachment("test-channel", file_path)
+            return message
+        if kind == "proactive":
+            return await manager.send_proactive("test-channel", "destination", "deadline response")
+        return await manager.send_message("test-channel", "deadline response")
+
+    sending = asyncio.create_task(deliver())
+    await entered.wait()
+    with patch("gobby.communications.outbound._OUTBOUND_DRAIN_SECONDS", 0):
+        await manager.stop()
+    with pytest.raises(asyncio.CancelledError):
+        await sending
+
+    store.create_message.assert_called_once()
+    store.update_message_delivery.assert_called_once()
+    assert messages[0].status == "failed"
+    assert messages[0].id in caplog.text
+    assert "CancelledError" in caplog.text
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["text", "attachment", "proactive"])
+async def test_empty_outbound_error_log_names_type_and_id(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    adapter = make_adapter()
+    adapter.send_message.side_effect = httpx.ReadError("")
+    adapter.send_attachment = AsyncMock(side_effect=httpx.ReadError(""))
+    adapter.send_proactive.side_effect = httpx.ReadError("")
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=adapter),
+    ):
+        await manager.start()
+    if kind == "attachment":
+        file_path = tmp_path / "diagnostic.txt"
+        file_path.write_text("diagnostic file")
+        message, _ = await manager.send_attachment("test-channel", file_path)
+    elif kind == "proactive":
+        message = await manager.send_proactive("test-channel", "destination", "diagnostic response")
+    else:
+        message = await manager.send_message("test-channel", "diagnostic response")
+    failure_lines = [
+        record.getMessage() for record in caplog.records if "Failed to send" in record.getMessage()
+    ]
+    assert len(failure_lines) == 1
+    assert message.id in failure_lines[0]
+    assert "ReadError" in failure_lines[0]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["attachment", "proactive"])
+async def test_stop_drains_other_outbound_sends(tmp_path: Path, kind: str) -> None:
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    adapter = make_adapter()
+    entered = asyncio.Event()
+    released = asyncio.Event()
+    closed = False
+
+    async def send(*args: object) -> str:
+        entered.set()
+        await released.wait()
+        if closed:
+            raise httpx.ReadError("")
+        return "other-delivered"
+
+    async def close() -> None:
+        nonlocal closed
+        closed = True
+
+    adapter.send_attachment = AsyncMock(side_effect=send)
+    adapter.send_proactive = AsyncMock(side_effect=send)
+    adapter.shutdown.side_effect = close
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=adapter),
+    ):
+        await manager.start()
+
+    async def deliver() -> CommsMessage:
+        if kind == "attachment":
+            file_path = tmp_path / "response.txt"
+            file_path.write_text("response file")
+            message, _ = await manager.send_attachment("test-channel", file_path)
+            return message
+        return await manager.send_proactive("test-channel", "destination", "response")
+
+    sending = asyncio.create_task(deliver())
+    await entered.wait()
+    with patch.object(manager.responder, "stop", AsyncMock(side_effect=released.set)):
+        await manager.stop()
+    message = await sending
+    assert message.status == "sent"
+    assert message.platform_message_id == "other-delivered"
+    assert closed
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cancelled_caller_send_is_still_drained() -> None:
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    adapter = make_adapter()
+    entered = asyncio.Event()
+    released = asyncio.Event()
+    delivered = asyncio.Event()
+
+    async def send(message: CommsMessage) -> str:
+        entered.set()
+        await released.wait()
+        delivered.set()
+        return "cancelled-caller-delivery"
+
+    adapter.send_message.side_effect = send
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=adapter),
+    ):
+        await manager.start()
+    sending = asyncio.create_task(manager.send_message("test-channel", "caller response"))
+    await entered.wait()
+    sending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await sending
+    with patch.object(manager.responder, "stop", AsyncMock(side_effect=released.set)):
+        await manager.stop()
+    assert delivered.is_set()
+    assert store.update_message_delivery.call_args.args[1] == "sent"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_stop_bounds_a_send_that_ignores_cancellation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    adapter = make_adapter()
+    entered = asyncio.Event()
+    released = asyncio.Event()
+    cancelled = asyncio.Event()
+    messages: list[CommsMessage] = []
+
+    async def send(message: CommsMessage) -> str:
+        messages.append(message)
+        entered.set()
+        try:
+            await released.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            await released.wait()
+        return "late-delivery"
+
+    adapter.send_message.side_effect = send
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=adapter),
+    ):
+        await manager.start()
+    sending = asyncio.create_task(manager.send_message("test-channel", "stubborn response"))
+    await entered.wait()
+    with (
+        patch("gobby.communications.outbound._OUTBOUND_DRAIN_SECONDS", 0),
+        patch("gobby.communications.outbound._OUTBOUND_CANCEL_SECONDS", 0, create=True),
+    ):
+        stopping = asyncio.create_task(manager.stop())
+        try:
+            await cancelled.wait()
+            done, _ = await asyncio.wait({stopping}, timeout=0.5)
+            assert stopping in done
+            store.create_message.assert_called_once()
+            assert messages[0].id in caplog.text
+            assert "TimeoutError" in caplog.text
+        finally:
+            released.set()
+            await stopping
+            await sending
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cancelled_manager_stop_settles_outbound_before_propagating() -> None:
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    adapter = make_adapter()
+    entered = asyncio.Event()
+    responder_stopping = asyncio.Event()
+    never = asyncio.Event()
+
+    async def send(message: CommsMessage) -> str:
+        entered.set()
+        await never.wait()
+        return "unreachable"
+
+    async def stop_responder() -> None:
+        responder_stopping.set()
+        await never.wait()
+
+    adapter.send_message.side_effect = send
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=adapter),
+    ):
+        await manager.start()
+    sending = asyncio.create_task(manager.send_message("test-channel", "outer deadline"))
+    await entered.wait()
+    with patch.object(manager.responder, "stop", AsyncMock(side_effect=stop_responder)):
+        stopping = asyncio.create_task(manager.stop())
+        await responder_stopping.wait()
+        stopping.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stopping
+    with pytest.raises(asyncio.CancelledError):
+        await sending
+    store.update_message_delivery.assert_called_once()
+    assert store.update_message_delivery.call_args.args[1] == "failed"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_set_reaction_delegates_to_capable_adapter() -> None:
     channel = make_channel(channel_type="telegram")
     store = make_store([channel])

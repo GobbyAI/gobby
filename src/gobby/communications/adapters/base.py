@@ -265,14 +265,21 @@ class BaseChannelAdapter(ABC):
         coro_factory: Callable[[], Awaitable[httpx.Response]],
         max_retries: int = 3,
         backoff_base: float = 1.0,
+        *,
+        retry_read_errors: bool = False,
+        message_id: str | None = None,
     ) -> httpx.Response:
         """Execute an HTTP request with retry logic for 429 and 5xx responses and for
-        connection failures raised before the request was sent.
+        connection failures raised before the request was sent. Outbound callers
+        can opt into ReadError retries when bounded redelivery is preferable to loss;
+        a request accepted before its response was lost may be delivered twice.
 
         Args:
             coro_factory: Zero-arg callable that returns a new awaitable for each attempt.
             max_retries: Maximum number of retry attempts.
             backoff_base: Base delay in seconds for exponential backoff.
+            retry_read_errors: Retry read failures for this request, never earlier chunks.
+            message_id: Outbound message identity for transport retry diagnostics.
 
         Returns:
             The successful HTTP response.
@@ -281,17 +288,23 @@ class BaseChannelAdapter(ABC):
             httpx.HTTPStatusError: If all retries are exhausted or a non-retryable error occurs.
         """
         max_retries = max(0, max_retries)
+        transport_errors: tuple[type[httpx.TransportError], ...] = _UNSENT_REQUEST_ERRORS
+        if retry_read_errors:
+            # An outbound caller may prefer bounded redelivery to a lost message.
+            # Retry this request only, never already-completed message chunks.
+            transport_errors = (*transport_errors, httpx.ReadError)
         last_response: httpx.Response | None = None
         for attempt in range(max_retries + 1):
             try:
                 response = await coro_factory()
-            except _UNSENT_REQUEST_ERRORS as exc:
+            except transport_errors as exc:
                 if attempt >= max_retries:
                     raise
                 delay = backoff_base * (2**attempt)
                 logger.warning(
-                    "%s %s before the request was sent, retrying in %.1fs (attempt %d/%d)",
+                    "%s message %s: %s, retrying in %.1fs (attempt %d/%d)",
                     self.channel_type,
+                    message_id or "unavailable",
                     type(exc).__name__,
                     delay,
                     attempt + 1,
