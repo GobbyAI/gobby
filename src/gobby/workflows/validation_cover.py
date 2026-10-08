@@ -314,8 +314,9 @@ def ran_in_scratchpad(run: TranscriptValidationRun, project_path: str | None) ->
     The tree is the run's path targets, or its directory when it names none,
     plus its pythonpath when set. Such a red, as in a reviewer's base extract,
     is a deliberate probe, so it is no terminal failure of the session's own
-    validation. Scratchpad tests importing the checkout's source still count,
-    and a checkout that itself lies in a scratchpad still owns its runs.
+    validation. Scratchpad tests run with the checkout's source on an explicit
+    PYTHONPATH still count, and a checkout that itself lies in a scratchpad
+    still owns its runs.
     """
     directory, pythonpath = _source_tree(run.command, project_path)
     if directory is None:
