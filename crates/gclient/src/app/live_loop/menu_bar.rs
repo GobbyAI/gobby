@@ -26,7 +26,8 @@ pub fn menu_bar_items<W: WorkspaceView>(
         MenuBarMenu::File => vec![
             act("New terminal", Action::NewTerminal),
             act("New tab", Action::NewTab),
-            act("New workspace…", Action::NewProject),
+            act("New project…", Action::NewProject),
+            act("Open project…", Action::OpenProject),
             enabled_if(
                 act("Rename tab", Action::RenameTab),
                 chrome.focused_pane().is_some(),

@@ -127,7 +127,8 @@ fn menus_list_items_per_target_and_state() {
         [
             "New terminal",
             "New tab",
-            "New workspace…",
+            "New project…",
+            "Open project…",
             "Settings",
             "Keybinding help",
             "Reload config",
@@ -138,23 +139,24 @@ fn menus_list_items_per_target_and_state() {
         ]
     );
     assert_eq!(menu.items[2].action, MenuAction::Act(Action::NewProject));
-    assert_eq!(menu.items[5].action, MenuAction::Act(Action::ReloadConfig));
-    assert_eq!(menu.items[9].action, MenuAction::Act(Action::Quit));
+    assert_eq!(menu.items[3].action, MenuAction::Act(Action::OpenProject));
+    assert_eq!(menu.items[6].action, MenuAction::Act(Action::ReloadConfig));
+    assert_eq!(menu.items[10].action, MenuAction::Act(Action::Quit));
     assert!(menu.items.iter().all(|item| item.enabled));
 
     // Rows sit one cell inside the popup at the anchor: `destroy orphaned
-    // terminals…` makes it 31 wide, ten items make it 12 tall.
+    // terminals…` makes it 31 wide, eleven items make it 13 tall.
     assert_eq!(
         menu_rect(menu.anchor, &menu.items),
-        Rect::new(40, 12, 31, 12)
+        Rect::new(40, 12, 31, 13)
     );
-    assert_eq!(menu.item_rects.len(), 10);
+    assert_eq!(menu.item_rects.len(), 11);
     assert_eq!(menu.item_rects[0], Rect::new(41, 13, 29, 1));
     assert_eq!(menu_hit(&menu, 41, 13), Some(0));
     assert_eq!(menu_hit(&menu, 57, 15), Some(2));
     assert_eq!(menu_hit(&menu, 40, 13), None, "the border is not a row");
-    assert_eq!(menu_hit(&menu, 45, 22), Some(9), "the last row");
-    assert_eq!(menu_hit(&menu, 45, 23), None, "below the last row");
+    assert_eq!(menu_hit(&menu, 45, 23), Some(10), "the last row");
+    assert_eq!(menu_hit(&menu, 45, 24), None, "below the last row");
     let short = [item("Zoom", MenuAction::Act(Action::Zoom))];
     assert_eq!(
         menu_rect((0, 0), &short).width,
@@ -213,7 +215,8 @@ fn menu_bar_menus_regroup_items_per_title() {
         [
             "New terminal",
             "New tab",
-            "New workspace…",
+            "New project…",
+            "Open project…",
             "Rename tab",
             "Close tab",
             "Destroy orphaned terminals…",
@@ -226,6 +229,7 @@ fn menu_bar_menus_regroup_items_per_title() {
             MenuAction::Act(Action::NewTerminal),
             MenuAction::Act(Action::NewTab),
             MenuAction::Act(Action::NewProject),
+            MenuAction::Act(Action::OpenProject),
             MenuAction::Act(Action::RenameTab),
             MenuAction::Act(Action::CloseTab),
             MenuAction::DestroyOrphans,
