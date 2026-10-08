@@ -8,6 +8,23 @@ For the broader control-plane model, see [Workflows Overview](./workflows-overvi
 
 ## Usage Surfaces
 
+Single managed launches accept an optional network profile: MCP `spawn_agent`
+and `POST /api/agents/spawn` use `network: "none" | "trusted" | null`; the CLI
+uses `gobby agents spawn "Work" --session <ref> --network none|trusted`.
+Omission or null inherits the final agent definition, including a selected
+fallback. An explicit value overrides that final definition for one launch.
+The stored definition and later launches keep their original profile; resume
+uses the effective sandbox configuration saved for the selected launch.
+
+`trusted` remains an SRT allowlist, with the vendored Trusted domains, Git
+forges, and package registries. It never grants unrestricted network access.
+Root sessions and the local operator may select either profile. Spawned callers
+may override only when their verified run names `default` or `orchestrator`;
+other callers may launch with the inherited profile. The caller guard also
+enforces this on pipeline MCP steps. Daemon-internal callers cannot override.
+Spawn scope and seat-spawn restrictions still apply. The direct HTTP route
+requires operator credentials and rejects explicit network for `web_chat`.
+
 Agent definitions have explicit `surfaces`:
 
 | Surface | Runtime tool | What happens |

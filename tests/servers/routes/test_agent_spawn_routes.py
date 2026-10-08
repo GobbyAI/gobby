@@ -34,6 +34,59 @@ from tests.servers.conftest import StubConfigRuntime, create_http_server
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("network", ["none", "trusted"])
+def test_web_chat_rejects_network_before_session_creation(
+    client: TestClient, server: HTTPServer, network: str
+) -> None:
+    with patch.object(server.services.session_manager, "create_web_chat_session") as create:
+        response = client.post(
+            "/api/agents/spawn",
+            json={"task_id": "unused", "web_chat": True, "network": network},
+        )
+    assert response.status_code == 400
+    assert "network" in response.json()["detail"]
+    create.assert_not_called()
+
+
+@pytest.mark.parametrize("network", [None, "none", "trusted"])
+def test_http_network_is_launch_local(
+    client: TestClient,
+    server: HTTPServer,
+    task_manager: LocalTaskManager,
+    test_project: Any,
+    network: str | None,
+) -> None:
+    from tests.fixtures.agent_definitions import make_agent_definition
+
+    task = _create_task(task_manager, test_project.id)
+    server.services.agent_runner = MagicMock()
+    body = make_agent_definition(
+        name="default", provider="claude", network="trusted", prompts={"agent": "Work."}
+    )
+    launch = AsyncMock(return_value={"success": False, "error": "test launch intercepted"})
+    with (
+        patch("gobby.workflows.agent_resolver.resolve_agent", return_value=body),
+        patch("gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl", launch),
+    ):
+        response = client.post(
+            "/api/agents/spawn", json={"task_id": task.id, "prompt": "work", "network": network}
+        )
+    assert response.status_code == 400
+    assert launch.await_args is not None
+    selected = launch.await_args.kwargs["agent_body"]
+    assert selected.network == (network or "trusted")
+    assert body.network == "trusted"
+
+
+def test_http_invalid_network_does_not_launch(client: TestClient) -> None:
+    with patch(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl", AsyncMock()
+    ) as launch:
+        response = client.post("/api/agents/spawn", json={"task_id": "unused", "network": "all"})
+    assert response.status_code == 422
+    launch.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

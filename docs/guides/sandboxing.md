@@ -336,6 +336,23 @@ Git network access remains independent. Web chat has its own configured defaults
 
 ## Agent network policy
 
+For one managed launch, MCP `spawn_agent(network="none" | "trusted")`, HTTP
+`POST /api/agents/spawn` with `network`, and CLI
+`gobby agents spawn "Work" --session <ref> --network none|trusted` can override
+the final definition's profile. Omitted or null input inherits that definition,
+including after fallback. The CLI omits the field unless its flag is supplied.
+The override changes a launch-local copy; stored definitions and later launches
+retain their policy. Resume retains the saved effective configuration.
+
+Only root sessions, the local operator, and spawned callers whose verified run
+names `default` or `orchestrator` may explicitly choose a profile. Other spawned
+callers can use inheritance; daemon-internal callers cannot override. These
+checks apply to pipeline MCP steps as well as direct MCP calls and do not bypass
+spawn scope or seat policy. HTTP requires operator credentials and refuses an
+explicit profile for `web_chat`. Invalid values, unauthorized callers, missing
+resolved definitions, and unreadable Trusted seeds refuse before launch
+allocation. `trusted` remains an SRT allowlist; it never disables the sandbox.
+
 An agent definition's `network` field picks the egress of the agents it spawns.
 Both values keep managed SRT and `allow_network: false`. Neither turns the
 sandbox off or opens unrestricted network.

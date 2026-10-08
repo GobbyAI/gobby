@@ -51,12 +51,34 @@ async def test_pipeline_spawn_refuses_unresolved_supplied_caller(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("allowed", [False, True], ids=["forbidden", "allowed"])
+@pytest.mark.parametrize(
+    "allowed, network, caller_name",
+    [
+        (False, None, "pipeline-caller"),
+        (True, None, "pipeline-caller"),
+        (True, "trusted", "pipeline-caller"),
+        (True, "trusted", "default"),
+        (True, "none", "orchestrator"),
+        (True, "trusted", "root"),
+        (True, "none", "root"),
+    ],
+    ids=[
+        "forbidden",
+        "allowed",
+        "network-forbidden",
+        "default-network",
+        "orchestrator-network",
+        "root-trusted",
+        "root-none",
+    ],
+)
 async def test_pipeline_spawn_obeys_spawnable_agents(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     allowed: bool,
+    network: str | None,
+    caller_name: str,
 ) -> None:
     """Use the real spawn closure even when the pipeline skips before_tool rules."""
     project_id = str(sample_project["id"])
@@ -74,13 +96,13 @@ async def test_pipeline_spawn_obeys_spawnable_agents(
         parent_session_id=root.id,
         provider="claude",
         prompt="work",
-        agent_name="pipeline-caller",
+        agent_name=caller_name,
         child_session_id=child.id,
     )
     sessions.update_terminal_pickup_metadata(child.id, agent_run_id=run.id)
     definitions = AgentDefinitionManager(temp_db)
     for name, spawnable in [
-        ("pipeline-caller", ["pipeline-target"] if allowed else []),
+        (caller_name, ["pipeline-target"] if allowed else []),
         ("pipeline-target", []),
     ]:
         definitions.create(
@@ -120,16 +142,24 @@ async def test_pipeline_spawn_obeys_spawnable_agents(
         mcp=MCPStepConfig(
             server="gobby-agents",
             tool="spawn_agent",
-            arguments={"prompt": "work", "agent": "pipeline-target", "parent_session_id": root.id},
+            arguments={
+                "prompt": "work",
+                "agent": "pipeline-target",
+                "parent_session_id": root.id,
+                "network": network,
+            },
         ),
     )
-    context: dict[str, Any] = {"session_id": child.id, "project_id": project_id}
-    if allowed:
+    context: dict[str, Any] = {
+        "session_id": root.id if caller_name == "root" else child.id,
+        "project_id": project_id,
+    }
+    if allowed and (network is None or caller_name in ("default", "orchestrator", "root")):
         result = await execute_mcp_step(step, context, lambda: proxy, session_manager=sessions)
         assert result["run_id"] == "mock-launch"
         launch.assert_awaited_once()
     else:
-        with pytest.raises(RuntimeError, match="spawnable_agents"):
+        with pytest.raises(RuntimeError, match="network" if network else "spawnable_agents"):
             await execute_mcp_step(step, context, lambda: proxy, session_manager=sessions)
         launch.assert_not_awaited()
 
