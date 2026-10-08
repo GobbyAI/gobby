@@ -394,6 +394,7 @@ Retained code that still names `gobby build`:
 - `gobby.tasks.lifecycle_repair` (563 lines) imports `gobby.storage.build_history`, which 2.5 deletes, so it cannot wait for the stage leaves. Its command module has 65 lines and `src/gobby/cli/tasks/main.py` has 256.
 - `_dispatcher_tick.py` is not an entry surface; its only importer is the stage review module, and 2.4 removes both the module and those calls.
 - Remaining build-tool and profile names outside history after this leaf: the docs guides (5.2) and `CHANGELOG.md`, which is history.
+- `tests/hooks/test_normalization.py::TestCanonicalToolMetadata::test_exec_command_unclassified_shell_sets_canonical_execute_kind` stays: its `uv run gobby build #15117` string is an unclassified shell-command fixture for tool normalization.
 - Large files: `condition_helpers.py` (996 lines) and `safe_evaluator.py` (887 lines) take delete-lines proofs; the matcher removal takes about 100 lines out of `condition_helpers.py`.
 - Planned checks: focused pytest on every edited test Target, `tests/skills/`, `tests/cli/test_cron_cli.py`, `tests/cli/test_cli_pipelines.py` and `tests/cli/test_pipelines_coverage.py`; ruff, format check and mypy on the changed source files.
 
@@ -1513,41 +1514,76 @@ Targets:
 - `src/gobby/install/shared/skills/prd/SKILL.md`
 - `src/gobby/install/shared/skills/research/SKILL.md`
 - `src/gobby/install/shared/skills/proportionality/SKILL.md`
+- `src/gobby/install/shared/skills/gobby/references/plan/approval.md`
+- `src/gobby/install/shared/skills/gobby/references/plan/expansion.md`
+- `src/gobby/install/shared/skills/gobby/references/plan/lifecycle.md`
+- `src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md`
+- `src/gobby/install/shared/skills/gobby/references/source-control/commits.md`
+- `src/gobby/install/shared/skills/gobby/references/tasks/creation.md`
+- `src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md`
+- `src/gobby/install/shared/skills/gobby/references/config/restarts.md`
+- `src/gobby/install/shared/skills/gobby/references/config/values.md`
+- `src/gobby/install/shared/skills/gobby/references/pipelines/overview.md`
+- `src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md`
 - `tests/skills/test_live_session_skill.py::*` — scope-reason: drop the three automation column phrases
 - `tests/skills/test_plan_skill_delegated_mode.py::*` — scope-reason: delete the unattended build sequence test
 - `tests/skills/test_tasks_skill.py::*` — scope-reason: the tasks overview lists no `reviews` topic
+- `tests/skills/test_pipelines_and_cron_skill.py::*` — scope-reason: the pipelines overview names no build capability
+- `tests/skills/test_skill_tdd_harness.py::*` — scope-reason: the pipelines scenario classifies no task-lifecycle path
+- `tests/skills/scenarios/plan/optional-review-approval.yaml::*` — scope-reason: the approved plan offers manual expansion only
+- `tests/skills/scenarios/pipelines-and-cron/select-automation-path.yaml::*` — scope-reason: the loaded run names pipelines and cron only
 
 **Granularity:** one outcome, no bundled skill teaches a removed surface. The catalog topic and its file go together because the reference-library contract requires the catalog topics to match the files on disk.
 
 - Delete `src/gobby/install/shared/skills/gobby/references/tasks/reviews.md`, which documents only stage manifests, stage reviews and the stage CLI, and drop its `reviews` topic from the tasks capability in `catalog.json`. 3.5 already dropped the audit entries that cite it, and 3.4 dropped the link from the review outcomes reference.
-- `tasks/overview.md`: the topic list drops `reviews`, and "For plan expansion use `$gobby plan`; for dispatch use `$gobby build`." becomes "For plan expansion use `$gobby plan`."
+- `tasks/overview.md`: the topic list drops `reviews`, and "For plan expansion use `$gobby plan`; for dispatch use `$gobby build`." becomes "For plan expansion use `$gobby plan`." "`list_tasks` for parent, label, project, closed-state, or current-stage filters." becomes "`list_tasks` for parent, label, project or closed-state filters.", and "Task state projects ownership, ordered stages, closure, escalation, and blockers." becomes "Task state projects ownership, closure, escalation, and blockers."
 - `tasks/live-work.md`: delete the sentence "Set `allow_automation=false` and `checkout_mode="none"` through `update_task`; confirm `unattended=false` and the returned settings before editing." The next sentence stays.
 - `review/evidence.md`: the first paragraph ends "artifact readers; load [source control](../source-control/overview.md) for implementation diffs."
-- `review/overview.md`: "`$gobby review <epic-ref>` selects an epic review, independent of `gobby build`." becomes "`$gobby review <epic-ref>` selects an epic review."
+- `review/overview.md`: "`$gobby review <epic-ref>` selects an epic review, independent of `gobby build`." becomes "`$gobby review <epic-ref>` selects an epic review." "Discover feedback evidence through `gobby-feedback`, task records through `gobby-tasks`, and stage decisions through `gobby-tasks-ops`." becomes "Discover feedback evidence through `gobby-feedback` and task records through `gobby-tasks`."
 - `plan/overview.md`: delete the two sentences "Unattended `gobby build` retains its stage-manifest sequence, installed review policy and configured round counts. Do not inject interactive menus into it."
 - `annotate/SKILL.md`: "it does not claim tasks, implement changes, enable dispatch, or run `gobby build`." becomes "it does not claim tasks or implement changes."
 - `tech-writer/SKILL.md`: check 5 becomes "Architecture references align with current `CLAUDE.md` and `AGENTS.md` (plan-coverage contract)."
 - The methodology skills stay (Decision Record item 4) and stop naming deleted definitions and stages. Descriptions: `ideate` "Internal methodology for ideation.", `architecture` "Internal methodology for architecture work.", `prd` "Internal methodology for a Product Reference Document.", `research` "Internal methodology for research.", each followed by its existing "Produces ..." sentence, where `research` ends "for architecture and PRD work". The role lines become "Use this skill for ideation work.", "Use this skill for architecture work. It covers both marker sections the architecture work owns:", "Use this skill for PRD work." and "Use this skill when acting as the `researcher` agent." In `ideate/SKILL.md`, "downstream stages can rely on" becomes "downstream work can rely on". The discovery marker blocks and the methodology sections stay.
 - `proportionality/SKILL.md`: the loader note and the leaf altitude name `task-close-reviewer`, which loads this skill, in place of the deleted `qa-reviewer`.
+- `plan/approval.md`: "After approval, choose manual [expansion](expansion.md) or authorized build with planning_seed_state approved and only finalized completed_plan_review_rounds." becomes "After approval, choose manual [expansion](expansion.md) with only finalized completed_plan_review_rounds." `planning_seed_state` is a build option only.
+- `plan/expansion.md`: "Apply wires dependencies, stage policy, affected files and provenance, retaining parent automation/isolation settings." becomes "Apply wires dependencies, affected files and provenance, and copies the parent's target branch to created leaves." The sentence "Build profiles/stages are governed by build guidance." goes.
+- `plan/lifecycle.md`: "operator HTTP plan-mode behavior is part of chat/session approval and build requests." becomes "operator HTTP plan-mode behavior is part of chat/session approval."
+- `agents/lifecycle.md`: "A spawned worker finishes its task/stage obligations first" becomes "A spawned worker finishes its task obligations first".
+- `source-control/commits.md`: "Follow the close or autonomous stage workflow;" becomes "Follow the close workflow;".
+- `tasks/creation.md`: the sentences "Isolation changes affect future dispatch and reject conflicting existing workspace artifacts; clean up through workspace tools before retargeting." go, because 4.1 takes the isolation field and its retargeting check out of `update_task`. "De-escalation normally preserves the current stage and leaves the task unclaimed;" becomes "De-escalation leaves the task unclaimed;".
+- `tasks/dependencies.md`: "Readiness includes current-stage eligibility, unresolved external blockers," becomes "Readiness includes unresolved external blockers,", and "just to claim or dispatch work" becomes "just to claim work".
+- `config/restarts.md`: "Project JSON and build defaults have their own consumers;" becomes "Project JSON has its own consumers;". `config/values.md`: "Bootstrap topology, project settings and build defaults have their own sources and precedence." becomes "Bootstrap topology and project settings have their own sources and precedence."
+- `pipelines/overview.md`: "Use pipelines for ordered steps, cron for timing, and the build capability for task lifecycle dispatch." becomes "Use pipelines for ordered steps and cron for timing." `pipelines/scheduling.md`: "Multi-step work belongs in a pipeline; task dispatch belongs in build." becomes "Multi-step work belongs in a pipeline."
+
+Recorded scenarios:
+
+- `optional-review-approval.yaml`: the prompt ends "then offer manual expansion." The `offer_implementation_route` options become `[manual expansion]`, the loaded response reads "Optional reviews were declined; base validation and explicit user approval still completed before manual expansion.", and `loaded_text_contains` becomes `[base validation, explicit user approval, manual expansion]`. The base and expansion validations, the approval request and the manifest derive-then-apply order stay, so `test_plan_optional_reviews_do_not_bypass_mandatory_approval_gates` passes unchanged.
+- `select-automation-path.yaml`: the description reads "Agent must separate deterministic and scheduled automation." `classify_automation_path` drops `task_lifecycle: build_dispatch`, the loaded response reads "Verified: pipeline owns ordered approval-gated work; cron owns the Monday trigger.", and `loaded_text_contains` drops "build/dispatch remains the task-lifecycle path". The excluded run keeps `run_gobby_build` and its "one build loop" text as the unskilled baseline.
 
 Tests:
 
 - `test_live_session_skill.py`: `test_live_session_skill_defines_complete_lifecycle_and_recovery` drops "`allow_automation=false`", '`checkout_mode="none"`' and "`unattended=false`" from its expected phrases.
 - `test_plan_skill_delegated_mode.py`: delete `test_unattended_build_retains_stage_native_sequence`.
 - `test_tasks_skill.py`: `test_core_is_compact_and_keeps_creation_and_exact_close_sequence` checks the topics `creation`, `implementation` and `closing`.
+- `test_pipelines_and_cron_skill.py`: `test_separates_automation_paths_and_omits_retired_content` asserts "pipelines for ordered steps and cron for timing" in place of the old phrase, and asserts "build capability" is absent from the body.
+- `test_skill_tdd_harness.py`: `test_pipelines_and_cron_selects_current_automation_paths` asserts `"task_lifecycle" not in result.loaded.actions[0]` in place of the `build_dispatch` value.
 
 **Research context:**
 
 - Inventory (2026-10-08): `p5/sweep_5.py` over `src/gobby/install/shared/skills/`, `docs/`, the root `AGENTS.md`, `CLAUDE.md` and `README.md` for the build, stage, dispatch, review-state and deleted-definition names. Earlier leaves own the build capability and catalog build entries (2.3), `references/agents/messaging.md` (2.4), `intro/overview.md` (2.3), `plan/enhancement.md` (3.2, 3.5), `plan/review.md` (3.2), `review/epic.md` and `review/outcomes.md` (3.4) and `merge-campaigns.md` (2.2, 3.1).
 - Matches that stay: `dispatcher` and `build` in the kotlin, scala, dart and javascript skills (language build tools and event dispatchers), `admin/installation`, `integrations/plugins`, `rules/effects` and the `impeccable` "unattended" wording.
+- Second inventory (2026-10-08, after Plan Adversary F5): `p5/sweep_5.py` matches phrases and skipped `tests/skills/scenarios/`, so it missed generic build, dispatch and stage wording. A word-boundary `gcode grep -wiE 'build|dispatch|dispatcher|stages?'` over `src/gobby/install/shared/skills/gobby/references/` and a build, stage and dispatch grep over `tests/skills/scenarios/` found the plan, agent, commit, task, config and pipelines lines above and the two recorded scenarios. `tests/skills/test_pipelines_and_cron_skill.py` pins the old pipelines sentence.
+- Word matches that stay: git staging and handoff staging (`source-control/commits.md` step 3, `sessions/`, `admin/backups.md`, `admin/installation.md`, `rules/effects.md`), the skill router's dispatch, dynamic dispatch in `code-index/impact.md`, pipeline child dispatch in `pipelines/history.md`, native component builds in `development/` and `admin/gclient-visual-capture.md`, hook stages and native dispatch in `integrations/hooks.md`, the review-pipeline dispatch in `review/overview.md`, and plain-verb uses in `sessions/waits.md` and `plan/repair.md`. In `tests/skills/scenarios/`, the coderabbit prompt's `tests/dispatch/test_runtime_dispatch_mutex.py` is prompt text the recorded run never opens.
 - The discovery skills keep their marker-block steps; `tests/skills/test_discovery_methodology_skills.py::test_discovery_methodology_skill_exists` (from 3.3) checks only the name, `internal: true`, the section heading and the word "methodology".
-- Planned checks: focused pytest on the three test Targets plus `tests/skills/test_reference_library.py`, `tests/skills/test_capability_routing.py`, `tests/skills/test_capability_catalog.py` and `tests/skills/test_discovery_methodology_skills.py`.
+- Planned checks: focused pytest on the five test Targets plus `tests/skills/test_reference_library.py`, `tests/skills/test_capability_routing.py`, `tests/skills/test_capability_catalog.py` and `tests/skills/test_discovery_methodology_skills.py`.
 
 **Acceptance:**
 
 - 5.1.1 - The tasks capability has no `reviews` topic, and the reference library passes. behavior: "reviews.md" absent from `src/gobby/install/shared/skills/gobby/catalog.json`. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
 - 5.1.2 - The live-work guidance sets no automation column. behavior: "allow_automation" absent from `src/gobby/install/shared/skills/gobby/references/tasks/live-work.md`. test: `tests/skills/test_live_session_skill.py::test_live_session_skill_defines_complete_lifecycle_and_recovery`.
 - 5.1.3 - No skill names `gobby build` or a deleted definition as its user. behavior: "gobby build" absent from `src/gobby/install/shared/skills/gobby/references/plan/overview.md`. behavior: "qa-reviewer" absent from `src/gobby/install/shared/skills/proportionality/SKILL.md`. behavior: "analyst" absent from `src/gobby/install/shared/skills/ideate/SKILL.md`. test: `tests/skills/test_discovery_methodology_skills.py::test_discovery_methodology_skill_exists`.
+- 5.1.4 - The recorded plan and pipelines scenarios offer no build route, and their harness tests pass. behavior: "gobby build" absent from `tests/skills/scenarios/plan/optional-review-approval.yaml`. behavior: "build_dispatch" absent from `tests/skills/scenarios/pipelines-and-cron/select-automation-path.yaml`. test: `tests/skills/test_skill_tdd_harness.py::test_plan_optional_reviews_do_not_bypass_mandatory_approval_gates`. test: `tests/skills/test_skill_tdd_harness.py::test_pipelines_and_cron_selects_current_automation_paths`.
+- 5.1.5 - The pipelines, plan and task references route no work to build or stages. behavior: "build capability" absent from `src/gobby/install/shared/skills/gobby/references/pipelines/overview.md`. behavior: "authorized build" absent from `src/gobby/install/shared/skills/gobby/references/plan/approval.md`. behavior: "current-stage" absent from `src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md`. test: `tests/skills/test_pipelines_and_cron_skill.py::test_separates_automation_paths_and_omits_retired_content`.
 
 ### 5.2 Guides, contracts and root docs teach no build, stage or dispatcher (depends: 5.1) [category: docs]
 `kind: deliverable`
@@ -1758,3 +1794,4 @@ These are completion gates for the implementation. Except for plan validation, n
 - 2026-10-08: Writer repairs for Plan Adversary gobby#15401 F1 (3.2 review guidance, plus the matching contract and guide text in 5.2) and F2 (3.3 keeps the discovery methodology skill test).
 - 2026-10-08: Writer repair for F3: 1.1 and 2.4 re-record the HTTP config corpus, and 2.4 names its new loop descriptions.
 - 2026-10-08: Writer repairs for F4 and N1: 2.3 drops the build advice from worktree evidence and deletes the build command matcher, and V2 classifies every sweep match.
+- 2026-10-08: Writer repair for F5: 5.1 retires the build route from the recorded plan and pipelines scenarios and the build and stage wording from the remaining plan, agent, commit, task, config and pipelines references; 2.3 lists the normalization fixture that stays.
