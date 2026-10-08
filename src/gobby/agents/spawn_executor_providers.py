@@ -253,6 +253,7 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
         cli="claude",
         prompt=None,
         session_id=gobby_session_id,
+        resume_session_id=request.resume_session_id,
         auto_approve=request.auto_approve,
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
@@ -336,6 +337,7 @@ async def prepare_qwen_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spawn
     post_sandbox_started = start_spawn_phase()
     cmd, _cmd_env = build_cli_command(
         cli="qwen",
+        resume_session_id=request.resume_session_id,
         prompt=request.prompt,
         auto_approve=True,
         model=request.model,
@@ -386,6 +388,7 @@ async def prepare_grok_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spawn
     post_sandbox_started = start_spawn_phase()
     cmd, _cmd_env = build_cli_command(
         cli="grok",
+        resume_session_id=request.resume_session_id,
         prompt=request.prompt,
         auto_approve=True,
         working_directory=request.cwd,
@@ -462,6 +465,7 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
     )
     cmd, _cmd_env = build_cli_command(
         cli="codex",
+        resume_session_id=request.resume_session_id,
         prompt=prompt_text if headless_reviewer else "",
         auto_approve=True,
         working_directory=request.cwd,
@@ -520,6 +524,7 @@ async def prepare_droid_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
     post_sandbox_started = start_spawn_phase()
     cmd, _cmd_env = build_cli_command(
         cli="droid",
+        resume_session_id=request.resume_session_id,
         prompt=request.prompt,
         auto_approve=True,
         working_directory=request.cwd,
@@ -581,6 +586,7 @@ async def prepare_agy_spawn(request: SpawnRequest) -> ProviderSpawnPlan | SpawnR
         sandbox_args.append("--sandbox=false")
     cmd, _cmd_env = build_cli_command(
         cli="agy",
+        resume_session_id=request.resume_session_id,
         prompt=request.prompt,
         auto_approve=True,
         working_directory=request.cwd,

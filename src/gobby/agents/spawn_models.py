@@ -37,6 +37,7 @@ class SpawnRequest:
     project_id: str
     _: KW_ONLY
     project_path: str | None = None
+    resume_session_id: str | None = None  # Provider-native thread, not the Gobby session ref
     agent_run_id: str | None = None
     workflow: str | None = None
     initial_variables: dict[str, Any] | None = None

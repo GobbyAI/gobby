@@ -338,7 +338,7 @@ def prepare_terminal_resume(
     session_manager: ChildSessionManager,
     *,
     existing_session_id: str,
-    original_run_id: str,
+    original_run_id: str | None,
     parent_session_id: str,
     project_id: str,
     source: str,
@@ -366,14 +366,19 @@ def prepare_terminal_resume(
     workspace_path: str,
     credential_manager: ManagedCredentialManager | None = None,
     config_snapshot: ConfigSnapshot | None = None,
+    relaunch: bool = False,
 ) -> PreparedSpawn:
-    """Prepare a successor run against an existing durable child session."""
+    """Prepare a successor run against an existing durable session.
+
+    Explicit relaunch can revive an inactive seat under a new parent; daemon-stop
+    recovery retains its original parent and nonterminal-session requirements.
+    """
     child_session = session_manager._storage.get(existing_session_id)
     if child_session is None:
         raise ValueError("Daemon resume child session does not exist")
-    if child_session.status in {"expired", "deleted"}:
+    if child_session.status == "deleted" or (child_session.status == "expired" and not relaunch):
         raise ValueError("Daemon resume child session is terminal")
-    if child_session.parent_session_id != parent_session_id:
+    if child_session.parent_session_id != parent_session_id and not relaunch:
         raise ValueError("Daemon resume child session belongs to another parent")
     if child_session.project_id != project_id:
         raise ValueError("Daemon resume child session belongs to another project")
@@ -388,6 +393,7 @@ def prepare_terminal_resume(
             expected_run_id=original_run_id,
             new_run_id=run_id,
             workflow_name=workflow_name,
+            relaunch_parent_session_id=parent_session_id if relaunch else None,
         )
         if not rebound:
             raise ValueError("Daemon resume session ownership changed concurrently")
@@ -437,14 +443,24 @@ def prepare_terminal_resume(
             clone_id=clone_id,
             checkout_root=workspace_path,
         )
-    prepared.config_snapshot = config_snapshot
-    return _issue_prelaunch_credential(
-        session_manager,
-        prepared,
-        timeout_seconds=timeout_seconds,
-        credential_manager=credential_manager,
-        workspace_path=workspace_path,
-    )
+        prepared.config_snapshot = config_snapshot
+        try:
+            return _issue_prelaunch_credential(
+                session_manager,
+                prepared,
+                timeout_seconds=timeout_seconds,
+                credential_manager=credential_manager,
+                workspace_path=workspace_path,
+            )
+        except Exception:
+            cleanup_unlaunched_spawn(
+                session_manager,
+                agent_run_id=prepared.agent_run_id,
+                prompt_file=prepared.prompt_file,
+                managed_credential=prepared.managed_credential,
+                credential_manager=credential_manager,
+            )
+            raise
 
 
 def _issue_prelaunch_credential(
