@@ -17,8 +17,10 @@ PIPELINES = ROOT / ".gobby/workflows/pipelines"
 
 def test_crew_lane_contains_only_approved_seats() -> None:
     paths = sorted(PIPELINES.glob("crew-*.yaml"))
-    assert [path.stem for path in paths] == ["crew-lane"]
-    definition = PipelineDefinition.model_validate(yaml.safe_load(paths[0].read_text()))
+    assert [path.stem for path in paths] == ["crew-coordination", "crew-lane", "crew-planning"]
+    definition = PipelineDefinition.model_validate(
+        yaml.safe_load((PIPELINES / "crew-lane.yaml").read_text())
+    )
     assert definition.tags == ["runbook"]
     assert definition.resume_on_restart
     assert [step.id for step in definition.steps] == [

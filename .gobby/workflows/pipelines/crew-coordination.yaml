@@ -1,0 +1,288 @@
+name: crew-coordination
+type: pipeline
+version: "1.0"
+description: |
+  Relaunch selected seats in the shared checkout, in one lane tab.
+  Approved seats: assistant, orchestrator, archivist, log-monitor, merge-manager, inbox-manager.
+  The operator launches missing seats only; agent definitions own seat behavior.
+  Supply lane_pane to add seats to an existing tab across runs.
+tags: [runbook]
+resume_on_restart: true
+
+inputs:
+  lane:
+    type: string
+    default: "0"
+    description: "Lane number used for the tab and seat titles"
+  workspace:
+    type: string
+    required: true
+    description: "Existing target workspace UUID or ref"
+  lane_pane:
+    type: string
+    default: null
+    description: "Existing lane pane to split; omit to open one Lane N tab"
+  project_path:
+    type: string
+    required: true
+    description: "Shared project checkout; no worktree is created"
+  seats:
+    type: string
+    default: assistant
+    description: "Comma-separated missing seats: assistant, orchestrator, archivist, log-monitor, merge-manager, inbox-manager"
+  report_to:
+    type: string
+    required: true
+    description: "Live operator session ref for readiness, blockers and unassigned waits"
+  assistant_provider:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  assistant_model:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  assistant_reasoning_effort:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  assistant_role_file:
+    type: string
+    default: assistant.md
+    description: "Role filename under the shared checkout .gobby/roles/"
+  orchestrator_provider:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  orchestrator_model:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  orchestrator_reasoning_effort:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  orchestrator_role_file:
+    type: string
+    default: orchestrator.md
+    description: "Role filename under the shared checkout .gobby/roles/"
+  archivist_provider:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  archivist_model:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  archivist_reasoning_effort:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  archivist_role_file:
+    type: string
+    default: archivist.md
+    description: "Role filename under the shared checkout .gobby/roles/"
+  log_monitor_provider:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  log_monitor_model:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  log_monitor_reasoning_effort:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  log_monitor_role_file:
+    type: string
+    default: monitor.md
+    description: "Role filename under the shared checkout .gobby/roles/"
+  merge_manager_provider:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  merge_manager_model:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  merge_manager_reasoning_effort:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  merge_manager_role_file:
+    type: string
+    default: merge-manager.md
+    description: "Role filename under the shared checkout .gobby/roles/"
+  inbox_manager_provider:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  inbox_manager_model:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  inbox_manager_reasoning_effort:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  inbox_manager_role_file:
+    type: string
+    default: inbox-manager.md
+    description: "Role filename under the shared checkout .gobby/roles/"
+
+steps:
+  - id: guard
+    mcp:
+      server: gobby-agents
+      tool: check_runbook_seats
+      arguments:
+        workspace: "${{ inputs.workspace }}"
+        requested: "${{ inputs.seats }}"
+        report_to: "${{ inputs.report_to }}"
+        require_report_to: true
+        catalogue:
+          - name: assistant
+            title: "${{ 'Lane ' + inputs.lane + ' assistant' }}"
+            agent: assistant
+          - name: orchestrator
+            title: "${{ 'Lane ' + inputs.lane + ' orchestrator' }}"
+            agent: orchestrator
+          - name: archivist
+            title: "${{ 'Lane ' + inputs.lane + ' archivist' }}"
+            agent: archivist
+          - name: log-monitor
+            title: "${{ 'Lane ' + inputs.lane + ' log monitor' }}"
+            agent: log-monitor
+          - name: merge-manager
+            title: "${{ 'Lane ' + inputs.lane + ' merge manager' }}"
+            agent: merge-manager
+          - name: inbox-manager
+            title: "${{ 'Lane ' + inputs.lane + ' inbox manager' }}"
+            agent: inbox-manager
+
+  - id: assistant
+    condition: "${{ 'assistant' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: assistant
+        provider: "${{ inputs.assistant_provider }}"
+        model: "${{ inputs.assistant_model }}"
+        reasoning_effort: "${{ inputs.assistant_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the assistant seat. Your current session ref is fresh; read ${{ inputs.project_path }}/.gobby/roles/_common.md first, then ${{ inputs.project_path }}/.gobby/roles/${{ inputs.assistant_role_file }} and follow that role. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Send that report through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Coordinate roster updates through the Assistant. Follow the installed agent definition and role for your standing duties and authority."
+        placement: >-
+          ${{ {'split': {'pane': inputs.lane_pane,
+          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' assistant'}}
+          if inputs.lane_pane
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
+
+  - id: orchestrator
+    condition: "${{ 'orchestrator' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: orchestrator
+        provider: "${{ inputs.orchestrator_provider }}"
+        model: "${{ inputs.orchestrator_model }}"
+        reasoning_effort: "${{ inputs.orchestrator_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the orchestrator seat. Your current session ref is fresh; read ${{ inputs.project_path }}/.gobby/roles/_common.md first, then ${{ inputs.project_path }}/.gobby/roles/${{ inputs.orchestrator_role_file }} and follow that role. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Send that report through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Coordinate roster updates through the Assistant. Follow the installed agent definition and role for your standing duties and authority."
+        placement: >-
+          ${{ {'split': {'pane': inputs.lane_pane or (steps['assistant'].output.pane_ref),
+          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' orchestrator'}}
+          if inputs.lane_pane or 'assistant' in inputs.seats.split(',')
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
+
+  - id: archivist
+    condition: "${{ 'archivist' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: archivist
+        provider: "${{ inputs.archivist_provider }}"
+        model: "${{ inputs.archivist_model }}"
+        reasoning_effort: "${{ inputs.archivist_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the archivist seat. Your current session ref is fresh; read ${{ inputs.project_path }}/.gobby/roles/_common.md first, then ${{ inputs.project_path }}/.gobby/roles/${{ inputs.archivist_role_file }} and follow that role. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Send that report through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Coordinate roster updates through the Assistant. Follow the installed agent definition and role for your standing duties and authority."
+        placement: >-
+          ${{ {'split': {'pane': inputs.lane_pane or (steps['assistant'].output.pane_ref if 'assistant' in inputs.seats.split(',') else steps['orchestrator'].output.pane_ref),
+          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' archivist'}}
+          if inputs.lane_pane or 'assistant' in inputs.seats.split(',') or 'orchestrator' in inputs.seats.split(',')
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
+
+  - id: log-monitor
+    condition: "${{ 'log-monitor' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: log-monitor
+        provider: "${{ inputs.log_monitor_provider }}"
+        model: "${{ inputs.log_monitor_model }}"
+        reasoning_effort: "${{ inputs.log_monitor_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the log monitor seat. Your current session ref is fresh; read ${{ inputs.project_path }}/.gobby/roles/_common.md first, then ${{ inputs.project_path }}/.gobby/roles/${{ inputs.log_monitor_role_file }} and follow that role. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Send that report through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Coordinate roster updates through the Assistant. Follow the installed agent definition and role for your standing duties and authority."
+        placement: >-
+          ${{ {'split': {'pane': inputs.lane_pane or (steps['assistant'].output.pane_ref if 'assistant' in inputs.seats.split(',') else steps['orchestrator'].output.pane_ref if 'orchestrator' in inputs.seats.split(',') else steps['archivist'].output.pane_ref),
+          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' log monitor'}}
+          if inputs.lane_pane or 'assistant' in inputs.seats.split(',') or 'orchestrator' in inputs.seats.split(',') or 'archivist' in inputs.seats.split(',')
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
+
+  - id: merge-manager
+    condition: "${{ 'merge-manager' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: merge-manager
+        provider: "${{ inputs.merge_manager_provider }}"
+        model: "${{ inputs.merge_manager_model }}"
+        reasoning_effort: "${{ inputs.merge_manager_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the merge manager seat. Your current session ref is fresh; read ${{ inputs.project_path }}/.gobby/roles/_common.md first, then ${{ inputs.project_path }}/.gobby/roles/${{ inputs.merge_manager_role_file }} and follow that role. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Send that report through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Coordinate roster updates through the Assistant. Follow the installed agent definition and role for your standing duties and authority."
+        placement: >-
+          ${{ {'split': {'pane': inputs.lane_pane or (steps['assistant'].output.pane_ref if 'assistant' in inputs.seats.split(',') else steps['orchestrator'].output.pane_ref if 'orchestrator' in inputs.seats.split(',') else steps['archivist'].output.pane_ref if 'archivist' in inputs.seats.split(',') else steps['log-monitor'].output.pane_ref),
+          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' merge manager'}}
+          if inputs.lane_pane or 'assistant' in inputs.seats.split(',') or 'orchestrator' in inputs.seats.split(',') or 'archivist' in inputs.seats.split(',') or 'log-monitor' in inputs.seats.split(',')
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
+
+  - id: inbox-manager
+    condition: "${{ 'inbox-manager' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: inbox-manager
+        provider: "${{ inputs.inbox_manager_provider }}"
+        model: "${{ inputs.inbox_manager_model }}"
+        reasoning_effort: "${{ inputs.inbox_manager_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the inbox manager seat. Your current session ref is fresh; read ${{ inputs.project_path }}/.gobby/roles/_common.md first, then ${{ inputs.project_path }}/.gobby/roles/${{ inputs.inbox_manager_role_file }} and follow that role. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Send that report through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Coordinate roster updates through the Assistant. Follow the installed agent definition and role for your standing duties and authority."
+        placement: >-
+          ${{ {'split': {'pane': inputs.lane_pane or (steps['assistant'].output.pane_ref if 'assistant' in inputs.seats.split(',') else steps['orchestrator'].output.pane_ref if 'orchestrator' in inputs.seats.split(',') else steps['archivist'].output.pane_ref if 'archivist' in inputs.seats.split(',') else steps['log-monitor'].output.pane_ref if 'log-monitor' in inputs.seats.split(',') else steps['merge-manager'].output.pane_ref),
+          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' inbox manager'}}
+          if inputs.lane_pane or 'assistant' in inputs.seats.split(',') or 'orchestrator' in inputs.seats.split(',') or 'archivist' in inputs.seats.split(',') or 'log-monitor' in inputs.seats.split(',') or 'merge-manager' in inputs.seats.split(',')
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}

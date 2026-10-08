@@ -1,0 +1,128 @@
+name: crew-planning
+type: pipeline
+version: "1.0"
+description: |
+  Relaunch selected seats in the shared checkout, in one lane tab.
+  Approved seats: plan-writer, plan-adversary.
+  The operator launches missing seats only; agent definitions own seat behavior.
+  Supply lane_pane to add seats to an existing tab across runs.
+tags: [runbook]
+resume_on_restart: true
+
+inputs:
+  lane:
+    type: string
+    default: "7"
+    description: "Lane number used for the tab and seat titles"
+  workspace:
+    type: string
+    required: true
+    description: "Existing target workspace UUID or ref"
+  lane_pane:
+    type: string
+    default: null
+    description: "Existing lane pane to split; omit to open one Lane N tab"
+  project_path:
+    type: string
+    required: true
+    description: "Shared project checkout; no worktree is created"
+  seats:
+    type: string
+    default: plan-writer
+    description: "Comma-separated missing seats: plan-writer, plan-adversary"
+  report_to:
+    type: string
+    required: true
+    description: "Live operator session ref for readiness, blockers and unassigned waits"
+  plan_writer_provider:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  plan_writer_model:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  plan_writer_reasoning_effort:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  plan_writer_role_file:
+    type: string
+    default: plan-writer.md
+    description: "Role filename under the shared checkout .gobby/roles/"
+  plan_adversary_provider:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  plan_adversary_model:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  plan_adversary_reasoning_effort:
+    type: string
+    default: null
+    description: "Optional override; omit to use the installed agent definition"
+  plan_adversary_role_file:
+    type: string
+    default: plan-adversary.md
+    description: "Role filename under the shared checkout .gobby/roles/"
+
+steps:
+  - id: guard
+    mcp:
+      server: gobby-agents
+      tool: check_runbook_seats
+      arguments:
+        workspace: "${{ inputs.workspace }}"
+        requested: "${{ inputs.seats }}"
+        report_to: "${{ inputs.report_to }}"
+        require_report_to: true
+        catalogue:
+          - name: plan-writer
+            title: "${{ 'Lane ' + inputs.lane + ' plan writer' }}"
+            agent: plan-writer
+          - name: plan-adversary
+            title: "${{ 'Lane ' + inputs.lane + ' plan adversary' }}"
+            agent: plan-adversary
+
+  - id: plan-writer
+    condition: "${{ 'plan-writer' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: plan-writer
+        provider: "${{ inputs.plan_writer_provider }}"
+        model: "${{ inputs.plan_writer_model }}"
+        reasoning_effort: "${{ inputs.plan_writer_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the plan writer seat. Your current session ref is fresh; read ${{ inputs.project_path }}/.gobby/roles/_common.md first, then ${{ inputs.project_path }}/.gobby/roles/${{ inputs.plan_writer_role_file }} and follow that role. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Send that report through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Coordinate roster updates through the Assistant. Follow the installed agent definition and role for your standing duties and authority."
+        placement: >-
+          ${{ {'split': {'pane': inputs.lane_pane,
+          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' plan writer'}}
+          if inputs.lane_pane
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
+
+  - id: plan-adversary
+    condition: "${{ 'plan-adversary' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: plan-adversary
+        provider: "${{ inputs.plan_adversary_provider }}"
+        model: "${{ inputs.plan_adversary_model }}"
+        reasoning_effort: "${{ inputs.plan_adversary_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the plan adversary seat. Your current session ref is fresh; read ${{ inputs.project_path }}/.gobby/roles/_common.md first, then ${{ inputs.project_path }}/.gobby/roles/${{ inputs.plan_adversary_role_file }} and follow that role. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Send that report through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Coordinate roster updates through the Assistant. Follow the installed agent definition and role for your standing duties and authority."
+        placement: >-
+          ${{ {'split': {'pane': inputs.lane_pane or (steps['plan-writer'].output.pane_ref),
+          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' plan adversary'}}
+          if inputs.lane_pane or 'plan-writer' in inputs.seats.split(',')
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
