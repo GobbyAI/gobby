@@ -1148,6 +1148,11 @@ class TestHookTemplates:
             assert "gobby tasks sync --import" not in content
             assert "gobby memory restore" not in content
 
+    def test_templates_write_no_here_documents(self) -> None:
+        """bash 3.2 writes here-documents to /tmp, which sandboxed seats cannot write."""
+        for name, content in HOOK_TEMPLATES.items():
+            assert "<<" not in content, name
+
 
 @pytest.mark.parametrize(
     ("delete_only", "verification_exit"),
