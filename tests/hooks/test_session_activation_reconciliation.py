@@ -21,7 +21,6 @@ from gobby.hooks.project_context import HookProjectResolution
 from gobby.hooks.session_activation import (
     _ACTIVE_RULE_NAMES_CACHE,
     _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES,
-    _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS,
     _AGENT_KEYS,
     MARKER_COMPLETED,
     MARKER_HASH,
@@ -637,14 +636,9 @@ def test_active_rule_names_cache_evicts_oldest_entries(
             }
         ),
     )
-    now = time.monotonic()
-    rules_revision = get_definitions_revision("rules")
+    revisions = (get_definitions_revision("agents"), get_definitions_revision("rules"))
     for index in range(_ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES + 1):
-        _ACTIVE_RULE_NAMES_CACHE[(f"agent-{index}", project_id)] = (
-            now - 1 + (index * 0.001),
-            rules_revision,
-            {f"rule-{index}"},
-        )
+        _ACTIVE_RULE_NAMES_CACHE[(f"agent-{index}", project_id)] = (revisions, {f"rule-{index}"})
 
     from gobby.hooks.session_activation import _resolve_active_rule_names
 
@@ -653,39 +647,62 @@ def test_active_rule_names_cache_evicts_oldest_entries(
     assert ("agent-0", project_id) not in _ACTIVE_RULE_NAMES_CACHE
 
 
-def test_active_rule_names_cache_purges_expired_entries(
+def _selector_agent_json(tag: str) -> str:
+    return json.dumps(
+        {
+            "name": "selector-agent",
+            "prompts": {"agent": "Run the assigned task."},
+            "workflows": {"rule_selectors": {"include": [f"tag:{tag}"], "exclude": []}},
+        }
+    )
+
+
+def test_active_rule_names_cache_holds_until_an_agents_or_rules_revision_moves(
     db: HubDatabase,
     project_id: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    AgentDefinitionManager(db).create(
-        name="new-agent",
-        source="custom",
-        definition_json=json.dumps(
-            {
-                "name": "new-agent",
-                "prompts": {"agent": "Run the assigned task."},
-                "workflows": {"rule_selectors": {"include": [], "exclude": []}},
-            }
-        ),
+    agents = AgentDefinitionManager(db)
+    agent = agents.create(
+        name="selector-agent", source="custom", definition_json=_selector_agent_json("first")
     )
-    now = time.monotonic()
-    rules_revision = get_definitions_revision("rules")
-    _ACTIVE_RULE_NAMES_CACHE[("stale-agent", project_id)] = (
-        now - _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS - 1,
-        rules_revision,
-        {"stale-rule"},
-    )
-    _ACTIVE_RULE_NAMES_CACHE[("fresh-agent", project_id)] = (
-        now,
-        rules_revision,
-        {"fresh-rule"},
-    )
+    rules = RuleDefinitionManager(db)
+    for name, tag in (("first-rule", "first"), ("second-rule", "second")):
+        rules.create(
+            name=name,
+            source="custom",
+            tags=[tag],
+            definition_json=json.dumps(
+                {
+                    "event": "before_tool",
+                    "effects": [{"type": "set_variable", "variable": name, "value": True}],
+                }
+            ),
+        )
+    list_all_calls = 0
+    original_list_all = RuleDefinitionManager.list_all
+
+    def counted_list_all(self: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal list_all_calls
+        list_all_calls += 1
+        return original_list_all(self, *args, **kwargs)
+
+    monkeypatch.setattr(RuleDefinitionManager, "list_all", counted_list_all)
 
     from gobby.hooks.session_activation import _resolve_active_rule_names
 
-    assert _resolve_active_rule_names(db, "new-agent", project_id) == set()
-    assert ("stale-agent", project_id) not in _ACTIVE_RULE_NAMES_CACHE
-    assert ("fresh-agent", project_id) in _ACTIVE_RULE_NAMES_CACHE
+    assert _resolve_active_rule_names(db, "selector-agent", project_id) == {"first-rule"}
+    # An hour later, with no definition write, the entry still answers.
+    later = time.monotonic() + 3600
+    with monkeypatch.context() as clock:
+        clock.setattr(time, "monotonic", lambda: later)
+        assert _resolve_active_rule_names(db, "selector-agent", project_id) == {"first-rule"}
+    assert list_all_calls == 1
+
+    agents.update(agent.id, definition_json=_selector_agent_json("second"))
+
+    assert _resolve_active_rule_names(db, "selector-agent", project_id) == {"second-rule"}
+    assert list_all_calls == 2
 
 
 def test_parent_shaped_taskless_session_restores_step_workflow(

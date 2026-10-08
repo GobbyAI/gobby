@@ -2344,12 +2344,12 @@ def test_adapter_hands_decoded_turns_to_parsers_without_reencoding(
         with monkeypatch.context() as patched:
             patched.setattr(analyzer_turns_module, "raw_lines_from_records", old_text_path)
             expected = analyzer_turns_from_transcript(parser, native_turns)
-        assert expected, parser.cli_name
+        assert expected, type(parser).__name__
 
         snapshot = copy.deepcopy(native_turns)
         with monkeypatch.context() as patched:
             patched.setattr(BaseTranscriptParser, "_decode_record", no_decode)
             actual = analyzer_turns_from_transcript(parser, native_turns)
 
-        assert actual == expected, parser.cli_name
-        assert native_turns == snapshot, parser.cli_name
+        assert actual == expected, type(parser).__name__
+        assert native_turns == snapshot, type(parser).__name__
