@@ -122,11 +122,11 @@ def prepare_receipt(
                 conn, session_id, force_continue_execution_num
             )
         receipt_id = str(uuid4())
-        conn.execute(
+        row = conn.execute(
             "INSERT INTO hook_receipt_effects ("
             "receipt_id, original_envelope_id, current_envelope_id, session_id, "
             "delivery_generation, state, staged_payload, transition_at, created_at"
-            ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING " + _RECEIPT_COLUMNS,
             (
                 receipt_id,
                 envelope_id,
@@ -138,10 +138,6 @@ def prepare_receipt(
                 now,
                 now,
             ),
-        )
-        row = conn.execute(
-            f"SELECT {_RECEIPT_COLUMNS} FROM hook_receipt_effects WHERE receipt_id = %s",
-            (receipt_id,),
         ).fetchone()
     assert row is not None
     receipt = _row_to_receipt(row)

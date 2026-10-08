@@ -15,6 +15,7 @@ from uuid import uuid4
 import pytest
 from psycopg.errors import UniqueViolation
 
+from gobby.storage.hub.postgres_pool import _PostgresTransaction
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import utc_now
 
@@ -58,6 +59,26 @@ class TestHookReceiptLifecycle:
         assert receipt.state == "prepared"
         assert receipt.session_id == session_id
         assert receipt.staged_payload == {"context": "startup"}
+
+    def test_prepare_returns_the_inserted_row_without_reading_it_back(
+        self, receipts_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        statements: list[str] = []
+        execute = _PostgresTransaction.execute
+
+        def record(self: _PostgresTransaction, sql: str, params: Any = ()) -> Any:
+            statements.append(sql.split(" ", 1)[0])
+            return execute(self, sql, params)
+
+        monkeypatch.setattr(_PostgresTransaction, "execute", record)
+        receipt = _receipts().prepare_receipt(
+            receipts_db, session_id=str(uuid4()), envelope_id="env-returning"
+        )
+
+        # One existing-receipt lookup and one INSERT ... RETURNING (#23359).
+        assert statements == ["SELECT", "INSERT"]
+        assert receipt.current_envelope_id == "env-returning"
+        assert receipt.state == "prepared"
 
     def test_acknowledge_commits_prepared_row(self, receipts_db: HubDatabase) -> None:
         receipts = _receipts()
