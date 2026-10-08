@@ -236,6 +236,11 @@ def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
     )
     assert "mcp__gobby__set_variable" in _allowed_tools(steps["await"])
     assert {"Bash", "Read", "Grep", "mcp__gobby__set_variable"} <= _allowed_tools(steps["review"])
+    assert {
+        "gobby-agents:send_message",
+        "gobby-agents:get_inter_session_message",
+        "gobby-agents:get_inter_session_messages",
+    } <= _allowed_mcp_tools(steps["review"])
     assert 'set_variable(name="candidate_task"' in prompt
     assert 'scope="step"' in prompt
     assert "against the current `0.5.0` head" in prompt
