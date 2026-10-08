@@ -221,11 +221,13 @@ The plan also sets:
      in `shadow`.
    - Request limits. Before sending, the service raises
      `DecisionsUnavailable(reason="invalid_request")` when a request has
-     more than 64 questions, a question key outside
+     no questions or more than 64, a question key outside
      `^[A-Za-z0-9_.-]{1,100}$`, or a Choice with fewer than 2 or more than
      255 options. These limits are the union of the documented ones:
      Workers AI documents all three (1 to 64 questions, that key pattern,
-     and 2 to 255 options), and TypeSafe documents the 255-option maximum.
+     and 2 to 255 options), TypeSafe documents the 255-option maximum, and
+     the local `clef_mlx.py` server rejects an empty question map with
+     HTTP 400.
      One rule set serves every wire, so no consumer's batching depends on
      the wire. A request a backend would reject as a permanent 4xx therefore
      never reaches it and never opens the cooldown shared by every consumer.
@@ -472,10 +474,14 @@ The plan also sets:
       | `clef-4bit` (27B) | 16.3 GB | 17.1 / 19.6 GB | 1.4 s / 26.0 s |
       | `clef-8bit` (27B) | 29.8 GB | 30.5 / 33.0 GB | 1.5 s / 32.0 s |
 
-      Every conversion fits in 128 GB. A parity spot-check against the BF16
-      PyTorch reference on an M5 Max agreed on 10 of 10 text top answers,
-      with a maximum probability difference of 0.006 for Flash and 0.007
-      for 27B. The cards call it a spot-check, not a benchmark. Local Clef
+      Every conversion fits in 128 GB. Each card's parity spot-check
+      against the BF16 PyTorch reference on an M5 Max agreed on 10 of 10
+      text top answers. The maximum text probability difference was 0.006
+      for `clef-flash-8bit`, 0.007 for `clef-8bit`, 0.029 for
+      `clef-flash-4bit`, and 0.037 for `clef-4bit`
+      ([clef-flash-4bit parity](https://huggingface.co/mlx-community/clef-flash-4bit#parity-vs-official-pytorch-implementation-bf16),
+      [clef-4bit parity](https://huggingface.co/mlx-community/clef-4bit#parity-vs-official-pytorch-implementation-bf16)).
+      The cards call it a spot-check, not a benchmark. Local Clef
       is therefore a supported local backend. This plan runs no download
       and no local inference; the Activation Gate's live capture and 2.1
       measure it on deployment.
@@ -632,7 +638,7 @@ stamped M1, so that file is not edited. At expansion, the PD updates task
 - sizes each batch to `service.max_input_tokens`. At the 8,192-token ceiling and
   6.3's budget of about 500 tokens of state plus 250 per question per
   community, that is at most 10 communities per request instead of 20;
-- keeps each request within the Decision 8 request limits: at most 64
+- keeps each request within the Decision 8 request limits: 1 to 64
   questions, question keys matching `^[A-Za-z0-9_.-]{1,100}$`, and 2 to 255
   options per Choice;
 - records its two-arm wire spike as the Activation Gate's live capture
@@ -1088,8 +1094,8 @@ Module contents:
 
 Transport, per Decisions 8 and 9:
 - the oversize check runs before sending;
-- the Decision 8 request limits are checked before sending. More than 64
-  questions, a question key outside `^[A-Za-z0-9_.-]{1,100}$`, or a Choice
+- the Decision 8 request limits are checked before sending. No questions,
+  more than 64, a question key outside `^[A-Za-z0-9_.-]{1,100}$`, or a Choice
   with fewer than 2 or more than 255 options raises `invalid_request`
   without dialing;
 - the client is `httpx.AsyncClient(trust_env=False,
@@ -1241,11 +1247,11 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   returns identity `response:` plus the result's `model`. A 2xx body whose
   `success` is `false`, or that has no object `result`, raises `parse`.
   test: `tests/ai/test_decisions_service.py::test_workers_ai_wire_posts_and_parses`.
-- 1.2.13 - On every wire, a request with 65 questions, a question key
-  containing `/` or longer than 100 characters, or a Choice with 1 or 256
-  options raises `invalid_request` without dialing and without opening the
-  cooldown. A request with 64 questions and Choices with 2 and 255 options
-  dials. test:
+- 1.2.13 - On every wire, a request with no questions, 65 questions, a
+  question key containing `/` or longer than 100 characters, or a Choice
+  with 1 or 256 options raises `invalid_request` without dialing and
+  without opening the cooldown. Requests with 1 question and with 64
+  questions dial, as do Choices with 2 and 255 options. test:
   `tests/ai/test_decisions_service.py::test_request_limits_never_dial`.
 - 1.2.14 - The pinned contract record holds Cloudflare's documented Workers
   AI contract for Clef and Clef-flash with its unverified items, and the
@@ -2114,8 +2120,8 @@ available with the configured model. With the server stopped, a
   - Decision 16 is proposed for Josh's approval: no Clef form reaches
     `enforce` under the existing identity contracts, and no contract is
     added.
-  - Decision 8 adds request limits (64 questions, a key pattern, and 2 to
-    255 Choice options) with the local reason `invalid_request`, so a
+  - Decision 8 adds request limits (1 to 64 questions, a key pattern, and
+    2 to 255 Choice options) with the local reason `invalid_request`, so a
     request the stricter Workers AI schema rejects never opens the shared
     cooldown. 3.1 batches to 64 with positional keys, and 3.3 validates the
     same bounds.
@@ -2127,3 +2133,11 @@ available with the configured model. With the server stopped, a
     failed base validation). V2 now validates from the main checkout and
     states that its checks are completion gates that have not run yet.
   - The superseded M1 was retired for re-derivation.
+  - Plan Adversary gobby#15401's preliminary review of 3e9c2c15df
+    returned two findings, both applied. CF_REQUEST_NONEMPTY (blocking):
+    the request limits did not reject an empty question map, which
+    Workers AI and the local `clef_mlx.py` server both reject (its
+    `systemone` raises `ValueError`, which `serve` returns as HTTP 400).
+    Decision 8, the 1.2 transport, and 1.2.13 now require 1 to 64
+    questions. CF_PARITY_VARIANTS: Decision 15 now gives the parity
+    figure for each of the four conversions.
