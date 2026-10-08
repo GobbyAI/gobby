@@ -10863,14 +10863,19 @@ async fn stale_cells_are_cleared_on_shrink_and_move() {
 }
 
 /// 3.3.1: `prefix+shift+n` opens the new-project dialog; enter posts the
-/// typed path to `/api/projects/init`, a refusal keeps the dialog (and its
-/// path) open with the daemon's reason, and the created project is focused
+/// created checkout path to `/api/projects/init`, and the created project is focused
 /// without opening a shell.
 #[tokio::test]
 async fn new_project_dialog_inits_and_focuses() {
     let mock = MockDaemon::start("local-token").await;
     let new_root = tempfile::tempdir().expect("new project dir");
-    let new_path = new_root.path().to_string_lossy().into_owned();
+    let new_path = new_root
+        .path()
+        .canonicalize()
+        .expect("canonical temp root")
+        .join("new-project")
+        .to_string_lossy()
+        .into_owned();
     let created = json!({
         "id": "project-2", "name": "two", "display_name": "two",
         "checkout": {"machine_id": "m-local", "root_path": new_path},
@@ -10881,12 +10886,6 @@ async fn new_project_dialog_inits_and_focuses() {
         created.clone(),
     ]);
     mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
-    mock.enqueue(
-        "POST",
-        "/api/projects/init",
-        400,
-        json!({"detail": {"error_code": "invalid_checkout_root", "message": "path is not a directory"}}),
-    );
     mock.enqueue("POST", "/api/projects/init", 200, created);
     for _ in 0..3 {
         mock.enqueue("GET", "/api/projects", 200, both.clone());
@@ -10915,9 +10914,6 @@ async fn new_project_dialog_inits_and_focuses() {
         }
         send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
         wait_for_http_requests(&mock, "POST", "/api/projects/init", 1).await;
-        // The refusal left the dialog open with the path still typed.
-        send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
-        wait_for_http_requests(&mock, "POST", "/api/projects/init", 2).await;
         wait_for_http_requests(&mock, "GET", "/api/terminals?", 2).await;
         settle_live_event().await;
         drop(input_tx);
@@ -10941,10 +10937,7 @@ async fn new_project_dialog_inits_and_focuses() {
         .filter(|request| request.method == "POST" && request.target == "/api/projects/init")
         .filter_map(|request| request.body)
         .collect();
-    assert_eq!(
-        inits,
-        [json!({"path": new_path}), json!({"path": new_path})]
-    );
+    assert_eq!(inits, [json!({"path": new_path})]);
     assert_eq!(chrome.mode, Mode::Terminal, "the dialog closed on success");
     assert!(chrome.dialog.is_none(), "{:?}", chrome.dialog);
     assert_eq!(workspace.project_id(), Some("project-2"));

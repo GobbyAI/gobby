@@ -314,6 +314,7 @@ fn apply_scripted_modal_outcome(
         | ModalOutcome::Passthrough
         | ModalOutcome::Confirm(_)
         | ModalOutcome::InitProject(_)
+        | ModalOutcome::OpenProject(_)
         | ModalOutcome::CreateWorktree { .. }
         | ModalOutcome::RemoveWorktree(_)
         | ModalOutcome::DestroyOrphans(_) => {}
