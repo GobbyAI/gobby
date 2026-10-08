@@ -13,7 +13,7 @@ from gobby.tasks.close_test_coverage import (
     changed_python_source_paths,
     changed_web_source_paths,
     copy_differing_paths,
-    coverage_failure_message,
+    coverage_failure_messages,
     drop_foreign_runs,
     related_python_source_tests,
     uncovered_pytest_paths,
@@ -280,7 +280,8 @@ def _evaluate_validation_commands(
     edit makes every earlier run stale unless ``first_invalidating_edit`` shows the
     run's bounded inputs cannot read the edited file. Among credited fresh runs, the latest
     definitive outcome for each validation category wins, so a later clean run cures
-    an earlier failure in the same category. ``latest_runs`` records the latest
+    an earlier failure in the same category. One failed result lists every unmet
+    requirement in checklist priority order. ``latest_runs`` records the latest
     definitive run for each distinct core command so the criteria reviewer can treat
     them as the authoritative account of what ran. ``deleted_paths`` are tests that a
     linked commit deleted and HEAD no longer tracks: pytest cannot target them, so only
@@ -444,96 +445,86 @@ def _evaluate_validation_commands(
         ],
     }
 
+    unmet: list[tuple[str, str]] = []
     if criterion_command_gaps:
-        return CloseGateResult(
-            item=9,
-            name="validation_commands",
-            status="failed",
-            message=criterion_command_gap_message(criterion_command_gaps),
-            details=details,
-        )
+        unmet.append(("criterion_commands", criterion_command_gap_message(criterion_command_gaps)))
 
     # Exempt tasks still need the command record for their explicit criteria review.
-    if (
-        not has_attributed_edits
-        and not test_types_audit_required
-        and not related_tests_required
-        and not changed_web_paths
-    ):
+    nothing_required = (
+        not test_types_audit_required and not related_tests_required and not changed_web_paths
+    )
+    skip: tuple[str, str] | None = None
+    if nothing_required and not has_attributed_edits:
+        skip = (
+            "no-edit",
+            "Validation command requirement skipped because the task has no attributed edits.",
+        )
+    elif nothing_required and category in _AUTO_PASS_CATEGORIES:
+        skip = (
+            "category",
+            f"Validation command requirement skipped for task category '{category}'.",
+        )
+    if skip is not None and unmet:
+        return _unmet_result(unmet, details)
+    if skip is not None:
         return CloseGateResult(
             item=9,
             name="validation_commands",
             status="skipped",
-            message="Validation command requirement skipped because the task has no attributed edits.",
-            details={**details, "skip_reason": "no-edit"},
+            message=skip[1],
+            details={**details, "skip_reason": skip[0]},
         )
 
-    if (
-        category in _AUTO_PASS_CATEGORIES
-        and not test_types_audit_required
-        and not related_tests_required
-        and not changed_web_paths
-    ):
-        return CloseGateResult(
-            item=9,
-            name="validation_commands",
-            status="skipped",
-            message=f"Validation command requirement skipped for task category '{category}'.",
-            details={**details, "skip_reason": "category"},
-        )
-
-    if test_types_audit_required and latest_audit is None:
-        if latest_partial_entry is not None:
-            uncovered_display = ", ".join(f"`{path}`" for path in uncovered_test_paths)
-            return CloseGateResult(
-                item=9,
-                name="validation_commands",
-                status="failed",
-                message=(
-                    "The latest Python test type audit did not cover every changed Python test. "
-                    f"Uncovered paths: {uncovered_display}. Run `{_TEST_TYPES_AUDIT_COMMAND}` clean "
-                    "after the final task edit, or audit explicit targets covering every listed path."
-                ),
-                details=details,
+    failed_audit = (
+        latest_audit
+        if test_types_audit_required
+        and latest_audit is not None
+        and latest_audit.outcome != "success"
+        else None
+    )
+    if test_types_audit_required and latest_audit is None and latest_partial_entry is not None:
+        uncovered_display = ", ".join(f"`{path}`" for path in uncovered_test_paths)
+        unmet.append(
+            (
+                "test_types_audit",
+                "The latest Python test type audit did not cover every changed Python test. "
+                f"Uncovered paths: {uncovered_display}. Run `{_TEST_TYPES_AUDIT_COMMAND}` clean "
+                "after the final task edit, or audit explicit targets covering every listed path.",
             )
-        return CloseGateResult(
-            item=9,
-            name="validation_commands",
-            status="failed",
-            message=(
+        )
+    elif test_types_audit_required and latest_audit is None:
+        unmet.append(
+            (
+                "test_types_audit",
                 "The required Python test type audit has no credited run. "
-                f"Run `{_TEST_TYPES_AUDIT_COMMAND}` clean after the final task edit."
-            ),
-            details=details,
+                f"Run `{_TEST_TYPES_AUDIT_COMMAND}` clean after the final task edit.",
+            )
+        )
+    elif failed_audit is not None:
+        unmet.append(
+            (
+                "test_types_audit",
+                "The required Python test type audit last failed at "
+                f"{failed_audit.completed_at.isoformat()}. "
+                f"Run `{_TEST_TYPES_AUDIT_COMMAND}` clean after the final task edit.",
+            )
         )
 
-    if test_types_audit_required and latest_audit is not None and latest_audit.outcome != "success":
-        reason = f"last failed at {latest_audit.completed_at.isoformat()}"
-        return CloseGateResult(
-            item=9,
-            name="validation_commands",
-            status="failed",
-            message=(
-                f"The required Python test type audit {reason}. "
-                f"Run `{_TEST_TYPES_AUDIT_COMMAND}` clean after the final task edit."
-            ),
-            details=details,
-        )
-
-    if unresolved:
-        blockers = [
-            f"{failure['category']}: {failure['command']!r} at {failure['completed_at']}"
-            for failure in unresolved_failures
-        ]
-        return CloseGateResult(
-            item=9,
-            name="validation_commands",
-            status="failed",
-            message=(
+    # The audit entry already asks for the rerun that clears the failure it recorded.
+    audit_key = None if failed_audit is None else (failed_audit.session_id, failed_audit.order)
+    blockers = [
+        f"{failure['category']}: {failure['command']!r} at {failure['completed_at']}"
+        for failure in unresolved_failures
+        if (unresolved[failure["category"]].session_id, unresolved[failure["category"]].order)
+        != audit_key
+    ]
+    if blockers:
+        unmet.append(
+            (
+                "unresolved_failures",
                 f"A validation command is still failing ({'; '.join(blockers)}). "
-                "Re-run each category clean after the final task edit."
-            ),
-            details=details,
+                "Re-run each category clean after the final task edit.",
+            )
         )
 
     pytest_required_paths = _pytest_module_paths(
@@ -551,21 +542,14 @@ def _evaluate_validation_commands(
         passing_runs, declined, close_root, changed_paths, candidate
     ):
         details["pytest_copy_differing_paths"] = list(differing)
-    coverage_failure = coverage_failure_message(
+    coverage_failures = coverage_failure_messages(
         uncovered_pytest,
         uncovered_sources,
         uncovered_web,
         differing_paths=differing,
         close_root=close_root,
     )
-    if coverage_failure:
-        return CloseGateResult(
-            item=9,
-            name="validation_commands",
-            status="failed",
-            message=coverage_failure,
-            details=details,
-        )
+    unmet.extend(coverage_failures)
 
     required_category = "test" if category in _TEST_REQUIRED_CATEGORIES else None
     if category == "config":
@@ -576,8 +560,17 @@ def _evaluate_validation_commands(
             and latest_by_category.get(required_category) is not None
             and latest_by_category[required_category].outcome == "success"
         )
+    # A listed rerun that leaves a clean run in the required category already cures it.
+    reruns = set(unresolved)
+    if coverage_failures:
+        reruns.add("test")
+    if any(name == "test_types_audit" for name, _ in unmet):
+        reruns.add("type_check")
+    cured_by_reruns = bool(reruns) if category == "config" else required_category in reruns
 
-    if has_success or category in _AUTO_PASS_CATEGORIES:
+    if has_success or category in _AUTO_PASS_CATEGORIES or cured_by_reruns:
+        if unmet:
+            return _unmet_result(unmet, details)
         message = "A clean validation command ran after the final task edit."
         if required_category:
             message = "A clean test-category validation command ran after the final task edit."
@@ -590,7 +583,7 @@ def _evaluate_validation_commands(
             name="validation_commands",
             status="passed",
             message=message,
-            details=details,
+            details={**details, "unmet_requirements": []},
         )
 
     if required_category:
@@ -604,13 +597,22 @@ def _evaluate_validation_commands(
         )
 
     degraded = _degraded_message(evidence)
-    message = f"{cure} {degraded}".strip()
+    unmet.append(("category_validation", f"{cure} {degraded}".strip()))
+    return _unmet_result(unmet, details)
+
+
+def _unmet_result(unmet: list[tuple[str, str]], details: Mapping[str, Any]) -> CloseGateResult:
+    """Report every unmet requirement at once so one validation pass can satisfy them all."""
+    message = unmet[0][1]
+    if len(unmet) > 1:
+        numbered = " ".join(f"({index}) {text}" for index, (_, text) in enumerate(unmet, start=1))
+        message = f"{len(unmet)} validation requirements are unmet: {numbered}"
     return CloseGateResult(
         item=9,
         name="validation_commands",
         status="failed",
         message=message,
-        details=details,
+        details={**details, "unmet_requirements": [name for name, _ in unmet]},
     )
 
 

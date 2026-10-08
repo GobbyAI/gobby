@@ -670,6 +670,138 @@ def test_related_pytest_must_cover_each_source_and_preserve_test_type_audit(
     assert evaluate((widget_run, audit_run, gadget_run)).status == "passed"
 
 
+_AUDIT_MISSING_MESSAGE = (
+    "The required Python test type audit has no credited run. Run `uv run gobby test-types "
+    "audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new` clean after the "
+    "final task edit."
+)
+_CHANGED_TEST_MESSAGE = (
+    "Changed Python tests have no credited fresh passing pytest target. "
+    "Uncovered paths: `tests/test_gadget.py`."
+)
+_RELATED_SOURCE_MESSAGE = (
+    "Changed Python sources have related tests with no credited fresh passing pytest target. "
+    "Uncovered sources and tests: `src/widget.py`: `tests/test_widget.py`."
+)
+
+
+def _evaluate_widget_source_and_gadget_test(
+    tmp_path: Path, *runs: TranscriptValidationRun
+) -> CloseGateResult:
+    """Evaluate a close that changed ``src/widget.py`` and ``tests/test_gadget.py``."""
+    for path in ("src/widget.py", "tests/test_widget.py", "tests/test_gadget.py"):
+        (tmp_path / path).parent.mkdir(exist_ok=True)
+        (tmp_path / path).write_text("value = 1\n")
+    return evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=runs),
+        has_attributed_edits=True,
+        changed_paths=("src/widget.py", "tests/test_gadget.py"),
+        close_root=str(tmp_path),
+    )
+
+
+def test_one_preview_lists_every_unmet_test_requirement(tmp_path: Path) -> None:
+    unrelated_run = _run(1, command="uv run pytest tests/test_unrelated.py -q")
+
+    gate = _evaluate_widget_source_and_gadget_test(tmp_path, unrelated_run)
+
+    assert gate.status == "failed"
+    assert gate.message == (
+        f"3 validation requirements are unmet: (1) {_AUDIT_MISSING_MESSAGE} "
+        f"(2) {_CHANGED_TEST_MESSAGE} (3) {_RELATED_SOURCE_MESSAGE}"
+    )
+    assert gate.details["unmet_requirements"] == [
+        "test_types_audit",
+        "pytest_changed_tests",
+        "pytest_related_source_tests",
+    ]
+    assert gate.details["test_types_audit_uncovered_paths"] == ["tests/test_gadget.py"]
+    assert gate.details["pytest_uncovered_paths"] == ["tests/test_gadget.py"]
+    assert gate.details["python_source_uncovered_tests"] == {
+        "src/widget.py": ["tests/test_widget.py"]
+    }
+    combined_runs = (
+        _run(2, command="uv run pytest tests/test_gadget.py tests/test_widget.py -q"),
+        _scoped_audit_run(3, "tests/test_gadget.py"),
+    )
+    satisfied = _evaluate_widget_source_and_gadget_test(tmp_path, unrelated_run, *combined_runs)
+    assert satisfied.status == "passed"
+    assert satisfied.details["unmet_requirements"] == []
+
+
+@pytest.mark.parametrize(
+    ("runs", "requirement", "message"),
+    [
+        (
+            (_run(1, command="uv run pytest tests/test_gadget.py tests/test_widget.py -q"),),
+            "test_types_audit",
+            _AUDIT_MISSING_MESSAGE,
+        ),
+        (
+            (
+                _run(1, command="uv run pytest tests/test_widget.py -q"),
+                _scoped_audit_run(2, "tests/test_gadget.py"),
+            ),
+            "pytest_changed_tests",
+            _CHANGED_TEST_MESSAGE,
+        ),
+        (
+            (
+                _run(1, command="uv run pytest tests/test_gadget.py -q"),
+                _scoped_audit_run(2, "tests/test_gadget.py"),
+            ),
+            "pytest_related_source_tests",
+            _RELATED_SOURCE_MESSAGE,
+        ),
+        (
+            (
+                _run(1, command="uv run pytest tests/test_gadget.py tests/test_widget.py -q"),
+                _audit_run(2, outcome="failure"),
+            ),
+            "test_types_audit",
+            "The required Python test type audit last failed at 2026-07-27T12:00:02+00:00. "
+            "Run `uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+            "--fail-on-new` clean after the final task edit. Observed `uv run gobby test-types "
+            "audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new` at "
+            "2026-07-27T12:00:02+00:00: Validation assertions or findings failed (exit 1) "
+            "(assertion-failed). Fix the reported assertions or validation findings. Run `uv run "
+            "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json "
+            "--fail-on-new` directly and clean after the final task edit.",
+        ),
+    ],
+)
+def test_single_unmet_test_requirement_reports_only_its_own_message(
+    tmp_path: Path,
+    runs: tuple[TranscriptValidationRun, ...],
+    requirement: str,
+    message: str,
+) -> None:
+    gate = _evaluate_widget_source_and_gadget_test(tmp_path, *runs)
+
+    assert gate.status == "failed"
+    assert gate.message == message
+    assert gate.details["unmet_requirements"] == [requirement]
+
+
+def test_changed_test_gap_alone_omits_the_test_category_cure(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_gadget.py").write_text("value = 1\n")
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_scoped_audit_run(1, "tests/test_gadget.py"),)
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/test_gadget.py",),
+        close_root=str(tmp_path),
+    )
+
+    assert gate.message == _CHANGED_TEST_MESSAGE
+    assert gate.details["unmet_requirements"] == ["pytest_changed_tests"]
+
+
 def test_source_without_related_tests_preserves_no_edit_skip(tmp_path: Path) -> None:
     gate = evaluate_validation_commands(
         task_category="code",
