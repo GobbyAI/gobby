@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
@@ -114,7 +115,7 @@ async def test_clean_print_exit_completes_with_the_answer(
 
 
 @pytest.mark.asyncio
-async def test_unsettled_completion_fails_instead_of_retrying_every_pass(
+async def test_unsettled_completion_fails_on_the_next_pass(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -136,6 +137,10 @@ async def test_unsettled_completion_fails_instead_of_retrying_every_pass(
         autospec=True,
         side_effect=RuntimeError("terminal delivery unavailable"),
     ) as terminate:
+        assert await monitor.check_unhealthy_agents() == 0
+        pending = runs.get(run.id)
+        assert pending is not None
+        assert pending.status == "running"
         assert await monitor.check_unhealthy_agents() == 1
         assert await monitor.check_unhealthy_agents() == 0
 
@@ -147,6 +152,52 @@ async def test_unsettled_completion_fails_instead_of_retrying_every_pass(
     assert stored.error.startswith(
         "agent exited after its last turn completed, but its completion did not settle"
     )
+
+
+@pytest.mark.asyncio
+async def test_completion_queued_past_the_delivery_wait_still_settles_as_success(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch_local_machine_id(monkeypatch, LOCAL_MACHINE_ID)
+    monitor, runs, run = _exited_run(
+        temp_db,
+        session_manager,
+        sample_project["id"],
+        provider="agy",
+        disposition="completed",
+    )
+    queued: list[tuple[SessionCoordinator, dict[str, Any]]] = []
+
+    def delivery_timed_out(coordinator: SessionCoordinator, **kwargs: Any) -> None:
+        # The real wait gives up after 20s and leaves the inline completion queued.
+        queued.append((coordinator, kwargs))
+
+    with patch.object(
+        SessionCoordinator,
+        "_terminate_agent_run",
+        autospec=True,
+        side_effect=delivery_timed_out,
+    ):
+        assert await monitor.check_unhealthy_agents() == 0
+        pending = runs.get(run.id)
+        assert pending is not None
+        assert pending.status == "running"
+
+        [(coordinator, kwargs)] = queued
+        # The inline completion blocks on the coordinator's loop, which is this test's loop.
+        await asyncio.to_thread(
+            SessionCoordinator._terminate_agent_run_inline, coordinator, **kwargs
+        )
+        assert await monitor.check_unhealthy_agents() == 0
+
+    stored = runs.get(run.id)
+    assert stored is not None
+    assert stored.status == "success"
+    assert stored.result == ANSWER
+    assert stored.error is None
 
 
 @pytest.mark.asyncio

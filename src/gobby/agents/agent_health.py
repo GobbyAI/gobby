@@ -76,6 +76,8 @@ class AgentHealthMonitor:
         self._run_db_callback = run_db
         self._checkpoint_agent_work = checkpoint_agent_work
         self._terminal_services = terminal_services
+        # Runs whose session-end completion left them active; they fail if still active next pass.
+        self._unsettled_completions: set[str] = set()
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -195,7 +197,7 @@ class AgentHealthMonitor:
         )
 
     async def _dead_terminal_reason(self, run: AgentRun) -> str | None:
-        """Why a run's terminal died, or ``None`` once SessionEnd's classifier settled a clean exit.
+        """Why a run's terminal died, or ``None`` while SessionEnd's classifier settles a clean exit.
 
         AGY ``--print`` exits after its final turn and has no SessionEnd hook, so its
         clean exit arrives here as a dead terminal (#23778).
@@ -230,18 +232,25 @@ class AgentHealthMonitor:
                 "agent exited after its last turn ended without completing "
                 f"({lifecycle.disposition})"
             )
+        if run.id in self._unsettled_completions:
+            self._unsettled_completions.discard(run.id)
+            # A queued completion had a full pass to land; only a termination owner remains.
+            if run.pending_terminal_action:
+                return None
+            return "agent exited after its last turn completed, but its completion did not settle"
         # Blocks on the daemon loop and the terminal-delivery executor.
         await asyncio.to_thread(coordinator.complete_agent_run, session)
         current = await self._run_db(self._agent_run_manager.get, run.id)
         if (
-            current is None
-            or current.status not in ("pending", "running")
+            current is not None
+            and current.status in ("pending", "running")
             # Reconciliation re-drives the termination owner's persisted action.
-            or current.pending_terminal_action
+            and not current.pending_terminal_action
         ):
-            return None
-        # complete_agent_run swallows its errors; fail now instead of retrying every pass.
-        return "agent exited after its last turn completed, but its completion did not settle"
+            # complete_agent_run swallows its errors, and a delivery that timed out
+            # leaves its completion queued, so give it one pass before failing.
+            self._unsettled_completions.add(run.id)
+        return None
 
     async def check_unhealthy_agents(self) -> int:
         """Detect and clean up dead or expired agents."""
@@ -253,6 +262,7 @@ class AgentHealthMonitor:
             )
             if not is_recovery_protected(run)
         ]
+        self._unsettled_completions &= {run.id for run in runs}
         now = datetime.now(UTC)
         cleaned = 0
 
@@ -313,7 +323,7 @@ class AgentHealthMonitor:
                     else:
                         reason = await self._dead_terminal_reason(run)
                         if reason is None:
-                            # Settled by session-end completion, or left to its termination owner.
+                            # Settled, left to its termination owner, or given one more pass.
                             current = await self._run_db(self._agent_run_manager.get, run.id)
                             if current is not None and current.status not in ("pending", "running"):
                                 cleaned += 1
