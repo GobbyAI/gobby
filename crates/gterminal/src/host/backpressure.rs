@@ -25,6 +25,10 @@ pub enum ControlOutbound {
     Bounded(Value),
 }
 
+// RPC callers can resume after the shorter event-delivery deadline. Allow a
+// bounded recovery window while still releasing a permanently stalled peer.
+const REPLY_DELIVERY_GRACE: Duration = Duration::from_secs(10);
+
 pub async fn write_outbound<W: AsyncWrite + Unpin>(
     mut writer: W,
     mut rx: mpsc::Receiver<ControlOutbound>,
@@ -49,11 +53,12 @@ pub async fn write_outbound<W: AsyncWrite + Unpin>(
             writer.write_all(line.as_bytes()).await?;
             writer.flush().await
         };
-        let result = if is_reply {
-            Ok(write.await)
+        let write_deadline = if is_reply {
+            deadline.max(REPLY_DELIVERY_GRACE)
         } else {
-            timeout(deadline, write).await
+            deadline
         };
+        let result = timeout(write_deadline, write).await;
         match result {
             Ok(Ok(())) => {}
             Ok(Err(_)) => return ControlClose::Io,
