@@ -10,6 +10,7 @@ provider: inherit
 checkout_mode: inherit
 timeout: 0
 send_message_targets: [parent, session]
+spawnable_agents: [task-close-reviewer]
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
