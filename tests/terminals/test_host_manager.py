@@ -21,6 +21,7 @@ from gobby.config.terminals import TerminalConfig
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import AttachLocator, Terminal, TerminalManager, native_locator_key
 from gobby.terminals import host_event_reader, host_events
+from gobby.terminals.composer_ledger import LedgerRead
 from gobby.terminals.frame_client import FrameClient
 from gobby.terminals.host_client import HostManagerStopped, HostUnavailableError
 from gobby.terminals.host_events import (
@@ -399,6 +400,74 @@ async def test_gap_recovery_converges_under_ring_churn(
     assert settled == [(first.id, "ht-first"), (second.id, "ht-second")]
     assert (host.last_event_epoch, host.last_event_seq) == (epoch, 10_002)
     assert stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_event_reader_replays_input_the_inventory_cut_hides_into_the_ledger(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    epoch = "epoch-ledger"
+    terminals = TerminalManager(temp_db)
+    typed = _live(terminals, sample_project["id"], epoch, host_terminal_id="ht-typed")
+
+    class InventoryClient(FakeControlClient):
+        async def list_inventory(self) -> HostInventorySnapshot:
+            row = FakeListRow(
+                terminal_id=typed.id,
+                spawn_key=typed.spawn_key or typed.id,
+                host_terminal_id="ht-typed",
+            )
+            return HostInventorySnapshot((cast(HostListRow, row),), self.host_epoch, 6)
+
+    class ReplayStream:
+        epoch = "epoch-ledger"
+        seq = 6
+        gap = False
+
+        def __init__(self) -> None:
+            # Typed while the daemon was down, at or before the inventory cut.
+            self.events = [
+                InputActivityEvent(typed.id, "ht-typed", "att-1", "input", 1, None, epoch, 5)
+            ]
+
+        def __aiter__(self) -> ReplayStream:
+            return self
+
+        async def __anext__(self) -> InputActivityEvent:
+            if self.events:
+                return self.events.pop(0)
+            raise HostManagerStopped()
+
+        async def aclose(self) -> None:
+            return None
+
+    client = InventoryClient(host_epoch=epoch, terminals=[])
+    client.authed = True
+    subscriptions: list[int | None] = []
+
+    async def connect_events(since: int | None) -> Any:
+        subscriptions.append(since)
+        return ReplayStream()
+
+    host = _host(tmp_path, terminals, client)
+    host._client = client
+    host.host_epoch = epoch
+    host._event_connector = connect_events
+    seen: list[InputActivityEvent] = []
+    host.set_input_activity_sink(seen.append)
+    # The ledger restored from the previous daemon's state file.
+    ledger = host.composer_ledger
+    ledger.observe_host_event(TerminalExitedEvent("gone", "ht-gone", 0, epoch, 4))
+    ledger.release(typed.id)
+
+    await host_event_reader.event_reader_loop(host)
+
+    assert subscriptions == [4]
+    assert seen == []
+    assert ledger.read(typed.id) == LedgerRead("draft")
+    assert ledger.host_cursor == (epoch, 5)
 
 
 @pytest.mark.asyncio

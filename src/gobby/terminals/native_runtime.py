@@ -15,6 +15,7 @@ from gobby.storage.terminals import (
     native_attach_locator,
     native_locator_key,
 )
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.dimensions import validate_dimensions
 from gobby.terminals.frame_client import FrameClient
 from gobby.terminals.host_client import (
@@ -242,8 +243,10 @@ class NativeTerminalRuntime(NativeFrameStreamMixin, NativeHostProbeMixin):
         spawn_in_doubt_seconds: float = 30.0,
         frame_client: Any | None = None,
         run_manager: Any | None = None,
+        composer_ledger: ComposerLedger | None = None,
     ) -> None:
         self._client = client
+        self._composer_ledger = composer_ledger if composer_ledger is not None else ComposerLedger()
         del frame_host_epoch
         self._terminal_manager = terminal_manager
         self._machine_id = machine_id
@@ -360,6 +363,8 @@ class NativeTerminalRuntime(NativeFrameStreamMixin, NativeHostProbeMixin):
             raise
         except (ConnectionError, OSError, TimeoutError) as exc:
             raise CommitTransportError(str(exc), request_written=False) from exc
+        # A committed spawn starts with an empty composer.
+        self._composer_ledger.release(str(prepared.terminal_id))
         return TerminalHandle(terminal_id=prepared.terminal_id, locator=locator)
 
     async def is_live(self, terminal: Terminal) -> bool:
@@ -486,6 +491,18 @@ class NativeTerminalRuntime(NativeFrameStreamMixin, NativeHostProbeMixin):
                 )
             )
 
+        # Every batch is a daemon write; record it before dispatch, so a write that
+        # turns out indeterminate still reads as held text.
+        for target in targets:
+            if target.result_id not in results:
+                for operation in target.operations:
+                    self._composer_ledger.observe_write(
+                        str(target.terminal.id),
+                        origin="daemon",
+                        kind=operation.kind,
+                        payload=operation.payload,
+                        submit=operation.kind == "text" and "\r" in operation.payload,
+                    )
         if host_targets:
             try:
                 host_results = await self._client.write_batch(host_targets)

@@ -17,6 +17,7 @@ from gobby.config.terminal_host import TerminalHostConfig
 from gobby.config.terminals import TerminalConfig
 from gobby.config.tmux import ATTACH_HISTORY_LINES
 from gobby.storage.terminals import TerminalManager
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.host_client import (
     HelloResult,
     HostClient,
@@ -136,6 +137,7 @@ class TerminalHostManager:
         self.last_event_epoch: str | None = None
         self.last_event_seq = 0
         self.input_activity_sink: InputActivitySink | None = None
+        self.composer_ledger = ComposerLedger()
 
     @property
     def socket_dir(self) -> Path:

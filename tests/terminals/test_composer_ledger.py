@@ -16,12 +16,13 @@ from gobby.terminals.composer_ledger import (
     persist_ledger,
     write_ledger,
 )
-from gobby.terminals.host_events import InputActivityEvent, InterruptKind
+from gobby.terminals.host_events import InputActivityEvent, InterruptKind, TerminalExitedEvent
 
 pytestmark = pytest.mark.unit
 
 _EMPTY = LedgerRead("empty")
 _DRAFT = LedgerRead("draft")
+_GAP = LedgerRead("blocked", "gap")
 _UNTRACKED = LedgerRead("blocked", "untracked")
 
 
@@ -64,8 +65,8 @@ def test_untracked_terminal_is_blocked_until_released() -> None:
 
 def test_submit_flagged_host_input_is_consumed_by_the_next_record() -> None:
     ledger = _tracked()
-    ledger.observe_host_input(_host(1))
-    ledger.observe_host_input(_host(2, submit=True))
+    ledger.observe_host_event(_host(1))
+    ledger.observe_host_event(_host(2, submit=True))
 
     assert ledger.read("t1") == _DRAFT
 
@@ -75,8 +76,8 @@ def test_submit_flagged_host_input_is_consumed_by_the_next_record() -> None:
 
 def test_input_after_the_flagged_chunk_stays_a_draft_after_the_record() -> None:
     ledger = _tracked()
-    ledger.observe_host_input(_host(1, submit=True))
-    ledger.observe_host_input(_host(2))
+    ledger.observe_host_event(_host(1, submit=True))
+    ledger.observe_host_event(_host(2))
     ledger.record_submit("t1")
 
     assert ledger.read("t1") == _DRAFT
@@ -84,7 +85,7 @@ def test_input_after_the_flagged_chunk_stays_a_draft_after_the_record() -> None:
 
 def test_record_without_a_new_flagged_write_does_not_move_the_clean_point() -> None:
     ledger = _tracked()
-    ledger.observe_host_input(_host(1))
+    ledger.observe_host_event(_host(1))
     ledger.record_submit("t1")
 
     assert ledger.read("t1") == _DRAFT
@@ -92,8 +93,8 @@ def test_record_without_a_new_flagged_write_does_not_move_the_clean_point() -> N
 
 def test_old_host_input_without_submit_field_is_consumed_by_the_record() -> None:
     ledger = _tracked()
-    ledger.observe_host_input(_host(1, submit=None))
-    ledger.observe_host_input(_host(2, submit=None))
+    ledger.observe_host_event(_host(1, submit=None))
+    ledger.observe_host_event(_host(2, submit=None))
     ledger.record_submit("t1")
 
     assert ledger.read("t1") == _EMPTY
@@ -101,13 +102,13 @@ def test_old_host_input_without_submit_field_is_consumed_by_the_record() -> None
 
 def test_interrupt_key_blocks_until_a_later_submit_is_recorded() -> None:
     ledger = _tracked()
-    ledger.observe_host_input(_host(1, interrupt="esc"))
+    ledger.observe_host_event(_host(1, interrupt="esc"))
 
     assert ledger.read("t1") == LedgerRead("blocked", "interrupt")
     ledger.record_submit("t1")
     assert ledger.read("t1") == LedgerRead("blocked", "interrupt")
 
-    ledger.observe_host_input(_host(2, submit=True))
+    ledger.observe_host_event(_host(2, submit=True))
     ledger.record_submit("t1")
     assert ledger.read("t1") == _EMPTY
 
@@ -189,7 +190,7 @@ def test_daemon_interrupt_holds_unknown_content_without_blocking() -> None:
 def test_human_draft_outranks_held_daemon_text() -> None:
     ledger = _tracked()
     ledger.observe_write("t1", origin="automatic", kind="text", payload="continue")
-    ledger.observe_host_input(_host(1))
+    ledger.observe_host_event(_host(1))
 
     assert ledger.read("t1") == _DRAFT
 
@@ -197,7 +198,7 @@ def test_human_draft_outranks_held_daemon_text() -> None:
 def test_dialog_input_is_consumed_when_a_clean_wait_resumes() -> None:
     ledger = _tracked()
     ledger.open_wait("t1")
-    ledger.observe_host_input(_host(1, submit=True))
+    ledger.observe_host_event(_host(1, submit=True))
     ledger.close_wait("t1", "resumed")
 
     assert ledger.read("t1") == _EMPTY
@@ -207,7 +208,7 @@ def test_dialog_input_is_consumed_when_a_clean_wait_resumes() -> None:
 def test_dialog_input_becomes_a_draft_when_the_wait_is_not_resumed(outcome: WaitOutcome) -> None:
     ledger = _tracked()
     ledger.open_wait("t1")
-    ledger.observe_host_input(_host(1))
+    ledger.observe_host_event(_host(1))
     ledger.close_wait("t1", outcome)
 
     assert ledger.read("t1") == _DRAFT
@@ -216,7 +217,7 @@ def test_dialog_input_becomes_a_draft_when_the_wait_is_not_resumed(outcome: Wait
 def test_dialog_interrupt_blocks_when_the_wait_is_abandoned() -> None:
     ledger = _tracked()
     ledger.open_wait("t1")
-    ledger.observe_host_input(_host(1, interrupt="esc"))
+    ledger.observe_host_event(_host(1, interrupt="esc"))
     ledger.close_wait("t1", "abandoned")
 
     assert ledger.read("t1") == LedgerRead("blocked", "interrupt")
@@ -224,9 +225,9 @@ def test_dialog_interrupt_blocks_when_the_wait_is_abandoned() -> None:
 
 def test_input_during_a_wait_opened_dirty_stays_human_input() -> None:
     ledger = _tracked()
-    ledger.observe_host_input(_host(1))
+    ledger.observe_host_event(_host(1))
     ledger.open_wait("t1")
-    ledger.observe_host_input(_host(2, submit=True))
+    ledger.observe_host_event(_host(2, submit=True))
     ledger.close_wait("t1", "resumed")
 
     assert ledger.read("t1") == _DRAFT
@@ -240,7 +241,7 @@ def test_provider_limit_blocks_until_a_later_submit_or_release() -> None:
 
     assert ledger.read("t1") == LedgerRead("blocked", "provider_limit")
 
-    ledger.observe_host_input(_host(1, submit=True))
+    ledger.observe_host_event(_host(1, submit=True))
     ledger.record_submit("t1")
     ledger.release("t2")
     assert ledger.read("t1") == _EMPTY
@@ -249,49 +250,95 @@ def test_provider_limit_blocks_until_a_later_submit_or_release() -> None:
 
 def test_release_clears_every_earlier_observation() -> None:
     ledger = _tracked()
-    ledger.observe_host_input(_host(1, interrupt="ctrl_c"))
+    ledger.observe_host_event(_host(1, interrupt="ctrl_c"))
     ledger.observe_write("t1", origin="automatic", kind="text", payload="continue")
     ledger.release("t1")
 
     assert ledger.read("t1") == _EMPTY
 
 
-def test_forget_returns_a_terminal_to_untracked() -> None:
-    ledger = _tracked()
-    ledger.forget("t1")
+def test_host_exit_event_returns_its_terminal_to_untracked() -> None:
+    ledger = _tracked("t1", "t2")
+    ledger.observe_host_event(
+        TerminalExitedEvent(terminal_id="t1", host_terminal_id="h1", exit_code=0, epoch="e1", seq=4)
+    )
 
     assert ledger.read("t1") == _UNTRACKED
+    assert ledger.read("t2") == _EMPTY
+    assert ledger.host_cursor == ("e1", 4)
 
 
-def test_host_break_blocks_every_tracked_terminal_and_sets_the_cursor() -> None:
+def test_first_host_resume_blocks_every_tracked_terminal_until_a_later_submit() -> None:
     ledger = _tracked("t1", "t2")
-    ledger.mark_host_break("gap", "e1", 40)
+    ledger.resume_host("e1", 40, since=None, gap=False)
 
-    assert ledger.read("t1") == LedgerRead("blocked", "gap")
-    assert ledger.read("t2") == LedgerRead("blocked", "gap")
+    assert ledger.read("t1") == _GAP
+    assert ledger.read("t2") == _GAP
     assert ledger.host_cursor == ("e1", 40)
 
-    ledger.observe_host_input(_host(41, submit=True))
+    ledger.observe_host_event(_host(41, submit=True))
     ledger.record_submit("t1")
     assert ledger.read("t1") == _EMPTY
-    assert ledger.read("t2") == LedgerRead("blocked", "gap")
+    assert ledger.read("t2") == _GAP
 
 
-def test_host_epoch_change_blocks_every_tracked_terminal() -> None:
+@pytest.mark.parametrize(
+    ("since", "gap"),
+    [(None, False), (7, False), (5, True)],
+    ids=["no-replay", "replay-past-the-cursor", "host-gap"],
+)
+def test_resume_that_may_have_lost_input_blocks_every_tracked_terminal(
+    since: int | None, gap: bool
+) -> None:
     ledger = _tracked("t1", "t2")
-    ledger.observe_host_input(_host(5, terminal_id="t2", submit=True))
-    ledger.observe_host_input(_host(1, terminal_id="t2", epoch="e2"))
+    ledger.observe_host_event(_host(5, terminal_id="other"))
+    ledger.resume_host("e1", 9, since=since, gap=gap)
 
-    assert ledger.read("t1") == LedgerRead("blocked", "epoch")
+    assert ledger.read("t1") == _GAP
+    assert ledger.read("t2") == _GAP
+    assert ledger.host_cursor == ("e1", 9)
+
+
+@pytest.mark.parametrize(("since", "seq"), [(5, 9), (3, 9), (None, 5)])
+def test_resume_that_replays_from_the_cursor_keeps_composer_state(
+    since: int | None, seq: int
+) -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(5, submit=True))
+    ledger.resume_host("e1", seq, since=since, gap=False)
+
+    assert ledger.read("t1") == _DRAFT
+    assert ledger.host_cursor == ("e1", 5)
+    ledger.observe_host_event(_host(6))
+    assert ledger.host_cursor == ("e1", 6)
+
+
+def test_resume_on_a_new_host_epoch_drops_every_tracked_terminal() -> None:
+    ledger = _tracked("t1", "t2")
+    ledger.observe_host_event(_host(5, terminal_id="t2", submit=True))
+    ledger.resume_host("e2", 3, since=None, gap=False)
+
+    assert ledger.read("t1") == _UNTRACKED
+    assert ledger.read("t2") == _UNTRACKED
+    assert ledger.host_cursor == ("e2", 3)
+
+
+def test_host_event_from_a_new_epoch_drops_every_tracked_terminal() -> None:
+    ledger = _tracked("t1", "t2")
+    ledger.observe_host_event(_host(5, terminal_id="t2", submit=True))
+    ledger.observe_host_event(_host(1, terminal_id="t2", epoch="e2"))
+
+    assert ledger.read("t1") == _UNTRACKED
+    assert ledger.read("t2") == _UNTRACKED
     assert ledger.host_cursor == ("e2", 1)
 
 
 def test_replayed_host_events_at_or_before_the_cursor_are_ignored() -> None:
     ledger = _tracked()
-    ledger.observe_host_input(_host(7, submit=True))
+    ledger.observe_host_event(_host(7, submit=True))
     ledger.record_submit("t1")
-    ledger.observe_host_input(_host(6))
-    ledger.observe_host_input(_host(7))
+    ledger.observe_host_event(_host(6))
+    ledger.observe_host_event(_host(7))
 
     assert ledger.read("t1") == _EMPTY
     assert ledger.host_cursor == ("e1", 7)
@@ -299,7 +346,7 @@ def test_replayed_host_events_at_or_before_the_cursor_are_ignored() -> None:
 
 def test_host_input_on_an_untracked_terminal_still_advances_the_cursor() -> None:
     ledger = ComposerLedger()
-    ledger.observe_host_input(_host(3, terminal_id="other"))
+    ledger.observe_host_event(_host(3, terminal_id="other"))
 
     assert ledger.host_cursor == ("e1", 3)
     assert ledger.read("other") == _UNTRACKED
@@ -307,7 +354,7 @@ def test_host_input_on_an_untracked_terminal_still_advances_the_cursor() -> None
 
 def test_state_round_trips_through_the_state_file(tmp_path: Path) -> None:
     ledger = _tracked("clean", "draft", "held", "limit")
-    ledger.observe_host_input(_host(9, terminal_id="draft"))
+    ledger.observe_host_event(_host(9, terminal_id="draft"))
     ledger.observe_write("held", origin="automatic", kind="text", payload="continue")
     ledger.block("limit", "provider_limit")
     ledger.open_wait("clean")
@@ -319,7 +366,7 @@ def test_state_round_trips_through_the_state_file(tmp_path: Path) -> None:
     for terminal_id in ("clean", "draft", "held", "limit", "missing"):
         assert restored.read(terminal_id) == ledger.read(terminal_id)
     assert restored.host_cursor == ("e1", 9)
-    restored.observe_host_input(_host(10, terminal_id="clean"))
+    restored.observe_host_event(_host(10, terminal_id="clean"))
     restored.close_wait("clean", "resumed")
     assert restored.read("clean") == _EMPTY
     assert json.loads(path.read_text(encoding="utf-8"))["version"] == 1
@@ -328,7 +375,7 @@ def test_state_round_trips_through_the_state_file(tmp_path: Path) -> None:
 
 def test_restored_ledger_continues_the_sequence(tmp_path: Path) -> None:
     ledger = _tracked()
-    ledger.observe_host_input(_host(1, submit=True))
+    ledger.observe_host_event(_host(1, submit=True))
     path = tmp_path / "ledger.json"
     write_ledger(ledger, path)
 

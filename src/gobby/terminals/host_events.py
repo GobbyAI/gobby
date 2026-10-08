@@ -123,8 +123,12 @@ class HostEventStream(AsyncIterator[HostEvent]):
 async def collect_gap_cut(
     stream: HostEventStream,
     fetch_inventory: Callable[[], Awaitable[HostInventorySnapshot]],
+    observe: Callable[[HostEvent], None] | None = None,
 ) -> tuple[HostInventorySnapshot, list[HostEvent]]:
-    """Buffer a subscribed stream around an inventory cut, repeating after overflow."""
+    """Buffer a subscribed stream around an inventory cut, repeating after overflow.
+
+    ``observe`` sees every event read, including those the cut and an overflow drop.
+    """
     while True:
         buffered: list[HostEvent] = []
         buffered_bytes = 0
@@ -143,6 +147,8 @@ async def collect_gap_cut(
                 done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 if next_event in done:
                     event = next_event.result()
+                    if observe is not None:
+                        observe(event)
                     event_bytes = len(repr(event).encode("utf-8"))
                     if (
                         len(buffered) >= GAP_BUFFER_ENTRIES
@@ -159,6 +165,8 @@ async def collect_gap_cut(
             if next_event is not None:
                 if next_event.done():
                     event = next_event.result()
+                    if observe is not None:
+                        observe(event)
                     event_bytes = len(repr(event).encode("utf-8"))
                     if (
                         len(buffered) >= GAP_BUFFER_ENTRIES

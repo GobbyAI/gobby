@@ -5,10 +5,10 @@ composer is clean when nothing human arrived after its clean point: the newest
 submit-flagged input that a later provider submit record (``BEFORE_AGENT``, a manual
 ``PRE_COMPACT``, ``SESSION_START(clear)``) proved consumed. Human input is gterm
 ``input_activity`` and operator/attention writes; daemon writes are held text the
-daemon typed itself. An interrupt key, a host event gap or epoch change, and a
-provider limit block until a later submit is recorded or an operator releases the
-terminal. A terminal the ledger never tracked reads blocked, so nothing types into
-a composer whose history is unknown.
+daemon typed itself. An interrupt key, a host event gap and a provider limit block
+until a later submit is recorded or an operator releases the terminal. A terminal
+the ledger never tracked reads blocked, so nothing types into a composer whose
+history is unknown; a new host epoch drops the old host's terminals.
 """
 
 from __future__ import annotations
@@ -25,8 +25,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from gobby.paths import get_gobby_home
 from gobby.terminals.composer import COMPOSER_CLEAR_KEYS
-from gobby.terminals.host_events import InputActivityEvent
+from gobby.terminals.host_events import HostEvent, InputActivityEvent
 
 __all__ = [
     "ComposerLedger",
@@ -34,6 +35,7 @@ __all__ = [
     "LedgerState",
     "UnsafeReason",
     "WaitOutcome",
+    "composer_ledger_path",
     "load_ledger",
     "persist_ledger",
     "write_ledger",
@@ -42,7 +44,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 LedgerState = Literal["blocked", "draft", "held", "empty"]
-UnsafeReason = Literal["interrupt", "gap", "epoch", "provider_limit"]
+UnsafeReason = Literal["interrupt", "gap", "provider_limit"]
 WaitOutcome = Literal["resumed", "abandoned", "ambiguous"]
 WriteOrigin = Literal["operator", "automatic", "attention", "daemon"]
 WriteKind = Literal["text", "key", "paste", "input"]
@@ -109,20 +111,19 @@ class ComposerLedger:
         with self._lock:
             self._entries[terminal_id] = _Entry(clean_seq=self._next())
 
-    def forget(self, terminal_id: str) -> None:
-        with self._lock:
-            if self._entries.pop(terminal_id, None) is not None:
-                self.version += 1
-
-    def observe_host_input(self, event: InputActivityEvent) -> None:
+    def observe_host_event(self, event: HostEvent) -> None:
+        """Advance the host cursor; input is human, an exit drops its terminal."""
         with self._lock:
             if self._host is not None and self._host[0] == event.epoch:
                 if event.seq <= self._host[1]:
                     return
             elif self._host is not None:
-                self._mark_all("epoch")
+                self._entries.clear()
             self._host = (event.epoch, event.seq)
             self.version += 1
+            if not isinstance(event, InputActivityEvent):
+                self._entries.pop(event.terminal_id, None)
+                return
             entry = self._entries.get(event.terminal_id)
             if entry is not None:
                 self._human(entry, submit=event.submit, interrupt=event.interrupt is not None)
@@ -207,11 +208,26 @@ class ComposerLedger:
             if entry is not None:
                 entry.unsafe, entry.unsafe_seq = reason, self._next()
 
-    def mark_host_break(self, reason: Literal["gap", "epoch"], epoch: str, seq: int) -> None:
-        """Input may have been missed: block every terminal and resume the host at ``seq``."""
+    def resume_host(self, epoch: str, seq: int, *, since: int | None, gap: bool) -> None:
+        """Re-anchor on a host subscription at ``(epoch, seq)`` that replays after ``since``.
+
+        A new epoch is a new host, whose predecessor's terminals died with it. In the
+        same epoch, a subscription that replays nothing past the cursor, while the host
+        moved past it, may have lost input, so every terminal blocks. Replay from at or
+        before the cursor loses nothing: the events up to it are skipped.
+        """
         with self._lock:
-            self._mark_all(reason)
+            cursor = self._host
+            if cursor is not None and cursor[0] != epoch:
+                self._entries.clear()
+            elif (
+                cursor is None or gap or (cursor[1] < seq and (since is None or since > cursor[1]))
+            ):
+                self._mark_all("gap")
+            else:
+                return
             self._host = (epoch, seq)
+            self.version += 1
 
     def to_state(self) -> dict[str, Any]:
         with self._lock:
@@ -266,6 +282,10 @@ def _read(entry: _Entry) -> LedgerRead:
     if entry.pending_seq > entry.clean_seq:
         return LedgerRead("held", pending=entry.pending_text)
     return LedgerRead("empty")
+
+
+def composer_ledger_path() -> Path:
+    return get_gobby_home() / "runtime" / "composer_ledger.json"
 
 
 def write_ledger(ledger: ComposerLedger, path: Path) -> None:

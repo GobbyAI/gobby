@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from gobby.storage.session_tasks import SessionTaskManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
+    from gobby.terminals.composer_ledger import ComposerLedger
     from gobby.workflows.hooks import WorkflowHookHandler
 
 # The final bool is set_awaiting_handoff for handoff-gated summary dispatches.
@@ -154,6 +155,10 @@ class EventHandlersBase:
             )
         except Exception:
             self.logger.warning("Failed to enter turn wait", exc_info=True)
+        # Input typed while the dialog is open belongs to the dialog until it resolves.
+        composer = self._composer_terminal(session_id)
+        if composer is not None:
+            composer[0].open_wait(composer[1])
 
     def _resolve_turn_wait(
         self,
@@ -177,6 +182,31 @@ class EventHandlersBase:
             )
         except Exception:
             self.logger.warning("Failed to resolve turn wait", exc_info=True)
+        composer = self._composer_terminal(session_id)
+        if composer is not None:
+            composer[0].close_wait(composer[1], resolution)
+
+    def _record_composer_submit(self, session_id: str) -> None:
+        """A provider submit record: the session's composer input up to now was consumed."""
+        composer = self._composer_terminal(session_id)
+        if composer is not None:
+            composer[0].record_submit(composer[1])
+
+    def _composer_terminal(self, session_id: str) -> tuple[ComposerLedger, str] | None:
+        """The composer ledger and the live terminal bound to ``session_id``, if both exist."""
+        app = get_app_context()
+        coordinator = app.write_coordinator if app is not None else None
+        manager = getattr(self, "terminal_manager", None)
+        if coordinator is None or manager is None:
+            return None
+        try:
+            row = manager.get_live_for_session(session_id)
+        except Exception:
+            self.logger.warning(
+                "Failed to resolve the composer terminal for session %s", session_id, exc_info=True
+            )
+            return None
+        return None if row is None else (coordinator.composer_ledger, str(row.id))
 
     def _resolve_message_processor(self) -> Any | None:
         return self._message_processor_resolver()
