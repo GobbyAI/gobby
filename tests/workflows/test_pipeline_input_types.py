@@ -42,6 +42,17 @@ def test_declared_string_inputs_keep_their_text(value: str, expression: str) -> 
     assert rendered.mcp.arguments == {"value": value, "nested": [value]}
 
 
+@pytest.mark.parametrize("condition, expected", [(True, "x"), (False, "y")])
+def test_multiline_pure_expression_uses_normalized_parser(condition: bool, expected: str) -> None:
+    renderer = StepRenderer(TemplateEngine())
+    rendered = renderer.render_mcp_arguments(
+        {"k": '${{ inputs.a\n  if inputs.b else "y" }}'},
+        {"inputs": {"a": "x", "b": condition}, "_string_inputs": ["a"]},
+    )
+
+    assert rendered == {"k": expected}
+
+
 def test_declared_optional_string_and_untyped_values_keep_existing_semantics() -> None:
     renderer = StepRenderer(TemplateEngine())
     arguments = {

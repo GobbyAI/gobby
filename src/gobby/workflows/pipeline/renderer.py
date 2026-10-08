@@ -254,7 +254,9 @@ class StepRenderer:
             if m:
                 expression = m.group(1).strip()
                 resolved = self._resolve_expression(expression, context)
-                node = ast.parse(expression, mode="eval").body
+                node = SafeExpressionEvaluator._parse_normalized_expr(
+                    SafeExpressionEvaluator._normalize_expr(expression)
+                ).body
                 input_name: str | None = None
                 if isinstance(node, ast.Attribute):
                     input_name = node.attr
