@@ -34,7 +34,7 @@ from gobby.sessions.continuation_retry import (
     resubmit_until_before_agent,
     turn_lifecycle_generation,
 )
-from gobby.sessions.handoff import HANDOFF_DISPATCH_GATE_VARIABLE, build_handoff_continue_prompt
+from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.handoff_records import record_handoff_delivery
 from gobby.sessions.tmux_context import parse_terminal_context_value
@@ -758,7 +758,7 @@ async def _continue_after_codex_compaction_ready(
     attempt_id: str | None = None,
     fresh_seconds: int = HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
 ) -> None:
-    """Consume and submit only after Codex renders a fresh completion marker."""
+    """Submit after a matching compact receipt, or a fresh completion marker."""
     baseline_count = _count_codex_compact_ready_status_lines(before_command)
     deadline = asyncio.get_running_loop().time() + fresh_seconds
 
@@ -804,28 +804,25 @@ async def _continue_after_codex_compaction_ready(
             )
             return
 
+        receipt = None
+        if attempt_id is not None:
+            receipt = await asyncio.to_thread(
+                db.fetchone,
+                "SELECT 1 FROM session_handoff_deliveries WHERE attempt_id = %s "
+                "AND boundary_kind = 'compact'",
+                (attempt_id,),
+            )
         fresh_output = _fresh_terminal_output(before_command, output)
         ready = (
-            _count_codex_compact_ready_status_lines(output) > baseline_count
+            receipt is not None
+            or _count_codex_compact_ready_status_lines(output) > baseline_count
             or _count_codex_compact_ready_status_lines(fresh_output) > 0
         )
         if ready:
-            gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
-            if (
-                attempt_id is not None
-                and isinstance(gate, dict)
-                and gate.get("attempt_id") == attempt_id
-            ):
-                receipt = await asyncio.to_thread(
-                    db.fetchone,
-                    "SELECT 1 FROM session_handoff_deliveries WHERE attempt_id = %s "
-                    "AND boundary_kind = 'compact'",
-                    (attempt_id,),
-                )
-                if receipt is None:
-                    # The provider can render its status before the delivery receipt.
-                    # The delivery waiter restarts readiness after recording it.
-                    return
+            if attempt_id is not None and receipt is None:
+                # The provider can render its status before the delivery receipt.
+                # The delivery waiter restarts readiness after recording it.
+                return
             if poll_seconds > 0:
                 await asyncio.sleep(poll_seconds)
             pending = await asyncio.to_thread(
