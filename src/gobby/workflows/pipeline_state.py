@@ -195,6 +195,10 @@ class StepExecution:
         }
 
 
+class PipelineStepError(RuntimeError):
+    """A failed pipeline step whose diagnostic is visible to the operator."""
+
+
 class ApprovalRequired(Exception):
     """Exception raised when a pipeline step requires approval.
 

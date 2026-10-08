@@ -272,7 +272,8 @@ def test_inbox_manager_is_read_only_and_routes_urgent_messages() -> None:
     assert "Forward at once" in prompt
     assert "with wake=true" in prompt
     assert 'single word "steady"' in prompt
-    assert "close backlog above 5" in prompt
+    assert "close backlog above 10" in prompt
+    assert "close backlog above 5" not in prompt
     assert "Never spawn agents, create or update tasks, edit files, restart the daemon" in prompt
     assert "~/.gobby/local_cli_token" in prompt
     assert "~/.gobby/bootstrap.yaml" in prompt

@@ -65,15 +65,12 @@ class GrokTranscriptParser(BaseTranscriptParser):
     def parse_line(self, line: str, index: int) -> ParsedMessage | ParsedToolEvent | None:
         if not line.strip():
             return None
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError as exc:
-            self.error_log.log_decode_failure(index, self.session_id, line, exc)
-            return None
-        if not isinstance(data, dict):
-            self.error_log.log_decode_failure(index, self.session_id, line, None)
-            return None
+        data = self._decode_record(line, index)
+        return None if data is None else self.parse_record(data, index)
 
+    def parse_record(
+        self, data: dict[str, Any], index: int
+    ) -> ParsedMessage | ParsedToolEvent | None:
         timestamp = _parse_timestamp(data)
         update = _extract_update(data)
         if update is None:

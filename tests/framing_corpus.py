@@ -81,6 +81,7 @@ REDIRECT_RULES = frozenset(
         "require-typescript-skill",
         "require-uv",
         "require-yaml-skill",
+        "seat-no-ask-user-question",
         "task-commit-project-path-allowlist-before-git",
     }
 )

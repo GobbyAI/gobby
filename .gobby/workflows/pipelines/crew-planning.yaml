@@ -36,32 +36,32 @@ inputs:
     description: "Live operator session ref for readiness, blockers and unassigned waits"
   plan_writer_provider:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: claude
+    description: "Seat provider; override to change the roster default"
   plan_writer_model:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: claude-opus-5-5
+    description: "Seat model; override to change the roster default"
   plan_writer_reasoning_effort:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: xhigh
+    description: "Seat reasoning effort; override to change the roster default"
   plan_writer_role_file:
     type: string
     default: plan-writer.md
     description: "Role filename under the shared checkout .gobby/roles/"
   plan_adversary_provider:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: codex
+    description: "Seat provider; override to change the roster default"
   plan_adversary_model:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: gpt-6.1-sol
+    description: "Seat model; override to change the roster default"
   plan_adversary_reasoning_effort:
     type: string
-    default: null
-    description: "Optional override; omit to use the installed agent definition"
+    default: medium
+    description: "Seat reasoning effort; override to change the roster default"
   plan_adversary_role_file:
     type: string
     default: plan-adversary.md

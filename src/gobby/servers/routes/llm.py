@@ -37,6 +37,7 @@ from gobby.llm.image_payloads import MAX_IMAGE_BYTES, prepare_image_inputs
 from gobby.servers.chat_attachment_limits import resolve_server_attachment_limits
 from gobby.servers.responses import JSONResponse
 from gobby.servers.upload_limits import read_bounded_upload
+from gobby.sessions.clear_run_lineage import current_run_session_id
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -304,9 +305,20 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
         is reported as a 400.
         """
         claims = server.auth_service.verified_agent_claims(request)
-        session_header = (
-            claims.session_id if claims is not None else request.headers.get("X-Gobby-Session-Id")
-        )
+        session_header: str | None
+        if claims is None:
+            session_header = request.headers.get("X-Gobby-Session-Id")
+        elif server.session_manager is None:
+            session_header = claims.session_id
+        else:
+            # The grant stays issued to the predecessor; a /clear successor
+            # that now holds the run is the caller.
+            session_header = current_run_session_id(
+                server.session_manager.db,
+                agent_run_id=claims.agent_run_id,
+                session_id=claims.session_id,
+                project_id=claims.project_id,
+            )
         try:
             authenticated_session_id = UUID(session_header) if session_header else None
         except ValueError:

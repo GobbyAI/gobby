@@ -924,6 +924,24 @@ class TestPipelineRunsShow:
 class TestPipelinesDaemonApproval:
     """Tests for daemon-backed pipeline approval commands."""
 
+    def test_approve_displays_resumed_step_failure(self, runner: CliRunner) -> None:
+        diagnostic = "Unsupported spawn provider: pipeline"
+        daemon = MagicMock()
+        daemon.check_health.return_value = (True, None)
+        daemon.call_http_api.return_value = httpx.Response(422, json={"detail": diagnostic})
+        with (
+            patch("gobby.cli.utils_config.get_daemon_client", return_value=daemon),
+            patch("gobby.cli.pipelines.get_pipeline_executor") as get_local_executor,
+        ):
+            result = runner.invoke(cli, ["pipelines", "approve", "approval-token-xyz"])
+
+        assert result.exit_code == 1
+        assert f"Pipeline approve failed in daemon: {diagnostic}" in result.output
+        daemon.call_http_api.assert_called_once_with(
+            "/api/pipelines/approve/approval-token-xyz", method="POST", timeout=300.0
+        )
+        get_local_executor.assert_not_called()
+
     @pytest.mark.parametrize(
         ("action", "expected_path", "expected_text"),
         [

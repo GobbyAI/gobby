@@ -647,6 +647,38 @@ def test_fresh_snapshot_recovery_emits_structured_warning(
     assert caplog.text.count(FRESH_SNAPSHOT_RECOVERY_MARKER) == 1
 
 
+def test_existing_step_instance_skips_the_variables_read(snap_db: PostgresHubDatabase) -> None:
+    """Every hook reconciles activation; with an instance present it must not decode the blob.
+
+    #23359: the re-read inside the immediate transaction ran before the existence
+    check, so each hook paid a full session-variables decode for a no-op.
+    """
+    from gobby.hooks.session_activation import _ensure_step_instance
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    agent = _agent("alpha", ["claim", "implement"], {"goal": "ship"})
+    AgentStepInstanceManager(snap_db).save(
+        build_step_instance(agent, session_id=S1, step_workflow_id=LINEAGE)
+    )
+    variables = {"_agent_type": "alpha"}
+    SessionVariableManager(snap_db).merge_variables(S1, variables)
+    session = SimpleNamespace(project_id=None)
+
+    with (
+        patch.object(
+            SessionVariableManager,
+            "get_variables",
+            side_effect=AssertionError("variables decoded for an existing instance"),
+        ),
+        patch("gobby.workflows.agent_resolver.resolve_agent_with_row") as resolve,
+    ):
+        assert _ensure_step_instance(snap_db, S1, variables, session) is False
+    resolve.assert_not_called()
+    instance = AgentStepInstanceManager(snap_db).get_for_session(S1)
+    assert instance is not None
+    assert instance.current_step == "claim"
+
+
 def test_compacted_mid_workflow_resume_keeps_step_and_variables(
     snap_db: PostgresHubDatabase,
 ) -> None:

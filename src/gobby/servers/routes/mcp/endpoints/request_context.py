@@ -17,6 +17,7 @@ from gobby.mcp_proxy.services.server_resolution import (
 )
 from gobby.mcp_proxy.terminal_context import TERMINAL_CONTEXT_KEYS
 from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_PROTOCOL_VERSION_HEADER
+from gobby.sessions.clear_run_lineage import current_run_session_id
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.session_resolution import resolve_session_reference
@@ -234,6 +235,27 @@ async def _set_context_for_request(
             raise
         return tokens
 
+    db = server.session_manager.db if server.session_manager else None
+    if (
+        request is not None
+        and header_session_id
+        and db is not None
+        and request.headers.get(AGENT_RUN_ID_HEADER)
+    ):
+        claims = await server.run_db(server.auth_service.verified_agent_claims, request)
+        if claims is not None:
+            # After /clear the pane still sends the predecessor its token was
+            # issued for; the run's live binding names the successor.
+            current_session_id = await server.run_db(
+                current_run_session_id,
+                db,
+                agent_run_id=claims.agent_run_id,
+                session_id=claims.session_id,
+                project_id=claims.project_id,
+            )
+            if current_session_id != claims.session_id:
+                session_id = current_session_id
+
     if not canonical_project_ref and header_session_id:
         canonical_project_ref = await server.run_db(
             _derive_project_from_unique_session_seq, server, header_session_id
@@ -260,7 +282,6 @@ async def _set_context_for_request(
                 exc,
             )
 
-    db = server.session_manager.db if server.session_manager else None
     tokens = await resolve_and_seed_contexts(
         session_ref=session_id,
         session_manager=server.session_manager if server.session_manager else None,

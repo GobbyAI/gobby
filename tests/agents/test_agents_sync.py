@@ -3,7 +3,7 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -46,6 +46,59 @@ def _step_revision_rows(db: HubDatabase) -> dict[str, tuple[int, object]]:
 
 class TestSyncBundledAgents:
     """Tests for sync_bundled_agents function."""
+
+    @pytest.mark.unit
+    def test_reload_cache_updates_definition_seen_by_new_spawn(
+        self, tmp_path: Path, definition_db: PostgresHubDatabase
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._factory import _load_agent_body
+        from gobby.mcp_proxy.tools.workflows._import import reload_cache
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        template = agents_dir / "test-agent.yaml"
+        body = AgentDefinitionBody.model_validate(
+            {
+                "name": "test-agent",
+                "provider": "claude",
+                "model": "old-model",
+                "prompts": {"agent": "Run the assigned task."},
+                "workflows": {"rule_selectors": {"include": []}},
+                "step_workflow": {"steps": [{"name": "serve", "allowed_mcp_tools": []}]},
+            }
+        )
+        template.write_text(yaml.safe_dump(body.model_dump(mode="json")), encoding="utf-8")
+        with (
+            patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir),
+            patch(
+                "gobby.sync_registry.SYNC_TARGETS",
+                [("agents", "gobby.agents.sync", "sync_bundled_agents")],
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.workflows._import.sync_imported_workflows",
+                return_value={"synced": 0, "errors": []},
+            ),
+        ):
+            initial = sync_bundled_agents(definition_db)
+            assert initial["errors"] == []
+            before = _load_agent_body("test-agent", definition_db)
+            assert before is not None
+            assert before.model == "old-model"
+
+            body.model = "new-model"
+            assert body.step_workflow is not None
+            body.step_workflow.steps[0].allowed_mcp_tools = ["gobby-sessions:set_title"]
+            template.write_text(yaml.safe_dump(body.model_dump(mode="json")), encoding="utf-8")
+            result = reload_cache(MagicMock(), db=definition_db)
+            after = _load_agent_body("test-agent", definition_db)
+
+        assert result["agents_synced"] == 1
+        assert "bundled_sync_errors" not in result
+        assert after is not None
+        assert after.model == "new-model"
+        assert after.step_workflow is not None
+        assert after.step_workflow.steps[0].allowed_mcp_tools == ["gobby-sessions:set_title"]
+        assert before.model == "old-model"
 
     @pytest.mark.unit
     def test_sync_creates_bundled_agents(

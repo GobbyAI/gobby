@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -47,6 +48,22 @@ _SETTLE_LISTENERS_STATE_KEY = "_gobby_hook_inbox_settle_listeners"
 # daemon and is handed back to the inbox instead of being lost.
 _RECEIPT_CLAIM_SUFFIX: Final = ".claimed.tmp"
 _RECEIPT_CLAIM_OWNER = uuid.uuid4().hex
+
+# The per-hook receipt sweep skips files it already decoded as some other kind
+# instead of decoding them again on every hook (#23359). An entry holds the file's
+# stat signature: ghook settles a delivered envelope by atomically replacing it
+# with a delivery receipt at the same path, and the changed signature makes the
+# sweep read it again. Each sweep keeps only paths still listed.
+_NON_RECEIPT_FILES: dict[Path, tuple[int, int, int]] = {}
+_NON_RECEIPT_FILES_LOCK = threading.Lock()
+
+
+def _file_signature(path: Path) -> tuple[int, int, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_ino, stat.st_mtime_ns, stat.st_size)
 
 
 def get_hook_inbox_dir() -> Path:
@@ -247,12 +264,25 @@ def consume_pending_delivery_receipts(app: Any, inbox_dir: Path | None = None) -
     _restore_orphaned_receipt_claims(pending_dir)
     consumed = 0
     processed_dir = get_processed_envelope_dir(pending_dir)
-    for path in _iter_inbox_files(pending_dir):
+    paths = _iter_inbox_files(pending_dir)
+    with _NON_RECEIPT_FILES_LOCK:
+        for gone in _NON_RECEIPT_FILES.keys() - set(paths):
+            del _NON_RECEIPT_FILES[gone]
+        known_non_receipts = dict(_NON_RECEIPT_FILES)
+    for path in paths:
+        # Taken before the read, so a replacement after it changes the signature.
+        signature = _file_signature(path)
+        if signature is None or known_non_receipts.get(path) == signature:
+            continue
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue
-        if not isinstance(raw, dict) or raw.get("kind") != "delivery-receipt":
+        if not isinstance(raw, dict):
+            continue
+        if raw.get("kind") != "delivery-receipt":
+            with _NON_RECEIPT_FILES_LOCK:
+                _NON_RECEIPT_FILES[path] = signature
             continue
         receipt_id = raw.get("receipt_id")
         generation = raw.get("delivery_generation")

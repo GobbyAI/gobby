@@ -18,7 +18,8 @@ function agentDefinition(): AgentDefInfo {
       surfaces: ["spawn"],
       prompts: { agent: "Review the assigned implementation." },
       provider: "claude",
-      execution_mode: "terminal",
+      execution_mode: "interactive",
+      idle_ttl_seconds: 900,
       model: "opus",
       reasoning_effort: null,
       reasoning_required: false,
@@ -154,6 +155,7 @@ describe("AgentsTabActions", () => {
     expect(body).not.toHaveProperty("is_local");
     expect(body).not.toHaveProperty("mode");
     expect(body).not.toHaveProperty("execution_mode");
+    expect(body).not.toHaveProperty("idle_ttl_seconds");
     // Sync-owned network and spawn/message authority never ride a UI copy.
     expect(body).not.toHaveProperty("network");
     expect(body).not.toHaveProperty("spawnable_agents");

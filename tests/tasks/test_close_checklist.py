@@ -1001,6 +1001,99 @@ def test_related_source_selector_shares_test_parses_across_worktrees(tmp_path: P
     assert parse.call_args_list == []
 
 
+@pytest.mark.parametrize(
+    "import_statement",
+    [
+        "from gobby.widget import VALUE\n",
+        "import gobby.widget as selected\n",
+        "from gobby import (\n    widget,\n)\n",
+        "from gobby import " + "\\" + "\n    widget\n",
+        "def helper():\n    from gobby.widget import VALUE\n",
+        "if True: import gobby.widget\n",
+        "import os; import gobby.widget\n",
+    ],
+)
+def test_related_source_selector_cold_scan_skips_body_only_mentions(
+    tmp_path: Path, import_statement: str
+) -> None:
+    """A cold preview parses real imports, not large bodies mentioning module names."""
+    package = tmp_path / "src/gobby"
+    package.mkdir(parents=True)
+    (package / "widget.py").write_text("VALUE = 1\n")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_consumer.py").write_text(import_statement)
+    for index in range(8):
+        (tests / f"test_unrelated_{index}.py").write_text(
+            "import os\nfrom pathlib import Path\n"
+            + f"EXAMPLE = 'gobby.widget {index}'\n"
+            + "def test_example():\n"
+            + "    value = 1 + 2\n" * 500
+        )
+
+    with (
+        patch.dict(close_test_coverage._PARSED_IMPORTS, clear=True),
+        patch("gobby.tasks.close_test_coverage.ast.parse", wraps=ast.parse) as parse,
+    ):
+        selected = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path)
+
+    assert selected == {"src/gobby/widget.py": ("tests/test_consumer.py",)}
+    assert [call.args[0] for call in parse.call_args_list] == [import_statement]
+
+
+def test_related_source_selector_import_prefilter_preserves_mixed_selection(tmp_path: Path) -> None:
+    """Compare a cold mixed tree with the original full-AST selection path."""
+    package = tmp_path / "src/gobby"
+    package.mkdir(parents=True)
+    (package / "widget.py").write_text("VALUE = 1\n")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    files = {
+        "test_direct.py": "from gobby.widget import VALUE\n",
+        "test_multiline.py": "from gobby import (\n    # continuation\n    widget as selected,\n)\n",
+        "test_unicode.py": "from gobby import ｗｉｄｇｅｔ\nEXAMPLE = 'widget'\n",
+        "test_widget.py": "def test_widget(): pass\n",
+        "test_broken.py": "from gobby.widget import VALUE\ninvalid =\n",
+    }
+    files.update(
+        {
+            f"test_mentions_{index}.py": f"import os\nEXAMPLE = 'gobby.widget {index}'\n"
+            for index in range(8)
+        }
+    )
+    for name, text in files.items():
+        (tests / name).write_text(text)
+
+    with (
+        patch.dict(close_test_coverage._PARSED_IMPORTS, clear=True),
+        patch.dict(close_test_coverage._TEST_SCANS, clear=True),
+        patch.object(close_test_coverage, "_import_header_mentions", return_value=True),
+        patch("gobby.tasks.close_test_coverage.ast.parse", wraps=ast.parse) as original_parse,
+    ):
+        original = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path)
+    with (
+        patch.dict(close_test_coverage._PARSED_IMPORTS, clear=True),
+        patch.dict(close_test_coverage._TEST_SCANS, clear=True),
+        patch("gobby.tasks.close_test_coverage.ast.parse", wraps=ast.parse) as filtered_parse,
+    ):
+        filtered = related_python_source_tests(("src/gobby/widget.py",), base_dir=tmp_path)
+
+    assert (
+        filtered
+        == original
+        == {
+            "src/gobby/widget.py": (
+                "tests/test_widget.py",
+                "tests/test_direct.py",
+                "tests/test_multiline.py",
+                "tests/test_unicode.py",
+            )
+        }
+    )
+    assert original_parse.call_count == 12
+    assert filtered_parse.call_count == 4
+
+
 def test_related_source_selector_reparses_an_edited_test(tmp_path: Path) -> None:
     (tmp_path / "src/gobby").mkdir(parents=True)
     (tmp_path / "src/gobby/widget.py").write_text("VALUE = 1\n")

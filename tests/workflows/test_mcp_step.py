@@ -350,6 +350,26 @@ class TestExecuteMCPStep:
     """Tests for execute_mcp_step handler function."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("sdk_reply", [False, True])
+    async def test_mcp_failure_is_an_operator_visible_step_error(self, sdk_reply: bool) -> None:
+        from gobby.workflows.pipeline_state import PipelineStepError
+
+        error = "Unsupported spawn provider: pipeline"
+        reply = (
+            CallToolResult(content=[TextContent(type="text", text=error)], is_error=True)
+            if sdk_reply
+            else {"success": False, "error": error}
+        )
+        proxy = AsyncMock()
+        proxy.call_tool = AsyncMock(return_value=reply)
+        step = PipelineStep(
+            id="inbox-manager", mcp=MCPStepConfig(server="gobby-agents", tool="spawn_agent")
+        )
+
+        with pytest.raises(PipelineStepError, match=error):
+            await execute_mcp_step(step, {"inputs": {}, "steps": {}}, lambda: proxy)
+
+    @pytest.mark.asyncio
     async def test_mcp_step_calls_tool_proxy(self, mock_tool_proxy: AsyncMock) -> None:
         """Test that MCP step calls tool_proxy.call_tool with correct args."""
         step = PipelineStep(
