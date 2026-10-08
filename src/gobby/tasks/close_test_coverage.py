@@ -144,12 +144,6 @@ _IMPORT_KEYWORD = re.compile(r"\b(?:from|import)\b")
 _IMPORT_MODULE = re.compile(r"(?m)^[ \t]*(?:from|import)[ \t]+([\w.]+)")
 
 
-@lru_cache(maxsize=32)
-def _literal_pattern(words: frozenset[str]) -> re.Pattern[str]:
-    """Keep the substring prefilter in C instead of rescanning once per family member."""
-    return re.compile("|".join(re.escape(word) for word in sorted(words)) if words else r"(?!)")
-
-
 def _import_header_mentions(text: str, prefixes: set[str], leaves: set[str]) -> bool:
     """Conservatively reject body-only mentions before building a full-file AST.
 
@@ -191,8 +185,8 @@ def _test_imports(
     except (OSError, UnicodeError) as exc:
         logger.debug("Cannot select related tests from %s: %s", path, exc)
         return frozenset()
-    if _literal_pattern(frozenset(leaves)).search(text) is None or not (
-        _literal_pattern(frozenset(prefixes)).search(text) is not None
+    if not any(leaf in text for leaf in leaves) or not (
+        any(prefix in text for prefix in prefixes)
         or (parent_import is not None and parent_import.search(text) is not None)
     ):
         return frozenset()
