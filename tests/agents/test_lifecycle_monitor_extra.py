@@ -203,6 +203,8 @@ class TestRecoverTaskFromFailedAgent:
         mock_task_mgr.list_tasks.assert_called_once_with(
             claimed_by_session_id="child-123",
             closed=False,
+            limit=1,
+            sort_by="created_at",
         )
         assert mock_task_mgr.list_tasks.call_count == 1
         assert mock_task_mgr.list_tasks.call_args is not None

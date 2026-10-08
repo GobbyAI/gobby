@@ -183,7 +183,13 @@ class TaskRecoveryHandler:
                     )
                     if not cleared:
                         return False
-                self._settled_run_ids.add(db_run.id)
+                # A live agent can still claim, so settle only once it is verified
+                # dead. A handler without a verifier leaves the run to the sweep.
+                verifiable = db_run.terminal_id is None or self._terminal_agent_killer is not None
+                if verifiable and await self._verify_agent_dead_before_recovery(
+                    db_run, "(no claim)"
+                ):
+                    self._settled_run_ids.add(db_run.id)
                 return False
 
             task_id, task = resolved

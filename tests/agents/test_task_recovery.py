@@ -523,6 +523,44 @@ async def test_unverified_terminal_run_is_retried_next_sweep(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kill_result", "expected_resolves"),
+    [
+        pytest.param(None, 2, id="no-verifier"),
+        pytest.param({"success": False, "error": "kill failed"}, 2, id="kill-failed"),
+        pytest.param({"success": True, "already_dead": True}, 1, id="verified-dead"),
+    ],
+)
+async def test_unclaimed_terminal_run_settles_only_when_verified_dead(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+    kill_result: dict[str, Any] | None,
+    expected_resolves: int,
+) -> None:
+    """A no-claim run whose agent may live is re-resolved, so a late claim is caught."""
+    child = _register(temp_db, sample_project["id"], "task-recovery-unclaimed-live")
+    run = _Run("unclaimed-live", "error", None, child, child, terminal_id="term-1")
+    killer = None if kill_result is None else AsyncMock(return_value=kill_result)
+    handler = TaskRecoveryHandler(
+        LocalTaskManager(temp_db),
+        _SweepRunManager(run),
+        _Classifier(),
+        terminal_agent_killer=killer,
+        run_db=_run_db,
+    )
+
+    with patch.object(
+        handler,
+        "resolve_claimed_task_for_run",
+        wraps=handler.resolve_claimed_task_for_run,
+    ) as resolve:
+        for _ in range(2):
+            assert await handler.recover_tasks_from_terminal_agents() == 0
+
+    assert resolve.call_count == expected_resolves
+
+
+@pytest.mark.asyncio
 async def test_sweep_releases_every_claim_before_settling(
     temp_db: Any,
     sample_project: dict[str, Any],
