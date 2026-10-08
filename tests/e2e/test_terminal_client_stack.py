@@ -420,6 +420,95 @@ def test_native_readiness_reports_failed_run() -> None:
             _live_native_items(client, ("first", "second"))
 
 
+def _stack_run_state(run: dict[str, Any]) -> dict[str, str]:
+    return {
+        key: str(run.get(key) or "")[:2000]
+        for key in ("status", "terminal_reason", "resume_metadata_json")
+    }
+
+
+def _cancel_stack_run(client: httpx.Client, run_id: str) -> dict[str, Any] | None:
+    cancelled = client.post(f"/api/agents/runs/{run_id}/cancel")
+    detail = client.get(f"/api/agents/runs/{run_id}")
+    run = detail.json()["run"] if detail.status_code == 200 else {}
+    evidence = json.dumps(
+        {
+            "run_id": run_id,
+            "cancel_status": cancelled.status_code,
+            "cancel_response": cancelled.text[:2000],
+            "detail_status": detail.status_code,
+            **_stack_run_state(run),
+        }
+    )
+    assert detail.status_code in {200, 404}, evidence
+    if cancelled.status_code == 400:
+        # Host-death reconciliation can cancel the run before cleanup gets here.
+        # Verify both the exact refusal and the persisted state; reject other 400s.
+        assert (
+            cancelled.json().get("detail")
+            == (f"Agent run '{run_id}' is not active (status=cancelled)")
+            and run.get("status") == "cancelled"
+        ), evidence
+    else:
+        assert cancelled.status_code in {200, 409, 404}, evidence
+    if detail.status_code == 404:
+        return None
+    return {**run, "cleanup_http_status": cancelled.status_code}
+
+
+@pytest.mark.parametrize(
+    ("cancel_status", "cancel_detail", "run_status", "accepted"),
+    [
+        (200, "", "cancelled", True),
+        (409, "", "cancelled", True),
+        (404, "", None, True),
+        (400, "Agent run 'first' is not active (status=cancelled)", "cancelled", True),
+        (400, "Agent run 'first' is not active (status=cancelled)", "running", False),
+        (400, "Agent run 'other' is not active (status=cancelled)", "cancelled", False),
+        (400, "invalid cancellation request", "cancelled", False),
+        (500, "cancellation failed", "cancelled", False),
+    ],
+)
+def test_stack_cleanup_validates_already_cancelled_run(
+    cancel_status: int, cancel_detail: str, run_status: str | None, accepted: bool
+) -> None:
+    requests: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request.method)
+        if request.method == "POST":
+            assert request.url.path == "/api/agents/runs/first/cancel"
+            return httpx.Response(cancel_status, json={"detail": cancel_detail})
+        assert request.url.path == "/api/agents/runs/first"
+        if run_status is None:
+            return httpx.Response(404)
+        return httpx.Response(
+            200,
+            json={
+                "run": {
+                    "status": run_status,
+                    "terminal_reason": "daemon_stop",
+                    "resume_metadata_json": {"retained": True},
+                }
+            },
+        )
+
+    with httpx.Client(
+        base_url="http://stack.test", transport=httpx.MockTransport(respond)
+    ) as client:
+        if accepted:
+            run = _cancel_stack_run(client, "first")
+            if run_status is None:
+                assert run is None
+            else:
+                assert run is not None and run["status"] == run_status
+                assert run["cleanup_http_status"] == cancel_status
+        else:
+            with pytest.raises(AssertionError, match="daemon_stop"):
+                _cancel_stack_run(client, "first")
+    assert requests == ["POST", "GET"]
+
+
 def _attach_locator(item: dict[str, Any]) -> AttachLocator:
     attach = item.get("attach")
     if not isinstance(attach, dict):
@@ -617,8 +706,9 @@ async def test_terminal_client_stack_end_to_end(
                         "run_id": run_id,
                         **{
                             key: str(run.get(key) or "")[:2000]
-                            for key in ("status", "error", "result", "terminal_id", "updated_at")
+                            for key in ("error", "result", "terminal_id", "updated_at")
                         },
+                        **_stack_run_state(run),
                     }
                 )
             except (httpx.HTTPError, ValueError, KeyError) as exc:
@@ -1128,6 +1218,11 @@ async def test_terminal_client_stack_end_to_end(
         description="exit-during-restart reconciled",
     )
 
+    before_host_crash: dict[str, dict[str, str]] = {}
+    for run_id in run_ids:
+        detail = client.get(f"/api/agents/runs/{run_id}")
+        assert detail.status_code == 200, detail.text
+        before_host_crash[run_id] = _stack_run_state(detail.json()["run"])
     host_pid = int(pidfile_path(socket_dir).read_text())
     os.kill(host_pid, signal.SIGKILL)
     # Both panes live on the one registered runtime, so a host crash
@@ -1144,21 +1239,30 @@ async def test_terminal_client_stack_end_to_end(
         description="both native panes reconciled after host crash",
     )
 
-    for run_id in (native_spawn.get("run_id"), direct_spawn.get("run_id")):
-        if not isinstance(run_id, str):
-            continue
-        cancelled = client.post(f"/api/agents/runs/{run_id}/cancel")
-        assert cancelled.status_code in {200, 409, 404}, cancelled.text
-        detail = client.get(f"/api/agents/runs/{run_id}")
-        if detail.status_code == 200:
-            run = detail.json().get("run") or {}
+    after_cleanup: dict[str, dict[str, Any]] = {}
+    try:
+        for run_id in run_ids:
+            run = _cancel_stack_run(client, run_id)
+            if run is None:
+                continue
+            after_cleanup[run_id] = {
+                **_stack_run_state(run),
+                "cleanup_http_status": run["cleanup_http_status"],
+            }
             result = str(run.get("result") or "")
             assert "GOBBY TMUX CAPTURE" in result or run.get("status") in {
                 "cancelled",
                 "completed",
                 "failed",
                 "interrupted",
-            }
+            }, after_cleanup[run_id]
+    except AssertionError as exc:
+        evidence = write_readiness_evidence([])
+        raise AssertionError(f"{exc}; cleanup evidence={evidence}") from exc
+    finally:
+        (tmp_path / "stack-cleanup.json").write_text(
+            json.dumps({"before_host_crash": before_host_crash, "after_cleanup": after_cleanup})
+        )
     client.close()
 
 
