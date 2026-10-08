@@ -227,8 +227,8 @@ class RuntimePaneIO:
     async def _send_native_input(
         self, runtime: NativeTerminalRuntime, operation: NativeBatchOperation
     ) -> SendResult:
-        # The ordinary host write acknowledges dropped input on a full/closed PTY.
-        # Batch delivery preserves its refusal; the shared ladder still sends Enter.
+        # Batch delivery preserves typed refusal details for the shared ladder.
+        # The ladder sends Enter separately after text.
         results = await runtime.write_batch(
             [NativeBatchTarget("pane-input", self._terminal, (operation,))]
         )
