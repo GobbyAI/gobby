@@ -11,6 +11,7 @@ from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 
+from gobby.hooks._path_scope import _is_temp_agent_scratchpad_path
 from gobby.tasks.command_equivalence import canonical_command, target_covers
 from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationRun,
@@ -262,7 +263,8 @@ def surviving_path_failure(
     """Narrow a pytest run that collected nothing because named paths are gone.
 
     Pytest stops with ``file or directory not found`` before collecting when a
-    path argument does not exist. When the output shows no collected test, that
+    path argument does not exist. When the output shows no collected test (its
+    summary, or usage-error exit 4 where compaction dropped the summary), that
     is the run's only error, and each reported path is one of its targets and
     is absent from both its source tree's working copy and HEAD, the red says
     nothing about the surviving targets, so it narrows to them. HEAD absence
@@ -273,7 +275,7 @@ def surviving_path_failure(
     if (
         not output
         or failure.output_truncated
-        or not _NO_TESTS_RE.search(output)
+        or not (failure.exit_code == 4 or _NO_TESTS_RE.search(output))
         or _COLLECTED_RE.search(output)
     ):
         return None
@@ -304,6 +306,16 @@ def surviving_path_failure(
         command=_drop_targets(failure.command, missing),
         validation_segments=segments if failure.validation_segments else (),
     )
+
+
+def ran_in_scratchpad(run: TranscriptValidationRun, project_path: str | None) -> bool:
+    """Whether a run targets an agent scratchpad tree, such as a reviewer's base extract.
+
+    Such a red is a deliberate probe outside the session's checkout, so it is
+    no terminal failure of the session's own validation.
+    """
+    directory = _source_tree(run.command, project_path)[0]
+    return directory is not None and _is_temp_agent_scratchpad_path(Path(directory))
 
 
 def _tracked_at_head(directory: str, paths: Sequence[str], project_path: str | None) -> bool:

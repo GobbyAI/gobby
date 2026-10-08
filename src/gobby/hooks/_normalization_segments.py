@@ -39,6 +39,9 @@ class _ShellSegmentMetadata:
     # An interpreter program fed via stdin (heredoc); its body may prove it
     # read-only or mutating. Python also reports literal write targets.
     stdin_program_interpreter: str | None = None
+    # Literal write targets that surrounding untrusted interpreter code could
+    # redirect; they resolve the write's scope only inside the project.
+    unverified_write_scope: bool = False
     cwd: str | None = None
     loop_binding_variable: str | None = None
     # Absolute literal `name=/path` bindings from a leading bare-assignment segment.

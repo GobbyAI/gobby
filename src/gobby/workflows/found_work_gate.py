@@ -35,6 +35,7 @@ from gobby.workflows.found_work_dispositions import has_owner_filed_disposition
 from gobby.workflows.validation_cover import (
     cargo_package_selection_failed,
     green_covers_failure,
+    ran_in_scratchpad,
     run_covers,
     run_targets,
     surviving_path_failure,
@@ -251,14 +252,15 @@ def unresolved_validation_failures(
     """Return failures without a later, or another tree's, covering green run.
 
     A pytest red that collected nothing because named paths are gone needs a
-    later green over only its surviving paths.
+    later green over only its surviving paths. A red against an agent
+    scratchpad tree is a deliberate probe, not the session's validation.
     """
     ordered = sorted(runs, key=lambda run: run.order)
     unresolved: list[TranscriptValidationRun] = []
     for failed in ordered:
         if failed.outcome != "failure":
             continue
-        if cargo_package_selection_failed(failed):
+        if cargo_package_selection_failed(failed) or ran_in_scratchpad(failed, project_path):
             continue
         greens = [
             run

@@ -79,11 +79,12 @@ from gobby.hooks._path_scope import (
     resolve_tool_path,
 )
 from gobby.hooks._python_pipeline_classifier import (
-    _classify_python_pipeline_with_targets,
-    _classify_python_source_with_targets,
+    _classify_python_pipeline_evidence,
+    _classify_python_source_evidence,
     _inline_interpreter_parts,
     _is_read_only_python_pipeline,
     _PythonExecutionClassification,
+    _PythonMutationEvidence,
 )
 from gobby.hooks.code_navigation import (
     count_option_byte_count,
@@ -298,9 +299,9 @@ def _classify_stdin_python(
     if len(flagged) != 1 or len(heredoc_bodies) != 1:
         return metadata
     interpreter = flagged[0].stdin_program_interpreter
-    targets: tuple[str, ...] = ()
+    mutation: _PythonMutationEvidence | None = None
     if interpreter in {"python", "python3"}:
-        python_classification, targets = _classify_python_source_with_targets(heredoc_bodies[0])
+        python_classification, mutation = _classify_python_source_evidence(heredoc_bodies[0])
         is_mutation = python_classification is _PythonExecutionClassification.MUTATION
         is_read_only = python_classification is _PythonExecutionClassification.READ_ONLY
     else:
@@ -308,19 +309,27 @@ def _classify_stdin_python(
         is_mutation = inline_classification is _InlineProgramClassification.MUTATION
         is_read_only = inline_classification is _InlineProgramClassification.READ_ONLY
     if is_mutation:
-        rebased_targets = tuple(_rebase_shell_paths(list(targets), flagged[0].cwd))
-        replacement = _ShellSegmentMetadata(
-            "write",
-            paths=rebased_targets,
-            write_paths=rebased_targets,
-            repo_mutation=True,
-        )
+        replacement = _python_write_segment(mutation, flagged[0].cwd)
     else:
         replacement = _ShellSegmentMetadata(
             "execute",
             confidence="high" if is_read_only else "low",
         )
     return [replacement if item.stdin_program_interpreter else item for item in metadata]
+
+
+def _python_write_segment(
+    mutation: _PythonMutationEvidence | None, cwd: str | None
+) -> _ShellSegmentMetadata:
+    """A proven interpreter write carrying its literal targets, rebased onto ``cwd``."""
+    targets = tuple(_rebase_shell_paths(list(mutation.targets or ()), cwd)) if mutation else ()
+    return _ShellSegmentMetadata(
+        "write",
+        paths=targets,
+        write_paths=targets,
+        repo_mutation=True,
+        unverified_write_scope=mutation is not None and mutation.unverified,
+    )
 
 
 def _classify_shell_segment(
@@ -644,18 +653,12 @@ def _classify_shell_segment_without_redirection(
         interpreter = shell_command_name(interpreter_parts[0])
         interpreter_args = interpreter_parts[1:]
         if interpreter in {"python", "python3"} and "-c" in interpreter_args:
-            python_classification, targets = _classify_python_pipeline_with_targets(parts)
+            python_classification, mutation = _classify_python_pipeline_evidence(parts)
             if python_classification is _PythonExecutionClassification.READ_ONLY:
                 return _ShellSegmentMetadata("execute")
             if python_classification is _PythonExecutionClassification.INDETERMINATE:
                 return _ShellSegmentMetadata("execute", confidence="low")
-            rebased_targets = tuple(_rebase_shell_paths(list(targets), cwd))
-            return _ShellSegmentMetadata(
-                "write",
-                paths=rebased_targets,
-                write_paths=rebased_targets,
-                repo_mutation=True,
-            )
+            return _python_write_segment(mutation, cwd)
         has_inline_program = (interpreter == "ruby" and "-e" in interpreter_args) or (
             interpreter == "node"
             and any(

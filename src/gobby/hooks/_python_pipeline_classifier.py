@@ -180,10 +180,12 @@ class _PythonMutationEvidence:
 
     ``targets`` holds every mutated path when each one is a string literal in
     the script; it is None when any mutation's scope is not literal, so the
-    caller keeps the unknown-scope classification.
+    caller keeps the unknown-scope classification. ``unverified`` marks literal
+    targets that surrounding untrusted code could redirect.
     """
 
     targets: tuple[str, ...] | None
+    unverified: bool = False
 
 
 _UNKNOWN_SCOPE_MUTATION = _PythonMutationEvidence(targets=None)
@@ -911,7 +913,7 @@ def _proven_python_mutation(
             ):
                 return _UNKNOWN_SCOPE_MUTATION
         elif isinstance(node, ast.ImportFrom):
-            if any(alias.name == "*" or alias.name.startswith("_") for alias in node.names):
+            if any(alias.name == "*" for alias in node.names):
                 return _UNKNOWN_SCOPE_MUTATION
         elif isinstance(node, ast.Call):
             call_targets = _mutation_call_targets(node, imported_bindings, path_value_names)
@@ -920,59 +922,65 @@ def _proven_python_mutation(
             if not call_targets:
                 return _UNKNOWN_SCOPE_MUTATION
             targets.extend(target for target in call_targets if target not in targets)
-    if targets and not _has_trusted_mutation_scope(
+    if not targets:
+        return None
+    trusted = _has_trusted_mutation_scope(
         tree, rebound_names | imported_bindings.keys(), imported_bindings, path_value_names
-    ):
-        return _UNKNOWN_SCOPE_MUTATION
-    return _PythonMutationEvidence(tuple(targets)) if targets else None
+    )
+    return _PythonMutationEvidence(tuple(targets), unverified=not trusted)
 
 
 def _classify_python_source_with_targets(
     script: str,
 ) -> tuple[_PythonExecutionClassification, tuple[str, ...]]:
-    """Classify ``script``; a MUTATION carries its literal targets when all are known."""
+    """Classify ``script``; a MUTATION carries its literal targets when all are trusted."""
+    classification, mutation = _classify_python_source_evidence(script)
+    if mutation is None or mutation.unverified:
+        return classification, ()
+    return classification, mutation.targets or ()
+
+
+def _classify_python_source_evidence(
+    script: str,
+) -> tuple[_PythonExecutionClassification, _PythonMutationEvidence | None]:
+    """Classify ``script`` and return a MUTATION's evidence, unverified targets included."""
     try:
         tree = parse_agent_source(script)
     except SyntaxError:
-        return _PythonExecutionClassification.INDETERMINATE, ()
+        return _PythonExecutionClassification.INDETERMINATE, None
     binding_counts = _binding_counts(tree)
     rebound_names = frozenset(binding_counts)
     imported_bindings = _imported_bindings(tree)
     if imported_bindings is None:
-        return _PythonExecutionClassification.MUTATION, ()
+        return _PythonExecutionClassification.MUTATION, _UNKNOWN_SCOPE_MUTATION
     path_value_names = _path_value_names(tree, imported_bindings, binding_counts)
-    mutation = _proven_python_mutation(
-        tree,
-        rebound_names,
-        imported_bindings,
-        path_value_names,
-    )
+    mutation = _proven_python_mutation(tree, rebound_names, imported_bindings, path_value_names)
     if mutation is not None:
-        return _PythonExecutionClassification.MUTATION, mutation.targets or ()
+        return _PythonExecutionClassification.MUTATION, mutation
     local_names = rebound_names | imported_bindings.keys()
     safe = not (
         rebound_names & (_PYTHON_PIPELINE_RESERVED_NAMES | imported_bindings.keys())
     ) and _is_safe_python_pipeline_node(tree, local_names, imported_bindings)
     if safe:
-        return _PythonExecutionClassification.READ_ONLY, ()
-    return _PythonExecutionClassification.INDETERMINATE, ()
+        return _PythonExecutionClassification.READ_ONLY, None
+    return _PythonExecutionClassification.INDETERMINATE, None
 
 
 def _classify_python_source(script: str) -> _PythonExecutionClassification:
-    return _classify_python_source_with_targets(script)[0]
+    return _classify_python_source_evidence(script)[0]
 
 
-def _classify_python_pipeline_with_targets(
+def _classify_python_pipeline_evidence(
     parts: list[str],
-) -> tuple[_PythonExecutionClassification, tuple[str, ...]]:
+) -> tuple[_PythonExecutionClassification, _PythonMutationEvidence | None]:
     script = _python_inline_script(parts)
     if script is None:
-        return _PythonExecutionClassification.INDETERMINATE, ()
-    return _classify_python_source_with_targets(script)
+        return _PythonExecutionClassification.INDETERMINATE, None
+    return _classify_python_source_evidence(script)
 
 
 def _classify_python_pipeline(parts: list[str]) -> _PythonExecutionClassification:
-    return _classify_python_pipeline_with_targets(parts)[0]
+    return _classify_python_pipeline_evidence(parts)[0]
 
 
 def _is_read_only_python_pipeline(parts: list[str]) -> bool:

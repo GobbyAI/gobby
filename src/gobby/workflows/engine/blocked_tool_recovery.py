@@ -60,6 +60,7 @@ def recovery_directive_suffix(reason: str) -> str:
 
 
 def _directive_sentences(reason: str) -> list[str]:
+    """Split at ``.?!`` that end a sentence, never inside a path such as ``~/.gobby``."""
     sentences: list[str] = []
     start = 0
     parenthesis_depth = 0
@@ -72,7 +73,11 @@ def _directive_sentences(reason: str) -> list[str]:
                 parenthesis_depth += 1
             elif char == ")" and parenthesis_depth:
                 parenthesis_depth -= 1
-            elif char in ".?!" and parenthesis_depth == 0:
+            elif (
+                char in ".?!"
+                and parenthesis_depth == 0
+                and reason[index + 1 : index + 2].strip() == ""
+            ):
                 sentences.append(reason[start : index + 1].strip())
                 start = index + 1
     tail = reason[start:].strip()
