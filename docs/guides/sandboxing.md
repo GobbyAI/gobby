@@ -234,8 +234,10 @@ environment variables use the credential handling described below.
 Managed reads deny `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`,
 `~/.config/gcloud`, `~/.config/gh`, `~/.netrc`, `~/.docker/config.json`,
 the keychain directory, and provider authentication roots. The SSH exception is
-`~/.ssh/known_hosts`; Claude and AGY retain their existing exact login-keychain
-exception. Other providers' authentication roots stay denied. Parent read
+`~/.ssh/known_hosts`; Claude, AGY and Droid keep an exact login-keychain
+exception. AGY also reads its `~/.gemini/config` directory and
+`~/.gemini/antigravity-ide/installation_id`; the rest of `~/.gemini` stays
+denied. Other providers' authentication roots stay denied. Parent read
 allowances override SRT read denials, so policy assembly rejects grants that
 would expose credentials beyond those explicit necessities, including provider
 roots resolving into a user credential store.
@@ -299,6 +301,8 @@ requires a verified atomic persistence mechanism; other SRT providers are unaffe
 The SRT policy is a strict allowlist. It contains:
 
 - the selected provider's model API domains;
+- the selected provider's login-refresh domains (Droid's `api.workos.com`),
+  which never receive injected API keys;
 - the hostname from an explicit provider API base;
 - `localhost` and `127.0.0.1` for Gobby's daemon and WebSocket services;
 - operator `allowed_domains`;
