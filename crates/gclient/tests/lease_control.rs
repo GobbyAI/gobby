@@ -457,7 +457,7 @@ fn project_and_orphan_dialogs_draw_sentence_case_actions() {
 
     open_new_project_dialog(&mut chrome);
     let (_, labels) = drawn_dialog_text(&ws, &mut chrome);
-    assert_eq!(labels, ["↵ Open", "tab Complete", "esc Cancel"]);
+    assert_eq!(labels, ["↵ Create", "tab Complete", "esc Cancel"]);
 
     open_project_dialog(&mut chrome, new_worktree_dialog());
     let (_, labels) = drawn_dialog_text(&ws, &mut chrome);
