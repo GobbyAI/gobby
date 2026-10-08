@@ -174,6 +174,29 @@ def test_scratchpad_tests_run_against_the_checkouts_own_source_still_block(
     )
 
 
+@pytest.mark.parametrize(
+    ("pythonpath", "blocks"),
+    [
+        ("PYTHONPATH={probe}/src:{project}/src uv run pytest", True),
+        ("uv run pytest -o 'pythonpath={probe}/src {project}/src'", True),
+        ("PYTHONPATH={probe}/src:{probe}/lib uv run pytest", False),
+    ],
+    ids=["env-checkout-second", "ini-checkout-second", "env-all-scratchpad"],
+)
+def test_every_pythonpath_entry_must_lie_in_the_scratchpad(
+    project: str, tmp_path: Path, pythonpath: str, blocks: bool
+) -> None:
+    # A scratchpad entry first must not hide the checkout's source behind it.
+    probe = tmp_path / "scratchpad" / "probe"
+    command = f"{pythonpath.format(probe=probe, project=project)} {probe / _ALIVE} -q"
+    runs = [_run(1, command, exit_code=1, output=_REAL_FAILURE)]
+
+    expected = (runs[0],) if blocks else ()
+    assert (
+        unresolved_validation_failures(runs, owner_handoff=False, project_path=project) == expected
+    )
+
+
 def test_real_failure_still_blocks_when_the_checkout_itself_lies_in_a_scratchpad(
     tmp_path: Path,
 ) -> None:
