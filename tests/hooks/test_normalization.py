@@ -14,6 +14,7 @@ from gobby.hooks._normalization_shell import (
     strip_output_redirections,
     tokenize_shell_command,
 )
+from gobby.hooks._normalization_tools import provider_native_input_updates
 from gobby.hooks.normalization import normalize_mcp_fields, normalize_tool_fields
 from gobby.mcp_proxy._call_tool_wrapper import (
     CallToolWrapperInputError,
@@ -3161,3 +3162,44 @@ def test_compound_comparison_around_command_substitution_is_not_a_redirect(
     assert data["canonical_tool_kind"] == "execute"
     assert "canonical_write_file_paths" not in data
     assert not data.get("canonical_repo_mutation")
+
+
+@pytest.mark.parametrize(
+    ("raw", "updates", "expected"),
+    [
+        pytest.param(
+            {"CommandLine": "cat probe", "Cwd": "/repo"},
+            {"command": "rtk read probe"},
+            {"CommandLine": "rtk read probe"},
+            id="agy-command-line",
+        ),
+        pytest.param(
+            {"cmd": "ls"},
+            {"command": "rtk ls"},
+            {"cmd": "rtk ls"},
+            id="qwen-cmd",
+        ),
+        pytest.param(
+            {"TargetFile": "/repo/a.py"},
+            {"file_path": "/repo/b.py"},
+            {"TargetFile": "/repo/b.py"},
+            id="agy-target-file",
+        ),
+        pytest.param(
+            {"command": "git status", "timeout": 300000},
+            {"command": "rtk git status"},
+            {"command": "rtk git status"},
+            id="canonical-field-sent",
+        ),
+        pytest.param(
+            {"CommandLine": "cat probe"},
+            {"command": "rtk read probe", "CommandLine": "cat other"},
+            {"CommandLine": "cat other"},
+            id="explicit-provider-field-wins",
+        ),
+    ],
+)
+def test_input_updates_land_on_the_field_the_cli_sent(
+    raw: dict[str, Any], updates: dict[str, Any], expected: dict[str, Any]
+) -> None:
+    assert provider_native_input_updates(raw, updates) == expected

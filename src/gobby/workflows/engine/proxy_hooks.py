@@ -230,7 +230,8 @@ class ProxyHooksMixin:
             logger.info("proxy_hook: provider %s has no adapter capabilities", event.source.value)
             return False
         if not capabilities.supports_permission_neutral_rewrite:
-            logger.info(
+            # Expected on every matching shell call for such a provider (AGY).
+            logger.debug(
                 "proxy_hook: provider %s cannot rewrite input without changing permission",
                 event.source.value,
             )
