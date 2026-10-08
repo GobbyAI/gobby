@@ -49,13 +49,40 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.utils.machine_id import require_machine_id
 
     runner.terminal_manager = TerminalManager(runner.database)
+    runner.terminal_config = config.terminals
+    host_config = getattr(config, "terminal_host", None) or TerminalHostConfig()
+    runner.terminal_host_config = host_config
+    runner.workspace_manager = WorkspaceManager(runner.database)
+    bootstrap = getattr(runner, "bootstrap_config", None)
+    if (
+        bootstrap is not None
+        and bootstrap.front_door.enabled
+        and bootstrap.front_door.routes.get("terminal_ws") == "native"
+    ):
+        # gdaemon owns Native control, leases and writes. Even a hello from a
+        # second supervisor would take the host's control-owner connection.
+        runner.terminal_host_manager = None
+        runner.lease_registry = None
+        runner.frame_client = None
+        runner.write_coordinator = None
+        runner.terminal_effect_bridge = None
+        runner.terminal_services = None
+        runner.terminal_runtime_registry = TerminalRuntimeRegistry()
+        bind_wake_write_services(None, None)
+        bind_composer_coordinator(None)
+        runner.wake_dispatcher.set_terminal_manager(runner.terminal_manager)
+        if runner.agent_runner is not None:
+            runner.agent_runner.terminal_manager = runner.terminal_manager
+            runner.agent_runner.terminal_runtime_registry = runner.terminal_runtime_registry
+            runner.agent_runner.terminal_config = runner.terminal_config
+            runner.agent_runner.write_coordinator = None
+            runner.agent_runner.terminal_services = None
+        return
+
     runner.lease_registry = TerminalLeaseRegistry()
     runner.terminal_manager.clear_orphaned_attachment_writes(
         require_machine_id(), runner.lease_registry.daemon_epoch
     )
-    runner.terminal_config = config.terminals
-    host_config = getattr(config, "terminal_host", None) or TerminalHostConfig()
-    runner.terminal_host_config = host_config
     runner.terminal_host_manager = TerminalHostManager(
         config=host_config,
         terminal_config=config.terminals,
@@ -105,7 +132,6 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
         registry=runner.terminal_runtime_registry,
         coordinator=runner.write_coordinator,
     )
-    runner.workspace_manager = WorkspaceManager(runner.database)
 
     try:
         loop = asyncio.get_running_loop()
