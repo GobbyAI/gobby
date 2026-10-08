@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 190,
+  "site_count": 188,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -1721,26 +1721,6 @@
         "arg-type"
       ],
       "statement": "task = asyncio . create_task ( read_loop ( client ) )"
-    },
-    {
-      "fingerprint": "9eb2404610d5b05e4ea3a40d287320684f8ef69a8b47bd18ab4b8979d3cf74b8",
-      "path": "tests/utils/test_stream_pump.py",
-      "symbol": "test_liveness_answers_while_the_default_executor_is_exhausted",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "router = create_health_router ( SimpleNamespace ( get_runner = lambda : None ) )"
-    },
-    {
-      "fingerprint": "71189a8005c2cfd81a09fcf99f44a2f43bd1fc41f331b89dabe169f6f89d7c4c",
-      "path": "tests/utils/test_stream_pump.py",
-      "symbol": "test_liveness_answers_while_the_default_executor_is_exhausted",
-      "directive": "type: ignore",
-      "codes": [
-        "attr-defined"
-      ],
-      "statement": "endpoint = next ( route . endpoint for route in router . routes if route . path == \"/api/health\" )"
     },
     {
       "fingerprint": "7e5983a5930078882953287b86c6b26300b274eab62dfcb4d31f7ef9967be014",

@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
 from gobby.sessions.compact_markers import HANDOFF_COMPACT_CONTINUE_VARIABLE
-from gobby.sessions.handoff import HANDOFF_DISPATCH_GATE_VARIABLE, HANDOFF_TURN_END_PENDING_VARIABLE
+from gobby.sessions.handoff import (
+    HANDOFF_DISPATCH_GATE_VARIABLE,
+    HANDOFF_TURN_END_PENDING_VARIABLE,
+    PENDING_HANDOFF_VARIABLE,
+)
 from gobby.storage.hub.protocol import HubDatabase, SessionVariableMutation
 
 logger = logging.getLogger(__name__)
@@ -50,6 +55,20 @@ def _fail_delivered_readiness(db: HubDatabase, session_id: str, attempt_id: str)
         conn.execute(
             "UPDATE session_variables SET variables = %s, updated_at = %s WHERE session_id = %s",
             (json.dumps(variables), datetime.now(UTC).isoformat(), session_id),
+        )
+        # Keep the attempt check and recovery atomic: a newer marker must not
+        # release its predecessor's wait, and fresh activity must stay active.
+        released = conn.execute(
+            "UPDATE sessions SET status = 'paused', updated_at = %s "
+            "WHERE id = %s AND status = 'awaiting_handoff'",
+            (datetime.now(UTC).isoformat(), session_id),
+        ).rowcount
+    if released:
+        logger.warning(
+            "Released awaiting_handoff after Codex readiness timeout for session %s "
+            "attempt %s; staged handoff preserved for get_handoff",
+            session_id,
+            attempt_id,
         )
 
 
@@ -117,6 +136,27 @@ def _load_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
         (session_id,),
     )
     return _load_variables(_row_variables(row))
+
+
+def pending_compact_attempt(db: HubDatabase, session_id: str) -> str | None:
+    """Return the staged compact attempt whose boundary has not been recorded yet.
+
+    A failed attempt leaves no pending marker, so only an attempt that can still
+    deliver qualifies; a ``set_handoff`` retry reuses it instead of staging a
+    sibling that would race it for the same compact boundary (#23495).
+    """
+    marker = _load_session_variables(db, session_id).get(PENDING_HANDOFF_VARIABLE)
+    if not isinstance(marker, Mapping) or marker.get("clear_session") is not False:
+        return None
+    attempt_id = marker.get("attempt_id")
+    handoff_record_id = marker.get("handoff_record_id")
+    if not isinstance(attempt_id, str) or not attempt_id or not isinstance(handoff_record_id, str):
+        return None
+    delivered = db.fetchone(
+        "SELECT 1 FROM session_handoff_deliveries WHERE handoff_id = %s",
+        (handoff_record_id,),
+    )
+    return attempt_id if delivered is None else None
 
 
 def _pop_session_variable(

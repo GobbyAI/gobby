@@ -5,6 +5,27 @@ use serde_json::Value;
 mod common;
 
 #[test]
+fn evidence_help_documents_complete_binding_example() -> anyhow::Result<()> {
+    let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
+        .args(["evidence", "--help"])
+        .output()?;
+    assert!(output.status.success());
+    let help = String::from_utf8(output.stdout)?;
+    let example = help
+        .lines()
+        .find(|line| line.contains("\"binding\""))
+        .expect("bound request in CLI help");
+    let request: gobby_code::evidence::EvidenceRequest =
+        serde_json::from_str(example.split('\'').nth(1).expect("quoted JSON"))?;
+    assert_eq!(request.binding.project_id, "PROJECT_ID");
+    assert_eq!(request.binding.commit_oid, "COMMIT_OID");
+    assert_eq!(request.binding.tree_oid, "TREE_OID");
+    assert!(help.contains("git rev-parse '<commit>^{tree}'"));
+    assert!(help.contains("response.binding.project_id"));
+    Ok(())
+}
+
+#[test]
 #[serial_test::serial(serial_db)]
 fn test_evidence_cli_contract() -> anyhow::Result<()> {
     let output = Command::new(env!("CARGO_BIN_EXE_gcode"))

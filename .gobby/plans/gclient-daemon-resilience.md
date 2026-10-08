@@ -1059,9 +1059,10 @@ Targets:
 - `crates/gclient/src/app/live/relist.rs::*` — scope-reason: `fetch_roster` gains the sync `issue_roster_fetch` sibling beside the shipped relist job
 - `crates/gclient/src/app/live.rs::*` — scope-reason: `apply_live_event` becomes sync and sets refetch flags
 - `crates/gclient/src/app/live_sidebar.rs::*` — scope-reason: `fetch_attention` issues a coalesced job and each failed REST component logs a WARN
-- `crates/gclient/src/app/live_loop.rs::*` — scope-reason: `run_live_loop` routes the new outcomes and its `Lagged` arm (~419) drops its await on `apply_live_event`
+- `crates/gclient/src/app/live_loop.rs::*` — scope-reason: `run_live_loop` routes the new outcomes and its `Lagged` arm (~419) drops its await on `apply_live_event`; one `mod project_dialogs;` line comes in
 - `crates/gclient/src/app/live_loop/reconnect.rs::*` — scope-reason: `handle_live_event` (~54-75) drops its await on the now-sync `apply_live_event` and drains the refetch flags
-- `crates/gclient/src/app/live_loop/projects.rs::*` — scope-reason: `focus_project` issues a scoped roster job and `restore_focused` runs when it lands
+- `crates/gclient/src/app/live_loop/projects.rs::*` — scope-reason: `focus_project` issues a scoped roster job and `restore_focused` runs when it lands; `project_dialog_key` moves out to the project-dialogs module and is re-exported here
+- `crates/gclient/src/app/live_loop/project_dialogs.rs`
 - `crates/gclient/src/app/live_loop/jobs.rs::*` — scope-reason: `JobKey` and `JobResult` gain the `Roster` and `Attention` keys and outcomes
 - `crates/gclient/src/app/live_loop/jobs_apply.rs::*` — scope-reason: `apply_job_outcome` gains the refetch drain and the `Roster` and `Attention` arms
 - `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: adds the scoped-roster and REST-failure WARN cases
@@ -1083,6 +1084,15 @@ shipped `start_relist`, used by the loop paths, while the inline async
 `fetch_roster` stays for `reconcile_subscribe_first` and the tests. `focus_project`
 selects immediately and issues a scoped `Roster`; `restore_focused` runs when it
 lands if the project is still selected.
+
+`crates/gclient/src/app/live_loop/projects.rs` is near the production ceiling, so
+before the roster edits A4a makes one behavior-neutral move: `project_dialog_key`,
+the project and worktree dialog key handler, goes unchanged to
+`crates/gclient/src/app/live_loop/project_dialogs.rs`.
+`projects.rs` re-exports `project_dialog_key` and exposes `home_dir` to the new
+module as `pub(super)`, so `modal_input.rs`,
+`mouse/mod.rs`, `mouse/wheel.rs`, `app/mod.rs` and the destroy-orphans dialog test
+keep their imports.
 
 Every sidebar/REST job records its start instant. The existing `optional` DEBUG
 becomes one WARN per failed REST component with operation, project, error class and
@@ -2298,7 +2308,8 @@ Consumers unchanged:
 - `src/gobby/config/app.py` — no-edit-reason: nests `TerminalHostConfig`; the new field has a default.
 - `src/gobby/runner.py` — no-edit-reason: reads `TerminalHostConfig`; the new field has a default.
 - `tests/config/test_terminal_host.py` — no-edit-reason: constructs `TerminalHostConfig` with defaults.
-- `tests/config/test_terminals.py` — no-edit-reason: constructs `TerminalHostConfig` with defaults.
+- `tests/config/test_terminal_host_restart.py` — no-edit-reason: constructs `TerminalHostConfig` with defaults and restart-field overrides; the new field has a default.
+- `tests/e2e/conftest.py` — no-edit-reason: constructs `TerminalHostConfig` with `socket_dir` for its host fixture; the new field has a default.
 - `tests/terminals/test_host_upgrade.py` — no-edit-reason: constructs `TerminalHostConfig` for its host fixture; the new field has a default.
 - `tests/terminals/test_input_grant_rebind.py` — no-edit-reason: constructs `TerminalHostConfig` with `socket_dir` and `health_interval_seconds`; the new field has a default.
 - `tests/terminals/test_host_shutdown_preservation.py` — no-edit-reason: constructs `TerminalHostConfig` with defaults.

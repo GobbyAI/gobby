@@ -21,15 +21,20 @@ import threading
 from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
-from typing import IO
+from typing import IO, TYPE_CHECKING, cast
 
 import pytest
+from fastapi.routing import APIRoute
 
 from gobby.adapters.codex_impl.client_lifecycle import stop
 from gobby.adapters.codex_impl.client_rpc import read_loop
 from gobby.adapters.subprocess_stderr import SubprocessStderrDrain
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.routes.admin._health import create_health_router
 from gobby.utils.stream_pump import open_stream_pump_executor
+
+if TYPE_CHECKING:
+    from gobby.servers.http import HTTPServer
 
 pytestmark = pytest.mark.unit
 
@@ -191,11 +196,25 @@ async def test_liveness_answers_while_the_default_executor_is_exhausted(
     loop = asyncio.get_running_loop()
     release = threading.Event()
     hog = loop.run_in_executor(None, release.wait)
-    router = create_health_router(SimpleNamespace(get_runner=lambda: None))  # type: ignore[arg-type]
-    endpoint = next(route.endpoint for route in router.routes if route.path == "/api/health")  # type: ignore[attr-defined]
+    server = cast(
+        "HTTPServer",
+        SimpleNamespace(
+            get_runner=lambda: None,
+            bootstrap_config=BootstrapConfig(),
+            services=SimpleNamespace(restart_recovery_ready=True),
+        ),
+    )
+    router = create_health_router(server)
+    endpoint = next(
+        route.endpoint
+        for route in router.routes
+        if isinstance(route, APIRoute) and route.path == "/api/health"
+    )
     try:
         payload = await asyncio.wait_for(endpoint(), timeout=OFFLOAD_TIMEOUT_SECONDS)
         assert payload["status"] in {"ok", "degraded"}
+        assert payload["mode"] == "standalone"
+        assert payload["restart_recovery_pending"] is False
     finally:
         release.set()
         await hog

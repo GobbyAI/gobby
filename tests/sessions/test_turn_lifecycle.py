@@ -475,6 +475,28 @@ def test_user_interruption_requires_explicit_disposition(
     assert replacement.status == "active"
 
 
+def test_turn_end_disposition_stays_durable_until_the_next_turn(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    sessions = SessionManager(temp_db)
+    session_id = _session(sessions, sample_project["id"], external_id="disposition")
+    lifecycle = TurnLifecycleReducer(sessions)
+    lifecycle.begin_turn(session_id, TurnEvidence(source="agy"))
+    assert lifecycle.get(session_id).disposition is None
+
+    ended = lifecycle.end_turn(
+        session_id, "ended_non_user", TurnEvidence(source="agy", generation=1)
+    )
+    assert ended.status == "paused"
+    assert ended.lifecycle.disposition == "ended_non_user"
+    # A fresh reader sees the stored payload, as the health monitor does after exit.
+    assert TurnLifecycleReducer(sessions).get(session_id).disposition == "ended_non_user"
+
+    lifecycle.begin_turn(session_id, TurnEvidence(source="agy"))
+    assert lifecycle.get(session_id).disposition is None
+
+
 def test_attention_screen_updates_preserve_lifecycle_namespace(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

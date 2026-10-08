@@ -250,7 +250,7 @@ async def collect_net_commit_paths_async(
     """Return what the linked commits change on net against the close review's base.
 
     A file a later link reverts, or one only edited and never committed, is absent.
-    Deletion is Git's record alone: a file the candidate tracks but the worktree
+    Deletion is the candidate tree's record alone: a file it tracks but the worktree
     lacks is never reported. A linked commit the candidate does not reach is not
     delivered, so it is listed as undelivered and never netted.
     """
@@ -279,6 +279,17 @@ async def collect_net_commit_paths_async(
                 changed.add(path)
         if kind in "DR" and paths[0] is not None:
             deleted.add(paths[0])
+    if candidate is not None and changed:
+        tracked = await daemon_git.run(
+            ["ls-tree", "--full-tree", "-r", "--name-only", "-z", candidate],
+            cwd=repo_path,
+            timeout=10,
+        )
+        if not isinstance(tracked, GitOk) or tracked.stderr:
+            raise RuntimeError("Cannot determine changed paths absent from the close candidate.")
+        # A foreign commit may delete or re-add a path after the last linked touch.
+        # Validation targets must exist in the delivered candidate, not the replay.
+        deleted = changed.difference(tracked.stdout.split("\0"))
     return NetCommitPaths(frozenset(changed), frozenset(deleted), tuple(undelivered))
 
 

@@ -774,6 +774,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         parent_task_id: str | None = None,
         title_like: str | None = None,
         limit: int = 50,
+        offset: int = 0,
+        sort_by: str | None = None,
         all_projects: bool = False,
         project: str | None = None,
     ) -> dict[str, Any]:
@@ -806,6 +808,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             parent_task_id=parent_task_id,
             title_like=title_like,
             limit=limit,
+            offset=offset,
+            sort_by=sort_by,
             project_id=project_id,
             **closed_filter,
         )

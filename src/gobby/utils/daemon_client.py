@@ -123,7 +123,19 @@ class DaemonClient:
         elif port is None:
             self.url = daemon_url()
         else:
-            self.url = f"http://{normalize_dial_host(host)}:{port}"
+            # Explicit host/port names a peer, rather than a local daemon bind address.
+            dial_host = host.strip()
+            if dial_host.lower() == "localhost" or dial_host in {
+                "",
+                "0.0.0.0",
+                "::",
+                "::0",
+                "[::]",
+            }:
+                dial_host = normalize_dial_host(dial_host)
+            elif ":" in dial_host and not dial_host.startswith("["):
+                dial_host = f"[{dial_host}]"
+            self.url = f"http://{dial_host}:{port}"
         self.timeout = timeout
         self.logger = logger or logging.getLogger(__name__)
         self._auth_headers = daemon_auth_headers()

@@ -12,7 +12,7 @@ from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.sql_dialect import table_column_names
 from gobby.utils.datetime import utc_now
 
-from ._registration_cache import invalidate_session_caches
+from ._session_mapping_cache import invalidate_session_caches
 from ._web_chat_crud import _SessionWebChatCRUDMixin
 
 _SESSION_ROW_TABLES = frozenset({"sessions", "projects"})

@@ -6,6 +6,10 @@ from typing import Any
 
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.mcp_proxy.metrics_store import ToolMetrics, ToolMetricsStore
+from gobby.storage.hub.operation_deadline import (
+    DEFAULT_DATABASE_OPERATION_TIMEOUT_SECONDS,
+    detached_database_operation_deadline,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.telemetry.instruments import get_telemetry_metrics
 from gobby.utils.datetime import utc_now
@@ -62,27 +66,33 @@ class ToolMetricsManager:
         """
         # 1. Hub database aggregate persistence.
         try:
-            self.store.record_call(
-                server_name=server_name,
-                tool_name=tool_name,
-                project_id=project_id,
-                latency_ms=latency_ms,
-                success=success,
-            )
+            with detached_database_operation_deadline(
+                timeout_seconds=DEFAULT_DATABASE_OPERATION_TIMEOUT_SECONDS
+            ):
+                self.store.record_call(
+                    server_name=server_name,
+                    tool_name=tool_name,
+                    project_id=project_id,
+                    latency_ms=latency_ms,
+                    success=success,
+                )
         except Exception as e:
             logger.error("Failed to record call to hub database: %s", e)
 
         # 2. Event log (per-event with session_id)
         try:
-            self.event_store.record_event(
-                event_type="tool_call",
-                name=tool_name,
-                project_id=project_id,
-                session_id=session_id,
-                server_name=server_name,
-                success=success,
-                latency_ms=latency_ms,
-            )
+            with detached_database_operation_deadline(
+                timeout_seconds=DEFAULT_DATABASE_OPERATION_TIMEOUT_SECONDS
+            ):
+                self.event_store.record_event(
+                    event_type="tool_call",
+                    name=tool_name,
+                    project_id=project_id,
+                    session_id=session_id,
+                    server_name=server_name,
+                    success=success,
+                    latency_ms=latency_ms,
+                )
         except Exception as e:
             logger.warning("Failed to record event: %s", e)
 

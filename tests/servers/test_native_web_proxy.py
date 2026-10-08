@@ -978,6 +978,12 @@ async def test_frame_queue_overflow_closes_socket_for_all_attachments(
             }
         )
     await _until(lambda: ws.closed, timeout=8.0)
+    # Socket closure precedes asynchronous attachment cleanup and lease release.
+    await _until(
+        lambda: harness.server.lease_registry.get(att_a) is None
+        and harness.server.lease_registry.get(att_b) is None,
+        timeout=8.0,
+    )
     assert harness.server.lease_registry.get(att_a) is None
     assert harness.server.lease_registry.get(att_b) is None
 

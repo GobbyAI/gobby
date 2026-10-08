@@ -54,7 +54,23 @@ def runtime() -> MagicMock:
 
 class TestRegistry:
     def test_components_are_complete_and_distinct(self) -> None:
-        assert len(COMPONENTS) == 12
+        assert set(COMPONENTS) == {
+            "claude",
+            "codex",
+            "grok",
+            "qwen",
+            "droid",
+            "agy",
+            "git-hooks",
+            "rtk",
+            "impeccable",
+            "voice",
+            "embedding",
+            "ide-settings",
+            "gclient",
+            "gterm",
+            "srt",
+        }
         assert len(set(COMPONENTS)) == len(COMPONENTS)
         assert CLI_COMPONENTS <= set(COMPONENTS)
         assert set(UNINSTALLABLE_COMPONENTS) <= set(COMPONENTS)
@@ -62,6 +78,9 @@ class TestRegistry:
             "voice",
             "embedding",
             "ide-settings",
+            "gclient",
+            "gterm",
+            "srt",
         }
 
     def test_embedding_overrides_any_set(self) -> None:

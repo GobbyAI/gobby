@@ -18,6 +18,7 @@ from gobby.workflows.agent_resolver import AgentResolutionError
 from gobby.workflows.definitions import AgentDefinitionBody
 
 from ._implementation import spawn_agent_impl
+from ._network_override import apply_network_override, validate_network_override
 from ._provider_resolution import (
     concrete_provider,
     resolve_spawn_provider,
@@ -368,6 +369,7 @@ def create_spawn_agent_registry(
         droid_mode: Literal["exec", "interactive"] = "exec",
         extra_write_paths: list[str] | None = None,
         write_paths_reason: str | None = None,
+        network: Literal["none", "trusted"] | None = None,
         reserved_run_id: str | None = None,
         placement: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -405,6 +407,7 @@ def create_spawn_agent_registry(
             project_path: Project path override
             extra_write_paths: Explicit external directories authorized for this run
             write_paths_reason: Required authorization reason for nonempty external roots
+            network: SRT profile for this launch; omission inherits the final definition.
             notify_parent_on_completion: Whether to notify the parent when the agent completes
             droid_mode: Use Droid's one-shot exec runner or interactive terminal UI
             placement: Bind the agent's terminal into a workspace pane before exec:
@@ -441,7 +444,10 @@ def create_spawn_agent_registry(
         # The spawning session, which may differ from the declared parent when an
         # agent points parent_session_id at the coordinator it reports to.
         try:
-            caller_session_id = await enforce_spawn_caller(session_manager, agent, project_id)
+            validate_network_override(network)
+            caller_session_id = await enforce_spawn_caller(
+                session_manager, agent, project_id, network=network
+            )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
         default_provider = concrete_provider(
@@ -639,6 +645,11 @@ def create_spawn_agent_registry(
                         )
             except Exception as e:
                 logger.debug("Fallback agent check failed: %s", e)
+
+        try:
+            agent_body = apply_network_override(agent_body, network)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
 
         # Delegate to spawn_agent_impl
         result = await spawn_agent_impl(
