@@ -121,6 +121,10 @@ class TaskRecoveryHandler:
         self._failure_threshold = failure_threshold
         self._terminal_agent_killer = terminal_agent_killer
         self._run_db_callback = run_db
+        # Terminal runs that own no task and whose stale claim variables are
+        # cleared. The lifecycle sweep skips them (#23783); the set is pruned to
+        # the sweep's status windows and rebuilt by one full sweep after restart.
+        self._settled_run_ids: set[str] = set()
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -136,10 +140,13 @@ class TaskRecoveryHandler:
         owner_session_id = db_run.child_session_id
 
         if not task_id and owner_session_id:
+            # Any one claim will do; an explicit sort skips the hierarchy page.
             tasks = await self._run_db(
                 self._task_manager.list_tasks,
                 claimed_by_session_id=owner_session_id,
                 closed=False,
+                limit=1,
+                sort_by="created_at",
             )
             if tasks:
                 task_id = tasks[0].id
@@ -169,11 +176,14 @@ class TaskRecoveryHandler:
             resolved = await self.resolve_claimed_task_for_run(db_run)
             if resolved is None:
                 if outcome == "cancelled" and db_run.task_id:
-                    await self._run_db(
+                    cleared = await self._run_db(
                         self._clear_claim_session_variables,
                         db_run,
                         db_run.task_id,
                     )
+                    if not cleared:
+                        return False
+                self._settled_run_ids.add(db_run.id)
                 return False
 
             task_id, task = resolved
@@ -309,11 +319,15 @@ class TaskRecoveryHandler:
         return checker(error_string) is True
 
     async def recover_tasks_from_terminal_agents(self, *, limit_per_status: int = 100) -> int:
-        """Sweep terminal non-success runs whose task ownership was not recovered."""
+        """Sweep terminal non-success runs whose task ownership was not recovered.
+
+        Settled runs are skipped, so steady state costs only the status listings.
+        """
         if not self._task_manager:
             return 0
 
         recovered = 0
+        swept: set[str] = set()
         for status in RECOVERABLE_TERMINAL_STATUSES:
             runs = await self._run_db(
                 self._agent_run_manager.list_by_status,
@@ -324,10 +338,12 @@ class TaskRecoveryHandler:
                 "cancelled" if status == "cancelled" else "failed"
             )
             for db_run in runs:
-                if is_daemon_stop_parked(db_run):
+                swept.add(db_run.id)
+                if db_run.id in self._settled_run_ids or is_daemon_stop_parked(db_run):
                     continue
                 if await self.recover_task_from_terminal_agent(db_run, outcome=outcome):
                     recovered += 1
+        self._settled_run_ids &= swept
         return recovered
 
     async def _fail_current_stage(
@@ -449,7 +465,7 @@ class TaskRecoveryHandler:
         finally:
             mutex.__exit__(None, None, None)
 
-    def _clear_claim_session_variables(self, db_run: _AgentRun, task_id: str) -> None:
+    def _clear_claim_session_variables(self, db_run: _AgentRun, task_id: str) -> bool:
         """Release the recovered task's claim in any agent-owned session variables.
 
         Recovery reopens or escalates the task; it never finishes it, so the paths
@@ -461,14 +477,16 @@ class TaskRecoveryHandler:
 
         A session that still owns the task's claim in the database is left alone:
         a cancelled worker's task that its coordinator has since claimed is swept
-        on every lifecycle cycle, and dropping the owner's variables there made
+        until its run settles, and dropping the owner's variables there made
         every edit gate read a live claim as unclaimed (#22425).
+
+        Returns False when the best-effort cleanup failed, so the run stays unsettled.
         """
         if not self._task_manager:
-            return
+            return True
         db = getattr(self._task_manager, "db", None)
         if db is None:
-            return
+            return True
 
         try:
             from gobby.workflows.state_manager import SessionVariableManager
@@ -492,6 +510,8 @@ class TaskRecoveryHandler:
                 task_id,
                 e,
             )
+            return False
+        return True
 
     def _live_claim_owner(self, task_id: str) -> str | None:
         """Return the session that actively owns ``task_id`` in the database, if any."""
