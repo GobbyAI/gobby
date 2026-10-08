@@ -280,7 +280,7 @@ def test_closed_section_requires_delivered_reason_or_landing(
     result = _validate(plan, index, [task])
     delivered = reason in {"completed", "already_implemented"}
     abandoned = reason in {"duplicate", "wont_fix", "obsolete", "out_of_repo"}
-    expected = not abandoned and (delivered or landed) if bare_only else reason == "completed"
+    expected = not abandoned and (delivered or landed) if bare_only else delivered
     assert result["valid"] is expected, result
     if not expected:
         assert (MISSING_SYMBOL_SCOPE if bare_only else "production-size-growth") in str(result)
@@ -453,9 +453,7 @@ def test_size_growth_requires_every_covering_leaf_closed(
     assert result["valid"] is repair_closed, result
 
 
-@pytest.mark.parametrize(
-    "reason", ["duplicate", "obsolete", "wont_fix", "already_implemented", "out_of_repo"]
-)
+@pytest.mark.parametrize("reason", ["duplicate", "obsolete", "wont_fix", "out_of_repo"])
 def test_closed_no_work_leaf_does_not_veto_delivered_coverage(
     landed_plan: tuple[Path, _Index], reason: str
 ) -> None:
@@ -468,9 +466,7 @@ def test_closed_no_work_leaf_does_not_veto_delivered_coverage(
     assert result["valid"] is True, result
 
 
-@pytest.mark.parametrize(
-    "reason", ["duplicate", "obsolete", "wont_fix", "already_implemented", "out_of_repo"]
-)
+@pytest.mark.parametrize("reason", ["duplicate", "obsolete", "wont_fix", "out_of_repo"])
 def test_no_work_only_coverage_retains_size_growth(
     landed_plan: tuple[Path, _Index], reason: str
 ) -> None:
@@ -480,6 +476,19 @@ def test_no_work_only_coverage_retains_size_growth(
     result = _validate(plan, index, [task])
     assert result["valid"] is False
     assert "production-size-growth" in str(result["errors"])
+
+
+@pytest.mark.parametrize("owner_count", [1, 2], ids=["single-owner", "multiple-owners"])
+def test_already_implemented_covering_leaves_are_executed(
+    landed_plan: tuple[Path, _Index], owner_count: int
+) -> None:
+    plan, index = landed_plan
+    tasks = [_task(closed=True) for _ in range(owner_count)]
+    for number, task in enumerate(tasks):
+        task.id = f"implemented-{number}"
+        task.closed_reason = "already_implemented"
+    result = _validate(plan, index, tasks)
+    assert result["valid"] is True, result
 
 
 def test_each_acceptance_item_requires_delivered_coverage(

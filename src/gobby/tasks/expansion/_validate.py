@@ -145,7 +145,7 @@ def _completed_plan_sections(
                 and task.closed_at is not None
                 for task in tasks
             )
-            and any(task.closed_reason == "completed" for task in tasks)
+            and any(task.closed_reason in {"completed", "already_implemented"} for task in tasks)
             for label, tasks in zip(labels, owners, strict=True)
         ):
             executed.add(section.section_id)
