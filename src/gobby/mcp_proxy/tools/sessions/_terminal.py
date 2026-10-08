@@ -647,6 +647,7 @@ def register_terminal_tools(
                 attempt_id=compact_attempt_id,
                 handoff=handoff,
                 clear_session=False,
+                transition_status="awaiting_handoff",
             )
         except Exception as exc:
             return {
