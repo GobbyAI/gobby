@@ -82,6 +82,7 @@ ORCHESTRATOR_EXCLUDES = [
     "name:no-daemon-management",
     "name:no-daemon-management-http",
     "name:block-git-worktree-mutations",
+    "name:block-update-task",
 ]
 
 # Steps that wait on another session report and wait from the step itself.
