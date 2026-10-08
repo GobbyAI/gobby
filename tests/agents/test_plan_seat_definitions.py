@@ -182,7 +182,7 @@ def _spawn_event(caller_id: str, agent: str) -> HookEvent:
                 "arguments": {"agent": agent, "checkout_mode": "none"},
             },
         },
-        metadata={"_platform_session_id": caller_id, "_mcp_proxy_dispatch": True},
+        metadata={"_platform_session_id": caller_id},
     )
 
 
