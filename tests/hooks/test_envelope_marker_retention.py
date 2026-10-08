@@ -28,6 +28,7 @@ from gobby.hooks.envelope_dedupe import (
     prune_processed_envelope_markers,
 )
 from gobby.hooks.inbox_maintenance import prune_hook_inbox
+from gobby.utils.durable_file import exclusive_file_lock
 
 pytestmark = pytest.mark.unit
 
@@ -167,13 +168,12 @@ def test_a_pass_locks_each_stale_shard_once_and_never_for_a_fresh_marker(
         _marker(processed_dir, f"stale-{index:02d}", age_seconds=2 * _DAY) for index in range(40)
     ]
     locked: list[Path] = []
-    real_lock = envelope_dedupe.exclusive_file_lock
 
     def recording_lock(
         path: Path, *, timeout_seconds: float | None = None
     ) -> AbstractContextManager[None]:
         locked.append(path)
-        return real_lock(path, timeout_seconds=timeout_seconds)
+        return exclusive_file_lock(path, timeout_seconds=timeout_seconds)
 
     monkeypatch.setattr(envelope_dedupe, "exclusive_file_lock", recording_lock)
 
