@@ -432,6 +432,7 @@ def _unwrap(words: list[str]) -> list[str]:
                 "time": {"-f", "-o", "--format", "--output"},
                 "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
                 "xargs": {
+                    "-a",
                     "-I",
                     "-J",
                     "-n",
@@ -440,8 +441,13 @@ def _unwrap(words: list[str]) -> list[str]:
                     "-s",
                     "-E",
                     "-d",
+                    "-R",
+                    "-S",
+                    "--arg-file",
                     "--max-args",
+                    "--max-chars",
                     "--max-procs",
+                    "--process-slot-var",
                     "--delimiter",
                 },
             }.get(name, set())
