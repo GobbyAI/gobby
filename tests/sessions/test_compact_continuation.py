@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import textwrap
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -1327,6 +1328,16 @@ def _claude_frame(row: str) -> str:
     return f"⏺ done\n{rule}\n{row}\n{rule}\n   Fable 5.1  12%\n"
 
 
+def _wrapped_continuation_frame(draft: str, cli_source: str, width: int) -> str:
+    rows = textwrap.wrap(draft, width=width - 2, break_long_words=False)
+    marker = "❯" if cli_source == "claude" else "›"
+    frame = marker + " " + (rows[0] if rows else "")
+    frame += "".join("\n  " + row for row in rows[1:])
+    if cli_source == "claude":
+        return _claude_frame(frame)
+    return frame + "\n\n  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n  ? for shortcuts\n"
+
+
 class _StickyComposerTmux(_FakeTmux):
     """Tmux fake whose composer keeps the pull prompt until enough Enters land.
 
@@ -1584,17 +1595,21 @@ async def test_confirmed_empty_pull_prompt_types_without_draining() -> None:
 
 
 @pytest.mark.parametrize(
-    "initial", ["empty", "held", "foreign", "prefix", "changed", "before-write-changed"]
+    "initial",
+    ["empty", "held", "foreign", "prefix", "prefix-only", "changed", "before-write-changed"],
 )
+@pytest.mark.parametrize("cli_source", ["claude", "codex"])
+@pytest.mark.parametrize("width", [120, 200])
 async def test_native_continuation_retries_only_its_exact_held_payload(
-    monkeypatch: pytest.MonkeyPatch, initial: str
+    monkeypatch: pytest.MonkeyPatch, initial: str, cli_source: str, width: int
 ) -> None:
-    prompt = _PULL_PROMPT
+    prompt = build_handoff_continue_prompt()
     composer = {
         "empty": "",
         "held": prompt,
         "foreign": "operator private draft",
         "prefix": prompt + " operator addition",
+        "prefix-only": textwrap.wrap(prompt, width=width - 2)[0],
         "changed": "",
         "before-write-changed": "",
     }[initial]
@@ -1629,7 +1644,7 @@ async def test_native_continuation_retries_only_its_exact_held_payload(
         snapshot_calls += 1
         if initial == "before-write-changed" and snapshot_calls == 2:
             composer = "private operator note"
-        return composer
+        return _wrapped_continuation_frame(composer, cli_source, width)
 
     monkeypatch.setattr(runtime, "write_batch", batch)
     pane = RuntimePaneIO(runtime, SimpleNamespace(id="continuation-terminal"))
@@ -1642,10 +1657,8 @@ async def test_native_continuation_retries_only_its_exact_held_payload(
         prompt,
         SESSION_ID,
         delay_seconds=0,
-        cli_source="claude",
-        composer_read=lambda output: ComposerRead("draft", output)
-        if output
-        else ComposerRead("empty"),
+        cli_source=cli_source,
+        composer_read=_CLAUDE_READ if cli_source == "claude" else _CODEX_READ,
         on_send_failure=lambda: failures.append(0),
     )
     if initial == "before-write-changed":
@@ -1658,11 +1671,16 @@ async def test_native_continuation_retries_only_its_exact_held_payload(
         assert operations == [("text", prompt + "\n"), ("key", "enter")]
         assert failures == [0]
         assert composer == prompt + " operator addition"
-    elif initial in {"foreign", "prefix"}:
+    elif initial in {"foreign", "prefix", "prefix-only"}:
         assert sent is False
         assert operations == []
         assert failures == [0]
-        assert composer.endswith("draft" if initial == "foreign" else "addition")
+        expected = {
+            "foreign": "operator private draft",
+            "prefix": prompt + " operator addition",
+            "prefix-only": textwrap.wrap(prompt, width=width - 2)[0],
+        }[initial]
+        assert composer == expected
     else:
         assert sent is True
         assert composer == ""
@@ -1689,6 +1707,58 @@ async def test_continuation_lifecycle_retry_refuses_every_other_draft(draft: str
     assert sent is False
     assert tmux.sent_keys == []
     assert tmux.composer_text == _claude_frame("❯ " + draft)
+
+
+@pytest.mark.parametrize("cli_source", ["claude", "codex"])
+@pytest.mark.parametrize("draft_kind", ["held", "suffix", "prefix-only"])
+async def test_lifecycle_retry_matches_whole_wrapped_continuation(
+    cli_source: str, draft_kind: str
+) -> None:
+    prompt = build_handoff_continue_prompt()
+    draft = {
+        "held": prompt,
+        "suffix": prompt + " operator addition",
+        "prefix-only": textwrap.wrap(prompt, width=118)[0],
+    }[draft_kind]
+    tmux = _FakeTmux()
+    tmux.composer_text = _wrapped_continuation_frame(draft, cli_source, 120)
+    sent = await continuation_retry.resubmit_continuation(
+        TmuxPaneIO(tmux, "%12"),
+        prompt,
+        SESSION_ID,
+        cli_source=cli_source,
+        composer_read=_CLAUDE_READ if cli_source == "claude" else _CODEX_READ,
+        verify_seconds=0,
+    )
+    assert sent is (draft_kind == "held")
+    assert tmux.sent_keys == ([("%12", "Enter", False)] if draft_kind == "held" else [])
+    assert tmux.composer_text == _wrapped_continuation_frame(draft, cli_source, 120)
+
+
+@pytest.mark.parametrize("cli_source", ["claude", "codex"])
+async def test_lifecycle_repaste_preserves_draft_that_appears_before_write(cli_source: str) -> None:
+    class DraftBeforeWriteTmux(_FakeTmux):
+        probes = 0
+
+        async def snapshot_lines(
+            self, pane_id: str, lines: int = 5, *, mode: SnapshotMode = "text"
+        ) -> str:
+            self.probes += 1
+            return _wrapped_continuation_frame(
+                "private operator note" if self.probes >= 3 else "", cli_source, 120
+            )
+
+    tmux = DraftBeforeWriteTmux()
+    sent = await continuation_retry.resubmit_continuation(
+        TmuxPaneIO(tmux, "%12"),
+        build_handoff_continue_prompt(),
+        SESSION_ID,
+        cli_source=cli_source,
+        composer_read=_CLAUDE_READ if cli_source == "claude" else _CODEX_READ,
+        verify_seconds=0,
+    )
+    assert sent is False
+    assert tmux.sent_keys == [("%12", "Enter", False)]
 
 
 class TestPullPromptFallback:

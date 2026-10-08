@@ -429,7 +429,7 @@ async def composer_gate_for_write(
     if read.state == "empty":
         return True, None, "empty"
     if read.state == "draft":
-        if pending_payload is not None and read.line == pending_payload.rstrip("\n"):
+        if pending_payload is not None and read.holds_payload(pending_payload):
             return True, None, "held"
         _log_composer_refusal(pane, read, pending_payload)
         return False, "composer holds an operator draft", "draft"
@@ -439,11 +439,7 @@ async def composer_gate_for_write(
 
 def _log_composer_refusal(pane: PaneIO, read: ComposerRead, pending_payload: str | None) -> None:
     draft_length = len(read.line or "")
-    matches_pending = (
-        read.state == "draft"
-        and pending_payload is not None
-        and read.line == pending_payload.rstrip("\n")
-    )
+    matches_pending = pending_payload is not None and read.holds_payload(pending_payload)
     logger.warning(
         "Composer write refused: target=%s classification=%s draft_length=%d matches_pending_payload=%s",
         pane.target,
@@ -528,7 +524,7 @@ async def composer_verdict(
             if read.state == "empty":
                 return "left"
             if read.state == "draft" and pending_payload is not None:
-                return "held" if read.line == pending_payload.rstrip("\n") else "changed"
+                return "held" if read.holds_payload(pending_payload) else "changed"
             if read.state == "draft" and read.line is not None and not read.line.startswith(prefix):
                 return "changed"
             return "held" if read.state == "draft" else "unreadable"
@@ -589,7 +585,7 @@ async def submit_text(
     if composer_read is not None:
         before = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
         if pending_payload is not None and before.state != "empty":
-            already_held = before.state == "draft" and before.line == pending_payload.rstrip("\n")
+            already_held = before.holds_payload(pending_payload)
             if not already_held:
                 _log_composer_refusal(pane, before, pending_payload)
                 return SubmitResult(
@@ -623,7 +619,7 @@ async def submit_text(
                 else ComposerRead("unknown")
             )
             _log_composer_refusal(pane, read, text)
-            if read.state == "draft" and read.line == text.rstrip("\n"):
+            if read.holds_payload(text):
                 held_seconds += verify_window
                 if verify_window == 0:
                     if retried_zero_window:

@@ -182,13 +182,14 @@ async def resubmit_continuation(
         cli_source=cli_source,
         composer_read=composer_read,
         verify_seconds=verify_seconds,
+        pending_payload=prompt,
     )
     return result.ok
 
 
 def _holds_our_prompt(read: ComposerRead, prompt: str) -> bool:
     """True only when the classified draft is exactly our pending prompt."""
-    return read.line == prompt.rstrip("\n")
+    return read.holds_payload(prompt)
 
 
 async def _send_enter(pane: PaneIO, session_id: str) -> bool:
