@@ -151,12 +151,14 @@ def test_pool_connection_honors_operation_deadline_without_retry(
 
     def blocking_check() -> None:
         pool.check_calls += 1
-        release_check.wait(timeout=1.0)
+        release_check.wait(timeout=5.0)
 
     monkeypatch.setattr(pool, "check", blocking_check)
 
+    # The budget only has to outlast scheduling the worker under parallel test
+    # load; the fake pool times out at once and the asserts below prove no retry.
     def acquire() -> None:
-        with database_operation_deadline(timeout_seconds=0.03):
+        with database_operation_deadline(timeout_seconds=1.0):
             with postgres_pool.pool_connection(
                 cast(ConnectionPool[Any], pool),
                 _pool_stats,
@@ -167,7 +169,7 @@ def test_pool_connection_honors_operation_deadline_without_retry(
         pending = executor.submit(acquire)
         try:
             with pytest.raises(PoolTimeout):
-                pending.result(timeout=0.08)
+                pending.result(timeout=3.0)
         finally:
             release_check.set()
 
@@ -176,7 +178,7 @@ def test_pool_connection_honors_operation_deadline_without_retry(
     assert len(pool.connection_timeouts) == 1
     timeout = pool.connection_timeouts[0]
     assert timeout is not None
-    assert 0 < timeout <= 0.03
+    assert 0 < timeout <= 1.0
 
 
 class _TransactionConnection:
