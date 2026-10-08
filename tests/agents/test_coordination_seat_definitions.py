@@ -251,7 +251,7 @@ def test_merge_manager_tracks_activation_and_preserves_foreign_work() -> None:
     role = Path(__file__).resolve().parents[2] / ".gobby/roles/merge-manager.md"
     pointer = role.read_text()
     assert "Definition: `merge-manager`." in pointer
-    assert 'gobby-agents:apply_persona(agent="merge-manager")' in pointer
+    assert 'gobby-agents:apply_agent_definition(agent="merge-manager")' in pointer
     assert "Keep the landed-but-unactivated ledger" not in pointer
     assert "Preserve source attribution" in prompt
     assert "each finding to the source whose commit introduced" in prompt
@@ -279,7 +279,7 @@ def test_inbox_manager_is_read_only_and_routes_urgent_messages() -> None:
     role = Path(__file__).resolve().parents[2] / ".gobby/roles/inbox-manager.md"
     pointer = role.read_text()
     assert "Definition: `inbox-manager`." in pointer
-    assert 'gobby-agents:apply_persona(agent="inbox-manager")' in pointer
+    assert 'gobby-agents:apply_agent_definition(agent="inbox-manager")' in pointer
     assert "Every five minutes" not in pointer
     assert "Keep one five-minute recurring reminder" in prompt
     assert "Lane, order, landing and close decisions belong to the Orchestrator" in prompt
