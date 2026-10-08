@@ -31,10 +31,10 @@
           "fencing_epoch": "@mask@"
         },
         "schema_identity": {
-          "assets_root_hash": "4a4387d46cbe1998f0b83e59f3bb0d572a75cd5de14b0c95907b71d79ed0b68f",
+          "assets_root_hash": "065a4d931e418df49ee2c859b9993bd9734428fdde79a7c905bc818a15e86b85",
           "baseline_checksum": "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55",
           "baseline_version": 420,
-          "latest_checksum": "f1c9554c0007f06954ee904a7917bccfd121799a73382d4fdda1e5248756fa16",
+          "latest_checksum": "5690e3755f9b78d94617b71e72a8c4584bf5adaf8d0fde4e3d1093c1ce3fc621",
           "latest_version": 464,
           "runner_protocol": 1
         },

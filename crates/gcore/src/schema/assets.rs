@@ -309,7 +309,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 464,
         filename: "464_preserve_rotated_credential_drain.sql",
-        checksum: "f1c9554c0007f06954ee904a7917bccfd121799a73382d4fdda1e5248756fa16",
+        checksum: "5690e3755f9b78d94617b71e72a8c4584bf5adaf8d0fde4e3d1093c1ce3fc621",
         sql: include_str!(
             "../../assets/schema/migrations/464_preserve_rotated_credential_drain.sql"
         ),
