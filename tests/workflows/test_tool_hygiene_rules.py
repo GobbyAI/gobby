@@ -560,7 +560,7 @@ def _terminal_tool_event(caller_id: str, target_ref: str, tool: str) -> HookEven
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data=data,
-        metadata={"_platform_session_id": caller_id, "_mcp_proxy_dispatch": True},
+        metadata={"_platform_session_id": caller_id},
     )
 
 
@@ -715,7 +715,7 @@ def _send_message_event(caller_id: str, target: str | None) -> HookEvent:
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data=data,
-        metadata={"_platform_session_id": caller_id, "_mcp_proxy_dispatch": True},
+        metadata={"_platform_session_id": caller_id},
     )
 
 

@@ -79,7 +79,7 @@ def _spawn_event(
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data=data,
-        metadata={"_platform_session_id": caller_id, "_mcp_proxy_dispatch": True},
+        metadata={"_platform_session_id": caller_id},
     )
 
 

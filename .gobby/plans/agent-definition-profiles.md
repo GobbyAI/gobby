@@ -116,19 +116,10 @@ non-goals.
    the Program Director included with no carve-out, is therefore blocked from `gobby-workflows:run_pipeline` and from the
    exposed `gobby-workflows:pipeline:<name>` tools, and every seat's shell is
    blocked from `gobby agents spawn` and `gobby pipelines run`. Runbooks
-   launch from Josh's CLI, web, gclient or cron surfaces (#22895). Plan Writer
-   exception: `agent == "plan-enhancer-taskless"`, `isolation == "none"`, at most
-   one pass per planning task, recorded as a durable receipt on the task
-   itself (the label `enhancer-pass-spent`, 2.2), never in session state:
-   reclaiming the same task, `create_task(claim=true)`, compaction, a
-   `/clear` successor, and a release followed by a fresh session's claim
-   all find the receipt and are refused; only a different planning task
-   admits a new pass (PD disposition, 2026-09-28). The exception is the Plan Writer's alone: no
-   other seat holds an enhancer or launch privilege, and Lane 7's earlier
-   one-off enhancer pass is consumed history that grants nothing.
-   `_common.md` names the exception. This is the
-   explicit spawn authorization Josh's proposed flow needs; until it lands, no
-   seat spawns.
+   launch from Josh's CLI, web, gclient or cron surfaces (#22895). The
+   planning runbook launches the Writer, Enhancer, and Adversary as live
+   seats. The Writer spawns no enhancer pass; all seat spawn calls are
+   blocked, including the retired taskless enhancer (2.2).
 7. **Step workflows authored for seats with a fixed loop or required skills:**
    `developer`, `code-reviewer`, `log-monitor`, and `researcher`. The
    run-scoped `plan-writer` and `plan-adversary` carry #23339's step
@@ -494,7 +485,7 @@ receives nothing.
   every other seat asks the PD. behavior: "only when Josh asks" in
   `src/gobby/install/shared/workflows/rules/roles/inject-seat-common.yaml`.
 
-### 2.2 Seat spawn and write policy with the Plan Writer enhancer exception [category: code] (depends: 2.1)
+### 2.2 Seat spawn and write policy for every seat [category: code] (depends: 2.1)
 `kind: deliverable`
 
 Targets:
@@ -519,53 +510,19 @@ Block effects name MCP tools with `mcp_tools:`. `after_tool` MCP events expose
 accepts a literal or an expression (`engine/effects.py::_apply_set_variable`;
 `auto-task/inject-autonomous-mode.yaml:38` uses an expression). `claimed_tasks`
 is a mapping keyed by task id (`hooks/event_handlers/_session_start/claims.py:61-77`,
-and the same rule tests membership with `in`). No bundled rule blocks
-`spawn_agent` for interactive sessions today; only
-`worker-safety/no-agent-spawn-for-merge.yaml` (`agent_scope: [merge]`).
+and the same rule tests membership with `in`). Seat identity is the
+`_agent_type` variable; a persona overlay alone grants no seat identity.
 
-Receipt facts: session variables cannot carry the bound. `claim_task`
-answers a task the session already holds with `already_claimed: True`
-(`mcp_proxy/tools/tasks/_lifecycle_claim.py:249`), a `/clear` successor
-inherits only `task_claimed` and `claimed_tasks`
-(`hooks/event_handlers/_session_start/claims.py:53`), and a fresh session
-that claims a released task starts empty. The receipt therefore lives on
-the task, in storage every session reads: the label `enhancer-pass-spent`.
-Rules already read labels through the registered task helper
-`all_tasks_have_label(task_id_or_ids, label)`
-(`workflows/condition_helpers.py:937`, registered in `safe_evaluator.py`
-when a task manager is bound), and write them through the `mcp_call`
-effect (`engine/effects.py:136`), whose inline form (`inject_result`, not
-`background`) honors `block_on_failure` so a failed call blocks the
-originating tool call. `gobby-tasks:add_label(task_id, label)`
-(`mcp_proxy/tools/tasks/_lifecycle_labels.py:19`) requires claim authority,
-which the Plan Writer holds on its claimed task; the executor confirms
-`live_session_label_change_error` does not guard this label. No table,
-column, or session-transfer change is needed. One claim per session means
-`claimed_tasks` holds the single planning task the pass is for.
-
-One logical MCP call can be evaluated twice. A provider with hooks runs
-its CLI `before_tool` evaluation first; the proxy then runs
-`result_handling.py::apply_before_tool_enforcement` immediately before
-dispatch, which marks `_mcp_proxy_duplicate_before_tool` when a hook
-evaluation preceded it but still runs every declarative rule
-(`engine/core.py:669`, each `when` rechecked at `evaluation.py:571`; the
-marker only skips the step check at `enforcement_checks.py:842`). A
-proxy-only provider gets the proxy evaluation alone. The proxy evaluation
-is therefore the one boundary every spawn crosses exactly once, just
-before it runs. `build_before_tool_event` (`result_handling.py:31`) builds
-that event; this leaf copies its `metadata` and sets
-`_mcp_proxy_dispatch: True` on the copy, and the receipt rule writes only
-on an event carrying that marker. Rules already read `event.metadata`
-(`build-coordinator/require-build-coordinator-for-gobby-build.yaml:14`).
-Rules run in ascending priority (`engine/core.py:842`), so within the
-proxy evaluation the admission rule reads the pre-receipt state. Same-session
-evaluations are serialized (`workflows/hooks.py:424-435`), and the inline
-`mcp_call` dispatches with `enforce_workflow=False`
-(`hooks/factory.py:414-455`), so it does not re-enter the rule loop.
+Current planning flow: the runbook launches the live Writer, Enhancer,
+and Adversary. The Writer's definition blocks both spawn tools in
+`src/gobby/install/shared/workflows/agents/plan-writer.yaml`, and
+`seat-no-spawn` applies to the Writer with every other seat. No task-label
+receipt, per-task launch allowance, or proxy-only dispatch marker is needed.
+The proxy event builder retains the original session metadata.
 
 Consumers unchanged:
-- `src/gobby/mcp_proxy/services/tool_proxy.py` — no-edit-reason: `ToolProxyService._build_before_tool_event` delegates to `build_before_tool_event` unchanged and gains the marker.
-- `tests/mcp_proxy/services/test_direct_tool_session_activation.py` — no-edit-reason: its `_DirectToolService` fixture overrides the builder for its own activation tests; the 2.2 tests copy its harness pattern but call the real `build_before_tool_event`.
+- `src/gobby/mcp_proxy/services/tool_proxy.py` — no-edit-reason: `ToolProxyService._build_before_tool_event` still delegates to the real event builder without a receipt marker.
+- `tests/mcp_proxy/services/test_direct_tool_session_activation.py` — no-edit-reason: its activation fixture overrides the builder and does not depend on the retired receipt policy.
 
 Write-scope facts: before-tool normalization annotates every write with
 `event.data['canonical_tool_kind'] == 'write'`,
@@ -604,7 +561,7 @@ file ends the leaf no longer than it starts.
 Rules in `seat-spawn-policy.yaml`, tags `[roles, seat, enforcement, gobby, default]`:
 
 - `seat-no-spawn`: `event: before_tool`, priority 10, `when:` seat match (2.1
-  condition) and seat is not `plan-writer`; effect `block` with `mcp_tools:
+  condition), including `plan-writer`; effect `block` with `mcp_tools:
   ["gobby-agents:spawn_agent", "gobby-agents:dispatch_batch"]`
   (`dispatch_batch` is dropped from the list when it retires with `gobby
   build`), reason: seats do not spawn; the automated close reviewer is the
@@ -625,38 +582,6 @@ Rules in `seat-spawn-policy.yaml`, tags `[roles, seat, enforcement, gobby, defau
   `gobby agents spawn` and `gobby pipelines run` (optionally behind `uv
   run`), in the prefix grammar of
   `task-enforcement/block-gobby-tasks-cli.yaml`; same reason.
-- `plan-writer-enhancer-only`: `event: before_tool`, priority 10, `when:`
-  seat is `plan-writer` and not (`arguments.agent ==
-  'plan-enhancer-taskless'` and `arguments.isolation == 'none'` and
-  `variables.get('claimed_tasks')` is non-empty and
-  `not all_tasks_have_label(list(variables.get('claimed_tasks')),
-  'enhancer-pass-spent')`); effect `block` on `gobby-agents:spawn_agent`
-  and `gobby-agents:dispatch_batch`, reason naming the exact allowed call
-  and that one pass per planning task is permitted and this task's is
-  spent.
-- `plan-writer-enhancer-receipt`: `event: before_tool`, priority 95 (after
-  every seat block rule), `when:` `event.metadata.get('_mcp_proxy_dispatch')`
-  and the admitted case of the rule above (seat `plan-writer`, a
-  `gobby-agents:spawn_agent` call with that agent and isolation, and the
-  claimed task without the label); effect inline `mcp_call` to
-  `gobby-tasks:add_label` with `task_id` the claimed task and `label:
-  enhancer-pass-spent`, `block_on_failure: true`. A provider's CLI hook
-  evaluation admits without writing; the proxy evaluation that follows
-  admits (the label is still absent) and writes the receipt as the last
-  rule before dispatch, so one logical call yields one receipt and one
-  spawn, and the next identical call is refused at whichever evaluation
-  sees it first. A receipt that cannot be written refuses the spawn. A
-  spawn that fails after its receipt, or a later rule that blocks it,
-  keeps the pass spent: the bound fails closed, and only the PD re-grants
-  a pass by removing the label.
-- `seat-keep-enhancer-receipt`: `event: before_tool`, priority 10,
-  `when:` seat match and seat is not `program-director` and either a
-  `gobby-tasks:remove_label` call whose `label` is `enhancer-pass-spent`,
-  or a `gobby-tasks:update_task` call carrying `labels` without
-  `enhancer-pass-spent` for a task that has it (`all_tasks_have_label`);
-  effect `block` with no tool filter, reason: only the PD removes an
-  enhancer receipt.
-
 Rules in `seat-write-scope.yaml`, same tags, `event: before_tool`, priority 15:
 
 - `assistant-write-scope`: `when:` seat is `assistant` and
@@ -669,35 +594,20 @@ Rules in `seat-write-scope.yaml`, same tags, `event: before_tool`, priority 15:
   r'/Users/josh/Desktop/gobby-digest-\d{4}-\d{2}-\d{2}\.md')`; reason:
   the Archivist writes only the dated desktop digest.
 
-Tests with the real engine and a bound task manager as 2.1 does, driving
-the proxy evaluation through `apply_before_tool_enforcement` in the
-`_DirectToolService` harness pattern of
-`tests/mcp_proxy/services/test_direct_tool_session_activation.py`, with
-the real `build_before_tool_event` so the marker is exercised: one
-logical call evaluated first by the provider `before_tool` hook and then
-by the proxy is admitted at both, writes exactly one receipt, and is
-dispatched once; a proxy-only call is admitted and receipted once; two
-same-session calls issued concurrently admit exactly one; after one
-admitted spawn the task carries `enhancer-pass-spent`, and a second spawn
-for the same task is refused from a reclaim answered `already_claimed`, a
-`create_task(claim=true)` of it, a `compact` session_start, a `/clear`
-successor, and a fresh session that claims it after release; a failed
-`add_label` refuses the spawn; a spawn that fails after its receipt stays
-spent; a different agent, another isolation, or no claimed task is
-refused; a second planning task admits exactly one pass; a non-PD seat's
-`remove_label` or label-dropping `update_task` on a receipted task is
-refused and the PD's is allowed. The write scope covers one allowed and
-one blocked write per seat and an opaque write with no path.
+Tests use the real engine and bound task manager, driving the provider
+hook and proxy evaluation through `apply_before_tool_enforcement` and the
+real `build_before_tool_event`. A Writer holding one planning claim is
+blocked from spawning `plan-enhancer-taskless-old` with
+`checkout_mode: none`, and from `dispatch_batch`. Non-seat persona
+overlays retain their existing behavior. Write-scope tests cover allowed,
+blocked, and opaque writes.
 
-`_common.md` third bullet becomes: "Do not spawn agents or launch
-pipelines. The automated task-close reviewer and the Plan Writer's single
-`plan-enhancer-taskless` pass per planning task, receipted on the task
-(Josh, 2026-09-26; rule `plan-writer-enhancer-only`), are the only
-permitted spawn paths."
+`_common.md` names the automated task-close reviewer as the only permitted
+spawn path and says the planning runbook launches the three live seats.
 
 **Acceptance:**
 
-- 2.2.1 - A non-writer seat's `spawn_agent` and `dispatch_batch` calls are
+- 2.2.1 - Every seat's `spawn_agent` and `dispatch_batch` calls are
   blocked with the seat reason; every seat, the Plan Writer included, is
   blocked from `gobby-workflows:run_pipeline`, an exposed
   `gobby-workflows:pipeline:<name>` tool, and a shell `gobby agents spawn`
@@ -705,20 +615,15 @@ permitted spawn paths."
   stays allowed. file:
   `src/gobby/install/shared/workflows/rules/roles/seat-spawn-policy.yaml`. test:
   `tests/workflows/test_seat_rules.py::test_seats_cannot_spawn`.
-- 2.2.2 - The Plan Writer may spawn `plan-enhancer-taskless` with `isolation:
-  none` once per planning task, receipted by the task label
-  `enhancer-pass-spent` before the spawn runs: a second attempt for the
-  same task is refused after a reclaim answered `already_claimed`, a
-  `create_task(claim=true)`, a compact, a `/clear` successor, and a
-  release followed by a fresh session's claim; one call evaluated by the
-  provider hook and then the proxy, a proxy-only call, and two concurrent
-  same-session calls each yield exactly one receipt and one spawn; a
-  failed receipt write refuses the spawn; a failed spawn keeps the receipt; a different agent,
-  another isolation, or no claimed task is refused; a different planning
-  task admits exactly one pass; only the PD can remove the receipt. test:
-  `tests/workflows/test_seat_rules.py::test_plan_writer_enhancer_pass_is_per_task`.
-- 2.2.3 - The shared role rules name the exception. behavior:
-  "plan-writer-enhancer-only" in `.gobby/roles/_common.md`.
+- 2.2.2 - The Plan Writer cannot spawn `plan-enhancer-taskless-old`,
+  including with `checkout_mode: none` and one claimed planning task.
+  The provider hook and proxy both block the retired spawn; batch spawning
+  is blocked too. test:
+  `tests/workflows/test_seat_rules.py::test_plan_writer_cannot_spawn_plan_enhancer_taskless_old`.
+- 2.2.3 - Shared role guidance describes the current live three-seat
+  planning runbook and gives the Writer no spawn exception. behavior:
+  "automated task-close reviewer is the only permitted spawn path" in
+  `.gobby/roles/_common.md`.
 - 2.2.4 - The Assistant's write under `docs/` is allowed and under `src/`,
   `docs-other/`, or `docs/../src/` blocked; the Archivist's write to
   `/Users/josh/Desktop/gobby-digest-2026-09-27.md` is allowed, and an
@@ -1789,7 +1694,7 @@ plan-writer` prints the seat row with `version: "1.0"`; the Plan Writer
 session calls `apply_persona(agent="plan-writer")` and on its next turn sees
 the seat prompt plus the shared seat guidance once; a deliberate
 `spawn_agent(agent="default")` from that session is blocked by
-`plan-writer-enhancer-only`; a `gobby-workflows:run_pipeline` call from that
+`seat-no-spawn`; a `gobby-workflows:run_pipeline` call from that
 session is blocked by `seat-no-pipeline-launch`; an Assistant write under
 `src/` is blocked by
 `assistant-write-scope`; `gobby agents show backend-developer` reports no
@@ -1966,6 +1871,16 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
   M1 is re-derived through the handoff-manifest tools for 3.3.6 and 3.3.7.
   Base and expansion-mode validation pass. No implementation tests were
   run.
+
+**Plan Changelog:**
+
+- 2026-10-07: #23706 (Retired Plan Writer enhancer spawn) supersedes the
+  receipt criteria in historical M1 entry 2.2 and the earlier enhancer-exception
+  decisions recorded above. The planning runbook launches the Writer, Enhancer,
+  and Adversary as live seats; the Writer spawns no enhancer. Section 2.2 and
+  its acceptance text describe the current policy. M1 remains unchanged as the
+  record of the already-expanded tasks; its 2.2 receipt criteria grant no spawn
+  privilege. Rule activation follows the Orchestrator's landing cutover.
 
 ## M1 Task Manifest
 `kind: manifest`

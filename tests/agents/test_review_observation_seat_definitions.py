@@ -201,7 +201,14 @@ def test_step_seats_open_by_loading_their_required_skills(name: str) -> None:
         "gobby-skills:get_skill_file",
     }
     if name == "code-reviewer":
-        expected.update({"gobby-agents:send_message", "gobby-agents:wait_for_coordination"})
+        expected.update(
+            {
+                "gobby-agents:send_message",
+                "gobby-agents:wait_for_coordination",
+                "gobby-sessions:get_session",
+                "gobby-sessions:set_title",
+            }
+        )
     assert _allowed_mcp_tools(load_skills) == expected
     assert _transitions(load_skills)[0][1] == LOAD_SKILLS_WHEN
     assert _variables(name)["required_skills_loaded"] is False
@@ -413,3 +420,14 @@ def test_review_and_observation_seats_sync_as_installed_rows(
         assert row is not None, name
         assert row.enabled is True, name
         assert AgentDefinitionBody.model_validate(row.definition_json) == _load(name), name
+
+
+@pytest.mark.parametrize(
+    ("seat", "step_name"),
+    [("developer", "load_skills"), ("code-reviewer", "load_skills"), ("code-reviewer", "await")],
+)
+def test_bootstrap_steps_allow_role_title_setup(seat: str, step_name: str) -> None:
+    workflow = _load(seat).step_workflow
+    assert workflow is not None
+    step = next(step for step in workflow.steps if step.name == step_name)
+    assert {"gobby-sessions:get_session", "gobby-sessions:set_title"} <= set(step.allowed_mcp_tools)

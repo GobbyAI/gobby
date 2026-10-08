@@ -466,7 +466,7 @@ def _prepare_gcode_runtime(
     wrapper_path.parent.mkdir(parents=True, exist_ok=True)
     _exclude_generated_wrapper_from_git(git_exclude_path)
     wrapper_path.write_text(
-        _gcode_wrapper_script(runtime_home, gcode_bin, launch.grant_path),
+        _gcode_wrapper_script(runtime_home, gcode_bin),
         encoding="utf-8",
     )
     wrapper_path.chmod(0o755)
@@ -637,13 +637,12 @@ def _has_scoped_runtime_bootstrap(path: Path) -> bool:
 def _gcode_wrapper_script(
     runtime_home: Path,
     gcode_bin: Path,
-    credential_bootstrap: Path,
 ) -> str:
+    # A worktree can host multiple seats. Keep each caller's managed grant from
+    # its launch environment instead of pinning the last launch's execution.
     return (
         "#!/bin/sh\n"
         f"export GOBBY_HOME={shlex.quote(str(runtime_home))}\n"
-        f"export {MANAGED_EXECUTION_BOOTSTRAP_ENV}="
-        f"{shlex.quote(str(credential_bootstrap))}\n"
         f'exec {shlex.quote(str(gcode_bin))} "$@"\n'
     )
 
