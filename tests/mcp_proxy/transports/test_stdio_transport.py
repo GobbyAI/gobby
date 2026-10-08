@@ -458,8 +458,9 @@ class TestStdioConnectSuccess:
 
         assert hooked_params.command == sys.executable
         assert hooked_params.args == [
+            "-P",
             "-m",
-            "gobby.mcp_proxy.transports.chrome_supervisor",
+            "gobby.utils.child_supervisor",
             "npx",
             *chrome_args,
             "--executable-path=/tmp/chrome",
