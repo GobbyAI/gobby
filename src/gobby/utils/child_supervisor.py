@@ -1,4 +1,9 @@
-"""Bounded cleanup for the Chrome DevTools MCP subprocess and its browser."""
+"""Bounded cleanup for a daemon's stdio child and its process tree.
+
+The child inherits this process's stdin, stdout and stderr, so no bytes pass
+through here. The tree is reaped when the child exits, when this process is
+asked to stop, or when its parent dies, so a SIGKILLed runner leaves no orphan.
+"""
 
 import os
 import signal
@@ -8,6 +13,11 @@ import threading
 import time
 
 import psutil
+
+
+def supervised_argv(argv: list[str]) -> list[str]:
+    """Run ``argv`` under this supervisor; ``-P`` keeps the child's cwd off ``sys.path``."""
+    return [sys.executable, "-P", "-m", "gobby.utils.child_supervisor", *argv]
 
 
 def main() -> int:
@@ -22,22 +32,7 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
-    child = subprocess.Popen(
-        sys.argv[1:], stdin=subprocess.PIPE, stdout=sys.stdout, stderr=sys.stderr, bufsize=0
-    )
-
-    def forward_stdin() -> None:
-        assert child.stdin is not None
-        try:
-            while chunk := os.read(sys.stdin.fileno(), 65536):
-                child.stdin.write(chunk)
-        except (BrokenPipeError, OSError):
-            pass
-        finally:
-            child.stdin.close()
-            stop_requested.set()
-
-    threading.Thread(target=forward_stdin, daemon=True).start()
+    child = subprocess.Popen(sys.argv[1:])
     process = psutil.Process(child.pid)
     owned: dict[int, psutil.Process] = {}
     try:
