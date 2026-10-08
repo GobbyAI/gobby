@@ -306,6 +306,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "46f83c0634688b4404a511f5a1310cf3acea968f33a74cf98877c8b93fddf4bf",
         sql: include_str!("../../assets/schema/migrations/463_usage_ledger.sql"),
     },
+    EmbeddedMigration {
+        version: 464,
+        filename: "464_preserve_rotated_credential_drain.sql",
+        checksum: "f1c9554c0007f06954ee904a7917bccfd121799a73382d4fdda1e5248756fa16",
+        sql: include_str!(
+            "../../assets/schema/migrations/464_preserve_rotated_credential_drain.sql"
+        ),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
