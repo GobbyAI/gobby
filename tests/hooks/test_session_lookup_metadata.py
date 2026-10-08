@@ -407,7 +407,8 @@ def test_tool_hook_with_active_parent_subagent_binds_to_parent() -> None:
     parent = SimpleNamespace(id="parent-live", status="active", agent_run_id=None, agent_depth=0)
     session_manager.find_live_interactive_pane_owner.return_value = parent
     session_manager.db.fetchone.return_value = {
-        "variables": {"subagent_count": 1, "is_subagent": True}
+        "stored": True,
+        "variables": {"subagent_count": 1, "is_subagent": True},
     }
     event = _pane_event(HookEventType.BEFORE_TOOL, source=SessionSource.CLAUDE)
 
@@ -490,7 +491,8 @@ def test_grok_tool_hook_from_another_process_in_the_pane_auto_registers() -> Non
     session_manager.get.return_value = parent
     session_manager.find_live_interactive_pane_owner.return_value = parent
     session_manager.db.fetchone.return_value = {
-        "variables": {"subagent_count": 3, "is_subagent": True}
+        "stored": True,
+        "variables": {"subagent_count": 3, "is_subagent": True},
     }
     session_manager.register_session.return_value = "created-session"
     event = _pane_event(HookEventType.BEFORE_TOOL, session_id="01a0b000-new-process")

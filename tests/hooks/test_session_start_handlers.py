@@ -89,7 +89,8 @@ def test_session_start_is_native_subagent_child_requires_live_parent_with_subage
     session_manager = MagicMock()
     session_manager.find_live_interactive_pane_owner.return_value = parent
     session_manager.db.fetchone.return_value = {
-        "variables": {"subagent_count": 1, "is_subagent": True}
+        "stored": True,
+        "variables": {"subagent_count": 1, "is_subagent": True},
     }
     terminal_context = {
         "tmux_pane": "%90",
@@ -116,7 +117,8 @@ def test_session_start_is_native_subagent_child_requires_live_parent_with_subage
     )
     session_manager.find_live_interactive_pane_owner.return_value = None
     session_manager.db.fetchone.return_value = {
-        "variables": {"subagent_count": 1, "is_subagent": True}
+        "stored": True,
+        "variables": {"subagent_count": 1, "is_subagent": True},
     }
     assert (
         session_start_is_native_subagent_child(
@@ -136,7 +138,10 @@ def test_session_start_skips_native_subagent_inheriting_tty(
     storage = mock_dependencies["session_storage"]
     storage.get.return_value = None
     storage.find_live_interactive_pane_owner.return_value = parent
-    storage.db.fetchone.return_value = {"variables": {"subagent_count": 1, "is_subagent": True}}
+    storage.db.fetchone.return_value = {
+        "stored": True,
+        "variables": {"subagent_count": 1, "is_subagent": True},
+    }
     handlers = EventHandlers(**mock_dependencies)
     event = make_event(
         HookEventType.SESSION_START,

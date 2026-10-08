@@ -17,8 +17,8 @@ from gobby.storage.hub.protocol import (
     HubDatabase,
     SessionVariableMutation,
 )
-from gobby.storage.hub.read_scope import SESSION_VARIABLES_TABLES, scoped_read
 from gobby.storage.sessions import startup_claim as _startup_claim
+from gobby.storage.sessions._contested_expiry import read_session_variables_row
 from gobby.storage.sessions.startup_claim import StartupClaimState, StartupContextClaim
 from gobby.workflows.variable_defaults import (
     load_variable_defaults,
@@ -129,21 +129,11 @@ class SessionVariableManager:
         This ensures presets are always available even if they were never
         explicitly materialized into the session row.
         """
-        row = scoped_read(
-            self.db,
-            ("session_variables", session_id),
-            SESSION_VARIABLES_TABLES,
-            lambda: self.db.fetchone(
-                "SELECT variables FROM session_variables WHERE session_id = %s",
-                (session_id,),
-            ),
-        )
-        session_vars = {}
-        if row:
-            session_vars = _decode_variables_payload(row["variables"])
-
+        row = read_session_variables_row(self.db, session_id)
+        session_vars = _decode_variables_payload(row["variables"]) if row["stored"] else {}
+        project_id = row["project_id"]
         return self._apply_variable_defaults(
-            session_vars, resolve_session_project_id(self.db, session_id)
+            session_vars, None if project_id is None else str(project_id)
         )
 
     def _get_variable_defaults(self, project_id: str | None) -> dict[str, Any]:
