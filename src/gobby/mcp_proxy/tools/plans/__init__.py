@@ -22,6 +22,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError, PlanRecord
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.git import run_git_command
 from gobby.utils.project_context import get_project_context
 
 P = ParamSpec("P")
@@ -406,7 +407,15 @@ def _optional_project_id(
         projects = LocalProjectManager(db)
         resolved = projects.resolve_ref(project)
         if resolved is None and Path(project).is_absolute():
-            checkout = get_project_context(cwd=Path(project))
+            checkout_path = Path(project).resolve()
+            git_root = run_git_command(["git", "rev-parse", "--show-toplevel"], cwd=checkout_path)
+            checkout = (
+                get_project_context(cwd=checkout_path)
+                if git_root
+                and Path(git_root).resolve() == checkout_path
+                and (checkout_path / ".gobby" / "project.json").is_file()
+                else None
+            )
             checkout_id = checkout.get("id") if checkout else None
             if isinstance(checkout_id, str):
                 resolved = projects.resolve_ref(checkout_id)
