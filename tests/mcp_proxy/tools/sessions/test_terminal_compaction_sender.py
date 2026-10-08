@@ -1024,3 +1024,81 @@ async def test_codex_and_grok_still_refuse_an_unreadable_first_read_at_once(
     turn_settled.assert_not_called()
     assert pane.keys == []
     assert pane.typed == []
+
+
+class _CodexPlaceholderPane(_ComposerPane):
+    def __init__(
+        self,
+        draft: str | None = None,
+        *,
+        partial: bool = False,
+        newline: str = "\n",
+        wrapped: bool = False,
+    ) -> None:
+        super().__init__()
+        self.draft = draft
+        self.partial = partial
+        self.newline = newline
+        self.wrapped = wrapped
+
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
+        if self.partial:
+            return "\n› Ask Codex to do anything"
+        prompt = (
+            f"› {self.draft}"
+            if self.draft is not None
+            else "\x1b[1m›\x1b[0m \x1b[2m"
+            + ("Ask Codex\n  to do anything" if self.wrapped else "Ask Codex to do anything")
+            + "\x1b[0m"
+        )
+        return (
+            f"done\n{prompt}\n\n"
+            "\x1b[2m  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n"
+            "  ← for agents · ? for shortcuts\x1b[0m"
+        ).replace("\n", self.newline)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("draft", [None, "operator draft", "Ask Codex to do anything"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("wrapped", [False, True])
+async def test_codex_placeholder_submits_once_and_real_draft_refuses(
+    draft: str | None, newline: str, wrapped: bool
+) -> None:
+    pane = _CodexPlaceholderPane(draft, newline=newline, wrapped=wrapped)
+    read = IdleDetector(BundledDetectionRegistry(), "codex").composer_read
+    result, _, _ = await _send(
+        pane, lambda: True, cli_source="codex", command="/compact", composer_read=read
+    )
+    if draft is None:
+        assert result[0] is True
+        assert pane.typed == ["/compact\n"]
+        assert pane.keys == ["escape", "enter"]
+    else:
+        assert result[0] is False
+        assert pane.typed == []
+        assert pane.keys == []
+
+
+@pytest.mark.asyncio
+async def test_partial_codex_snapshot_refusal_records_frame_shape(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pane = _CodexPlaceholderPane(partial=True)
+    read = IdleDetector(BundledDetectionRegistry(), "codex").composer_read
+    with caplog.at_level(logging.WARNING, logger="gobby.terminals.pane_io"):
+        result, _, _ = await _send(
+            pane, lambda: True, cli_source="codex", command="/compact", composer_read=read
+        )
+    assert result[0] is False
+    assert pane.typed == []
+    assert pane.keys == []
+    record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "composer_write_refused"
+    )
+    assert getattr(record, "snapshot_source", None) == "native"
+    assert getattr(record, "snapshot_mode", None) == "ansi"
+    assert getattr(record, "snapshot_row_count", None) == 2
+    assert getattr(record, "snapshot_row_widths", None) == (0, 26)

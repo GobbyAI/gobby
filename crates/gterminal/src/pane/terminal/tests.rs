@@ -3135,3 +3135,28 @@ fn trim_trailing_blank_rows_drops_empty_viewport_tail() {
     trim_trailing_blank_rows(&mut rows);
     assert_eq!(rows, vec!["hello".to_string()]);
 }
+
+#[test]
+fn recent_history_snapshot_keeps_visible_codex_composer() {
+    let (tx, _rx) = mpsc::channel(4);
+    let mut terminal = crate::ghostty::Terminal::new(80, 8, 100).unwrap();
+    terminal.write(b"old output\r\n".repeat(12).as_slice());
+    terminal.write(
+        "\x1b[2J\x1b[Hdone\r\n\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\r\n\r\n  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\r\n  ← for agents · ? for shortcuts\x1b[2;3H".as_bytes(),
+    );
+    let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+    let text = pane.recent_unwrapped_text(30);
+    let ansi = pane.recent_unwrapped_ansi(30);
+    assert!(
+        text.contains("? for shortcuts"),
+        "text snapshot lost visible footer: {text:?}"
+    );
+    assert!(
+        ansi.contains("? for shortcuts"),
+        "ANSI snapshot lost visible footer: {ansi:?}"
+    );
+    assert!(
+        ansi.contains("\x1b[2m"),
+        "ANSI snapshot lost placeholder styling: {ansi:?}"
+    );
+}
