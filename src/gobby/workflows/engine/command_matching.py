@@ -351,8 +351,13 @@ def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) ->
                 if word.startswith("--command="):
                     scripts.append(word.partition("=")[2])
                     break
-                if word.startswith("-c") and len(word) > 2:
-                    scripts.append(word[2:])
+                command_option = re.fullmatch(r"-[flmpP]*c(.*)", word)
+                if command_option:
+                    script = command_option[1] or (
+                        unwrapped[index + 1] if index + 1 < len(unwrapped) else ""
+                    )
+                    if script:
+                        scripts.append(script)
                     break
         if name in _SHELLS:
             execution = shell_execution(unwrapped)
@@ -654,7 +659,7 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
             correlated.append(subject[index : index + 2])
             index += 2
             continue
-        if quote != "'" and (subject.startswith("$(", index) or char == "`"):
+        if quote not in {"'", "$"} and (subject.startswith("$(", index) or char == "`"):
             tick = char == "`"
             start = index + (1 if tick else 2)
             try:
@@ -668,8 +673,24 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
             correlated.append(f"{subject[index:start]}{' '.join(bodies)}{subject[end]}")
             index = end + 1
             continue
+        if not quote and subject.startswith("$'", index):
+            quote = "$"
+            out.append("$'")
+            correlated.append("$'")
+            index += 2
+            continue
         if char in "\"'":
-            quote = "" if quote == char else quote or char
+            if not quote:
+                quote = char
+            elif quote == char or (quote == "$" and char == "'"):
+                quote = ""
+        elif not quote and char == "#" and (index == 0 or subject[index - 1] in " \t\n;|&()"):
+            end = subject.find("\n", index)
+            end = len(subject) if end < 0 else end
+            out.append(subject[index:end])
+            correlated.append(subject[index:end])
+            index = end
+            continue
         if char == "\n" and not quote:
             try:
                 line = scan_shell_command(subject[line_start:index])
