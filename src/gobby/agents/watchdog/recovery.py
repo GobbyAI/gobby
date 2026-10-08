@@ -10,7 +10,7 @@ import psycopg
 import pydantic
 
 from gobby.agents.capture import terminate_managed_runtime_async
-from gobby.agents.idle_detector import IdleDetector
+from gobby.agents.idle_detector import IdleDetector, plain_text
 from gobby.agents.run_completion import (
     agent_run_task_dirty_paths,
     build_agent_exit_notification,
@@ -54,13 +54,24 @@ from .quota import ProviderQuotaExhaustion
 
 logger = logging.getLogger(__name__)
 WATCHDOG_ACTOR = "agent_idle_watchdog"
-_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 _TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 REASONING_WATCHDOG_CONTINUATION = (
     "Gobby watchdog interrupted a long idle reasoning turn with no workflow progress. "
     "Continue from the current task context, avoid redoing completed analysis, finish the "
     "required Gobby lifecycle MCP transition, then call end_agent_run."
 )
+
+
+def pane_has_capacity_message(
+    pane_output: str,
+    reader: TranscriptWatchdogReader | None,
+) -> bool:
+    """Whether the pane shows the provider's capacity banner, ignoring escapes and controls."""
+    capacity_message = reader.capacity_pane_message if reader is not None else None
+    if not capacity_message:
+        return False
+    visible = _TERMINAL_CONTROL_RE.sub("", plain_text(pane_output))
+    return capacity_message in " ".join(visible.split())
 
 
 class WatchdogRecoveryCoordinator:
@@ -125,19 +136,6 @@ class WatchdogRecoveryCoordinator:
         self._completed_turn_recovery.pop(run_id, None)
         self._reprompt_delivery_failures.pop(run_id, None)
         self._transcript_resolver.discard(run_id)
-
-    @staticmethod
-    def _pane_has_capacity_message(
-        pane_output: str,
-        reader: TranscriptWatchdogReader | None,
-    ) -> bool:
-        capacity_message = reader.capacity_pane_message if reader is not None else None
-        if capacity_message is None:
-            return False
-        visible = _ANSI_ESCAPE_RE.sub("", pane_output)
-        visible = _TERMINAL_CONTROL_RE.sub("", visible)
-        normalized = " ".join(visible.split())
-        return capacity_message in normalized
 
     async def _recover_capacity_error(
         self,
