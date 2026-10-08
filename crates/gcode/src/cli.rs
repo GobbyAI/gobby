@@ -47,13 +47,19 @@ pub(crate) struct Cli {
 }
 
 const EVIDENCE_REQUEST_EXAMPLES: &str = r#"Examples:
+  gcode evidence --request-json '{"schema_version":1,"operation":"read","read":{"kind":"commit_metadata"}}'
   gcode evidence --request-json '{"schema_version":1,"operation":"search","search":{"lane":"symbol","query":"main","paths":["src"]}}'
   gcode evidence --request-json '{"schema_version":1,"operation":"read","read":{"kind":"range","path":"src/main.rs","start_line":1,"end_line":40}}'
+  gcode evidence --request-json '{"schema_version":1,"operation":"read","binding":{"project_id":"PROJECT_ID","commit_oid":"COMMIT_OID","tree_oid":"TREE_OID"},"read":{"kind":"range","path":"src/lib.rs","start_line":1,"end_line":1}}'
 
 Search lanes are symbol, lexical_symbol, literal, regex, content, and hybrid.
 Search paths are file or directory scopes relative to the project root. Omit
 binding to resolve project_id, commit_oid, and tree_oid from --project or the
-current directory."#;
+current directory. A bound request requires all three fields inside binding:
+project_id from response.binding.project_id of an unbound request in the same
+checkout, commit_oid from git rev-parse <commit>, and tree_oid from
+git rev-parse '<commit>^{tree}'. Replace the example's uppercase placeholders.
+Task project IDs or another checkout's persisted binding may differ."#;
 
 #[derive(Subcommand)]
 pub(crate) enum Command {

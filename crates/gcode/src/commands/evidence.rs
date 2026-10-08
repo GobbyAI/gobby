@@ -14,7 +14,7 @@ use crate::vector::code_symbols::{audited_semantic_search, collection_name};
 
 fn request_recovery(action: &str) -> String {
     format!(
-        r#"{action} with --request-json, for example {{"schema_version":1,"operation":"search","search":{{"lane":"symbol","query":"NAME"}}}}; run gcode evidence --help for more examples"#
+        r#"{action} with --request-json. A bound request requires binding.project_id, binding.commit_oid, and binding.tree_oid, for example `{{"schema_version":1,"operation":"read","binding":{{"project_id":"PROJECT_ID","commit_oid":"COMMIT_OID","tree_oid":"TREE_OID"}},"read":{{"kind":"range","path":"src/lib.rs","start_line":1,"end_line":1}}}}`. Replace PROJECT_ID with binding.project_id from an unbound response in the same checkout; obtain COMMIT_OID with git rev-parse <commit> and TREE_OID with git rev-parse '<commit>^{{tree}}'. Omit binding for working-tree reads; run gcode evidence --help for more examples"#
     )
 }
 
@@ -255,7 +255,9 @@ impl HybridSearch for NativeHybridSearch {
 
 fn cli_error(error: EvidenceError) -> CliError {
     let recovery = match &error {
-        EvidenceError::BindingMismatch { .. } => "use the persisted caller repository binding",
+        EvidenceError::BindingMismatch { .. } => {
+            "use the persisted caller repository binding: run a commit_metadata read with binding omitted in the intended checkout, copy response.binding.project_id, then set commit_oid and tree_oid from git rev-parse <commit> and git rev-parse '<commit>^{tree}'; task project IDs or another checkout's binding may differ"
+        }
         EvidenceError::ContinuationMismatch => {
             "reuse a continuation only with the canonical request that produced it"
         }
