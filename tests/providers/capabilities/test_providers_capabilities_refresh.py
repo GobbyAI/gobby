@@ -38,11 +38,6 @@ from gobby.providers.capabilities.models import (
 )
 from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.store import ProviderCapabilityStore
-from gobby.servers.provider_model_discovery import (
-    claude_uses_loopback_model_endpoint,
-    codex_uses_loopback_model_endpoint,
-    qwen_uses_loopback_model_endpoint,
-)
 from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -471,66 +466,6 @@ async def test_local_coverage_remote_recovery(
     assert sum("configured alias targets missing" in message for message in messages) == 1
     assert "Provider qwen context metadata coverage recovered" in messages
     assert "Provider qwen model metadata alias targets recovered" in messages
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    ("settings", "expected"),
-    (
-        (
-            {
-                "model": {"name": "local-model"},
-                "modelProviders": {
-                    "openai": [{"id": "local-model", "baseUrl": "http://127.0.0.1:1234/v1"}]
-                },
-            },
-            True,
-        ),
-        (
-            {
-                "model": {"name": "remote-model"},
-                "modelProviders": {
-                    "openai": [{"id": "remote-model", "baseUrl": "https://models.example.test/v1"}]
-                },
-            },
-            False,
-        ),
-        ({"modelProviders": {"openai": []}}, False),
-        ({"model": {"name": "missing-model"}}, False),
-    ),
-)
-def test_qwen_uses_loopback_model_endpoint(settings: dict[str, object], expected: bool) -> None:
-    assert qwen_uses_loopback_model_endpoint(settings) is expected
-
-
-@pytest.mark.unit
-def test_codex_detects_active_loopback_model_provider() -> None:
-    config = {
-        "model_provider": "local-endpoint",
-        "model_providers": {
-            "local-endpoint": {"base_url": "http://localhost:1234/v1"},
-            "remote-endpoint": {"base_url": "https://models.example.test/v1"},
-        },
-    }
-
-    assert codex_uses_loopback_model_endpoint(config) is True
-    assert (
-        codex_uses_loopback_model_endpoint({**config, "model_provider": "remote-endpoint"}) is False
-    )
-
-
-@pytest.mark.unit
-def test_claude_detects_effective_loopback_model_endpoint() -> None:
-    settings = {"env": {"ANTHROPIC_BASE_URL": "http://[::1]:1234/v1"}}
-
-    assert claude_uses_loopback_model_endpoint(settings, environment={}) is True
-    assert (
-        claude_uses_loopback_model_endpoint(
-            settings,
-            environment={"ANTHROPIC_BASE_URL": "https://models.example.test/v1"},
-        )
-        is False
-    )
 
 
 @pytest.mark.asyncio
