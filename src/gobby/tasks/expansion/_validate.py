@@ -138,13 +138,15 @@ def _completed_plan_sections(
                 f"task lookup failed for section {section.section_id}: {exc}"
             ) from exc
         if all(owners) and all(
-            task.project_id == project_id
-            and label in (task.labels or [])
-            and task.task_type != "epic"
-            and task.closed_at is not None
-            and task.closed_reason in {"completed", "already_implemented"}
+            all(
+                task.project_id == project_id
+                and label in (task.labels or [])
+                and task.task_type != "epic"
+                and task.closed_at is not None
+                for task in tasks
+            )
+            and any(task.closed_reason == "completed" for task in tasks)
             for label, tasks in zip(labels, owners, strict=True)
-            for task in tasks
         ):
             executed.add(section.section_id)
         if any(len(tasks) != 1 for tasks in owners):
@@ -283,7 +285,7 @@ def validate_plan_file(
         code_index=code_index,
         required=require_symbol_validation,
         consumer_coverage_blocking=consumer_coverage_blocking or bool(plan_doc.manifest_entries),
-        completed_section_ids=completed_section_ids,
+        completed_section_ids=completed_section_ids | executed_section_ids,
     )
     consumer_warnings = [
         issue.message

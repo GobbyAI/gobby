@@ -280,14 +280,14 @@ def test_closed_section_requires_delivered_reason_or_landing(
     result = _validate(plan, index, [task])
     delivered = reason in {"completed", "already_implemented"}
     abandoned = reason in {"duplicate", "wont_fix", "obsolete", "out_of_repo"}
-    expected = not abandoned and (delivered or (landed and bare_only))
+    expected = not abandoned and (delivered or landed) if bare_only else reason == "completed"
     assert result["valid"] is expected, result
     if not expected:
         assert (MISSING_SYMBOL_SCOPE if bare_only else "production-size-growth") in str(result)
     assert plan.read_bytes() == before
 
 
-@pytest.mark.parametrize("problem", ["missing", "partial", "duplicate", "foreign", "abandoned"])
+@pytest.mark.parametrize("problem", ["missing", "partial", "foreign", "abandoned"])
 def test_completion_evidence_fails_closed(landed_plan: tuple[Path, _Index], problem: str) -> None:
     plan, index = landed_plan
     task = _task(closed=True)
@@ -296,16 +296,13 @@ def test_completion_evidence_fails_closed(landed_plan: tuple[Path, _Index], prob
         tasks = []
     elif problem == "partial":
         task.labels = task.labels[:1] if task.labels else []
-    elif problem == "duplicate":
-        tasks.append(_task(closed=True))
     elif problem == "foreign":
         task.project_id = "other-project"
     else:
         task.closed_reason = "wont_fix"
     result = _validate(plan, index, tasks)
     assert result["valid"] is False
-    expected_error = MISSING_SYMBOL_SCOPE if problem == "duplicate" else "production-size-growth"
-    assert expected_error in str(result)
+    assert "production-size-growth" in str(result["errors"])
 
 
 def test_unmerged_worktree_commit_is_not_landed(
@@ -410,7 +407,7 @@ def test_cli_rechecks_size_growth_with_completion_evidence(
         }
 
 
-def test_duplicate_owner_on_later_acceptance_item_is_not_completion(
+def test_closed_repair_owner_preserves_symbol_scope_exemption(
     landed_plan: tuple[Path, _Index],
 ) -> None:
     plan, index = landed_plan
@@ -424,8 +421,7 @@ def test_duplicate_owner_on_later_acceptance_item_is_not_completion(
         code_index=index,
         require_symbol_validation=True,
     )
-    assert result["valid"] is False
-    assert MISSING_SYMBOL_SCOPE in str(result)
+    assert result["valid"] is True, result
 
 
 @pytest.mark.parametrize("repair_closed", [False, True], ids=["repair-open", "all-closed"])
@@ -433,9 +429,6 @@ def test_size_growth_requires_every_covering_leaf_closed(
     landed_plan: tuple[Path, _Index], repair_closed: bool
 ) -> None:
     plan, index = landed_plan
-    plan.write_text(
-        plan.read_text().replace("`tests/test_created.py`", "`tests/test_created.py::test_created`")
-    )
     original = _task(closed=True)
     repair = _task(closed=repair_closed)
     repair.id = "repair-id"
@@ -458,6 +451,62 @@ def test_size_growth_requires_every_covering_leaf_closed(
     ]
     assert bool(growth_issues) is not repair_closed, result
     assert result["valid"] is repair_closed, result
+
+
+@pytest.mark.parametrize(
+    "reason", ["duplicate", "obsolete", "wont_fix", "already_implemented", "out_of_repo"]
+)
+def test_closed_no_work_leaf_does_not_veto_delivered_coverage(
+    landed_plan: tuple[Path, _Index], reason: str
+) -> None:
+    plan, index = landed_plan
+    delivered = _task(closed=True)
+    abandoned = _task(closed=True)
+    abandoned.id = "abandoned-id"
+    abandoned.closed_reason = reason
+    result = _validate(plan, index, [delivered, abandoned])
+    assert result["valid"] is True, result
+
+
+@pytest.mark.parametrize(
+    "reason", ["duplicate", "obsolete", "wont_fix", "already_implemented", "out_of_repo"]
+)
+def test_no_work_only_coverage_retains_size_growth(
+    landed_plan: tuple[Path, _Index], reason: str
+) -> None:
+    plan, index = landed_plan
+    task = _task(closed=True)
+    task.closed_reason = reason
+    result = _validate(plan, index, [task])
+    assert result["valid"] is False
+    assert "production-size-growth" in str(result["errors"])
+
+
+def test_each_acceptance_item_requires_delivered_coverage(
+    landed_plan: tuple[Path, _Index],
+) -> None:
+    plan, index = landed_plan
+    delivered = _task(closed=True)
+    delivered.labels = (delivered.labels or [])[:2]
+    abandoned = _task(closed=True)
+    abandoned.id = "abandoned-id"
+    abandoned.labels = ["covers:landed-lint:1.1:1.1.3"]
+    abandoned.closed_reason = "duplicate"
+    manager = MagicMock(spec=LocalTaskManager)
+
+    def covering_tasks(*, label: str, **kwargs: Any) -> list[Task]:
+        return [task for task in (delivered, abandoned) if label in (task.labels or [])]
+
+    manager.list_tasks.side_effect = covering_tasks
+    result = validate_plan_file(
+        SimpleNamespace(task_manager=manager),
+        plan,
+        project_context={"id": PROJECT_ID, "project_path": str(plan.parent)},
+        code_index=index,
+        require_symbol_validation=True,
+    )
+    assert result["valid"] is False
+    assert "production-size-growth" in str(result["errors"])
 
 
 @pytest.mark.parametrize("last_closed", [False, True], ids=["late-open", "all-pages-closed"])
