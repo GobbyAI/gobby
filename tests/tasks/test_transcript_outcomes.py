@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from gobby.tasks.command_equivalence import command_covers
+from gobby.tasks.command_equivalence import command_covers, pytest_targets
 from gobby.tasks.transcript_outcomes import (
     classify_validation_command_equivalence,
     extract_outcome,
@@ -36,6 +36,17 @@ def test_nice_without_delimiter_after_export_criterion_command_is_credited() -> 
     core = classify_validation_command_equivalence(command).core_command
     assert core == "cargo clippy -p gobby-code"
     assert command_covers(command, "cargo clippy -p gobby-code")
+
+
+def test_nice_then_env_pytest_run_credits_the_bare_targets() -> None:
+    command = (
+        "nice -n 10 env DATABASE_URL=postgresql://u:p@127.0.0.1:1/db GOBBY_TEST_PROTECT=1 "
+        "uv run pytest tests/a.py tests/b.py --no-cov --tb=short"
+    )
+    core = classify_validation_command_equivalence(command).core_command
+    assert core is not None
+    assert core == "uv run pytest tests/a.py tests/b.py --no-cov --tb=short"
+    assert pytest_targets(core) == ("tests/a.py", "tests/b.py")
 
 
 def test_nice_inner_command_mismatch_is_not_credited() -> None:

@@ -704,6 +704,33 @@ def test_evidence_normalizer_strips_env_assignment_prefix_only(command: str, exp
     assert normalize_validation_evidence_command(command) == expected
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "nice -n 10 env A=1 B=2 uv run pytest tests/a.py",
+        "nice -n 10 env A=1 B=2 -- uv run pytest tests/a.py",
+        "nice -n 10 -- env A=1 uv run pytest tests/a.py",
+        "env A=1 nice -n 10 uv run pytest tests/a.py",
+        "A=1 nice -n 10 uv run pytest tests/a.py",
+        "env A=1 nice -n 10 env B=2 uv run pytest tests/a.py",
+    ],
+)
+def test_nice_and_env_in_any_order_match_like_the_bare_prefix(command: str) -> None:
+    bare = classify_validation_command("A=1 uv run pytest tests/a.py")
+    match = classify_validation_command(command)
+
+    assert bare is not None
+    assert match is not None
+    assert match.matcher_id == bare.matcher_id == "python-tests"
+    assert match.normalized_argv == bare.normalized_argv
+    assert normalize_validation_evidence_command(command) == "uv run pytest tests/a.py"
+
+
+def test_evidence_normalizer_keeps_env_options_after_nice() -> None:
+    command = "nice -n 10 env -i A=1 uv run pytest tests/a.py"
+    assert normalize_validation_evidence_command(command) == "env -i A=1 uv run pytest tests/a.py"
+
+
 def test_nice_without_delimiter_is_detected() -> None:
     match = classify_validation_command("nice -n 15 cargo clippy -p gobby-code")
     assert match is not None
