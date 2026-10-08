@@ -1,5 +1,5 @@
 use anyhow::{Context as _, anyhow};
-use postgres::{Client, GenericClient, Row, Transaction};
+use postgres::{Client, GenericClient, Row, Transaction, types::ToSql};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -7,10 +7,94 @@ use crate::communities::{LabelSource, StoredCommunity};
 
 use super::id_param;
 
+// Bound both the payload and PostgreSQL's parameter count (20 per row).
+const COMMUNITY_INSERT_BATCH_SIZE: usize = 256;
+
 #[derive(Deserialize, Serialize)]
 struct BoundaryRow {
     other_community_id: i32,
     import_count: usize,
+}
+
+fn insert_community_batch(
+    tx: &mut Transaction<'_>,
+    machine_id: &Uuid,
+    project_id: &Uuid,
+    rows: &[StoredCommunity],
+) -> anyhow::Result<()> {
+    let encoded = rows
+        .iter()
+        .map(|row| {
+            Ok((
+                i32::try_from(row.member_count)
+                    .context("community member_count exceeds PostgreSQL integer")?,
+                i32::try_from(row.internal_edges)
+                    .context("community internal_edges exceeds PostgreSQL integer")?,
+                serde_json::to_string(
+                    &row.boundary
+                        .iter()
+                        .map(|&(other_community_id, import_count)| BoundaryRow {
+                            other_community_id,
+                            import_count,
+                        })
+                        .collect::<Vec<_>>(),
+                )?,
+                row.label_source.as_str(),
+            ))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut sql = String::from(
+        "INSERT INTO code_communities (
+            machine_id, project_id, community_id, member_count, members,
+            representatives, internal_edges, cohesion, boundary, member_signature,
+            label_deterministic, label, label_source, label_confidence, label_model,
+            label_candidates, labeled_signature, labeled_at, label_attempted_at,
+            refreshed_at
+         ) VALUES ",
+    );
+    let mut params: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(rows.len() * 20);
+    for (index, (row, (member_count, internal_edges, boundary, label_source))) in
+        rows.iter().zip(&encoded).enumerate()
+    {
+        if index != 0 {
+            sql.push(',');
+        }
+        sql.push('(');
+        for column in 1..=20 {
+            if column != 1 {
+                sql.push(',');
+            }
+            sql.push_str(&format!("${}", index * 20 + column));
+            if column == 9 {
+                sql.push_str("::text::jsonb");
+            }
+        }
+        sql.push(')');
+        params.extend_from_slice(&[
+            machine_id,
+            project_id,
+            &row.community_id,
+            member_count,
+            &row.members,
+            &row.representatives,
+            internal_edges,
+            &row.cohesion,
+            boundary,
+            &row.member_signature,
+            &row.label_deterministic,
+            &row.label,
+            label_source,
+            &row.label_confidence,
+            &row.label_model,
+            &row.label_candidates,
+            &row.labeled_signature,
+            &row.labeled_at,
+            &row.label_attempted_at,
+            &row.refreshed_at,
+        ]);
+    }
+    tx.execute(&sql, &params)?;
+    Ok(())
 }
 
 #[allow(dead_code, reason = "consumed by the stored-community read surfaces")]
@@ -227,54 +311,8 @@ impl ReplaceTxn<'_> {
             "DELETE FROM code_communities WHERE machine_id = $1 AND project_id = $2",
             &[&self.machine_id, &self.project_id],
         )?;
-        for row in rows {
-            let member_count = i32::try_from(row.member_count)
-                .context("community member_count exceeds PostgreSQL integer")?;
-            let internal_edges = i32::try_from(row.internal_edges)
-                .context("community internal_edges exceeds PostgreSQL integer")?;
-            let boundary = serde_json::to_string(
-                &row.boundary
-                    .into_iter()
-                    .map(|(other_community_id, import_count)| BoundaryRow {
-                        other_community_id,
-                        import_count,
-                    })
-                    .collect::<Vec<_>>(),
-            )?;
-            self.tx.execute(
-                "INSERT INTO code_communities (
-                    machine_id, project_id, community_id, member_count, members,
-                    representatives, internal_edges, cohesion, boundary, member_signature,
-                    label_deterministic, label, label_source, label_confidence, label_model,
-                    label_candidates, labeled_signature, labeled_at, label_attempted_at,
-                    refreshed_at
-                 ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10,
-                    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
-                 )",
-                &[
-                    &self.machine_id,
-                    &self.project_id,
-                    &row.community_id,
-                    &member_count,
-                    &row.members,
-                    &row.representatives,
-                    &internal_edges,
-                    &row.cohesion,
-                    &boundary,
-                    &row.member_signature,
-                    &row.label_deterministic,
-                    &row.label,
-                    &row.label_source.as_str(),
-                    &row.label_confidence,
-                    &row.label_model,
-                    &row.label_candidates,
-                    &row.labeled_signature,
-                    &row.labeled_at,
-                    &row.label_attempted_at,
-                    &row.refreshed_at,
-                ],
-            )?;
+        for batch in rows.chunks(COMMUNITY_INSERT_BATCH_SIZE) {
+            insert_community_batch(&mut self.tx, &self.machine_id, &self.project_id, batch)?;
         }
         self.tx.execute(
             "UPDATE code_indexed_project_states
