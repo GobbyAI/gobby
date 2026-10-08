@@ -420,10 +420,8 @@ parity_tests! {
             );
         }
 
-        // herdr's `RenameWorkspace` with a pending create cwd is the
-        // workspace-creation dialog; gclient's `Dialog::NewProject` (plan
-        // 3.3) renders the same `new workspace` title over the path typed.
-        fn workspace_creation_dialog_renders_new_workspace_title() {
+        // Project creation uses the existing path-dialog chrome.
+        fn project_creation_dialog_renders_new_project_title() {
             let ws = scripted(&["one"]);
             let mut chrome = chrome_for(&ws, "one");
             chrome.mode = Mode::ProjectDialog;
@@ -441,7 +439,7 @@ parity_tests! {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            assert!(screen.contains("New workspace"), "{screen}");
+            assert!(screen.contains("New project"), "{screen}");
             assert!(screen.contains("project"), "{screen}");
         }
 

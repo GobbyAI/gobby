@@ -80,8 +80,11 @@ _PROVIDER_AUTH_PATHS: dict[str, tuple[str, ...]] = {
 
 _PROVIDER_AUTH_READ_ONLY_PATHS: dict[str, tuple[str, ...]] = {
     "claude": ("~/.claude.json", "~/Library/Keychains/login.keychain-db"),
+    # AGY's config (config.json, hooks.json, mcp_config.json, plugins, projects)
+    # sits under gemini's denied ~/.gemini; the rest of ~/.gemini stays denied.
     "agy": (
-        "~/.gemini/config/projects",
+        "~/.gemini/config",
+        "~/.gemini/antigravity-ide/installation_id",
         "~/Library/Keychains/login.keychain-db",
     ),
     "droid": ("~/Library/Keychains/login.keychain-db",),

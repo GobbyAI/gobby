@@ -94,7 +94,10 @@ def sandbox_record(
         record[RETAINED_SETTINGS_PATH_KEY] = str(retained_settings)
     # The live log wins while the run root survives; the retained copy keeps the
     # count honest once the reaper deletes it.
-    violation_path = trusted_live_violation_path(raw.get("violation_path")) or retained_log
+    live_log = trusted_live_violation_path(raw.get("violation_path"))
+    if live_log is not None:
+        record["violation_path"] = str(live_log)
+    violation_path = live_log or retained_log
     count, violations, count_truncated = _read_violations(
         violation_path,
         include_events=include_events,

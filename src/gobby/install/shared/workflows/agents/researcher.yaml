@@ -36,7 +36,7 @@ prompts:
     - Reach the Orchestrator and the Assistant through `gobby-agents:send_message`, and wait on replies with `gobby-agents:wait_for_coordination`.
 
     ## Continuity
-    Continuity: clear after each report. Once a report is sent, hand off with `gobby-sessions:set_handoff(clear_session=true)`. Under context pressure mid-research, use `set_handoff(clear_session=false)`.
+    Continuity: compact in place after each report. Once a report is sent, or under context pressure mid-research, hand off with `gobby-sessions:set_handoff` without `clear_session`. The session compacts and continues.
 
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.

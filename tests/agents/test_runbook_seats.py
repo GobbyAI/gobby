@@ -7,10 +7,12 @@ import json
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
 from gobby.agents.runbook_seats import (
     READ_BOUND,
@@ -29,7 +31,10 @@ from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.definitions import PipelineDefinition
+from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_state import ExecutionStatus
+from gobby.workflows.templates import TemplateEngine
 from tests.agents.conftest import AGENT_TEST_MACHINE_ID
 
 RUNBOOK = "deploy-runbook"
@@ -414,3 +419,34 @@ def test_registered_tool_replies_in_mcp_step_shape(env: _Env) -> None:
         "seats": ({"name": "lead", "title": "Lead", "agent": "lead-agent"},),
     }
     assert refused == {"success": False, "error": "seat 'ghost' is not in the catalogue"}
+
+
+@pytest.mark.parametrize("report_to", [None, "", " \t", "operator"])
+def test_crew_lane_guard_validates_rendered_report_target(env: _Env, report_to: str | None) -> None:
+    """Missing inputs must refuse at admission, before a seat can receive target_id=None."""
+    path = Path(__file__).parents[2] / ".gobby/workflows/pipelines/crew-lane.yaml"
+    definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
+    guard = definition.steps[0].mcp
+    assert guard is not None and guard.arguments is not None
+    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
+    inputs.update(
+        workspace=env.workspace_id,
+        seats="developer",
+        report_to=env.parent_session_id if report_to == "operator" else report_to,
+    )
+    arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
+        guard.arguments, {"inputs": inputs, "steps": {}}, drop_none=True
+    )
+    _install_agent(env.db, "developer", env.project_id)
+    caller = _pipeline_child(env)
+    registry = create_agents_registry(
+        MagicMock(), session_manager=SessionManager(env.db), db=env.db
+    )
+    with session_context_for_test(caller):
+        result = registry.call_sync("check_runbook_seats", arguments)
+    assert arguments["require_report_to"] is True
+    if report_to == "operator":
+        assert result["success"] is True and "error" not in result
+        assert arguments["report_to"] == env.parent_session_id
+    else:
+        assert result == {"success": False, "error": "report_to must be a nonempty session ref"}

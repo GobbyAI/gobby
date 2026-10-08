@@ -463,6 +463,31 @@ async def test_result_entrypoints_expose_bounded_retained_sandbox_diagnostics(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "status"), [("get_agent_result", "running"), ("wait_for_agent", "success")]
+)
+async def test_result_entrypoints_expose_live_sandbox_log_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tool: str, status: str
+) -> None:
+    home = tmp_path / "gobby-home"
+    log = home / "runtime" / "managed-executions" / "run-123" / "logs" / "violations.jsonl"
+    log.parent.mkdir(parents=True)
+    log.write_text('{"operation":"read","path":"/etc/secret-a"}\n', encoding="utf-8")
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    run = _run(
+        status=status,
+        result="",
+        capture_id=None,
+        resume_metadata_json={"sandbox": {"backend": "srt", "violation_path": str(log)}},
+    )
+    result = await _registry(run).call(tool, {"run_id": run.id})
+    assert result["sandbox"]["violation_path"] == str(log)
+    assert result["sandbox"]["violation_count"] == 1
+    assert "violations" not in result["sandbox"]
+    assert "secret-a" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
 async def test_result_entrypoints_omit_sandbox_for_unsandboxed_runs() -> None:
     run = _run(status="success", result="Completed", capture_id=None)
     registry = _registry(run)

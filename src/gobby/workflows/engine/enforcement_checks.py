@@ -39,6 +39,7 @@ _TERMINAL_DENIAL_COUNT = 3
 _CAPABILITY_NEUTRAL_MCP_TOOLS = frozenset(
     {
         "gobby-sessions:set_handoff",
+        "gobby-sessions:get_handoff",
         "gobby-sessions:feedback",
         # Both record access, so neither is read-only, yet every step must be
         # able to search memories and read the ones its index points at.

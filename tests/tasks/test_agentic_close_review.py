@@ -287,6 +287,13 @@ def test_task_close_reviewer_definition_submits_then_terminates() -> None:
     assert "prior review history" in guidance
     assert "must not use them as current gate evidence" in guidance
     assert "receipt or artifact that must result" not in guidance
+    # The launch prompt carries no caller session ref, so a reviewer asked to
+    # name the originating coordinator filled in its own session and misrouted
+    # repairs (#23761). next_steps states the action and names no session.
+    flat_guidance = " ".join(guidance.split())
+    assert "next_steps stating the action the close caller must take" in flat_guidance
+    assert "Name no session in next_steps" in flat_guidance
+    assert "originating coordinator" not in flat_guidance
 
 
 @pytest.mark.parametrize(

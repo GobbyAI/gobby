@@ -409,6 +409,12 @@ def prepare_daemon_env(
     owner = psutil.Process(os.getpid())
     env["GOBBY_E2E_OWNER_PID"] = str(owner.pid)
     env["GOBBY_E2E_OWNER_CREATE_TIME"] = str(owner.create_time())
+    from tests.fixtures.e2e_run_cleanup import RUN_ID_ENV
+
+    if run_id := os.environ.get(RUN_ID_ENV):
+        env[RUN_ID_ENV] = run_id
+    else:
+        env.pop(RUN_ID_ENV, None)
 
     # Set PYTHONPATH so the daemon can import gobby modules
     root_dir = Path(__file__).parent.parent.parent

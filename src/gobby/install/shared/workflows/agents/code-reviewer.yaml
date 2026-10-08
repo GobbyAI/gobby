@@ -28,6 +28,7 @@ prompts:
   agent: &seat |
     ## Role
     You review the CANDIDATEs routed to you, in the Orchestrator's priority order, and land the ones you approve. Your LAND is the source approval (Josh, 2026-09-30); the Orchestrator does not re-review it. Don't write the author's code, and never approve your own fix.
+    On launch, read the shared role files before receiving a candidate and report readiness to the live session named in the launch prompt with target="session". A runbook's pipeline parent may have ended; use the supplied report target for readiness, blockers and unassigned waits.
     - Intake. When a CANDIDATE line arrives, record it with the top-level `set_variable(name="candidate_task", value=<its TASK= value>, scope="step")`, then `set_variable(name="candidate_received", value=true, scope="step")`. That starts the review.
     - Review. Check the candidate's merge against the current `0.5.0` head with `gcode` and `git diff`. Rate each finding HIGH, MEDIUM or LOW. Cite each claim about what specific code does through `gcode evidence`, as `gobby:references/code-index/evidence.md` describes. When the verdict is ready, call `set_variable(name="verdict_ready", value=true, scope="step")`.
     - Verdict. Send `EVENT=CANDIDATE_VERDICT TASK=#NNNNN TASK_TITLE= SHA= VERDICT=LAND|BOUNCE NOTE=` with the findings to the Orchestrator and the author lane. A BOUNCE ends the unit.
@@ -49,7 +50,7 @@ prompts:
     - Your lane, Lane Manager and author lanes come from your role file (`.gobby/roles/`, found by your session ref in `roster.md`) and from the CANDIDATE line.
 
     ## Continuity
-    Continuity: clear after each landing or bounce. Once the unit's last line is sent, hand off with `gobby-sessions:set_handoff(clear_session=true)`. Under context pressure mid-review, use `set_handoff(clear_session=false)`.
+    Continuity: compact in place after each landing or bounce. Once the unit's last line is sent, or under context pressure mid-review, hand off with `gobby-sessions:set_handoff` without `clear_session`. The session compacts and continues.
 
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.
@@ -80,6 +81,11 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load the required review skills"
       status_message: |
+        First read _common.md, roster.md and your assigned role file from the
+        shared checkout using Read or Bash. These native tools are for role
+        bootstrap here; defer review preflight until review.
+        Report readiness or a bootstrap blocker to the live session in your
+        launch prompt with gobby-agents:send_message(target="session").
         Load the required review skills before taking a candidate:
         1. get_skill(name="code-review") on gobby-skills
         2. get_skill(name="restraint") on gobby-skills
@@ -88,6 +94,8 @@ step_workflow:
         native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's skill tracking.
       allowed_tools:
+        - Bash
+        - Read
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
@@ -95,6 +103,10 @@ step_workflow:
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
+        - "gobby-sessions:get_session"
+        - "gobby-sessions:set_title"
+        - "gobby-agents:send_message"
+        - "gobby-agents:wait_for_coordination"
       on_mcp_success:
         - server: gobby-skills
           tool: get_skill
@@ -116,11 +128,16 @@ step_workflow:
       mcp_error_policy: stay
       description: "Wait for a routed CANDIDATE"
       status_message: |
+        Read any role files still missing using Read or Bash; defer review
+        preflight until review. Report readiness to the live session in your
+        launch prompt using send_message(target="session", target_id=<report target>).
         Wait for a CANDIDATE with gobby-agents:wait_for_coordination. When one
         arrives, call the top-level set_variable with scope="step": first
         name="candidate_task" with its TASK= value, then
         name="candidate_received" with true.
       allowed_tools:
+        - Bash
+        - Read
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
@@ -130,6 +147,7 @@ step_workflow:
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
         - "gobby-sessions:get_session"
+        - "gobby-sessions:set_title"
       transitions:
         - to: review
           when: "vars.candidate_received"

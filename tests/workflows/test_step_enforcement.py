@@ -39,6 +39,73 @@ PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("seat", "step"),
+    [
+        ("developer", "load_skills"),
+        ("developer", "claim"),
+        ("code-reviewer", "load_skills"),
+        ("code-reviewer", "await"),
+    ],
+)
+async def test_runbook_unassigned_seat_can_bootstrap_and_report(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+    seat: str,
+    step: str,
+) -> None:
+    """Role reads and live-owner reports work before assignment; writes stay gated."""
+    shared = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents"
+    definition = yaml.safe_load((shared / f"{seat}.yaml").read_text())
+    workflow = definition.pop("step_workflow")
+    _setup_step_workflow(
+        db, manager, instance_mgr, current_step=step, workflow_data={**definition, **workflow}
+    )
+    body = AgentDefinitionBody.model_validate({**definition, "step_workflow": workflow})
+    assert "session" in body.send_message_targets
+    for native, arguments in [
+        ("Bash", {"command": "cat /Users/josh/Projects/gobby/.gobby/roles/_common.md"}),
+        ("Read", {"file_path": "/Users/josh/Projects/gobby/.gobby/roles/lane-4-runbooks.md"}),
+    ]:
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": native, "tool_input": arguments}),
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert response.decision != "block", response.reason
+    for tool, coordination_arguments in [
+        ("send_message", {"target": "session", "target_id": "gobby#14972", "content": "Ready"}),
+        ("wait_for_coordination", {"owner_session": "gobby#14972", "reply": True}),
+    ]:
+        response = await engine.evaluate(
+            _make_event(
+                data={
+                    "tool_name": "mcp__gobby__call_tool",
+                    "tool_input": {
+                        "server_name": "gobby-agents",
+                        "tool_name": tool,
+                        "arguments": coordination_arguments,
+                    },
+                }
+            ),
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert response.decision != "block", response.reason
+    for native in ("Edit", "Write", "apply_patch"):
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": native, "tool_input": {}}),
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert response.decision == "block"
+    current = instance_mgr.get_for_session(SESSION_ID)
+    assert current is not None and current.current_step == step
+
+
+@pytest.mark.asyncio
 async def test_reviewer_required_load_transition_releases_deferred_preflight(
     db: "HubDatabase",
     manager: AgentDefinitionManager,
@@ -1412,13 +1479,15 @@ class TestStepMCPToolBlocking:
         ],
         ids=["restrictive-allowlist", "explicit-block", "all-tools"],
     )
+    @pytest.mark.parametrize("handoff_tool", ["set_handoff", "get_handoff"])
     @pytest.mark.asyncio
-    async def test_set_handoff_step_enforcement(
+    async def test_handoff_step_enforcement(
         self,
         db: "HubDatabase",
         manager: AgentDefinitionManager,
         engine: RuleEngine,
         instance_mgr: AgentStepInstanceManager,
+        handoff_tool: str,
         allowed_mcp_tools: list[str] | str,
         blocked_mcp_tools: list[str],
         expected_decision: str,
@@ -1426,7 +1495,9 @@ class TestStepMCPToolBlocking:
         step: dict[str, Any] = {
             "name": "work",
             "allowed_mcp_tools": allowed_mcp_tools,
-            "blocked_mcp_tools": blocked_mcp_tools,
+            "blocked_mcp_tools": [
+                tool.replace("set_handoff", handoff_tool) for tool in blocked_mcp_tools
+            ],
         }
         workflow = {
             "name": "test-compact-self",
@@ -1446,7 +1517,7 @@ class TestStepMCPToolBlocking:
                 "tool_name": "mcp__gobby__call_tool",
                 "tool_input": {
                     "server_name": "gobby-sessions",
-                    "tool_name": "set_handoff",
+                    "tool_name": handoff_tool,
                 },
             }
         )
@@ -3452,6 +3523,7 @@ class TestProviderToolNameNormalization:
     "mcp_key",
     [
         "gobby-sessions:set_handoff",
+        "gobby-sessions:get_handoff",
         "gobby-sessions:feedback",
         "gobby-memory:search_memories",
         "gobby-memory:get_memory",

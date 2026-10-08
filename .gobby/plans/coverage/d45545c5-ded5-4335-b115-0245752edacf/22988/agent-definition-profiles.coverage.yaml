@@ -1,11 +1,11 @@
 header:
   plan_id: agent-definition-profiles
-  plan_hash: 51076275f60aacbbe1503ad79c9800ac04bb492487b11ace8304ec3380a7b862
+  plan_hash: 64fb35e676016abb377709f62e6a6bfdb2d7e1cb9773391de521cde9e5fe4846
   root_task_ref: '22988'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-07T19:10:49Z'
+  generated_at: '2026-10-08T01:04:07Z'
   task_tree_source: db
-  task_tree_source_hash: 8e6d056a2116873c1315d553534b6680b819133d7f4aeb95f347fe69ebc7f338
+  task_tree_source_hash: 2fe0ec99fb62e4d4b5ea3c8962d71785292def3e6a7cf3575ddadade96308ecc
   evidence_summary: []
   evidence: []
 rows:
@@ -110,7 +110,7 @@ rows:
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.1
-  plan_node_hash: 4d415b60b993b1db82e4bce00898858a25d7aa96cb68f10f2e5e355bde516a3a
+  plan_node_hash: 119fef1f7ac40014c414df75dd3277e334e2abd77d7b1d3bf53eba1c7d97954c
   status: covered
   leaves:
   - leaf_task_ref: '#22995'
@@ -122,26 +122,27 @@ rows:
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.2
-  plan_node_hash: 126778cb675a4c17bad124021fd4ec5f7a185a2fc23ef3128bf8a6b05eaac108
+  plan_node_hash: 7a0a12b5d32639b5d95ca14f1d513ad1f5a804707ac7823f008c0a7200d29835
   status: covered
   leaves:
-  - leaf_task_ref: '#22995'
-    validation_criteria_snippet: '2.2.1: A non-writer seat''s `spawn_agent` and `dispatch_batch`
-      calls are blocked with the seat reason; every seat, the Plan Writer included,
-      is blocked from `go...'
-    matched_artifact_ref: tests/workflows/test_seat_rules.py::test_plan_writer_enhancer_pass_is_per_task
+  - leaf_task_ref: '#23706'
+    validation_criteria_snippet: 1. seat-spawn-policy.yaml carries no Plan Writer
+      enhancer-spawn exception and no enhancer-pass-spent label handling. 2. The roles
+      row in the rules AGENTS.md no...
+    matched_artifact_ref: tests/workflows/test_seat_rules.py::test_plan_writer_cannot_spawn_plan_enhancer_taskless_old
   deferral_target: null
   detail: ''
 - section_id: '2.2'
   item_id: 2.2.3
-  plan_node_hash: 8528704ead2e22b990ca0b9c00e18323c8c0b9cfc2b9c0b509f597d76638a96c
+  plan_node_hash: 54502846daeb80079beea7494bc89875e15bd8cf42238b6cf69699c2feef6402
   status: covered
   leaves:
   - leaf_task_ref: '#22995'
     validation_criteria_snippet: '2.2.1: A non-writer seat''s `spawn_agent` and `dispatch_batch`
       calls are blocked with the seat reason; every seat, the Plan Writer included,
       is blocked from `go...'
-    matched_artifact_ref: plan-writer-enhancer-only
+    matched_artifact_ref: automated task-close reviewer is the only permitted spawn
+      path
   deferral_target: null
   detail: ''
 - section_id: '2.2'

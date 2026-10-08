@@ -181,7 +181,7 @@ fn agent_menu_lists_the_nine_actions_in_order() {
 }
 
 #[test]
-fn file_menu_says_new_workspace_and_help_holds_the_alert_log() {
+fn file_menu_lists_project_actions_and_help_holds_the_alert_log() {
     let workspace = Workspace::scripted();
     let chrome = Chrome::dark();
     let labels = |title| {
@@ -197,7 +197,8 @@ fn file_menu_says_new_workspace_and_help_holds_the_alert_log() {
         [
             "New terminal",
             "New tab",
-            "New workspace…",
+            "New project…",
+            "Open project…",
             "Rename tab",
             "Close tab",
             "Destroy orphaned terminals…",
@@ -216,9 +217,9 @@ fn file_menu_says_new_workspace_and_help_holds_the_alert_log() {
         BINDINGS
             .iter()
             .find(|binding| binding.name == "new_project")
-            .expect("new workspace binding")
+            .expect("new project binding")
             .description,
-        "Add a workspace"
+        "Create project"
     );
 }
 

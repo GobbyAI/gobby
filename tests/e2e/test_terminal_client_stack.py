@@ -34,6 +34,7 @@ from gobby.agents.idle_detector import (
     IdleDetector,
     composer_text,
 )
+from gobby.agents.srt_runtime import SRT_PREFLIGHT_TIMEOUT_SECONDS
 from gobby.servers.websocket.terminal_ws import WRITE_FAULT_NAME
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
 from gobby.storage.terminals import AttachLocator, TerminalManager
@@ -85,6 +86,7 @@ _STUB = f"""\
 import select
 import sys
 import termios
+from pathlib import Path
 
 if any(arg in {{"--version", "-v"}} for arg in sys.argv[1:]):
     sys.stdout.write("1.0.0-e2e\\n")
@@ -97,12 +99,11 @@ try:
     termios.tcsetattr(fd, termios.TCSADRAIN, attrs)
 except termios.error:
     pass
-try:
-    open("/tmp/gobby-stack-stub.log", "w", encoding="utf-8").write(
-        "argv=" + repr(sys.argv) + "\\n"
-    )
-except OSError:
-    pass
+session_id = sys.argv[sys.argv.index("--session-id") + 1]
+# SRT permits writes under cwd; a shared /tmp log is outside that grant.
+Path(f".gobby-stack-stub-{{session_id}}.log").write_text(
+    "argv=" + repr(sys.argv) + "\\n", encoding="utf-8"
+)
 sys.stdout.write({READY!r} + "\\n")
 sys.stdout.write("\\n" * 20)
 sys.stdout.write({APPROVAL_PROMPT!r})
@@ -341,17 +342,171 @@ def _list_items(client: httpx.Client) -> list[dict[str, Any]]:
     return list(response.json().get("items") or [])
 
 
-def _live_native_items(client: httpx.Client) -> tuple[dict[str, Any], dict[str, Any]]:
-    live = [
-        item
+def _live_native_items(
+    client: httpx.Client, run_ids: tuple[str, str]
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Wait for each accepted spawn's persisted terminal, ignoring unrelated rows."""
+    terminal_ids: list[str] = []
+    for run_id in run_ids:
+        response = client.get(f"/api/agents/runs/{run_id}")
+        assert response.status_code == 200, response.text
+        run = response.json()["run"]
+        assert run["status"] not in {"error", "timeout", "cancelled", "success"}, (
+            f"run={run_id}; status={run['status']}; "
+            f"error={str(run.get('error') or '')[:2000]}; "
+            f"result={str(run.get('result') or '')[:2000]}"
+        )
+        terminal_id = run.get("terminal_id")
+        if not isinstance(terminal_id, str):
+            return None
+        terminal_ids.append(terminal_id)
+    live = {
+        item["id"]: item
         for item in _list_items(client)
         if item.get("backend") == "native"
         and item.get("ownership") == "gobby"
         and item.get("state") == "live"
-    ]
-    if len(live) < 2:
-        raise AssertionError(f"fewer than two live native terminals in {_list_items(client)}")
-    return live[0], live[1]
+    }
+    if not all(terminal_id in live for terminal_id in terminal_ids):
+        return None
+    return live[terminal_ids[0]], live[terminal_ids[1]]
+
+
+@pytest.mark.parametrize("readiness", ["pending", "unpublished", "live"])
+def test_native_readiness_matches_spawn_runs(readiness: str) -> None:
+    """Unrelated live rows never satisfy readiness for the two requested runs."""
+
+    def row(terminal_id: str) -> dict[str, str]:
+        return {"id": terminal_id, "backend": "native", "ownership": "gobby", "state": "live"}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/terminals":
+            items = [row("unrelated-one"), row("unrelated-two")]
+            if readiness == "live":
+                # Roster order must not change the association with each run.
+                items.extend([row("terminal-second"), row("terminal-first")])
+            return httpx.Response(200, json={"items": items})
+        run_id = request.url.path.rsplit("/", 1)[-1]
+        assert run_id in {"first", "second"}
+        return httpx.Response(
+            200,
+            json={
+                "run": {
+                    "status": "running",
+                    "terminal_id": None if readiness == "pending" else f"terminal-{run_id}",
+                }
+            },
+        )
+
+    with httpx.Client(
+        base_url="http://stack.test", transport=httpx.MockTransport(respond)
+    ) as client:
+        live = _live_native_items(client, ("first", "second"))
+    if readiness == "live":
+        assert live == (row("terminal-first"), row("terminal-second"))
+    else:
+        assert live is None
+
+
+def test_native_readiness_reports_failed_run() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/agents/runs/first"
+        return httpx.Response(200, json={"run": {"status": "error", "error": "spawn refused"}})
+
+    with httpx.Client(
+        base_url="http://stack.test", transport=httpx.MockTransport(respond)
+    ) as client:
+        with pytest.raises(AssertionError, match="first.*error.*spawn refused"):
+            _live_native_items(client, ("first", "second"))
+
+
+def _stack_run_state(run: dict[str, Any]) -> dict[str, str]:
+    return {
+        key: str(run.get(key) or "")[:2000]
+        for key in ("status", "terminal_reason", "resume_metadata_json")
+    }
+
+
+def _cancel_stack_run(client: httpx.Client, run_id: str) -> dict[str, Any] | None:
+    cancelled = client.post(f"/api/agents/runs/{run_id}/cancel")
+    detail = client.get(f"/api/agents/runs/{run_id}")
+    run = detail.json()["run"] if detail.status_code == 200 else {}
+    evidence = json.dumps(
+        {
+            "run_id": run_id,
+            "cancel_status": cancelled.status_code,
+            "cancel_response": cancelled.text[:2000],
+            "detail_status": detail.status_code,
+            **_stack_run_state(run),
+        }
+    )
+    assert detail.status_code in {200, 404}, evidence
+    if cancelled.status_code == 400:
+        # Host-death reconciliation can cancel the run before cleanup gets here.
+        # Verify both the exact refusal and the persisted state; reject other 400s.
+        assert (
+            cancelled.json().get("detail")
+            == (f"Agent run '{run_id}' is not active (status=cancelled)")
+            and run.get("status") == "cancelled"
+        ), evidence
+    else:
+        assert cancelled.status_code in {200, 409, 404}, evidence
+    if detail.status_code == 404:
+        return None
+    return {**run, "cleanup_http_status": cancelled.status_code}
+
+
+@pytest.mark.parametrize(
+    ("cancel_status", "cancel_detail", "run_status", "accepted"),
+    [
+        (200, "", "cancelled", True),
+        (409, "", "cancelled", True),
+        (404, "", None, True),
+        (400, "Agent run 'first' is not active (status=cancelled)", "cancelled", True),
+        (400, "Agent run 'first' is not active (status=cancelled)", "running", False),
+        (400, "Agent run 'other' is not active (status=cancelled)", "cancelled", False),
+        (400, "invalid cancellation request", "cancelled", False),
+        (500, "cancellation failed", "cancelled", False),
+    ],
+)
+def test_stack_cleanup_validates_already_cancelled_run(
+    cancel_status: int, cancel_detail: str, run_status: str | None, accepted: bool
+) -> None:
+    requests: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request.method)
+        if request.method == "POST":
+            assert request.url.path == "/api/agents/runs/first/cancel"
+            return httpx.Response(cancel_status, json={"detail": cancel_detail})
+        assert request.url.path == "/api/agents/runs/first"
+        if run_status is None:
+            return httpx.Response(404)
+        return httpx.Response(
+            200,
+            json={
+                "run": {
+                    "status": run_status,
+                    "terminal_reason": "daemon_stop",
+                    "resume_metadata_json": {"retained": True},
+                }
+            },
+        )
+
+    with httpx.Client(
+        base_url="http://stack.test", transport=httpx.MockTransport(respond)
+    ) as client:
+        if accepted:
+            run = _cancel_stack_run(client, "first")
+            if run_status is None:
+                assert run is None
+            else:
+                assert run is not None and run["status"] == run_status
+                assert run["cleanup_http_status"] == cancel_status
+        else:
+            with pytest.raises(AssertionError, match="daemon_stop"):
+                _cancel_stack_run(client, "first")
+    assert requests == ["POST", "GET"]
 
 
 def _attach_locator(item: dict[str, Any]) -> AttachLocator:
@@ -536,14 +691,55 @@ async def test_terminal_client_stack_end_to_end(
     direct_spawn = _spawn_agent(client)
     native_spawn = _spawn_agent(client)
 
-    def both_live() -> tuple[dict[str, Any], dict[str, Any]] | None:
-        try:
-            first, second = _live_native_items(client)
-            return first, second
-        except AssertionError:
-            return None
+    run_ids = (direct_spawn["run_id"], native_spawn["run_id"])
+    assert all(isinstance(run_id, str) for run_id in run_ids), (direct_spawn, native_spawn)
 
-    live = wait_for_condition(both_live, timeout=25.0, interval=0.2, description="two native rows")
+    def write_readiness_evidence(frames: list[dict[str, Any]]) -> Path:
+        runs: list[dict[str, Any]] = []
+        for run_id in run_ids:
+            try:
+                response = client.get(f"/api/agents/runs/{run_id}")
+                response.raise_for_status()
+                run = response.json()["run"]
+                runs.append(
+                    {
+                        "run_id": run_id,
+                        **{
+                            key: str(run.get(key) or "")[:2000]
+                            for key in ("error", "result", "terminal_id", "updated_at")
+                        },
+                        **_stack_run_state(run),
+                    }
+                )
+            except (httpx.HTTPError, ValueError, KeyError) as exc:
+                runs.append({"run_id": run_id, "diagnostic_error": str(exc)[:2000]})
+        logs: dict[str, str] = {}
+        for label, path in (
+            ("stdout", daemon_instance.log_file),
+            ("stderr", daemon_instance.error_log_file),
+            ("daemon", daemon_instance.gobby_home / "logs" / "daemon.log"),
+            ("errors", daemon_instance.gobby_home / "logs" / "errors.log"),
+        ):
+            if path.is_file():
+                with path.open("rb") as stream:
+                    stream.seek(max(0, path.stat().st_size - 8192))
+                    logs[label] = stream.read(8192).decode("utf-8", errors="replace")
+        evidence = tmp_path / "stack-readiness.json"
+        evidence.write_text(json.dumps({"runs": runs, "daemon_logs": logs, "frames": frames}))
+        return evidence
+
+    # Spawn acceptance precedes native publication. Bound readiness by the run's
+    # terminal_id plus its live roster row, with a two-minute integration deadline.
+    try:
+        live = wait_for_condition(
+            lambda: _live_native_items(client, run_ids),
+            timeout=120.0,
+            interval=0.2,
+            description=f"live native terminals for runs {run_ids}",
+        )
+    except (AssertionError, httpx.HTTPError) as exc:
+        evidence = write_readiness_evidence([])
+        raise AssertionError(f"{exc}; native-readiness evidence={evidence}") from exc
     assert _is_item_pair(live)
     direct_item, native_item = live
     assert direct_item["backend"] == "native"
@@ -552,24 +748,60 @@ async def test_terminal_client_stack_end_to_end(
     assert native_item["state"] == "live"
     native_id = str(native_item["id"])
     direct_id = str(direct_item["id"])
-
+    assert direct_id != native_id
     token = daemon_token(daemon_instance.gobby_home)
     native_loc = _attach_locator(native_item)
     direct_loc = _attach_locator(direct_item)
     native_frames = await _open_viewer(native_loc, token, cols=VIEWER_COLS, rows=VIEWER_ROWS)
     direct_frames = await _open_viewer(direct_loc, token, cols=VIEWER_COLS, rows=VIEWER_ROWS)
-    native_seen = await _read_until(
-        native_frames,
-        _has_ready_marker,
-        timeout=12.0,
-        description="native ready frames",
-    )
-    direct_seen = await _read_until(
-        direct_frames,
-        _has_ready_marker,
-        timeout=12.0,
-        description="direct ready frames",
-    )
+    readiness_frames: list[dict[str, Any]] = []
+
+    def ready(message: dict[str, Any]) -> bool:
+        readiness_frames.append(
+            {
+                "type": message.get("type"),
+                "width": message.get("width"),
+                "height": message.get("height"),
+                "text": _frame_text(message),
+            }
+        )
+        del readiness_frames[:-8]
+        return _has_ready_marker(message)
+
+    # Native publication proves the SRT runner execed, not that Seatbelt has
+    # compiled and started the CLI. Measured READY at ~57 s with 1376 write
+    # denies; use SRT's 90 s preflight budget for this second compilation too.
+    try:
+        native_seen = await _read_until(
+            native_frames,
+            ready,
+            timeout=SRT_PREFLIGHT_TIMEOUT_SECONDS,
+            description="native ready frames",
+        )
+        direct_seen = await _read_until(
+            direct_frames,
+            ready,
+            timeout=SRT_PREFLIGHT_TIMEOUT_SECONDS,
+            description="direct ready frames",
+        )
+    except AssertionError as exc:
+        evidence = write_readiness_evidence(readiness_frames)
+        logs = sorted(path.name for path in daemon_instance.project_dir.glob(".gobby-stack-*.log"))
+        raise AssertionError(
+            f"{exc}; cwds={(direct_item.get('cwd'), native_item.get('cwd'))}; "
+            f"logs={logs}; first-output evidence={evidence}"
+        ) from exc
+    for spawn, item in ((direct_spawn, direct_item), (native_spawn, native_item)):
+        session_id = spawn["child_session_id"]
+        assert isinstance(session_id, str), spawn
+        cwd = item.get("cwd")
+        assert isinstance(cwd, str), item
+        assert Path(cwd).resolve() == daemon_instance.project_dir.resolve(), cwd
+        log = daemon_instance.project_dir / f".gobby-stack-stub-{session_id}.log"
+        assert log.is_file(), f"stub log missing after READY: {log}"
+        contents = log.read_text()
+        assert str(shutil.which("claude")) in contents, contents
+        assert session_id in contents, contents
     assert {_frame_text(item) and item.get("type") for item in native_seen}  # nonempty
     assert all(item.get("type") in _FRAME_TYPES for item in native_seen)
     assert all(item.get("type") in _FRAME_TYPES for item in direct_seen)
@@ -986,6 +1218,11 @@ async def test_terminal_client_stack_end_to_end(
         description="exit-during-restart reconciled",
     )
 
+    before_host_crash: dict[str, dict[str, str]] = {}
+    for run_id in run_ids:
+        detail = client.get(f"/api/agents/runs/{run_id}")
+        assert detail.status_code == 200, detail.text
+        before_host_crash[run_id] = _stack_run_state(detail.json()["run"])
     host_pid = int(pidfile_path(socket_dir).read_text())
     os.kill(host_pid, signal.SIGKILL)
     # Both panes live on the one registered runtime, so a host crash
@@ -1002,21 +1239,30 @@ async def test_terminal_client_stack_end_to_end(
         description="both native panes reconciled after host crash",
     )
 
-    for run_id in (native_spawn.get("run_id"), direct_spawn.get("run_id")):
-        if not isinstance(run_id, str):
-            continue
-        cancelled = client.post(f"/api/agents/runs/{run_id}/cancel")
-        assert cancelled.status_code in {200, 409, 404}, cancelled.text
-        detail = client.get(f"/api/agents/runs/{run_id}")
-        if detail.status_code == 200:
-            run = detail.json().get("run") or {}
+    after_cleanup: dict[str, dict[str, Any]] = {}
+    try:
+        for run_id in run_ids:
+            run = _cancel_stack_run(client, run_id)
+            if run is None:
+                continue
+            after_cleanup[run_id] = {
+                **_stack_run_state(run),
+                "cleanup_http_status": run["cleanup_http_status"],
+            }
             result = str(run.get("result") or "")
             assert "GOBBY TMUX CAPTURE" in result or run.get("status") in {
                 "cancelled",
                 "completed",
                 "failed",
                 "interrupted",
-            }
+            }, after_cleanup[run_id]
+    except AssertionError as exc:
+        evidence = write_readiness_evidence([])
+        raise AssertionError(f"{exc}; cleanup evidence={evidence}") from exc
+    finally:
+        (tmp_path / "stack-cleanup.json").write_text(
+            json.dumps({"before_host_crash": before_host_crash, "after_cleanup": after_cleanup})
+        )
     client.close()
 
 
