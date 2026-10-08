@@ -1180,6 +1180,9 @@ async def test_compact_timeout_restores_precompact_status_and_releases_wake(
     ):
         staged = await set_handoff(current_state="Preserve this draft", next_steps=["Continue"])
     attempt_id = staged["attempt_id"]
+    staged_session = manager.get(session_id)
+    assert staged_session is not None
+    assert staged_session.status == prior_status
     staged_marker = variables.get_variables(session_id)[PENDING_HANDOFF_VARIABLE]
     variables.merge_variables(session_id, {HANDOFF_DISPATCH_GATE_VARIABLE: staged})
     claimed = claim_staged_handoff_delivery(temp_db, session_id, attempt_id)
