@@ -1480,7 +1480,33 @@ def test_sweep_decodes_a_retained_hook_envelope_once(tmp_path: Path) -> None:
     # Once the drain removes the envelope, its path leaves the memo.
     hook_envelope.unlink()
     assert consume_pending_delivery_receipts(app, inbox_dir=inbox_dir) == 0
-    assert hook_envelope not in inbox_module._NON_RECEIPT_PATHS
+    assert hook_envelope not in inbox_module._NON_RECEIPT_FILES
+
+
+def test_sweep_consumes_a_receipt_that_replaced_a_decoded_envelope(tmp_path: Path) -> None:
+    """ghook settles an envelope by replacing it with a receipt at the same path."""
+    from gobby.hooks.inbox import consume_pending_delivery_receipts
+
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope = inbox_dir / "n-0000000000001-hook.json"
+    envelope.write_text(
+        json.dumps({"schema_version": 1, "hook_type": "Stop", "source": "claude"}),
+        encoding="utf-8",
+    )
+    app = FastAPI()
+    app.state.database = object()
+    app.state.hook_manager = MagicMock()
+
+    with patch("gobby.storage.hook_receipts.acknowledge_receipt", return_value=None):
+        assert consume_pending_delivery_receipts(app, inbox_dir=inbox_dir) == 0
+        # The same replacement ghook's atomic_write makes: write aside, rename over.
+        staged = inbox_dir / "n-0000000000001-hook.json.tmp"
+        staged.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
+        os.replace(staged, envelope)
+        assert consume_pending_delivery_receipts(app, inbox_dir=inbox_dir) == 1
+
+    assert not envelope.exists()
 
 
 def test_sweep_missing_inbox_dir_is_a_noop(tmp_path: Path) -> None:
