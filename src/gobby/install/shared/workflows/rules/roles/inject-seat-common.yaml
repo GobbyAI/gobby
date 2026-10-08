@@ -11,7 +11,8 @@ rules:
     when: >
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary']
+        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
+        'merge-manager']
       and not variables.get('_seat_common_injected')
     effects:
       - type: inject_context

@@ -200,6 +200,26 @@ async def test_seats_ask_through_send_message(engine: RuleEngine) -> None:
         assert (await _decide(engine, ask, non_seat)).decision == "allow", non_seat
 
 
+def test_every_seat_scoped_rule_covers_every_seat_definition() -> None:
+    seats = _seat_definitions()
+    scoped: dict[str, str] = {}
+    for rule_file in sorted(ROLES_DIR.glob("*.yaml")):
+        for name, rule in yaml.safe_load(rule_file.read_text())["rules"].items():
+            when = str(rule.get("when") or "")
+            if "variables.get('_agent_type') in [" in when:
+                scoped[name] = when
+
+    assert {
+        "inject-seat-common",
+        "seat-no-spawn",
+        "seat-no-pipeline-launch",
+        "seat-no-launch-cli",
+        "seat-no-ask-user-question",
+    } <= set(scoped)
+    for name, when in scoped.items():
+        assert [seat for seat in seats if f"'{seat}'" not in when] == [], name
+
+
 def _write(project: Path, file_path: str) -> dict[str, Any]:
     return {
         "tool_name": "Write",
