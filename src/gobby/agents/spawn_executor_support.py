@@ -10,6 +10,7 @@ import psycopg
 
 from gobby.agents.constants import (
     ALL_TERMINAL_ENV_VARS,
+    CARGO_TARGET_DIR,
     GOBBY_AGENT_API_TOKEN,
     GOBBY_AGENT_RUN_ID,
     GOBBY_PROJECT_ID,
@@ -631,9 +632,12 @@ def _codex_runtime_config_overrides(
         # and the sandbox policy only grants writes to those redirected roots.
         # Without UV_CACHE_DIR the `uv run` bootstrap aborts against the
         # read-only ~/.cache/uv and the server never starts.
-        for variable_name in SPAWN_CACHE_ENV_VARS:
+        for variable_name in (*SPAWN_CACHE_ENV_VARS, CARGO_TARGET_DIR):
             if value := managed_identity_env.get(variable_name):
                 overrides.append(f"mcp_servers.gobby.env.{variable_name}={json.dumps(value)}")
+                overrides.append(
+                    f"shell_environment_policy.set.{variable_name}={json.dumps(value)}"
+                )
         forwarded_secrets = [
             variable_name
             for variable_name in _CODEX_GOBBY_MCP_FORWARDED_SECRET_ENV_VARS

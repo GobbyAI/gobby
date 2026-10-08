@@ -409,7 +409,9 @@ async def resume_agent_run(
             )
         ]
         config_overrides.extend(
-            _codex_runtime_config_overrides(launch.provider_env.get("TMPDIR"), env)
+            _codex_runtime_config_overrides(
+                launch.provider_env.get("TMPDIR"), {**env, **launch.provider_env}
+            )
         )
     command, _cmd_env = build_cli_command(
         cli=provider,

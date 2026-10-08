@@ -442,7 +442,7 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         *_codex_mcp_config_overrides(
             request.project_path,
             (launch.provider_env or {}).get("TMPDIR"),
-            managed_identity_env=env,
+            managed_identity_env={**env, **launch.provider_env},
         ),
         *request.codex_config_overrides,
     ]

@@ -19,6 +19,23 @@ def test_codex_shell_tmpdir_is_omitted_without_sandbox() -> None:
     assert not any(entry.startswith("shell_environment_policy.set.TMPDIR") for entry in overrides)
 
 
+def test_codex_shell_and_mcp_use_provisioned_cache_paths() -> None:
+    import tomllib
+
+    cache_env = {
+        "UV_CACHE_DIR": "/sandbox/cache/uv",
+        "CARGO_HOME": "/sandbox/shared/cargo-home",
+        "CARGO_TARGET_DIR": "/sandbox/checkout/cargo-target",
+    }
+    config = tomllib.loads(
+        "\n".join(_codex_mcp_config_overrides("/repo", managed_identity_env=cache_env))
+    )
+
+    for name, path in cache_env.items():
+        assert config["shell_environment_policy"]["set"][name] == path
+        assert config["mcp_servers"]["gobby"]["env"][name] == path
+
+
 def test_managed_codex_requires_gobby_before_first_turn() -> None:
     import tomllib
 
