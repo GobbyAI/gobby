@@ -514,7 +514,7 @@ class TestSessionManagerCaching:
 
     def test_cache_session_mapping_expires_entries(self, session_mgr: SessionManager) -> None:
         with patch(
-            "gobby.storage.sessions._registration_cache.time.monotonic",
+            "gobby.storage.sessions._session_mapping_cache.time.monotonic",
             side_effect=[0.0, 3600.0],
         ):
             session_mgr.cache_session_mapping(
@@ -543,9 +543,9 @@ class TestSessionManagerCaching:
         }
         session_mgr._session_mapping.clear()
         with (
-            patch("gobby.storage.sessions._registration_cache._SESSION_MAPPING_MAX_ENTRIES", 2),
+            patch("gobby.storage.sessions._session_mapping_cache._SESSION_MAPPING_MAX_ENTRIES", 2),
             patch(
-                "gobby.storage.sessions._registration_cache.time.monotonic",
+                "gobby.storage.sessions._session_mapping_cache.time.monotonic",
                 side_effect=itertools.count(0.0, 1.0),
             ),
         ):
