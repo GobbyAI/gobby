@@ -572,7 +572,7 @@ def _unwrap_env_tokens(tokens: list[str]) -> list[str] | None:
 
 
 def normalize_validation_evidence_command(command: str) -> str:
-    """Remove exit-preserving prefixes and use the category check's nice grammar."""
+    """Remove exit-preserving prefixes, unwrapping nice and env in any order and nesting."""
     cursor = _evidence_skip_whitespace(command, 0)
     while True:
         next_cursor = _evidence_consume_cd_prefix(command, cursor)
@@ -604,10 +604,16 @@ def normalize_validation_evidence_command(command: str) -> str:
     core = _EVIDENCE_RTK_PREFIX.sub(r"\1", command[cursor:].strip(), count=1)
     parsed = parse_shell_command(core)
     if len(parsed.segments) == 1 and not parsed.operators:
-        unwrapped = _unwrap_nice_tokens(list(parsed.segments[0]))
-        if unwrapped is not None:
-            # Native execution can insert RTK inside uv after the nice prefix.
-            return _EVIDENCE_RTK_PREFIX.sub(r"\1", shlex.join(unwrapped), count=1)
+        tokens = list(parsed.segments[0])
+        changed = False
+        for _ in range(_MAX_WRAPPER_NORMALIZATION_DEPTH):
+            inner = _unwrap_nice_tokens(tokens) or _unwrap_env_tokens(tokens)
+            if inner is None:
+                break
+            tokens, changed = inner, True
+        if changed:
+            # Native execution can insert RTK inside uv after the wrapper prefix.
+            return _EVIDENCE_RTK_PREFIX.sub(r"\1", shlex.join(tokens), count=1)
     return core
 
 
