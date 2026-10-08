@@ -728,6 +728,24 @@ async def test_unexpected_dirty_edit_ownership_inspection_failure_propagates(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["functions.apply_patch", "Write"])
+@pytest.mark.parametrize("placement", ["tool_input", "event"])
+async def test_commit_text_in_non_shell_tool_data_is_allowed(
+    guard_harness: GuardHarness, tool_name: str, placement: str
+) -> None:
+    command = "git " + "commit -m $(uv run pytest)"
+    event = guard_harness.event(command)
+    event.data["tool_name"] = tool_name
+    if placement == "event":
+        event.data["tool_input"] = {"content": command}
+        event.data["command"] = command
+
+    response = await guard_harness.handler._evaluate_rules(event)
+
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
 async def test_unscoped_commit_blocks_foreign_staged_path_with_owner_diagnostic(
     guard_harness: GuardHarness,
 ) -> None:

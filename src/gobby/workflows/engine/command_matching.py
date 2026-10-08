@@ -36,12 +36,14 @@ import functools
 import re
 import shlex
 from dataclasses import dataclass
+from typing import Literal
 
 from gobby.hooks._ansi_c import SHELL_DIALECTS
 from gobby.hooks._normalization_shell import (
     _SHELL_SEQUENCING_TOKENS,
     HeredocBody,
     ShellToken,
+    _skip_heredocs,
     _strip_shell_wrappers,
     _substitution_end,
     is_fd_duplication_token,
@@ -52,7 +54,11 @@ from gobby.hooks._normalization_shell import (
 from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import (
     _SHELLS,
+    _piped_to_shell,
     _prepare,
+    _python_name,
+    _python_program,
+    _shell_stdin,
     _unwrap,
     option_word_count,
 )
@@ -139,6 +145,9 @@ _UV_GLOBAL_VALUE_OPTIONS = frozenset(
         "--directory",
         "--project",
         "--config-file",
+        "--python-preference",
+        "--preview-features",
+        "--python-fetch",
     }
 )
 # Every value-taking option `uv run --help` lists.
@@ -317,6 +326,39 @@ def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) ->
         if not unwrapped:
             continue
         name = shell_command_name(unwrapped[0])
+        if name == "find":
+            next_expression = 0
+            for index, word in enumerate(unwrapped):
+                if index >= next_expression and word in {"-exec", "-execdir", "-ok", "-okdir"}:
+                    find_argv = unwrapped[index + 1 :]
+                    end = next(
+                        (i for i, value in enumerate(find_argv) if value in {";", "+"}),
+                        len(find_argv),
+                    )
+                    if find_argv[:end]:
+                        scripts.append(shlex.join(find_argv[:end]))
+                    next_expression = index + end + 2
+            continue
+        if _python_name(name):
+            module_args = _python_program(unwrapped)[2]
+            if module_args[:1] == ["gobby"]:
+                scripts.append(shlex.join(module_args))
+        if name == "su":
+            for index, word in enumerate(unwrapped[1:], 1):
+                if word in {"-c", "--command"} and index + 1 < len(unwrapped):
+                    scripts.append(unwrapped[index + 1])
+                    break
+                if word.startswith("--command="):
+                    scripts.append(word.partition("=")[2])
+                    break
+                command_option = re.fullmatch(r"-[flmpP]*c(.*)", word)
+                if command_option:
+                    script = command_option[1] or (
+                        unwrapped[index + 1] if index + 1 < len(unwrapped) else ""
+                    )
+                    if script:
+                        scripts.append(script)
+                    break
         if name in _SHELLS:
             execution = shell_execution(unwrapped)
             if execution and execution.command is not None:
@@ -341,6 +383,46 @@ def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) ->
             continue
         if unwrapped != words:
             scripts.append(shlex.join(unwrapped))
+    return scripts
+
+
+def _shell_input_scripts(command: str) -> list[str]:
+    """Project literal stdin only when a shell will execute it."""
+    scripts: list[str] = []
+    for dialect in SHELL_DIALECTS:
+        try:
+            scan = scan_shell_command(command, dialect=dialect)
+        except ValueError:
+            continue
+        start = 0
+        for end in range(len(scan.tokens) + 1):
+            if end < len(scan.tokens) and (
+                scan.tokens[end].quoted
+                or scan.tokens[end].value not in {"|", *_SHELL_SEQUENCING_TOKENS}
+            ):
+                continue
+            tokens = scan.tokens[start:end]
+            words = _unwrap(_stage_words(tokens))
+            start = end + 1
+            if not words:
+                continue
+            if _piped_to_shell(scan.tokens, end) and shell_command_name(words[0]) in {
+                "echo",
+                "printf",
+            }:
+                args = words[1:]
+                if shell_command_name(words[0]) == "echo":
+                    while args and re.fullmatch(r"-[neE]+", args[0]):
+                        args = args[1:]
+                    scripts.append(" ".join(args))
+                else:
+                    scripts.extend(args)
+            if _shell_stdin(words):
+                scripts.extend(
+                    tokens[index + 1].value
+                    for index, token in enumerate(tokens[:-1])
+                    if not token.quoted and token.value == "<<<"
+                )
     return scripts
 
 
@@ -397,6 +479,7 @@ def _selector_subjects(
         # rules, to a bounded depth, so a nested wrapped invocation such as
         # ``bash -c "bash -c '…'"`` still matches (#23134).
         scripts = _wrapper_scripts(stages, resolve_uv_run=resolve_uv_run)
+        scripts.extend(_shell_input_scripts(text))
         if scripts and depth >= _WRAPPER_DEPTH:
             return None
         for script in scripts:
@@ -466,16 +549,35 @@ def _subjects(
     command: str,
     depth: int,
     *,
-    heredoc_source: bool = False,
+    heredoc_source: Literal["shell", "language"] | None = None,
     correlated_subjects: list[str] | None = None,
 ) -> list[str]:
     try:
         scan = scan_shell_command(command)
     except ValueError:
         return [command]
-    # Preserve interpreter source verbatim unless it has its own heredoc boundaries.
-    if heredoc_source and not scan.heredocs:
+    # Language source has its own syntax; a variable named cat is not a data sink.
+    if heredoc_source == "language" or (heredoc_source == "shell" and not scan.heredocs):
         return [command]
+    correlations = [] if correlated_subjects is None else correlated_subjects
+    split_substitution = False
+    for start, end in scan.spans:
+        opening = command.find("$(", start, end)
+        if opening >= 0:
+            try:
+                split_substitution |= (
+                    _substitution_end(command, opening + 2, False, depth + 1) >= end
+                )
+            except ValueError:
+                continue
+    if split_substitution and not _runs_substitution_output(scan.tokens):
+        resolved = _resolve_substitutions(command, depth, correlations)
+        if resolved[0] != command:
+            projected = _subjects(resolved[0], depth, correlated_subjects=correlations)
+            projected.extend(resolved[1:])
+            if correlated_subjects is None:
+                projected.extend(correlations)
+            return projected
     segments = _split_segments(scan.tokens)
     if not segments:
         return [command]
@@ -487,7 +589,6 @@ def _subjects(
         raw.append(
             command[min(start for start, _ in segment_spans) : max(end for _, end in segment_spans)]
         )
-    correlations = [] if correlated_subjects is None else correlated_subjects
     subjects: list[str] = []
     for text, segment in zip(raw, segments, strict=True):
         if _runs_substitution_output(scan.tokens[segment.first : segment.last + 1]):
@@ -509,7 +610,15 @@ def _subjects(
                 _subjects(
                     heredoc.text,
                     depth,
-                    heredoc_source=True,
+                    heredoc_source=(
+                        "shell"
+                        if any(
+                            (words := _unwrap(_stage_words(stage)))
+                            and (_shell_stdin(words) or shell_command_name(words[0]) == "ssh")
+                            for stage in _pipeline_stages(tokens)
+                        )
+                        else "language"
+                    ),
                     correlated_subjects=correlations,
                 )
             )
@@ -542,6 +651,7 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
     executed: list[str] = []
     quote = ""
     index = 0
+    line_start = 0
     while index < len(subject):
         char = subject[index]
         if char == "\\" and quote != "'":
@@ -549,21 +659,52 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
             correlated.append(subject[index : index + 2])
             index += 2
             continue
-        if quote != "'" and (subject.startswith("$(", index) or char == "`"):
+        if quote not in {"'", "$"} and (subject.startswith("$(", index) or char == "`"):
             tick = char == "`"
             start = index + (1 if tick else 2)
             try:
                 end = _substitution_end(subject, start, tick, depth + 1)
             except ValueError:
                 return [subject]
-            bodies = _subjects(subject[start:end], depth + 1, correlated_subjects=correlations)
+            body = subject[start:end]
+            bodies = _subjects(body, depth + 1, correlated_subjects=correlations) if body else []
             executed.extend(bodies)
             out.append(f"{subject[index:start]}{subject[end]}")
             correlated.append(f"{subject[index:start]}{' '.join(bodies)}{subject[end]}")
             index = end + 1
             continue
+        if not quote and subject.startswith("$'", index):
+            quote = "$"
+            out.append("$'")
+            correlated.append("$'")
+            index += 2
+            continue
         if char in "\"'":
-            quote = "" if quote == char else quote or char
+            if not quote:
+                quote = char
+            elif quote == char or (quote == "$" and char == "'"):
+                quote = ""
+        elif not quote and char == "#" and (index == 0 or subject[index - 1] in " \t\n;|&()"):
+            end = subject.find("\n", index)
+            end = len(subject) if end < 0 else end
+            out.append(subject[index:end])
+            correlated.append(subject[index:end])
+            index = end
+            continue
+        if char == "\n" and not quote:
+            try:
+                line = scan_shell_command(subject[line_start:index])
+            except ValueError:
+                # Comments and ANSI-C quotes can diverge from this lightweight
+                # tracker. Keep the complete subject for conservative matching.
+                return [subject]
+            if not line.tokens or line.tokens[-1].value not in _CONTINUATION_OPERATORS:
+                end = _skip_heredocs(subject, line.tokens, index + 1)
+                out.append(subject[index:end])
+                correlated.append(subject[index:end])
+                index = end
+                line_start = end
+                continue
         out.append(char)
         correlated.append(char)
         index += 1

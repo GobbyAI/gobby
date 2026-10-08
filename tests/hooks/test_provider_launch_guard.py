@@ -17,6 +17,44 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_rule_file
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize(
+    "options",
+    [
+        "-a /tmp/input",
+        "-a/tmp/input",
+        "-0a /tmp/input",
+        "-0a/tmp/input",
+        "--arg-file /tmp/input",
+        "--arg-file=/tmp/input",
+        "--arg-f /tmp/input",
+        "--arg-f=/tmp/input",
+        "--max-chars 4096",
+        "--max-chars=4096",
+        "--max-char 4096",
+        "--max-char=4096",
+        "--process-slot-var SLOT",
+        "--process-slot-var=SLOT",
+        "--process-slot SLOT",
+        "--process-slot=SLOT",
+        "-I {} -R 2",
+        "-I{} -R2",
+        "-I {} -0R2",
+        "-I {} -S 4096",
+        "-I{} -S4096",
+        "-I {} -0S4096",
+        "--max-lines",
+        "--max-lines=3",
+    ],
+)
+@pytest.mark.parametrize(("target", "blocked"), [("codex exec", True), ("echo codex exec", False)])
+def test_xargs_required_operands(tool_name: str, options: str, target: str, blocked: bool) -> None:
+    key = "command" if tool_name == "Bash" else "cmd"
+    assert blocks_direct_provider_launch(tool_name, {key: f"xargs {options} {target}"}) is blocked
+
+
 SHARED = Path(__file__).resolve().parents[2] / "src/gobby/install/shared"
 RULE = SHARED / "workflows/rules/worker-safety/block-direct-provider-launch.yaml"
 SESSION = "abababab-0000-4000-8000-000000000001"

@@ -375,7 +375,9 @@ async def foreign_staged_commit_conflict(
     project_path: str,
 ) -> str:
     """Inspect commit ownership without parking a workflow worker on Git."""
-    if is_shell_tool(event.data.get("tool_name")) and tool_input_error(event.data) is not None:
+    if not is_shell_tool(event.data.get("tool_name")):
+        return ""
+    if tool_input_error(event.data) is not None:
         # An undecodable shell input may hide a commit, so it can't pass as none.
         return (
             "Shell tool input arrived as undecodable JSON, so Gobby can't check it for a "
