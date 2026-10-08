@@ -35,6 +35,20 @@ pytestmark = pytest.mark.unit
             "restart",
         ),
         (["web/src/App.tsx"], "ui_build"),
+        ([".gobby/workflows/pipelines/crew-lane.yaml"], "sync"),
+        ([".gobby/workflows/pipelines/crew-lane.yml", "docs/x.md"], "sync"),
+        ([".gobby/workflows/pipelines/README.md"], "none"),
+        ([".gobby/workflows/pipelines/nested/seat.yaml"], "none"),
+        ([".gobby/workflows/pipelines/crew-lane.yaml", "src/gobby/cli/main.py"], "restart"),
+        ([".gobby/workflows/pipelines/crew-lane.yaml", "crates/gcore/src/lib.rs"], "cutover"),
+        ([".gobby/workflows/pipelines/crew-lane.yaml", "web/src/App.tsx"], "ui_build"),
+        (
+            [
+                ".gobby/workflows/pipelines/crew-lane.yaml",
+                "src/gobby/install/shared/workflows/agents/researcher.yaml",
+            ],
+            "reload",
+        ),
         (
             ["src/gobby/install/shared/workflows/agents/researcher.yaml", "web/src/App.tsx"],
             "restart",

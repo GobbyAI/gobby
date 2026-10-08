@@ -1072,6 +1072,31 @@ async def test_ref_moved_before_failure_reports_landing(case: LandingCase) -> No
     assert (case.repo / "notes.txt").read_text() == "untracked\n"
 
 
+@pytest.mark.parametrize("move_tip", [False, True])
+async def test_pipeline_sync_landing_and_recovery(case: LandingCase, move_tip: bool) -> None:
+    sha = case.candidate(
+        "pipeline-sync", {".gobby/workflows/pipelines/crew-lane.yaml": "name: crew-lane\n"}
+    )
+    task = case.reviewed(sha, "Project pipeline sync")
+    if move_tip:
+        case.direct({"docs/moved.md": "moved\n"})
+    with patch.object(
+        land_commit, "record_close_receipt", side_effect=IndeterminateCommitError("unobserved")
+    ):
+        pending = await case.land(task, sha)
+    recovered = await case.land(task, sha)
+    replay = await case.land(task, sha)
+
+    assert pending["landed"] is True
+    assert pending["receipt_pending"] is True
+    assert pending["activation_class"] == "sync"
+    assert recovered["activation_class"] == "sync"
+    assert recovered["provenance"] == "reflog"
+    assert recovered["mode"] == ("merge" if move_tip else "ff")
+    assert recovered["retest_required"] is move_tip
+    assert replay == recovered
+
+
 async def test_merge_landing_replay_preserves_retest_obligation(case: LandingCase) -> None:
     lane = case.candidate("lane", {"tests/test_lane.py": "lane = 1\n"})
     case.direct({"docs/moved.md": "moved\n"})
