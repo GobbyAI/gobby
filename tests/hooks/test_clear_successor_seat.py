@@ -20,6 +20,7 @@ from gobby.hooks.event_handlers._session_start.agents import (
     build_agent_changes,
     resolve_agent_name,
 )
+from gobby.hooks.event_handlers._session_start.claims import MCP_PROXY_READY_VARIABLE
 from gobby.hooks.event_handlers._session_start.handoff import SessionStartResolution
 from gobby.hooks.event_handlers._session_start.materialize import activate_materialized_session
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -29,6 +30,7 @@ from gobby.mcp_proxy.tools.apply_agent_definition import (
     definition_pin,
 )
 from gobby.sessions.clear_continuation import stage_clear_attempt
+from gobby.sessions.handoff import HANDOFF_PULL_PENDING_VARIABLE
 from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.definitions import AgentDefinitionManager
@@ -258,6 +260,34 @@ def test_base_agent_clear_successor_unchanged(
     assert "_agent_type" not in after
     assert "_agent_definition_hash" not in after
     assert _session(pane, successor_id).agent_run_id is None
+
+
+def test_config_read_failure_keeps_successor_handoff_state(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pane = _pane(temp_db, tmp_path, monkeypatch, "config-failure")
+
+    def unreadable(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("config unavailable")
+
+    monkeypatch.setattr("gobby.storage.config_repository.ConfigRepository.read", unreadable)
+    variables = SessionVariableManager(temp_db)
+    variables.merge_variables(
+        pane.predecessor_id,
+        {
+            "_agent_type": _SEAT,
+            "_agent_definition_hash": "seat-pin",
+            MCP_PROXY_READY_VARIABLE: True,
+        },
+    )
+    _stage(temp_db, pane)
+
+    successor_id = _start(pane, "succ-ext", activate=False)
+
+    after = variables.get_variables(successor_id)
+    assert after[HANDOFF_PULL_PENDING_VARIABLE] is True
+    assert after[MCP_PROXY_READY_VARIABLE] is True
+    assert "_agent_type" not in after
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,44 @@ def current_run_session_id(
     return str(row["child_session_id"]) if row is not None else session_id
 
 
+def earlier_clear_session_id(
+    db: HubDatabase,
+    *,
+    current_session_id: str,
+    origin_session_id: str,
+    project_id: str,
+    external_ids: Sequence[str],
+) -> str | None:
+    """Return the session owning ``external_ids`` when it is an earlier clear of the pane.
+
+    Every take parents its successor on the predecessor, including a successor
+    that supersedes an unpulled one, so each session the pane's run has passed
+    through reaches ``origin_session_id``, the session the pane's token names,
+    by its parents.
+    """
+    row = db.fetchone(
+        """
+        WITH RECURSIVE chain (id, parent_session_id, owner_id) AS (
+            SELECT id, parent_session_id, id FROM sessions
+            WHERE project_id = %s AND external_id = ANY(%s) AND id <> %s
+            UNION
+            SELECT parent.id, parent.parent_session_id, chain.owner_id
+            FROM sessions parent JOIN chain ON parent.id = chain.parent_session_id
+            WHERE chain.id <> %s
+        )
+        SELECT owner_id FROM chain WHERE id = %s LIMIT 1
+        """,
+        (
+            project_id,
+            list(external_ids),
+            current_session_id,
+            origin_session_id,
+            origin_session_id,
+        ),
+    )
+    return str(row["owner_id"]) if row is not None else None
+
+
 def move_clear_run_lineage(
     conn: Transaction,
     *,

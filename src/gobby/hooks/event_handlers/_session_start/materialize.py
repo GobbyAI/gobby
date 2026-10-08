@@ -154,6 +154,30 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
         handler.logger.warning("Failed to reset agent context injection flag: %s", exc)
 
 
+def _crossing_seat(
+    handler: Any, successor_id: str, predecessor_vars: dict[str, Any]
+) -> dict[str, Any]:
+    """The seat a clear successor keeps; the base agent is resolved afresh, as for any session."""
+    agent_type = predecessor_vars.get("_agent_type")
+    if not agent_type or agent_type == "default":
+        return {}
+    try:
+        from gobby.storage.config_repository import ConfigRepository
+
+        config = ConfigRepository(handler._session_manager.db).read(resolve_secrets=False)
+    except Exception as exc:
+        handler.logger.warning(
+            "Failed to read the default agent for clear successor %s: %s", successor_id, exc
+        )
+        return {}
+    if agent_type == config.values.get("default_agent"):
+        return {}
+    seat = {"_agent_type": agent_type}
+    if predecessor_vars.get("_agent_definition_hash"):
+        seat["_agent_definition_hash"] = predecessor_vars["_agent_definition_hash"]
+    return seat
+
+
 def _bind_clear_successor(
     handler: Any,
     resolution: SessionStartResolution | None,
@@ -224,24 +248,11 @@ def _bind_clear_successor(
             successor_id,
             exc,
         )
+    seat = _crossing_seat(handler, successor_id, predecessor_vars)
     try:
-        from gobby.storage.config_repository import ConfigRepository
         from gobby.workflows.state_manager import SessionVariableManager
 
-        db = handler._session_manager.db
-        # A seat crosses the clear; the base agent is resolved afresh, as for any session.
-        seat: dict[str, Any] = {}
-        agent_type = predecessor_vars.get("_agent_type")
-        if (
-            agent_type
-            and agent_type != "default"
-            and agent_type
-            != ConfigRepository(db).read(resolve_secrets=False).values.get("default_agent")
-        ):
-            seat["_agent_type"] = agent_type
-            if predecessor_vars.get("_agent_definition_hash"):
-                seat["_agent_definition_hash"] = predecessor_vars["_agent_definition_hash"]
-        SessionVariableManager(db).merge_variables(
+        SessionVariableManager(handler._session_manager.db).merge_variables(
             successor_id,
             {
                 HANDOFF_PULL_PENDING_VARIABLE: True,

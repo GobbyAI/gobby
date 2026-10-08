@@ -25,7 +25,8 @@ from gobby.servers.lease_fence import EffectFence
 from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.servers.routes.llm import create_llm_router
 from gobby.servers.routes.mcp.endpoints.request_context import _set_context_for_request
-from gobby.sessions.clear_continuation import take_clear_handoff_marker
+from gobby.sessions.clear_continuation import stage_clear_attempt, take_clear_handoff_marker
+from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
@@ -57,6 +58,7 @@ pytestmark = pytest.mark.unit
 _API_KEY = "managed-clear-identity"
 _PROBE = "seat_probe"
 _OTHER_PROJECT = "31000000-0000-4000-8000-000000000001"
+_SECOND_ATTEMPT_ID = "2" * 32
 
 
 async def _run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -121,6 +123,37 @@ class _Seat:
             attempt_id=_ATTEMPT_ID,
             successor_id=self.successor_id,
         )
+
+    def clear_again(self) -> str:
+        """The successor stages its own /clear and a third session takes the run from it."""
+        stage_clear_attempt(
+            self.db,
+            self.successor_id,
+            attempt_id=_SECOND_ATTEMPT_ID,
+            handoff=build_handoff_payload(current_state="Ready.", next_steps=["Continue."]),
+            terminal_context=self.pane.term,
+            chat_context=None,
+        )
+        third_id = self.pane.register("third-ext")
+        assert take_clear_handoff_marker(
+            self.db,
+            self.successor_id,
+            attempt_id=_SECOND_ATTEMPT_ID,
+            successor_id=third_id,
+        )
+        return third_id
+
+    def supersede(self) -> str:
+        """An operator /clear before the pull: a third session supersedes the unpulled successor."""
+        third_id = self.pane.register("third-ext")
+        assert take_clear_handoff_marker(
+            self.db,
+            self.pane.predecessor_id,
+            attempt_id=_ATTEMPT_ID,
+            successor_id=third_id,
+            supersede_successor_id=self.successor_id,
+        )
+        return third_id
 
     def end_run(self) -> None:
         assert LocalAgentRunManager(self.db).complete(self.run.id) is not None
@@ -246,6 +279,28 @@ def test_late_predecessor_hook_stays_on_predecessor(
     """A clear end the predecessor's conversation sends after the take cannot end the seat."""
     seat.take()
 
+    owners = {"predecessor": seat.pane.predecessor_id, "successor": seat.successor_id}
+    assert _late_clear_end_session(seat, conversation_id) == owners[owner]
+
+
+@pytest.mark.parametrize("later_take", ["clear_again", "supersede"])
+@pytest.mark.parametrize(
+    ("conversation_id", "owner"),
+    [("pred-ext", "first"), ("successor-ext", "second"), ("third-ext", "third")],
+)
+def test_late_hook_after_a_later_take_stays_on_its_session(
+    seat: _Seat, later_take: str, conversation_id: str, owner: str
+) -> None:
+    """Every earlier session of the pane's clear chain keeps its own late clear end."""
+    seat.take()
+    third_id = {"clear_again": _Seat.clear_again, "supersede": _Seat.supersede}[later_take](seat)
+
+    owners = {"first": seat.pane.predecessor_id, "second": seat.successor_id, "third": third_id}
+    assert _late_clear_end_session(seat, conversation_id) == owners[owner]
+
+
+def _late_clear_end_session(seat: _Seat, conversation_id: str) -> str:
+    """The session a clear end from ``conversation_id`` on the frozen pane is attributed to."""
     with (
         TestClient(_hook_server(seat).app) as client,
         patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
@@ -258,9 +313,7 @@ def test_late_predecessor_hook_stays_on_predecessor(
         )
 
     assert response.status_code == 200, response.text
-    adapter_payload = adapter_cls.return_value.handle_native.call_args.args[0]
-    owners = {"predecessor": seat.pane.predecessor_id, "successor": seat.successor_id}
-    assert adapter_payload["_platform_session_id"] == owners[owner]
+    return str(adapter_cls.return_value.handle_native.call_args.args[0]["_platform_session_id"])
 
 
 async def test_no_forwarding_without_live_run_binding(seat: _Seat) -> None:

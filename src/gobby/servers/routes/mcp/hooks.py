@@ -70,7 +70,7 @@ from gobby.servers.routes.mcp.hook_responses import (
     _normalize_hold_open_hook_type,
     _result_encodes_denial,
 )
-from gobby.sessions.clear_run_lineage import current_run_session_id
+from gobby.sessions.clear_run_lineage import current_run_session_id, earlier_clear_session_id
 from gobby.telemetry.instruments import inc_counter
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
 
@@ -92,10 +92,10 @@ def _run_bound_platform_session(
 ) -> str:
     """Attribute a run-bound hook to the session its run is bound to now.
 
-    After /clear the pane still sends the predecessor its token was issued for,
-    and the run names the successor. A hook from the predecessor's own
-    conversation stays on the predecessor even when it lands after the take, so
-    a late SessionEnd cannot end the successor's seat.
+    After /clear the pane still sends the first session its token was issued
+    for, and the run names the latest successor. A hook from an earlier
+    conversation of that clear chain stays on its own session even when it lands
+    after a later take, so a late SessionEnd cannot end the live seat.
     """
     claims = server.auth_service.verified_agent_claims(request)
     session_manager = server.session_manager
@@ -109,11 +109,20 @@ def _run_bound_platform_session(
     )
     if current_session_id == claims.session_id:
         return header_session_id
-    claimed = session_manager.get(claims.session_id)
-    if claimed is not None and isinstance(input_data, dict):
-        if claimed.external_id in {input_data.get(key) for key in _PROVIDER_SESSION_KEYS}:
-            return header_session_id
-    return current_session_id
+    provider_ids = input_data if isinstance(input_data, dict) else {}
+    conversation_ids = [
+        value for key in _PROVIDER_SESSION_KEYS if isinstance(value := provider_ids.get(key), str)
+    ]
+    if not conversation_ids:
+        return current_session_id
+    earlier_session_id = earlier_clear_session_id(
+        session_manager.db,
+        current_session_id=current_session_id,
+        origin_session_id=claims.session_id,
+        project_id=claims.project_id,
+        external_ids=conversation_ids,
+    )
+    return current_session_id if earlier_session_id is None else earlier_session_id
 
 
 def _normalize_hook_request(payload: Any) -> tuple[dict[str, Any], dict[str, Any]]:
