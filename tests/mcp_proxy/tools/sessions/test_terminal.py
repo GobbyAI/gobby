@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -12,6 +13,9 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.hooks._normalization_tools import normalize_tool_fields
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.terminal_handoff_delivery import schedule_terminal_handoff_delivery
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import _terminal_clear
 from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
@@ -19,7 +23,16 @@ from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
     _FORBIDDEN_SPEED_COMMANDS,
     _is_speed_command,
 )
-from gobby.sessions.handoff import HandoffAttemptState
+from gobby.sessions.handoff import (
+    FAILED_HANDOFF_VARIABLE,
+    HANDOFF_DELIVERY_FAILURES_VARIABLE,
+    HANDOFF_DISPATCH_GATE_VARIABLE,
+    PENDING_HANDOFF_VARIABLE,
+    HandoffAttemptState,
+    claim_staged_handoff_delivery,
+    consume_pending_handoff,
+)
+from gobby.sessions.handoff_records import record_handoff_delivery
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
@@ -1012,3 +1025,113 @@ class TestSetHandoffFeedback:
             result = asyncio.run(set_handoff(current_state="Ready", next_steps=["Continue"]))
         assert result["handoff_staged"] is True
         assert result["feedback_submitted"] is False
+
+
+def _set_handoff_completion(session_id: str, result: dict[str, Any]) -> HookEvent:
+    """Build the AFTER_TOOL event the proxy hands the CLI for a set_handoff result."""
+    data: dict[str, Any] = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-sessions",
+            "tool_name": "set_handoff",
+            "arguments": {"clear_session": False},
+        },
+        "tool_output": {
+            "success": True,
+            "result": {key: value for key, value in result.items() if key != "success"},
+        },
+    }
+    normalize_tool_fields(data)
+    return HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id="provider-session",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data=data,
+        metadata={"_platform_session_id": session_id},
+    )
+
+
+def test_set_handoff_retry_reuses_the_in_flight_compact_attempt(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    """A retry while /compact is in flight never stages or dispatches a sibling (#23495).
+
+    Both incidents staged a second attempt over a dispatched one. Its delivery hit
+    "compact boundary wait already active", raised handoff_delivery_failed, and left
+    the retry gate demanding set_handoff after the first attempt compacted the session,
+    while the continuation prompt said not to call set_handoff again.
+    """
+    manager, session_id = _persistent_session(temp_db, tmp_path)
+    set_handoff = _feedback_registry(temp_db, manager, survey="off").get_tool("set_handoff")
+    assert set_handoff is not None
+    pane = MagicMock(backend="tmux", target="%12")
+    pane.snapshot = AsyncMock(return_value="ready")
+    variables = SessionVariableManager(temp_db)
+    event_loop = MagicMock()
+    event_loop.is_closed.return_value = False
+
+    with (
+        session_context_for_test(session_id),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal._resolve_pane_io",
+            return_value=(pane, None),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal._interrupt_observer",
+            return_value=(None, None),
+        ),
+    ):
+        first = asyncio.run(set_handoff(current_state="First", next_steps=["Continue"]))
+        # The first attempt's delivery is in flight: claimed and its /compact typed.
+        claimed = claim_staged_handoff_delivery(
+            temp_db, session_id, first["attempt_id"], recover_unarmed_gate=True
+        )
+        assert claimed is not None
+        retry = asyncio.run(set_handoff(current_state="Retry", next_steps=["Continue"]))
+
+    assert (retry["handoff_staged"], retry["delivery_pending"]) == (True, True)
+    assert retry["reused_attempt"] is True
+    assert retry["attempt_id"] == first["attempt_id"]
+    assert _handoff_row_count(temp_db, session_id) == 1
+    marker = variables.get_variables(session_id)[PENDING_HANDOFF_VARIABLE]
+    assert (marker["attempt_id"], marker["handoff_record_id"]) == (
+        claimed.attempt_id,
+        claimed.handoff_record_id,
+    )
+
+    # The context observer re-arms the gate from the retry result; AFTER_TOOL then
+    # schedules it, and the in-flight claim leaves nothing to dispatch.
+    pending_gate = {
+        "handoff_staged": True,
+        "delivery_pending": True,
+        "attempt_id": retry["attempt_id"],
+        "clear_session": False,
+    }
+    variables.merge_variables(session_id, {HANDOFF_DISPATCH_GATE_VARIABLE: pending_gate})
+    with patch("gobby.hooks.terminal_handoff_delivery.asyncio.run_coroutine_threadsafe") as submit:
+        scheduled = schedule_terminal_handoff_delivery(
+            _set_handoff_completion(session_id, retry),
+            session_manager=manager,
+            agent_run_manager=MagicMock(),
+            event_loop=event_loop,
+        )
+    assert scheduled is False
+    submit.assert_not_called()
+
+    # The first attempt compacts. Its gate is the pending one the compact boundary
+    # releases, never a delivery_failed gate demanding another set_handoff.
+    assert record_handoff_delivery(
+        temp_db,
+        handoff_id=claimed.handoff_record_id,
+        attempt_id=claimed.attempt_id,
+        boundary_kind="compact",
+        continuation_session_id=session_id,
+    )
+    settled = variables.get_variables(session_id)
+    assert settled[HANDOFF_DISPATCH_GATE_VARIABLE] == pending_gate
+    assert FAILED_HANDOFF_VARIABLE not in settled
+    assert HANDOFF_DELIVERY_FAILURES_VARIABLE not in settled
+    consumed = consume_pending_handoff(temp_db, session_id)
+    assert consumed is not None
+    assert "First" in consumed.markdown
