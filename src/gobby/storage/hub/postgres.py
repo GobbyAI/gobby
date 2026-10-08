@@ -76,12 +76,6 @@ class PostgresHubDatabase:
         self._runtime_role = runtime_role
         self._deployment_token = deployment_token()
         self._application_name = f"gobby-hub-{self._deployment_token}-{uuid.uuid4().hex[:8]}"
-        runtime_check = None
-        if runtime_role is not None:
-            runtime_check = partial(
-                _postgres_pool.assert_runtime_role,
-                runtime_role=runtime_role,
-            )
         self._pool = ConnectionPool(
             conninfo=self._conninfo,
             open=False,
@@ -103,7 +97,7 @@ class PostgresHubDatabase:
                 _postgres_pool.configure_pool_connection,
                 runtime_role=runtime_role,
             ),
-            check=runtime_check,
+            check=_postgres_pool.check_connection_alive,
         )
         self._open_lock = threading.Lock()
         self._pool_opened = False

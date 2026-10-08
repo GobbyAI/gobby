@@ -7,6 +7,7 @@ import json
 import logging
 import random
 import re
+import select
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
@@ -659,6 +660,24 @@ def configure_pool_connection(
     adapters.register_loader("uuid", TextLoader)
     if runtime_role is not None:
         configure_runtime_role(connection, runtime_role)
+        assert_runtime_role(connection, runtime_role)
+
+
+def check_connection_alive(connection: psycopg.Connection[Any]) -> None:
+    """Pool check: reject a pooled connection whose server end went away.
+
+    An idle connection's socket has nothing to read until the server sends a
+    FATAL notice or closes it, so a zero-timeout poll finds the connections a
+    hub restart killed without a round trip on every checkout (#23359). Only
+    a readable socket pays for psycopg_pool's own query check.
+    """
+    poll = getattr(select, "poll", None)
+    if poll is not None:
+        readable = poll()
+        readable.register(connection.fileno(), select.POLLIN)
+        if not readable.poll(0):
+            return
+    ConnectionPool.check_connection(connection)
 
 
 def configure_runtime_role(
@@ -676,17 +695,15 @@ def assert_runtime_role(
     connection: psycopg.Connection[Any],
     runtime_role: str,
 ) -> None:
-    """Reject a checked-out connection whose effective identity changed.
+    """Reject a connection whose effective identity is not the runtime role.
 
-    This runs on every checkout, so its cost is charged to every database
-    operation in the process. The query itself is unavoidable -- PostgreSQL
-    does not push the role: on server 18, parameter_status('role') is None
-    before and after SET ROLE, and session_authorization stays at the login
-    user. The transaction around it was avoidable, and was two thirds of the
-    cost: the pool's connections are not autocommit, so the SELECT opened a
-    transaction and the commit existed only to close it, verifying nothing.
-    Checking out and running one statement measured 0.620 ms with that commit
-    and 0.420 ms without, against 0.320 ms for no check at all (#20853).
+    The pool runs this once per connection, right after SET ROLE, and
+    verify_runtime_identity runs it on demand. It used to run on every
+    checkout, which charged a round trip to every database operation (#23359).
+    The query itself is unavoidable -- PostgreSQL does not push the role: on
+    server 18, parameter_status('role') is None before and after SET ROLE, and
+    session_authorization stays at the login user. Autocommit keeps the SELECT
+    from opening a transaction that would need a commit to close it (#20853).
     """
     validate_identifier(runtime_role)
     previous_autocommit = connection.autocommit
