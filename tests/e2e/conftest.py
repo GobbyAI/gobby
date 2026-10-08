@@ -566,6 +566,9 @@ def _seed_e2e_runtime_state(
         "gobby-tasks.expansion.enabled": False,
         "gobby-tasks.validation.enabled": False,
         "code_index.enabled": False,
+        # The updater downloads absent managed binaries from GitHub into the
+        # isolated bin dir, which would break the stamped set `gobby restart` proves.
+        "bin_freshness.enabled": False,
     }
     if terminal_host_socket_dir is not None:
         values["terminal_host.socket_dir"] = str(terminal_host_socket_dir)
