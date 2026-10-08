@@ -1,5 +1,6 @@
 """Render the approved crew-lane seats without launching live agents."""
 
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -203,9 +204,7 @@ def test_crew_lane_renders_operator_inputs(
     assert args["checkout_mode"] == "none"
     assert args["worktree_id"] == "pilot-worktree" and "project_path" not in args
     assert args["reserved_run_id"] == "pilot-run"
-    assert args["placement"] == {
-        "tab": {"workspace": "pilot-workspace", "title": f"Lane {lane} {title}"}
-    }
+    assert args["placement"] == {"tab": {"workspace": "pilot-workspace", "title": f"Lane {lane}"}}
     assert f".gobby/roles/{role_file}" in args["prompt"]
     assert ".gobby/roles/_common.md first" in args["prompt"]
     assert f"Explicit lane assignment: Lane {lane}" in args["prompt"]
@@ -240,3 +239,62 @@ def test_crew_lane_selects_only_requested_seats(requested: str, expected: list[s
     assert [
         step.id for step in definition.steps[1:] if renderer.should_run_step(step, context)
     ] == expected
+
+
+@pytest.mark.parametrize("lane_pane", [None, "pilot:existing-pane"])
+@pytest.mark.parametrize(
+    "seats",
+    [
+        subset
+        for size in range(1, 5)
+        for subset in combinations(
+            ("developer", "code-reviewer", "researcher", "lane-manager"), size
+        )
+    ],
+)
+def test_crew_lane_keeps_selected_seats_in_one_tab(
+    seats: tuple[str, ...], lane_pane: str | None
+) -> None:
+    definition = PipelineDefinition.model_validate(
+        yaml.safe_load((PIPELINES / "crew-lane.yaml").read_text())
+    )
+    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
+    inputs.update(
+        lane="6",
+        seats=",".join(reversed(seats)),
+        lane_pane=lane_pane,
+        workspace="pilot-workspace",
+        worktree_id="pilot-worktree",
+        report_to="gobby#14972",
+    )
+    context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "pilot-run"}
+    renderer = StepRenderer(TemplateEngine())
+    anchor_pane = lane_pane
+    titles = {
+        "developer": "developer",
+        "code-reviewer": "code reviewer",
+        "researcher": "researcher",
+        "lane-manager": "manager",
+    }
+    placements = []
+    for step in definition.steps[1:]:
+        if not renderer.should_run_step(step, context):
+            continue
+        assert step.mcp is not None and step.mcp.arguments is not None
+        args = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
+        placement = args["placement"]
+        placements.append(placement)
+        if anchor_pane is None:
+            assert placement == {"tab": {"workspace": "pilot-workspace", "title": "Lane 6"}}
+            anchor_pane = f"pilot:{step.id}"
+        else:
+            assert placement == {
+                "split": {
+                    "pane": anchor_pane,
+                    "axis": "right",
+                    "title": f"Lane 6 {titles[step.id]}",
+                }
+            }
+        context["steps"][step.id] = {"output": {"pane_ref": f"pilot:{step.id}"}}
+    assert len(placements) == len(seats)
+    assert sum("tab" in placement for placement in placements) == (0 if lane_pane else 1)
