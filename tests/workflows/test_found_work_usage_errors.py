@@ -129,15 +129,32 @@ def test_compacted_red_without_a_pure_missing_path_usage_error_still_blocks(
     )
 
 
+@pytest.mark.parametrize(
+    "locations",
+    ["--project {project} --directory {extract}", "--directory {extract} --project {project}"],
+    ids=["project-first", "directory-first"],
+)
 def test_deliberate_red_in_a_scratchpad_extract_does_not_hold_the_stop(
-    project: str, tmp_path: Path
+    project: str, tmp_path: Path, locations: str
 ) -> None:
     extract = tmp_path / "scratchpad" / "base_23762"
     (extract / _ALIVE).parent.mkdir(parents=True)
-    command = f"uv run --project {project} --directory {extract} pytest {_ALIVE} -q"
-    runs = [_run(1, command, exit_code=1, output=_REAL_FAILURE)]
+    options = locations.format(project=project, extract=extract)
+    runs = [_run(1, f"uv run {options} pytest {_ALIVE} -q", exit_code=1, output=_REAL_FAILURE)]
 
     assert unresolved_validation_failures(runs, owner_handoff=False, project_path=project) == ()
+
+
+def test_real_failure_still_blocks_when_the_checkout_itself_lies_in_a_scratchpad(
+    tmp_path: Path,
+) -> None:
+    checkout = tmp_path / "scratchpad" / "worktree"
+    (checkout / _ALIVE).parent.mkdir(parents=True)
+    runs = [_run(1, f"uv run pytest {_ALIVE} -q", exit_code=1, output=_REAL_FAILURE)]
+
+    assert unresolved_validation_failures(
+        runs, owner_handoff=False, project_path=str(checkout)
+    ) == (runs[0],)
 
 
 @pytest.mark.parametrize(

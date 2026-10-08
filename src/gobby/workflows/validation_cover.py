@@ -309,13 +309,18 @@ def surviving_path_failure(
 
 
 def ran_in_scratchpad(run: TranscriptValidationRun, project_path: str | None) -> bool:
-    """Whether a run targets an agent scratchpad tree, such as a reviewer's base extract.
+    """Whether a run targets an agent scratchpad tree outside the session's checkout.
 
-    Such a red is a deliberate probe outside the session's checkout, so it is
-    no terminal failure of the session's own validation.
+    Such a red, as in a reviewer's base extract, is a deliberate probe, so it is
+    no terminal failure of the session's own validation. A checkout that itself
+    lies in a scratchpad still owns the runs inside it.
     """
     directory = _source_tree(run.command, project_path)[0]
-    return directory is not None and _is_temp_agent_scratchpad_path(Path(directory))
+    if directory is None or not _is_temp_agent_scratchpad_path(Path(directory)):
+        return False
+    return project_path is None or not Path(directory).resolve().is_relative_to(
+        Path(project_path).resolve()
+    )
 
 
 def _tracked_at_head(directory: str, paths: Sequence[str], project_path: str | None) -> bool:
@@ -356,9 +361,11 @@ def _source_tree(command: str, base: str | None) -> tuple[str | None, str | None
     """Return the ``(directory, pythonpath)`` a validation command runs against.
 
     The directory starts at ``base`` and follows ``cd`` and uv's ``--directory``
-    or ``--project``, before or after ``run``. The pythonpath comes from a
-    ``PYTHONPATH=`` assignment or pytest's ``-o pythonpath=``. Relative values
-    resolve against the directory in effect when they appear.
+    or ``--project``, before or after ``run``. ``--directory`` sets uv's working
+    directory, so it outranks ``--project`` in either order, as in
+    ``run_location``. The pythonpath comes from a ``PYTHONPATH=`` assignment or
+    pytest's ``-o pythonpath=``. Relative values resolve against the directory in
+    effect when they appear.
     """
     try:
         tokens = shlex.split(command)
@@ -373,7 +380,8 @@ def _source_tree(command: str, base: str | None) -> tuple[str | None, str | None
         if token == "cd" and following is not None and _starts_segment(tokens, index):
             directory = _resolve(directory, following)
         elif option in _UV_DIRECTORY_OPTIONS and (inline or following):
-            directory = _resolve(directory, inline or following or "")
+            if option == "--directory" or not _segment_passes_directory(tokens, index):
+                directory = _resolve(directory, inline or following or "")
         elif option == "PYTHONPATH" and inline:
             pythonpath = _resolve(directory, inline)
         elif token in _INI_OVERRIDE_OPTIONS and following is not None:
@@ -387,6 +395,17 @@ def _source_tree(command: str, base: str | None) -> tuple[str | None, str | None
 
 def _starts_segment(tokens: Sequence[str], index: int) -> bool:
     return index == 0 or tokens[index - 1] in _SHELL_SEPARATORS
+
+
+def _segment_passes_directory(tokens: Sequence[str], index: int) -> bool:
+    """Whether the shell segment holding ``tokens[index]`` passes uv's ``--directory``."""
+    start = index
+    while start and tokens[start - 1] not in _SHELL_SEPARATORS:
+        start -= 1
+    end = index
+    while end < len(tokens) and tokens[end] not in _SHELL_SEPARATORS:
+        end += 1
+    return any(token.partition("=")[0] == "--directory" for token in tokens[start:end])
 
 
 def _ini_pythonpath(override: str, directory: str | None) -> str | None:
