@@ -152,6 +152,10 @@ step_workflow:
         - "gobby-tasks:get_task"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
+        # Post-close memory review runs after submit advances back to claim.
+        - "gobby-memory:create_memory"
+        - "gobby-memory:update_memory"
+        - "gobby-memory:delete_memory"
       on_mcp_success:
         - server: gobby-tasks
           tool: claim_task

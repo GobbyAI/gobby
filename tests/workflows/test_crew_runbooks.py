@@ -1,5 +1,6 @@
 """Render the approved crew-lane seats without launching live agents."""
 
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ def test_crew_lane_contains_only_approved_seats() -> None:
         "guard",
         "developer",
         "code-reviewer",
+        "researcher",
         "lane-manager",
     ]
     guard = definition.steps[0].mcp
@@ -41,6 +43,11 @@ def test_crew_lane_contains_only_approved_seats() -> None:
             "agent": "code-reviewer",
         },
         {
+            "name": "researcher",
+            "title": "${{ 'Lane ' + inputs.lane + ' researcher' }}",
+            "agent": "researcher",
+        },
+        {
             "name": "lane-manager",
             "title": "${{ 'Lane ' + inputs.lane + ' manager' }}",
             "agent": "lane-manager",
@@ -53,6 +60,10 @@ def test_crew_lane_contains_only_approved_seats() -> None:
         definition.inputs[f"reviewer_{name}"]["default"]
         for name in ("provider", "model", "reasoning_effort", "role_file")
     ] == ["claude", "claude-opus-5-5", "xhigh", "code-reviewer.md"]
+    assert [
+        definition.inputs[f"researcher_{name}"]["default"]
+        for name in ("provider", "model", "reasoning_effort", "role_file")
+    ] == ["codex", "gpt-6.1-sol", "medium", "researcher.md"]
     assert [
         definition.inputs[f"manager_{name}"]["default"]
         for name in ("provider", "model", "reasoning_effort", "role_file")
@@ -101,6 +112,26 @@ def test_crew_lane_contains_only_approved_seats() -> None:
             "gpt-6.1-sol",
             "high",
             "pilot-reviewer.md",
+        ),
+        (
+            "researcher",
+            "researcher",
+            "researcher",
+            "3",
+            "codex",
+            "gpt-6.1-sol",
+            "medium",
+            "researcher.md",
+        ),
+        (
+            "researcher",
+            "researcher",
+            "researcher",
+            "6",
+            "claude",
+            "claude-opus-5-5",
+            "high",
+            "pilot-researcher.md",
         ),
         (
             "lane-manager",
@@ -173,16 +204,14 @@ def test_crew_lane_renders_operator_inputs(
     assert args["checkout_mode"] == "none"
     assert args["worktree_id"] == "pilot-worktree" and "project_path" not in args
     assert args["reserved_run_id"] == "pilot-run"
-    assert args["placement"] == {
-        "tab": {"workspace": "pilot-workspace", "title": f"Lane {lane} {title}"}
-    }
+    assert args["placement"] == {"tab": {"workspace": "pilot-workspace", "title": f"Lane {lane}"}}
     assert f".gobby/roles/{role_file}" in args["prompt"]
     assert ".gobby/roles/_common.md first" in args["prompt"]
     assert f"Explicit lane assignment: Lane {lane}" in args["prompt"]
     assert 'target="session", target_id="gobby#14972"' in args["prompt"]
     assert 'owner_session="gobby#14972"' in args["prompt"]
     assert definition.inputs["report_to"]["required"]
-    inputs["seats"] = "researcher"
+    inputs["seats"] = "unapproved-seat"
     assert not renderer.should_run_step(step, context)
 
 
@@ -190,8 +219,14 @@ def test_crew_lane_renders_operator_inputs(
     ("requested", "expected"),
     [
         ("developer", ["developer"]),
+        ("researcher", ["researcher"]),
+        ("code-reviewer,researcher", ["code-reviewer", "researcher"]),
         ("code-reviewer,lane-manager", ["code-reviewer", "lane-manager"]),
         ("developer,code-reviewer,lane-manager", ["developer", "code-reviewer", "lane-manager"]),
+        (
+            "developer,code-reviewer,researcher,lane-manager",
+            ["developer", "code-reviewer", "researcher", "lane-manager"],
+        ),
     ],
 )
 def test_crew_lane_selects_only_requested_seats(requested: str, expected: list[str]) -> None:
@@ -204,3 +239,62 @@ def test_crew_lane_selects_only_requested_seats(requested: str, expected: list[s
     assert [
         step.id for step in definition.steps[1:] if renderer.should_run_step(step, context)
     ] == expected
+
+
+@pytest.mark.parametrize("lane_pane", [None, "pilot:existing-pane"])
+@pytest.mark.parametrize(
+    "seats",
+    [
+        subset
+        for size in range(1, 5)
+        for subset in combinations(
+            ("developer", "code-reviewer", "researcher", "lane-manager"), size
+        )
+    ],
+)
+def test_crew_lane_keeps_selected_seats_in_one_tab(
+    seats: tuple[str, ...], lane_pane: str | None
+) -> None:
+    definition = PipelineDefinition.model_validate(
+        yaml.safe_load((PIPELINES / "crew-lane.yaml").read_text())
+    )
+    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
+    inputs.update(
+        lane="6",
+        seats=",".join(reversed(seats)),
+        lane_pane=lane_pane,
+        workspace="pilot-workspace",
+        worktree_id="pilot-worktree",
+        report_to="gobby#14972",
+    )
+    context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "pilot-run"}
+    renderer = StepRenderer(TemplateEngine())
+    anchor_pane = lane_pane
+    titles = {
+        "developer": "developer",
+        "code-reviewer": "code reviewer",
+        "researcher": "researcher",
+        "lane-manager": "manager",
+    }
+    placements = []
+    for step in definition.steps[1:]:
+        if not renderer.should_run_step(step, context):
+            continue
+        assert step.mcp is not None and step.mcp.arguments is not None
+        args = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
+        placement = args["placement"]
+        placements.append(placement)
+        if anchor_pane is None:
+            assert placement == {"tab": {"workspace": "pilot-workspace", "title": "Lane 6"}}
+            anchor_pane = f"pilot:{step.id}"
+        else:
+            assert placement == {
+                "split": {
+                    "pane": anchor_pane,
+                    "axis": "right",
+                    "title": f"Lane 6 {titles[step.id]}",
+                }
+            }
+        context["steps"][step.id] = {"output": {"pane_ref": f"pilot:{step.id}"}}
+    assert len(placements) == len(seats)
+    assert sum("tab" in placement for placement in placements) == (0 if lane_pane else 1)

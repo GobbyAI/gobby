@@ -884,6 +884,45 @@ async def test_gateway_does_not_misclassify_unstructured_exit_three(
     assert exc_info.value.stderr == "real failure"
 
 
+async def test_gateway_classifies_grant_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stderr = b'{"error":"timeout","message":"grant operation timed out"}'
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(returncode=2, stderr=stderr),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeTimeoutError, match="grant operation timed out") as caught:
+        await gateway.vector_sync_file(Path("/tmp/project"), "src/app.py")
+
+    assert caught.value.stderr == stderr.decode()
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("error_code", ["managed_capability_missing", "io", "expired"])
+async def test_gateway_preserves_permanent_grant_error_classification(
+    error_code: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stderr = f'{{"error":"{error_code}","message":"grant rejected"}}'.encode()
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(returncode=2, stderr=stderr),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeCommandError, match="grant rejected") as caught:
+        await gateway.vector_sync_file(Path("/tmp/project"), "src/app.py")
+
+    assert caught.value.stderr == stderr.decode()
+    assert processes == []
+
+
 async def test_gateway_classifies_daemon_config_transport_without_forwarding_stderr(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
