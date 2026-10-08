@@ -8,9 +8,6 @@ rules:
     event: before_tool
     enabled: true
     priority: 30
-    when: >
-      tool_input.get('server_name') == 'gobby-tasks'
-      and tool_input.get('tool_name') == 'update_task'
     effects:
       - type: block
         mcp_tools: ["gobby-tasks:update_task"]
