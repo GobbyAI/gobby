@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable, Generator
@@ -144,6 +145,7 @@ def test_readiness_bootstrap_records_isolated_daemon_same_path_write(
     )
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     monkeypatch.setenv(ROOT_ENV, str(home / ".gobby"))
+    monkeypatch.setattr(e2e, "_production_daemon_running", lambda: True)
     monkeypatch.setenv(LOG_ENV, str(log))
     env = dict(os.environ)
     env.update(
@@ -188,6 +190,7 @@ def test_guard_checks_mutations_without_flagging_reads(
         path.unlink()
         path.symlink_to(outside)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(e2e, "_production_daemon_running", lambda: True)
     factory = cast(Callable[[], Generator[None]], inspect.unwrap(e2e.assert_no_external_writes))
     guard = factory()
     next(guard)
@@ -204,3 +207,101 @@ def test_guard_checks_mutations_without_flagging_reads(
         path.write_text("modified")
     with pytest.raises(pytest.fail.Exception, match="recovery/session.json"):
         next(guard)
+
+
+@pytest.mark.parametrize("operation", ["child_create", "child_modify", "fifo"])
+def test_quiet_guard_retains_uninstrumented_write_detection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    home = tmp_path / "home"
+    root = home / ".gobby"
+    root.mkdir(parents=True)
+    target = root / "escaped.db"
+    if operation == "child_modify":
+        target.write_text("before")
+        os.utime(target, (0, 0))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(e2e, "_production_daemon_running", lambda: False)
+    factory = cast(Callable[[], Generator[None]], inspect.unwrap(e2e.assert_no_external_writes))
+    guard = factory()
+    next(guard)
+    if operation == "fifo":
+        os.mkfifo(target)
+    else:
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; open(sys.argv[1], 'w').write('child')",
+                str(target),
+            ],
+            check=True,
+            timeout=10,
+        )
+    with pytest.raises(pytest.fail.Exception, match="escaped.db"):
+        next(guard)
+
+
+def test_clean_test_does_not_inherit_previous_attributed_leak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.fixtures.external_write_audit import LOG_ENV, observe_writes
+
+    home = tmp_path / "home"
+    root = home / ".gobby"
+    root.mkdir(parents=True)
+    log = tmp_path / "writes.jsonl"
+    log.touch()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(e2e, "_production_daemon_running", lambda: True)
+    monkeypatch.setenv(LOG_ENV, str(log))
+    factory = cast(Callable[[], Generator[None]], inspect.unwrap(e2e.assert_no_external_writes))
+    with observe_writes(root, log):
+        leaking = factory()
+        next(leaking)
+        (root / "leak.json").write_text("leak")
+        with pytest.raises(pytest.fail.Exception, match="leak.json") as failure:
+            next(leaking)
+        clean = factory()
+        next(clean)
+        with pytest.raises(StopIteration):
+            next(clean)
+        assert str(failure.value).count("open: ~/.gobby/leak.json") == 1
+
+
+@pytest.mark.parametrize("operation", ["sqlite", "unresolved", "sqlite_readonly"])
+def test_live_guard_covers_database_and_unresolved_path_attempts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    home = tmp_path / "home"
+    root = home / ".gobby"
+    root.mkdir(parents=True)
+    target = root / "escaped.db"
+    if operation == "sqlite_readonly":
+        connection = sqlite3.connect(target)
+        connection.close()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(e2e, "_production_daemon_running", lambda: True)
+    factory = cast(Callable[[], Generator[None]], inspect.unwrap(e2e.assert_no_external_writes))
+    guard = factory()
+    next(guard)
+    if operation == "unresolved":
+        original_resolve = Path.resolve
+
+        def resolve(path: Path, strict: bool = False) -> Path:
+            if path == target:
+                raise OSError("cannot resolve mutation target")
+            return original_resolve(path, strict=strict)
+
+        monkeypatch.setattr(Path, "resolve", resolve)
+        target.write_text("owned")
+    else:
+        database = f"file:{target}?mode=ro" if operation == "sqlite_readonly" else str(target)
+        connection = sqlite3.connect(database, uri=operation == "sqlite_readonly")
+        connection.close()
+    if operation == "sqlite_readonly":
+        with pytest.raises(StopIteration):
+            next(guard)
+    else:
+        with pytest.raises(pytest.fail.Exception, match="escaped.db"):
+            next(guard)

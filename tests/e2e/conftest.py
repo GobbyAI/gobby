@@ -2144,14 +2144,33 @@ def assert_no_external_writes() -> Generator[None]:
 
     The daemon installs the same audit hook in readiness_bootstrap. Concurrent
     live processes have no observer and cannot produce records in our temp log.
-    Uninstrumented children (including native helpers) are outside this Python
-    audit boundary; a home-directory snapshot cannot attribute their writes.
+    When no production daemon is present before or after the test, retain the
+    snapshot verdict for uninstrumented children and native filesystem writes.
+    In live mode these remain outside the Python audit attribution boundary.
     """
-    from tests.fixtures.external_write_audit import daemon_writes, observe_writes
+    from tests.fixtures.external_write_audit import daemon_writes, observe_writes, write_log_offset
 
-    with observe_writes(Path.home() / ".gobby") as observer:
+    root = Path.home() / ".gobby"
+    prod_before = _production_daemon_running()
+    before = _snapshot_dir(root) if not prod_before else {}
+    offset = write_log_offset()
+    with observe_writes(root) as observer:
         yield
-    leaked = observer.writes + daemon_writes()
+    leaked = list(dict.fromkeys(observer.writes + daemon_writes(offset)))
+    prod_after = _production_daemon_running()
+    if not prod_before and not prod_after:
+        for rel_path, mtime in _snapshot_dir(root).items():
+            basename = Path(rel_path).name
+            if rel_path not in before:
+                if rel_path.startswith(_ALWAYS_EXEMPT_PREFIXES):
+                    continue
+                if basename not in _ALWAYS_EXEMPT_BASENAMES:
+                    leaked.append(f"CREATED: ~/.gobby/{rel_path}")
+            elif mtime != before[rel_path] and not rel_path.startswith("logs/"):
+                if _is_shallow_snapshot_child(f"{rel_path}/"):
+                    continue
+                if not basename.endswith(("-shm", "-wal", "-journal")):
+                    leaked.append(f"MODIFIED: ~/.gobby/{rel_path}")
     if leaked:
         pytest.fail("E2E-owned process attempted real-home writes:\n" + "\n".join(leaked))
 
