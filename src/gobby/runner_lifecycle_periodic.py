@@ -199,8 +199,10 @@ def start_periodic_tasks(
     )
     runner._provider_capability_refresh_task = None
     provider_capability_service = getattr(services, "provider_capability_service", None)
-    if provider_capability_service is not None and not hub_only_skipped(
-        "provider-capability-refresh"
+    if (
+        provider_capability_service is not None
+        and config.provider_capabilities.refresh_enabled
+        and not hub_only_skipped("provider-capability-refresh")
     ):
         run = getattr(provider_capability_service, "run", None)
         refresh_loop = run(lambda: runner._shutdown_requested) if callable(run) else None

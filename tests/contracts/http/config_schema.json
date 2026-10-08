@@ -3355,6 +3355,16 @@
           "default": "feature_mid",
           "description": "Provider-agnostic capability profile for verification synthesis."
         },
+        "provider_capabilities.refresh_enabled": {
+          "type": "boolean",
+          "namespace": "provider_capabilities",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "restart_required",
+          "machineExport": false,
+          "default": true,
+          "description": "Refresh provider capability catalogs at daemon start and every 24 hours. Each refresh launches the installed provider CLIs."
+        },
         "recommend_tools.candidates": {
           "type": [
             "string"
