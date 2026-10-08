@@ -256,17 +256,13 @@ class TestCreateTaskTool:
         mock_task_manager.get_task.return_value = task
         mock_task_manager.update_task.return_value = task
 
-        with patch(
-            "gobby.mcp_proxy.tools.tasks._crud.require_claim_authority",
-            return_value=None,
-        ):
-            result = await create_task_registry(mock_task_manager).call(
-                "update_task",
-                {
-                    "task_id": task.id,
-                    "description": "Targets:\n- src/gobby/tasks/overlay_only.py",
-                },
-            )
+        result = await create_task_registry(mock_task_manager).call(
+            "update_task",
+            {
+                "task_id": task.id,
+                "description": "Targets:\n- src/gobby/tasks/overlay_only.py",
+            },
+        )
 
         assert "targets_not_found" not in result
         mock_task_manager.update_task.assert_called_once()
@@ -303,17 +299,13 @@ class TestCreateTaskTool:
         )
         mock_task_manager.get_task.return_value = task
 
-        with patch(
-            "gobby.mcp_proxy.tools.tasks._crud.require_claim_authority",
-            return_value=None,
-        ):
-            result = await create_task_registry(mock_task_manager).call(
-                "update_task",
-                {
-                    "task_id": task.id,
-                    "description": "Targets:\n- src/gobby/tasks/primary_only.py",
-                },
-            )
+        result = await create_task_registry(mock_task_manager).call(
+            "update_task",
+            {
+                "task_id": task.id,
+                "description": "Targets:\n- src/gobby/tasks/primary_only.py",
+            },
+        )
 
         assert result["success"] is False
         assert result["error_type"] == "checkout_unresolved"

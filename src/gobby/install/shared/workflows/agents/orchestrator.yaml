@@ -58,9 +58,11 @@ workflows:
       - "name:no-force-push-interactive"
       - "name:no-destructive-git-interactive"
     # A spawned Orchestrator keeps its restart, cutover and worktree-cleanup
-    # authority; the destructive-git and force-push rules still apply.
+    # authority; the destructive-git and force-push rules still apply. It edits
+    # tasks as needed, so block-update-task is excluded.
     exclude:
       - "name:no-daemon-management"
       - "name:no-daemon-management-http"
       - "name:block-git-worktree-mutations"
+      - "name:block-update-task"
   variables: {}
