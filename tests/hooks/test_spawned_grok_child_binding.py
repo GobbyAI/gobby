@@ -30,7 +30,7 @@ _NATIVE_TTY = "/dev/ttys900"
 
 def _service(session_manager: SessionManager, project_id: str) -> SessionLookupService:
     session_task_manager = MagicMock()
-    session_task_manager.get_session_tasks.return_value = []
+    session_task_manager.get_worked_on_task.return_value = None
     return SessionLookupService(
         # hook_manager.py casts at this same boundary: SessionManager serves the
         # HookSessionManager protocol at runtime without nominally declaring it.

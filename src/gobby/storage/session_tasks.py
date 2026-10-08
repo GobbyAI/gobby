@@ -130,6 +130,27 @@ class SessionTaskManager:
             )
         return results
 
+    def get_worked_on_task(self, session_id: str, task_id: str | None = None) -> Task | None:
+        """Return the session's latest ``worked_on`` task, or ``task_id``'s if linked so.
+
+        Hooks need only this task; loading every task the session ever linked
+        cost ~240 samples/min of GIL time under load (#23359).
+        """
+        row = self.db.fetchone(
+            """
+            SELECT t.*
+            FROM tasks t
+            JOIN session_tasks st ON t.id = st.task_id
+            WHERE st.session_id = %s
+              AND st.action = 'worked_on'
+              AND (%s::text IS NULL OR st.task_id::text = %s)
+            ORDER BY st.created_at DESC
+            LIMIT 1
+            """,
+            (session_id, task_id, task_id),
+        )
+        return None if row is None else Task.from_row(row)
+
     def get_task_sessions(self, task_id: str) -> list[dict[str, Any]]:
         """
         Get all sessions associated with a task.
