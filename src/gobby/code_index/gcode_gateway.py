@@ -177,7 +177,7 @@ class GcodeVersionError(GcodeGatewayError):
 
 
 class GcodeTimeoutError(GcodeGatewayError):
-    """Raised when a gcode subprocess exceeds its timeout."""
+    """Raised when gcode or one of its grant operations exceeds its timeout."""
 
     def __init__(self, message: str, *, stdout: str = "", stderr: str = "") -> None:
         self.stdout = stdout
@@ -333,7 +333,7 @@ def _classify_gcode_command_error(
     returncode: int,
     stderr_text: str,
     stdout_text: str = "",
-) -> GcodeCommandError:
+) -> GcodeCommandError | GcodeTimeoutError:
     if returncode == 3:
         try:
             payload = json.loads(stdout_text)
@@ -373,6 +373,12 @@ def _classify_gcode_command_error(
             stdout=stdout_text,
         )
     payload = _typed_gcode_error(stderr_text)
+    if payload is not None and payload.get("error") == "timeout":
+        return GcodeTimeoutError(
+            f"gcode exited {returncode}: {stderr_text}",
+            stdout=stdout_text,
+            stderr=stderr_text,
+        )
     if payload is not None and payload.get("error") in _CHECKOUT_ERROR_CODES:
         project_path = _command_project_path(command)
         if project_path is not None:
