@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from uuid import uuid4
 
@@ -213,3 +214,20 @@ def test_startup_without_a_ready_socket_is_reaped(tmp_path: Path) -> None:
         if process.poll() is None:
             process.kill()
             process.wait(timeout=5)
+
+
+def test_empty_run_returns_without_a_settle_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    scans = 0
+
+    def no_processes() -> Iterator[psutil.Process]:
+        nonlocal scans
+        scans += 1
+        return iter(())
+
+    def unexpected_wait(seconds: float) -> None:
+        raise AssertionError(f"Empty run waited {seconds}s despite owning no fixtures")
+
+    monkeypatch.setattr(psutil, "process_iter", no_processes)
+    monkeypatch.setattr(time, "sleep", unexpected_wait)
+    cleanup_run("empty-run")
+    assert scans == 1

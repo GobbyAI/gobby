@@ -154,7 +154,7 @@ def cleanup_run(run_id: str) -> None:
 
     if not run_id:
         raise ValueError("Fixture cleanup requires a nonempty pytest run ID")
-    quiet_until = time.monotonic() + E2E_HOST_SETTLE_SECONDS
+    quiet_until = time.monotonic()
     while True:
         resources = _resources(run_id)
         if not resources:
