@@ -687,8 +687,6 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
         elif not quote and char == "#" and (index == 0 or subject[index - 1] in " \t\n;|&()"):
             end = subject.find("\n", index)
             end = len(subject) if end < 0 else end
-            out.append(subject[index:end])
-            correlated.append(subject[index:end])
             index = end
             continue
         if char == "\n" and not quote:

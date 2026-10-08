@@ -256,6 +256,11 @@ def test_uv_hidden_global_value_options(
             False,
             id="review_trailing_comment_data",
         ),
+        pytest.param(
+            f"X=$(python3 - <<'PY'\nprint(1)\nPY\n) true # then; {_MUTATION}\necho ok",
+            False,
+            id="review_comment_mutation_data",
+        ),
         (f"X=$(python3 - <<'PY'\nprint('ok')\nPY\n) {_MUTATION}", True),
         (f"X=$({_ODD_PYTHON_SOURCE}) {_MUTATION}", True),
     ],
