@@ -107,6 +107,7 @@ class SuppressionScan:
 
     sites: tuple[SuppressionSite, ...]
     files_scanned: int
+    errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -144,10 +145,19 @@ def scan_suppressions(
     resolved_root = root.resolve()
     targets = tuple(_resolve_target(path, root=resolved_root) for path in paths)
     files = tuple(_discover_python_files(targets, root=resolved_root))
-    sites = tuple(site for path in files for site in _scan_python_file(path, root=resolved_root))
+    sites: list[SuppressionSite] = []
+    errors: list[str] = []
+    for path in files:
+        try:
+            file_sites = tuple(_scan_python_file(path, root=resolved_root))
+        except ValueError as exc:
+            errors.append(str(exc))
+        else:
+            sites.extend(file_sites)
     return SuppressionScan(
         sites=tuple(sorted(sites, key=_site_sort_key)),
         files_scanned=len(files),
+        errors=tuple(errors),
     )
 
 
@@ -246,13 +256,19 @@ def _discover_python_files(targets: Sequence[Path], *, root: Path) -> Iterator[P
             candidates = _walk_python_files(target, root=root)
         for candidate in candidates:
             resolved = candidate.resolve()
-            if resolved in seen or _is_generated_file(resolved):
+            if (
+                resolved in seen
+                or _is_excluded_directory(resolved.parent, root=root)
+                or _is_generated_file(resolved)
+            ):
                 continue
             seen.add(resolved)
             yield resolved
 
 
 def _walk_python_files(target: Path, *, root: Path) -> Iterator[Path]:
+    if _is_excluded_directory(target, root=root):
+        return
     for directory, dirnames, filenames in os.walk(target):
         directory_path = Path(directory)
         dirnames[:] = [
@@ -268,6 +284,11 @@ def _walk_python_files(target: Path, *, root: Path) -> Iterator[Path]:
 
 def _is_excluded_directory(path: Path, *, root: Path) -> bool:
     relative_parts = path.relative_to(root).parts
+    if any(
+        relative_parts[index : index + 2] == (".gobby", "tmp")
+        for index in range(len(relative_parts) - 1)
+    ):
+        return True
     if relative_parts and relative_parts[0] in _TOP_LEVEL_BUILD_DIRECTORY_NAMES:
         return True
     return not _EXCLUDED_DIRECTORY_NAMES.isdisjoint(relative_parts)

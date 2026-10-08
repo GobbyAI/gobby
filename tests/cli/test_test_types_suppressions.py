@@ -53,6 +53,68 @@ def sample() -> None:
     ]
 
 
+@pytest.mark.parametrize("target", [".", ".gobby/tmp", ".gobby/tmp/broken.py"])
+def test_scan_excludes_gobby_scratch_even_when_explicitly_targeted(
+    tmp_path: Path, target: str
+) -> None:
+    _write(tmp_path / "src" / "owned.py", "value = 1  # noqa: F401\n")
+    _write(tmp_path / ".gobby" / "scripts" / "owned.py", "value = 2  # noqa: F401\n")
+    _write(tmp_path / ".gobby" / "tmp" / "broken.py", "value = (\n")
+
+    scan = scan_suppressions((target,), root=tmp_path)
+    scoped = scan_suppressions(("src", ".gobby/scripts"), root=tmp_path)
+
+    assert scan.errors == ()
+    if target == ".":
+        assert scan == scoped
+        assert scan.files_scanned == 2
+        assert [site.path for site in scan.sites] == [".gobby/scripts/owned.py", "src/owned.py"]
+    else:
+        assert scan.files_scanned == 0
+        assert scan.sites == ()
+
+
+def test_scan_reports_each_malformed_source_and_continues(tmp_path: Path) -> None:
+    _write(tmp_path / "a_broken.py", "value = 1  # noqa: F401\nvalue = (\n")
+    _write(tmp_path / "b_broken.py", 'value = """\n')
+    _write(tmp_path / "z_valid.py", "value = 2  # noqa: F401\n")
+
+    scan = scan_suppressions((".",), root=tmp_path)
+
+    assert scan.files_scanned == 3
+    assert [site.path for site in scan.sites] == ["z_valid.py"]
+    assert len(scan.errors) == 2
+    assert f"Could not tokenize Python source {tmp_path / 'a_broken.py'}:" in scan.errors[0]
+    assert f"Could not tokenize Python source {tmp_path / 'b_broken.py'}:" in scan.errors[1]
+
+
+@pytest.mark.parametrize("write_baseline", [False, True])
+def test_cli_reports_source_errors_and_preserves_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, write_baseline: bool
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "a_broken.py"
+    baseline = tmp_path / "baseline.json"
+    _write(target, "value = 1  # noqa: F401\n")
+    _write(tmp_path / "z_valid.py", "value = 2  # noqa: F401\n")
+    _baseline(tmp_path, baseline)
+    original_baseline = baseline.read_bytes()
+    _write(target, "value = (\n")
+    arguments = ["suppressions", ".", "--baseline", str(baseline)]
+    if write_baseline:
+        arguments.append("--write-baseline")
+
+    result = CliRunner().invoke(types_command, arguments)
+
+    assert result.exit_code == 1
+    assert "Files scanned: 2" in result.output
+    assert "Suppressions: 1" in result.output
+    assert f"Could not tokenize Python source {target}:" in result.output
+    assert "New: 0" in result.output
+    assert "Stale: 1" in result.output
+    assert baseline.read_bytes() == original_baseline
+
+
 def test_fingerprint_survives_line_and_formatting_movement(tmp_path: Path) -> None:
     target = tmp_path / "tests" / "test_sample.py"
     _write(target, "def sample() -> None:\n    value = (1 + 2)  # noqa: F401\n")
