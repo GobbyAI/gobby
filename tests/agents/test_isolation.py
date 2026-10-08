@@ -6,6 +6,7 @@ Tests the isolation abstraction layer for spawn_agent unified API.
 
 import asyncio
 import json
+import os
 import subprocess
 import threading
 from collections.abc import Awaitable
@@ -166,6 +167,53 @@ class TestEnsureIsolationCodeIndex:
             bootstrap_path=bootstrap_path,
         )
 
+    def test_shared_worktree_wrapper_preserves_each_session_grant(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.agents.code_index import _prepare_gcode_runtime
+
+        workspace = tmp_path / "workspace"
+        source_home = tmp_path / "home"
+        workspace.mkdir()
+        source_home.mkdir()
+        monkeypatch.setenv("GOBBY_HOME", str(source_home))
+        self._write_operator_token(source_home)
+        self._stub_grant_context(monkeypatch)
+        gcode_bin = tmp_path / "gcode"
+        gcode_bin.write_text(
+            '#!/bin/sh\nprintf "%s\\n" "$GOBBY_MANAGED_EXECUTION_BOOTSTRAP" '
+            '"$GOBBY_SESSION_ID" "$@"\n'
+        )
+        gcode_bin.chmod(0o755)
+        launches = []
+        for _ in range(2):
+            session_id = str(uuid4())
+            credential_root = tmp_path / session_id
+            credential_root.mkdir()
+            launch = _prepare_gcode_runtime(
+                workspace=workspace,
+                gcode_bin=gcode_bin,
+                credential=self._credential(credential_root),
+                runtime_root=tmp_path / "runtime",
+                project_id=self._PROJECT_ID,
+                session_id=session_id,
+                config_snapshot=self._config_snapshot(),
+            )
+            launches.append((session_id, launch))
+
+        for session_id, launch in launches:
+            assert launch.wrapper_path is not None
+            result = subprocess.run(
+                [launch.wrapper_path, "search", "two words"],
+                env={**os.environ, **launch.env, "GOBBY_SESSION_ID": session_id},
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            grant_path = launch.env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"]
+            assert result.stdout.splitlines() == [grant_path, session_id, "search", "two words"]
+            assert json.loads(Path(grant_path).read_text())["principal"]["session_id"] == session_id
+
     def _stub_grant_context(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             "gobby.agents.code_index._active_deployment_grant_context",
@@ -283,9 +331,7 @@ class TestEnsureIsolationCodeIndex:
         assert grant_path.is_file()
         assert result.env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == str(grant_path)
         assert wrapper.read_text() == (
-            f"#!/bin/sh\nexport GOBBY_HOME={result.runtime_home}\n"
-            f"export GOBBY_MANAGED_EXECUTION_BOOTSTRAP={grant_path}\n"
-            'exec /tmp/gcode "$@"\n'
+            f'#!/bin/sh\nexport GOBBY_HOME={result.runtime_home}\nexec /tmp/gcode "$@"\n'
         )
         assert not (Path(result.runtime_home) / "bootstrap.yaml").exists()
         preflight = self._gcode_calls(popen)[0]
