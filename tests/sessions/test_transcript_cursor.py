@@ -55,6 +55,62 @@ ASSISTANT_RECORD = (
 PLAIN_USER_RECORD = (
     json.dumps({"type": "user", "message": {"role": "user", "content": "hello"}}).encode() + b"\n"
 )
+
+
+def _claude_row(record: dict[str, object]) -> bytes:
+    return json.dumps(record).encode() + b"\n"
+
+
+# Claude Code 2.1.292 turn-boundary rows (2026-10-08, #23784): every turn with no Stop
+# hook holding it open ends in stop_hook_summary + turn_duration; a blocked Stop writes
+# only the summary and the turn continues.
+CLAUDE_STOP_SUMMARY_RECORD = _claude_row(
+    {"type": "system", "subtype": "stop_hook_summary", "preventedContinuation": False}
+)
+CLAUDE_TURN_DURATION_RECORD = _claude_row(
+    {"type": "system", "subtype": "turn_duration", "durationMs": 14085}
+)
+CLAUDE_TOOL_RESULT_RECORD = _claude_row(
+    {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}],
+        },
+    }
+)
+CLAUDE_TRAILING_ROWS = _claude_row({"type": "last-prompt"}) + _claude_row({"type": "attachment"})
+# A local slash command such as /model writes these rows without starting a turn.
+CLAUDE_LOCAL_COMMAND_ROWS = (
+    _claude_row(
+        {
+            "type": "user",
+            "isMeta": True,
+            "message": {
+                "role": "user",
+                "content": "<local-command-caveat>Caveat</local-command-caveat>",
+            },
+        }
+    )
+    + _claude_row(
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": "<command-name>/model</command-name>\n<command-message>model</command-message>",
+            },
+        }
+    )
+    + _claude_row(
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": "<local-command-stdout>Set model to Opus</local-command-stdout>",
+            },
+        }
+    )
+)
 # Grok 1.0.30 events.jsonl rows: a Ctrl+C cancel observed on 2026-09-14 (#22358).
 GROK_CANCELLED_RECORD = (
     json.dumps(
@@ -233,12 +289,44 @@ def test_codex_cursor_reports_whether_the_last_turn_ended(tmp_path: Path) -> Non
     assert cursor.turn_settled() is True
 
 
-def test_turn_settled_observer_covers_codex_and_grok_only(tmp_path: Path) -> None:
+def test_claude_cursor_reports_whether_the_last_turn_ended(tmp_path: Path) -> None:
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_bytes(CLAUDE_TRAILING_ROWS)
+    cursor = ClaudeTranscriptCursor.at_eof(transcript)
+
+    assert cursor.turn_settled() is None
+    _append_bytes(transcript, PLAIN_USER_RECORD + ASSISTANT_RECORD + CLAUDE_TOOL_RESULT_RECORD)
+    assert cursor.turn_settled() is False
+    _append_bytes(transcript, ASSISTANT_RECORD + CLAUDE_STOP_SUMMARY_RECORD)
+    assert cursor.turn_settled() is False, "a Stop hook may still hold the turn open"
+    _append_bytes(transcript, CLAUDE_TURN_DURATION_RECORD + CLAUDE_TRAILING_ROWS)
+    assert cursor.turn_settled() is True
+    _append_bytes(transcript, CLAUDE_LOCAL_COMMAND_ROWS)
+    assert cursor.turn_settled() is True, "a local slash command starts no turn"
+    _append_bytes(transcript, PLAIN_USER_RECORD)
+    assert cursor.turn_settled() is False
+    _append_bytes(transcript, ASSISTANT_RECORD + INTERRUPTED_TEXT_RECORD)
+    assert cursor.turn_settled() is True, "an interrupt ends the turn without turn_duration"
+    _append_bytes(transcript, PLAIN_USER_RECORD + ASSISTANT_RECORD + REJECTED_TOOL_RECORD)
+    assert cursor.turn_settled() is True
+
+
+def test_turn_settled_observer_covers_claude_codex_and_grok(tmp_path: Path) -> None:
     transcript = tmp_path / "session.jsonl"
     transcript.write_bytes(b"")
-    assert build_turn_settled_observer("claude", transcript, session_id="#1") is None
     assert build_turn_settled_observer("droid", transcript, session_id="#1") is None
     assert build_turn_settled_observer(None, transcript, session_id="#1") is None
+
+    claude = build_turn_settled_observer("claude", transcript, session_id="#1")
+    assert claude is not None
+    assert claude() is None
+    _append_bytes(transcript, PLAIN_USER_RECORD)
+    assert claude() is False
+    _append_bytes(transcript, CLAUDE_TURN_DURATION_RECORD)
+    assert claude() is True
+    transcript.unlink()
+    assert claude() is None
+    transcript.write_bytes(b"")
 
     codex = build_turn_settled_observer("codex", transcript, session_id="#1")
     assert codex is not None
