@@ -8,7 +8,7 @@ import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType, SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import psycopg
 import pytest
@@ -254,6 +254,36 @@ def test_snapshot_overrides_are_deeply_isolated_at_publish_and_access() -> None:
 
     assert snapshot.desired_overrides == {"provider": {"models": ["original"]}}
     assert snapshot.active_overrides == {"provider": {"models": ["original"]}}
+
+
+@pytest.mark.unit
+def test_active_section_is_isolated_without_copying_the_whole_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole-config copy is ~5 ms, and every hook paid it for one section (#23359)."""
+    snapshot = ConfigSnapshot(
+        revision=1,
+        desired=DaemonConfig(),
+        active=DaemonConfig(workflow={"timeout": 22.0}),
+        row_revisions={},
+        pending_restart_keys=frozenset(),
+        failed_live_keys={},
+    )
+    whole_copies: list[bool] = []
+    real_model_copy = DaemonConfig.model_copy
+
+    def counting_model_copy(self: DaemonConfig, **kwargs: Any) -> DaemonConfig:
+        whole_copies.append(True)
+        return real_model_copy(self, **kwargs)
+
+    monkeypatch.setattr(DaemonConfig, "model_copy", counting_model_copy)
+
+    workflow = snapshot.active_section("workflow")
+    workflow.timeout = 99.0
+
+    assert whole_copies == []
+    assert snapshot.active_section("workflow").timeout == 22.0
+    assert snapshot.active_section("test_mode") is False
 
 
 @pytest.mark.unit

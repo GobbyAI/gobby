@@ -20,6 +20,8 @@ import pytest
 
 import gobby.llm.context_windows as context_windows
 from gobby.config.ai import ModelMetadataAlias
+from gobby.config.app import DaemonConfig
+from gobby.config.runtime_models import ConfigSnapshot
 from gobby.llm.context_windows import (
     coerce_context_length,
     reconcile_model_context,
@@ -680,11 +682,16 @@ def test_ready_runtime_aliases_skip_the_per_call_config_read() -> None:
         provider_model_id="provider-model",
         openrouter_model_id="openai/registry-model",
     )
-    active = SimpleNamespace(ai=SimpleNamespace(model_metadata_aliases=[alias]))
-    runtime = SimpleNamespace(
-        ready=True,
-        capture=lambda: SimpleNamespace(snapshot=SimpleNamespace(active=active)),
+    active = DaemonConfig(ai={"model_metadata_aliases": [alias]})
+    snapshot = ConfigSnapshot(
+        revision=1,
+        desired=active,
+        active=active,
+        row_revisions={},
+        pending_restart_keys=frozenset(),
+        failed_live_keys={},
     )
+    runtime = SimpleNamespace(ready=True, capture=lambda: SimpleNamespace(snapshot=snapshot))
     app_context = SimpleNamespace(config_runtime=runtime)
 
     with patch("gobby.storage.config_repository.ConfigRepository.read") as config_read:

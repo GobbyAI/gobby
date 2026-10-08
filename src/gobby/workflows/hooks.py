@@ -116,6 +116,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         session_task_manager: "SessionTaskManager | None" = None,
         config: Any | None = None,
         config_resolver: Callable[[], Any | None] | None = None,
+        config_section_resolver: Callable[[str], Any | None] | None = None,
         llm_service_resolver: Callable[[], Any | None] | None = None,
         evaluation_runtime: "WorkflowEvaluationRuntime | None" = None,
     ):
@@ -125,6 +126,10 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         self._session_task_manager = session_task_manager
         self._config = config
         self._config_resolver = config_resolver or (lambda: self._config)
+        # Per-hook readers resolve only their section; the whole config is a ~5 ms copy (#23359).
+        self._config_section = config_section_resolver or (
+            lambda name: getattr(self._config_resolver(), name, None)
+        )
         self._found_work_analyzer = FoundWorkStopAnalyzer(
             llm_service_resolver=llm_service_resolver or (lambda: None),
             config_resolver=self._config_resolver,
@@ -151,11 +156,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         self._eval_locks: dict[str, _EvalLockState] = {}
 
     def _resolve_policy(self) -> tuple[bool, float | None]:
-        config = self._config_resolver()
-        if config is None:
+        workflow = self._config_section("workflow")
+        if workflow is None:
             return self._enabled, self.timeout
-        timeout = config.workflow.timeout
-        return config.workflow.enabled, timeout if timeout > 0 else None
+        timeout = workflow.timeout
+        return workflow.enabled, timeout if timeout > 0 else None
 
     def _reserve_eval_lock(self, session_id: str) -> _EvalLockState:
         """Reserve the per-session evaluation lock for one active or waiting event."""

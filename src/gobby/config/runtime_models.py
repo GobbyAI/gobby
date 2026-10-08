@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from typing import Any
 
 from gobby.config.app import DaemonConfig
 
@@ -114,6 +115,14 @@ class ConfigSnapshot:
     def active(self) -> DaemonConfig:
         """Return an isolated typed active projection."""
         return self._active.model_copy(deep=True)
+
+    def active_section(self, name: str) -> Any:
+        """Return an isolated copy of one top-level active setting or section.
+
+        Copying the whole projection costs ~5 ms; a reader of one section pays
+        only that section's copy (#23359).
+        """
+        return deepcopy(getattr(self._active, name))
 
     @property
     def desired_values(self) -> Mapping[str, object]:

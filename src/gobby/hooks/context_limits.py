@@ -60,6 +60,6 @@ def _active_hooks_config() -> Any | None:
     if runtime is None:
         return None
     try:
-        return runtime.snapshot.active.hooks
+        return runtime.snapshot.active_section("hooks")
     except RuntimeError:
         return None

@@ -142,7 +142,7 @@ def run_observers(
             variables,
             session_id,
             handler._session_manager,
-            config=getattr(handler._config_resolver(), "context_handoff", None),
+            config=handler._config_section("context_handoff"),
         )
 
     # Plan mode detection on the semantic start-of-turn boundary
@@ -162,7 +162,7 @@ def run_observers(
             variables,
             session_id,
             handler._session_manager,
-            config=getattr(handler._config_resolver(), "context_handoff", None),
+            config=handler._config_section("context_handoff"),
         )
 
     return failures

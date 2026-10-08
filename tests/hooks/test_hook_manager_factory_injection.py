@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+from functools import partial
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,10 +12,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.app import DaemonConfig
+from gobby.config.runtime_models import ConfigSnapshot
 from gobby.hooks.factory import HookManagerFactory
 from gobby.hooks.hook_manager import HookManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.hooks import WorkflowHookHandler
 
 pytestmark = pytest.mark.unit
 
@@ -93,6 +96,60 @@ def test_factory_config_resolution_falls_back_to_supplied_config_on_snapshot_fai
 
     startup = MagicMock()
     assert HookManagerFactory._resolve_config(startup, cast(Any, BrokenRuntime())) is startup
+
+
+def test_hook_policy_reads_one_section_without_copying_the_whole_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every hook deep-copied the ~5 ms whole config to read two workflow fields (#23359)."""
+    active = DaemonConfig(workflow={"enabled": False, "timeout": 22.0})
+    runtime = cast(
+        Any,
+        SimpleNamespace(
+            snapshot=ConfigSnapshot(
+                revision=1,
+                desired=active,
+                active=active,
+                row_revisions={},
+                pending_restart_keys=frozenset(),
+                failed_live_keys={},
+            )
+        ),
+    )
+    whole_copies: list[bool] = []
+    real_model_copy = DaemonConfig.model_copy
+
+    def counting_model_copy(self: DaemonConfig, **kwargs: Any) -> DaemonConfig:
+        whole_copies.append(True)
+        return real_model_copy(self, **kwargs)
+
+    monkeypatch.setattr(DaemonConfig, "model_copy", counting_model_copy)
+
+    def whole_config() -> DaemonConfig:
+        raise AssertionError("the hook policy must not resolve the whole config")
+
+    handler = WorkflowHookHandler(
+        config_resolver=whole_config,
+        config_section_resolver=partial(HookManagerFactory._resolve_config_section, None, runtime),
+    )
+
+    assert handler._resolve_policy() == (False, 22.0)
+    assert handler._config_section("context_handoff") == active.context_handoff
+    assert whole_copies == []
+
+
+def test_factory_section_resolution_falls_back_to_supplied_config_on_snapshot_failure() -> None:
+    class BrokenRuntime:
+        @property
+        def snapshot(self) -> object:
+            raise RuntimeError("ConfigRuntime has not started")
+
+    startup = DaemonConfig(workflow={"timeout": 22.0})
+    section = HookManagerFactory._resolve_config_section(
+        startup, cast(Any, BrokenRuntime()), "workflow"
+    )
+
+    assert section is startup.workflow
 
 
 def test_hook_manager_shutdown_leaves_injected_database_open() -> None:
