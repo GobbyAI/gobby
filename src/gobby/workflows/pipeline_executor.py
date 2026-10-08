@@ -257,7 +257,7 @@ class PipelineExecutor(
                     execution_id,
                     exc.step_id,
                 )
-            elif exc:
+            elif exc and not isinstance(exc, PipelineStepRefusal):
                 logger.error("Detached pipeline run %s failed: %s", execution_id, exc)
 
         task.add_done_callback(_on_done)

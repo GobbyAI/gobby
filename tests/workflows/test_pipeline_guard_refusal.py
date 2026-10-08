@@ -18,6 +18,7 @@ from gobby.telemetry.logging import _create_formatted_handlers, _handler_config
 from gobby.workflows.definitions import MCPStepConfig, PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline_executor import PipelineExecutor
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineStepError, StepStatus
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -47,7 +48,7 @@ class GuardProxy:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["direct", "background", "nested"])
+@pytest.mark.parametrize("mode", ["direct", "background", "nested", "detached"])
 @pytest.mark.parametrize("refused", [True, False])
 @pytest.mark.parametrize("reason", [REFUSAL, REFUSAL.replace("; ", ";\n")])
 async def test_guard_logging_preserves_refusal_and_real_failure(
@@ -135,6 +136,14 @@ async def test_guard_logging_preserves_refusal_and_real_failure(
                 await _execute_pipeline_background(
                     executor, pipeline, {}, "project", execution.id, pipeline.name
                 )
+            elif mode == "detached":
+                await executor.start_detached(pipeline=pipeline, inputs={}, project_id="project")
+                task = next(iter(executor._detached_tasks))
+                with pytest.raises(PipelineStepError):
+                    await task
+                await drain_asyncio_tasks()
+                assert executor._detached_tasks == set()
+                assert executor._detached_execution_ids == set()
             else:
                 with pytest.raises(PipelineStepError):
                     await executor.execute(pipeline=pipeline, inputs={}, project_id="project")
