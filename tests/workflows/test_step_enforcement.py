@@ -39,6 +39,53 @@ PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("step", ["load_skills", "serve"])
+async def test_researcher_can_set_role_title_without_write_authority(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+    step: str,
+) -> None:
+    shared = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents"
+    definition = yaml.safe_load((shared / "researcher.yaml").read_text())
+    definition.pop("network")
+    workflow = definition.pop("step_workflow")
+    variables = {
+        "_agent_blocked_tools": definition["blocked_tools"],
+        "_agent_blocked_mcp_tools": definition["blocked_mcp_tools"],
+        "_agent_type": "researcher",
+    }
+    _setup_step_workflow(
+        db, manager, instance_mgr, current_step=step, workflow_data={**definition, **workflow}
+    )
+    response = await engine.evaluate(
+        _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-sessions",
+                    "tool_name": "set_title",
+                    "arguments": {"title": "Researcher"},
+                },
+            }
+        ),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    assert response.decision != "block", response.reason
+    for native in ("Edit", "Write", "apply_patch"):
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": native, "tool_input": {}}),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+        assert response.decision == "block"
+    current = instance_mgr.get_for_session(SESSION_ID)
+    assert current is not None and current.current_step == step
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("seat", "step"),
     [
