@@ -28,7 +28,7 @@ from typing import Any, BinaryIO, Literal, overload
 # Each of these forces the fork path, or bypasses executable resolution. A
 # caller that needs its own session and the output at exit uses
 # create_session_exec; any other caller that needs one spawns directly and is
-# named in the allowlist of tests/utils/test_spawn.py.
+# named in the allowlist of tests/utils/test_posix_spawn.py.
 _REJECTED_OPTIONS = frozenset(
     {
         "close_fds",
