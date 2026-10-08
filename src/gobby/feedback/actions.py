@@ -179,8 +179,6 @@ class FeedbackActions:
                     continue
 
                 labels = [FEEDBACK_TASK_LABEL, LLM_REVIEWED_LABEL, AWAITING_HUMAN_REVIEW_LABEL]
-                if cluster.get("classification") == "guidance-gap":
-                    labels.append("needs-decision")
                 proposed_priority = proposed.get("priority")
                 priority = int(proposed_priority) if isinstance(proposed_priority, int) else 2
                 cited_paths = _cluster_cited_paths(cluster)
