@@ -249,22 +249,27 @@ async def _recover_landing(
             if await _ancestor(main, sha, entry.old):
                 continue
             activation_class = action["class"]
-            merged = await _merge_tree(main, entry.old, sha)
-            tree = merged.stdout.split("\n", 1)[0]
-            paths = await _candidate_paths(main, entry.old, sha, tree)
-            if action["candidate"] != sha:
-                activation_class = classify_paths(paths)
             facts: dict[str, str | int | bool] = {
                 **unknown,
                 "landed_tip": entry.new,
                 "mode": action["mode"],
                 "activation_class": activation_class,
-                "project_sync_required": requires_project_sync(paths),
                 "retest_required": action["mode"] == "merge",
                 "provenance": "reflog",
             }
             if action["mode"] == "merge":
                 facts["merge_commit"] = entry.new
+            try:
+                merged = await _merge_tree(main, entry.old, sha)
+                tree = merged.stdout.split("\n", 1)[0]
+                paths = await _candidate_paths(main, entry.old, sha, tree)
+            except LandingGitError:
+                # Exact-candidate trailers still prove activation and landing provenance.
+                # Missing sync facts hold release until project sync is verified.
+                return facts if action["candidate"] == sha else unknown
+            if action["candidate"] != sha:
+                facts["activation_class"] = classify_paths(paths)
+            facts["project_sync_required"] = requires_project_sync(paths)
             return facts
     except (OSError, UnicodeError, LandingGitError):
         return unknown

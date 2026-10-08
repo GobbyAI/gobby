@@ -1132,6 +1132,35 @@ async def test_pipeline_sync_landing_and_recovery(
     assert f"activation {expected_class}; project pipeline sync required" in message.content
 
 
+@pytest.mark.parametrize("move_tip", [False, True])
+async def test_exact_landing_recovery_preserves_trailer_when_diff_fails(
+    case: LandingCase, move_tip: bool
+) -> None:
+    sha = case.candidate(
+        "pipeline-sync",
+        {".gobby/workflows/pipelines/crew-lane.yaml": "name: crew-lane\n"},
+    )
+    task = case.reviewed(sha, "Project pipeline sync")
+    if move_tip:
+        case.direct({"docs/moved.md": "moved\n"})
+    with patch.object(
+        land_commit, "record_close_receipt", side_effect=IndeterminateCommitError("unobserved")
+    ):
+        pending = await case.land(task, sha)
+    assert pending["receipt_pending"] is True
+
+    with patch.object(
+        land_commit, "_merge_tree", side_effect=land_commit.LandingGitError("unavailable")
+    ):
+        recovered = await case.land(task, sha)
+
+    assert recovered["activation_class"] == "sync"
+    assert recovered["provenance"] == "reflog"
+    assert recovered["mode"] == ("merge" if move_tip else "ff")
+    assert recovered["retest_required"] is move_tip
+    assert "project_sync_required" not in recovered
+
+
 @pytest.mark.parametrize("pipeline_in_candidate", [False, True])
 async def test_stacked_recovery_reports_only_candidates_project_sync(
     case: LandingCase, pipeline_in_candidate: bool
