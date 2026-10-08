@@ -260,6 +260,81 @@ def test_claude_bash_error_header_supplies_the_exit_code(
     assert extract_outcome(result, extract_output(result)[0]) == expected
 
 
+def _claude_record_result(
+    content: str,
+    *,
+    is_error: bool,
+    transport: object,
+    git_branch: str = "wip/23437-callback-contract",
+    slug: str = "rustling-foraging-allen",
+) -> dict[str, object]:
+    """Close evidence's view of a Claude tool result: the parsed block plus its whole record."""
+    block = {
+        "type": "tool_result",
+        "content": content,
+        "is_error": is_error,
+        "tool_use_id": "toolu_01Vkx1DDxT4GvFQWUvQLcUz8",
+    }
+    return {
+        "tool_result": {"content": content, "is_error": is_error},
+        "raw_json": {
+            "parentUuid": "06fb90a1-d2bd-4638-b766-2d1769a00c12",
+            "isSidechain": False,
+            "promptId": "7da5ad50-6e28-4a11-ac50-754c7b407488",
+            "type": "user",
+            "message": {"role": "user", "content": [block]},
+            "uuid": "340a274e-da85-4143-9f1f-a8103fd6f50c",
+            "timestamp": "2026-10-07T20:52:36.137Z",
+            "toolUseResult": transport,
+            "sourceToolAssistantUUID": "06fb90a1-d2bd-4638-b766-2d1769a00c12",
+            "session_id": "1c8cea2d-b28a-4fa5-8df7-2ad8bd5f028a",
+            "userType": "external",
+            "entrypoint": "cli",
+            "cwd": "/Users/josh/.gobby/worktrees/gobby/lane-6-everything-else",
+            "sessionId": "1c8cea2d-b28a-4fa5-8df7-2ad8bd5f028a",
+            "version": "2.1.292",
+            "gitBranch": git_branch,
+            "slug": slug,
+        },
+    }
+
+
+def test_claude_error_string_result_output_is_only_the_tool_result_text() -> None:
+    """A failed Bash record's metadata never joins the run output (#23787)."""
+    content = (
+        "Exit code 4\n"
+        "ERROR: file or directory not found: tests/config/test_validation_matchers.py\n"
+        "[full output: rtk recall 6893682e04a1]"
+    )
+    result = _claude_record_result(content, is_error=True, transport=f"Error: {content}")
+
+    assert extract_output(result) == (content, False)
+
+
+@pytest.mark.parametrize(
+    ("git_branch", "slug"),
+    [("wip/1 failed", "rustling-foraging-allen"), ("main", "ERROR tests/test_a.py::test_b")],
+)
+def test_claude_record_metadata_cannot_flip_a_passing_run(git_branch: str, slug: str) -> None:
+    """Branch and slug text is not runner output, so it cannot report failures (#23787)."""
+    content = "============================= 3 passed in 0.10s =============================="
+    result = _claude_record_result(
+        content,
+        is_error=False,
+        transport={"stdout": content, "stderr": "", "interrupted": False, "isImage": False},
+        git_branch=git_branch,
+        slug=slug,
+    )
+    output, _truncated = extract_output(result)
+
+    assert output == content
+    assert extract_outcome(result, output, aggregate_status_is_trustworthy=False) == (
+        "success",
+        None,
+        None,
+    )
+
+
 def test_runner_reported_failure_keeps_the_claude_error_exit_code() -> None:
     """A runner-reported red still carries the header status to exit-code consumers (#23529)."""
     output = "FAILED tests/test_x.py::test_y - AssertionError\n1 failed in 0.10s"

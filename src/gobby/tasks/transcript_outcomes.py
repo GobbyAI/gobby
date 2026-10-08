@@ -222,25 +222,20 @@ def extract_output(result: Any, *, max_chars: int = _OUTPUT_CHAR_LIMIT) -> tuple
     """Extract bounded command output needed to classify validation failures."""
     if isinstance(result, dict) and "outcome_provenance" in result:
         result = {key: value for key, value in result.items() if key != "outcome_provenance"}
-    # Claude's transport copy can duplicate the result and exhaust the output limit.
-    if isinstance(result, dict) and isinstance(result.get("raw_json"), dict):
+    # The provider record around a tool result carries uuids, cwd, branch and
+    # slug, none of which is command output (#23787). Of it, only Claude's
+    # toolUseResult transport can add output, less its copy of the result, which
+    # would otherwise exhaust the output limit.
+    if isinstance(result, dict) and "raw_json" in result:
         raw_json = result["raw_json"]
+        transport = raw_json.get("toolUseResult") if isinstance(raw_json, dict) else None
         tool_result = result.get("tool_result")
         content = tool_result.get("content") if isinstance(tool_result, dict) else None
-        transport = raw_json.get("toolUseResult")
-        if (
-            content
-            and isinstance(content, str)
-            and isinstance(transport, str)
-            and content in transport
-        ):
-            result = {
-                **result,
-                "raw_json": {
-                    **raw_json,
-                    "toolUseResult": transport.replace(content, "", 1),
-                },
-            }
+        if content and isinstance(content, str) and isinstance(transport, str):
+            # A failed Claude Bash call's transport is "Error: " plus the result.
+            transport = transport.replace(content, "", 1).removeprefix("Error: ")
+        result = {key: value for key, value in result.items() if key != "raw_json"}
+        result["toolUseResult"] = transport
     parts: list[str] = []
     seen: set[str] = set()
     for value in _walk_values(result):

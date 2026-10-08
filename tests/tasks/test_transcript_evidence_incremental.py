@@ -125,7 +125,7 @@ def _validation_records(
         command="uv run pytest tests/tasks/test_a.py",
         call_id=call_id,
         start=at,
-        result={"exit_code": 0 if outcome == "passed" else 1, "stdout": outcome},
+        result={"exit_code": 0 if outcome == "passed" else 1, "stdout": f"1 {outcome}"},
         is_error=outcome != "passed",
     )
 
@@ -222,11 +222,9 @@ async def test_worker_owned_snapshot_matches_cold_derive_across_append_truncatio
     assert truncated == await _derive_for_caller(caller, session, window, tmp_path)
 
     original_bytes = transcript.read_bytes()
-    transcript.write_bytes(
-        original_bytes.replace(b'"passed"', b'"failed"').replace(
-            b'"exit_code": 0', b'"exit_code": 1'
-        )
-    )
+    # A Claude success records no exit code, so the same-size rewrite flips the
+    # runner summary that classifies it.
+    transcript.write_bytes(original_bytes.replace(b"1 passed", b"1 failed"))
     assert transcript.stat().st_size == len(original_bytes)
     rewritten = await _derive_for_caller(caller, session, window, tmp_path)
     snapshot = _stored_snapshot(session, tmp_path, window if caller == "window" else None)
