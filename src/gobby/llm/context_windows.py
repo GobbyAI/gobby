@@ -520,7 +520,7 @@ def _model_metadata_aliases(
     # fallback for callers without one (#22812).
     runtime = getattr(ctx, "config_runtime", None) if ctx else None
     if runtime is not None and runtime.ready:
-        return list(runtime.capture().snapshot.active.ai.model_metadata_aliases)
+        return list(runtime.capture().snapshot.active_section("ai").model_metadata_aliases)
 
     if db is not None:
         from gobby.storage.config_repository import ConfigRepository, ConfigRepositoryError

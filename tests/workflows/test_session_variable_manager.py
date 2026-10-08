@@ -115,7 +115,7 @@ def test_get_variables_empty(db: Any) -> None:
 def test_container_defaults_are_isolated_across_sessions_and_cache_hits(db: Any) -> None:
     """Mutating one returned default must not mutate the cached value or another session."""
     from gobby.storage.definitions import SessionVariableDefaultManager
-    from gobby.workflows.state_manager import SessionVariableManager
+    from gobby.workflows.state_manager import _DEFAULTS_CACHE, SessionVariableManager
 
     SessionVariableDefaultManager(db).create(name="loaded_skills", default_value=[])
     mgr = SessionVariableManager(db)
@@ -125,8 +125,9 @@ def test_container_defaults_are_isolated_across_sessions_and_cache_hits(db: Any)
     session_b = mgr.get_variables(S2)
 
     assert session_b["loaded_skills"] == []
-    assert mgr._defaults_cache
-    cached = next(iter(mgr._defaults_cache.values()))
+    hub_cache = _DEFAULTS_CACHE[db]
+    assert hub_cache
+    _, cached = next(iter(hub_cache.values()))
     assert session_a["loaded_skills"] is not cached["loaded_skills"]
     assert session_b["loaded_skills"] is not cached["loaded_skills"]
 

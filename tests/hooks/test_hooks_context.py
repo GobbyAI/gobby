@@ -103,9 +103,7 @@ def test_hook_event_task_id(mock_hook_manager: Any) -> None:
     mock_task.title = task_title
     mock_task.status = "in_progress"
 
-    mock_hook_manager._session_task_manager.get_session_tasks.return_value = [
-        {"task": mock_task, "action": "worked_on"}
-    ]
+    mock_hook_manager._session_task_manager.get_worked_on_task.return_value = mock_task
 
     # Create event
     event = HookEvent(
@@ -142,9 +140,7 @@ def test_session_start_context_injection(mock_hook_manager: Any) -> None:
     mock_task.id = task_id
     mock_task.title = task_title
     mock_task.status = "in_progress"
-    mock_hook_manager._session_task_manager.get_session_tasks.return_value = [
-        {"task": mock_task, "action": "worked_on"}
-    ]
+    mock_hook_manager._session_task_manager.get_worked_on_task.return_value = mock_task
 
     start_event = HookEvent(
         event_type=HookEventType.SESSION_START,

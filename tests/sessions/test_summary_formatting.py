@@ -31,7 +31,11 @@ def test_seeded_open_tool_errors_are_lossless_with_bounded_retrieval_preview() -
         {"malformed": True},
     ]
     db = MagicMock()
-    db.fetchone.return_value = {"variables": json.dumps({"open_tool_errors": seeded})}
+    db.fetchone.return_value = {
+        "stored": True,
+        "variables": json.dumps({"open_tool_errors": seeded}),
+        "project_id": None,
+    }
     db.fetchall.return_value = []
 
     records = load_open_tool_errors(db, "session-1")

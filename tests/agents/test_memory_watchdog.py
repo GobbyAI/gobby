@@ -52,11 +52,8 @@ class FakeProc:
         self._rss = rss
         self._name = name
         self._cmdline = cmdline or ["uv", "run", "gobby", "mcp-server"]
-        self._children = children or []
+        self.child_procs = children or []
         self._start_time = start_time
-
-    def children(self, recursive: bool = True) -> list[FakeProc]:
-        return self._children
 
     def name(self) -> str:
         return self._name
@@ -119,11 +116,28 @@ def make_handler(
     cleanup_handler = MagicMock()
     cleanup_handler.cleanup_agent = AsyncMock()
 
+    def live_processes() -> dict[int, tuple[FakeProc, int]]:
+        # Tests swap trees between ticks, so read them on every call.
+        found: dict[int, tuple[FakeProc, int]] = {}
+        stack = [(root, 1) for root in trees.values()]
+        while stack:
+            proc, ppid = stack.pop()
+            found[proc.pid] = (proc, ppid)
+            stack.extend((child, proc.pid) for child in proc.child_procs)
+        return found
+
     def process_factory(pid: int) -> FakeProc:
-        proc = trees.get(pid)
-        if proc is None:
+        entry = live_processes().get(pid)
+        if entry is None:
             raise psutil.NoSuchProcess(pid)
-        return proc
+        return entry[0]
+
+    ppid_scans: list[int] = []
+
+    def ppid_map() -> dict[int, int]:
+        ppids = {pid: ppid for pid, (_, ppid) in live_processes().items()}
+        ppid_scans.append(len(ppids))
+        return ppids
 
     vm = virtual_memory or SimpleNamespace(total=128 * GB, available=100 * GB)
     ticks = iter(monotonic_values or [float(i) * 1000 for i in range(100)])
@@ -153,6 +167,7 @@ def make_handler(
         cleanup_handler=cleanup_handler,
         tmux_config=config,
         process_factory=process_factory,
+        ppid_map_fn=ppid_map,
         virtual_memory_fn=lambda: vm,
         process_iter_fn=process_iter or (lambda attrs: []),
         monotonic=lambda: next(ticks),
@@ -162,6 +177,7 @@ def make_handler(
         "agent_run_manager": agent_run_manager,
         "cleanup_handler": cleanup_handler,
         "runtime": runtime,
+        "ppid_scans": ppid_scans,
     }
     return handler, mocks
 
@@ -381,3 +397,49 @@ async def test_failed_kill_skips_cleanup() -> None:
     assert killed == 0
     mocks["cleanup_handler"].cleanup_agent.assert_not_awaited()
     mocks["agent_run_manager"].clear_live_terminal.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_one_process_scan_serves_every_run_in_a_tick() -> None:
+    # Process.children(recursive=True) scanned every process on the machine
+    # once per run, ~70 ms of GIL time each (#23359).
+    grandchild = FakeProc(102, rss=3 * GB)
+    trees = {
+        100: FakeProc(100, rss=1 * GB, children=[FakeProc(101, rss=2 * GB, children=[grandchild])]),
+        200: FakeProc(200, rss=4 * GB),
+    }
+    handler, mocks = make_handler(
+        runs=[make_run("run-1", terminal_id="gobby-a"), make_run("run-2", terminal_id="gobby-b")],
+        trees=trees,
+        process_pids={"gobby-a": 100, "gobby-b": 200},
+    )
+
+    samples = await handler._collect_samples()
+
+    assert {s.run.id: (s.total_rss, [p.pid for p in s.processes]) for s in samples} == {
+        "run-1": (6 * GB, [100, 101, 102]),
+        "run-2": (4 * GB, [200]),
+    }
+    assert mocks["ppid_scans"] == [4]
+
+
+@pytest.mark.asyncio
+async def test_a_descendant_older_than_its_root_holds_a_reused_pid_and_is_not_sampled() -> None:
+    reused = FakeProc(101, rss=20 * GB, start_time=900.0, children=[FakeProc(102, rss=20 * GB)])
+    handler, _ = make_handler(
+        runs=[make_run()], trees={100: FakeProc(100, rss=1 * GB, children=[reused])}
+    )
+
+    samples = await handler._collect_samples()
+
+    assert [(s.total_rss, [p.pid for p in s.processes]) for s in samples] == [(1 * GB, [100])]
+
+
+@pytest.mark.asyncio
+async def test_a_tick_without_a_live_native_root_scans_no_processes() -> None:
+    handler, mocks = make_handler(
+        runs=[make_run()], trees={100: FakeProc(100, rss=20 * GB, start_time=2000.0)}
+    )
+
+    assert await handler._collect_samples() == []
+    assert mocks["ppid_scans"] == []

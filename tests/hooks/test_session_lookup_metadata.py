@@ -84,7 +84,7 @@ def test_valid_platform_session_metadata_is_preserved_and_enriched() -> None:
     )
     session_manager.backfill_terminal_context.return_value = (None, False)
     session_task_manager = MagicMock()
-    session_task_manager.get_session_tasks.return_value = []
+    session_task_manager.get_worked_on_task.return_value = None
     resolve_project_id = MagicMock(return_value="wrong-project")
     service = _service(session_manager, session_task_manager, resolve_project_id)
     event = _event({"_platform_session_id": "platform-session"})
@@ -104,7 +104,7 @@ def test_valid_platform_session_metadata_is_preserved_and_enriched() -> None:
     session_manager.revive_expired_terminal_session.assert_called_once_with(
         "platform-session", None
     )
-    session_task_manager.get_session_tasks.assert_called_once_with("platform-session")
+    session_task_manager.get_worked_on_task.assert_called_once_with("platform-session", None)
 
 
 def test_terminal_context_backfill_adds_cwd_and_renames_empty_title() -> None:
@@ -120,7 +120,7 @@ def test_terminal_context_backfill_adds_cwd_and_renames_empty_title() -> None:
     )
     session_manager.backfill_terminal_context.return_value = (updated_session, True)
     session_task_manager = MagicMock()
-    session_task_manager.get_session_tasks.return_value = []
+    session_task_manager.get_worked_on_task.return_value = None
     service = _service(session_manager, session_task_manager, MagicMock(return_value="project-1"))
     event = _event({"_platform_session_id": "platform-session"})
     event.data["cwd"] = "/work/repos/gobby"
@@ -149,7 +149,7 @@ def test_revival_judges_the_seat_recorded_from_this_hook() -> None:
     )
     session_manager.backfill_terminal_context.return_value = (None, False)
     session_task_manager = MagicMock()
-    session_task_manager.get_session_tasks.return_value = []
+    session_task_manager.get_worked_on_task.return_value = None
     service = _service(session_manager, session_task_manager, MagicMock(return_value="project-1"))
 
     service.resolve(_event({"_platform_session_id": "platform-session"}))
@@ -169,7 +169,7 @@ def test_root_cwd_platform_session_metadata_sets_project_on_event_data() -> None
     )
     session_manager.backfill_terminal_context.return_value = (None, False)
     session_task_manager = MagicMock()
-    session_task_manager.get_session_tasks.return_value = []
+    session_task_manager.get_worked_on_task.return_value = None
     resolve_project_id = MagicMock(return_value="wrong-project")
     service = _service(session_manager, session_task_manager, resolve_project_id)
     event = _event({"_platform_session_id": "platform-session"})
@@ -192,7 +192,7 @@ def test_root_cwd_terminal_context_session_sets_project_before_lookup() -> None:
     session_manager.get_session_id.return_value = "mapped-platform-session"
     session_manager.backfill_terminal_context.return_value = (None, False)
     session_task_manager = MagicMock()
-    session_task_manager.get_session_tasks.return_value = []
+    session_task_manager.get_worked_on_task.return_value = None
     resolve_project_id = MagicMock(return_value="wrong-project")
     service = _service(session_manager, session_task_manager, resolve_project_id)
     event = _event()
@@ -216,7 +216,7 @@ def test_invalid_platform_session_metadata_falls_back_to_external_lookup() -> No
     session_manager.get_session_id.return_value = "mapped-platform-session"
     session_manager.backfill_terminal_context.return_value = (None, False)
     session_task_manager = MagicMock()
-    session_task_manager.get_session_tasks.return_value = []
+    session_task_manager.get_worked_on_task.return_value = None
     resolve_project_id = MagicMock(return_value="project-from-cwd")
     service = _service(session_manager, session_task_manager, resolve_project_id)
     event = _event({"_platform_session_id": "missing-platform-session"})
@@ -247,7 +247,7 @@ def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registeri
     session_manager.recover_session.return_value = recovered_session
     session_manager.backfill_terminal_context.return_value = (recovered_session, False)
     session_task_manager = MagicMock()
-    session_task_manager.get_session_tasks.return_value = []
+    session_task_manager.get_worked_on_task.return_value = None
     resolve_project_id = MagicMock(return_value="project-1")
     service = _service(session_manager, session_task_manager, resolve_project_id)
     event = _event()
@@ -306,7 +306,7 @@ def test_resolve_uncached_marks_only_the_create_branch() -> None:
     session_manager.lookup_session_id.return_value = "existing-session"
     session_manager.backfill_terminal_context.return_value = (None, False)
     session_task_manager = MagicMock()
-    session_task_manager.get_session_tasks.return_value = []
+    session_task_manager.get_worked_on_task.return_value = None
     service = _service(
         session_manager,
         session_task_manager,
@@ -334,7 +334,7 @@ def _uncached_service() -> tuple[MagicMock, MagicMock, SessionLookupService]:
     session_manager.find_live_interactive_pane_owner.return_value = None
     session_manager.backfill_terminal_context.return_value = (None, False)
     session_task_manager = MagicMock()
-    session_task_manager.get_session_tasks.return_value = []
+    session_task_manager.get_worked_on_task.return_value = None
     service = _service(
         session_manager,
         session_task_manager,
@@ -407,7 +407,8 @@ def test_tool_hook_with_active_parent_subagent_binds_to_parent() -> None:
     parent = SimpleNamespace(id="parent-live", status="active", agent_run_id=None, agent_depth=0)
     session_manager.find_live_interactive_pane_owner.return_value = parent
     session_manager.db.fetchone.return_value = {
-        "variables": {"subagent_count": 1, "is_subagent": True}
+        "stored": True,
+        "variables": {"subagent_count": 1, "is_subagent": True},
     }
     event = _pane_event(HookEventType.BEFORE_TOOL, source=SessionSource.CLAUDE)
 
@@ -490,7 +491,8 @@ def test_grok_tool_hook_from_another_process_in_the_pane_auto_registers() -> Non
     session_manager.get.return_value = parent
     session_manager.find_live_interactive_pane_owner.return_value = parent
     session_manager.db.fetchone.return_value = {
-        "variables": {"subagent_count": 3, "is_subagent": True}
+        "stored": True,
+        "variables": {"subagent_count": 3, "is_subagent": True},
     }
     session_manager.register_session.return_value = "created-session"
     event = _pane_event(HookEventType.BEFORE_TOOL, session_id="01a0b000-new-process")
@@ -524,7 +526,7 @@ def test_hand_started_grok_parent_survives_first_of_three_process_bound_children
     )
     session_manager.get.return_value = parent
     session_manager.find_live_interactive_pane_owner.return_value = parent
-    session_task_manager.get_session_tasks.return_value = []
+    session_task_manager.get_worked_on_task.return_value = None
 
     coordinator = MagicMock()
     task_manager = MagicMock()
@@ -622,7 +624,7 @@ def test_materialized_row_uses_normalized_deferred_identity() -> None:
     session_manager.register_session.return_value = "created-session"
     session_manager.backfill_terminal_context.return_value = (None, False)
     session_task_manager = MagicMock()
-    session_task_manager.get_session_tasks.return_value = []
+    session_task_manager.get_worked_on_task.return_value = None
     service = _service(
         session_manager,
         session_task_manager,
@@ -672,7 +674,7 @@ def test_prestart_compact_traffic_recovers_canonical_row_without_registration(
     session_manager.recover_session.return_value = None
     session_manager.backfill_terminal_context.return_value = (canonical, False)
     session_task_manager = MagicMock()
-    session_task_manager.get_session_tasks.return_value = []
+    session_task_manager.get_worked_on_task.return_value = None
     service = _service(
         session_manager,
         session_task_manager,
@@ -709,7 +711,7 @@ def test_task_context_uses_stage_native_state() -> None:
         is_escalated=False,
         active_blocked_by=[],
     )
-    session_task_manager.get_session_tasks.return_value = [{"task": task, "action": "worked_on"}]
+    session_task_manager.get_worked_on_task.return_value = task
     service = _service(session_manager, session_task_manager, MagicMock(return_value="project-1"))
     event = _event({"_platform_session_id": "platform-session"})
 
@@ -731,14 +733,6 @@ def test_task_context_preserves_explicit_task_and_enriches_matching_link() -> No
         id="platform-session", project_id="project-1"
     )
     session_manager.backfill_terminal_context.return_value = (None, False)
-    latest_task = SimpleNamespace(
-        id="task-latest",
-        title="Latest session task",
-        stages=[],
-        closed_at=None,
-        is_escalated=False,
-        active_blocked_by=[],
-    )
     explicit_task = SimpleNamespace(
         id="task-explicit",
         title="Explicit event task",
@@ -748,16 +742,17 @@ def test_task_context_preserves_explicit_task_and_enriches_matching_link() -> No
         active_blocked_by=[],
     )
     session_task_manager = MagicMock()
-    session_task_manager.get_session_tasks.return_value = [
-        {"task": latest_task, "action": "worked_on"},
-        {"task": explicit_task, "action": "worked_on"},
-    ]
+    # The matching link is chosen in SQL (tests/storage/test_storage_session_tasks.py).
+    session_task_manager.get_worked_on_task.return_value = explicit_task
     service = _service(session_manager, session_task_manager, MagicMock(return_value="project-1"))
     event = _event({"_platform_session_id": "platform-session"})
     event.task_id = explicit_task.id
 
     service.resolve(event)
 
+    session_task_manager.get_worked_on_task.assert_called_once_with(
+        "platform-session", "task-explicit"
+    )
     assert event.task_id == "task-explicit"
     assert event.metadata["_task_id_origin"] == "explicit"
     assert event.metadata["_task_title"] == "Explicit event task"
@@ -779,7 +774,7 @@ def _recovery_case(
     session_manager.recover_session.return_value = recovered
     session_manager.backfill_terminal_context.return_value = (recovered, False)
     session_task_manager = MagicMock()
-    session_task_manager.get_session_tasks.return_value = []
+    session_task_manager.get_worked_on_task.return_value = None
     resolve_project_id = MagicMock(return_value="project-1")
     service = _service(session_manager, session_task_manager, resolve_project_id, logger)
     event = _event()
