@@ -95,7 +95,6 @@ def _claim(hub_db: HubDatabase, *, clear_session: bool = False) -> ClaimedHandof
             attempt_id=ATTEMPT_ID,
             handoff=handoff,
             clear_session=False,
-            record_prior_status=True,
         )
     SessionVariableManager(hub_db).merge_variables(
         SESSION_ID,

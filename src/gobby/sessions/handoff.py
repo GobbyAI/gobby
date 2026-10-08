@@ -101,8 +101,7 @@ class HandoffAttemptState:
     prior_handoff_markdown: str | None
     prior_markers: dict[str, Any]
     missing_markers: frozenset[str]
-    # Status the row held before a clear attempt moved it to awaiting_handoff;
-    # None when staging did not transition the row.
+    # Active/paused status before staging; compensation only reverts awaiting_handoff.
     prior_status: str | None = None
 
 
@@ -384,7 +383,6 @@ def stage_handoff_attempt(
     delivery_mode: Literal["terminal", "in_process", "queued_in_process"] = "terminal",
     additional_markers: Mapping[str, Any] | None = None,
     transition_status: str | None = None,
-    record_prior_status: bool = False,
 ) -> HandoffAttemptState:
     """Atomically stage authored content, handoff Markdown, and delivery markers.
 
@@ -392,8 +390,8 @@ def stage_handoff_attempt(
     the staging transaction (clear attempts use ``awaiting_handoff`` so startup
     expiry and SessionEnd leave the row alone until its successor binds); the
     prior status is recorded on the attempt markers and in the returned state.
-    ``record_prior_status`` captures that status without moving the row, so compact
-    attempts can restore a later PreCompact transition without implying it already ran.
+    Staging always captures the active/paused status so compact attempts can restore
+    a later PreCompact transition without implying it already ran.
     Terminal delivery arms the turn-end bypass until SessionStart. Queued
     in-process delivery arms it until the queued compact settles; idle in-process
     delivery completes its continuation without crossing a turn boundary.
@@ -421,10 +419,7 @@ def stage_handoff_attempt(
 
         lock_handoff_staging(conn, str(session_row["machine_id"]))
         prior_status: str | None = None
-        if (record_prior_status or transition_status is not None) and session_row["status"] in (
-            "active",
-            "paused",
-        ):
+        if session_row["status"] in ("active", "paused"):
             prior_status = str(session_row["status"])
         variable_row = conn.execute(
             "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
