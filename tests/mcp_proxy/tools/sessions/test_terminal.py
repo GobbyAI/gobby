@@ -38,7 +38,7 @@ from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.terminals.runtime import Delivered
+from gobby.terminals.runtime import Delivered, TerminalWriteError
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import write_project_marker
@@ -761,6 +761,30 @@ class TestRegisterTerminalTools:
 
 def test_send_keys_rejects_raw_tmux_context_after_native_lookup() -> None:
     TestRegisterTerminalTools().assert_send_keys_rejects_raw_tmux_context_after_native_lookup()
+
+
+@pytest.mark.parametrize("stage", ["none", "partial"])
+@pytest.mark.parametrize("keys,literal", [("/compact\n", True), ("enter", False)])
+def test_send_keys_reports_terminal_write_refusal(stage: str, keys: str, literal: bool) -> None:
+    send_keys, _, coordinator = TestRegisterTerminalTools._authorized_send_keys()
+    error = TerminalWriteError(stage="partial" if stage == "partial" else "none")
+    coordinator.write.side_effect = error
+    with patch("gobby.utils.session_context.get_current_session_id", return_value="caller-session"):
+        result = asyncio.run(
+            send_keys(
+                session_id="target-session", keys=keys, literal=literal, idempotency_key="compact-1"
+            )
+        )
+    assert result["success"] is False
+    assert result["error_code"] == "terminal_write_failed"
+    assert result["stage"] == stage
+    assert result["indeterminate"] is (stage == "partial")
+    assert result["idempotency_key"] == "compact-1"
+    request = coordinator.write.await_args.args[0]
+    assert request.idempotency_key == "compact-1"
+    assert request.payload == ("/compact" if literal else "enter")
+    assert request.submit is literal
+    coordinator.write.assert_awaited_once()
 
 
 def test_send_keys_named_key_never_pastes_literally() -> None:

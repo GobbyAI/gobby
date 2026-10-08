@@ -38,6 +38,7 @@ from gobby.install.bin_freshness_updater import update_all_managed_bins, update_
 from gobby.storage.bin_update_state import BinUpdateStateStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
+from gobby.utils.native_bin import IDENTITY_STAMP_NAME, SET_MEMBERS, native_bin_name
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
@@ -71,7 +72,7 @@ def test_lock_close_error_does_not_mask_unlock_error(
     assert exc_info.value is unlock_error
 
 
-def _spec(name: str = "ghook", floor: str = "0.4.1") -> ManagedBinSpec:
+def _spec(name: str = "gterm", floor: str = "0.4.1") -> ManagedBinSpec:
     return ManagedBinSpec(
         name=name,
         floor_version=floor,
@@ -104,7 +105,7 @@ def _tar_with_binary(spec: ManagedBinSpec, payload: bytes = b"new") -> bytes:
     return data.getvalue()
 
 
-class FakeClient:
+class FakeClient(GithubReleaseClient):
     def __init__(
         self,
         *,
@@ -113,6 +114,7 @@ class FakeClient:
         resolve_error: Exception | None = None,
         download_error: Exception | None = None,
     ) -> None:
+        super().__init__(timeout_seconds=1.0)
         self.asset = asset
         self.archive = archive or b""
         self.resolve_error = resolve_error
@@ -627,8 +629,65 @@ class TestBinUpdater:
             client=client,
         )
 
-        assert len(records) == len(managed_bin_specs())
+        updatable = {spec.name for spec in managed_bin_specs()} - set(SET_MEMBERS)
+        assert {record.tool_name for record in records} == updatable
         assert {record.last_status for record in records} == {"failed"}
+
+    def test_update_all_leaves_a_stamped_partial_set_alone(
+        self, tmp_path: Path, postgres_db: HubDatabase
+    ) -> None:
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        gdaemon = bin_dir / native_bin_name("gdaemon")
+        gdaemon.write_bytes(b"gdaemon")
+        stamp = bin_dir / IDENTITY_STAMP_NAME
+        stamp.write_bytes(b'{"schema": 1}\n')
+        client = FakeClient(asset=_asset(_spec("ghook")), archive=_tar_with_binary(_spec("ghook")))
+
+        update_all_managed_bins(postgres_db, BinFreshnessConfig(), bin_dir=bin_dir, client=client)
+
+        installed = {
+            member for member in SET_MEMBERS if (bin_dir / native_bin_name(member)).exists()
+        }
+        assert installed == {"gdaemon"}
+        assert gdaemon.read_bytes() == b"gdaemon"
+        assert stamp.read_bytes() == b'{"schema": 1}\n'
+
+    def test_update_refuses_a_set_member(self, tmp_path: Path, postgres_db: HubDatabase) -> None:
+        client = FakeClient(asset=_asset(_spec("ghook")))
+
+        with pytest.raises(ValueError, match="promote_workspace_binary_set"):
+            update_managed_bin(
+                postgres_db,
+                _spec("ghook"),
+                BinFreshnessConfig(),
+                bin_dir=tmp_path / "bin",
+                client=client,
+            )
+
+        assert client.downloads == 0
+        assert not (tmp_path / "bin").exists()
+
+    def test_release_below_floor_is_not_installed(
+        self, tmp_path: Path, postgres_db: HubDatabase
+    ) -> None:
+        bin_dir = tmp_path / "bin"
+        spec = _spec(floor="0.4.3")
+        client = FakeClient(asset=_asset(spec, "0.4.1"), archive=_tar_with_binary(spec))
+
+        record = update_managed_bin(
+            postgres_db,
+            spec,
+            BinFreshnessConfig(),
+            bin_dir=bin_dir,
+            client=client,
+        )
+
+        assert record is not None
+        assert record.last_status == "floor_violated"
+        assert record.last_error == "latest release 0.4.1 is below floor 0.4.3"
+        assert client.downloads == 0
+        assert not (bin_dir / spec.binary_name).exists()
 
 
 class TestGithubReleaseClient:
@@ -727,7 +786,7 @@ class TestGithubReleaseClient:
     def test_resolve_latest_asset_resolves_from_canonical_repo(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        spec = _spec()
+        spec = _spec("ghook")
         target = "aarch64-apple-darwin"
         expected_asset = f"{spec.name}-{target}.tar.gz"
         calls: list[str] = []
@@ -841,7 +900,7 @@ class TestGithubReleaseClient:
     def test_resolve_latest_asset_fails_closed_when_canonical_asset_missing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        spec = _spec()
+        spec = _spec("ghook")
         target = "aarch64-apple-darwin"
         expected_asset = f"{spec.name}-{target}.tar.gz"
         calls: list[str] = []

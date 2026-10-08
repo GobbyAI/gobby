@@ -1,4 +1,4 @@
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -125,6 +125,7 @@ class TaskTransitionsMixin:
         force: bool = False,
         *,
         expected_owner: str | None = None,
+        select_claim: bool = True,
     ) -> Task:
         """Claim a task for a session, preserving non-open lifecycle states."""
         task = _claim_task(
@@ -133,6 +134,7 @@ class TaskTransitionsMixin:
             session_id=session_id,
             force=force,
             expected_owner=expected_owner,
+            select_claim=select_claim,
         )
         self._notify_listeners()
         return task
@@ -144,16 +146,14 @@ class TaskTransitionsMixin:
         force: bool = False,
         *,
         expected_owner: str | None = None,
-        handed_off_task_ids: Collection[str] = (),
     ) -> Task:
-        """Claim a task through the agent-facing single-claim guard."""
+        """Serialize an agent claim and select its task atomically."""
         task = _claim_task_for_agent(
             self.db,
             task_id=task_id,
             session_id=session_id,
             force=force,
             expected_owner=expected_owner,
-            handed_off_task_ids=handed_off_task_ids,
         )
         self._notify_listeners()
         return task

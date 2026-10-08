@@ -1682,7 +1682,12 @@ class ClientWire:
 
     @asynccontextmanager
     async def running(self) -> AsyncIterator[ClientWire]:
-        async with serve(self.websocket, "127.0.0.1", 0, process_request=self.http) as server:
+        # Fault callbacks own their deadlines. In particular, startup outage
+        # injection waits for a 20s daemon stop inside process_request; the
+        # ordinary 10s WebSocket handshake budget must not cancel that wait.
+        async with serve(
+            self.websocket, "127.0.0.1", 0, process_request=self.http, open_timeout=None
+        ) as server:
             self.url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
             try:
                 yield self
@@ -2004,16 +2009,33 @@ async def test_gclient_survives_daemon_stop_during_startup_response(
                     await _screen(client, "GCLIENT-STARTUP-READY")
                     assert client.poll() is None, "gclient exited on an interrupted launch response"
                     await _take_and_echo(client, "GCLIENT-STARTUP-AFTER")
-                except AssertionError as exc:
+                except (AssertionError, TimeoutError) as exc:
+                    from tests.e2e.readiness_capture import capture_readiness_timeout
+
+                    capture = capture_readiness_timeout(
+                        daemon_instance.log_file.parent, daemon_instance.process
+                    )
+                    exc.add_note(f"Isolated daemon shutdown threads: {capture.thread_stack_tail}")
+                    exc.add_note(f"Isolated daemon shutdown tasks: {capture.task_stack_tail}")
+                    exc.add_note(f"Isolated daemon shutdown timings: {capture.startup_timing_tail}")
+                    exc.add_note(
+                        "Isolated daemon process state: "
+                        f"pid={daemon_instance.process.pid}, "
+                        f"returncode={daemon_instance.process.poll()}"
+                    )
+                    exc.add_note(
+                        f"Isolated daemon shutdown log: {daemon_instance.read_logs()[-8000:]}"
+                    )
+                    exc.add_note(
+                        "Isolated daemon shutdown error log: "
+                        f"{daemon_instance.read_error_logs()[-8000:]}"
+                    )
                     log = daemon_instance.gobby_home / "logs" / "gclient.log"
                     if log.is_file():
                         exc.add_note(
                             f"Isolated gclient exit attribution: {log.read_text()[-4000:]}"
                         )
                     raise
-                finally:
-                    if not daemon_instance.is_alive():
-                        await asyncio.to_thread(daemon_instance.restart)
 
 
 @pytest.mark.asyncio

@@ -113,7 +113,13 @@ def test_transfer_releases_only_the_prior_owners_transferred_claim(
         )
         remaining[other.id] = f"#{other.seq_num}"
         state = variables.get_variables(owner)
-        variables.merge_variables(owner, {"claimed_tasks": {**state["claimed_tasks"], **remaining}})
+        variables.merge_variables(
+            owner,
+            {
+                "claimed_tasks": {**state["claimed_tasks"], **remaining},
+                "active_task_id": task_id,
+            },
+        )
 
     assert _claim_gates_block(variables.get_variables(owner)) == (True, True)
     claim_task(
@@ -325,10 +331,9 @@ async def test_after_tool_claim_observation_cannot_restore_transferred_ownership
     state = variables.get_variables(caller)
     assert state["claimed_tasks"] == expected_claims
     assert state["task_claimed"] is bool(expected_claims)
-    if expected_claims:
-        assert state["active_task_id"] in expected_claims
-    else:
-        assert state["active_task_id"] is None
+    assert state["active_task_id"] == (
+        task_id if transfer_at in ("no_transfer", "locked_persistence") else None
+    )
     assert _claim_gates_block(state) == (bool(expected_claims), bool(expected_claims))
     assert state["task_edited_files"] == {task_id: ["src/caller.py"]}
     assert state["unrelated_marker"] == "preserved"

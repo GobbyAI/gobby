@@ -27,6 +27,7 @@ from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._transitions import close_task
 from gobby.workflows.found_work_gate import FOUND_WORK_GATE_ARMED_AT_VARIABLE
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_claim_state import active_task_id_for_edit
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
@@ -196,6 +197,41 @@ def test_preserve_transfers_predecessor_claims_and_claimed_link(
     )
 
 
+@pytest.mark.parametrize("selected_index", [0, 1])
+def test_preserve_multiple_claims_retains_selected_edit_target(
+    tmp_path: Path, hub_db: HubDatabase, selected_index: int
+) -> None:
+    harness = _make_harness(hub_db, tmp_path)
+    tasks = [
+        harness.create_claimed_task("First inherited claim"),
+        harness.create_claimed_task("Second inherited claim"),
+    ]
+    selected = tasks[selected_index]
+    predecessor_vars = _predecessor_vars(*tasks)
+    predecessor_vars["active_task_id"] = selected.id
+    predecessor_vars["task_selection_history"] = [
+        {"task_id": selected.id, "epoch": "2026-01-01T00:00:00+00:00"}
+    ]
+
+    preserve_task_claim_state(
+        harness.handler(),
+        harness.sv_mgr,
+        harness.successor_id,
+        harness.predecessor_id,
+        predecessor_vars,
+    )
+
+    successor_vars = harness.sv_mgr.get_variables(harness.successor_id)
+    assert _claimed_task_ids(harness.session_task_manager, harness.successor_id) == {
+        task.id for task in tasks
+    }
+    assert active_task_id_for_edit(successor_vars) == selected.id
+    history = successor_vars["task_selection_history"]
+    assert history[-1]["task_id"] == selected.id
+    assert history != predecessor_vars["task_selection_history"]
+    assert all(entry["epoch"] != "2026-01-01T00:00:00+00:00" for entry in history)
+
+
 def test_rehydrate_arms_session_from_claim_link(tmp_path: Path, hub_db: HubDatabase) -> None:
     harness = _make_harness(hub_db, tmp_path)
     harness.create_claimed_task("Claim survives context loss")
@@ -260,7 +296,7 @@ def test_expected_owner_skips_claim_moved_to_third_session(
         harness.sv_mgr,
         harness.successor_id,
         harness.predecessor_id,
-        _predecessor_vars(kept, stolen),
+        _predecessor_vars(kept, stolen) | {"active_task_id": stolen.id},
     )
 
     assert harness.task_manager.get_task(kept.id).claimed_by_session_id == harness.successor_id
@@ -268,6 +304,7 @@ def test_expected_owner_skips_claim_moved_to_third_session(
     successor_vars = harness.sv_mgr.get_variables(harness.successor_id)
     claimed = successor_vars.get("claimed_tasks") or {}
     assert claimed == {kept.id: f"#{kept.seq_num}"}
+    assert active_task_id_for_edit(successor_vars) == kept.id
     assert stolen.id not in _claimed_task_ids(harness.session_task_manager, harness.successor_id)
 
 

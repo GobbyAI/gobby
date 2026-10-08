@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -22,6 +23,7 @@ from gobby.storage.task_close_reviews import (
 )
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.close_review_delivery import mark_terminal_review_delivered
+from gobby.utils.host_sleep import AwakeClock
 from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
@@ -104,6 +106,30 @@ def test_active_close_review_suppresses_stagnation(
         status="invalid",
         result_payload=payload,
     )
+    assert tracker.get_summary(session_id).is_stagnant is True
+
+
+def _backdate_progress(db: HubDatabase, session_id: str, *, seconds: float) -> None:
+    db.execute(
+        "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s",
+        ((datetime.now(UTC) - timedelta(seconds=seconds)).isoformat(), session_id),
+    )
+
+
+def test_host_sleep_does_not_count_as_stagnation(temp_db: HubDatabase) -> None:
+    slept = [0.0]
+    clock = AwakeClock(wall=time.time, monotonic=lambda: time.monotonic() - slept[0])
+    session_id = _create_session(temp_db)
+    tracker = ProgressTracker(temp_db, stagnation_threshold=60, clock=clock)
+    tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
+
+    # The host sleeps 120 seconds after the event: wall time moves, monotonic time does not.
+    _backdate_progress(temp_db, session_id, seconds=120)
+    slept[0] = 120.0
+    assert tracker.get_summary(session_id).is_stagnant is False
+
+    # Another 120 awake seconds without progress is stagnation again.
+    _backdate_progress(temp_db, session_id, seconds=240)
     assert tracker.get_summary(session_id).is_stagnant is True
 
 

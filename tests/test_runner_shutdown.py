@@ -1301,7 +1301,10 @@ class TestExpiryBackstopSubprocess:
         import sys
         import textwrap
 
+        from tests._timing import wait_for_condition
+
         pid_file = tmp_path / "gobby.pid"
+        ready = tmp_path / "shutdown.ready"
         script = textwrap.dedent(
             f"""
             import threading
@@ -1322,6 +1325,7 @@ class TestExpiryBackstopSubprocess:
             ).start()
 
             shutdown._expiry_exit_backstop_required = True
+            Path({str(ready)!r}).write_text('shutdown ready')
             try:
                 pass
             finally:
@@ -1331,16 +1335,27 @@ class TestExpiryBackstopSubprocess:
             """
         )
 
-        completed = subprocess.run(
+        process = subprocess.Popen(
             [sys.executable, "-c", script],
-            capture_output=True,
-            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=20.0,
         )
-
-        assert completed.returncode == 0, completed.stderr
-        assert "UNREACHABLE" not in completed.stdout
+        try:
+            # Import cost under load is unrelated to the process-exit contract.
+            wait_for_condition(
+                lambda: ready.exists() or process.poll() is not None,
+                timeout=60.0,
+                description="isolated expiry backstop reached shutdown",
+            )
+            stdout, stderr = process.communicate(timeout=20.0)
+            assert ready.exists(), stderr
+            assert process.returncode == 0, stderr
+            assert "UNREACHABLE" not in stdout
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=5.0)
 
         from gobby.runner_pid_file import claim_pid_file
 

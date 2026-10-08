@@ -32,6 +32,7 @@ __all__ = [
     "SessionRegistration",
     "SessionSeqMutation",
     "SessionVariableMutation",
+    "SessionVariableTransfer",
     "StageReviewApprovalMutation",
     "StageReviewRejectionMutation",
     "SystemSessionBootstrap",
@@ -284,6 +285,14 @@ class SessionVariableMutation:
 
     PRIORITY: ClassVar[int] = 950
     session_id: str
+
+
+@dataclass(frozen=True)
+class SessionVariableTransfer:
+    """Lock both variable rows for an ownership transfer in deterministic order."""
+
+    PRIORITY: ClassVar[int] = 950
+    session_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)

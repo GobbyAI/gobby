@@ -13,6 +13,7 @@ from gobby.adapters.acp_client import ACPClient
 from gobby.adapters.acp_commands import normalize_available_commands
 from gobby.adapters.acp_session_state import ACPSessionState
 from gobby.adapters.qwen_acp_client import QwenACPClient
+from gobby.utils.child_supervisor import supervised_argv
 
 pytestmark = pytest.mark.unit
 
@@ -197,7 +198,7 @@ async def test_daemon_spawned_qwen_acp_disables_terminal_hooks(
 
     await client.start(auto_session=False)
 
-    assert captured["args"] == ("/usr/bin/qwen", "--acp")
+    assert captured["args"] == tuple(supervised_argv(["/usr/bin/qwen", "--acp"]))
     assert captured["env"]["GOBBY_HOOKS_DISABLED"] == "1"
     assert captured["env"]["GOBBY_ACP_CHILD"] == "1"
 

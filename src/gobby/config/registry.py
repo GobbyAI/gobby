@@ -619,6 +619,8 @@ _RESTART_NESTED_PATHS = frozenset(
         "ui.enabled",
         "ui.mode",
         "ui.web_dir",
+        # Read once, when the periodic refresh task starts.
+        "provider_capabilities.refresh_enabled",
         # Summarizer and labeler copy these at construction. Batch sizes stay
         # LIVE because the maintenance loop re-reads them each pass.
         "code_index.symbol_summary.enabled",

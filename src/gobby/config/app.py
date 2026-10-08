@@ -57,6 +57,7 @@ from gobby.config.persistence import (
 )
 from gobby.config.pipelines import PipelineConfig
 from gobby.config.postgres_pool import PostgresPoolConfig
+from gobby.config.provider_capabilities import ProviderCapabilitiesConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
     ChatHistoryConfig,
@@ -447,6 +448,10 @@ class DaemonConfig(BaseModel):
     bin_freshness: BinFreshnessConfig = Field(
         default_factory=BinFreshnessConfig,
         description="Managed native binary freshness checks.",
+    )
+    provider_capabilities: ProviderCapabilitiesConfig = Field(
+        default_factory=ProviderCapabilitiesConfig,
+        description="Provider capability catalog refresh.",
     )
     clones_dir: str = Field(
         default="~/.gobby/clones",
