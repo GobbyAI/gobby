@@ -363,8 +363,11 @@ class NativeTerminalRuntime(NativeFrameStreamMixin, NativeHostProbeMixin):
             raise
         except (ConnectionError, OSError, TimeoutError) as exc:
             raise CommitTransportError(str(exc), request_written=False) from exc
-        # A committed spawn starts with an empty composer.
-        self._composer_ledger.release(str(prepared.terminal_id))
+        # A committed spawn starts with an empty composer. No await separates the commit from
+        # this record, so the reader cannot have resumed on a later host first.
+        self._composer_ledger.record_spawn(
+            str(prepared.terminal_id), expected_epoch or current_epoch
+        )
         return TerminalHandle(terminal_id=prepared.terminal_id, locator=locator)
 
     async def is_live(self, terminal: Terminal) -> bool:

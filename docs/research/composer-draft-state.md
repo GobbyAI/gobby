@@ -164,7 +164,7 @@ compaction sender.
   ledger per terminal, owned by `WriteCoordinator` as `coordinator.composer_ledger`
   and reached through `get_app_context().write_coordinator`. Each entry keeps
   `session_id`, `clean_seq`, `human_seq`, an unsafe marker (`interrupt`, `gap`,
-  `epoch`, `unverified`, `provider_limit`) with its sequence number, the submit-flagged
+  `unverified`, `provider_limit`) with its sequence number, the submit-flagged
   write sequence numbers, the pending daemon text `(seq, text)`, and the dialog-input
   sequence number. One monotonic ledger sequence orders all events.
 - Read result `LedgerRead(state, reason, pending)`:
@@ -200,8 +200,12 @@ compaction sender.
   per second when it has changed. At startup the ledger restores it. A one-shot
   stream `since=cursor` then replays input events up to the inventory snapshot seq
   in `recover_event_gap` (`src/gobby/terminals/host_event_reader.py`). A replay gap
-  or an epoch mismatch marks the entries `gap` or `epoch`. gterm upgrades carry the
-  epoch and ring (`HostEvents::restore`), so they do not dirty seats.
+  marks the entries `gap`. A new host epoch drops the old host's entries, whose
+  terminals died with it, so they read untracked. A spawn committed on the new host
+  before the reader resubscribes moves the ledger to that host at seq 0, and the
+  reader replays the host from its start. Events from another host are ignored.
+  gterm upgrades carry the epoch and ring (`HostEvents::restore`), so they do not
+  dirty seats.
 - Gates (net-neutral edits; wake.py, compact_continuation.py and the other host
   files are near the 1,000-line ceiling):
   - `probe_terminal_activity` (`src/gobby/runner_init/wake_activity.py`): the composer

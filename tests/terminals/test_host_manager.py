@@ -402,15 +402,10 @@ async def test_gap_recovery_converges_under_ring_churn(
     assert stream.closed is True
 
 
-@pytest.mark.asyncio
-async def test_event_reader_replays_input_the_inventory_cut_hides_into_the_ledger(
-    tmp_path: Path,
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    epoch = "epoch-ledger"
-    terminals = TerminalManager(temp_db)
-    typed = _live(terminals, sample_project["id"], epoch, host_terminal_id="ht-typed")
+def _typed_replay_host(
+    tmp_path: Path, terminals: TerminalManager, typed: Terminal, epoch: str, typed_seq: int
+) -> tuple[Any, list[int | None], list[InputActivityEvent]]:
+    """A host whose stream replays one input on ``typed`` at the inventory cut."""
 
     class InventoryClient(FakeControlClient):
         async def list_inventory(self) -> HostInventorySnapshot:
@@ -419,17 +414,18 @@ async def test_event_reader_replays_input_the_inventory_cut_hides_into_the_ledge
                 spawn_key=typed.spawn_key or typed.id,
                 host_terminal_id="ht-typed",
             )
-            return HostInventorySnapshot((cast(HostListRow, row),), self.host_epoch, 6)
+            return HostInventorySnapshot((cast(HostListRow, row),), self.host_epoch, typed_seq + 1)
 
     class ReplayStream:
-        epoch = "epoch-ledger"
-        seq = 6
         gap = False
 
         def __init__(self) -> None:
-            # Typed while the daemon was down, at or before the inventory cut.
+            self.epoch = epoch
+            self.seq = typed_seq + 1
             self.events = [
-                InputActivityEvent(typed.id, "ht-typed", "att-1", "input", 1, None, epoch, 5)
+                InputActivityEvent(
+                    typed.id, "ht-typed", "att-1", "input", 1, None, epoch, typed_seq
+                )
             ]
 
         def __aiter__(self) -> ReplayStream:
@@ -457,6 +453,20 @@ async def test_event_reader_replays_input_the_inventory_cut_hides_into_the_ledge
     host._event_connector = connect_events
     seen: list[InputActivityEvent] = []
     host.set_input_activity_sink(seen.append)
+    return host, subscriptions, seen
+
+
+@pytest.mark.asyncio
+async def test_event_reader_replays_input_the_inventory_cut_hides_into_the_ledger(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    epoch = "epoch-ledger"
+    terminals = TerminalManager(temp_db)
+    typed = _live(terminals, sample_project["id"], epoch, host_terminal_id="ht-typed")
+    # Typed while the daemon was down, at or before the inventory cut.
+    host, subscriptions, seen = _typed_replay_host(tmp_path, terminals, typed, epoch, 5)
     # The ledger restored from the previous daemon's state file.
     ledger = host.composer_ledger
     ledger.observe_host_event(TerminalExitedEvent("gone", "ht-gone", 0, epoch, 4))
@@ -468,6 +478,28 @@ async def test_event_reader_replays_input_the_inventory_cut_hides_into_the_ledge
     assert seen == []
     assert ledger.read(typed.id) == LedgerRead("draft")
     assert ledger.host_cursor == (epoch, 5)
+
+
+@pytest.mark.asyncio
+async def test_event_reader_replays_a_new_host_from_its_start_for_a_seat_spawned_first(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    epoch = "epoch-new"
+    terminals = TerminalManager(temp_db)
+    typed = _live(terminals, sample_project["id"], epoch, host_terminal_id="ht-typed")
+    # Typed into the seat after it spawned on the new host, before the reader resubscribed.
+    host, subscriptions, _ = _typed_replay_host(tmp_path, terminals, typed, epoch, 1)
+    ledger = host.composer_ledger
+    ledger.observe_host_event(TerminalExitedEvent("gone", "ht-gone", 0, "epoch-dead", 9))
+    ledger.record_spawn(typed.id, epoch)
+
+    await host_event_reader.event_reader_loop(host)
+
+    assert subscriptions == [0]
+    assert ledger.read(typed.id) == LedgerRead("draft")
+    assert ledger.host_cursor == (epoch, 1)
 
 
 @pytest.mark.asyncio

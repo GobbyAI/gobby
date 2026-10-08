@@ -112,18 +112,34 @@ class ComposerLedger:
             return LedgerRead("blocked", "untracked") if entry is None else _read(entry)
 
     def release(self, terminal_id: str) -> None:
-        """Start ``terminal_id`` clean now: a spawn, or an operator vouching for its composer."""
+        """Start ``terminal_id`` clean now: an operator vouching for its composer."""
         with self._lock:
             self._entries[terminal_id] = _Entry(clean_seq=self._next())
 
-    def observe_host_event(self, event: HostEvent) -> None:
-        """Advance the host cursor; input is human, an exit drops its terminal."""
+    def record_spawn(self, terminal_id: str, epoch: str) -> None:
+        """A terminal committed on host ``epoch`` starts with an empty composer.
+
+        A spawn can commit on a new host before the event reader resubscribes. The ledger
+        moves to that host from before its first event, so the reader replays it from the
+        start; the old host's terminals died with it. An empty ``epoch`` moves nothing.
+        """
         with self._lock:
-            if self._host is not None and self._host[0] == event.epoch:
-                if event.seq <= self._host[1]:
-                    return
-            elif self._host is not None:
+            if epoch and (self._host is None or self._host[0] != epoch):
                 self._entries.clear()
+                self._host = (epoch, 0)
+            self._entries[terminal_id] = _Entry(clean_seq=self._next())
+
+    def observe_host_event(self, event: HostEvent) -> None:
+        """Advance the host cursor; input is human, an exit drops its terminal.
+
+        Another host's event is ignored: the reader resumes on the live host, and a spawn
+        may have moved the ledger there while a dead host's stream drained.
+        """
+        with self._lock:
+            if self._host is not None and (
+                self._host[0] != event.epoch or event.seq <= self._host[1]
+            ):
+                return
             self._host = (event.epoch, event.seq)
             self.version += 1
             if not isinstance(event, InputActivityEvent):

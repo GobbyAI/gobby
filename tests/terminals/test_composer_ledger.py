@@ -335,14 +335,51 @@ def test_resume_on_a_new_host_epoch_drops_every_tracked_terminal() -> None:
     assert ledger.host_cursor == ("e2", 3)
 
 
-def test_host_event_from_a_new_epoch_drops_every_tracked_terminal() -> None:
+def test_host_event_from_another_epoch_is_ignored() -> None:
     ledger = _tracked("t1", "t2")
-    ledger.observe_host_event(_host(5, terminal_id="t2", submit=True))
-    ledger.observe_host_event(_host(1, terminal_id="t2", epoch="e2"))
+    ledger.observe_host_event(_host(5, terminal_id="t1"))
+    ledger.observe_host_event(_host(6, terminal_id="t2", epoch="e2"))
+
+    assert ledger.read("t1") == _DRAFT
+    assert ledger.read("t2") == _EMPTY
+    assert ledger.host_cursor == ("e1", 5)
+
+
+def test_spawn_on_a_new_host_replays_that_host_from_its_first_event() -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(9))
+    ledger.record_spawn("t2", "e2")
 
     assert ledger.read("t1") == _UNTRACKED
-    assert ledger.read("t2") == _UNTRACKED
-    assert ledger.host_cursor == ("e2", 1)
+    assert ledger.read("t2") == _EMPTY
+    assert ledger.host_cursor == ("e2", 0)
+    # The reader resubscribes from the cursor and replays the spawn's input.
+    ledger.resume_host("e2", 3, since=0, gap=False)
+    ledger.observe_host_event(_host(1, terminal_id="t1", epoch="e1"))
+    assert ledger.read("t2") == _EMPTY
+    ledger.observe_host_event(_host(2, terminal_id="t2", epoch="e2"))
+    assert ledger.read("t2") == _DRAFT
+    assert ledger.host_cursor == ("e2", 2)
+
+
+def test_spawn_on_a_new_host_blocks_when_the_resume_did_not_replay_its_start() -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(9))
+    ledger.record_spawn("t2", "e2")
+    ledger.resume_host("e2", 3, since=None, gap=False)
+
+    assert ledger.read("t2") == _GAP
+
+
+@pytest.mark.parametrize("epoch", ["e1", ""], ids=["cursor-host", "unknown-host"])
+def test_spawn_without_a_new_host_keeps_tracked_terminals(epoch: str) -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(9))
+    ledger.record_spawn("t2", epoch)
+
+    assert ledger.read("t1") == _DRAFT
+    assert ledger.read("t2") == _EMPTY
+    assert ledger.host_cursor == ("e1", 9)
 
 
 def test_replayed_host_events_at_or_before_the_cursor_are_ignored() -> None:

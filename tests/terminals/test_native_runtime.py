@@ -1077,10 +1077,9 @@ async def test_sequence_holds_lock_across_steps_native(monkeypatch: pytest.Monke
     assert kinds[-1] == "text" or host.writes[-1]["kind"] in {"text", "key"}
 
 
-@pytest.mark.asyncio
-async def test_committed_spawn_starts_with_an_empty_composer() -> None:
-    host = FakeHostClient()
-    ledger = ComposerLedger()
+async def _prepared_ledger_spawn(
+    host: FakeHostClient, ledger: ComposerLedger
+) -> tuple[NativeTerminalRuntime, PreparedSpawn]:
     runtime = NativeTerminalRuntime(
         host,
         frame_host_epoch=host.host_epoch,
@@ -1100,12 +1099,34 @@ async def test_committed_spawn_starts_with_an_empty_composer() -> None:
     prepared = await runtime.prepare_spawn(request)
     prepared.acknowledge_persist()
     prepared.acknowledge_observer()
-    terminal_id = str(request.terminal_id)
+    return runtime, prepared
+
+
+@pytest.mark.asyncio
+async def test_committed_spawn_starts_with_an_empty_composer() -> None:
+    ledger = ComposerLedger()
+    runtime, prepared = await _prepared_ledger_spawn(FakeHostClient(), ledger)
+    terminal_id = str(prepared.terminal_id)
     assert ledger.read(terminal_id) == LedgerRead("blocked", "untracked")
 
     await runtime.commit_spawn(prepared)
 
     assert ledger.read(terminal_id) == LedgerRead("empty")
+
+
+@pytest.mark.asyncio
+async def test_spawn_committed_on_a_new_host_moves_the_ledger_to_that_host() -> None:
+    host = FakeHostClient()
+    ledger = ComposerLedger()
+    ledger.release("seat-on-the-dead-host")
+    ledger.resume_host("dead-host", 40, since=None, gap=False)
+    runtime, prepared = await _prepared_ledger_spawn(host, ledger)
+
+    await runtime.commit_spawn(prepared)
+
+    assert ledger.read(str(prepared.terminal_id)) == LedgerRead("empty")
+    assert ledger.read("seat-on-the-dead-host") == LedgerRead("blocked", "untracked")
+    assert ledger.host_cursor == (host.host_epoch, 0)
 
 
 @pytest.mark.asyncio
