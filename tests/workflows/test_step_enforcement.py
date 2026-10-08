@@ -1479,13 +1479,15 @@ class TestStepMCPToolBlocking:
         ],
         ids=["restrictive-allowlist", "explicit-block", "all-tools"],
     )
+    @pytest.mark.parametrize("handoff_tool", ["set_handoff", "get_handoff"])
     @pytest.mark.asyncio
-    async def test_set_handoff_step_enforcement(
+    async def test_handoff_step_enforcement(
         self,
         db: "HubDatabase",
         manager: AgentDefinitionManager,
         engine: RuleEngine,
         instance_mgr: AgentStepInstanceManager,
+        handoff_tool: str,
         allowed_mcp_tools: list[str] | str,
         blocked_mcp_tools: list[str],
         expected_decision: str,
@@ -1493,7 +1495,9 @@ class TestStepMCPToolBlocking:
         step: dict[str, Any] = {
             "name": "work",
             "allowed_mcp_tools": allowed_mcp_tools,
-            "blocked_mcp_tools": blocked_mcp_tools,
+            "blocked_mcp_tools": [
+                tool.replace("set_handoff", handoff_tool) for tool in blocked_mcp_tools
+            ],
         }
         workflow = {
             "name": "test-compact-self",
@@ -1513,7 +1517,7 @@ class TestStepMCPToolBlocking:
                 "tool_name": "mcp__gobby__call_tool",
                 "tool_input": {
                     "server_name": "gobby-sessions",
-                    "tool_name": "set_handoff",
+                    "tool_name": handoff_tool,
                 },
             }
         )
@@ -3519,6 +3523,7 @@ class TestProviderToolNameNormalization:
     "mcp_key",
     [
         "gobby-sessions:set_handoff",
+        "gobby-sessions:get_handoff",
         "gobby-sessions:feedback",
         "gobby-memory:search_memories",
         "gobby-memory:get_memory",

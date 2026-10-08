@@ -50,7 +50,7 @@ prompts:
     - Your lane, Lane Manager and author lanes come from your role file (`.gobby/roles/`, found by your session ref in `roster.md`) and from the CANDIDATE line.
 
     ## Continuity
-    Continuity: clear after each landing or bounce. Once the unit's last line is sent, hand off with `gobby-sessions:set_handoff(clear_session=true)`. Under context pressure mid-review, use `set_handoff(clear_session=false)`.
+    Continuity: compact in place after each landing or bounce. Once the unit's last line is sent, or under context pressure mid-review, hand off with `gobby-sessions:set_handoff` without `clear_session`. The session compacts and continues.
 
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.
