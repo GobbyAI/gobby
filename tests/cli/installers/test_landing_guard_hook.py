@@ -173,6 +173,36 @@ def test_protected_branch_refuses_writes_from_any_worktree(tmp_path: Path) -> No
     assert repo.ok(repo.root, "rev-parse", "main") == main_before
 
 
+def test_pack_refs_prunes_the_protected_ref_but_deletions_stay_refused(tmp_path: Path) -> None:
+    """pack-refs may prune the protected ref's loose copy; deleting the branch stays refused."""
+    repo = _baseline(tmp_path)
+    lane = tmp_path / "lane"
+    repo.ok(repo.root, "worktree", "add", "-q", "-b", "lane", str(lane))
+    loose_main = repo.root / ".git" / "refs" / "heads" / "main"
+
+    maintenance = repo.git(lane, "maintenance", "run", "--task=pack-refs")
+    pruned_by_maintenance = not loose_main.exists()
+    readme = repo.commit(repo.root, {"README.md": "readme\n"})
+    main_before = repo.ok(repo.root, "rev-parse", "main")
+    pack = repo.git(lane, "pack-refs", "--all")
+    pruned_by_pack = not loose_main.exists()
+    # A deletion naming the old value sends the same "<old> 0" line as the prune.
+    delete_with_old = repo.git(lane, "update-ref", "-d", "refs/heads/main", main_before)
+    delete_ref = repo.git(lane, "update-ref", "-d", "refs/heads/main")
+    # git refuses to delete a branch checked out in a worktree before any transaction.
+    branch_delete = repo.git(lane, "branch", "-D", "main")
+
+    assert maintenance.returncode == 0, maintenance.stderr
+    assert readme.returncode == 0, readme.stderr
+    assert pack.returncode == 0, pack.stderr
+    assert (pruned_by_maintenance, pruned_by_pack) == (True, True)
+    for result in (delete_with_old, delete_ref):
+        assert result.returncode != 0
+        assert "the protected branch cannot be deleted" in result.stderr
+    assert branch_delete.returncode != 0
+    assert repo.ok(repo.root, "rev-parse", "main") == main_before
+
+
 def test_guard_classifies_unusual_paths_fail_closed(tmp_path: Path) -> None:
     repo = _baseline(tmp_path)
 

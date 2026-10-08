@@ -78,8 +78,9 @@ COMPONENTS: tuple[str, ...] = (
     "srt",
 )
 CLI_COMPONENTS: frozenset[str] = frozenset({"claude", "codex", "grok", "qwen", "droid", "agy"})
-# Components that leave something behind to remove; voice, embedding, and
-# ide-settings only write configuration and have no uninstall.
+# Components that leave something behind to remove. voice, embedding, and
+# ide-settings only write configuration, and gclient, gterm, and srt install
+# Gobby's own runtime under ~/.gobby; none of them has an uninstall.
 UNINSTALLABLE_COMPONENTS: tuple[str, ...] = (
     "claude",
     "codex",
