@@ -23,7 +23,22 @@ pytestmark = pytest.mark.unit
         (["crates/gobby-core/src/lib.rs", "web/src/App.tsx"], "cutover"),
         (["src/gobby/storage/schema_expected_identity.json", "docs/x.md"], "cutover"),
         (["src/gobby/cli/main.py", "web/src/App.tsx"], "restart"),
+        (["src/gobby/install/shared/workflows/agents/researcher.yaml"], "reload"),
+        (["src/gobby/install/shared/workflows/agents/developer.yaml", "docs/x.md"], "reload"),
+        (["src/gobby/install/shared/workflows/agents/README.md"], "restart"),
+        (["src/gobby/install/shared/workflows/agents/nested/seat.yaml"], "restart"),
+        (
+            [
+                "src/gobby/install/shared/workflows/agents/researcher.yaml",
+                "src/gobby/agents/sync.py",
+            ],
+            "restart",
+        ),
         (["web/src/App.tsx"], "ui_build"),
+        (
+            ["src/gobby/install/shared/workflows/agents/researcher.yaml", "web/src/App.tsx"],
+            "restart",
+        ),
         (["docs/guides/x.md", "tests/test_x.py"], "none"),
         ([], "none"),
     ],
