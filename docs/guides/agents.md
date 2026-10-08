@@ -25,6 +25,10 @@ enforces this on pipeline MCP steps. Daemon-internal callers cannot override.
 Spawn scope and seat-spawn restrictions still apply. The direct HTTP route
 requires operator credentials and rejects explicit network for `web_chat`.
 
+Until batch spawning is retired, the operator-only `POST /api/agents/spawn/batch`
+also accepts `network` on each item, with the same inheritance, one-launch
+lifetime, validation, and `web_chat` refusal as single HTTP spawns.
+
 Agent definitions have explicit `surfaces`:
 
 | Surface | Runtime tool | What happens |
