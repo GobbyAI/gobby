@@ -470,6 +470,48 @@ fn source_repo() -> anyhow::Result<(tempfile::TempDir, RepositoryBinding)> {
 
 #[test]
 #[serial_test::serial(evidence_git)]
+fn documented_bound_request_reads_committed_source() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let documentation = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../src/gobby/install/shared/skills/gobby/references/code-index/evidence.md"
+    ));
+    let example = documentation
+        .lines()
+        .find(|line| line.starts_with("gcode evidence") && line.contains("\"binding\""))
+        .expect("documented bound example");
+    let json = example
+        .split('\'')
+        .nth(1)
+        .expect("quoted JSON request")
+        .replace("PROJECT_ID", &binding.project_id)
+        .replace("COMMIT_OID", &binding.commit_oid)
+        .replace("TREE_OID", &binding.tree_oid);
+    let request: EvidenceRequest = serde_json::from_str(&json)?;
+    assert_eq!(request.binding, binding);
+    let library = EvidenceLibrary::new(
+        temporary.path(),
+        binding.clone(),
+        Arc::new(FakeFacts::for_source(&binding)),
+    )?;
+    // Commit-bound reads must serve Git bytes even when working-tree bytes differ.
+    std::fs::write(
+        temporary.path().join("src/lib.rs"),
+        "changed working tree\n",
+    )?;
+    let response = library.query(request)?;
+    assert!(response.complete);
+    assert!(response.warnings.is_empty());
+    assert_eq!(response.binding, binding);
+    let EvidenceItem::Source(source) = &response.items[0] else {
+        panic!("expected source evidence");
+    };
+    assert_eq!(source.excerpt, "use std::fmt;\n");
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial(evidence_git)]
 fn test_live_evidence_contract() -> anyhow::Result<()> {
     let (temporary, binding) = source_repo()?;
     let facts = FakeFacts::for_source(&binding);
