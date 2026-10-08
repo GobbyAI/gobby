@@ -42,7 +42,9 @@ class CompletedSectionExemptionsUnavailable(ValueError):
 class CompletionTaskLookup(Protocol):
     """Task reads that resolve completed-section owners by coverage label."""
 
-    def list_tasks(self, *, project_id: str, label: str, limit: int, sort_by: str) -> list[Task]:
+    def list_tasks(
+        self, *, project_id: str, label: str, limit: int, offset: int, sort_by: str
+    ) -> list[Task]:
         """Return up to ``limit`` project tasks carrying ``label``."""
         ...
 

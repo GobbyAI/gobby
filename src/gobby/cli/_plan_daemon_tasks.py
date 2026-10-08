@@ -35,11 +35,20 @@ class DaemonTaskLookup:
         self._client = client
         self._tasks: dict[str, Task] = {}
 
-    def list_tasks(self, *, project_id: str, label: str, limit: int, sort_by: str) -> list[Task]:
-        """Return up to ``limit`` project tasks carrying ``label``."""
-        # Ownership needs exactly one match, so the order of a short page never matters.
-        del sort_by
-        page = self._call("list_tasks", {"project": project_id, "label": label, "limit": limit})
+    def list_tasks(
+        self, *, project_id: str, label: str, limit: int, offset: int, sort_by: str
+    ) -> list[Task]:
+        """Return a stable page of project tasks carrying ``label``."""
+        page = self._call(
+            "list_tasks",
+            {
+                "project": project_id,
+                "label": label,
+                "limit": limit,
+                "offset": offset,
+                "sort_by": sort_by,
+            },
+        )
         try:
             task_ids = [str(row["id"]) for row in page["tasks"]]
         except (KeyError, TypeError) as exc:
