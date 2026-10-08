@@ -41,6 +41,8 @@ class InputActivityEvent:
     interrupt: InterruptKind | None
     epoch: str
     seq: int
+    # The chunk holds CR outside bracketed paste; ``None`` from a host without the flag.
+    submit: bool | None = None
 
 
 HostEvent = TerminalExitedEvent | InputActivityEvent
@@ -86,6 +88,7 @@ def decode_host_event(payload: dict[str, Any]) -> HostEvent:
             interrupt=_interrupt_kind(payload.get("interrupt")),
             epoch=str(payload["epoch"]),
             seq=int(payload["seq"]),
+            submit=submit if isinstance(submit := payload.get("submit"), bool) else None,
         )
     raise ValueError(f"unknown host event: {event}")
 

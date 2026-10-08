@@ -104,6 +104,12 @@ def test_control_goldens_match_rust_emitter() -> None:
     )
     with pytest.raises(ValueError, match="interrupt"):
         decode_host_event(input_activity | {"interrupt": "sigint"})
+    assert decode_host_event(input_activity | {"submit": True}) == (
+        InputActivityEvent("t", "ht-1", "att-1", "input", 1, None, "epoch-1", 43, submit=True)
+    )
+    assert decode_host_event(input_activity | {"submit": "yes"}) == (
+        InputActivityEvent("t", "ht-1", "att-1", "input", 1, None, "epoch-1", 43, submit=None)
+    )
 
 
 def test_control_client_matches_golden_corpus() -> None:

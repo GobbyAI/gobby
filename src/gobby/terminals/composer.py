@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from gobby.terminals.runtime import NamedKey
 
-__all__ = ["COMPOSER_DRAIN_LINES", "composer_clear_sequence"]
+__all__ = ["COMPOSER_CLEAR_KEYS", "COMPOSER_DRAIN_LINES", "composer_clear_sequence"]
 
 # Lines one drain pass removes; each pass empties the cursor line and joins its
 # neighbours, so this bounds the multi-line draft a drain can clear.
@@ -25,6 +25,7 @@ COMPOSER_DRAIN_LINES = 8
 # join the emptied line with its neighbours. Each key is a no-op on an empty
 # buffer. Never escape or ctrl+c: those cancel turns, and a doubled ctrl+c exits.
 _DRAIN_PASS: tuple[NamedKey, ...] = ("ctrl_u", "ctrl_k", "backspace", "delete")
+COMPOSER_CLEAR_KEYS: frozenset[str] = frozenset(_DRAIN_PASS)
 
 
 def composer_clear_sequence(cli_source: str | None) -> tuple[NamedKey, ...]:
