@@ -108,6 +108,29 @@ class _Harness:
         self.processor = SessionMessageProcessor(MagicMock(), session_manager=self.session_manager)
 
 
+@pytest.mark.asyncio
+async def test_codex_capture_records_initial_and_changed_turn_effort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The registered capture reads effective effort from each rollout turn."""
+    fixture = Path(__file__).parent / "transcripts/fixtures/codex_turn_context_model.jsonl"
+    lines = fixture.read_text(encoding="utf-8").splitlines()
+    transcript = tmp_path / "codex.jsonl"
+    transcript.write_text(lines[0] + "\n", encoding="utf-8")
+    harness = _Harness(monkeypatch)
+    harness.session.source = "codex"
+    harness.session.model = "gpt-5.6-terra"
+    harness.processor.register_session(SESSION_ID, str(transcript), source="codex")
+
+    assert await harness.processor._process_session(SESSION_ID, str(transcript))
+    assert harness.session.reasoning_effort == "medium"
+
+    _append(transcript, lines[1:])
+    assert await harness.processor._process_session(SESSION_ID, str(transcript))
+    assert harness.session.reasoning_effort == "xhigh"
+    assert harness.efforts == ["medium", "xhigh"]
+
+
 async def _offset_after_restart_append(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> int:
     """Process a transcript, append while "down", and return a fresh processor's offset."""
     transcript = tmp_path / "claude.jsonl"
