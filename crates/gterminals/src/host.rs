@@ -359,32 +359,45 @@ impl HostSupervisor {
     }
 
     async fn drain_host(&self) -> Result<(), HostFailure> {
-        let adoption = timeout(READY_DEADLINE, async {
+        let handshake = timeout(READY_DEADLINE, async {
             let Some(stream) = connect(&self.inner.options).await? else {
                 return Ok(None);
             };
-            authenticate(&self.inner, stream, true, None)
+            handshake(&self.inner.options, stream, true, None)
                 .await
                 .map(Some)
         })
-        .await
-        .map_err(|_| {
-            HostFailure::PostAdoptionIo("drain authentication deadline exceeded".into())
-        })??;
-        let Some((Some(mut client), info)) = adoption else {
-            return Ok(());
-        };
+        .await;
         let grace = self.inner.options.shutdown_grace;
         let grace_ms = u64::try_from(grace.as_millis()).unwrap_or(u64::MAX);
-        // A lost reply can mean the host exited. Prove the process boundary next.
-        let _ = timeout(grace + READY_DEADLINE, client.host_shutdown(grace_ms)).await;
-        drop(client);
-        if await_host_exit(info.pid, grace).await? {
+        // Explicit drain must work even when the live host cannot be adopted.
+        let pid = if let Ok(Ok(Some((Some(mut client), info)))) = handshake {
+            // A lost reply can mean the host exited. Prove the boundary next.
+            let _ = timeout(grace + READY_DEADLINE, client.host_shutdown(grace_ms)).await;
+            info.pid
+        } else {
+            match read_pid(&self.inner.options).await {
+                Ok(pid) => pid,
+                Err(error) => {
+                    return if !tokio::fs::try_exists(
+                        self.inner.options.socket_dir.join("gterm.pid"),
+                    )
+                    .await
+                    .map_err(pre_io)?
+                    {
+                        Ok(())
+                    } else {
+                        Err(post_adoption_failure(error))
+                    };
+                }
+            }
+        };
+        if await_host_exit(pid, grace).await? {
             return Ok(());
         }
         for signal in ["-TERM", "-KILL"] {
             // Never signal a PID whose installed host identity no longer matches.
-            let identity = timeout(READY_DEADLINE, verify_pid(&self.inner.options, info.pid))
+            let identity = timeout(READY_DEADLINE, verify_pid(&self.inner.options, pid))
                 .await
                 .map_err(|_| {
                     HostFailure::PostAdoptionIo("drain identity deadline exceeded".into())
@@ -392,7 +405,7 @@ impl HostSupervisor {
             if let Err(error) = identity {
                 // The host unlinks its identity before its final process grace.
                 // Prove exit even if the pidfile vanished during verification.
-                return if await_host_exit(info.pid, READY_DEADLINE).await? {
+                return if await_host_exit(pid, READY_DEADLINE).await? {
                     Ok(())
                 } else {
                     Err(post_adoption_failure(error))
@@ -401,26 +414,24 @@ impl HostSupervisor {
             let result = timeout(
                 READY_DEADLINE,
                 Command::new("/bin/kill")
-                    .args([signal, &info.pid.to_string()])
+                    .args([signal, &pid.to_string()])
                     .output(),
             )
             .await
             .map_err(|_| HostFailure::PostAdoptionIo("drain signal deadline exceeded".into()))?
             .map_err(|error| HostFailure::PostAdoptionIo(error.to_string()))?;
             if !result.status.success()
-                && !process_is_host(info.pid)
-                    .await
-                    .map_err(post_adoption_failure)?
+                && !process_is_host(pid).await.map_err(post_adoption_failure)?
             {
                 return Ok(());
             }
-            if await_host_exit(info.pid, grace.max(Duration::from_millis(100))).await? {
+            if await_host_exit(pid, grace.max(Duration::from_millis(100))).await? {
                 return Ok(());
             }
         }
         Err(HostFailure::PostAdoptionIo(format!(
             "gterm host {} still running after explicit drain",
-            info.pid
+            pid
         )))
     }
 }
@@ -614,7 +625,25 @@ async fn authenticate(
     adopted: bool,
     spawned_pid: Option<u32>,
 ) -> Result<Adoption, HostFailure> {
-    let token = tokio::fs::read_to_string(inner.options.socket_dir.join("gterm-control.token"))
+    let adoption = handshake(&inner.options, stream, adopted, spawned_pid).await?;
+    let bindings = inner.authority.bindings(&adoption.1.epoch).await?;
+    if bindings
+        .iter()
+        .any(|row| row.machine_id != inner.options.machine_id)
+    {
+        return Err(HostFailure::EpochRefused);
+    }
+    Ok(adoption)
+}
+
+// Explicit drain authenticates the wire and process, independently of adoption authority.
+async fn handshake(
+    options: &HostOptions,
+    stream: UnixStream,
+    adopted: bool,
+    spawned_pid: Option<u32>,
+) -> Result<Adoption, HostFailure> {
+    let token = tokio::fs::read_to_string(options.socket_dir.join("gterm-control.token"))
         .await
         .map_err(|_| HostFailure::TokenMismatch)?;
     if token.trim().is_empty() {
@@ -629,16 +658,9 @@ async fn authenticate(
         .ping()
         .await
         .map_err(|error| control_failure(error, false))?;
-    verify_pid(&inner.options, ping.host_pid).await?;
+    verify_pid(options, ping.host_pid).await?;
     if spawned_pid.is_some_and(|pid| pid != ping.host_pid) {
         return Err(HostFailure::PidMismatch);
-    }
-    let bindings = inner.authority.bindings(&ping.host_epoch).await?;
-    if bindings
-        .iter()
-        .any(|row| row.machine_id != inner.options.machine_id)
-    {
-        return Err(HostFailure::EpochRefused);
     }
     Ok((
         Some(client),

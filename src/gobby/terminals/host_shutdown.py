@@ -47,7 +47,12 @@ class HostShutdown(ABC):
         raise NotImplementedError
 
     async def _host_shutdown(self) -> None:
-        """Drain the authenticated host, verifying exit before escalating signals."""
+        """Drain through the control socket, then verify exit and escalate signals.
+
+        Explicit drain must also stop a live host that cannot be adopted (#22232).
+        If connection or authentication fails, fall through to the pidfile and
+        identity-checked SIGTERM/SIGKILL ladder instead of leaving terminals alive.
+        """
         client = self._client
         pid = self.host_pid
         if client is None:

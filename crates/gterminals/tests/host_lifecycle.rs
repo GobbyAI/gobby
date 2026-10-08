@@ -1002,6 +1002,65 @@ async fn shutdown_cancels_inflight_start_callers() {
     assert!(host.alive());
 }
 
+async fn drain_unadoptable_live_host(token_mismatch: bool) -> anyhow::Result<bool> {
+    let hub = OwnedHubSchema::new().await?;
+    let daemon = isolated_daemon(&hub).await?;
+    let options = HostOptions::from_pool(&hub.pool()?, daemon.home.path(), "M1".into())
+        .await?
+        .expect("enabled test host");
+    let owner = HostSupervisor::new(options.clone(), Arc::new(Rows(vec![])));
+    let original = owner.start().await?;
+    owner.stop().await;
+    let rows = if token_mismatch {
+        tokio::fs::write(
+            options.socket_dir.join("gterm-control.token"),
+            "wrong-token",
+        )
+        .await?;
+        vec![]
+    } else {
+        vec![binding("foreign-machine", &original.epoch)]
+    };
+    let supervisor = HostSupervisor::new(options, Arc::new(Rows(rows)));
+    assert_eq!(
+        supervisor.start().await,
+        Err(if token_mismatch {
+            HostFailure::TokenMismatch
+        } else {
+            HostFailure::EpochRefused
+        })
+    );
+    let result = supervisor.drain().await;
+    assert!(
+        result.is_ok(),
+        "explicit drain must bypass adoption failure: {result:?}"
+    );
+    let process = Command::new("/bin/ps")
+        .args(["-p", &original.pid.to_string(), "-o", "stat="])
+        .output()?;
+    let state = String::from_utf8_lossy(&process.stdout);
+    Ok(!daemon.home.path().join("gterm.pid").exists()
+        && (state.trim().is_empty() || state.trim().starts_with('Z')))
+}
+
+#[tokio::test]
+async fn explicit_drain_terminates_token_mismatch_host() -> anyhow::Result<()> {
+    assert!(
+        drain_unadoptable_live_host(true).await?,
+        "explicit drain must terminate the token-mismatched host pid"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn explicit_drain_terminates_foreign_epoch_host() -> anyhow::Result<()> {
+    assert!(
+        drain_unadoptable_live_host(false).await?,
+        "explicit drain must terminate the foreign-epoch host pid"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn health_pidfile_io_keeps_post_adoption_type() {
     let mut host = HostFixture::new(None, 1, false).await;
