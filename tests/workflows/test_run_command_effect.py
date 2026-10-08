@@ -24,6 +24,7 @@ from gobby.skills.materialization import (
     SkillMaterializationResult,
 )
 from gobby.storage.definitions.rules import RuleDefinitionRow
+from gobby.utils import spawn
 from gobby.workflows.definitions import RuleEffect
 from gobby.workflows.engine.effects import EffectsMixin
 from gobby.workflows.engine.run_command import (
@@ -748,24 +749,29 @@ class TestRunCommandBounds:
         assert result.stderr_bytes > STDERR_LIMIT_BYTES
 
     async def test_timeout_kills_and_reaps_child(self, tmp_path: Path) -> None:
-        pid_path = tmp_path / "pid"
-        script = (
-            "import os, pathlib, time; "
-            f"pathlib.Path({str(pid_path)!r}).write_text(str(os.getpid())); "
-            "time.sleep(30)"
-        )
+        processes: list[asyncio.subprocess.Process] = []
+        create_process = spawn.create_subprocess_exec
 
-        result = await execute_run_command(
-            [sys.executable, "-c", script],
-            cwd=str(tmp_path),
-            stdin_payload=b"{}",
-            timeout_seconds=0.2,
-            background=False,
-        )
+        async def capture_process(*args: str, **kwargs: Any) -> asyncio.subprocess.Process:
+            process = await create_process(*args, **kwargs)
+            processes.append(process)
+            return process
+
+        with patch("gobby.utils.spawn.create_subprocess_exec", capture_process):
+            result = await execute_run_command(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                cwd=str(tmp_path),
+                stdin_payload=b"{}",
+                timeout_seconds=0.2,
+                background=False,
+            )
 
         assert result.status == "timeout"
+        assert len(processes) == 1
+        process = processes[0]
+        assert process.returncode is not None
         with pytest.raises(ProcessLookupError):
-            os.kill(int(pid_path.read_text()), 0)
+            os.kill(process.pid, 0)
 
     async def test_stalled_execution_guard_times_out_without_spawning(self, tmp_path: Path) -> None:
         entered = asyncio.Event()
