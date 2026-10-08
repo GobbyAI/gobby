@@ -26,7 +26,7 @@ The shared state across all five layers is:
 - Domain definitions, which live in the typed tables above and are synced from
   bundled or project YAML. Names may overlap across domains.
 - Immutable step-workflow snapshots on `agent_step_instances`, taken at spawn
-  or persona activation so a running session is not rewritten by later
+  or whole-definition activation so a running session is not rewritten by later
   definition edits.
 - Completion IDs and notifications, which let agents, pipelines, and dispatch
   reconnect long-running work after a daemon restart or parent-session wait.
@@ -55,18 +55,22 @@ Rules do **not** decide the broader workflow. They enforce local invariants.
 
 Agents are reusable worker definitions. They combine:
 
-- Persona and prompt fields such as `role`, `goal`, `personality`, and `instructions`.
+- `prompts.persona` for interactive guidance and `prompts.agent` for spawned-run guidance.
 - Provider and isolation preferences.
 - Rule selectors, variable overrides, and optional inline step workflows.
 - Tool restrictions that apply either globally or per step.
 
-An agent definition can be applied to the current session with
-`gobby-agents:apply_persona`, or used to spawn a child session with
-`gobby-agents:spawn_agent` or `dispatch_batch`.
+Activate a whole definition on the current session with
+`gobby-agents:apply_agent_definition`, switch its persona prompt and skills live
+with `gobby-agents:apply_persona`, or spawn a child session with
+`gobby-agents:spawn_agent` or `dispatch_batch`. A terminal definition change
+requires a relaunch; a persona switch keeps the current seat's enforcement.
+See [Agents](./agents.md#definition-activation) for activation and continuity.
 
-Ending a turn is not the same as ending an agent run. Spawned agents finish by
-calling `gobby-agents:end_agent_run`; turn-end rules only govern the current
-model turn boundary.
+Ending a turn is separate from ending an agent run. One-shot workers finish by
+calling `gobby-agents:end_agent_run`; interactive seats remain available between
+tasks until explicitly ended or their configured idle TTL expires. Turn-end
+rules govern the current model turn boundary.
 
 ### Pipelines
 
@@ -118,7 +122,7 @@ behavior today:
 | Server | What it owns |
 | --- | --- |
 | `gobby-workflows` | Rule, variable, agent-definition, and pipeline definitions; step-status and evaluation tools; pipeline execution and pipeline `wait` steps |
-| `gobby-agents` | Agent spawning, runtime inspection, persona application, inter-agent messaging, and commands |
+| `gobby-agents` | Agent spawning, runtime inspection, definition activation, persona switching, inter-agent messaging, and commands |
 | `gobby-tasks` | Task lifecycle, dependencies, readiness, review states, close, and escalation |
 | `gobby-tasks-ops` | Build, artifact, stage-transition, review, expansion-run, and affected-file helpers |
 | `gobby-worktrees` | Worktree creation, sync, merge, and cleanup |
@@ -195,4 +199,4 @@ waiting for approval", that is runtime state.
 - [Orchestration](./orchestration.md) for the current task/agent coordination model
 - [Rule Authoring Guide](./workflow-rules.md) for engine caveats and safety rules
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-08_
