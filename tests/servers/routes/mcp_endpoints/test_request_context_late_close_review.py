@@ -121,7 +121,10 @@ async def review_client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Review
         }
 
     server = MagicMock()
-    server.run_db = AsyncMock(side_effect=lambda function, *args: function(*args))
+    server.auth_service.verified_agent_claims.return_value = None
+    server.run_db = AsyncMock(
+        side_effect=lambda function, *args, **kwargs: function(*args, **kwargs)
+    )
     server.tool_proxy.call_tool = AsyncMock(side_effect=dispatch)
     server.config.mcp_client_proxy.tool_timeout = 10.0
     app = FastAPI()
