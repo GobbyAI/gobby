@@ -43,6 +43,7 @@ from gobby.agents.spawn_cache_policy import (
     build_spawn_cache_env,
     sandbox_config_for_spawn,
 )
+from gobby.cli.installers.agy import _agy_config_dir
 from gobby.config.app import DaemonConfig
 from gobby.integrations.rtk import platform_paths
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
@@ -1814,7 +1815,7 @@ class TestAgySandboxResolver:
 
         read_only = sandbox_policy._PROVIDER_AUTH_READ_ONLY_PATHS.get("agy")
         assert read_only is not None
-        assert "~/.gemini/config/projects" in read_only
+        assert "~/.gemini/config" in read_only
         assert "~/Library/Keychains/login.keychain-db" in read_only
 
         assert "agy" in sandbox_policy._PROVIDER_CREDENTIAL_ENV
@@ -1856,6 +1857,19 @@ class TestAgySandboxResolver:
         for entry in paths.credential_env_vars:
             assert entry.mode == "mask"
             assert set(_AGY_PROBE_DOMAINS) <= set(entry.inject_hosts)
+
+    def test_agy_reads_its_own_config_but_not_gemini_credentials(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        gemini = tmp_path.resolve() / ".gemini"
+        # Managed runs deny gemini's ~/.gemini to every provider, so AGY's config
+        # beneath it (config.json, hooks, MCP) needs its own grant or AGY never starts.
+        assert str(gemini) in sandbox_policy.credential_read_roots()
+        grants = [Path(path) for path in sandbox_policy.provider_credential_read_exceptions("agy")]
+        for needed in (_agy_config_dir(), gemini / "antigravity-ide" / "installation_id"):
+            assert any(needed.resolve().is_relative_to(grant) for grant in grants), needed
+        assert not any((gemini / "oauth_creds.json").is_relative_to(grant) for grant in grants)
 
     async def test_create_session_admits_agy_under_srt_and_rejects_provider_native(self) -> None:
         caps = provider_capabilities("agy")
