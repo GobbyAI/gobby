@@ -501,6 +501,14 @@ class PipelineExecutor(
                         # Bare value (not a definition dict) — use as-is
                         resolved_defaults[key] = spec
                 merged_inputs = {**resolved_defaults, **inputs}
+                string_inputs = [
+                    key
+                    for key, spec in pipeline.inputs.items()
+                    if isinstance(spec, dict) and spec.get("type") == "string"
+                ]
+                for key in string_inputs:
+                    if merged_inputs[key] is not None:
+                        merged_inputs[key] = str(merged_inputs[key])
                 # Inject parent_session_id into inputs so ${{ inputs.parent_session_id }} resolves
                 if parent_session_id and not inputs.get("parent_session_id"):
                     merged_inputs["parent_session_id"] = parent_session_id
@@ -529,6 +537,7 @@ class PipelineExecutor(
 
                 context: dict[str, Any] = {
                     "inputs": merged_inputs,
+                    "_string_inputs": string_inputs,
                     "steps": {},  # Will hold step outputs as they complete
                     "session_id": pipeline_session_id,
                     "parent_session_id": parent_session_id,
