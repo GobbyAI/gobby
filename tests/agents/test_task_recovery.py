@@ -67,6 +67,24 @@ class _RunManager:
         return []
 
 
+class _SweepRunManager(_RunManager):
+    """Serves fixed terminal runs to the lifecycle sweep by status."""
+
+    def __init__(self, *runs: _Run) -> None:
+        self._runs = runs
+
+    def list_by_status(
+        self,
+        status: str | None = None,
+        limit: int = 100,
+        project_id: str | None = None,
+    ) -> list[_Run]:
+        return [run for run in self._runs if run.status == status][:limit]
+
+
+_MERGE_EXISTING_VARIABLES = SessionVariableManager.merge_existing_variables
+
+
 class _Classifier:
     def for_provider(self, provider_id: str) -> _Classifier:
         return self
@@ -365,14 +383,211 @@ async def test_cancelled_run_sweep_keeps_the_live_claim_owner(
         child_session_id=worker.id,
         claimed_session_id=coordinator.id,
     )
-    handler = TaskRecoveryHandler(task_manager, _RunManager(), _Classifier(), run_db=_run_db)
+    handler = TaskRecoveryHandler(
+        task_manager, _SweepRunManager(run), _Classifier(), run_db=_run_db
+    )
 
-    # The lifecycle sweep revisits a terminal cancelled run on every cycle.
-    for _ in range(2):
-        assert not await handler.recover_task_from_terminal_agent(run, outcome="cancelled")
+    # Two lifecycle sweeps clear the worker's stale claim exactly once (#23783).
+    with patch.object(
+        SessionVariableManager,
+        "merge_existing_variables",
+        autospec=True,
+        side_effect=_MERGE_EXISTING_VARIABLES,
+    ) as merge_vars:
+        for _ in range(2):
+            assert await handler.recover_tasks_from_terminal_agents() == 0
 
+    assert [call.args[1] for call in merge_vars.call_args_list] == [worker.id]
     assert task.id not in variable_manager.get_variables(worker.id)["claimed_tasks"]
     kept = variable_manager.get_variables(coordinator.id)
     assert kept["task_claimed"] is True
     assert kept["claimed_tasks"] == {task.id: f"#{task.seq_num}"}
     assert task_manager.get_task(task.id).claimed_by_session_id == coordinator.id
+
+
+def _register(temp_db: Any, project_id: str, external_id: str) -> str:
+    return (
+        SessionManager(temp_db)
+        .register(external_id=external_id, machine_id=None, source="codex", project_id=project_id)
+        .id
+    )
+
+
+@pytest.mark.asyncio
+async def test_terminal_sweep_does_not_revisit_settled_runs(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
+    """A settled terminal run costs no task read or variable write on later sweeps (#23783)."""
+    cancelled_child = _register(temp_db, sample_project["id"], "task-recovery-settled-cancel")
+    failed_child = _register(temp_db, sample_project["id"], "task-recovery-settled-failed")
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        sample_project["id"],
+        "Already released task",
+        validation_criteria="The sweep settles.",
+    )
+    variable_manager = SessionVariableManager(temp_db)
+    variable_manager.merge_variables(
+        cancelled_child,
+        {"task_claimed": True, "claimed_tasks": {task.id: f"#{task.seq_num}"}},
+    )
+    runs = _SweepRunManager(
+        _Run("settled-cancelled", "cancelled", task.id, cancelled_child, cancelled_child),
+        _Run("settled-failed", "error", None, failed_child, failed_child),
+    )
+    handler = TaskRecoveryHandler(task_manager, runs, _Classifier(), run_db=_run_db)
+
+    with (
+        patch.object(task_manager, "list_tasks", wraps=task_manager.list_tasks) as list_tasks,
+        patch.object(task_manager, "get_task", wraps=task_manager.get_task) as get_task,
+        patch.object(
+            SessionVariableManager,
+            "merge_existing_variables",
+            autospec=True,
+            side_effect=_MERGE_EXISTING_VARIABLES,
+        ) as merge_vars,
+    ):
+        assert await handler.recover_tasks_from_terminal_agents() == 0
+        assert list_tasks.call_count == 1
+        get_task.assert_called()
+        assert [call.args[1] for call in merge_vars.call_args_list] == [cancelled_child]
+        for spy in (list_tasks, get_task, merge_vars):
+            spy.reset_mock()
+
+        assert await handler.recover_tasks_from_terminal_agents() == 0
+
+    list_tasks.assert_not_called()
+    get_task.assert_not_called()
+    merge_vars.assert_not_called()
+    assert variable_manager.get_variables(cancelled_child)["claimed_tasks"] == {}
+
+
+@pytest.mark.asyncio
+async def test_claimed_task_lookup_skips_hierarchy_page(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
+    """A run without task_id finds its claim without the hierarchy ordering (#23783)."""
+    child = _register(temp_db, sample_project["id"], "task-recovery-lookup-child")
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        sample_project["id"],
+        "Claimed without a run task",
+        validation_criteria="The lookup finds it.",
+    )
+    task_manager.claim_task(task.id, child)
+    handler = TaskRecoveryHandler(task_manager, _RunManager(), _Classifier(), run_db=_run_db)
+    run = _Run("lookup-run", "error", None, child, child)
+
+    with patch(
+        "gobby.storage.tasks._queries._hierarchy_page",
+        side_effect=AssertionError("recovery lookup took the hierarchy page"),
+    ) as hierarchy_page:
+        resolved = await handler.resolve_claimed_task_for_run(run)
+
+    hierarchy_page.assert_not_called()
+    assert resolved is not None
+    assert resolved[0] == task.id
+
+
+@pytest.mark.asyncio
+async def test_unverified_terminal_run_is_retried_next_sweep(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
+    """A run whose agent can't be verified dead stays unsettled and keeps its claim."""
+    child = _register(temp_db, sample_project["id"], "task-recovery-unverified-child")
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        sample_project["id"],
+        "Owned by an unverified agent",
+        validation_criteria="Recovery waits for liveness proof.",
+    )
+    task_manager.claim_task(task.id, child)
+    run = _Run("unverified-run", "cancelled", task.id, child, child, terminal_id="term-1")
+    handler = TaskRecoveryHandler(
+        task_manager, _SweepRunManager(run), _Classifier(), run_db=_run_db
+    )
+
+    with patch.object(
+        handler,
+        "resolve_claimed_task_for_run",
+        wraps=handler.resolve_claimed_task_for_run,
+    ) as resolve:
+        for _ in range(2):
+            assert await handler.recover_tasks_from_terminal_agents() == 0
+
+    assert resolve.call_count == 2
+    assert task_manager.get_task(task.id).claimed_by_session_id == child
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kill_result", "expected_resolves"),
+    [
+        pytest.param(None, 2, id="no-verifier"),
+        pytest.param({"success": False, "error": "kill failed"}, 2, id="kill-failed"),
+        pytest.param({"success": True, "already_dead": True}, 1, id="verified-dead"),
+    ],
+)
+async def test_unclaimed_terminal_run_settles_only_when_verified_dead(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+    kill_result: dict[str, Any] | None,
+    expected_resolves: int,
+) -> None:
+    """A no-claim run whose agent may live is re-resolved, so a late claim is caught."""
+    child = _register(temp_db, sample_project["id"], "task-recovery-unclaimed-live")
+    run = _Run("unclaimed-live", "error", None, child, child, terminal_id="term-1")
+    killer = None if kill_result is None else AsyncMock(return_value=kill_result)
+    handler = TaskRecoveryHandler(
+        LocalTaskManager(temp_db),
+        _SweepRunManager(run),
+        _Classifier(),
+        terminal_agent_killer=killer,
+        run_db=_run_db,
+    )
+
+    with patch.object(
+        handler,
+        "resolve_claimed_task_for_run",
+        wraps=handler.resolve_claimed_task_for_run,
+    ) as resolve:
+        for _ in range(2):
+            assert await handler.recover_tasks_from_terminal_agents() == 0
+
+    assert resolve.call_count == expected_resolves
+
+
+@pytest.mark.asyncio
+async def test_sweep_releases_every_claim_before_settling(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
+    """A dead child holding two claims has both released before its run settles."""
+    child = _register(temp_db, sample_project["id"], "task-recovery-two-claims-child")
+    task_manager = LocalTaskManager(temp_db)
+    tasks = [
+        task_manager.create_task(
+            sample_project["id"],
+            f"Claimed task {index}",
+            validation_criteria="Recovery releases it.",
+        )
+        for index in range(2)
+    ]
+    for task in tasks:
+        task_manager.claim_task(task.id, child)
+    run = _Run("eeeeeeee-eeee-4eee-8eee-eeeeeeee2378", "cancelled", None, child, child)
+    handler = TaskRecoveryHandler(
+        task_manager, _SweepRunManager(run), _Classifier(), run_db=_run_db
+    )
+
+    assert await handler.recover_tasks_from_terminal_agents() == 1
+    assert await handler.recover_tasks_from_terminal_agents() == 1
+    assert await handler.recover_tasks_from_terminal_agents() == 0
+    with patch.object(task_manager, "list_tasks", wraps=task_manager.list_tasks) as list_tasks:
+        assert await handler.recover_tasks_from_terminal_agents() == 0
+
+    list_tasks.assert_not_called()
+    assert [task_manager.get_task(task.id).claimed_by_session_id for task in tasks] == [None, None]
