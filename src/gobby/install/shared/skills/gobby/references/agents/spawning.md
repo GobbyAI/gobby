@@ -16,6 +16,10 @@ MCP steps enforce the same boundary. Daemon-internal callers cannot override.
 Spawn scope and seat-spawn policy remain in force. Direct HTTP spawn accepts
 operator credentials only and refuses explicit network for `web_chat`.
 
+Until batch spawning is retired, operator-only `POST /api/agents/spawn/batch`
+accepts `network` per item with the same inheritance, one-launch lifetime,
+validation, and `web_chat` refusal as single HTTP spawns.
+
 Load when authorized work calls for a Gobby-managed worker or batch. Inspect the
 installed spawn-capable definition, assigned task, parent session, and workspace
 before launching. `gobby-agents:can_spawn_agent` checks capacity/depth eligibility;

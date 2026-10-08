@@ -353,6 +353,10 @@ explicit profile for `web_chat`. Invalid values, unauthorized callers, missing
 resolved definitions, and unreadable Trusted seeds refuse before launch
 allocation. `trusted` remains an SRT allowlist; it never disables the sandbox.
 
+Until batch spawning is retired, the operator-only `POST /api/agents/spawn/batch`
+also accepts `network` per item through the same spawn boundary. Each item keeps
+the same inheritance, one-launch lifetime, validation, and `web_chat` refusal.
+
 An agent definition's `network` field picks the egress of the agents it spawns.
 Both values keep managed SRT and `allow_network: false`. Neither turns the
 sandbox off or opens unrestricted network.
