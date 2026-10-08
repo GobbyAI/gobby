@@ -88,6 +88,14 @@ class SessionEndMixin(EventHandlersBase):
         else:
             end_status = "expired"
         terminal_outcome = end_status == "expired"
+        # A staged clear hands its run and the run's terminal to the successor,
+        # whose marker take rebinds both; ending them here would kill the seat.
+        hands_off_run = bool(
+            end_reason == SessionEndReason.CLEAR
+            and session is not None
+            and session.status == "awaiting_handoff"
+            and session.agent_run_id
+        )
 
         # Auto-link outside the critical hook executor. The managed worker drains
         # accepted work before HookManager closes shared storage.
@@ -112,7 +120,13 @@ class SessionEndMixin(EventHandlersBase):
                 )
 
         # Complete agent run if this is a terminal-mode agent session
-        if terminal_outcome and session and session.agent_run_id and self._session_coordinator:
+        if (
+            terminal_outcome
+            and not hands_off_run
+            and session
+            and session.agent_run_id
+            and self._session_coordinator
+        ):
             try:
                 self._session_coordinator.complete_agent_run(session)
             except Exception as e:
@@ -201,7 +215,7 @@ class SessionEndMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.warning("Failed to update session %s status on end: %s", session_id, e)
 
-        if terminal_outcome and session_id:
+        if terminal_outcome and not hands_off_run and session_id:
             manager = getattr(self, "terminal_manager", None)
             if manager is not None:
                 try:

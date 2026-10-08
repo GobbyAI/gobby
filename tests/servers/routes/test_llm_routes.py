@@ -1660,6 +1660,7 @@ def test_chat_completions_uses_verified_agent_session_claim(
     server_with_llm.auth_service.verified_agent_claims.return_value = SimpleNamespace(
         session_id=str(claimed_session_id),
         project_id="project-claimed",
+        agent_run_id=None,
     )
     service = _FakeToolChatService(_chat_result())
     server_with_llm.services.tool_chat_service = service

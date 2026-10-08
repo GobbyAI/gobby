@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, TypeGuard
 from uuid import uuid4
 
+from gobby.sessions.clear_run_lineage import move_clear_run_lineage
 from gobby.sessions.compact_continuation import schedule_handoff_compact_continuation
 from gobby.sessions.compact_continuation_store import (
     _format_timestamp,
@@ -479,15 +480,16 @@ def take_clear_handoff_marker(
                     "UPDATE sessions SET status = 'expired', updated_at = %s WHERE id = %s",
                     (now, predecessor_id),
                 )
-            conn.execute(
-                "UPDATE agent_runs SET parent_session_id = %s WHERE parent_session_id = %s",
-                (successor_id, predecessor_id),
+            move_clear_run_lineage(
+                conn,
+                predecessor_id=predecessor_id,
+                successor_id=successor_id,
+                session_ids=(
+                    (predecessor_id,)
+                    if supersede_successor_id is None
+                    else (predecessor_id, supersede_successor_id)
+                ),
             )
-            if supersede_successor_id is not None:
-                conn.execute(
-                    "UPDATE agent_runs SET parent_session_id = %s WHERE parent_session_id = %s",
-                    (successor_id, supersede_successor_id),
-                )
             return True
     except Exception:
         logger.warning(
@@ -775,9 +777,11 @@ def _commit_web_chat_clear_successor_rows(
         """,
         (successor_id, json.dumps({}), now.isoformat()),
     )
-    conn.execute(
-        "UPDATE agent_runs SET parent_session_id = %s WHERE parent_session_id = %s",
-        (successor_id, predecessor_id),
+    move_clear_run_lineage(
+        conn,
+        predecessor_id=predecessor_id,
+        successor_id=successor_id,
+        session_ids=(predecessor_id,),
     )
     succ_row = conn.execute(
         "SELECT *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name FROM sessions WHERE id = %s",
