@@ -50,7 +50,8 @@ without task attribution.
 Paths still live-attributed to another active claim cannot be edited. Select the
 owning task or finish it, and split commits by task. A later task may edit a
 committed path; linking or closing the earlier commit remains allowed when the
-later live attribution began after that path's commit. Close judges validation
+later live attribution began after that path's commit. Git records whole seconds,
+so same-second ordering is treated as unproven. Close judges validation
 runs started while this task was selected, while
 all edits to its owned paths count and stale earlier green evidence.
 

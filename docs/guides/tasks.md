@@ -121,6 +121,7 @@ An edit cannot overlap paths still live-attributed to another active claim.
 Select their owning task or finish it, and split commits by task. A later task
 may edit a committed path; those later edits do not block linking or closing the
 earlier commit when their live attribution began after that path's commit.
+Git records whole seconds, so same-second ordering is treated as unproven.
 Close uses validation runs started while its task was selected; edits to that
 task's owned paths always count and stale earlier green evidence.
 

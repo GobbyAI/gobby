@@ -155,14 +155,21 @@ def test_commit_paths_cannot_cross_another_active_claim(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "first_edit,release,accepted", [(100, False, False), (300, False, True), (100, True, True)]
+    "first_edit,release,accepted",
+    [
+        (100, False, False),
+        (200.5, False, False),
+        (201, False, True),
+        (300, False, True),
+        (100, True, True),
+    ],
 )
 async def test_commit_chronology_uses_first_live_edit(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
     tmp_path: Path,
-    first_edit: int,
+    first_edit: float,
     release: bool,
     accepted: bool,
 ) -> None:

@@ -267,7 +267,8 @@ def assert_task_edit_paths_available(
                 if not (
                     isinstance(starts.get(path), (int, float))
                     and path in commit_path_times
-                    and starts[path] > commit_path_times[path]
+                    # Git timestamps cover a whole second; same-second order is unproven.
+                    and starts[path] >= commit_path_times[path] + 1
                 )
             }
         if overlap:
