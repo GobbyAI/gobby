@@ -541,6 +541,82 @@ async def test_stop_deadline_keeps_durable_send_and_logs_id(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "stage"),
+    [
+        (kind, stage)
+        for kind in ("text", "attachment")
+        for stage in ("session", "metadata", "reserve")
+    ]
+    + [("proactive", "reserve")],
+)
+async def test_shutdown_rejects_unadmitted_send(
+    caplog: pytest.LogCaptureFixture, tmp_path: Path, kind: str, stage: str
+) -> None:
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    adapter = make_adapter()
+    adapter.send_attachment = AsyncMock(return_value="attachment-id")
+    entered = asyncio.Event()
+    released = asyncio.Event()
+    original_reserve = manager._outbound._reserve
+
+    async def prepare(*args: object) -> dict[str, object]:
+        entered.set()
+        await released.wait()
+        return {}
+
+    async def reserve(message: CommsMessage, attachment: CommsAttachment | None = None) -> None:
+        entered.set()
+        await released.wait()
+        await original_reserve(message, attachment)
+
+    file_path = tmp_path / "preparing.txt"
+    file_path.write_text("preparing attachment")
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=adapter),
+    ):
+        await manager.start()
+    method = {"session": "_require_session", "metadata": "enrich_metadata", "reserve": "_reserve"}[
+        stage
+    ]
+
+    async def deliver() -> None:
+        if kind == "attachment":
+            await manager.send_attachment("test-channel", file_path)
+        elif kind == "proactive":
+            await manager.send_proactive("test-channel", "dest", "preparing")
+        else:
+            await manager.send_message("test-channel", "preparing")
+
+    with patch.object(
+        manager._outbound, method, AsyncMock(side_effect=reserve if stage == "reserve" else prepare)
+    ):
+        sending = asyncio.create_task(deliver())
+        await entered.wait()
+        with patch("gobby.communications.outbound._OUTBOUND_DRAIN_SECONDS", 0):
+            await manager.stop()
+        released.set()
+        with pytest.raises(RuntimeError, match="stopping"):
+            await sending
+
+    adapter.send_message.assert_not_awaited()
+    adapter.send_attachment.assert_not_awaited()
+    adapter.send_proactive.assert_not_awaited()
+    if stage == "reserve":
+        message = store.create_message.call_args.args[0]
+        assert message.status == "failed"
+        store.update_message_delivery.assert_called_once()
+        assert message.id in caplog.text
+        assert "RuntimeError" in caplog.text
+    else:
+        store.create_message.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["text", "attachment", "proactive"])
 async def test_empty_outbound_error_log_names_type_and_id(
     caplog: pytest.LogCaptureFixture,

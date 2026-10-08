@@ -38,12 +38,21 @@ class OutboundCommunications:
     def start(self) -> None:
         self._stopping = False
 
-    async def run[T](self, operation: Coroutine[Any, Any, T]) -> T:
-        """Own delivery independently of a request or responder's cancellation."""
+    def _require_running(self) -> None:
+        if self._stopping:
+            raise RuntimeError("Outbound communications are stopping")
+
+    async def run[T](self, operation: Coroutine[Any, Any, T], message: CommsMessage) -> T:
+        """Accept only durably reserved sends, then own their delivery."""
         if self._stopping:
             operation.close()
+            message.status = "failed"
+            message.error = "RuntimeError: outbound communications are stopping; send not admitted"
+            logger.error("Failed to admit outbound message %s: %s", message.id, message.error)
+            await self._record_result(message)
             raise RuntimeError("Outbound communications are stopping")
         task = asyncio.create_task(operation)
+        self._messages[task] = message
         self._pending.add(task)
         task.add_done_callback(self._finished)
         return await asyncio.shield(task)
@@ -90,9 +99,6 @@ class OutboundCommunications:
     async def _reserve(
         self, message: CommsMessage, attachment: CommsAttachment | None = None
     ) -> None:
-        task = asyncio.current_task()
-        if task is not None:
-            self._messages[task] = message
         try:
             await asyncio.to_thread(self._manager._store.create_message, message)
             if attachment is not None:
@@ -195,6 +201,7 @@ class OutboundCommunications:
         metadata: dict[str, Any] | None = None,
     ) -> CommsMessage:
         """Send a message to a named channel."""
+        self._require_running()
         manager = self._manager
         adapter = manager._adapters.get(channel_name)
         if adapter is None:
@@ -231,9 +238,16 @@ class OutboundCommunications:
             created_at=datetime.now(UTC),
         )
 
+        self._require_running()
         await self._reserve(message)
+
+        return await self.run(self._deliver_message(channel_name, message), message)
+
+    async def _deliver_message(self, channel_name: str, message: CommsMessage) -> CommsMessage:
+        manager = self._manager
+        adapter = manager._adapters[channel_name]
         try:
-            await manager._rate_limiter.wait_if_needed(channel.id)
+            await manager._rate_limiter.wait_if_needed(message.channel_id)
             platform_message_id = await adapter.send_message(message)
             message.platform_message_id = platform_message_id
             message.status = "sent"
@@ -272,6 +286,7 @@ class OutboundCommunications:
         metadata: dict[str, Any] | None = None,
     ) -> tuple[CommsMessage, CommsAttachment]:
         """Send a file attachment to a named channel."""
+        self._require_running()
         manager = self._manager
         file_path = Path(file_path)
         if not file_path.exists():
@@ -318,9 +333,21 @@ class OutboundCommunications:
             created_at=datetime.now(UTC),
         )
 
+        self._require_running()
         await self._reserve(message, attachment)
+
+        return await self.run(
+            self._deliver_attachment(channel_name, message, attachment, file_path), message
+        )
+
+    async def _deliver_attachment(
+        self, channel_name: str, message: CommsMessage, attachment: CommsAttachment, file_path: Path
+    ) -> tuple[CommsMessage, CommsAttachment]:
+        manager = self._manager
+        adapter = manager._adapters[channel_name]
+        channel = manager._channel_by_name[channel_name]
         try:
-            await manager._rate_limiter.wait_if_needed(channel.id)
+            await manager._rate_limiter.wait_if_needed(message.channel_id)
             platform_message_id = await adapter.send_attachment(message, attachment, file_path)
             message.platform_message_id = platform_message_id
             message.status = "sent"
@@ -363,6 +390,7 @@ class OutboundCommunications:
         self, channel_name: str, conversation_id: str, content: str, content_type: str = "text"
     ) -> CommsMessage:
         """Send a proactive message via an adapter that supports it."""
+        self._require_running()
         manager = self._manager
         adapter = manager._adapters.get(channel_name)
         if adapter is None:
@@ -380,11 +408,22 @@ class OutboundCommunications:
             created_at=datetime.now(UTC),
         )
 
+        self._require_running()
         await self._reserve(message)
+
+        return await self.run(
+            self._deliver_proactive(channel_name, message, conversation_id), message
+        )
+
+    async def _deliver_proactive(
+        self, channel_name: str, message: CommsMessage, conversation_id: str
+    ) -> CommsMessage:
+        manager = self._manager
+        adapter = manager._adapters[channel_name]
         try:
-            await manager._rate_limiter.wait_if_needed(channel.id)
+            await manager._rate_limiter.wait_if_needed(message.channel_id)
             message.platform_message_id = await adapter.send_proactive(
-                conversation_id, content, content_type
+                conversation_id, message.content, message.content_type
             )
             message.status = "sent"
         except asyncio.CancelledError:
