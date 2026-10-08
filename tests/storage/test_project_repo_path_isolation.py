@@ -6,8 +6,11 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 from collections.abc import Iterator
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -38,6 +41,48 @@ from tests.storage.test_postgres_agent_authorization import AuthorizationFixture
 pytestmark = pytest.mark.unit
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+class _TaskApiStub(ThreadingHTTPServer):
+    """Stands in for the daemon's gobby-tasks route; no task carries any label."""
+
+    def __init__(self) -> None:
+        super().__init__(("127.0.0.1", 0), _TaskApiHandler)
+        self.requests: list[tuple[str, object]] = []
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.server_address[1]}"
+
+
+class _TaskApiHandler(BaseHTTPRequestHandler):
+    server: _TaskApiStub
+
+    def do_POST(self) -> None:
+        length = int(self.headers["Content-Length"])
+        self.server.requests.append((self.path, json.loads(self.rfile.read(length))))
+        body = json.dumps({"success": True, "result": {"tasks": [], "count": 0}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: object) -> None:
+        del format, args
+
+
+@contextmanager
+def _task_api_stub() -> Iterator[_TaskApiStub]:
+    server = _TaskApiStub()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 @pytest.fixture(autouse=True)
@@ -287,29 +332,33 @@ Validate the same plan through both principals.
     if checkout_gdaemon is not None:
         base_env[NATIVE_BIN_DIR_ENV] = str(checkout_gdaemon.parent)
 
-    operator = subprocess.run(
-        command,
-        cwd=tmp_path,
-        env=base_env,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=30,
-    )
-    agent_env = base_env | {
-        "GOBBY_AGENT_RUN_ID": str(fixture.execution_id),
-        "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": str(grant_path),
-        "GOBBY_SESSION_ID": str(fixture.session_id),
-    }
-    agent = subprocess.run(
-        command,
-        cwd=tmp_path,
-        env=agent_env,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=30,
-    )
+    with _task_api_stub() as daemon:
+        # Pin the dial target so neither principal reaches a live daemon.
+        base_env["GOBBY_DAEMON_URL"] = daemon.url
+        operator = subprocess.run(
+            command,
+            cwd=tmp_path,
+            env=base_env,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        operator_requests = list(daemon.requests)
+        agent_env = base_env | {
+            "GOBBY_AGENT_RUN_ID": str(fixture.execution_id),
+            "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": str(grant_path),
+            "GOBBY_SESSION_ID": str(fixture.session_id),
+        }
+        agent = subprocess.run(
+            command,
+            cwd=tmp_path,
+            env=agent_env,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
 
     assert operator.returncode == 0, operator.stderr or operator.stdout
     assert agent.returncode == 0, agent.stderr or agent.stdout
@@ -317,6 +366,18 @@ Validate the same plan through both principals.
     assert agent.stderr == operator.stderr
     assert "InsufficientPrivilege" not in agent.stdout + agent.stderr
     assert "permission denied" not in (agent.stdout + agent.stderr).lower()
+    # The operator reads tasks from the hub; the agent asks the daemon's task API.
+    assert operator_requests == []
+    assert daemon.requests == [
+        (
+            "/api/mcp/gobby-tasks/tools/list_tasks",
+            {
+                "project": str(fixture.project_id),
+                "label": "covers:agent-role-acceptance:1.1:1.1.1",
+                "limit": 2,
+            },
+        )
+    ]
 
 
 @pytest.mark.parametrize("checkout_mode", ["worktree", "clone"])
