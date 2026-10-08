@@ -80,16 +80,18 @@ def _normalize_string_list(value: Any) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
-_LIVE_VARIABLE_MANAGERS: weakref.WeakSet["SessionVariableManager"] = weakref.WeakSet()
+# Defaults per hub, shared by every manager on it: callers build a manager per
+# call, so a per-instance cache almost never hit (#23359).
+_DEFAULTS_CACHE: weakref.WeakKeyDictionary[
+    HubDatabase, dict[tuple[str | None, int], tuple[float, dict[str, Any]]]
+] = weakref.WeakKeyDictionary()
 _VARIABLE_CACHE_LOCK = threading.Lock()
 
 
 def _clear_variable_defaults_caches() -> None:
-    """Drop every SessionVariableManager defaults cache on a variables revision."""
+    """Drop every hub's cached defaults on a variables revision."""
     with _VARIABLE_CACHE_LOCK:
-        for manager in tuple(_LIVE_VARIABLE_MANAGERS):
-            manager._defaults_cache.clear()
-            manager._defaults_cache_times.clear()
+        _DEFAULTS_CACHE.clear()
 
 
 register_revision_listener("variables", _clear_variable_defaults_caches)
@@ -119,10 +121,6 @@ class SessionVariableManager:
 
     def __init__(self, db: HubDatabase):
         self.db = db
-        self._defaults_cache: dict[tuple[str | None, int], dict[str, Any]] = {}
-        self._defaults_cache_times: dict[tuple[str | None, int], float] = {}
-        with _VARIABLE_CACHE_LOCK:
-            _LIVE_VARIABLE_MANAGERS.add(self)
 
     def get_variables(self, session_id: str) -> dict[str, Any]:
         """Get all session variables with definition defaults applied.
@@ -157,18 +155,14 @@ class SessionVariableManager:
         revision = get_definitions_revision("variables")
         cache_key = (project_id, revision)
         now = time.monotonic()
-        cached = self._defaults_cache.get(cache_key)
-        cached_at = self._defaults_cache_times.get(cache_key)
-        if (
-            cached is not None
-            and cached_at is not None
-            and (now - cached_at) < self._DEFAULTS_CACHE_TTL
-        ):
-            return deepcopy(cached)
+        with _VARIABLE_CACHE_LOCK:
+            cached = _DEFAULTS_CACHE.get(self.db, {}).get(cache_key)
+        if cached is not None and (now - cached[0]) < self._DEFAULTS_CACHE_TTL:
+            return deepcopy(cached[1])
 
         defaults = load_variable_defaults(self.db, project_id)
-        self._defaults_cache[cache_key] = defaults
-        self._defaults_cache_times[cache_key] = now
+        with _VARIABLE_CACHE_LOCK:
+            _DEFAULTS_CACHE.setdefault(self.db, {})[cache_key] = (now, defaults)
         return deepcopy(defaults)
 
     def _apply_variable_defaults(
