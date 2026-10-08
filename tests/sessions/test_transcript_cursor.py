@@ -80,6 +80,18 @@ CLAUDE_TOOL_RESULT_RECORD = _claude_row(
     }
 )
 CLAUDE_TRAILING_ROWS = _claude_row({"type": "last-prompt"}) + _claude_row({"type": "attachment"})
+# A /loop or cron tick starts its turn with a meta prompt row after the fire record.
+CLAUDE_SCHEDULED_TICK_ROWS = (
+    _claude_row({"type": "system", "subtype": "scheduled_task_fire", "isMeta": False})
+    + _claude_row(
+        {
+            "type": "user",
+            "isMeta": True,
+            "message": {"role": "user", "content": "Run your 10-minute monitor check"},
+        }
+    )
+    + _claude_row({"type": "attachment"})
+)
 # A local slash command such as /model writes these rows without starting a turn.
 CLAUDE_LOCAL_COMMAND_ROWS = (
     _claude_row(
@@ -303,6 +315,10 @@ def test_claude_cursor_reports_whether_the_last_turn_ended(tmp_path: Path) -> No
     assert cursor.turn_settled() is True
     _append_bytes(transcript, CLAUDE_LOCAL_COMMAND_ROWS)
     assert cursor.turn_settled() is True, "a local slash command starts no turn"
+    _append_bytes(transcript, CLAUDE_SCHEDULED_TICK_ROWS)
+    assert cursor.turn_settled() is False, "a scheduled tick's meta prompt starts a turn"
+    _append_bytes(transcript, ASSISTANT_RECORD + CLAUDE_TURN_DURATION_RECORD)
+    assert cursor.turn_settled() is True
     _append_bytes(transcript, PLAIN_USER_RECORD)
     assert cursor.turn_settled() is False
     _append_bytes(transcript, ASSISTANT_RECORD + INTERRUPTED_TEXT_RECORD)

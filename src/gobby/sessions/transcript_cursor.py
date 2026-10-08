@@ -302,7 +302,8 @@ class ClaudeTranscriptCursor(TranscriptTailCursor):
 
         ``turn_duration`` closes a turn no Stop hook held open, and an interrupt ends
         one without it. A newer prompt, tool result or assistant record means a turn
-        is running. Meta rows and local slash commands are written outside turns.
+        is running; a scheduled task starts its turn with a meta prompt row. Local
+        slash commands, including their meta caveat row, are written outside turns.
         """
         for record in reversed(self.tail_records()):
             kind = record.get("type")
@@ -310,7 +311,7 @@ class ClaudeTranscriptCursor(TranscriptTailCursor):
                 return True
             if kind == "assistant":
                 return False
-            if kind != "user" or record.get("isMeta"):
+            if kind != "user":
                 continue
             if _claude_interrupt_record(record):
                 return True
