@@ -276,9 +276,10 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             202: Detached run started (background: true) or pipeline waiting
                  for approval
             404: Pipeline not found
+            422: Pipeline step failed, with operator-visible diagnostics
             500: Execution error
         """
-        from gobby.workflows.pipeline_state import ApprovalRequired
+        from gobby.workflows.pipeline_state import ApprovalRequired, PipelineStepError
 
         # Get loader from services; executor is resolved per-project
         loader = server.services.workflow_loader
@@ -351,6 +352,9 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                     "message": e.message,
                 },
             )
+
+        except PipelineStepError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
 
         except Exception as e:
             logger.exception("Pipeline execution failed: %s", e)

@@ -240,6 +240,25 @@ class TestSearchExecutions:
 class TestRunPipeline:
     """Tests for the run_pipeline endpoint."""
 
+    def test_run_pipeline_step_error_reports_cause(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        from gobby.workflows.pipeline_state import PipelineStepError
+
+        mock_pipeline = MagicMock()
+        mock_server.services.workflow_loader.load_pipeline = AsyncMock(return_value=mock_pipeline)
+        error = "Step 'inbox-manager' failed: Unsupported spawn provider: pipeline"
+        executor = mock_server.services.get_pipeline_executor.return_value
+        executor.execute = AsyncMock(side_effect=PipelineStepError(error))
+
+        response = client.post(
+            "/api/pipelines/run",
+            json={"name": "crew-coordination", "project_id": "proj-1"},
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == error
+
     def test_run_requires_project_id(self, client: TestClient, mock_server: MagicMock) -> None:
         response = client.post(
             "/api/pipelines/run",
