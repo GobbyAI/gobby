@@ -24,6 +24,7 @@ def test_crew_lane_contains_only_approved_seats() -> None:
         "guard",
         "developer",
         "code-reviewer",
+        "researcher",
         "lane-manager",
     ]
     guard = definition.steps[0].mcp
@@ -41,6 +42,11 @@ def test_crew_lane_contains_only_approved_seats() -> None:
             "agent": "code-reviewer",
         },
         {
+            "name": "researcher",
+            "title": "${{ 'Lane ' + inputs.lane + ' researcher' }}",
+            "agent": "researcher",
+        },
+        {
             "name": "lane-manager",
             "title": "${{ 'Lane ' + inputs.lane + ' manager' }}",
             "agent": "lane-manager",
@@ -53,6 +59,10 @@ def test_crew_lane_contains_only_approved_seats() -> None:
         definition.inputs[f"reviewer_{name}"]["default"]
         for name in ("provider", "model", "reasoning_effort", "role_file")
     ] == ["claude", "claude-opus-5-5", "xhigh", "code-reviewer.md"]
+    assert [
+        definition.inputs[f"researcher_{name}"]["default"]
+        for name in ("provider", "model", "reasoning_effort", "role_file")
+    ] == ["codex", "gpt-6.1-sol", "medium", "researcher.md"]
     assert [
         definition.inputs[f"manager_{name}"]["default"]
         for name in ("provider", "model", "reasoning_effort", "role_file")
@@ -101,6 +111,26 @@ def test_crew_lane_contains_only_approved_seats() -> None:
             "gpt-6.1-sol",
             "high",
             "pilot-reviewer.md",
+        ),
+        (
+            "researcher",
+            "researcher",
+            "researcher",
+            "3",
+            "codex",
+            "gpt-6.1-sol",
+            "medium",
+            "researcher.md",
+        ),
+        (
+            "researcher",
+            "researcher",
+            "researcher",
+            "6",
+            "claude",
+            "claude-opus-5-5",
+            "high",
+            "pilot-researcher.md",
         ),
         (
             "lane-manager",
@@ -182,7 +212,7 @@ def test_crew_lane_renders_operator_inputs(
     assert 'target="session", target_id="gobby#14972"' in args["prompt"]
     assert 'owner_session="gobby#14972"' in args["prompt"]
     assert definition.inputs["report_to"]["required"]
-    inputs["seats"] = "researcher"
+    inputs["seats"] = "unapproved-seat"
     assert not renderer.should_run_step(step, context)
 
 
@@ -190,8 +220,14 @@ def test_crew_lane_renders_operator_inputs(
     ("requested", "expected"),
     [
         ("developer", ["developer"]),
+        ("researcher", ["researcher"]),
+        ("code-reviewer,researcher", ["code-reviewer", "researcher"]),
         ("code-reviewer,lane-manager", ["code-reviewer", "lane-manager"]),
         ("developer,code-reviewer,lane-manager", ["developer", "code-reviewer", "lane-manager"]),
+        (
+            "developer,code-reviewer,researcher,lane-manager",
+            ["developer", "code-reviewer", "researcher", "lane-manager"],
+        ),
     ],
 )
 def test_crew_lane_selects_only_requested_seats(requested: str, expected: list[str]) -> None:

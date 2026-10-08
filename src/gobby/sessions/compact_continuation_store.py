@@ -132,7 +132,7 @@ def _restore_session_variable_if_absent(
 
 def _load_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
     row = db.fetchone(
-        "SELECT variables FROM session_variables WHERE session_id = %s",
+        "SELECT variables::text AS variables FROM session_variables WHERE session_id = %s",
         (session_id,),
     )
     return _load_variables(_row_variables(row))

@@ -1,4 +1,5 @@
 import logging
+import tomllib
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -38,6 +39,42 @@ def _sandbox_request() -> tuple[SpawnRequest, PreparedSpawn, MagicMock]:
         prepared_spawn=spawn_context,
     )
     return request, spawn_context, run_manager
+
+
+@pytest.mark.asyncio
+async def test_codex_spawn_uses_sandbox_effective_cache_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, spawn_context, _ = _sandbox_request()
+    cache_env = {
+        "UV_CACHE_DIR": "/sandbox/cache/uv",
+        "CARGO_HOME": "/sandbox/shared/cargo-home",
+        "CARGO_TARGET_DIR": "/sandbox/checkout/cargo-target",
+    }
+    spawn_context.env_vars.update({name: f"/operator/{name}" for name in cache_env})
+    request = replace(request, project_path="/main/repo", session_manager=MagicMock())
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._prepare_managed_code_index",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._prepare_provider_sandbox",
+        AsyncMock(return_value=SandboxLaunch(backend="srt", enforced=True, provider_env=cache_env)),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._record_resume_launch_details", MagicMock()
+    )
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.pre_approve_directory", MagicMock())
+    build_command = MagicMock(return_value=(["codex"], {}))
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.build_cli_command", build_command)
+
+    result = await prepare_codex_spawn(request)
+
+    assert isinstance(result, ProviderSpawnPlan)
+    config = tomllib.loads("\n".join(build_command.call_args.kwargs["config_overrides"]))
+    for name, path in cache_env.items():
+        assert config["shell_environment_policy"]["set"][name] == path
+        assert config["mcp_servers"]["gobby"]["env"][name] == path
 
 
 @pytest.mark.parametrize(

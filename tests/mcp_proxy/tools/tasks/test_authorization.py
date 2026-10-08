@@ -347,11 +347,6 @@ def _build_append_description_section(manager: MagicMock, stack: ExitStack) -> B
 
 TOOL_SPECS = [
     ToolSpec(
-        name="update_task",
-        build=_build_task_registry_tool("update_task", "update_task"),
-        kwargs={"task_id": TASK_UUID, "title": "Retitled"},
-    ),
-    ToolSpec(
         name="delete_task",
         build=_build_task_registry_tool("delete_task", "delete_task"),
         kwargs={"task_id": TASK_UUID},
@@ -505,3 +500,28 @@ class TestGuardedToolMatrix:
         )
         assert result.get("error_code") is None
         assert mutation.called
+
+
+UPDATE_TASK = ToolSpec(
+    name="update_task",
+    build=_build_task_registry_tool("update_task", "update_task"),
+    kwargs={"task_id": TASK_UUID, "title": "Retitled"},
+)
+
+
+class TestUpdateTaskLeavesAuthorityToRules:
+    """update_task has no claim check; the block-update-task rule decides who may edit."""
+
+    @pytest.mark.parametrize(
+        "context_session", [CALLER_SESSION, OWNER_SESSION, None], ids=["foreign", "owner", "none"]
+    )
+    def test_claimed_task_edit_writes_only_the_edited_field(
+        self, context_session: str | None
+    ) -> None:
+        result, mutation = _invoke(
+            UPDATE_TASK, claimed_by=OWNER_SESSION, context_session=context_session
+        )
+
+        assert result.get("error_code") is None
+        mutation.assert_called_once()
+        assert mutation.call_args.kwargs == {"title": "Retitled"}

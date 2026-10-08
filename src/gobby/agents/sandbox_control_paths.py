@@ -92,11 +92,6 @@ def provider_control_write_paths(
     if configured_auth := env.get("GROK_AUTH_PATH"):
         auth = Path(configured_auth).expanduser().resolve()
         auth_files.update((auth, auth.with_name("auth.json.lock")))
-    from gobby.agents.sandbox_policy import managed_grant_lock_path
-
-    # gcode creates the managed grant's lock on demand, so is_file() cannot see it.
-    if grant_lock := managed_grant_lock_path(env):
-        auth_files.add(grant_lock)
     control_roots: list[Path] = []
     for extra in extra_roots:
         # File and glob grants are not configuration directories. Inventing

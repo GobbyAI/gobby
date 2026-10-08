@@ -396,8 +396,6 @@ pub fn rehandshake(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, GrantE
     }
     if let Some(path) = managed_bootstrap_path(&ctx) {
         let destination = path.to_path_buf();
-        let lock_path = grant_lock_path(&destination);
-        let _lock = lock_with_deadline(&lock_path, ctx.stale_lock_after, ctx.deadline)?;
         let existing = match load_grant_file(&destination) {
             Ok(grant) => Some(grant),
             Err(error) if cache::is_missing_grant_file(&error) => None,
@@ -408,7 +406,7 @@ pub fn rehandshake(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, GrantE
                 ));
             }
         };
-        return handshake_managed(&ctx, existing.as_ref(), destination);
+        return handshake_managed(&ctx, existing.as_ref());
     }
     let token = load_binding(&ctx.home, &ctx.daemon_url)
         .map(|binding| binding.deployment_token)
@@ -532,7 +530,11 @@ fn maybe_proactive_refresh(
     if !(grant.past_half_ttl(ctx.now) && ctx.reachable()) {
         return None;
     }
-    let lock = try_lock(&grant_lock_path(destination)).ok().flatten()?;
+    let lock = if managed {
+        None
+    } else {
+        Some(try_lock(&grant_lock_path(destination)).ok().flatten()?)
+    };
     refresh_or_fail(
         ctx,
         Some(grant),
@@ -540,7 +542,7 @@ fn maybe_proactive_refresh(
         destination.to_path_buf(),
         managed,
         false,
-        Some(lock),
+        lock,
     )
     .ok()
 }
@@ -575,7 +577,9 @@ pub(super) fn refresh_or_fail(
         };
     }
     let lock_path = grant_lock_path(&destination);
-    let _lock = if held_lock.is_some() {
+    let _lock = if managed {
+        None
+    } else if held_lock.is_some() {
         held_lock
     } else if mandatory {
         Some(lock_with_deadline(
@@ -605,7 +609,7 @@ pub(super) fn refresh_or_fail(
                 let (_, claims) = managed_envelope(ctx, existing)?;
                 match validate_managed_refresh(ctx, &current, &claims, existing) {
                     Err(GrantError::SchemaMismatch { .. }) => {
-                        return handshake_managed(ctx, Some(&current), destination);
+                        return handshake_managed(ctx, Some(&current));
                     }
                     result => result?,
                 }
@@ -633,7 +637,7 @@ pub(super) fn refresh_or_fail(
         _ => {}
     }
     if managed {
-        handshake_managed(ctx, existing, destination)
+        handshake_managed(ctx, existing)
     } else {
         handshake_interactive(
             ctx,

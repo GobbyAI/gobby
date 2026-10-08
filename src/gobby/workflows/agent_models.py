@@ -144,7 +144,8 @@ class AgentDefinitionBody(BaseModel):
     network: Literal["none", "trusted"] = Field(
         default="none",
         description=(
-            "Egress for the agent's SRT sandbox; `trusted` is set only by bundled templates"
+            "Default SRT egress profile; bundled templates may store `trusted`. "
+            "Authorized callers may override the profile for one spawn."
         ),
     )
     # False skips the sandbox's pre-commit store prewarm for definitions that never commit.

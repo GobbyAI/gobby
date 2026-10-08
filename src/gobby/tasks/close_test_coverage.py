@@ -112,25 +112,27 @@ def _module_imports(path: Path, module: str, text: str) -> set[str]:
     return imports
 
 
-# Parsed imports by path, valid while the file's content digest matches (#23359). The
-# least recently used entries past the cap go, so deleted tests and removed worktrees
-# cannot grow it for the daemon's lifetime. Closes evaluate on worker threads.
+# Parsed imports by module, package-ness and content digest, the parse's only inputs,
+# so the same test in every worktree shares one entry; path keys made each of the many
+# checkouts evict the others' parses (#23359). The least recently used entries past
+# the cap go, so deleted tests cannot grow it for the daemon's lifetime. Closes
+# evaluate on worker threads.
 _PARSED_IMPORTS_MAX = 8192
-_PARSED_IMPORTS: OrderedDict[Path, tuple[bytes, frozenset[str]]] = OrderedDict()
+_PARSED_IMPORTS: OrderedDict[tuple[str, bool, bytes], frozenset[str]] = OrderedDict()
 _PARSED_IMPORTS_LOCK = threading.Lock()
 
 
 def _parsed_imports(path: Path, module: str, text: str) -> frozenset[str]:
-    digest = hashlib.blake2b(text.encode(), digest_size=16).digest()
+    key = (module, path.stem == "__init__", hashlib.blake2b(text.encode(), digest_size=16).digest())
     with _PARSED_IMPORTS_LOCK:
-        cached = _PARSED_IMPORTS.get(path)
-        if cached is not None and cached[0] == digest:
-            _PARSED_IMPORTS.move_to_end(path)
-            return cached[1]
+        cached = _PARSED_IMPORTS.get(key)
+        if cached is not None:
+            _PARSED_IMPORTS.move_to_end(key)
+            return cached
     imports = frozenset(_module_imports(path, module, text))
     with _PARSED_IMPORTS_LOCK:
-        _PARSED_IMPORTS[path] = (digest, imports)
-        _PARSED_IMPORTS.move_to_end(path)
+        _PARSED_IMPORTS[key] = imports
+        _PARSED_IMPORTS.move_to_end(key)
         while len(_PARSED_IMPORTS) > _PARSED_IMPORTS_MAX:
             _PARSED_IMPORTS.popitem(last=False)
     return imports

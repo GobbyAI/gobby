@@ -47,4 +47,7 @@ workflows:
       - "tag:default"
       - "tag:roles"
       - "tag:worker-safety"
+    # The Assistant edits tasks when Josh asks.
+    exclude:
+      - "name:block-update-task"
   variables: {}
