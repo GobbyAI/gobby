@@ -26,7 +26,12 @@ from gobby.tasks.close_receipts import (
     list_close_receipts,
     record_close_receipt,
 )
-from gobby.tasks.landing_policy import ACTIVATION_CLASSES, classify_paths, read_freeze
+from gobby.tasks.landing_policy import (
+    ACTIVATION_CLASSES,
+    classify_paths,
+    read_freeze,
+    requires_project_sync,
+)
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 from gobby.utils.git import git_subprocess_env
 from gobby.utils.machine_id import require_machine_id
@@ -68,6 +73,7 @@ class LandingResult(TypedDict, total=False):
     observed_tip: str
     mode: str
     activation_class: str
+    project_sync_required: bool
     retest_required: bool
     retest_procedure: str
     provenance: str
@@ -243,17 +249,17 @@ async def _recover_landing(
             if await _ancestor(main, sha, entry.old):
                 continue
             activation_class = action["class"]
+            merged = await _merge_tree(main, entry.old, sha)
+            tree = merged.stdout.split("\n", 1)[0]
+            paths = await _candidate_paths(main, entry.old, sha, tree)
             if action["candidate"] != sha:
-                merged = await _merge_tree(main, entry.old, sha)
-                tree = merged.stdout.split("\n", 1)[0]
-                activation_class = classify_paths(
-                    await _candidate_paths(main, entry.old, sha, tree)
-                )
+                activation_class = classify_paths(paths)
             facts: dict[str, str | int | bool] = {
                 **unknown,
                 "landed_tip": entry.new,
                 "mode": action["mode"],
                 "activation_class": activation_class,
+                "project_sync_required": requires_project_sync(paths),
                 "retest_required": action["mode"] == "merge",
                 "provenance": "reflog",
             }
@@ -279,6 +285,8 @@ def _facts_result(sha: str, facts: dict[str, str | int | bool]) -> LandingResult
     }
     if "merge_commit" in facts:
         result["merge_commit"] = str(facts["merge_commit"])
+    if "project_sync_required" in facts:
+        result["project_sync_required"] = bool(facts["project_sync_required"])
     if result["retest_required"]:
         result["retest_procedure"] = _RETEST_PROCEDURE
     return result
@@ -313,6 +321,8 @@ async def _record_and_notify(
             f'Landed #{task.seq_num} "{task.title}" {sha[:10]} on {facts["branch"]} '
             f"at {str(facts['landed_tip'])[:10]}; activation {facts['activation_class']}"
         )
+        if facts.get("project_sync_required"):
+            content += "; project pipeline sync required"
         manager = InterSessionMessageManager(db)
         unreached: list[str] = []
         for recipient in sorted(recipients):
@@ -427,6 +437,7 @@ async def land_candidate(
                     "landed": False,
                     "commit_sha": sha,
                     "activation_class": activation_class,
+                    "project_sync_required": requires_project_sync(paths),
                     "missing_approvals": missing,
                     "overlaps": overlaps,
                     "shared_paths": shared,
@@ -470,6 +481,7 @@ async def land_candidate(
                         "observed_tip": observed_tip,
                         "mode": mode,
                         "activation_class": activation_class,
+                        "project_sync_required": requires_project_sync(paths),
                         "retest_required": mode == "merge",
                         "provenance": "recorded",
                     }

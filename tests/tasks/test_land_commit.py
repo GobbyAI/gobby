@@ -247,6 +247,7 @@ async def test_fast_forward_lands_exact_candidate(case: LandingCase) -> None:
     assert result["landed_tip"] == sha
     assert result["observed_tip"] == sha
     assert result["activation_class"] == "none"
+    assert result["project_sync_required"] is False
     assert result["retest_required"] is False
     assert case.git("rev-parse", "trunk") == sha
     assert (case.repo / "docs/change.md").read_text() == "land me"
@@ -1073,11 +1074,38 @@ async def test_ref_moved_before_failure_reports_landing(case: LandingCase) -> No
 
 
 @pytest.mark.parametrize("move_tip", [False, True])
-async def test_pipeline_sync_landing_and_recovery(case: LandingCase, move_tip: bool) -> None:
+@pytest.mark.parametrize(
+    ("other_path", "expected_class"),
+    [
+        ("docs/change.md", "sync"),
+        ("src/gobby/example.py", "restart"),
+        ("crates/gobby-core/src/lib.rs", "cutover"),
+        ("web/src/example.ts", "ui_build"),
+        ("src/gobby/install/shared/workflows/agents/example.yaml", "reload"),
+    ],
+)
+async def test_pipeline_sync_landing_and_recovery(
+    case: LandingCase, move_tip: bool, other_path: str, expected_class: str
+) -> None:
     sha = case.candidate(
-        "pipeline-sync", {".gobby/workflows/pipelines/crew-lane.yaml": "name: crew-lane\n"}
+        "pipeline-sync",
+        {
+            ".gobby/workflows/pipelines/crew-lane.yaml": "name: crew-lane\n",
+            other_path: "example\n",
+        },
     )
     task = case.reviewed(sha, "Project pipeline sync")
+    if expected_class in {"restart", "cutover"}:
+        refused = await case.land(task, sha)
+        assert refused["project_sync_required"] is True
+        record_close_receipt(
+            case.db,
+            task=task,
+            author_session_id=case.creator,
+            kind=LANDING_APPROVAL,
+            commit_sha=sha,
+            facts={"reason": "restart"},
+        )
     if move_tip:
         case.direct({"docs/moved.md": "moved\n"})
     with patch.object(
@@ -1089,12 +1117,45 @@ async def test_pipeline_sync_landing_and_recovery(case: LandingCase, move_tip: b
 
     assert pending["landed"] is True
     assert pending["receipt_pending"] is True
-    assert pending["activation_class"] == "sync"
-    assert recovered["activation_class"] == "sync"
+    assert pending["activation_class"] == expected_class
+    assert pending["project_sync_required"] is True
+    assert recovered["activation_class"] == expected_class
+    assert recovered["project_sync_required"] is True
     assert recovered["provenance"] == "reflog"
     assert recovered["mode"] == ("merge" if move_tip else "ff")
     assert recovered["retest_required"] is move_tip
     assert replay == recovered
+    [receipt] = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
+    assert receipt.facts["project_sync_required"] is True
+    manager = InterSessionMessageManager(case.db)
+    [message] = manager.get_messages(case.claimant)
+    assert f"activation {expected_class}; project pipeline sync required" in message.content
+
+
+@pytest.mark.parametrize("pipeline_in_candidate", [False, True])
+async def test_stacked_recovery_reports_only_candidates_project_sync(
+    case: LandingCase, pipeline_in_candidate: bool
+) -> None:
+    pipeline = ".gobby/workflows/pipelines/crew-lane.yml"
+    candidate_path = pipeline if pipeline_in_candidate else "docs/candidate.md"
+    sha = case.candidate("candidate", {candidate_path: "candidate\n"})
+    task = case.reviewed(sha)
+    stacked_files = {"src/gobby/stacked.py": "stacked\n"}
+    if not pipeline_in_candidate:
+        stacked_files[pipeline] = "name: crew-lane\n"
+    stacked = case.candidate("stacked", stacked_files, base=sha)
+    case.git(
+        "merge",
+        "--ff-only",
+        stacked,
+        env={"GIT_REFLOG_ACTION": f"gobby-land candidate={stacked} mode=ff class=restart"},
+    )
+
+    recovered = await case.land(task, sha)
+    assert recovered["provenance"] == "reflog"
+    assert recovered["project_sync_required"] is pipeline_in_candidate
+    assert recovered["activation_class"] == ("sync" if pipeline_in_candidate else "none")
+    assert await case.land(task, sha) == recovered
 
 
 async def test_merge_landing_replay_preserves_retest_obligation(case: LandingCase) -> None:
