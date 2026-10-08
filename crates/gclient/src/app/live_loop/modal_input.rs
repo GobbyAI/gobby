@@ -68,6 +68,7 @@ pub enum ModalOutcome {
     /// The new-project dialog asked the daemon to register this path; the
     /// dialog stays open for the answer.
     InitProject(String),
+    OpenProject(String),
     /// The new-worktree dialog asked for a checkout of `project_id`; the
     /// dialog stays open for the answer.
     CreateWorktree {

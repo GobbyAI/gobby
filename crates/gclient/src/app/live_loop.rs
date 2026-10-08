@@ -50,6 +50,7 @@ pub(super) mod menu_dispatch;
 pub(super) mod modal_input;
 pub(super) mod mouse;
 pub(super) mod orphans;
+mod project_paths;
 mod projection;
 pub(super) mod projects;
 mod reconnect;

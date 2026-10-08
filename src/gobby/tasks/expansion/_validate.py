@@ -7,7 +7,7 @@ import subprocess
 from collections import defaultdict
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import psycopg
 
@@ -22,7 +22,7 @@ from gobby.plans.symbol_targets import (
     skipped_symbol_validation,
     validate_symbol_targets,
 )
-from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks import Task
 from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES, IMPLEMENTATION_DOMAINS
 from gobby.tasks.expansion._common import (
     _CONTRACT_PHASE_ID_RE,
@@ -32,16 +32,25 @@ from gobby.tasks.expansion._common import (
     validate_contract_test_artifacts,
 )
 from gobby.tasks.task_types import VALID_TASK_TYPES
+from gobby.utils import spawn
 
 
 class CompletedSectionExemptionsUnavailable(ValueError):
     """Task completion could not be resolved; dependent lint cannot run safely."""
 
 
+class CompletionTaskLookup(Protocol):
+    """Task reads that resolve completed-section owners by coverage label."""
+
+    def list_tasks(self, *, project_id: str, label: str, limit: int, sort_by: str) -> list[Task]:
+        """Return up to ``limit`` project tasks carrying ``label``."""
+        ...
+
+
 def _task_has_landed_commit(task: Task, project_root: Path) -> bool:
     """Require Git evidence in both the shared checkout and the validated checkout."""
     try:
-        common_dir = subprocess.run(
+        common_dir = spawn.run(
             [
                 "git",
                 "-C",
@@ -59,7 +68,7 @@ def _task_has_landed_commit(task: Task, project_root: Path) -> bool:
             return False
         commits = list(task.commits or [])
         if task.seq_num is not None:
-            history = subprocess.run(
+            history = spawn.run(
                 [
                     "git",
                     "--git-dir",
@@ -82,7 +91,7 @@ def _task_has_landed_commit(task: Task, project_root: Path) -> bool:
                     commits.append(sha)
         for sha in commits:
             if all(
-                subprocess.run(
+                spawn.run(
                     ["git", *scope, "merge-base", "--is-ancestor", sha, "HEAD"],
                     capture_output=True,
                     timeout=5,
@@ -98,7 +107,7 @@ def _task_has_landed_commit(task: Task, project_root: Path) -> bool:
 
 def _completed_plan_sections(
     plan_doc: PlanDocument,
-    task_manager: LocalTaskManager | None,
+    task_manager: CompletionTaskLookup | None,
     project_context: Mapping[str, Any] | None,
     project_root: Path | None,
 ) -> frozenset[str]:
@@ -149,7 +158,7 @@ def validate_plan_file(
     project_context: Mapping[str, Any] | None = None,
     expected_project_id: str | None = None,
     code_index: Any | None = None,
-    task_manager: LocalTaskManager | None = None,
+    task_manager: CompletionTaskLookup | None = None,
     require_symbol_validation: bool = False,
     consumer_coverage_blocking: bool = False,
     plan_document: PlanDocument | None = None,

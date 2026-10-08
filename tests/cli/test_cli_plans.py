@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import click
+import httpx
 import pytest
 from click.testing import CliRunner
 
@@ -19,6 +20,8 @@ from gobby.storage.plans import LocalPlanManager
 from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.daemon_url import DaemonUrlError
+from tests.cli.test_plan_daemon_tasks import LABEL, FakeTaskClient, task_record
 from tests.fixtures.isolated_checkout import (
     insert_isolated_machine,
     install_isolated_checkout_project,
@@ -391,6 +394,94 @@ def test_validate_helper_uses_auto_resolved_fresh_project_index(
     assert result["valid"] is True
     assert result["symbol_validation"]["status"] == "passed"
     assert result["symbol_validation"]["checked_targets"] == ["docs/demo.md"]
+
+
+def _use_agent_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: FakeTaskClient
+) -> None:
+    def no_task_table(_db: object) -> LocalTaskManager:
+        raise AssertionError("agent validation must not read the tasks table")
+
+    monkeypatch.setattr(
+        plans_module,
+        "get_project_context",
+        lambda *_args, **_kwargs: {"id": "project-1", "project_path": str(tmp_path)},
+    )
+    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
+    monkeypatch.setattr(plans_module, "CodeIndexStorage", lambda _db: _FakeIndex(tmp_path))
+    monkeypatch.setattr(plans_module, "managed_grant_path", lambda: tmp_path / "grant.json")
+    monkeypatch.setattr(plans_module, "get_daemon_client", lambda: client)
+    monkeypatch.setattr(plans_module, "LocalTaskManager", no_task_table)
+
+
+@pytest.mark.parametrize(
+    ("owners", "valid"),
+    [([task_record()], True), ([], False)],
+    ids=["delivered-owner-exempts", "no-owner-validates"],
+)
+def test_validate_helper_reads_agent_completion_through_the_daemon(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    owners: list[dict[str, Any]],
+    valid: bool,
+) -> None:
+    plan = _write_contract_plan(
+        tmp_path, target_line="Target: `docs/demo.md::*` — scope-reason: rewrites the page"
+    )
+    client = FakeTaskClient(owners)
+    _use_agent_validation(tmp_path, monkeypatch, client)
+
+    result = plans_module._validate_plan_for_cli(plan, None, mode="standard")
+
+    assert result["valid"] is valid
+    assert client.calls[0] == (
+        "gobby-tasks",
+        "list_tasks",
+        {"project": "project-1", "label": LABEL, "limit": 2},
+    )
+    if not valid:
+        assert result["errors"] == [
+            "Target `docs/demo.md::*` names symbol scope for a file with no index record"
+        ]
+
+
+def test_validate_helper_reports_unreachable_daemon_for_agents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _write_contract_plan(tmp_path)
+    _use_agent_validation(
+        tmp_path, monkeypatch, FakeTaskClient(error=httpx.ConnectError("connection refused"))
+    )
+
+    result = plans_module._validate_plan_for_cli(plan, None, mode="standard")
+
+    assert result["valid"] is False
+    assert result["condition"] == "completed_section_exemptions_unavailable"
+    assert result["errors"] == [
+        "completed-section exemptions unavailable: "
+        "daemon task API list_tasks failed: connection refused"
+    ]
+
+
+def test_validate_helper_reports_unresolvable_daemon_for_agents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unresolvable_daemon() -> FakeTaskClient:
+        raise DaemonUrlError("GOBBY_DAEMON_URL must be an http(s) URL")
+
+    plan = _write_contract_plan(tmp_path)
+    _use_agent_validation(tmp_path, monkeypatch, FakeTaskClient())
+    monkeypatch.setattr(plans_module, "get_daemon_client", unresolvable_daemon)
+
+    result = plans_module._validate_plan_for_cli(plan, None, mode="standard")
+
+    assert result["valid"] is False
+    assert result["condition"] == "completed_section_exemptions_unavailable"
+    assert result["errors"] == [
+        "completed-section exemptions unavailable: daemon: GOBBY_DAEMON_URL must be an http(s) URL"
+    ]
 
 
 def test_validate_helper_explicit_project_fails_closed_without_index(

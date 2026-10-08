@@ -1479,13 +1479,22 @@ class TestStepMCPToolBlocking:
         ],
         ids=["restrictive-allowlist", "explicit-block", "all-tools"],
     )
+    @pytest.mark.parametrize(
+        "mcp_key",
+        [
+            "gobby-sessions:set_handoff",
+            "gobby-sessions:get_handoff",
+            "gobby-memory:review_task_memories",
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_set_handoff_step_enforcement(
+    async def test_neutral_tools_step_enforcement(
         self,
         db: "HubDatabase",
         manager: AgentDefinitionManager,
         engine: RuleEngine,
         instance_mgr: AgentStepInstanceManager,
+        mcp_key: str,
         allowed_mcp_tools: list[str] | str,
         blocked_mcp_tools: list[str],
         expected_decision: str,
@@ -1493,7 +1502,7 @@ class TestStepMCPToolBlocking:
         step: dict[str, Any] = {
             "name": "work",
             "allowed_mcp_tools": allowed_mcp_tools,
-            "blocked_mcp_tools": blocked_mcp_tools,
+            "blocked_mcp_tools": [mcp_key] if blocked_mcp_tools else [],
         }
         workflow = {
             "name": "test-compact-self",
@@ -1508,12 +1517,13 @@ class TestStepMCPToolBlocking:
             current_step="work",
             workflow_data=workflow,
         )
+        server, tool = mcp_key.split(":")
         event = _make_event(
             data={
                 "tool_name": "mcp__gobby__call_tool",
                 "tool_input": {
-                    "server_name": "gobby-sessions",
-                    "tool_name": "set_handoff",
+                    "server_name": server,
+                    "tool_name": tool,
                 },
             }
         )
@@ -3519,9 +3529,11 @@ class TestProviderToolNameNormalization:
     "mcp_key",
     [
         "gobby-sessions:set_handoff",
+        "gobby-sessions:get_handoff",
         "gobby-sessions:feedback",
         "gobby-memory:search_memories",
         "gobby-memory:get_memory",
+        "gobby-memory:review_task_memories",
     ],
 )
 async def test_capability_neutral_tools_pass_step_allowlist(

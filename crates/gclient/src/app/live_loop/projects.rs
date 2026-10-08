@@ -10,7 +10,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::daemon::{Daemon, DaemonError, LiveDaemon, WorkspaceErrorCode, WorkspaceOp};
 use crate::frame_source::FrameError;
 use crate::ui::chrome::{attention_pane, Tab};
-use crate::ui::dialogs::project::{complete_directory, expand_home, plural};
+use crate::ui::dialogs::project::{complete_directory, plural};
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, OrphanRow, RenameKind, WorktreeChoice};
 use crate::ui::sidebar::TERMINAL_ROW;
 use crate::ui::sidebar_rows::project_label;
@@ -336,22 +336,63 @@ pub fn open_new_project_dialog(chrome: &mut Chrome) {
     chrome.mode = Mode::ProjectDialog;
 }
 
-/// Register the checkout at `path` (with `~` expanded), then focus it; the
-/// daemon's refusal shows in the dialog.
+pub fn open_open_project_dialog(chrome: &mut Chrome) {
+    let path = "~/".to_string();
+    chrome.dialog = Some(Dialog::OpenProject {
+        cursor: path.chars().count(),
+        path,
+        error: None,
+    });
+    chrome.mode = Mode::ProjectDialog;
+}
+
+/// Create and register a checkout at `path`, then attach its default workspace.
 pub async fn submit_new_project(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
     path: &str,
 ) -> Result<(), FrameError> {
-    let expanded = expand_home(path.trim(), &home_dir());
-    match workspace.daemon().init_project(&expanded).await {
+    submit_project_path(workspace, chrome, path, true).await
+}
+
+pub async fn submit_open_project(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    path: &str,
+) -> Result<(), FrameError> {
+    submit_project_path(workspace, chrome, path, false).await
+}
+
+async fn submit_project_path(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    path: &str,
+    create: bool,
+) -> Result<(), FrameError> {
+    match super::project_paths::resolve_project(workspace.daemon(), path, &home_dir(), create).await
+    {
         Ok(row) => {
-            workspace.fetch_sidebar_rows().await?;
-            close_modal(chrome);
-            focus_project(workspace, chrome, &row.id).await
+            let result = async {
+                workspace.fetch_sidebar_rows().await?;
+                // Open attaches the default even when this project was selected
+                // inside an explicitly attached, different workspace.
+                attach_project_workspace(workspace, &row.id).await?;
+                focus_project(workspace, chrome, &row.id).await
+            }
+            .await;
+            match result {
+                Ok(()) => {
+                    close_modal(chrome);
+                    sync_live_chrome(workspace, chrome);
+                }
+                Err(error) => {
+                    set_dialog_error(chrome, format!("Cannot open project workspace: {error}"))
+                }
+            }
+            Ok(())
         }
         Err(error) => {
-            set_dialog_error(chrome, daemon_reason(&error));
+            set_dialog_error(chrome, error);
             Ok(())
         }
     }
@@ -624,8 +665,20 @@ pub fn project_dialog_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
             path,
             cursor,
             error,
+        }
+        | Dialog::OpenProject {
+            path,
+            cursor,
+            error,
         } => match key.code {
-            KeyCode::Enter => return ModalOutcome::InitProject(path.clone()),
+            KeyCode::Enter => {
+                let path = path.clone();
+                return if matches!(chrome.dialog, Some(Dialog::NewProject { .. })) {
+                    ModalOutcome::InitProject(path)
+                } else {
+                    ModalOutcome::OpenProject(path)
+                };
+            }
             KeyCode::Esc => return close_modal(chrome),
             KeyCode::Tab => {
                 if let Some(completed) = complete_directory(path, &home_dir()) {
@@ -795,6 +848,7 @@ fn set_dialog_error(chrome: &mut Chrome, message: String) {
     match chrome.dialog.as_mut() {
         Some(
             Dialog::NewProject { error, .. }
+            | Dialog::OpenProject { error, .. }
             | Dialog::NewWorktree { error, .. }
             | Dialog::RemoveWorktree { error, .. },
         ) => *error = Some(message),
@@ -804,7 +858,7 @@ fn set_dialog_error(chrome: &mut Chrome, message: String) {
 
 /// The daemon's reason for a refusal: the `message`, `error_code`, or
 /// `error` of a JSON `detail` body, else the error's own text.
-fn daemon_reason(error: &DaemonError) -> String {
+pub(super) fn daemon_reason(error: &DaemonError) -> String {
     let DaemonError::Protocol { detail } = error else {
         return error.to_string();
     };

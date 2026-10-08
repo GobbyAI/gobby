@@ -39,11 +39,14 @@ _TERMINAL_DENIAL_COUNT = 3
 _CAPABILITY_NEUTRAL_MCP_TOOLS = frozenset(
     {
         "gobby-sessions:set_handoff",
+        "gobby-sessions:get_handoff",
         "gobby-sessions:feedback",
         # Both record access, so neither is read-only, yet every step must be
         # able to search memories and read the ones its index points at.
         "gobby-memory:search_memories",
         "gobby-memory:get_memory",
+        # Required post-close review must remain reachable after the seat advances.
+        "gobby-memory:review_task_memories",
     }
 )
 # Grok's read-only poll for a backgrounded call. It returns the result of a call

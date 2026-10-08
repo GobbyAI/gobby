@@ -1,6 +1,6 @@
 // upstream: herdr v0.8.0 src/client/shell/overlay_input.rs
-//! The project dialogs: new project (herdr's "new workspace" overlay), new
-//! worktree, open worktree, and remove worktree (herdr's
+//! The project dialogs: new/open project, new worktree,
+//! open worktree, and remove worktree (herdr's
 //! `render_worktree_remove_overlay`).
 
 use std::fs;
@@ -9,7 +9,7 @@ use std::path::Path;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::ui::chrome::Chrome;
@@ -21,8 +21,8 @@ use crate::ui::widgets::{
 
 use super::{input_line, primary_button_style, secondary_button_style, WorktreeChoice};
 
-/// herdr's overlay title for registering a checkout.
-pub const NEW_PROJECT_TITLE: &str = "New workspace";
+/// Title for creating a new git checkout.
+pub const NEW_PROJECT_TITLE: &str = "New project";
 const POPUP_WIDTH: u16 = 64;
 const NEW_PROJECT_HEIGHT: u16 = 8;
 const NEW_WORKTREE_HEIGHT: u16 = 10;
@@ -84,16 +84,24 @@ fn buttons(
     rects
 }
 
-pub fn render_new_project(
+pub fn render_project_path(
     frame: &mut Frame,
     area: Rect,
     chrome: &Chrome,
     path: &str,
     cursor: usize,
     error: Option<&str>,
+    create: bool,
 ) -> Vec<Rect> {
     let p = &chrome.palette;
-    let Some(inner) = render_modal_shell(frame, area, POPUP_WIDTH, NEW_PROJECT_HEIGHT, p) else {
+    let error_height = if error.is_some() { 4 } else { 1 };
+    let Some(inner) = render_modal_shell(
+        frame,
+        area,
+        POPUP_WIDTH,
+        NEW_PROJECT_HEIGHT + error_height - 1,
+        p,
+    ) else {
         return Vec::new();
     };
     if inner.height < 5 {
@@ -103,20 +111,46 @@ pub fn render_new_project(
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(error_height),
         Constraint::Min(0),
     ])
     .areas::<5>(inner);
-    render_modal_header(frame, rows[0], NEW_PROJECT_TITLE, p);
+    render_modal_header(
+        frame,
+        rows[0],
+        if create {
+            NEW_PROJECT_TITLE
+        } else {
+            "Open project"
+        },
+        p,
+    );
     render_modal_description(
         frame,
         rows[1],
-        "checkout path",
+        if create {
+            "New directory path (or an empty directory)"
+        } else {
+            "Existing git checkout path"
+        },
         Style::default().fg(p.subtext0),
     );
     input(frame, rows[2], chrome, path, Some(cursor));
-    error_line(frame, rows[3], chrome, error);
-    buttons(frame, inner, chrome, "Open", &["tab"])
+    if let Some(error) = error {
+        frame.render_widget(
+            Paragraph::new(error)
+                .style(Style::default().fg(p.red))
+                .wrap(Wrap { trim: false }),
+            rows[3],
+        );
+    }
+    buttons(
+        frame,
+        inner,
+        chrome,
+        if create { "Create" } else { "Open" },
+        &["tab"],
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

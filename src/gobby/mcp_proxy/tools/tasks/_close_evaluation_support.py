@@ -35,6 +35,7 @@ from gobby.tasks.transcript_evidence_models import (
 )
 from gobby.tasks.transcript_exclusions import derive_prelink_runs
 from gobby.tasks.transcript_sync import transcript_sync_point
+from gobby.utils import spawn
 from gobby.workflows.task_claim_state import task_selection_events
 from gobby.workflows.task_dirty_state import (
     committable_task_paths,
@@ -678,7 +679,7 @@ def _same_git_checkout(root: str, repo_path: str) -> bool:
     common: list[str] = []
     for checkout in (root, repo_path):
         try:
-            result = subprocess.run(
+            result = spawn.run(
                 ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
                 cwd=checkout,
                 check=True,

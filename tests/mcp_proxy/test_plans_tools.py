@@ -658,6 +658,28 @@ async def test_plan_tools_resolve_project_from_checkout_path_name_or_uuid(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("path_kind", ["copied-marker", "fake-git-dir", "subdirectory"])
+async def test_plan_tools_reject_registered_marker_outside_checkout_root(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    path_kind: str,
+) -> None:
+    main = tmp_path / "main"
+    project_id = _create_project(temp_db, main, "registered-checkout")
+    _git(main, "init", "-q")
+    invalid = main / "nested" if path_kind == "subdirectory" else tmp_path / "copied"
+    write_project_marker(invalid, project_id=project_id, name="registered-checkout")
+    if path_kind == "fake-git-dir":
+        (invalid / ".git").mkdir()
+
+    result = await create_plan_registry(temp_db).call("list_plans", {"project": str(invalid)})
+
+    assert result["ok"] is False
+    assert result["error"] == "invalid_project"
+    assert "project name, UUID, or absolute path" in result["message"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("registered_marker", [False, True], ids=["plain-dir", "unregistered"])
 async def test_plan_tools_reject_path_outside_registered_checkouts(
     temp_db: HubDatabase,

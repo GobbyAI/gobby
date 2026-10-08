@@ -105,6 +105,14 @@ def _spawn_kwargs(request: SpawnRequest) -> _SpawnKwargs:
 
 
 @pytest.fixture(autouse=True)
+def isolate_provider_preapproval(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit launch tests must not edit the operator's provider trust profiles."""
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers.pre_approve_directory", lambda *_args: None
+    )
+
+
+@pytest.fixture(autouse=True)
 def mock_codex_prompt_delivery() -> Iterator[MagicMock]:
     """Keep the fire-and-forget Codex prompt delivery task out of spawn tests.
 

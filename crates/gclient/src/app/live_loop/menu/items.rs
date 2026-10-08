@@ -445,7 +445,8 @@ pub(super) fn global_items() -> Vec<MenuItem> {
     vec![
         item("New terminal", MenuAction::Act(Action::NewTerminal)),
         item("New tab", MenuAction::Act(Action::NewTab)),
-        item("New workspace…", MenuAction::Act(Action::NewProject)),
+        item("New project…", MenuAction::Act(Action::NewProject)),
+        item("Open project…", MenuAction::Act(Action::OpenProject)),
         item("Settings", MenuAction::Act(Action::Settings)),
         item("Keybinding help", MenuAction::Act(Action::Help)),
         item("Reload config", MenuAction::Act(Action::ReloadConfig)),
