@@ -19,7 +19,7 @@ from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workspaces import WorkspaceManager
-from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
+from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
 
 PIPELINE_CHILD_PREFIX = "pipeline-"
 LIVE_EXECUTION_STATUSES = (
@@ -191,14 +191,21 @@ def _refuse_live_siblings(
             row.id
             for row in rows
             if row.id != execution.id
-            and _launches_here(stores, row, machine_id=machine_id, workspace_id=workspace_id)
+            and _launches_here(
+                stores, executions, row, machine_id=machine_id, workspace_id=workspace_id
+            )
         )
     if siblings:
         raise RunbookSeatRefusal(f"another '{name}' execution is live: {', '.join(siblings)}")
 
 
 def _launches_here(
-    stores: RunbookSeatStores, sibling: PipelineExecution, *, machine_id: str, workspace_id: str
+    stores: RunbookSeatStores,
+    executions: LocalPipelineExecutionManager,
+    sibling: PipelineExecution,
+    *,
+    machine_id: str,
+    workspace_id: str,
 ) -> bool:
     """Whether ``sibling`` launches on this machine in this workspace; unknown refuses."""
     child = stores.sessions.get(sibling.session_id) if sibling.session_id else None
@@ -208,6 +215,17 @@ def _launches_here(
         return False
     inputs = json.loads(sibling.inputs_json or "{}")
     workspace = inputs.get("workspace") if isinstance(inputs, dict) else None
+    if not isinstance(workspace, str) or not workspace:
+        # Inferred runbooks persist their canonical launch target in the guard output.
+        guards = [
+            step
+            for step in executions.get_steps_for_execution(sibling.id)
+            if step.step_id == "guard" and step.status == StepStatus.COMPLETED
+        ]
+        if len(guards) == 1:
+            output = json.loads(guards[0].output_json or "{}")
+            if isinstance(output, dict) and output.get("success") is True:
+                workspace = output.get("workspace")
     if not isinstance(workspace, str) or not workspace:
         raise RunbookSeatRefusal(f"live execution {sibling.id} has no workspace input")
     return _workspace_id(stores.workspaces, workspace) == workspace_id
