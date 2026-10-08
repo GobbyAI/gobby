@@ -919,6 +919,59 @@ def test_related_source_selector_on_real_module_paths() -> None:
     )
 
 
+@pytest.mark.parametrize("runner", ["pytest", "rtk pytest"])
+def test_nice_pytest_node_credits_changed_file_after_native_rtk_rewrite(
+    tmp_path: Path, runner: str
+) -> None:
+    test = "tests/e2e/test_terminal_client_stack.py"
+    command = (
+        "CARGO_BUILD_JOBS=4 "
+        "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test "
+        f"GOBBY_TEST_PROTECT=1 nice -n 15 uv run {runner} "
+        f"{test}::test_gclient_survives_daemon_restart_with_usable_native_pane "
+        "--basetemp=/tmp/gobby-23760-usable-pane-15381-1 --no-cov --tb=short"
+    )
+    result = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, test),
+                _run(2, command=command, workdir=str(tmp_path)),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=(test,),
+        close_root=str(tmp_path),
+    )
+
+    assert result.passed, result.message
+    assert result.details["pytest_uncovered_paths"] == []
+
+
+def test_deleted_test_exemption_credits_existing_parent_pytest_target(tmp_path: Path) -> None:
+    gone = "tests/dispatch/test_spawn_forwarding.py"
+    kept = "tests/dispatch/test_dispatch.py"
+    (tmp_path / "tests/dispatch").mkdir(parents=True)
+    (tmp_path / kept).write_text("def test_dispatch():\n    assert True\n")
+    result = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, "tests/dispatch"),
+                _run(2, command="uv run pytest tests/dispatch/ -q", workdir=str(tmp_path)),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=(gone, kept),
+        deleted_paths=(gone,),
+        close_root=str(tmp_path),
+    )
+
+    assert result.passed, result.message
+    assert result.details["pytest_exempt_deleted_paths"] == [gone]
+    assert result.details["pytest_uncovered_paths"] == []
+
+
 def _deleted_test_gate(*audit_targets: str) -> CloseGateResult:
     return evaluate_validation_commands(
         task_category="code",
