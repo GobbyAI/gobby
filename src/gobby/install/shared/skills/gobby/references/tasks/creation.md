@@ -39,10 +39,13 @@ or validating it.
 Finish or stop native shell/agent calls before explicitly selecting another task.
 Live calls stay bound to the task selected at their start, including delayed
 results. Completed replay bindings retire at turn end. A selection refusal names
-the running calls;
-create-and-claim rolls back without creating a task. If a native child loses
-ownership during a transfer, restore ownership with `claim_task` or stop that
-child before retrying its edits.
+the running calls; create-and-claim rolls back without creating a task. If a
+native child loses ownership during a transfer, restore ownership with
+`claim_task` or stop that child before retrying its edits.
+
+Codex file changes without a tool-start event use an unchanged matching turn's
+selection. Unbound or unclaimed edits still enter the session dirty ledger,
+without task attribution.
 
 Paths still live-attributed to another active claim cannot be edited. Select the
 owning task or finish it, and split commits by task. A later task may edit a

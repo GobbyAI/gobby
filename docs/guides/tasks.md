@@ -109,9 +109,13 @@ one with `claim_task` before editing or validating it.
 Finish or stop native shell/agent calls before explicitly switching tasks.
 Live calls retain the selection from their start, even when delivery is delayed.
 Completed replay bindings retire at turn end. A refused switch names running
-calls; create-and-claim rolls back
-without creating a task. If a native child loses ownership during a transfer,
-restore ownership with `claim_task` or stop the child before retrying its edits.
+calls; create-and-claim rolls back without creating a task. If a native child
+loses ownership during a transfer, restore ownership with `claim_task` or stop
+the child before retrying its edits.
+
+Codex file changes without a tool-start event use the matching turn's selection
+only when it hasn't changed. Unbound or unclaimed edits still enter the session
+dirty ledger, without task attribution.
 
 An edit cannot overlap paths still live-attributed to another active claim.
 Select their owning task or finish it, and split commits by task. A later task
