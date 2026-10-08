@@ -59,6 +59,7 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
 
     server = MagicMock()
     server.session_manager.db = MagicMock()
+    server.auth_service.verified_agent_claims.return_value = None
     server.run_db = AsyncMock(side_effect=lambda operation, *args: operation(*args))
     run = SimpleNamespace(
         id="21000000-0000-4000-8000-000000000071", child_session_id="session-1", status="running"

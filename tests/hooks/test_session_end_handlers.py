@@ -792,12 +792,14 @@ class TestSessionEndHandling:
             response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
-        manager_cls.return_value.delete_for_session.assert_called_once_with("sess-123")
-        completions = mock_dependencies["session_coordinator"].complete_agent_run
-        if hands_off:
-            completions.assert_not_called()
-            terminals.mark_exited.assert_not_called()
-            terminals.release_session.assert_not_called()
-        else:
-            completions.assert_called_once_with(mock_session)
-            terminals.mark_exited.assert_called_once_with("term-1")
+        assert manager_cls.return_value.delete_for_session.call_args_list == [call("sess-123")]
+        ended = {
+            "run": mock_dependencies["session_coordinator"].complete_agent_run.call_args_list,
+            "exited": terminals.mark_exited.call_args_list,
+            "released": terminals.release_session.call_args_list,
+        }
+        assert ended == (
+            {"run": [], "exited": [], "released": []}
+            if hands_off
+            else {"run": [call(mock_session)], "exited": [call("term-1")], "released": []}
+        )

@@ -4,7 +4,31 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from gobby.storage.hub.protocol import Transaction
+from gobby.storage.hub.protocol import HubDatabase, Transaction
+
+
+def current_run_session_id(
+    db: HubDatabase, *, agent_run_id: str | None, session_id: str, project_id: str
+) -> str:
+    """Return the session a run-bound capability now speaks for.
+
+    A /clear hands a live run to the successor, but the pane keeps sending the
+    predecessor it was launched as. Follows the run's live binding (the run's
+    child naming the run back) and never walks the clear chain, so a capability
+    without a live run keeps ``session_id``.
+    """
+    if agent_run_id is None:
+        return session_id
+    row = db.fetchone(
+        """
+        SELECT run.child_session_id FROM agent_runs run
+        JOIN sessions child ON child.id = run.child_session_id
+        WHERE run.id = %s AND run.status IN ('pending', 'running')
+          AND child.agent_run_id = run.id AND child.project_id = %s
+        """,
+        (agent_run_id, project_id),
+    )
+    return str(row["child_session_id"]) if row is not None else session_id
 
 
 def move_clear_run_lineage(

@@ -70,7 +70,9 @@ from gobby.servers.routes.mcp.hook_responses import (
     _normalize_hold_open_hook_type,
     _result_encodes_denial,
 )
+from gobby.sessions.clear_run_lineage import current_run_session_id
 from gobby.telemetry.instruments import inc_counter
+from gobby.utils.session_context import AGENT_RUN_ID_HEADER
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -80,6 +82,38 @@ logger = logging.getLogger(__name__)
 
 HOOK_ADAPTER_MAX_WORKERS = _HOOK_ADAPTER_MAX_WORKERS
 SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "qwen", "codex", "droid", "agy")
+
+
+_PROVIDER_SESSION_KEYS: Final = ("session_id", "sessionId", "conversationId", "conversation_id")
+
+
+def _run_bound_platform_session(
+    server: "HTTPServer", request: Request, input_data: Any, header_session_id: str
+) -> str:
+    """Attribute a run-bound hook to the session its run is bound to now.
+
+    After /clear the pane still sends the predecessor its token was issued for,
+    and the run names the successor. A hook from the predecessor's own
+    conversation stays on the predecessor even when it lands after the take, so
+    a late SessionEnd cannot end the successor's seat.
+    """
+    claims = server.auth_service.verified_agent_claims(request)
+    session_manager = server.session_manager
+    if claims is None or session_manager is None:
+        return header_session_id
+    current_session_id = current_run_session_id(
+        session_manager.db,
+        agent_run_id=claims.agent_run_id,
+        session_id=claims.session_id,
+        project_id=claims.project_id,
+    )
+    if current_session_id == claims.session_id:
+        return header_session_id
+    claimed = session_manager.get(claims.session_id)
+    if claimed is not None and isinstance(input_data, dict):
+        if claimed.external_id in {input_data.get(key) for key in _PROVIDER_SESSION_KEYS}:
+            return header_session_id
+    return current_session_id
 
 
 def _normalize_hook_request(payload: Any) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -283,6 +317,14 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
             payload, request_metadata = _normalize_hook_request(raw_payload)
             platform_session_id = request.headers.get("X-Gobby-Session-Id", "").strip()
+            if platform_session_id and request.headers.get(AGENT_RUN_ID_HEADER):
+                platform_session_id = await server.run_db(
+                    _run_bound_platform_session,
+                    server,
+                    request,
+                    payload.get("input_data"),
+                    platform_session_id,
+                )
             if platform_session_id:
                 payload["_platform_session_id"] = platform_session_id
             enqueued_at = request_metadata.get("enqueued_at")
