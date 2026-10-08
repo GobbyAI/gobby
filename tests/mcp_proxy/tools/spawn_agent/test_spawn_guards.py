@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+import yaml
 
+from gobby.agents.sync import get_bundled_agents_path
 from gobby.mcp_proxy.tools.spawn_agent import _factory, _spawn_guards
 from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import resolve_spawn_task_context
 from gobby.sessions.clear_continuation import stage_clear_attempt, take_clear_handoff_marker
@@ -207,6 +209,32 @@ async def test_seeded_spawn_caller_scope(
                 await _spawn_guards.enforce_spawn_caller(
                     spawn_caller.sessions, "forbidden", caller.project_id
                 )
+
+
+@pytest.mark.asyncio
+async def test_bundled_developer_can_admit_only_its_close_reviewer(
+    monkeypatch: pytest.MonkeyPatch, spawn_caller: _SpawnCaller
+) -> None:
+    monkeypatch.setattr(
+        _spawn_guards, "get_request_principal", AsyncMock(return_value=None), raising=False
+    )
+    definition = yaml.safe_load((get_bundled_agents_path() / "developer.yaml").read_text())
+    manager = AgentDefinitionManager(spawn_caller.sessions.db)
+    row = manager.get_by_name("scope-caller", project_id=spawn_caller.child.project_id)
+    assert row is not None
+    manager.update(row.id, definition_json={**definition, "name": "scope-caller"})
+    _scope_definition(
+        spawn_caller.sessions.db, spawn_caller.child.project_id, TASK_CLOSE_REVIEWER_AGENT, []
+    )
+    with session_context_for_test(spawn_caller.child.id):
+        admitted = await _spawn_guards.enforce_spawn_caller(
+            spawn_caller.sessions, TASK_CLOSE_REVIEWER_AGENT, spawn_caller.child.project_id
+        )
+        assert admitted == spawn_caller.child.id
+        with pytest.raises(ValueError, match="spawnable_agents"):
+            await _spawn_guards.enforce_spawn_caller(
+                spawn_caller.sessions, "scope-target", spawn_caller.child.project_id
+            )
 
 
 @pytest.mark.asyncio
