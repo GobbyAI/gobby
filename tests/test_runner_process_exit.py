@@ -10,18 +10,22 @@ import pytest
 from tests._timing import wait_for_condition
 
 
-@pytest.mark.parametrize("exit_code", [0, 1])
+@pytest.mark.parametrize("standalone", [True, False])
+@pytest.mark.parametrize("exit_code", [0, 1, 2])
 def test_standalone_shutdown_exits_without_module_finalization(
-    tmp_path: Path, exit_code: int
+    tmp_path: Path, exit_code: int, standalone: bool
 ) -> None:
     ready = tmp_path / "ready"
     released = tmp_path / "released"
     cleanup = tmp_path / "cleanup"
     finalizing = tmp_path / "finalizing"
+    resumed = tmp_path / "resumed"
     script = textwrap.dedent(
         f"""
         import atexit
         import gc
+        import os
+        import sys
         import time
         from pathlib import Path
         from types import SimpleNamespace
@@ -35,6 +39,7 @@ def test_standalone_shutdown_exits_without_module_finalization(
         released = Path({str(released)!r})
         cleanup = Path({str(cleanup)!r})
         finalizing = Path({str(finalizing)!r})
+        resumed = Path({str(resumed)!r})
         atexit.register(lambda: cleanup.write_text('exit cleanup ran'))
 
         # Model the observed delay after Py_RunMain enters finalize_modules.
@@ -44,12 +49,18 @@ def test_standalone_shutdown_exits_without_module_finalization(
             def __del__(self, marker=finalizing, sleep=time.sleep):
                 marker.write_text('module finalization entered')
                 sleep(60)
-        victim = ModuleFinalizer()
-        victim.cycle = victim
+        if {standalone}:
+            victim = ModuleFinalizer()
+            victim.cycle = victim
+
+        class FatalShutdown(BaseException):
+            pass
 
         async def completed_daemon(**kwargs):
             ready.write_text('daemon cleanup completed')
             print('shutdown output flushed')
+            if {exit_code} == 2:
+                raise FatalShutdown('isolated fatal shutdown')
             if {exit_code}:
                 raise RuntimeError('isolated startup failure')
 
@@ -66,7 +77,24 @@ def test_standalone_shutdown_exits_without_module_finalization(
             patch.object(runner, '_healthy_daemon_running', return_value=False),
             patch.object(runner, 'run_gobby', completed_daemon),
         ):
-            runner.main()
+            try:
+                if {standalone}:
+                    runner._standalone_main()
+                else:
+                    runner.main()
+            except SystemExit as exc:
+                if {standalone}:
+                    raise
+                assert exc.code == {exit_code}
+            except FatalShutdown:
+                if {standalone}:
+                    raise
+            resumed.write_text('main caller resumed')
+            # The embedding caller owns its process. End this probe after
+            # observing main's return, without measuring interpreter GC again.
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit({min(exit_code, 1)})
         """
     )
     process = subprocess.Popen(
@@ -85,13 +113,19 @@ def test_standalone_shutdown_exits_without_module_finalization(
             assert cleanup.exists(), "Delay occurred before exit callbacks completed"
             raise
         stdout, stderr = process.communicate(timeout=5.0)
-        assert process.returncode == exit_code, (stdout, stderr)
+        assert process.returncode == min(exit_code, 1), (stdout, stderr)
         assert "shutdown output flushed" in stdout
-        if exit_code:
+        if exit_code == 1:
             assert "isolated startup failure" in stderr
+        if exit_code == 2 and standalone:
+            assert "FatalShutdown: isolated fatal shutdown" in stderr
         assert released.read_text() == "claim released"
-        assert cleanup.read_text() == "exit cleanup ran"
+        if standalone:
+            assert cleanup.read_text() == "exit cleanup ran"
+        else:
+            assert not cleanup.exists()
         assert not finalizing.exists()
+        assert resumed.exists() is not standalone
     finally:
         if process.poll() is None:
             process.kill()
