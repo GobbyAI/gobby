@@ -6,12 +6,14 @@ import asyncio
 import json
 import logging
 import os
+from collections.abc import MutableMapping
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 from gobby.agents.isolation_git_hygiene import apply_isolation_git_hygiene
 from gobby.agents.python_env_seed import preseed_isolated_python_environment
+from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 
 logger = logging.getLogger("gobby.agents.isolation")
 
@@ -21,29 +23,47 @@ async def repair_isolation_environment(
     main_repo_path: str,
     isolated_path: str,
     provider: str,
+    phase_timings_ms: MutableMapping[str, float] | None = None,
 ) -> None:
     """Repair hooks, project metadata, and MCP config for an isolated workspace."""
-    await _copy_cli_hooks(
-        source_path=main_repo_path,
-        target_path=isolated_path,
-        provider=provider,
-    )
+    started_at = start_spawn_phase()
+    try:
+        await _copy_cli_hooks(
+            source_path=main_repo_path,
+            target_path=isolated_path,
+            provider=provider,
+        )
+    finally:
+        finish_spawn_phase(phase_timings_ms, "isolation_hook_copy", started_at)
 
     from gobby.utils.project_context import ensure_project_json_for_isolation
 
-    await ensure_project_json_for_isolation(main_repo_path, isolated_path)
-    seed_result = await preseed_isolated_python_environment(isolated_path)
+    started_at = start_spawn_phase()
+    try:
+        await ensure_project_json_for_isolation(main_repo_path, isolated_path)
+    finally:
+        finish_spawn_phase(phase_timings_ms, "isolation_project_marker", started_at)
+    started_at = start_spawn_phase()
+    try:
+        seed_result = await preseed_isolated_python_environment(isolated_path)
+    finally:
+        finish_spawn_phase(phase_timings_ms, "python_env_seed", started_at)
     if seed_result.attempted and not seed_result.success:
         logger.warning(
             "Failed to pre-seed isolated Python environment for %s: %s",
             isolated_path,
             seed_result.error,
         )
-    await _patch_mcp_config_for_isolation(
-        main_repo_path=main_repo_path,
-        isolated_path=isolated_path,
-        provider=provider,
-    )
+    started_at = start_spawn_phase()
+    try:
+        await _patch_mcp_config_for_isolation(
+            main_repo_path=main_repo_path,
+            isolated_path=isolated_path,
+            provider=provider,
+        )
+    finally:
+        finish_spawn_phase(phase_timings_ms, "isolation_mcp_config", started_at)
+    started_at = start_spawn_phase()
     try:
         await apply_isolation_git_hygiene(
             isolated_path,
@@ -55,6 +75,8 @@ async def repair_isolation_environment(
             isolated_path,
             exc_info=True,
         )
+    finally:
+        finish_spawn_phase(phase_timings_ms, "isolation_git_hygiene", started_at)
 
 
 async def _copy_cli_hooks(

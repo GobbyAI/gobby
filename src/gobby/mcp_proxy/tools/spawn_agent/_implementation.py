@@ -52,6 +52,7 @@ from ._failure_cleanup import (
     cleanup_created_isolation,
     cleanup_failed_spawn,
 )
+from ._isolation_prepare import prepare_spawn_isolation
 from ._placement import preflight_placement, run_placed_spawn, task_active_refusal
 from ._provider_resolution import (
     concrete_provider,
@@ -135,6 +136,8 @@ async def spawn_agent_impl(
     project_context_authoritative: bool = False,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
+    spawn_started_at = start_spawn_phase()
+    phase_timings_ms: dict[str, float] = {}
     resume_target = None
     if resume_session_id:
         resume_project_id = target_project_id
@@ -448,6 +451,7 @@ async def spawn_agent_impl(
         project_path=resolved_project_path,
         provider=effective_provider,
         parent_session_id=parent_session_id,
+        phase_timings_ms=phase_timings_ms,
     )
     if droid_mode == "interactive" and effective_provider != "droid":
         return {
@@ -455,6 +459,7 @@ async def spawn_agent_impl(
             "error": "droid_mode='interactive' requires provider='droid'",
         }
     isolation_ctx = None
+    isolation_started = start_spawn_phase()
     if worktree_id and worktree_storage:
         try:
             worktree_id = worktree_storage.resolve_reference(worktree_id)
@@ -553,6 +558,7 @@ async def spawn_agent_impl(
                 main_repo_path=resolved_project_path,
                 isolated_path=existing_clone.clone_path,
                 provider=effective_provider,
+                phase_timings_ms=phase_timings_ms,
             )
         except Exception as e:
             return {"success": False, "error": f"Failed to repair clone isolation: {e}"}
@@ -582,22 +588,12 @@ async def spawn_agent_impl(
         context_handler = handler
 
     if isolation_ctx is None:
-        try:
-            isolation_ctx = await handler.prepare_environment(spawn_config)
-        except Exception as e:
-            logger.exception("Failed to prepare environment: %s", e)
-            try:
-                await handler.cleanup_environment(spawn_config)
-            except Exception as cleanup_err:
-                logger.warning("Cleanup after prepare failure also failed: %s", cleanup_err)
-            response: dict[str, Any] = {
-                "success": False,
-                "error": f"Failed to prepare environment: {e}",
-            }
-            error_code = getattr(e, "code", None)
-            if isinstance(error_code, str):
-                response["error_code"] = error_code
+        isolation_ctx, response = await prepare_spawn_isolation(handler, spawn_config)
+        if response is not None:
             return response
+        assert isolation_ctx is not None
+    else:
+        finish_spawn_phase(phase_timings_ms, "isolation_prepare", isolation_started)
 
     if effective_checkout_mode in {"worktree", "clone"}:
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
@@ -718,7 +714,6 @@ async def spawn_agent_impl(
         if child_session_manager is None:
             await run_to_completion(cleanup_unattached_spawn())
             return {"success": False, "error": "Session manager is required to spawn an agent"}
-        phase_timings_ms: dict[str, float] = {}
         prepare_terminal_started = start_spawn_phase()
         try:
             config_runtime = getattr(runner, "config_runtime", None)
@@ -872,6 +867,7 @@ async def spawn_agent_impl(
                 code_index_mode=code_index_mode,
                 code_index_api_token=await run_thread_to_completion(read_local_api_token),
                 phase_timings_ms=phase_timings_ms,
+                spawn_started_at=spawn_started_at,
                 prewarm_pre_commit_store=prewarm_pre_commit_store,
                 droid_mode=droid_mode,
             )

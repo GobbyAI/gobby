@@ -35,6 +35,7 @@ def build_spawn_request(
     code_index_mode: str | None,
     code_index_api_token: str | None,
     phase_timings_ms: dict[str, float],
+    spawn_started_at: float,
     prewarm_pre_commit_store: bool,
     droid_mode: Literal["exec", "interactive"],
 ) -> SpawnRequest:
@@ -95,6 +96,7 @@ def build_spawn_request(
         code_index_api_token=code_index_api_token,
         prepared_spawn=prepared_spawn,
         phase_timings_ms=phase_timings_ms,
+        spawn_started_at=spawn_started_at,
         prewarm_pre_commit_store=prewarm_pre_commit_store,
         terminal_manager=getattr(runner, "terminal_manager", None),
         terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
