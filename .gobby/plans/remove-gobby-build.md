@@ -361,6 +361,11 @@ Targets:
 - `tests/mcp_proxy/tools/test_read_only_classification.py::*` — scope-reason: drop the two read-only build observability tools
 - `tests/workflows/test_task_enforcement_rules.py::*` — scope-reason: drop the build tools from the read-only and non-interactive tool lists
 - `tests/workflows/test_agent_monitoring_rules.py::*` — scope-reason: drop the build-coordinator rule cases
+- `src/gobby/plans/evidence.py::*` — scope-reason: the missing-base detail names only the set_artifact recovery
+- `src/gobby/workflows/condition_helpers.py::*` — operation: delete-lines — base-blob: 7be56294e45b58fbe9b04c61c1537f466ab3232d — lines: 69-113, 565-572, 678-691, 699-738 — scope-reason: drop the gobby build command matcher and the parsers only it uses
+- `src/gobby/workflows/safe_evaluator.py::*` — operation: delete-lines — base-blob: 72d8a44a67b69bc1fee3bdad28fafcc5ac47553c — lines: 563, 639 — scope-reason: stop exposing the gobby build command matcher
+- `tests/plans/test_evidence_worktree_diff.py::*` — scope-reason: the missing-base case asserts the set_artifact recovery detail
+- `tests/workflows/test_condition_helpers.py::*` — scope-reason: drop the gobby build command matcher cases
 - `tests/framing_corpus.py::*` — scope-reason: drop the deleted rule name
 - `tests/skills/test_removed_wait_tool_guidance.py::*` — scope-reason: drop the deleted coordination reference from the updated-skill list and its parameter
 
@@ -376,6 +381,11 @@ Test edits follow the source. `test_skill_tdd_harness.py` deletes `test_build_co
 
 **Granularity:** the CLI, MCP and HTTP entry points share `gobby.build.service`, and the build skill capability's audit cites all three. The reference-library contract fails while the capability names a deleted tool, so the surfaces and the capability go in one change.
 
+Retained code that still names `gobby build`:
+
+- `src/gobby/plans/evidence.py` `_resolve_worktree_diff`: the missing-base detail becomes "missing base_commit_sha; use set_artifact(base_commit_sha=...) to record the verified original base". The result stays invalid. `tests/plans/test_evidence_worktree_diff.py::test_invalid_when_base_sha_null` asserts the new detail.
+- Delete `is_gobby_build_command` from `src/gobby/workflows/condition_helpers.py` with the parsers only it uses: `_segment_invokes_gobby_build`, `_strip_uv_run_options`, `_python_module_tokens` and `_UV_RUN_OPTIONS_WITH_VALUE`. `_strip_env_assignments`, `_executable_name` and `shell_command_segments` keep their other callers. `src/gobby/workflows/safe_evaluator.py` drops the import and the evaluator entry. In `tests/workflows/test_condition_helpers.py`, delete `test_detects_direct_gobby_build_invocations`, `test_skips_non_build_invocations` and the import. The only rule that called the matcher is the build-coordinator rule this leaf deletes.
+
 **Research context:**
 
 - Entry-surface inventory (2026-10-06): no edited production file in this leaf reaches 850 lines (`registries.py` 604, `cron.py` 407). The deleted modules are `build.py` 585, `_build_daemon.py` 318, `profiles.py` 267, the MCP `build.py` 406 and `profiles.py` 279, `_build_observability.py` 116, the route `build.py` 543 and `profiles.py` 194.
@@ -384,6 +394,7 @@ Test edits follow the source. `test_skill_tdd_harness.py` deletes `test_build_co
 - `gobby.tasks.lifecycle_repair` (563 lines) imports `gobby.storage.build_history`, which 2.5 deletes, so it cannot wait for the stage leaves. Its command module has 65 lines and `src/gobby/cli/tasks/main.py` has 256.
 - `_dispatcher_tick.py` is not an entry surface; its only importer is the stage review module, and 2.4 removes both the module and those calls.
 - Remaining build-tool and profile names outside history after this leaf: the docs guides (5.2) and `CHANGELOG.md`, which is history.
+- Large files: `condition_helpers.py` (996 lines) and `safe_evaluator.py` (887 lines) take delete-lines proofs; the matcher removal takes about 100 lines out of `condition_helpers.py`.
 - Planned checks: focused pytest on every edited test Target, `tests/skills/`, `tests/cli/test_cron_cli.py`, `tests/cli/test_cli_pipelines.py` and `tests/cli/test_pipelines_coverage.py`; ruff, format check and mypy on the changed source files.
 
 **Acceptance:**
@@ -392,6 +403,7 @@ Test edits follow the source. `test_skill_tdd_harness.py` deletes `test_build_co
 - 2.3.2 - No build, profile or build-observability MCP tool is registered. file: `src/gobby/mcp_proxy/registries.py`. test: `tests/mcp_proxy/test_registries.py::test_setup_tasks_ops_registry_omits_legacy_front_half_tick`.
 - 2.3.3 - The daemon serves no `/api/build` or `/api/profiles` route. file: `src/gobby/servers/_app_routes.py`. behavior: "build_router" absent from `src/gobby/servers/_app_routes.py`.
 - 2.3.4 - The gobby skill catalog has no build capability, and the reference-library contract passes. file: `src/gobby/install/shared/skills/gobby/catalog.json`. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
+- 2.3.5 - Worktree evidence keeps its missing-base recovery without `gobby build`, and the rule evaluator exposes no build command matcher. behavior: "gobby build" absent from `src/gobby/plans/evidence.py`. behavior: "is_gobby_build_command" absent from `src/gobby/workflows/safe_evaluator.py`. test: `tests/plans/test_evidence_worktree_diff.py::test_invalid_when_base_sha_null`.
 
 ### 2.4 Nothing drives or wakes the dispatcher (depends: 2.3) [category: code]
 `kind: deliverable`
@@ -1737,7 +1749,7 @@ These are completion gates for the implementation. Except for plan validation, n
 - `GOBBY_SCHEMA_TEST_DATABASE_URL=<isolated test hub> cargo test -p gobby-core` and `cargo test -p gobby-daemon --test cli_contract` must pass after 6.1.
 - `tests/skills/test_reference_library.py::test_reference_contract_3_2_1` must pass after every leaf that edits a skill, guide or audit.
 - After 6.1 lands, the Orchestrator's rebuild, promotion and restart must start the daemon at schema 465, and `gobby status` must report healthy.
-- A final sweep of `src/`, `tests/`, `web/src/`, `crates/gcore/src/` and the live guides for `gobby build`, `task_stage_states`, `allow_automation` and `submit_for_review` must find only the history named in Context.
+- A final sweep of `src/`, `tests/`, `web/src/`, `crates/gcore/src/` and the live guides for `gobby build`, `task_stage_states`, `allow_automation` and `submit_for_review` must classify every match. A match passes only when it is the history named in Context or a fixture, runtime primitive or test caller that a leaf's Research context lists as staying. Every other match is a retired surface and fails the gate.
 
 ## V1 Plan Changelog
 `kind: framing`
@@ -1745,3 +1757,4 @@ These are completion gates for the implementation. Except for plan validation, n
 - 2026-10-08: First draft by Plan Writer gobby#15528.
 - 2026-10-08: Writer repairs for Plan Adversary gobby#15401 F1 (3.2 review guidance, plus the matching contract and guide text in 5.2) and F2 (3.3 keeps the discovery methodology skill test).
 - 2026-10-08: Writer repair for F3: 1.1 and 2.4 re-record the HTTP config corpus, and 2.4 names its new loop descriptions.
+- 2026-10-08: Writer repairs for F4 and N1: 2.3 drops the build advice from worktree evidence and deletes the build command matcher, and V2 classifies every sweep match.
