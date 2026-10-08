@@ -4,14 +4,21 @@ the verified-submit ladder every daemon-driven injection presses Enter through."
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import Any, Literal, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
 from gobby.agents.detection.matcher import CompiledManifest, compile_manifest
 from gobby.agents.idle_detector import ComposerRead, IdleDetector
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.native_runtime import (
+    NativeBatchFailure,
+    NativeBatchResult,
+    NativeTerminalRuntime,
+)
 from gobby.terminals.pane_io import (
+    ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE,
     SUBMIT_UNVERIFIED_ERROR_CODE,
     TEXT_NOT_SUBMITTED_ERROR_CODE,
     PaneIO,
@@ -130,6 +137,106 @@ async def test_runtime_pane_reports_indeterminate_and_typed_failures() -> None:
     ok, reason = await failed.type_text("/clear")
     assert ok is False
     assert reason == "native text write failed (partial)"
+
+
+@pytest.mark.parametrize("code", ["write_queue_unavailable", "terminal_not_running"])
+@pytest.mark.asyncio
+async def test_native_dropped_compact_is_reported_undelivered(
+    monkeypatch: pytest.MonkeyPatch, code: str
+) -> None:
+    runtime = NativeTerminalRuntime(cast(Any, object()))
+    unchecked_text = AsyncMock(return_value=Delivered())
+    unchecked_key = AsyncMock(return_value=Delivered())
+    batch = AsyncMock(
+        return_value=[NativeBatchResult("pane-input", NativeBatchFailure("none", code, code))]
+    )
+    monkeypatch.setattr(runtime, "write_text", unchecked_text)
+    monkeypatch.setattr(runtime, "write_key", unchecked_key)
+    monkeypatch.setattr(runtime, "write_batch", batch)
+    pane = RuntimePaneIO(runtime, _Terminal())
+    monkeypatch.setattr(pane, "snapshot", AsyncMock(return_value="empty composer"))
+
+    result = await submit_text(
+        pane,
+        "/compact",
+        "session-1",
+        label="/compact",
+        cli_source="codex",
+        composer_read=lambda _output: ComposerRead("empty"),
+        verify_seconds=0,
+    )
+
+    assert result.ok is False
+    assert code in (result.reason or "")
+    unchecked_key.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_native_indeterminate_compact_write_keeps_boundary_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = NativeTerminalRuntime(cast(Any, object()))
+    batch = AsyncMock(
+        return_value=[NativeBatchResult("pane-input", IndeterminateWrite("reply lost"))]
+    )
+    monkeypatch.setattr(runtime, "write_batch", batch)
+    pane = RuntimePaneIO(runtime, _Terminal())
+    monkeypatch.setattr(pane, "snapshot", AsyncMock(return_value="empty composer"))
+
+    result = await submit_text(
+        pane,
+        "/compact",
+        "session-1",
+        label="/compact",
+        cli_source="codex",
+        composer_read=lambda _output: ComposerRead("empty"),
+        verify_seconds=0,
+    )
+
+    assert result.ok is False
+    assert result.error_code == ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE
+    assert batch.await_count == 1
+
+
+@pytest.mark.parametrize("enter_state", ["delivered", "dropped", "indeterminate"])
+@pytest.mark.asyncio
+async def test_native_submit_preserves_followup_enter_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+    enter_state: Literal["delivered", "dropped", "indeterminate"],
+) -> None:
+    runtime = NativeTerminalRuntime(cast(Any, object()))
+    delivered = NativeBatchResult("pane-input", Delivered())
+    enter_outcome = (
+        NativeBatchResult(
+            "pane-input",
+            IndeterminateWrite("reply lost")
+            if enter_state == "indeterminate"
+            else NativeBatchFailure("none", "write_queue_unavailable", "queue full"),
+        )
+        if enter_state != "delivered"
+        else delivered
+    )
+    batch = AsyncMock(side_effect=[[delivered], [enter_outcome]])
+    monkeypatch.setattr(runtime, "write_batch", batch)
+    pane = RuntimePaneIO(runtime, _Terminal())
+    monkeypatch.setattr(pane, "snapshot", AsyncMock(return_value="empty composer"))
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0)
+
+    result = await submit_text(
+        pane,
+        "/compact",
+        "session-1",
+        label="/compact",
+        cli_source="codex",
+        composer_read=lambda _output: ComposerRead("empty"),
+        verify_seconds=0,
+    )
+
+    assert result.ok is (enter_state == "delivered")
+    assert result.error_code == (
+        None if enter_state == "delivered" else ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE
+    )
+    assert batch.await_count == 2
 
 
 @pytest.mark.asyncio

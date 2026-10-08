@@ -20,6 +20,12 @@ from gobby.agents.detection.provider import DetectionRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.key_bytes import tmux_key_name
+from gobby.terminals.native_runtime import (
+    NativeBatchFailure,
+    NativeBatchOperation,
+    NativeBatchTarget,
+    NativeTerminalRuntime,
+)
 from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
@@ -195,6 +201,10 @@ class RuntimePaneIO:
 
     async def send_key(self, key: NamedKey) -> SendResult:
         try:
+            if isinstance(self._runtime, NativeTerminalRuntime):
+                return await self._send_native_input(
+                    self._runtime, NativeBatchOperation("key", key)
+                )
             outcome = await self._runtime.write_key(self._terminal, key)
         except IndeterminateWrite as exc:
             return _outcome_result(exc, f"{self.backend} key write")
@@ -203,6 +213,8 @@ class RuntimePaneIO:
         return _outcome_result(outcome, f"{self.backend} key write")
 
     async def type_text(self, text: str) -> SendResult:
+        if isinstance(self._runtime, NativeTerminalRuntime):
+            return await self._send_native_input(self._runtime, NativeBatchOperation("text", text))
         body = text.rstrip("\n")
         try:
             outcome = await self._runtime.write_text(self._terminal, body, submit=body != text)
@@ -211,6 +223,25 @@ class RuntimePaneIO:
         except TerminalWriteError as exc:
             return False, f"{self.backend} text write failed ({exc.stage})"
         return _outcome_result(outcome, f"{self.backend} text write")
+
+    async def _send_native_input(
+        self, runtime: NativeTerminalRuntime, operation: NativeBatchOperation
+    ) -> SendResult:
+        # The ordinary host write acknowledges dropped input on a full/closed PTY.
+        # Batch delivery preserves its refusal; the shared ladder still sends Enter.
+        results = await runtime.write_batch(
+            [NativeBatchTarget("pane-input", self._terminal, (operation,))]
+        )
+        outcome = results[0].outcome
+        if isinstance(outcome, IndeterminateWrite):
+            # The input may have reached Codex despite a lost host reply.
+            raise outcome
+        if isinstance(outcome, NativeBatchFailure):
+            return (
+                False,
+                f"{self.backend} input was not delivered ({outcome.stage}): {outcome.code}",
+            )
+        return _outcome_result(outcome, f"{self.backend} input")
 
     async def snapshot(
         self, lines: int = DEFAULT_SNAPSHOT_LINES, *, mode: SnapshotMode = "text"
@@ -521,7 +552,12 @@ async def submit_text(
         before = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
         if before.state == "draft":
             held_text = before.line or ""
-    ok, reason = await pane.type_text(f"{text}\n")
+    try:
+        ok, reason = await pane.type_text(f"{text}\n")
+    except IndeterminateWrite as exc:
+        # A short command's newline may already have started compaction.
+        # Preserve its boundary waiter instead of allowing another submission.
+        return SubmitResult(False, str(exc), ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE)
     if not ok:
         log_pane_failure(pane, session_id, f"typing {label}", reason)
         return SubmitResult(False, reason)
