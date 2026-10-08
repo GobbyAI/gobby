@@ -26,7 +26,7 @@ from gobby.agents.provider_rotation import model_for_provider
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.resume_placement import placement_snapshot
 from gobby.agents.sandbox import SandboxConfig
-from gobby.agents.spawn import prepare_terminal_spawn
+from gobby.agents.spawn import PreparedSpawn, prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
@@ -61,6 +61,7 @@ from ._provider_resolution import (
     spawning_session_provider,
 )
 from ._request import build_spawn_request
+from ._resume import resolve_resume_target
 from ._runtime import (
     _normalize_optional_model,
     build_spawn_context,
@@ -107,6 +108,7 @@ async def spawn_agent_impl(
     workflow: str | None = None,
     execution_mode: Literal["one_shot", "interactive"] | None = None,
     provider: str | None = None,
+    resume_session_id: str | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
     reasoning_required: bool | None = None,
@@ -132,6 +134,28 @@ async def spawn_agent_impl(
     project_context_authoritative: bool = False,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
+    resume_target = None
+    if resume_session_id:
+        resume_project_id = target_project_id
+        if resume_project_id is None:
+            resume_ctx = await asyncio.to_thread(
+                get_project_context, Path(project_path) if project_path else None
+            )
+            resume_project_id = (
+                (resume_ctx.get("id") or resume_ctx.get("project_id")) if resume_ctx else None
+            )
+        try:
+            resume_target = await asyncio.to_thread(
+                resolve_resume_target,
+                session_manager,
+                resume_session_id,
+                resume_project_id,
+                concrete_provider(provider),
+                runner.run_storage,
+            )
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+        provider = resume_target.source
     effective_execution_mode = execution_mode or (
         agent_body.execution_mode if agent_body else "one_shot"
     )
@@ -627,6 +651,17 @@ async def spawn_agent_impl(
         resume_metadata[GRANT_KEY] = write_grant
     if allow_closed_task:
         resume_metadata["allow_closed_task"] = True
+    if resume_target is not None:
+        resume_metadata.update(
+            {
+                "provider_native_session_id": resume_target.external_id,
+                "resume_existing_session": True,
+                "resume_previous_run_id": resume_target.agent_run_id,
+                "resume_previous_parent_session_id": resume_target.parent_session_id,
+                "resume_previous_status": resume_target.status,
+                "resume_previous_workflow_name": resume_target.workflow_name,
+            }
+        )
 
     task_spawn_lease = TaskSpawnLease(
         db=db,
@@ -652,7 +687,7 @@ async def spawn_agent_impl(
     if lease_response is not None:
         return lease_response if placed is None else task_active_refusal(lease_response)
 
-    cleanup_once = SpawnCleanupOnce()
+    cleanup_once = SpawnCleanupOnce(resume_metadata=resume_metadata)
 
     async def rollback_cancelled_spawn(error: str, child_session_id: str | None = None) -> None:
         await run_thread_to_completion(task_spawn_lease.release_unattached)
@@ -693,14 +728,25 @@ async def spawn_agent_impl(
             # grant materialization are synchronous. PostgreSQL pool acquisition alone
             # can wait for its full timeout, so keep the complete transactional
             # preparation chain off the daemon event loop.
+            prepare: Callable[..., PreparedSpawn] = prepare_terminal_spawn
+            prepare_options: dict[str, Any] = {"machine_id": machine_id}
+            if resume_target is not None:
+                from gobby.agents.spawn import prepare_terminal_resume
+
+                prepare = prepare_terminal_resume
+                prepare_options = {
+                    "existing_session_id": resume_target.id,
+                    "original_run_id": resume_target.agent_run_id,
+                    "relaunch": True,
+                }
             prepared_spawn = await run_thread_to_completion(
-                prepare_terminal_spawn,
+                prepare,
+                **prepare_options,
                 session_manager=child_session_manager,
                 credential_manager=runner.run_storage.credential_manager,
                 config_snapshot=config_snapshot,
                 parent_session_id=parent_session_id,
                 project_id=project_id,
-                machine_id=machine_id,
                 source=effective_provider,
                 workflow_name=effective_workflow,
                 initial_variables=effective_initial_variables,
@@ -780,6 +826,7 @@ async def spawn_agent_impl(
                         persist_initial_step_instance_if_resolved,
                         db,
                         agent_body,
+                        **({"preserve_existing": True} if resume_target is not None else {}),
                         session_id=prepared_spawn.session_id,
                         project_id=project_id,
                         initial_variables=effective_initial_variables,

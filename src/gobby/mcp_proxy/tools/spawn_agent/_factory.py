@@ -355,6 +355,7 @@ def create_spawn_agent_registry(
         workflow: str | None = None,
         execution_mode: Literal["one_shot", "interactive"] | None = None,
         provider: str | None = None,
+        resume_session_id: str | None = None,
         model: str | None = None,
         reasoning_effort: str | None = None,
         reasoning_required: bool | None = None,
@@ -388,10 +389,13 @@ def create_spawn_agent_registry(
             workflow: Workflow/pipeline to use
             execution_mode: Run lifetime; defaults to the agent definition (one_shot).
                 Interactive standing seats remain available between turns until explicitly ended.
-            provider: Required when model is supplied. Otherwise resolved from
+            provider: Required when model is supplied for a fresh spawn. Resume uses
+                the target's recorded provider. Otherwise resolved from
                 the agent definition, then the spawning session (explicit
                 argument always wins).
-            model: Model to use. When set, provider must be explicit and the
+            resume_session_id: Existing same-project Gobby session ref to resume in
+                its recorded provider thread. Live sessions are refused.
+            model: Model to use. For fresh spawns, provider must be explicit and the
                 pair is checked against the provider capability matrix before
                 any terminal or worktree is allocated.
             reasoning_effort: Optional reasoning override for supported providers/models
@@ -547,6 +551,7 @@ def create_spawn_agent_registry(
             and agent_body
             and agent_body.fallback_agent
             and not provider
+            and not resume_session_id
             and detection_registry is not None
         ):
             try:
@@ -658,6 +663,7 @@ def create_spawn_agent_registry(
             workflow=effective_workflow,
             execution_mode=execution_mode,
             provider=provider,
+            resume_session_id=resume_session_id,
             model=model,
             reasoning_effort=reasoning_effort,
             reasoning_required=reasoning_required,

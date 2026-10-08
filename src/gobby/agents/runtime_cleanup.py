@@ -41,6 +41,19 @@ def cleanup_agent_runtime_state(
     dispatch_mutex_rows = 0
     workflow_instance_rows = 0
     errors: list[str] = []
+    preserve_session_state = terminal_reason == "daemon_stop"
+    if run_id and terminal_reason == "spawn_rollback":
+        from gobby.storage.agents import LocalAgentRunManager
+
+        try:
+            run = LocalAgentRunManager(db).get(run_id)
+            metadata = run.resume_metadata_json if run else None
+            preserve_session_state = bool(metadata and metadata.get("resume_existing_session"))
+        except Exception as exc:
+            preserve_session_state = True
+            message = f"resume state lookup failed for run {run_id}: {exc}"
+            logger.warning(message)
+            errors.append(message)
 
     if run_id:
         try:
@@ -50,7 +63,7 @@ def cleanup_agent_runtime_state(
             logger.warning(message)
             errors.append(message)
 
-    if child_session_id and terminal_reason != "daemon_stop":
+    if child_session_id and not preserve_session_state:
         try:
             workflow_instance_rows = AgentStepInstanceManager(db).delete_for_session(
                 child_session_id
