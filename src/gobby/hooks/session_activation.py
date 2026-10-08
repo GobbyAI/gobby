@@ -641,12 +641,13 @@ def _ensure_step_instance(
     lock = AgentStepInstanceMutation(session_id=session_id)
     recovered_ids: tuple[str, str | None] | None = None
     with db.transaction_immediate(lock):
+        # The common case: an instance exists, so skip decoding the variables blob (#23359).
+        if manager.get_for_session(session_id) is not None:
+            return False
         # A caller can be holding a snapshot from before an identity transition.
         current = SessionVariableManager(db).get_variables(session_id)
         agent_name = _resolved_agent_name(current, None)
         if not agent_name:
-            return False
-        if manager.get_for_session(session_id) is not None:
             return False
         found = resolve_agent_with_row(
             agent_name,
