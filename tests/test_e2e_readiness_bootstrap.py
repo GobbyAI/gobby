@@ -37,7 +37,14 @@ def test_startup_instrumentation_does_not_eagerly_import_runtime(
     assert runtime_imports == []
 
 
+def test_startup_instrumentation_does_not_profile_runtime_calls() -> None:
+    previous = sys.getprofile()
+    with readiness_bootstrap.instrument_startup(lambda _name: nullcontext()):
+        assert sys.getprofile() is previous, "Diagnostics must not observe every runtime call"
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("relative", [False, True])
 @pytest.mark.parametrize(
     ("module_name", "function_name", "definition", "stage_name"),
     [
@@ -63,6 +70,7 @@ async def test_later_module_execution_retains_startup_timing(
     function_name: str,
     definition: str,
     stage_name: str,
+    relative: bool,
 ) -> None:
     events: list[tuple[str, str]] = []
 
@@ -74,15 +82,33 @@ async def test_later_module_execution_retains_startup_timing(
 
     imported = ModuleType(module_name)
     imported.__dict__["asyncio"] = asyncio
-    with readiness_bootstrap.instrument_startup(record_stage):
-        monkeypatch.setitem(sys.modules, module_name, imported)
+    original_import = builtins.__import__
+    package, _, member = module_name.rpartition(".")
+    import_name = member if relative else module_name
+
+    def load_runtime(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name != import_name:
+            return original_import(name, *args, **kwargs)
         exec(compile(definition, "isolated_startup_module.py", "exec"), imported.__dict__)
-        function = imported.__dict__[function_name]
-        result = function()
-        if asyncio.iscoroutine(result):
-            result = await result
-        assert result == "ready"
-        assert events[-2:] == [(stage_name, "started"), (stage_name, "completed")]
+        monkeypatch.setitem(sys.modules, module_name, imported)
+        return imported
+
+    monkeypatch.delitem(sys.modules, module_name, raising=False)
+    with monkeypatch.context() as loader:
+        loader.setattr(builtins, "__import__", load_runtime)
+        with readiness_bootstrap.instrument_startup(record_stage):
+            loaded = builtins.__import__(
+                import_name,
+                globals={"__package__": package},
+                fromlist=[function_name],
+                level=int(relative),
+            )
+            function = loaded.__dict__[function_name]
+            result = function()
+            if asyncio.iscoroutine(result):
+                result = await result
+            assert result == "ready"
+            assert events[-2:] == [(stage_name, "started"), (stage_name, "completed")]
     assert sys.getprofile() is None
     assert imported.__dict__[function_name] is not function
 

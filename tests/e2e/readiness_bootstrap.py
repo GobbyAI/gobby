@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import faulthandler
 import json
 import os
@@ -14,6 +15,7 @@ import time
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from functools import wraps
+from importlib.util import resolve_name
 from pathlib import Path
 from types import FrameType
 from typing import Any, TextIO
@@ -154,25 +156,32 @@ def instrument_startup(
                 patches.enter_context(patch.object(target, members[-1], timed))
                 wrapped.add(id(timed))
 
-        def module_finished(frame: FrameType, event: str, _argument: Any) -> None:
-            if event == "return" and frame.f_code.co_name == "<module>":
-                name = frame.f_globals.get("__name__")
-                if isinstance(name, str) and name in boundaries:
-                    attach(name)
-
         for name in boundaries:
             attach(name)
-        # A module's return event runs before importers copy its exports. The
-        # timed wrappers still cover complete awaits rather than profile yields.
-        # Respect an existing profiler instead of replacing it in this fixture.
-        if sys.getprofile() is not None:
-            yield
-            return
-        sys.setprofile(module_finished)
-        try:
-            yield
-        finally:
-            sys.setprofile(None)
+        original_import = builtins.__import__
+
+        def imported(
+            name: str,
+            globals: dict[str, Any] | None = None,
+            locals: dict[str, Any] | None = None,
+            fromlist: tuple[str, ...] | list[str] | None = (),
+            level: int = 0,
+        ) -> Any:
+            module = original_import(name, globals, locals, fromlist, level)
+            package = (globals or {}).get("__package__")
+            resolved = resolve_name("." * level + name, package) if level and package else name
+            if resolved in boundaries:
+                attach(resolved)
+            for member in fromlist or ():
+                child = f"{resolved}.{member}"
+                if child in boundaries:
+                    attach(child)
+            return module
+
+        # Import returns precede copying `from` exports into the caller. Observe
+        # those boundaries only, leaving ordinary runtime calls uninstrumented.
+        patches.enter_context(patch.object(builtins, "__import__", imported))
+        yield
 
 
 def main() -> None:
