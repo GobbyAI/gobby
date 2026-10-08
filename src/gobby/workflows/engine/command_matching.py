@@ -586,9 +586,15 @@ def _subjects(
     raw: list[str] = []
     for segment in segments:
         segment_spans = scan.spans[segment.first : segment.last + 1]
-        raw.append(
-            command[min(start for start, _ in segment_spans) : max(end for _, end in segment_spans)]
-        )
+        cursor = min(start for start, _ in segment_spans)
+        end = max(end for _, end in segment_spans)
+        parts: list[str] = []
+        for heredoc in scan.heredocs:
+            if cursor <= heredoc.start < end:
+                parts.append(command[cursor : heredoc.start])
+                cursor = min(heredoc.end, end)
+        parts.append(command[cursor:end])
+        raw.append("".join(parts))
     subjects: list[str] = []
     for text, segment in zip(raw, segments, strict=True):
         if _runs_substitution_output(scan.tokens[segment.first : segment.last + 1]):
@@ -684,7 +690,7 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
                 quote = char
             elif quote == char or (quote == "$" and char == "'"):
                 quote = ""
-        elif not quote and char == "#" and (index == 0 or subject[index - 1] in " \t\n;|&()"):
+        elif not quote and char == "#" and (index == 0 or subject[index - 1] in " \t\n;|&("):
             end = subject.find("\n", index)
             end = len(subject) if end < 0 else end
             index = end
@@ -696,13 +702,14 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
                 # Comments and ANSI-C quotes can diverge from this lightweight
                 # tracker. Keep the complete subject for conservative matching.
                 return [subject]
-            if not line.tokens or line.tokens[-1].value not in _CONTINUATION_OPERATORS:
-                end = _skip_heredocs(subject, line.tokens, index + 1)
-                out.append(subject[index:end])
-                correlated.append(subject[index:end])
-                index = end
-                line_start = end
-                continue
+            end = _skip_heredocs(subject, line.tokens, index + 1)
+            out.append(subject[index:end])
+            # The owner is rescanned with its heredocs intact; the additional
+            # argument correlation must not reintroduce their literal bodies.
+            correlated.append(char)
+            index = end
+            line_start = end
+            continue
         out.append(char)
         correlated.append(char)
         index += 1

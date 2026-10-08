@@ -261,6 +261,36 @@ def test_uv_hidden_global_value_options(
             False,
             id="review_comment_mutation_data",
         ),
+        pytest.param(
+            f"X=$(python3 - <<'PY'\nprint(1)\nPY\n) echo $(true)#; {_MUTATION}",
+            True,
+            id="review_substitution_hash_word",
+        ),
+        pytest.param(
+            f"cat <<EOF &&\n# $({_MUTATION})\nEOF\ntrue",
+            True,
+            id="review_continuation_heredoc_expansion",
+        ),
+        pytest.param(
+            f"cat <<'EOF' &&\n# $({_MUTATION})\nEOF\ntrue",
+            False,
+            id="review_continuation_heredoc_data",
+        ),
+        pytest.param(
+            f"cat <<'EOF' |\n{_MUTATION}\nEOF\ntee /dev/null",
+            False,
+            id="review_pipeline_continuation_heredoc_data",
+        ),
+        pytest.param(
+            f"X=$(python3 - <<'PY'\nprint(1)\nPY\n) cat <<'EOF' &&\n# $({_MUTATION})\nEOF\ntrue",
+            False,
+            id="review_nested_continuation_heredoc_data",
+        ),
+        pytest.param(
+            f"echo \"$(cat <<'EOF' &&\n)\n# $({_MUTATION})\nEOF\ntrue\n)\"",
+            False,
+            id="review_substitution_continuation_heredoc_data",
+        ),
         (f"X=$(python3 - <<'PY'\nprint('ok')\nPY\n) {_MUTATION}", True),
         (f"X=$({_ODD_PYTHON_SOURCE}) {_MUTATION}", True),
     ],

@@ -1479,8 +1479,12 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "write"
         assert data["canonical_file_path"] == "src/app.py"
 
-    def test_heredoc_body_waits_for_logical_command_continuation(self) -> None:
-        command = "cat > first.txt <<'EOF' &&\nprintf done > visible.txt\nbody > ignored.txt\nEOF"
+    @pytest.mark.parametrize("operator", ["&&", "||", "|"])
+    def test_heredoc_body_starts_before_logical_command_continuation(self, operator: str) -> None:
+        command = (
+            f"cat > first.txt <<'EOF' {operator}\n"
+            "body > ignored.txt\nEOF\nprintf done > visible.txt"
+        )
         data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
 
         normalize_tool_fields(data)
@@ -2072,8 +2076,22 @@ class TestHeredocTokenization:
             "\n",
         ]
         assert scan.heredocs == [
-            HeredocBody("body line", quoted=True, terminated=True, opener=4),
-            HeredocBody("$(x)", quoted=False, terminated=True, opener=8),
+            HeredocBody(
+                "body line",
+                quoted=True,
+                terminated=True,
+                opener=4,
+                start=command.index("body line"),
+                end=command.index("bash"),
+            ),
+            HeredocBody(
+                "$(x)",
+                quoted=False,
+                terminated=True,
+                opener=8,
+                start=command.index("$(x)"),
+                end=len(command),
+            ),
         ]
 
     def test_scan_reads_ansi_c_quote_escapes(self) -> None:
@@ -2142,11 +2160,18 @@ class TestHeredocTokenization:
         scan = scan_shell_command(command)
 
         assert scan.heredocs == [
-            HeredocBody("still > body\nnever closed", quoted=False, terminated=False, opener=2)
+            HeredocBody(
+                "still > body\nnever closed",
+                quoted=False,
+                terminated=False,
+                opener=2,
+                start=command.index("still > body"),
+                end=len(command),
+            )
         ]
 
-    def test_scan_binds_a_deferred_body_to_its_opener(self) -> None:
-        command = "cat <<'EOF' |\n  tee out.txt\nbody\nEOF"
+    def test_scan_binds_a_continued_pipeline_body_to_its_opener(self) -> None:
+        command = "cat <<'EOF' |\nbody\nEOF\n  tee out.txt\n"
 
         scan = scan_shell_command(command)
 
@@ -2160,7 +2185,16 @@ class TestHeredocTokenization:
             "out.txt",
             "\n",
         ]
-        assert scan.heredocs == [HeredocBody("body", quoted=True, terminated=True, opener=2)]
+        assert scan.heredocs == [
+            HeredocBody(
+                "body",
+                quoted=True,
+                terminated=True,
+                opener=2,
+                start=command.index("body"),
+                end=command.index("  tee"),
+            )
+        ]
 
     def test_scan_skips_word_initial_comments_and_keeps_heredoc_input(self) -> None:
         command = "cat <<'EOF' # it's\n# don't\nEOF\necho a#b 'c # d' # e's"
@@ -2176,7 +2210,16 @@ class TestHeredocTokenization:
             "a#b",
             "c # d",
         ]
-        assert scan.heredocs == [HeredocBody("# don't", quoted=True, terminated=True, opener=2)]
+        assert scan.heredocs == [
+            HeredocBody(
+                "# don't",
+                quoted=True,
+                terminated=True,
+                opener=2,
+                start=command.index("# don't"),
+                end=command.index("echo"),
+            )
+        ]
 
     def test_scan_ends_a_backtick_comment_at_the_closing_backtick(self) -> None:
         scan = scan_shell_command("echo `true # it's` ; ls # `x`")
