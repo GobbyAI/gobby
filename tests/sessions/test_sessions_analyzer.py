@@ -2,7 +2,7 @@
 Tests for TranscriptAnalyzer in gobby.sessions.analyzer.
 """
 
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 from unittest.mock import Mock
 
 import pytest
@@ -2256,3 +2256,100 @@ def test_adapter_scan_leaves_parser_state_untouched() -> None:
 
         assert actual == expected
         assert parser.snapshot_state() == before
+
+
+def _decoded_record_cases() -> list[tuple[TranscriptParser, list[dict[str, Any]]]]:
+    from gobby.sessions.transcripts.agy import AgyTranscriptParser
+    from gobby.sessions.transcripts.codex import CodexTranscriptParser
+
+    timestamp = "2026-10-08T12:00:00Z"
+    codex_turns: list[dict[str, Any]] = [
+        {
+            "timestamp": timestamp,
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "call_id": "patch",
+                "name": "apply_patch",
+                "status": "completed",
+                "input": {"path": "codex.py"},
+            },
+        },
+        {
+            "timestamp": timestamp,
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call_output",
+                "call_id": "patch",
+                "output": "patched",
+            },
+        },
+    ]
+    agy_turns: list[dict[str, Any]] = [
+        {
+            "step_index": 0,
+            "source": "USER_EXPLICIT",
+            "type": "USER_INPUT",
+            "status": "DONE",
+            "created_at": timestamp,
+            "content": "Run the tests",
+        },
+        {
+            "step_index": 1,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": timestamp,
+            "tool_calls": [{"name": "run_command", "args": {"CommandLine": "uv run pytest"}}],
+        },
+        {
+            "step_index": 2,
+            "source": "MODEL",
+            "type": "GENERIC",
+            "status": "DONE",
+            "created_at": timestamp,
+            "content": "The command exited with code 0.\nOutput:\npassed\n",
+        },
+    ]
+    return [
+        *_noncommit_provider_cases(),
+        (CodexTranscriptParser(), codex_turns),
+        (AgyTranscriptParser(), agy_turns),
+    ]
+
+
+def test_adapter_hands_decoded_turns_to_parsers_without_reencoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The summary window arrives decoded; the adapter must not encode and decode it again.
+
+    #23359: the dumps/loads round trip was 943 of 1,680 adapter samples in the
+    load capture. The output must match the old text path for every provider,
+    and the caller's turns must come back unchanged.
+    """
+    import copy
+    import json
+
+    import gobby.sessions.analyzer_turns as analyzer_turns_module
+    from gobby.sessions.analyzer_turns import analyzer_turns_from_transcript
+    from gobby.sessions.transcripts.base import BaseTranscriptParser, raw_lines_from_texts
+
+    def old_text_path(records: list[dict[str, Any]]) -> Any:
+        return raw_lines_from_texts(json.dumps(record, default=str) for record in records)
+
+    def no_decode(self: BaseTranscriptParser, line: str, index: int) -> NoReturn:
+        raise AssertionError(f"{self.cli_name} decoded line {index} again")
+
+    for parser, native_turns in _decoded_record_cases():
+        with monkeypatch.context() as patched:
+            patched.setattr(analyzer_turns_module, "raw_lines_from_records", old_text_path)
+            expected = analyzer_turns_from_transcript(parser, native_turns)
+        assert expected, parser.cli_name
+
+        snapshot = copy.deepcopy(native_turns)
+        with monkeypatch.context() as patched:
+            patched.setattr(BaseTranscriptParser, "_decode_record", no_decode)
+            actual = analyzer_turns_from_transcript(parser, native_turns)
+
+        assert actual == expected, parser.cli_name
+        assert native_turns == snapshot, parser.cli_name

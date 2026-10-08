@@ -379,27 +379,18 @@ class CodexTranscriptParser(BaseTranscriptParser):
     ]:
         if not line.strip():
             return None, [], []
-
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError as e:
-            self.error_log.log_decode_failure(
-                line_num=index,
-                session_id=self.session_id,
-                raw_text=line,
-                error=e,
-            )
+        data = self._decode_record(line, index)
+        if data is None:
             return None, [], []
+        return self._parse_record_with_outcomes(data, index)
 
-        if not isinstance(data, dict):
-            self.error_log.log_decode_failure(
-                line_num=index,
-                session_id=self.session_id,
-                raw_text=line,
-                error=None,
-            )
-            return None, [], []
-
+    def _parse_record_with_outcomes(
+        self, data: dict[str, Any], index: int
+    ) -> tuple[
+        ParsedMessage | ParsedToolEvent | None,
+        list[CodexNestedExecOutcome],
+        list[ParsedToolEvent],
+    ]:
         line_type = data.get("type")
         payload = data.get("payload")
         if not isinstance(payload, dict):
@@ -592,7 +583,8 @@ class CodexTranscriptParser(BaseTranscriptParser):
             name = "WebSearch"
         elif payload_type == "custom_tool_call":
             name = str(payload.get("name") or "unknown")
-            tool_input = _parse_tool_payload(_tool_call_arguments(payload))
+            # Copy: a dict payload is the caller's record, which status must not enter.
+            tool_input = dict(_parse_tool_payload(_tool_call_arguments(payload)))
             status = payload.get("status")
             if status is not None:
                 tool_input.setdefault("status", status)
@@ -752,7 +744,10 @@ class CodexTranscriptParser(BaseTranscriptParser):
         """
         current_index = start_index
         for raw in raw_lines:
-            record, outcomes, mcp_calls = self._parse_line_with_outcomes(raw.text, current_index)
+            data = self._raw_record(raw, current_index)
+            if data is None:
+                continue
+            record, outcomes, mcp_calls = self._parse_record_with_outcomes(data, current_index)
             if record is None and not outcomes and not mcp_calls:
                 continue
             records = annotate_record_source(
