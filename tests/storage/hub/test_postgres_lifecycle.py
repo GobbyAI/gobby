@@ -48,10 +48,16 @@ def _database_with_transaction(
     database = object.__new__(postgres.PostgresHubDatabase)
 
     @contextmanager
-    def transaction_context() -> Iterator[postgres_pool._PostgresTransaction]:
-        yield postgres_pool._PostgresTransaction(cast(psycopg.Connection[Any], transaction))
+    def open_transaction(
+        *, immediate: bool, lock: object = None
+    ) -> Iterator[postgres_pool._PostgresTransaction]:
+        yield postgres_pool._PostgresTransaction(
+            cast(psycopg.Connection[Any], transaction), is_immediate=immediate
+        )
 
-    monkeypatch.setattr(database, "transaction", transaction_context)
+    # Through the ambient entry, as in production: a nested transaction()
+    # reuses the open transaction and its deadline instead of a second one.
+    monkeypatch.setattr(database, "_native_transaction", open_transaction)
     return database
 
 

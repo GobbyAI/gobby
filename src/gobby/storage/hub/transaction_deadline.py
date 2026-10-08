@@ -7,12 +7,22 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
+from weakref import WeakKeyDictionary
 
 import psycopg
 
 from gobby.storage.hub.operation_deadline import (
     DatabaseOperationDeadlineExceeded,
     current_database_operation_deadline,
+)
+
+# Session (not SET LOCAL) statement and lock timeouts per pooled connection.
+_SESSION_TIMEOUTS: WeakKeyDictionary[psycopg.Connection[Any], tuple[int, int]] = WeakKeyDictionary()
+_TIMEOUT_MENTION = re.compile(
+    r"\b(?:set|reset)\s+(?:(?:local|session)\s+)?\w*timeout"
+    r"|\bset_config\s*\(\s*'\w*timeout'"
+    r"|\b(?:reset|discard)\s+all\b",
+    re.IGNORECASE,
 )
 
 
@@ -39,6 +49,18 @@ class TransactionDeadline:
         self._owner = current_database_operation_deadline()
         self._original_timeouts: tuple[int, int] | None = None
         self._bounds: list[tuple[int, int]] = []
+        self._timeouts_touched = False
+
+    def observe(self, sql: str) -> None:
+        """Note an executed statement that may have set a timeout itself.
+
+        The session baseline is cached per connection. A transaction that set
+        a timeout (SET LOCAL, a session SET or set_config) reads it with SHOW
+        from then on, and a session change must be read again next time.
+        """
+        if _TIMEOUT_MENTION.search(sql) is not None:
+            self._timeouts_touched = True
+            _SESSION_TIMEOUTS.pop(self._conn, None)
 
     @property
     def active(self) -> bool:
@@ -93,15 +115,7 @@ class TransactionDeadline:
         for deadline in deadlines:
             deadline.remaining_seconds()
         if self._original_timeouts is None:
-            # SHOW/SET are utility commands: unlike SELECT, they allow callers
-            # to choose transaction isolation before the first data query.
-            statement = self._conn.execute("SHOW statement_timeout").fetchone()
-            lock = self._conn.execute("SHOW lock_timeout").fetchone()
-            assert statement is not None and lock is not None
-            self._original_timeouts = (
-                _milliseconds(statement["statement_timeout"]),
-                _milliseconds(lock["lock_timeout"]),
-            )
+            self._original_timeouts = self._baseline_timeouts()
         limits = list(self._bounds)
         if deadlines:
             remaining_ms = max(1, math.floor(min(d.remaining_seconds() for d in deadlines) * 1000))
@@ -114,6 +128,28 @@ class TransactionDeadline:
         )
         for deadline in deadlines:
             deadline.remaining_seconds()
+
+    def _baseline_timeouts(self) -> tuple[int, int]:
+        # Each deadline owns its pooled connection's whole transaction, so while
+        # untouched the settings outside our SET LOCAL are the session's, which
+        # only a statement observe() flags can change: the SHOW pair cost ~125 us
+        # of GIL time per deadline transaction (#23359).
+        if not self._timeouts_touched:
+            cached = _SESSION_TIMEOUTS.get(self._conn)
+            if cached is not None:
+                return cached
+        # SHOW/SET are utility commands: unlike SELECT, they allow callers
+        # to choose transaction isolation before the first data query.
+        statement = self._conn.execute("SHOW statement_timeout").fetchone()
+        lock = self._conn.execute("SHOW lock_timeout").fetchone()
+        assert statement is not None and lock is not None
+        timeouts = (
+            _milliseconds(statement["statement_timeout"]),
+            _milliseconds(lock["lock_timeout"]),
+        )
+        if not self._timeouts_touched:
+            _SESSION_TIMEOUTS[self._conn] = timeouts
+        return timeouts
 
     def _set_timeouts(self, values: tuple[int, ...]) -> None:
         # PostgreSQL timeout GUCs use signed 32-bit milliseconds. A distant

@@ -209,6 +209,59 @@ def test_existing_stricter_timeouts_are_preserved(database: PostgresHubDatabase)
     assert scoped[1:] == restored[1:] == ("20ms", "10ms")
 
 
+def _record_statements(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    statements: list[str] = []
+    real_execute = psycopg.Connection.execute
+
+    def recording_execute(
+        self: psycopg.Connection[Any], query: Any, *args: Any, **kwargs: Any
+    ) -> psycopg.Cursor[Any]:
+        statements.append(query if isinstance(query, str) else repr(query))
+        return real_execute(self, query, *args, **kwargs)
+
+    monkeypatch.setattr(psycopg.Connection, "execute", recording_execute)
+    return statements
+
+
+def test_deadline_reads_the_session_timeouts_once_per_connection(
+    database: PostgresHubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SHOW pair cost ~125 us of GIL time per deadline transaction (#23359)."""
+    statements = _record_statements(monkeypatch)
+    states = []
+    with database_operation_deadline(timeout_seconds=0.4):
+        for _ in range(3):
+            with database.transaction() as txn:
+                states.append(_connection_state(txn))
+
+    assert statements.count("SHOW statement_timeout") == 1
+    assert statements.count("SHOW lock_timeout") == 1
+    assert len({pid for pid, _, _ in states}) == 1
+    assert all(
+        0 < int(value.removesuffix("ms")) <= 400 for _, *values in states for value in values
+    )
+
+
+def test_a_session_timeout_change_is_read_again_by_later_transactions(
+    database: PostgresHubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements = _record_statements(monkeypatch)
+    with database_operation_deadline(timeout_seconds=600):
+        with database.transaction() as txn:
+            _connection_state(txn)
+        with database.transaction() as txn:
+            # Session level, below the deadline's 5 s per-operation cap.
+            txn.execute("SET statement_timeout = '3s'")
+        with database.transaction() as txn:
+            _, statement_timeout, lock_timeout = _connection_state(txn)
+
+    assert statement_timeout == "3s"
+    assert lock_timeout != "3s"
+    assert statements.count("SHOW statement_timeout") == 2
+
+
 def test_bounded_transaction_composes_with_deadline_and_restores_outer_settings(
     database: PostgresHubDatabase,
 ) -> None:

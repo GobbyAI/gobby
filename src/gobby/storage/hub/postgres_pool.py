@@ -424,12 +424,14 @@ class _PostgresTransaction:
             # exiting synchronizes the result/error before this operation returns.
             with self._conn.pipeline() if self._deadline.active else nullcontext():
                 result = self._conn.execute(sql, params) if params else self._conn.execute(sql)
+            self._deadline.observe(sql)
             return PostgresCursor(result)
         finally:
             record_query(time.perf_counter() - started_at)
 
     def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:
         self._note_write(sql)
+        self._deadline.observe(sql)
         if self._deadline.active:
             # Driver pipelining gives every row the same stale server bound.
             rowcount = 0
