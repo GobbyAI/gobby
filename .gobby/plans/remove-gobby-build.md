@@ -1795,3 +1795,4 @@ These are completion gates for the implementation. Except for plan validation, n
 - 2026-10-08: Writer repair for F3: 1.1 and 2.4 re-record the HTTP config corpus, and 2.4 names its new loop descriptions.
 - 2026-10-08: Writer repairs for F4 and N1: 2.3 drops the build advice from worktree evidence and deletes the build command matcher, and V2 classifies every sweep match.
 - 2026-10-08: Writer repair for F5: 5.1 retires the build route from the recorded plan and pipelines scenarios and the build and stage wording from the remaining plan, agent, commit, task, config and pipelines references; 2.3 lists the normalization fixture that stays.
+- 2026-10-08: Plan Adversary gobby#15401 consensus on 9623014b627262faa678b496154893db0b8d9a05: F1 to F5 and N1 resolved, no blocking finding remains.
