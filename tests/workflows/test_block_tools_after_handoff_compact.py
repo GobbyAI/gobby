@@ -1136,3 +1136,50 @@ async def test_context_loss_gate_clear_preserves_failed_delivery_retry_gate(
     assert stored["context_compact_handoff_result"]["delivery_failed"] is True
     assert resubmit.decision == "block"
     assert "get_handoff" in (resubmit.reason or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("server", "tool", "arguments"),
+    [
+        ("gobby-tasks", "close_task", {}),
+        ("gobby-agents", "wait_for_agent", {}),
+        ("gobby-skills", "get_skill", {"name": "brevity"}),
+        (
+            "gobby-skills",
+            "get_skill_file",
+            {"name": "gobby", "path": "references/skills/loading.md"},
+        ),
+        (
+            "gobby-skills",
+            "get_skill_file",
+            {"name": "gobby", "path": "references/memory/overview.md"},
+        ),
+        (
+            "gobby-skills",
+            "get_skill_file",
+            {"name": "gobby", "path": "references/memory/post-task.md"},
+        ),
+        (
+            "gobby-skills",
+            "get_skill_file",
+            {"name": "gobby", "path": "references/tasks/closing.md"},
+        ),
+    ],
+)
+async def test_failed_handoff_allows_task_close_exit(
+    handler: WorkflowHookHandler,
+    temp_db: HubDatabase,
+    server: str,
+    tool: str,
+    arguments: dict[str, str],
+) -> None:
+    """The retry gate cannot forbid the close demanded by the task stop gate."""
+    SessionVariableManager(temp_db).merge_variables(
+        SESSION_ID,
+        {"context_compact_handoff_result": {"delivery_failed": True}},
+    )
+    event = _arbitrary_tool_event(mcp_server=server, mcp_tool=tool)
+    event.data["tool_input"] = {"arguments": arguments}
+    response = await handler._evaluate_rules(event)
+    assert response.decision == "allow"

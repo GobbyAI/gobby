@@ -17,7 +17,7 @@ from uuid import UUID
 from weakref import WeakKeyDictionary
 
 from gobby.agents.detection.provider import DetectionRegistry
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
+from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector, plain_text
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.key_bytes import tmux_key_name
 from gobby.terminals.native_runtime import (
@@ -425,32 +425,47 @@ async def composer_gate_for_write(
     """
     if composer_read is None:
         return True, None, "unprobed"
-    read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
+    snapshot = await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi")
+    read = composer_read(snapshot)
     if read.state == "empty":
         return True, None, "empty"
     if read.state == "draft":
         if pending_payload is not None and read.holds_payload(pending_payload):
             return True, None, "held"
-        _log_composer_refusal(pane, read, pending_payload)
+        _log_composer_refusal(pane, read, pending_payload, snapshot)
         return False, "composer holds an operator draft", "draft"
-    _log_composer_refusal(pane, read, pending_payload)
+    _log_composer_refusal(pane, read, pending_payload, snapshot)
     return False, f"composer could not be confirmed empty before {action}", "unknown"
 
 
-def _log_composer_refusal(pane: PaneIO, read: ComposerRead, pending_payload: str | None) -> None:
+def _log_composer_refusal(
+    pane: PaneIO, read: ComposerRead, pending_payload: str | None, snapshot: str | None
+) -> None:
     draft_length = len(read.line or "")
     matches_pending = pending_payload is not None and read.holds_payload(pending_payload)
+    row_widths = tuple(len(row) for row in plain_text(snapshot).splitlines()) if snapshot else ()
     logger.warning(
-        "Composer write refused: target=%s classification=%s draft_length=%d matches_pending_payload=%s",
+        "Composer write refused: target=%s classification=%s draft_length=%d "
+        "matches_pending_payload=%s snapshot_source=%s snapshot_mode=ansi "
+        "snapshot_rows=%d snapshot_row_widths=%s requested_rows=%d",
         pane.target,
         read.state,
         draft_length,
         matches_pending,
+        pane.backend,
+        len(row_widths),
+        row_widths,
+        COMPOSER_PROBE_LINES,
         extra={
             "event": "composer_write_refused",
             "composer_state": read.state,
             "draft_length": draft_length,
             "matches_pending_payload": matches_pending,
+            "snapshot_source": pane.backend,
+            "snapshot_mode": "ansi",
+            "snapshot_row_count": len(row_widths),
+            "snapshot_row_widths": row_widths,
+            "snapshot_requested_rows": COMPOSER_PROBE_LINES,
         },
     )
 
@@ -583,11 +598,12 @@ async def submit_text(
     held_text = text
     already_held = False
     if composer_read is not None:
-        before = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
+        snapshot = await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi")
+        before = composer_read(snapshot)
         if pending_payload is not None and before.state != "empty":
             already_held = before.holds_payload(pending_payload)
             if not already_held:
-                _log_composer_refusal(pane, before, pending_payload)
+                _log_composer_refusal(pane, before, pending_payload, snapshot)
                 return SubmitResult(
                     False,
                     "composer does not hold the pending payload",
@@ -613,12 +629,13 @@ async def submit_text(
     while True:
         ok, reason = await send_pane_key(pane, "enter", session_id, action=f"submitting {label}")
         if not ok:
-            read = (
-                composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
+            snapshot = (
+                await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi")
                 if composer_read is not None
-                else ComposerRead("unknown")
+                else None
             )
-            _log_composer_refusal(pane, read, text)
+            read = composer_read(snapshot) if composer_read is not None else ComposerRead("unknown")
+            _log_composer_refusal(pane, read, text, snapshot)
             if read.holds_payload(text):
                 held_seconds += verify_window
                 if verify_window == 0:
