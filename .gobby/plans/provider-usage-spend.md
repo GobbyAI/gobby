@@ -1177,7 +1177,7 @@ Targets:
 - Both AGY reporter refresh and pushed observations enter this same admission
   path. Reporter reads/commands remain bounded and outside the provider lock;
   stale reporter failure preserves the last row and does not clear a hard signal.
-- Capacity persistence/alerts do not own terminalization.4.4 reuses the existing
+- Capacity persistence/alerts do not own terminalization. 4.4 reuses the existing
   current-source watchdog transcript error reader and recovery path, independently
   of successful storage or delivery; no new hard-evidence queue/cache is added.
 - Reporterless reads apply the component-level 900s and supplied-reset rules,
@@ -1472,9 +1472,9 @@ Targets:
   pane-only fail-fast tests; those are owned Targets and are rewritten for
   verified evidence, with a paired pane-only no-fail regression. Existing typed
   Codex quota-error reader/recovery tests remain valid and need no edits.
-- AgyUsageReporter.report already runs the supported usage command with a15s
-  bound and normalizes windows.4.1 routes successful reporter results to observe;
- 4.4 verifies that actual reporter refresh drives the same alerts.
+- AgyUsageReporter.report already runs the supported usage command with a 15s
+  bound and normalizes windows. 4.1 routes successful reporter results to observe;
+  4.4 verifies that actual reporter refresh drives the same alerts.
 
 **Implementation:**
 - Move quota scanning behavior out of lifecycle_monitor.py into the new
