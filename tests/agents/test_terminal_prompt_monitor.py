@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -14,6 +15,7 @@ from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
 from gobby.terminals import TerminalRuntimeRegistry
+from gobby.terminals.host_client import HostConnectionLost, HostUnavailableError
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import TerminalWriteError
 from gobby.terminals.services import TerminalServices
@@ -156,3 +158,46 @@ async def test_unexpected_probe_error_still_warns_with_a_traceback(
     assert len(warnings) == 1
     assert "Prompt probe trust failed" in warnings[0].getMessage()
     assert warnings[0].exc_info is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", [HostConnectionLost, HostUnavailableError])
+@pytest.mark.parametrize(
+    "operation",
+    ["trust", "loop", "approval", "queued_continuation", "periodic_enters"],
+)
+async def test_host_outage_retries_multiple_runs_without_warning_burst(
+    error_type: type[HostUnavailableError],
+    operation: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Every prompt pass retries all runs after outage without hiding unexpected faults."""
+    monitor = _monitor_with_probe_error(error_type("control closed"))
+    runs = [replace(_run(), id=f"run-{index}") for index in range(3)]
+    monkeypatch.setattr(monitor, "_get_active_terminal_runs", lambda: runs)
+    probe = AsyncMock(side_effect=error_type("control closed " + "x" * 1000))
+    monkeypatch.setattr(monitor, "_pane_text", probe)
+    check = {
+        "trust": monitor.check_trust_prompts,
+        "loop": monitor.check_loop_prompts,
+        "approval": monitor.check_approval_prompts,
+        "queued_continuation": monitor.check_queued_continuation_prompts,
+        "periodic_enters": monitor.check_periodic_enters,
+    }[operation]
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.agents.terminal_prompt_monitor"):
+        assert await check() == 0
+        assert probe.await_count == len(runs)
+        assert len(caplog.records) == len(runs)
+        assert all(record.levelno == logging.DEBUG for record in caplog.records)
+        assert all(record.exc_info is None for record in caplog.records)
+        assert all("control closed" in record.getMessage() for record in caplog.records)
+        assert all(len(record.getMessage()) < 400 for record in caplog.records)
+
+        probe.side_effect = None
+        probe.return_value = ""
+        monkeypatch.setattr(monitor, "_send_enter", AsyncMock(return_value=False))
+        assert await check() == 0
+        assert probe.await_count == 2 * len(runs)
+        assert [record for record in caplog.records if record.levelno >= logging.WARNING] == []
