@@ -454,32 +454,38 @@ The plan also sets:
       ships BF16 weights and `joint_schema_model.py`. Its `systemone` is a
       Python function with no HTTP server; it defaults to CUDA and was
       tested on one H200. The mlx-community conversions ship an HTTP server:
-      - `mlx-community/clef-4bit`, `clef-8bit`, `clef-flash-4bit`, and
-        `clef-flash-8bit` are 4- or 8-bit, group size 64, with the decision
-        head kept in BF16. They need mlx 0.32.3 and mlx-vlm 0.7.4, and no
-        torch.
+      - [`mlx-community/clef-4bit`](https://huggingface.co/mlx-community/clef-4bit),
+        [`clef-8bit`](https://huggingface.co/mlx-community/clef-8bit),
+        [`clef-flash-4bit`](https://huggingface.co/mlx-community/clef-flash-4bit),
+        and [`clef-flash-8bit`](https://huggingface.co/mlx-community/clef-flash-8bit)
+        are 4- or 8-bit, group size 64, with the decision head kept in BF16
+        (each card's Conversion section). They were tested with mlx 0.32.3
+        and mlx-vlm 0.7.4, and need no torch.
       - Their `clef_mlx.py serve` binds `127.0.0.1:8000` by default and
         serves `POST /v1/systemone`, `GET /v1/models`, and `GET /health`.
 
       So local Clef needs no new wire. It is an operator-run server under
       Decision 3, like Kev, and Gobby never downloads, starts, or stops it.
     - Local feasibility on Josh's M5 Max with 128 GB. These figures are
-      community-reported on the conversion cards, measured on an M5 Max
-      with text input, and were not measured by Gobby:
+      community-reported in each conversion card's "Which variant fits
+      your Mac?" section, measured on an M5 Max with text input, and were
+      not measured by Gobby:
 
       | Conversion | Download | Peak memory at 1k / 16k tokens | Latency at 1k / 16k tokens |
       | --- | --- | --- | --- |
-      | `clef-flash-4bit` (9B) | 6.2 GB | 7.0 / 8.6 GB | 0.31 s / 7.0 s |
-      | `clef-flash-8bit` (9B) | 10.7 GB | 11.4 / 13.0 GB | 0.34 s / 7.7 s |
-      | `clef-4bit` (27B) | 16.3 GB | 17.1 / 19.6 GB | 1.4 s / 26.0 s |
-      | `clef-8bit` (27B) | 29.8 GB | 30.5 / 33.0 GB | 1.5 s / 32.0 s |
+      | [`clef-flash-4bit`](https://huggingface.co/mlx-community/clef-flash-4bit#which-variant-fits-your-mac) (9B) | 6.2 GB | 7.0 / 8.6 GB | 0.31 s / 7.0 s |
+      | [`clef-flash-8bit`](https://huggingface.co/mlx-community/clef-flash-8bit#which-variant-fits-your-mac) (9B) | 10.7 GB | 11.4 / 13.0 GB | 0.34 s / 7.7 s |
+      | [`clef-4bit`](https://huggingface.co/mlx-community/clef-4bit#which-variant-fits-your-mac) (27B) | 16.3 GB | 17.1 / 19.6 GB | 1.4 s / 26.0 s |
+      | [`clef-8bit`](https://huggingface.co/mlx-community/clef-8bit#which-variant-fits-your-mac) (27B) | 29.8 GB | 30.5 / 33.0 GB | 1.5 s / 32.0 s |
 
       Every conversion fits in 128 GB. Each card's parity spot-check
       against the BF16 PyTorch reference on an M5 Max agreed on 10 of 10
       text top answers. The maximum text probability difference was 0.006
       for `clef-flash-8bit`, 0.007 for `clef-8bit`, 0.029 for
       `clef-flash-4bit`, and 0.037 for `clef-4bit`
-      ([clef-flash-4bit parity](https://huggingface.co/mlx-community/clef-flash-4bit#parity-vs-official-pytorch-implementation-bf16),
+      ([clef-flash-8bit parity](https://huggingface.co/mlx-community/clef-flash-8bit#parity-vs-official-pytorch-implementation-bf16),
+      [clef-8bit parity](https://huggingface.co/mlx-community/clef-8bit#parity-vs-official-pytorch-implementation-bf16),
+      [clef-flash-4bit parity](https://huggingface.co/mlx-community/clef-flash-4bit#parity-vs-official-pytorch-implementation-bf16),
       [clef-4bit parity](https://huggingface.co/mlx-community/clef-4bit#parity-vs-official-pytorch-implementation-bf16)).
       The cards call it a spot-check, not a benchmark. Local Clef
       is therefore a supported local backend. This plan runs no download
@@ -497,13 +503,17 @@ The plan also sets:
         consumers queue.
 
       The evaluation decides, and this plan sets no Clef-specific bar.
-    - Facts the service relies on, read from the `clef_mlx.py` source:
+    - Facts the service relies on, read from the `clef_mlx.py` source
+      ([the copy in `clef-flash-8bit`](https://huggingface.co/mlx-community/clef-flash-8bit/blob/main/clef_mlx.py),
+      retrieved 2026-10-08):
       - the default limit is 16,384 tokens for the whole prompt, and
         `usage.input_tokens` counts the whole prompt;
       - by default the state is silently truncated to fit, and with
-        `--no-truncate` the server answers 413 instead;
+        `--no-truncate` the server answers 413 instead. A request's own
+        `truncate` field overrides the default, and Gobby never sends it;
       - `model` is echoed from the request;
-      - `/v1/models` returns only `{"id", "object"}`.
+      - `/v1/models` returns a list whose entries carry only `id` and
+        `object`.
 
       The operator sets `backend_max_state_tokens: 16384`, and the Decision
       8 guard then catches truncation. The server has no authentication and
@@ -2146,6 +2156,14 @@ available with the configured model. With the server stopped, a
   remaining finding. Adv1 derived and applied M1 (manifest digest
   3f8ecc41, seven entries, 57 covers labels), and expansion validation
   passed.
+- 2026-10-08: Josh approved Decision 16 option A ("23790 A"), through
+  the Assistant gobby#15070. The #23790 close review (review 57b88461)
+  found Decision 15's local evidence under-cited: only the two 4-bit
+  parity anchors were linked. Decision 15 now links all four conversion
+  cards (conversion details, memory and latency, and parity) and the
+  `clef_mlx.py` source. Re-reading that source made two statements more
+  exact: the `/v1/models` list shape and the request-level `truncate`
+  override. This is a narrative change only; M1 is unchanged.
 
 ## M1 Task Manifest
 `kind: manifest`
