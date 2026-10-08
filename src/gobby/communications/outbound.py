@@ -42,19 +42,27 @@ class OutboundCommunications:
         if self._stopping:
             raise RuntimeError("Outbound communications are stopping")
 
-    async def run[T](self, operation: Coroutine[Any, Any, T], message: CommsMessage) -> T:
-        """Accept only durably reserved sends, then own their delivery."""
+    async def run[T](
+        self,
+        operation: Coroutine[Any, Any, T],
+        message: CommsMessage,
+        attachment: CommsAttachment | None = None,
+    ) -> T:
+        """Own reservation and delivery together, with an ID before the first await."""
         if self._stopping:
             operation.close()
-            message.status = "failed"
-            message.error = "RuntimeError: outbound communications are stopping; send not admitted"
-            logger.error("Failed to admit outbound message %s: %s", message.id, message.error)
-            await self._record_result(message)
             raise RuntimeError("Outbound communications are stopping")
-        task = asyncio.create_task(operation)
+
+        async def deliver() -> T:
+            await self._reserve(message, attachment)
+            return await operation
+
+        task = asyncio.create_task(deliver())
         self._messages[task] = message
         self._pending.add(task)
         task.add_done_callback(self._finished)
+        # Reservation may fail or shutdown may cancel before delivery starts.
+        task.add_done_callback(lambda _: operation.close())
         return await asyncio.shield(task)
 
     def _finished(self, task: asyncio.Task[Any]) -> None:
@@ -99,10 +107,30 @@ class OutboundCommunications:
     async def _reserve(
         self, message: CommsMessage, attachment: CommsAttachment | None = None
     ) -> None:
-        try:
+        async def persist() -> None:
             await asyncio.to_thread(self._manager._store.create_message, message)
             if attachment is not None:
                 await asyncio.to_thread(self._manager._store.create_attachment, attachment)
+
+        reservation = asyncio.create_task(persist())
+        try:
+            await asyncio.shield(reservation)
+        except asyncio.CancelledError:
+            self._cancelled(message, message.channel_id)
+            # A worker thread cannot be cancelled. Settle its insert before the
+            # delivery update; stop() bounds how long it waits for this task.
+            try:
+                await asyncio.shield(reservation)
+            except Exception as exc:
+                logger.exception(
+                    "Failed to settle outbound reservation %s: %s: %s",
+                    message.id,
+                    type(exc).__name__,
+                    exc,
+                )
+            else:
+                await self._record_result(message)
+            raise
         except Exception as exc:
             logger.exception(
                 "Failed to reserve outbound message %s: %s: %s", message.id, type(exc).__name__, exc
@@ -239,8 +267,6 @@ class OutboundCommunications:
         )
 
         self._require_running()
-        await self._reserve(message)
-
         return await self.run(self._deliver_message(channel_name, message), message)
 
     async def _deliver_message(self, channel_name: str, message: CommsMessage) -> CommsMessage:
@@ -334,10 +360,10 @@ class OutboundCommunications:
         )
 
         self._require_running()
-        await self._reserve(message, attachment)
-
         return await self.run(
-            self._deliver_attachment(channel_name, message, attachment, file_path), message
+            self._deliver_attachment(channel_name, message, attachment, file_path),
+            message,
+            attachment,
         )
 
     async def _deliver_attachment(
@@ -409,8 +435,6 @@ class OutboundCommunications:
         )
 
         self._require_running()
-        await self._reserve(message)
-
         return await self.run(
             self._deliver_proactive(channel_name, message, conversation_id), message
         )
