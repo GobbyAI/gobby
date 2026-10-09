@@ -91,6 +91,7 @@ class CloneIsolationHandler(IsolationHandler):
                     main_repo_path=config.project_path,
                     isolated_path=existing.clone_path,
                     provider=config.provider,
+                    phase_timings_ms=config.phase_timings_ms,
                 )
                 # Use existing clone
                 self._partial_clones.pop(state_key, None)
@@ -199,6 +200,7 @@ class CloneIsolationHandler(IsolationHandler):
             main_repo_path=config.project_path,
             isolated_path=clone_path,
             provider=config.provider,
+            phase_timings_ms=config.phase_timings_ms,
         )
 
         # Success — clear partial state

@@ -167,10 +167,15 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
 
         return result
     finally:
-        phase_timings_ms = complete_spawn_phase_timings(request.phase_timings_ms)
+        phase_timings_ms = complete_spawn_phase_timings(
+            request.phase_timings_ms,
+            started_at=request.spawn_started_at
+            if request.spawn_started_at is not None
+            else started_at,
+        )
         level = (
             logging.INFO
-            if (time.perf_counter() - started_at) * 1000 >= _SLOW_SPAWN_THRESHOLD_MS
+            if phase_timings_ms["spawn_wall"] >= _SLOW_SPAWN_THRESHOLD_MS
             else logging.DEBUG
         )
         logger.log(

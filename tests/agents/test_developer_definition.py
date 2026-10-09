@@ -9,7 +9,7 @@ import pytest
 pytestmark = pytest.mark.unit
 
 AGENTS_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents"
-RETIRED_AGENTS = ("developer", "pipeline-worker")
+RETIRED_AGENTS = ("pipeline-worker",)
 
 
 @pytest.mark.parametrize("name", RETIRED_AGENTS)

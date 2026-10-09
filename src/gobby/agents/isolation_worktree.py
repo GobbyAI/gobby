@@ -89,6 +89,7 @@ class WorktreeIsolationHandler(IsolationHandler):
                     main_repo_path=str(self._git_manager.repo_path),
                     isolated_path=existing.worktree_path,
                     provider=config.provider,
+                    phase_timings_ms=config.phase_timings_ms,
                 )
                 await asyncio.to_thread(self._worktree_storage.touch, existing.id)
                 extra = {"main_repo_path": str(self._git_manager.repo_path)}
@@ -183,6 +184,7 @@ class WorktreeIsolationHandler(IsolationHandler):
             main_repo_path=str(self._git_manager.repo_path),
             isolated_path=worktree_path,
             provider=config.provider,
+            phase_timings_ms=config.phase_timings_ms,
         )
 
         return IsolationContext(

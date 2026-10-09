@@ -36,6 +36,7 @@ async def prepare_reused_worktree(
         main_repo_path=main_repo_path,
         isolated_path=existing_worktree.worktree_path,
         provider=spawn_config.provider,
+        phase_timings_ms=spawn_config.phase_timings_ms,
     )
 
     extra = {"main_repo_path": main_repo_path, "reused_worktree": True}
@@ -78,6 +79,7 @@ async def prepare_resumed_worktree(
         main_repo_path=main_repo_path,
         isolated_path=existing_worktree.worktree_path,
         provider=spawn_config.provider,
+        phase_timings_ms=spawn_config.phase_timings_ms,
     )
     return (
         IsolationContext(

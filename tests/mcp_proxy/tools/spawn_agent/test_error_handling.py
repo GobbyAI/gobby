@@ -519,6 +519,7 @@ class TestSpawnAgentImplErrorBranches:
             main_repo_path=str(tmp_path / "repo"),
             isolated_path=str(worktree_path),
             provider="codex",
+            phase_timings_ms=spawn_config.phase_timings_ms,
         )
 
     @pytest.mark.asyncio
@@ -602,14 +603,19 @@ class TestSpawnAgentImplErrorBranches:
             worktree_path=str(worktree_path),
             base_branch="main",
         )
+        mock_execute.assert_awaited_once()
+        assert mock_execute.await_args is not None
+        spawn_request = mock_execute.await_args.args[0]
         repair.assert_awaited_once_with(
             main_repo_path=str(tmp_path / "repo"),
             isolated_path=str(worktree_path),
             provider="codex",
+            phase_timings_ms=spawn_request.phase_timings_ms,
         )
-        mock_execute.assert_awaited_once()
-        assert mock_execute.await_args is not None
-        spawn_request = mock_execute.await_args.args[0]
+        assert repair.await_args is not None
+        assert repair.await_args.kwargs["phase_timings_ms"] is spawn_request.phase_timings_ms
+        assert spawn_request.spawn_started_at is not None
+        assert spawn_request.phase_timings_ms["isolation_prepare"] > 0
         assert spawn_request.cwd == str(worktree_path)
         assert spawn_request.worktree_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"
         assert spawn_request.initial_variables["base_commit_sha"] == "base-sha"

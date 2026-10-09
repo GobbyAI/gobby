@@ -53,6 +53,7 @@ class SpawnConfig:
     project_path: str
     provider: str
     parent_session_id: str
+    phase_timings_ms: dict[str, float] = field(default_factory=dict)
 
 
 type SpawnStateKey = tuple[

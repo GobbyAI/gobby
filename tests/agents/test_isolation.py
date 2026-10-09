@@ -1371,6 +1371,7 @@ class TestWorktreeIsolationHandler:
             main_repo_path="/path/to/main/repo",
             isolated_path="/tmp/worktrees/existing-branch",
             provider="claude",
+            phase_timings_ms=config.phase_timings_ms,
         )
         mock_worktree_storage.touch.assert_called_once_with("existing-wt-456")
         # Should NOT create a new worktree
@@ -1532,6 +1533,7 @@ class TestWorktreeIsolationHandler:
             main_repo_path="/path/to/main/repo",
             isolated_path="/tmp/worktrees/stale-branch",
             provider="claude",
+            phase_timings_ms=config.phase_timings_ms,
         )
 
     async def test_stale_worktree_retries_target_without_repeating_git_delete(
@@ -2123,6 +2125,7 @@ class TestCloneIsolationHandler:
             main_repo_path="/path/to/main/repo",
             isolated_path="/tmp/clones/existing-branch",
             provider="claude",
+            phase_timings_ms=config.phase_timings_ms,
         )
         # Should NOT create a new clone
         mock_clone_manager.create_clone.assert_not_called()

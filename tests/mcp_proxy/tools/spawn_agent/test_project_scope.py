@@ -234,6 +234,7 @@ async def test_worktree_spawn_uses_target_repository(
         main_repo_path=target_project.root_path,
         isolated_path=str(worktree_path),
         provider="claude",
+        phase_timings_ms=request.phase_timings_ms,
     )
     stored_worktree = worktree_storage.get(result["worktree_id"])
     assert stored_worktree is not None
