@@ -759,7 +759,10 @@ def _untracked(_ledger: ComposerLedger) -> None:
     bind_composer_ledger(ComposerLedger())
 
 
-_UNCONFIRMED = f"composer could not be confirmed empty before {_COMMAND}"
+_UNCONFIRMED = (
+    f"composer could not be confirmed empty before {_COMMAND}; once the pane shows an "
+    "empty composer, an operator can release it with gobby-sessions release_composer"
+)
 
 
 @pytest.mark.asyncio

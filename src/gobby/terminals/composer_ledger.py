@@ -23,7 +23,7 @@ from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from gobby.agents.idle_detector import ComposerRead
 from gobby.paths import get_gobby_home
@@ -31,8 +31,12 @@ from gobby.terminals.composer import COMPOSER_CLEAR_KEYS, composer_clear_sequenc
 from gobby.terminals.host_events import HostEvent, InputActivityEvent
 from gobby.terminals.runtime import NamedKey
 
+if TYPE_CHECKING:
+    from gobby.storage.terminals import Terminal
+
 __all__ = [
     "ComposerLedger",
+    "ComposerReleaseError",
     "LedgerRead",
     "LedgerState",
     "UnsafeReason",
@@ -46,6 +50,7 @@ __all__ = [
     "read_composer",
     "record_composer_drain",
     "record_composer_submit",
+    "release_composer",
     "write_ledger",
 ]
 
@@ -375,6 +380,39 @@ def record_composer_submit(terminal_id: str) -> None:
     """Record on the bound ledger that the provider consumed the flagged input."""
     if _bound is not None:
         _bound.record_submit(terminal_id)
+
+
+class LiveTerminalLookup(Protocol):
+    def get_live_for_session(self, session_id: str) -> Terminal | None: ...
+
+
+class ComposerReleaseError(Exception):
+    """The valve refused; ``code`` is the stable error code callers return."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def release_composer(
+    terminals: LiveTerminalLookup, session_id: str, *, caller_session_id: str | None
+) -> str:
+    """The operator valve: vouch that ``session_id``'s composer is empty and start it clean.
+
+    The target session cannot vouch for itself: its own composer is the one in doubt.
+    Returns the released terminal id.
+    """
+    if caller_session_id == session_id:
+        raise ComposerReleaseError("self_release", "A session cannot release its own composer")
+    ledger = _bound
+    if ledger is None:
+        raise ComposerReleaseError("ledger_unavailable", "No composer ledger is running")
+    terminal = terminals.get_live_for_session(session_id)
+    if terminal is None:
+        raise ComposerReleaseError("no_live_terminal", f"Session {session_id} has no live terminal")
+    ledger.release(terminal.id)
+    logger.info("Released the composer of terminal %s (session %s)", terminal.id, session_id)
+    return terminal.id
 
 
 def composer_ledger_path() -> Path:

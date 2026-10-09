@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from gobby.storage.session_tasks import SessionTaskManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
-    from gobby.terminals.composer_ledger import ComposerLedger
+    from gobby.terminals.composer_ledger import ComposerLedger, UnsafeReason
     from gobby.workflows.hooks import WorkflowHookHandler
 
 # How a turn end leaves a dialog still open on the composer; ``unknown`` leaves it open.
@@ -200,6 +200,12 @@ class EventHandlersBase:
         composer = self._composer_terminal(session_id)
         if composer is not None:
             composer[0].record_submit(composer[1])
+
+    def _block_composer(self, session_id: str, reason: UnsafeReason) -> None:
+        """Hold automatic writes to the session's composer until a submit record or release."""
+        composer = self._composer_terminal(session_id)
+        if composer is not None:
+            composer[0].block(composer[1], reason)
 
     def _close_composer_wait(self, session_id: str, outcome: WaitResolution) -> None:
         """Close the dialog open on the session's composer, as the turn lifecycle clears waits."""

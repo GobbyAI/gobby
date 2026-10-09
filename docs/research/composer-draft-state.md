@@ -269,6 +269,15 @@ compaction sender.
   refusal log remains only for the read-back after a failed Enter.
 - A wake drains a cancelled staged `/compact`, which is daemon text, and then
   delivers. It no longer skips the wake.
+- The watchdog's idle reprompt and stuck Enter read the ledger
+  (`composer_refuses_automation`), not a frame, so a provider-limit block also holds
+  them. A hold does not count as a failed delivery.
+- The Claude transcript reader does not map `apiError: "usage_limit_reached"` to a
+  terminal provider error. That mapping would terminalize interactive seats, which
+  must survive the limit for the operator's continue line. The StopFailure
+  classification and the ledger block cover the limit.
+- The unknown-composer refusal and the usage-limit attention message name
+  `release_composer`.
 
 ## Not Recommended
 

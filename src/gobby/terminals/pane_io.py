@@ -469,7 +469,12 @@ async def composer_gate_for_write(
     _log_ledger_refusal(pane, read)
     if read.state == "draft":
         return False, "composer holds an operator draft", "draft"
-    return False, f"composer could not be confirmed empty before {action}", "unknown"
+    return (
+        False,
+        f"composer could not be confirmed empty before {action}; once the pane shows an "
+        "empty composer, an operator can release it with gobby-sessions release_composer",
+        "unknown",
+    )
 
 
 def _log_composer_refusal(

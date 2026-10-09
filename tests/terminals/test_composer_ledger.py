@@ -8,17 +8,24 @@ from pathlib import Path
 
 import pytest
 
+from gobby.agents.idle_detector import ComposerRead
+from gobby.storage.terminals import Terminal
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.composer_ledger import (
     ComposerLedger,
+    ComposerReleaseError,
     LedgerRead,
     WaitOutcome,
     composer_drain_keys,
     load_ledger,
     persist_ledger,
+    read_composer,
+    record_composer_submit,
+    release_composer,
     write_ledger,
 )
 from gobby.terminals.host_events import InputActivityEvent, InterruptKind, TerminalExitedEvent
+from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -513,3 +520,52 @@ def test_persist_loop_writes_nothing_without_changes(tmp_path: Path) -> None:
     asyncio.run(run())
 
     assert not path.exists()
+
+
+def _seat(session_id: str = "seat-session") -> tuple[Terminal, MemoryTerminalStore]:
+    seat = make_memory_terminal(terminal_id="pre-land-seat")
+    seat.session_id = session_id
+    return seat, MemoryTerminalStore(seat)
+
+
+def test_first_deploy_seat_reads_unknown_until_an_operator_releases_it(
+    composer_ledger: ComposerLedger,
+) -> None:
+    seat, terminals = _seat()
+
+    assert read_composer(seat.id) == ComposerRead("unknown")
+    record_composer_submit(seat.id)
+    assert read_composer(seat.id) == ComposerRead("unknown")
+
+    released = release_composer(terminals, "seat-session", caller_session_id="assistant")
+
+    assert released == seat.id
+    assert read_composer(seat.id) == ComposerRead("empty")
+
+
+@pytest.mark.parametrize(
+    ("caller", "target", "code"),
+    [
+        ("seat-session", "seat-session", "self_release"),
+        ("assistant", "terminal-less-session", "no_live_terminal"),
+    ],
+)
+def test_release_refuses_a_self_call_and_a_session_without_a_terminal(
+    composer_ledger: ComposerLedger, caller: str, target: str, code: str
+) -> None:
+    seat, terminals = _seat()
+
+    with pytest.raises(ComposerReleaseError) as refused:
+        release_composer(terminals, target, caller_session_id=caller)
+
+    assert refused.value.code == code
+    assert composer_ledger.read(seat.id) == _UNTRACKED
+
+
+def test_release_without_a_running_ledger_is_refused() -> None:
+    _seat_row, terminals = _seat()
+
+    with pytest.raises(ComposerReleaseError) as refused:
+        release_composer(terminals, "seat-session", caller_session_id=None)
+
+    assert refused.value.code == "ledger_unavailable"

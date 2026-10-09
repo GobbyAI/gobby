@@ -19,7 +19,7 @@ from gobby.agents.watchdog.completed_turn_recovery import (
     format_reprompt_message,
     recover_completed_turn,
 )
-from gobby.agents.watchdog.composer_probe import composer_holds_draft
+from gobby.agents.watchdog.composer_gate import composer_refuses_automation
 from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
 from gobby.storage.terminals import Terminal
 from gobby.tasks.state_semantics import projected_task_state
@@ -321,11 +321,12 @@ class WatchdogRecoveryCoordinator:
         Every other give-up counter advances only on success, so a terminal
         refusing all automatic writes bypasses all of them and retries
         forever. This is the one boundary the three re-arming callers share.
-        An operator draft in the composer holds the reprompt without counting
-        as a failed delivery, so the draft never gets its agent failed.
+        A composer the ledger reads as an operator draft or unknown (a provider
+        limit, an untracked seat) holds the reprompt without counting as a failed
+        delivery, so the hold never gets its agent failed.
         """
-        if await composer_holds_draft(self._terminal_services, self._idle_detector, run):
-            logger.debug("Holding idle reprompt for agent %s: composer holds a draft", run.id)
+        if composer_refuses_automation(self._terminal_services, run):
+            logger.debug("Holding idle reprompt for agent %s: composer not clean", run.id)
             return False
         delivered = await self._attempt_idle_reprompt(
             run,
