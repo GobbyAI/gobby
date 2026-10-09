@@ -373,7 +373,10 @@ fn menu_bar_menus_regroup_items_per_title() {
     );
 
     let help = menu(&ws, &chrome, MenuBarMenu::Help);
-    assert_eq!(labels(&help), ["Keys", "Alerts…", "Daemon", "About Gobby"]);
+    assert_eq!(
+        labels(&help),
+        ["Keybinds", "Alerts…", "Daemon", "About Gobby"]
+    );
     assert_eq!(
         actions(&help),
         [
