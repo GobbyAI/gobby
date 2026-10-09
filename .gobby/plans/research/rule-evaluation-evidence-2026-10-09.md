@@ -627,3 +627,63 @@ The rule engine imports these modules from `src/gobby/hooks/`:
 `run_command.py`, `validation_cover.py`, `code_navigation_recovery.py`, and
 `provider_launch_guard.py`. Hook ingress normalization uses the same modules: the
 `normalization` sub-bucket is 3.5% of hook-other samples.
+
+## Repository counts
+
+Read on 2026-10-09 at `0.5.0` from the main checkout.
+
+Line counts of the Python modules the port replaces:
+
+```text
+$ wc -l src/gobby/hooks/_normalization_shell.py src/gobby/hooks/_normalization_segments.py src/gobby/hooks/_ansi_c.py src/gobby/hooks/_path_scope.py src/gobby/hooks/_python_pipeline_classifier.py src/gobby/hooks/_normalization_tools.py src/gobby/hooks/provider_launch_guard.py src/gobby/workflows/engine/command_matching.py src/gobby/workflows/safe_evaluator.py src/gobby/workflows/engine/enforcement_checks.py
+     970 src/gobby/hooks/_normalization_shell.py
+     111 src/gobby/hooks/_normalization_segments.py
+     105 src/gobby/hooks/_ansi_c.py
+     289 src/gobby/hooks/_path_scope.py
+     992 src/gobby/hooks/_python_pipeline_classifier.py
+     197 src/gobby/hooks/_normalization_tools.py
+     762 src/gobby/hooks/provider_launch_guard.py
+     807 src/gobby/workflows/engine/command_matching.py
+     903 src/gobby/workflows/safe_evaluator.py
+     993 src/gobby/workflows/engine/enforcement_checks.py
+    6129 total
+```
+
+The six normalizer modules total 2,664 lines. `provider_launch_guard.py` parses
+inline Python with `ast.parse` (line 633), and `_python_pipeline_classifier.py`
+walks `ast` trees. The engine reaches both through `command_matching.py` (import at
+line 55) and `blocks_direct_provider_launch` in `safe_evaluator.py` (import at line
+563).
+
+Delivery classes, lookaround patterns, and `mcp_call` targets in the bundled rules
+(`R=src/gobby/install/shared/workflows/rules`):
+
+```text
+$ grep -r 'delivery: on_receipt' $R | wc -l
+17
+$ grep -rl 'delivery: on_receipt' $R | wc -l
+9
+$ grep -rlE '\(\?[=!<]' $R | wc -l
+28
+$ grep -rh -A3 'type: mcp_call' $R | grep -E '^\s+(server|tool):' | sort | uniq -c | sort -rn
+   5         tool: surface_memories
+   5         server: gobby-memory
+   4       tool: recall_review_lessons_by_class
+   4       server: gobby-review-learning
+   1         tool: run_pipeline
+   1         tool: recall_review_lessons_for_files
+   1         tool: list_hubs
+   1         server: gobby-workflows
+   1         server: gobby-skills
+   1         server: gobby-review-learning
+```
+
+`gobby-review-learning` appears at two indentations, so it has 5 targets in total.
+
+ghook's failure disposition, read from source: on a 503 `{"status": "retry"}` other
+than `adapter_timeout`, `run_gobby_owned` (`crates/ghook/src/dispatch.rs`) keeps the
+envelope for drain replay and continues the host CLI, "even on critical hooks". Other
+delivery failures go to `action_from_failure` (`crates/ghook/src/action.rs`), which
+blocks only critical hooks. Every CLI's `critical_hooks` set
+(`crates/ghook/src/cli_config.rs`) holds only session start, session end, and
+pre-compact, so tool hooks continue on every delivery failure.

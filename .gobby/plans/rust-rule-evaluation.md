@@ -52,7 +52,10 @@ That file embeds each script and its verbatim output, and lists its inputs under
 | Turn-start rule latency | `before_agent` p90 229 ms, p99 2,548 ms; `surface-memories-on-turn-start` (an `mcp_call`) matches 95% of turn starts | `#matched-rule-passes-in-the-allow-audit` |
 | Rules needing a cross-family seam | 44 of 219 bundled rules; 175 need only the event and session variables | `#cross-family-seams-per-rule` |
 | Condition and template surface | 54 helper names plus 19 added by templating; 130 Jinja blocks with tags `set`, `if`, `elif`, `else`, `for` | `#condition-and-template-surface` |
-| Shell normalization surface | six `src/gobby/hooks/` modules, 2,664 lines | `#shell-normalization-surface` |
+| Shell normalization surface | six `src/gobby/hooks/` modules, 2,664 lines; `provider_launch_guard.py` (762 lines) parses inline Python with `ast.parse` | `#shell-normalization-surface`, `#repository-counts` |
+| Delivery and patterns | 17 `on_receipt` declarations in 9 rule files; 28 rule files use regex lookarounds | `#repository-counts` |
+| `mcp_call` targets | `gobby-memory` 5, `gobby-review-learning` 5, `gobby-workflows` `run_pipeline` 1, `gobby-skills` `list_hubs` 1 | `#repository-counts` |
+| ghook on a 503 retry or a failed delivery | continues the host CLI for every tool hook, because no CLI marks tool hooks critical | `#repository-counts` |
 
 Uncertainty, stated so no later section overclaims:
 
@@ -133,27 +136,42 @@ from them and from the task's correctness requirements.
   - **Depending on the family crates directly.** Most do not exist yet, so the early
     start would wait on them, and Cargo would see cycles where families call back
     into validation.
-- **DR5: Fail closed, with no snapshot.** The engine never allows an event because
-  state is missing or stale.
-  - **No snapshot skip.** No pass is skipped on a cached snapshot. Every pass reads
-    session variables and evaluates every candidate rule.
-  - **Seam failures.** Any seam I/O failure (database, adapter, timeout) is a typed
-    `SeamUnavailable`. It aborts the pass with no variable delta and no staged
-    effects. The hooks route returns the same 503 retry envelope Python returns when
-    a rule pass raises `DatabaseOperationDeadlineExceeded` (1.2 records it as case
-    `rule_pass_deadline`).
-  - **Python's fallbacks are not ported.** Helpers return `False` when a manager is
-    absent, for example `task_tree_complete` in
+- **DR5: Fail closed inside the response, with no snapshot.** The engine never
+  allows an event because state is missing or stale.
+  - **No snapshot exists.** DR7 checks definitions every pass, and variables and
+    seam state are read live. Nothing is allowed on cached state, because there is
+    none.
+  - **Where fail-closed can live.** On a 503 retry other than `adapter_timeout`,
+    and on any failed delivery of a tool hook, ghook continues the host CLI. No CLI
+    marks its tool hooks critical (evidence `#repository-counts`). A 503 therefore
+    can never fail a tool event closed; only a delivered block decision can. The
+    engine keeps Python's rules, which put the closed decision in the response:
+    - **Condition failures.** A seam failure or deterministic error inside a rule's
+      `when` makes a rule with a `block` effect match, and a rule without one not
+      match (`TemplatingMixin._evaluate_condition` in
+      `src/gobby/workflows/engine/templating.py`). Python's helpers raise seam
+      failures into that same handler, so the rule covers them.
+    - **Session state that cannot be loaded.** A `stop` event blocks with Python's
+      "Could not load session state. Try again." response. Any other event runs on
+      empty variables and persists nothing, as `WorkflowHookHandler._evaluate_rules`
+      does. The caller owns this path (D2).
+    - **Pass-level errors.** Only the pass deadline and a failed definitions read
+      leave the pass as errors. The route maps each to the response Python returns
+      for the same condition; 1.2 records them.
+  - **Python's absent-manager fallbacks are not ported.** Python helpers return
+    `False` when a manager is absent, for example `task_tree_complete` in
     `src/gobby/workflows/condition_helpers.py`. In Rust a missing adapter is a
-    construction error.
-  - **Deterministic expression errors keep Python's per-rule rule.** This covers type
-    errors, unknown names, and bad subscripts. A rule with a `block` effect treats
-    the condition as matched, and any other rule treats it as not matched
-    (`TemplatingMixin._evaluate_condition` in
-    `src/gobby/workflows/engine/templating.py`).
+    construction error, so a block rule can never silently fail to fire for lack of
+    one.
   - **Parse failures** are skipped and logged as Python does, and also counted.
-  - **Recorded divergence.** The seam-failure cases in the 1.1 corpus record this
-    difference from Python.
+  - Rejected alternatives:
+    - **A 503 retry on every seam failure.** ghook would continue the CLI, so a seam
+      outage would allow every tool call a block rule would have stopped. That is
+      less closed than Python.
+    - **Blocking every event on any seam failure.** A seam outage would live-lock
+      every agent, the failure the ghook comment on the retry path guards against.
+  - Changing ghook's availability-first edge is outside this plan. No decision here
+    is less closed than Python's.
 - **DR6: Dual-engine window.** The Python engine keeps serving the MCP proxy, web
   chat, and in-process agent runner until each flips (D3-D5). Until D6 deletes it,
   every rule template change re-records the 1.1 corpus, and the change passes both
@@ -167,7 +185,8 @@ from them and from the task's correctness requirements.
   Every pass reads `definition_revisions` for `rules`, `agents`, and
   `agent_step_workflows` in one indexed query. The revision is read before rows are
   loaded, so a write that commits during a load forces the next pass to reload. A
-  failed revision read is `SeamUnavailable`; the cache is never used unvalidated.
+  failed revision read fails the pass with `DefinitionsUnavailable`; the cache is
+  never used unvalidated.
   Rejected alternative: mirroring Python's `DefinitionRevisionListener`, a
   LISTEN/NOTIFY listener with a 30-second poll fallback
   (`src/gobby/storage/definitions/notifications.py`). While its connection is down,
@@ -279,8 +298,8 @@ file per case, listed in `manifest.json`. A case carries:
   and the DR8 outcome.
 
 A case whose Rust result is meant to differ from Python's also carries
-`expect_rust` and names its reason. Only DR5's seam-failure rule and #23866 may
-appear there.
+`expect_rust` and names its reason. Only #23866 may appear there; DR5 keeps Python's
+failure semantics, so seam-failure cases need no divergence.
 
 `rules_corpus.py` records cases. For each case it seeds rows through
 `RuleDefinitionManager` in the isolated test hub, then runs
@@ -294,6 +313,7 @@ Python functions:
 - `apply_path_scope_metadata` (`_path_scope`);
 - `normalize_tool_fields` (`_normalization_tools`);
 - `executable_command_subjects` and `command_patterns_match` (`command_matching`);
+- `blocks_direct_provider_launch` (`provider_launch_guard`);
 - `rule_matches_agent` (`selectors`).
 
 The command strings come from the corpus events plus the existing cases in
@@ -325,7 +345,7 @@ exporter cannot be re-recorded, and DR6 needs re-recording.
 - 1.1.3 - Every effect type and both delivery classes appear in some case's expected effect log. test: `tests/contracts/test_rules_corpus.py::test_corpus_covers_effect_types_and_delivery`.
 - 1.1.4 - Every required scenario case exists. test: `tests/contracts/test_rules_corpus.py::test_corpus_has_required_scenarios`.
 - 1.1.5 - The Python engine reproduces every case's `expect` block. test: `tests/contracts/test_rules_corpus.py::test_python_engine_replays_corpus`.
-- 1.1.6 - Every `expect_rust` block names DR5 or #23866, and no other reason appears. test: `tests/contracts/test_rules_corpus.py::test_divergences_name_their_decision`.
+- 1.1.6 - Every `expect_rust` block names #23866, and no other reason appears. test: `tests/contracts/test_rules_corpus.py::test_divergences_name_their_decision`.
 - 1.1.7 - The Python functions reproduce every normalizer vector. test: `tests/contracts/test_rules_corpus.py::test_python_normalizer_replays_vectors`.
 - 1.1.8 - The README documents the record and replay commands and the DR6 re-record obligation. file: `tests/contracts/rules/README.md`.
 
@@ -383,15 +403,24 @@ Required envelope cases:
 - both `ingress_backpressure` reasons;
 - `adapter_timeout`;
 - `rule_pass_deadline`: whatever Python returns when the rule pass raises
-  `DatabaseOperationDeadlineExceeded`, recorded as observed.
+  `DatabaseOperationDeadlineExceeded`, recorded as observed;
+- `rule_load_failure`: whatever Python returns when loading rule rows raises,
+  recorded as observed;
+- `stop_state_unavailable`: the `stop` block Python returns when session variables
+  cannot load;
+- `tool_state_unavailable`: a tool event whose session variables cannot load, which
+  runs on empty variables and persists nothing.
 
 `docs/contracts/hooks-execute.md` states:
 - the request fields and the response per adapter;
 - each status code and envelope;
 - duplicate and retry semantics, including that a retried envelope re-runs the
   pass and its external effects;
-- the DR5 mapping of `SeamUnavailable` and deadline expiry to the
-  `rule_pass_deadline` envelope.
+- ghook's disposition of each failure (the CLI continues on a retry for every tool
+  hook);
+- the DR5 mapping of `DeadlineExceeded` and `DefinitionsUnavailable` to the
+  `rule_pass_deadline` and `rule_load_failure` responses, and of session-state load
+  failure to the two `*_state_unavailable` responses.
 
 D2 replays this corpus against the Rust route.
 
@@ -401,7 +430,7 @@ D2 replays this corpus against the Rust route.
 - 1.2.2 - Every sequence case replays equal against the Python boundary daemon. test: `tests/contracts/test_hooks_corpus.py::test_sequence_case_replays_equal`.
 - 1.2.3 - Every envelope case replays equal in-process. test: `tests/contracts/test_hooks_corpus.py::test_envelope_case_replays_equal`.
 - 1.2.4 - Every required sequence and envelope case exists. test: `tests/contracts/test_hooks_corpus.py::test_hooks_corpus_has_required_cases`.
-- 1.2.5 - The contract document states every envelope, the retry semantics, and the DR5 mapping. file: `docs/contracts/hooks-execute.md`.
+- 1.2.5 - The contract document states every envelope, the retry semantics, ghook's failure disposition, and the DR5 mapping. file: `docs/contracts/hooks-execute.md`.
 
 ## P2: gobby-workflows rule engine
 `kind: framing`
@@ -460,6 +489,11 @@ The crate is built as follows:
 - **No route family.** The crate exports no `RouteFamily` and does not depend on
   `gdaemon`; DR1 states this deviation.
 
+**Granularity:** one leaf with seven production files, counting both `Cargo.toml`
+files. The workspace entry, the crate manifest, and the repository, definitions, and
+cache modules form one loader. The cache cannot be tested without the repository it
+validates.
+
 **Acceptance:**
 
 - 2.1.1 - The crate is a workspace member, `cargo clippy -p gobby-workflows --all-targets -- -D warnings` passes, and no other crate depends on it. file: `crates/gworkflows/Cargo.toml`.
@@ -467,7 +501,7 @@ The crate is built as follows:
 - 2.1.3 - A body Python rejects is skipped and counted, and the rest of the pass still loads. test: `crates/gworkflows/tests/corpus_parse.rs::rejected_bodies_are_skipped_and_counted`.
 - 2.1.4 - The repository returns global rows plus same-project rows, deduped and ordered by `(priority, trigger_index, name)`. test: `crates/gworkflows/tests/definitions_repo.rs::lists_global_and_same_project_rows_in_order`.
 - 2.1.5 - An event with no project id loads global rows only. test: `crates/gworkflows/tests/definitions_repo.rs::event_without_project_loads_global_rows_only`.
-- 2.1.6 - Advancing the `rules` revision makes the next pass reload, and a failed revision read returns `SeamUnavailable` without using the cache. test: `crates/gworkflows/tests/definitions_repo.rs::cache_reloads_on_revision_and_fails_closed`.
+- 2.1.6 - Advancing the `rules` revision makes the next pass reload, and a failed revision read returns `DefinitionsUnavailable` without using the cache. test: `crates/gworkflows/tests/definitions_repo.rs::cache_reloads_on_revision_and_fails_closed`.
 
 ### 2.2 Shell normalization [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -478,10 +512,13 @@ Targets:
 - `crates/gworkflows/src/lib.rs`
 - `crates/gworkflows/src/normalize.rs`
 - `crates/gworkflows/src/normalize/shell.rs`
+- `crates/gworkflows/src/normalize/shell/scan.rs`
 - `crates/gworkflows/src/normalize/segments.rs`
 - `crates/gworkflows/src/normalize/ansi_c.rs`
 - `crates/gworkflows/src/normalize/path_scope.rs`
+- `crates/gworkflows/src/normalize/python_source.rs`
 - `crates/gworkflows/src/normalize/python_pipeline.rs`
+- `crates/gworkflows/src/normalize/python_pipeline/ast_walk.rs`
 - `crates/gworkflows/src/normalize/tools.rs`
 - `crates/gworkflows/src/normalize/tests.rs`
 - `crates/gworkflows/tests/normalize_corpus.rs`
@@ -505,16 +542,29 @@ Research context:
   stays with #21569, which reuses this module.
 - **No Rust equivalent.** `crates/ghook` has none, and neither does `crates/gcore`.
 
-Port the six modules as `normalize`, one Rust file per Python module, with the same
-token, segment, scope, and classification results. Split
-`python_pipeline.rs` by concern (AST walk, allow-lists) if it reaches 1,000 lines.
-`normalize` is public, and the hooks family consumes it through this crate's API at
-D2 (DR3). It has no seams and no I/O beyond the cwd and project-root values the caller
-passes.
+Port the six modules as `normalize`, with the same token, segment, scope, and
+classification results. The two near-ceiling Python modules are split up front:
+- `shell.rs` holds the tokenizer and token predicates; `shell/scan.rs` holds
+  `scan_shell_command`, heredoc extraction, and the redirection checks.
+- `python_pipeline.rs` holds the classification entry points and allow-lists;
+  `python_pipeline/ast_walk.rs` holds the tree walk.
 
-**Granularity:** one leaf with eight production files. Every file is a port of one
-Python module that the shared vector replay tests together, and the modules call each
-other.
+**Python source parsing.** The classifier walks Python `ast` trees, and
+`provider_launch_guard.py` calls `ast.parse` on inline scripts (evidence
+`#repository-counts`). `python_source.rs` wraps `rustpython-parser`, pinned at its
+newest release that is at least two weeks old when 2.2 starts. Both the classifier
+port and 2.3's launch-guard port consume it. Rejected alternatives:
+- **A hand-written statement parser.** It needs the full statement grammar.
+- **Treating unparsed inline Python as not read-only.** It diverges from Python and
+  blocks pipelines Python allows.
+
+`normalize` is public, and the hooks family consumes it through this crate's API at
+D2 (DR3). It has no seams and no I/O beyond the cwd and project-root values the
+caller passes.
+
+**Granularity:** one leaf with eleven production files. Each file ports one Python
+module or one half of a split module. The shared vector replay tests them together,
+and the modules call each other.
 
 **Acceptance:**
 
@@ -534,6 +584,7 @@ Targets:
 - `crates/gworkflows/src/matching/command.rs`
 - `crates/gworkflows/src/matching/selectors.rs`
 - `crates/gworkflows/src/matching/patterns.rs`
+- `crates/gworkflows/src/matching/provider_launch.rs`
 - `crates/gworkflows/src/matching/tests.rs`
 - `crates/gworkflows/tests/matching_corpus.rs`
 
@@ -547,8 +598,15 @@ Research context:
   rule files use lookarounds such as `(?<=[;&|]` and `(?=.*DATABASE_URL=`, which the
   `regex` crate rejects. `fancy-regex` and `regex` are already in `Cargo.lock`.
 
-Port command matching and selectors as `matching`. `matching::patterns` compiles each
-rule-authored pattern once per DR7 cache entry:
+Port command matching and selectors as `matching`, and port
+`src/gobby/hooks/provider_launch_guard.py` (762 lines) as `matching::provider_launch`,
+on 2.2's `python_source` parser. Command matching imports it, and the condition helper
+`blocks_direct_provider_launch` calls it.
+
+**Granularity:** one leaf with six production files. The launch guard is a
+dependency of command matching, and the shared vectors test them together.
+
+`matching::patterns` compiles each rule-authored pattern once per DR7 cache entry:
 - with `regex` when it compiles there;
 - otherwise with `fancy-regex`;
 - and a pattern neither accepts is a parse failure counted under 2.1's rule.
@@ -559,7 +617,8 @@ No pattern compiles inside a pass.
 
 - 2.3.1 - Every `command_patterns_match` and `executable_command_subjects` vector replays equal. test: `crates/gworkflows/tests/matching_corpus.rs::command_vectors_replay_equal`.
 - 2.3.2 - Every `rule_matches_agent` vector replays equal. test: `crates/gworkflows/tests/matching_corpus.rs::selector_vectors_replay_equal`.
-- 2.3.3 - Every pattern in the bundled rules compiles, lookaround patterns match as Python's `re` does on the corpus strings, and compilation happens only on cache load. test: `crates/gworkflows/src/matching/tests.rs::bundled_patterns_compile_once_with_python_semantics`.
+- 2.3.3 - Every `blocks_direct_provider_launch` vector replays equal, including inline Python scripts. test: `crates/gworkflows/tests/matching_corpus.rs::provider_launch_vectors_replay_equal`.
+- 2.3.4 - Every pattern in the bundled rules compiles, lookaround patterns match as Python's `re` does on the corpus strings, and compilation happens only on cache load. test: `crates/gworkflows/src/matching/tests.rs::bundled_patterns_compile_once_with_python_semantics`.
 
 ### 2.4 Condition language, helpers, and query seams [category: code] (depends: 2.3)
 `kind: deliverable`
@@ -634,7 +693,7 @@ belong here because the helpers are their first callers.
 - 2.4.2 - Every node outside the accepted subset is rejected at parse time, f-strings and lambdas included. test: `crates/gworkflows/src/condition/tests.rs::rejects_nodes_outside_the_subset`.
 - 2.4.3 - `and` and `or` return operands, and truthiness matches Python for every value kind. test: `crates/gworkflows/src/condition/tests.rs::boolean_operators_return_operands`.
 - 2.4.4 - A deterministic error matches in a block rule and does not match in a non-block rule. test: `crates/gworkflows/src/condition/tests.rs::expression_errors_follow_the_per_rule_rule`.
-- 2.4.5 - A seam failure inside a helper returns `SeamUnavailable` and never `False`. test: `crates/gworkflows/src/condition/tests.rs::seam_failure_is_not_false`.
+- 2.4.5 - A seam failure inside a helper is never read as `False`. It makes a block rule match and a non-block rule not match, as Python's handler does. test: `crates/gworkflows/src/condition/tests.rs::seam_failure_follows_the_per_rule_rule`.
 - 2.4.6 - All 73 helper names resolve, and an unscripted seam call fails the test. test: `crates/gworkflows/src/condition/tests.rs::every_helper_name_resolves_and_unscripted_calls_fail`.
 
 ### 2.5 Templates [category: code] (depends: 2.4)
@@ -716,7 +775,8 @@ A `PassResult` carries:
 - the audit records, in `record_rule_evaluation`'s line schema;
 - the DR8 outcome.
 
-A `PassError` is `SeamUnavailable` or `DeadlineExceeded`.
+A `PassError` is `DefinitionsUnavailable` or `DeadlineExceeded` (DR5). A seam
+failure inside a `when` follows DR5's per-rule rule and does not end the pass.
 
 Pass behavior:
 - **Order.** The pass follows the Constraints section's effect order exactly.
@@ -738,14 +798,20 @@ corpus replay can only test them together.
 - 2.6.1 - Every 1.1 case replays equal to `expect`, or to `expect_rust` where present: decision, reason, context, delta, staged payload, effect log, audit records, and outcome. test: `crates/gworkflows/tests/rule_pass_corpus.rs::every_case_replays_equal`.
 - 2.6.2 - In aggregate blocking, only the first matching block runs sibling effects and records metrics, and the reason matches `format_aggregated_block_reason`. test: `crates/gworkflows/tests/rule_pass_corpus.rs::aggregate_block_runs_first_block_effects_only`.
 - 2.6.3 - A `set_variable` and an `mcp_call` result are visible to later rules in the same pass. test: `crates/gworkflows/tests/rule_pass_corpus.rs::in_pass_writes_are_visible_to_later_rules`.
-- 2.6.4 - A seam failure aborts the pass with no delta and no staged payload, and the error lists the external effects that already ran. test: `crates/gworkflows/tests/rule_pass_corpus.rs::seam_failure_aborts_without_committing`.
+- 2.6.4 - A seam failure inside a `when` follows the per-rule rule and the pass continues. A failed definitions read returns `DefinitionsUnavailable` with no delta and no staged payload. test: `crates/gworkflows/tests/rule_pass_corpus.rs::seam_and_definition_failures_follow_dr5`.
 - 2.6.5 - Deadline expiry returns `DeadlineExceeded` and commits nothing. test: `crates/gworkflows/tests/rule_pass_corpus.rs::deadline_expiry_commits_nothing`.
 - 2.6.6 - Each pass is counted exactly once as `zero_match`, `matched_allow`, `mutating`, or `block` under its event type. test: `crates/gworkflows/src/engine/tests.rs::outcome_counters_classify_each_pass`.
 - 2.6.7 - On the release profile with in-memory seams, the p99 `before_tool` pass over the corpus's full bundled rule set takes 1 ms or less, and the test prints p50 and p99 per event type. test: `crates/gworkflows/tests/rule_pass_budget.rs::before_tool_pass_p99_within_budget`.
 
-The 1 ms ceiling is a regression gate, not a claim of speed against Python. The
-allow audit times rules, not passes (`before_tool` per-rule p99 9.168 ms), so no Python
-per-pass baseline exists to compare against.
+The 1 ms ceiling is derived, because no Python per-pass baseline exists: the allow
+audit times rules, not passes.
+- The `before_tool` per-rule median is 0.006 ms (evidence
+  `#matched-rule-passes-in-the-allow-audit`).
+- 146 enabled rows trigger on `before_tool` (evidence `#inputs`).
+- A pass whose every rule cost that median would take about 0.88 ms.
+
+The Rust pass must stay at or below that cost while evaluating every rule. This is a
+regression gate, not a speed claim against Python.
 
 ### 2.7 Step-workflow and agent tool enforcement [category: code] (depends: 2.6)
 `kind: deliverable`
@@ -837,8 +903,10 @@ the values `proxy`, `compare`, and `native`.
 
 Deferred obligations, under #21543's per-boundary gates:
 - **D2.1** Fixture parity: the 1.2 corpus replays equal against the Rust route.
-- **D2.2** Error-path parity: every 409 and 503 envelope, plus DR5's mapping of
-  `SeamUnavailable` and deadline expiry to `rule_pass_deadline`.
+- **D2.2** Error-path parity: every 409 and 503 envelope, and DR5's mappings. The
+  pass deadline and a failed definitions read map to `rule_pass_deadline` and
+  `rule_load_failure`. Session-state load failure maps to `stop_state_unavailable` and
+  `tool_state_unavailable`.
 - **D2.3** A Compare soak with no unexplained diff in decision, reason, injected
   context, or staged receipt fields.
   - In Compare, the Rust pass runs its effect seams in record mode, so no effect runs
@@ -970,6 +1038,19 @@ deferral:
   dual-engine window, the definition cache, and the zero-match measurement. The
   project-isolation finding is filed as #23866 and pinned as a recorded divergence in
   1.1 and 2.1.
+- 2026-10-08 CDT: Pre-review amendment to the first draft (1f442a416c).
+  - **DR5 rewritten.** ghook continues the host CLI on a 503 retry and on any failed
+    delivery of a tool hook. A retry therefore cannot fail a tool event closed, so the
+    engine keeps Python's per-rule and session-state failure rules in the response.
+    `PassError` becomes `DefinitionsUnavailable` or `DeadlineExceeded`, and 1.2 adds
+    three recorded responses.
+  - **Evidence.** The repository counts and ghook's disposition are now in the
+    evidence file under `#repository-counts`.
+  - **Python source parsing.** It is decided as `rustpython-parser` in 2.2, and
+    `provider_launch_guard.py` is ported in 2.3.
+  - **File splits** for the two near-ceiling modules are fixed up front.
+  - **Other fixes.** 2.6.7's ceiling is derived, 2.1, 2.2, and 2.3 have Granularity
+    notes, and V2's planning-time check is recorded as observed.
 
 ## V2: Verification
 `kind: verification`
@@ -981,7 +1062,8 @@ P1 and P2 leaves close.
 Observed on this draft:
 
 - `uv run gobby plans validate .gobby/plans/rust-rule-evaluation.md -p /Users/josh/Projects/gobby`
-  must exit 0 in standard mode. This is the only planning-time check.
+  exited 0 in standard mode on 2026-10-08 CDT, run by the Writer gobby#15677. This is
+  the only planning-time check.
 
 Implementation gates (not run; the files they test do not exist yet):
 
