@@ -28,12 +28,12 @@ class MockWebSocket:
 
 
 @pytest.fixture
-def mock_mcp_manager():
+def mock_mcp_manager() -> MagicMock:
     return MagicMock()
 
 
 @pytest.fixture
-def mock_config():
+def mock_config() -> MagicMock:
     config = MagicMock()
     config.host = "localhost"
     config.port = 60888
@@ -44,7 +44,7 @@ def mock_config():
 
 
 @pytest.mark.asyncio
-async def test_subscribe_success(mock_config, mock_mcp_manager):
+async def test_subscribe_success(mock_config: MagicMock, mock_mcp_manager: MagicMock) -> None:
     server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
     ws = MockWebSocket()
 
@@ -61,7 +61,7 @@ async def test_subscribe_success(mock_config, mock_mcp_manager):
 
 
 @pytest.mark.asyncio
-async def test_unsubscribe_success(mock_config, mock_mcp_manager):
+async def test_unsubscribe_success(mock_config: MagicMock, mock_mcp_manager: MagicMock) -> None:
     server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
     ws = MockWebSocket()
     ws.subscriptions = {"event1", "event2"}
@@ -78,7 +78,7 @@ async def test_unsubscribe_success(mock_config, mock_mcp_manager):
 
 
 @pytest.mark.asyncio
-async def test_unsubscribe_all(mock_config, mock_mcp_manager):
+async def test_unsubscribe_all(mock_config: MagicMock, mock_mcp_manager: MagicMock) -> None:
     server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
     ws = MockWebSocket()
     ws.subscriptions = {"event1", "event2"}
@@ -128,7 +128,7 @@ async def test_unsubscribe_rejects_mixed_payload_without_mutating(
 
 
 @pytest.mark.asyncio
-async def test_broadcast_filtering(mock_config, mock_mcp_manager):
+async def test_broadcast_filtering(mock_config: MagicMock, mock_mcp_manager: MagicMock) -> None:
     server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
 
     # Client 1: No subscription (should receive nothing after deprecation cleanup)
@@ -181,7 +181,9 @@ async def test_broadcast_filtering(mock_config, mock_mcp_manager):
 
 
 @pytest.mark.asyncio
-async def test_parametric_subscription_matches(mock_config, mock_mcp_manager):
+async def test_parametric_subscription_matches(
+    mock_config: MagicMock, mock_mcp_manager: MagicMock
+) -> None:
     """Parametric subscription 'type:key=value' filters by message field."""
     server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
 
@@ -202,7 +204,9 @@ async def test_parametric_subscription_matches(mock_config, mock_mcp_manager):
 
 
 @pytest.mark.asyncio
-async def test_parametric_subscription_no_match(mock_config, mock_mcp_manager):
+async def test_parametric_subscription_no_match(
+    mock_config: MagicMock, mock_mcp_manager: MagicMock
+) -> None:
     """Parametric subscription doesn't match if the value is different."""
     server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
 
@@ -218,7 +222,9 @@ async def test_parametric_subscription_no_match(mock_config, mock_mcp_manager):
 
 
 @pytest.mark.asyncio
-async def test_parametric_and_type_subscription_coexist(mock_config, mock_mcp_manager):
+async def test_parametric_and_type_subscription_coexist(
+    mock_config: MagicMock, mock_mcp_manager: MagicMock
+) -> None:
     """A client can have both type-level and parametric subscriptions."""
     server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
 
