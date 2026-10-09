@@ -228,6 +228,27 @@ async def test_boundary_inside_the_window_as_settle_fires_stays_on_the_reconcile
     assert receipt_count(temp_db) == 1
 
 
+@pytest.mark.parametrize("evidence", ["rollout", "notification"])
+def test_boundary_hours_after_the_window_does_not_hold_the_gate(
+    temp_db: HubDatabase, session_id: str, tmp_path: Path, evidence: str
+) -> None:
+    authored = unconfirmed_attempt(temp_db, session_id, age=LONG_PAST)
+    boundary = authored + UNCONFIRMED_COMPACT_WINDOW + timedelta(hours=1)
+    if evidence == "rollout":
+        write_rollout(temp_db, session_id, tmp_path, boundary)
+    else:
+        write_rollout(temp_db, session_id, tmp_path)
+        SessionVariableManager(temp_db).set_variable(
+            session_id, COMPACT_NOTIFICATION_STARTED_AT_VARIABLE, boundary.isoformat()
+        )
+
+    assert settle_expired_unconfirmed_compact(temp_db, session_id, ATTEMPT_ID) is True
+    variables = SessionVariableManager(temp_db).get_variables(session_id)
+    assert HANDOFF_DISPATCH_GATE_VARIABLE not in variables
+    assert variables[FAILED_HANDOFF_VARIABLE]["attempt_id"] == ATTEMPT_ID
+    assert receipt_count(temp_db) == 0
+
+
 @pytest.mark.asyncio
 async def test_boundary_after_settlement_cannot_deliver_the_settled_attempt(
     temp_db: HubDatabase,
