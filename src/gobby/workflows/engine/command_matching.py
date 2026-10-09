@@ -265,7 +265,7 @@ def _uv_run_argvs(name: str, args: list[str]) -> list[list[str]] | None:
     if subcommand[:1] == ["run"]:
         argv = _after_options(subcommand[1:], _UV_RUN_VALUE_OPTIONS)
         options = subcommand[1 : len(subcommand) - len(argv)]
-        if argv and {"-m", "--module"} & set(options):
+        if argv and any(_selects_module(option) for option in options):
             return [argv, ["python", "-m", *argv]]
         return [argv]
     if subcommand[:1] == ["tool"]:
@@ -273,6 +273,21 @@ def _uv_run_argvs(name: str, args: list[str]) -> list[list[str]] | None:
         if tool[:1] in (["run"], ["uvx"]):
             return [_tool_argv(_after_options(tool[1:], _UV_TOOL_RUN_VALUE_OPTIONS))]
     return None
+
+
+def _selects_module(option: str) -> bool:
+    """Whether a ``uv run`` option is ``-m``, alone or in a short cluster (``-qm``)."""
+    if option == "--module":
+        return True
+    if option.startswith("--") or not option.startswith("-"):
+        return False
+    for letter in option[1:]:
+        if letter == "m":
+            return True
+        # A value option takes the rest of the cluster as its value.
+        if "-" + letter in _UV_RUN_VALUE_OPTIONS:
+            return False
+    return False
 
 
 def _tool_argv(words: list[str]) -> list[str]:
