@@ -315,6 +315,12 @@ jobs:
           key: ${{ runner.os }}-coverage-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: ${{ runner.os }}-coverage-cargo-
 
+      # Coverage runs gclient's vt-engine host tests through nextest too.
+      - name: Setup Zig 0.16.0
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: 0.16.0
+
       - name: Generate LCOV report
         run: |
           cargo llvm-cov clean --workspace

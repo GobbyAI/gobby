@@ -7,6 +7,7 @@ here proves a backup is restorable, it only makes one.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shlex
@@ -234,13 +235,23 @@ def reconcile_restored_principals(database_url: str) -> int:
     return drain_ephemeral_principals(database_url)
 
 
-def restore_postgres_globals(database_url: str, globals_path: Path) -> None:
+def restore_postgres_globals(
+    database_url: str, globals_path: Path, *, expected_sha256: str | None = None
+) -> None:
     """Replay verified stable cluster globals into the managed PostgreSQL container."""
     require_regular_file(globals_path, label="PostgreSQL globals")
     user = _dsn_user(database_url) or DEFAULT_POSTGRES_USER
     container = _managed_postgres_container(database_url)
     with open_regular_binary(globals_path, label="PostgreSQL globals") as globals_file:
-        replay = _idempotent_global_role_creates(_without_role_passwords(globals_file.read()))
+        globals_bytes = globals_file.read()
+        if expected_sha256 is not None:
+            actual_sha256 = hashlib.sha256(globals_bytes).hexdigest()
+            if actual_sha256 != expected_sha256:
+                raise click.ClickException(
+                    "PostgreSQL globals checksum mismatch: "
+                    f"expected {expected_sha256}, got {actual_sha256}"
+                )
+        replay = _idempotent_global_role_creates(_without_role_passwords(globals_bytes))
         ensure_docker_allowed("hub backup PostgreSQL globals restore", runner=subprocess.run)
         result = subprocess.run(  # nosec B603 # fixed docker/psql argv and verified file input
             _postgres_client_command(

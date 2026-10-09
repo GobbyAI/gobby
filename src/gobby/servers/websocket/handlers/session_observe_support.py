@@ -96,10 +96,31 @@ def _variable_str(variables: dict[str, Any], *names: str) -> str | None:
 
 
 def _read_session_variables(db: Any, session_id: str) -> dict[str, Any]:
-    from gobby.workflows.state_manager import SessionVariableManager
+    from gobby.storage.sessions._contested_expiry import read_session_variables
 
-    variables = SessionVariableManager(db).get_variables(session_id)
-    return variables if isinstance(variables, dict) else {}
+    # The attach consumer uses metadata and context-window evidence only.
+    return (
+        read_session_variables(
+            db,
+            session_id,
+            keys=(
+                "chat_mode",
+                "mode_level",
+                "reasoning_effort",
+                "_effective_reasoning_effort",
+                "_requested_reasoning_effort",
+                "model",
+                "model_id",
+                "modelId",
+                "context_window",
+                "model_context_window",
+                "modelContextWindow",
+                "_local_context_route",
+                "_local_context_observation",
+            ),
+        )
+        or {}
+    )
 
 
 async def _load_live_session_variables(

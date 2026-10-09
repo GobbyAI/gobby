@@ -104,6 +104,7 @@ def restore_postgres_backup(
     allow_unverified: bool = False,
     gobby_home: Path | None = None,
     database_url: str | None = None,
+    expected_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Verify and restore a PostgreSQL backup file or backup directory."""
     home = gobby_home or get_gobby_home()
@@ -112,7 +113,8 @@ def restore_postgres_backup(
     dump_path = _resolve_dump_path(source.expanduser())
 
     metadata = _read_metadata_for_dump(dump_path)
-    expected_sha256 = _expected_dump_sha256(dump_path, metadata)
+    if expected_sha256 is None:
+        expected_sha256 = _expected_dump_sha256(dump_path, metadata)
     actual_sha256 = _sha256_file(dump_path)
     if expected_sha256:
         if actual_sha256 != expected_sha256:
