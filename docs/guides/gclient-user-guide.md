@@ -74,7 +74,7 @@ and the status bar the last row. With default pane gaps, every pane draws all
 four edges. This example shows the sidebar hidden for clarity. By default it
 starts pinned in a saved column beside the content. `prefix+b` unpins it; a
 later `prefix+b` opens the overlay on the configured side without resizing
-tabs or panes. `esc` or `prefix+b` rolls the overlay up. **View › Sidebar ›
+tabs or panes. `esc` or `prefix+b` rolls the overlay up. **View ›
 Pin sidebar** pins it again. The menus remain usable while the client connects.
 
 **Menus.** Click a title on row 0 or move between open menus with the keyboard.
@@ -86,7 +86,7 @@ when those conditions are absent. Slashes below separate alternative labels:
 | Gobby | Settings, Reload config, Quit |
 | File | New terminal, New tab, New project…, Open project…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
 | Edit | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name (when named), Send right-clicks to pane / Use gclient menu |
-| View | Appearance: Dark / Light / System ▸, Theme: Restored ▸, Monochrome, Sidebar ▸ |
+| View | Appearance: Dark / Light / System ▸, Theme: Restored ▸, Monochrome, Show sidebar, Pin sidebar, Show all machines, Show all projects, Group agents by project |
 | Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (Even horizontal, Even vertical, Main horizontal, Main vertical, Tiled, New grid…) |
 | Agent | Respond, Mark seen, Take control, Release control, Take back, Detach, Open alert target, Next attention, Previous attention |
 | Help | Keybinds, Alerts…, Daemon, About Gobby |
@@ -108,18 +108,20 @@ returns to the menu it came from, a click on a row of any open menu acts on
 it, and `esc` closes them all. **View › Appearance** holds Dark, Light, and
 System. **View › Theme** lists the themes the appearance in force offers
 (**Themes**, below); a pick redraws at once and is saved. **View ›
-Monochrome** toggles monochrome (below). **View › Sidebar** holds:
+Monochrome** toggles monochrome (below). View also holds:
 
-| Sidebar row | Items |
+| View control | Effect |
 | --- | --- |
 | Show sidebar | toggles the sidebar |
 | Pin sidebar | pins it beside the content, or unpins it to an overlay |
-| Machines ▸ | This machine / All machines: the machine filter for the sections below |
-| Projects ▸ | Working projects / All projects |
-| Agents ▸ | This project / All projects, then Grouped / Priority |
-| Terminals ▸ | New terminal, Destroy orphaned terminals… |
+| Show all machines | checked by default; unchecked limits rows to the local machine |
+| Show all projects | checked by default; unchecked limits projects and agents to the current project |
+| Group agents by project | groups agents under project headings; disabled while Show all projects is unchecked |
 
-A `✓` marks the value or toggle in force. The attention legend lives in
+A `✓` marks a toggle in force; a `●` marks a theme or appearance choice.
+Selected choices stay enabled, and choosing them again changes nothing.
+New terminal and Destroy orphaned terminals… live in File.
+The attention legend lives in
 **Help › Keybinds**, where it opens first.
 
 **Monochrome.** **View › Monochrome**, or `Monochrome` in settings, draws the
@@ -181,8 +183,8 @@ Four sections, each under a bold heading on the theme's header fill:
 Machines, Projects, Agents, and Terminals. The selected row and the active
 row sit on the selection fill, and the selected row also leads with the `▸`
 marker. The Terminals heading is hidden
-while no bare terminal is open. Each section's view options live in its own
-**View › Sidebar** submenu. Machines and Projects together
+while no bare terminal is open. The sidebar controls live directly in
+**View**. Machines and Projects together
 never take more than the top half of the sidebar (each scrolls inside its cap);
 Agents and Terminals share the rest. A section with more rows than room draws a
 scrollbar thumb and no track. The thumb is dim at rest, and brightens for a
@@ -194,8 +196,8 @@ second after the section scrolls or while the navigate cursor is in it.
   the list scrolls. The rows are the machine filter for the sections below:
   clicking a remote machine shows that machine's terminals, clicking it again
   returns to this machine; clicking the hub row toggles all machines.
-  **View › Sidebar › Machines** sets the same filter to This machine or All
-  machines.
+  **View › Show all machines** enables all machines, or limits rows to the
+  local machine when unchecked.
 - *Projects* lists registered projects as one-line cards:
   `glyph name (branch ↑ahead ↓behind)` with a `▸`/`▾` fold mark at the right
   edge. Only one project is expanded at a time: selecting a project expands it
@@ -205,9 +207,8 @@ second after the section scrolls or while the navigate cursor is in it.
   agent draws a blank in its place, since it has no state to show.
   A branch too long for its row drops the task and scrolls on the same clock
   as the Agents titles.
-  **View › Sidebar › Projects** chooses Working projects (projects
-  with a live session, run, or terminal on the current machine filter, plus the
-  focused one) or All projects.
+  **View › Show all projects** lists every registered project by default;
+  unchecked, it lists only the current project.
 - *Agents* lists active agents and sessions with their state, reference, name,
   task title, and model. A session named by hand shows that name where the
   definition goes (`#14069: Assistant`). Otherwise the agent definition names
@@ -226,12 +227,10 @@ second after the section scrolls or while the navigate cursor is in it.
   scrolls. By default it rests at the start,
   walks left to its end, parks, and jumps home; every scrolling row and pane
   header shares one clock. Settings can reverse that direction or turn it off.
-  **View › Sidebar › Agents** holds both axes: the scope, This project (the
-  focused project only) or All projects (every project, grouped under dim
-  project rows), and the order, Grouped (tab order, with agent runs nested
-  under the session that spawned them) or Priority (flattened urgency order).
-  A `✓` marks the value in force, and choosing it again closes the menu
-  unchanged.
+  **View › Show all projects** also sets the agents' scope. **Group agents
+  by project** adds project headings; it is disabled in current-project scope.
+  Agent sort in Settings chooses Grouped (tab order, with runs nested under
+  their parent session) or Priority (urgency order).
 - *Terminals* lists bare terminals without an agent row by their given pane
   name or foreground command. The pane's address sits at the right edge, as
   the pane's corner prints it, and gives way when the name needs the room.
@@ -541,8 +540,8 @@ and only work after you bind them; every action also appears in the help popup
 | *unset* | Focus project 1–9 | `switch_project` |
 | *unset* | Collapse or expand the project's worktrees | `toggle_group` |
 | *unset* | Cycle the machine filter (this machine, all machines, each machine) | `cycle_machine_filter` |
-| *unset* | Toggle working / all projects | `toggle_projects_filter` |
-| *unset* | Toggle the sessions scope (this project / all projects) | `toggle_sessions_scope` |
+| *unset* | Toggle current / all projects | `toggle_projects_filter` |
+| *unset* | Toggle grouping agents by project | `toggle_sessions_scope` |
 | *unset* | Toggle the session order (grouped / priority) | `toggle_agent_sort` |
 
 `up`, `down`, `h`, `j`, `k`, and `l` are direct chords: they act only when the
@@ -759,7 +758,7 @@ the `Done` and `Close` buttons. Rows are clickable. Every change is written to
 | Hide tab bar with one tab | off | Hide the tab bar when a project has a single tab |
 | Sidebar width | 26 | Columns, up to 540 of the pixels the terminal reports for its window; that cap is never under 36 columns, and is 36 when the terminal reports no pixels. Also set by dragging the sidebar edge, which saves the width on release |
 | Sidebar side | `left` | Put the overlay or pinned sidebar on the left or right |
-| Sidebar pinned | on | Keep the sidebar in its own column; also changed by **View › Sidebar › Pin sidebar** |
+| Sidebar pinned | on | Keep the sidebar in its own column; also changed by **View › Pin sidebar** |
 | Right-click passthrough | none | Modifier that sends a right-click to the pane's application instead of opening the pane menu (`shift`, `alt`, `ctrl`, or none) |
 | Agent sort | `grouped` | `grouped` or `priority` order in the Agents section |
 | Title scrolling | `left` | `off`, `left`, or `right`: which way over-long session titles and pane headers scroll, on one shared ticker |
@@ -870,7 +869,7 @@ close.
 | **Gobby** on the menu bar (click) | Settings, Reload config, Quit |
 | **File** on the menu bar (click) | New terminal, New tab, New project…, Open project…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
 | **Edit** on the menu bar (click) | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name, Send right-clicks to pane / Use gclient menu |
-| **View** on the menu bar (click) | Appearance ▸, Theme ▸, Monochrome, Sidebar ▸ (Show sidebar, Pin sidebar, Machines ▸, Projects ▸, Agents ▸, Terminals ▸) |
+| **View** on the menu bar (click) | Appearance ▸, Theme ▸, Monochrome, Show sidebar, Pin sidebar, Show all machines, Show all projects, Group agents by project |
 | **Window** on the menu bar (click) | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (five layouts, New grid…) |
 | **Agent** on the menu bar (click) | Respond, Mark seen, Take / Release control, Take back, Detach, Open alert target, Next / Previous attention |
 | **Help** on the menu bar (click) | Keybinds, Alerts…, Daemon, About Gobby |

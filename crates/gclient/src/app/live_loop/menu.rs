@@ -15,7 +15,6 @@ use ratatui::layout::{Margin, Position, Rect};
 use crate::app::PaneId;
 use crate::daemon::Daemon;
 use crate::theme::ThemeName;
-use crate::ui::hit::SidebarSection;
 use crate::ui::menu_bar::MenuBarMenu;
 use crate::ui::sidebar::ALL_MACHINES;
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
@@ -31,7 +30,7 @@ use items::{
 };
 pub(super) use items::{
     appearance_row_label, arrange_row, blocked_entry, enabled_if, item, passthrough_label,
-    theme_row_label, toggle,
+    sidebar_items, theme_row_label, toggle,
 };
 
 /// A menu that opens beside the row of its parent menu that names it.
@@ -41,11 +40,6 @@ pub enum Submenu {
     Appearance,
     /// View › Theme: every named theme.
     Theme,
-    /// View › Sidebar: showing and pinning the sidebar, and one submenu per
-    /// section.
-    Sidebar,
-    /// View › Sidebar › one section: only that section's options.
-    Section(SidebarSection),
     /// Arrange: the layout choices for the tab the opening menu (Window, a
     /// tab's or a pane's) was built for.
     Arrange(ArrangeTarget),
@@ -56,8 +50,7 @@ impl Submenu {
     /// menu itself.
     fn parent(&self) -> Option<Self> {
         match self {
-            Self::Section(_) => Some(Self::Sidebar),
-            Self::Appearance | Self::Theme | Self::Sidebar | Self::Arrange(_) => None,
+            Self::Appearance | Self::Theme | Self::Arrange(_) => None,
         }
     }
 }
@@ -100,6 +93,8 @@ pub enum ArrangeLayout {
 /// What an item does when activated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuAction {
+    /// Close a menu after re-picking the value already in force.
+    Noop,
     /// Lay out the target tab's panes; refused once the tab is gone or the
     /// pane has left it.
     Arrange {
@@ -288,6 +283,7 @@ where
     Workspace<D>: WorkspaceView,
 {
     match action {
+        MenuAction::Noop => {}
         MenuAction::SwapWithFocused(pane) => swap_with_focused(chrome, *pane),
         MenuAction::ClearPaneName(pane) => {
             if let Some(pane) = workspace.panes.get_mut(pane) {
