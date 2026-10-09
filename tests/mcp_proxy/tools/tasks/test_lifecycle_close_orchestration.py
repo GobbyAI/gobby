@@ -40,6 +40,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import SubmittedCloseReview
+from gobby.servers.auth_service import AuthService
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
 from gobby.servers.routes.mcp.tools import create_mcp_router
 from gobby.sessions.transcript_reader import TranscriptReader
@@ -1526,6 +1527,7 @@ async def test_submit_close_review_claims_before_heavy_work(
     http_server = SimpleNamespace(
         _internal_manager=internal_manager,
         tool_proxy=tool_proxy,
+        auth_service=AuthService(lambda: temp_db),
         mcp_manager=None,
         session_manager=session_manager,
         services=SimpleNamespace(database=temp_db),
