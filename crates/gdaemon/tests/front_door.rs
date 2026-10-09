@@ -1724,12 +1724,28 @@ async fn self_signed_generated_once_and_reused() {
     use std::os::unix::fs::PermissionsExt;
 
     let mut ports = Vec::new();
+    let mut held_backends = Vec::new();
     while ports.len() < 2 {
         let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
         let port = probe.local_addr().expect("probe addr").port();
-        if port <= 65435 && !ports.contains(&port) {
-            ports.push(port);
+        if port > 65435
+            || [60891, 60892].contains(&port)
+            || [60791, 60792].contains(&port)
+            || ports.contains(&port)
+            || ports.contains(&(port + 100))
+        {
+            continue;
         }
+        // Keep the derived backend unavailable throughout both daemon launches.
+        let backend = tokio::net::TcpSocket::new_v4().expect("backend socket");
+        if backend
+            .bind(SocketAddr::from(([127, 0, 0, 1], port + 100)))
+            .is_err()
+        {
+            continue;
+        }
+        held_backends.push(backend);
+        ports.push(port);
     }
     let ports = [ports[0], ports[1]];
     let home = tempfile::tempdir().expect("tempdir");
