@@ -13,6 +13,7 @@ import pytest
 from gobby.runtime_grants.launch import materialize_managed_launch, rewrite_managed_grant_file
 from gobby.runtime_grants.schema import GrantPrincipal
 from gobby.storage.hub.protocol import Row
+from gobby.storage.managed_credential_types import CredentialIssuanceError
 from gobby.storage.managed_credentials import ManagedCredential
 from gobby.utils import local_token
 from tests.runtime_grants.support import DEPLOYMENT_TOKEN
@@ -116,6 +117,110 @@ def test_renewal_is_gated_by_live_owner(
             admin.execute(
                 "UPDATE agent_runs SET status = 'pending' WHERE id = %s", (fixture.agent_run_id,)
             )
+        manager.revoke(execution, reason="test-cleanup")
+        manager.close()
+
+
+@pytest.mark.parametrize("owner_state", ["live", "expired_session", "ended_run"])
+def test_live_owner_can_refresh_an_expired_postgres_binding(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+    owner_state: str,
+) -> None:
+    """Postgres expiry must not turn an authenticated live seat into an ended owner."""
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path)
+    execution = uuid4()
+    try:
+        initial = manager.issue(
+            managed_execution_id=execution,
+            owner_kind="agent_run",
+            session_id=fixture.session_id,
+            agent_run_id=fixture.agent_run_id,
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                f"UPDATE {AUTH_SCHEMA}.principal_bindings "
+                "SET issued_at = NOW() - INTERVAL '61 minutes', "
+                "expires_at = NOW() - INTERVAL '1 minute' "
+                "WHERE managed_execution_id = %s",
+                (execution,),
+            )
+            if owner_state == "expired_session":
+                admin.execute(
+                    "UPDATE sessions SET status = 'expired' WHERE id = %s", (fixture.session_id,)
+                )
+            elif owner_state == "ended_run":
+                admin.execute(
+                    "UPDATE agent_runs SET status = 'success' WHERE id = %s",
+                    (fixture.agent_run_id,),
+                )
+        if owner_state != "live":
+            original_bootstrap = initial.bootstrap_path.read_bytes()
+            with pytest.raises(CredentialIssuanceError, match="lost binding race"):
+                manager.rotate(
+                    managed_execution_id=execution,
+                    expires_at=datetime.now(UTC) + timedelta(minutes=59),
+                )
+            assert initial.bootstrap_path.read_bytes() == original_bootstrap
+            assert manager.get_live_binding_generation(execution) == initial.credential_generation
+            return
+        refreshed = manager.rotate(
+            managed_execution_id=execution,
+            expires_at=datetime.now(UTC) + timedelta(minutes=59),
+        )
+        assert refreshed.credential_generation == initial.credential_generation + 1
+        assert manager.get_live_binding_generation(execution) == refreshed.credential_generation
+        assert json.loads(refreshed.bootstrap_path.read_bytes())["credential_generation"] == 2
+    finally:
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                "UPDATE sessions SET status = 'active' WHERE id = %s", (fixture.session_id,)
+            )
+            admin.execute(
+                "UPDATE agent_runs SET status = 'pending' WHERE id = %s", (fixture.agent_run_id,)
+            )
+        manager.revoke(execution, reason="test-cleanup")
+        manager.close()
+
+
+def test_refresh_recovers_after_predecessor_drain_clears(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path)
+    execution = uuid4()
+    expiry = datetime.now(UTC) + timedelta(minutes=59)
+    try:
+        initial = manager.issue(
+            managed_execution_id=execution,
+            owner_kind="agent_run",
+            session_id=fixture.session_id,
+            agent_run_id=fixture.agent_run_id,
+            expires_at=expiry,
+        )
+        # Pause a competing rotation after its SQL successor exists, before it
+        # publishes the envelope and revokes the predecessor. Refresh must wait.
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            successor = admin.execute(
+                f"SELECT credential_generation FROM {AUTH_SCHEMA}.rotate_principal_if_generation"
+                "(%s, %s, %s, %s)",
+                (execution, initial.credential_generation, expiry, "isolated-drain-password"),
+            ).fetchone()
+        assert successor == (2,)
+        predecessor_bootstrap = initial.bootstrap_path.read_bytes()
+        with pytest.raises(CredentialIssuanceError, match="lost binding race"):
+            manager.rotate(managed_execution_id=execution, expires_at=expiry)
+        assert initial.bootstrap_path.read_bytes() == predecessor_bootstrap
+        manager.revoke(
+            execution, generation=initial.credential_generation, reason="rotation-predecessor"
+        )
+        refreshed = manager.rotate(managed_execution_id=execution, expires_at=expiry)
+        assert refreshed.credential_generation == 3
+        assert manager.get_live_binding_generation(execution) == 3
+    finally:
         manager.revoke(execution, reason="test-cleanup")
         manager.close()
 
