@@ -251,9 +251,14 @@ def test_invalid_binding_count_refuses_without_retry_storm(
             query: str,
             params: Sequence[Any] | Mapping[str, Any] = (),
         ) -> list[Row]:
-            if "list_active_principals" in query:
+            if "managed_binding_states" in query:
                 return [
-                    {"managed_execution_id": execution, "expires_at": initial.expires_at}
+                    {
+                        "managed_execution_id": execution,
+                        "expires_at": initial.expires_at,
+                        "revocation_requested_at": None,
+                        "predecessor_drain_deadline": None,
+                    }
                 ] * binding_count
             return list(original(query, params))
 

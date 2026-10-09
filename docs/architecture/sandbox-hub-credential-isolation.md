@@ -483,9 +483,22 @@ Rotation:
 1. Create a new role and generation by 45 minutes or earlier when the run
    deadline requires it.
 2. Atomically replace the managed-execution bootstrap.
-3. Allow a connection-drain interval of at most five minutes.
+3. Persist a connection-drain deadline of at most five minutes, capped by the
+   successor's expiry. The owner guard accepts the current binding and one
+   adjacent draining predecessor with matching owner identity. Further rotation
+   waits for that predecessor's drain; lifecycle cleanup revokes expired drains
+   without requiring a restart.
 4. Revoke the old role, terminate its sessions, and remove its registry row
    after audit retention is recorded.
+
+The runtime role reads machine-scoped binding state through
+`gobby_agent_auth.managed_binding_states`, which returns identity, generation,
+expiry and drain state without credential material or raw table access.
+Periodic rotation refreshes expired live current bindings before a general
+reconcile can revoke them. For residual state with an expired current binding
+and a live predecessor drain, cleanup first shortens the old deadline to now,
+then revokes the predecessor and refreshes current authority. Explicit exit,
+security and rollback revocations remain immediate.
 
 Revocation and exit:
 
