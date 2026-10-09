@@ -430,6 +430,9 @@ def activate_materialized_session(
         session_id=session_id,
         pending_bind=pending_native_terminal_bind,
     )
+    # /clear left the composer, and no BEFORE_AGENT records it; the pane is bound by now.
+    if session_source == "clear":
+        handler._record_composer_submit(session_id)
     if session_obj:
         _schedule_tmux_window_rename_for_session(handler, session_obj)
 

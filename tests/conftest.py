@@ -233,6 +233,7 @@ if TYPE_CHECKING:
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
+    from gobby.terminals.composer_ledger import ComposerLedger
     from tests.fixtures.isolated_checkout import (
         IsolatedCheckoutFactory,
         IsolatedCheckoutProject,
@@ -251,6 +252,7 @@ def _reset_process_global_state() -> None:
     from gobby.agents import terminal_delivery
     from gobby.storage import schema_contract
     from gobby.telemetry import providers as telemetry_providers
+    from gobby.terminals.composer_ledger import bind_composer_ledger
 
     api_tracer_provider = trace._TRACER_PROVIDER
     api_meter_provider = metrics_internal._METER_PROVIDER
@@ -280,10 +282,13 @@ def _reset_process_global_state() -> None:
     # test faked must not answer for a later test's binary.
     schema_contract._probe_installed_file.cache_clear()
 
+    # Terminal wiring binds the daemon's composer ledger for every composer gate.
+    bind_composer_ledger(None)
+
 
 @pytest.fixture(autouse=True)
 def _restore_process_global_state() -> Generator[None]:
-    """Isolate OpenTelemetry, terminal-delivery, tmux and probe-cache state around every test.
+    """Isolate OpenTelemetry, terminal-delivery, tmux, ledger and probe-cache state per test.
 
     OpenTelemetry provider registration uses process-global one-shot guards.
     Terminal delivery also owns process-global admission and in-flight task
@@ -352,6 +357,21 @@ def temp_dir() -> Iterator[Path]:
     """Create a temporary directory for test files."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
+
+
+@pytest.fixture
+def composer_ledger() -> "ComposerLedger":
+    """The bound composer ledger every gate reads; the process-state reset unbinds it.
+
+    Seed a clean seat with ``record_spawn(terminal_id, "")``, a human draft with
+    ``observe_write(terminal_id, origin="operator", kind="text", payload=...)`` and
+    held daemon text with ``origin="daemon"``. An unseeded terminal reads unknown.
+    """
+    from gobby.terminals.composer_ledger import ComposerLedger, bind_composer_ledger
+
+    ledger = ComposerLedger()
+    bind_composer_ledger(ledger)
+    return ledger
 
 
 @pytest.fixture

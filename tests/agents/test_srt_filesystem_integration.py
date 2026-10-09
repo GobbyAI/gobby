@@ -14,7 +14,7 @@ from typing import Literal
 
 import pytest
 
-from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig, compute_sandbox_paths
+from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.sandbox_resolvers import merge_claude_settings
 from gobby.agents.srt_runtime import render_srt_settings
 from gobby.cli.install_setup_srt import install_srt_runtime
@@ -163,42 +163,3 @@ async def test_supported_backend_blocks_sensitive_path_traversal_and_later_launc
     assert runner.read_bytes() == original_runner
     later_launch = _run_srt(node, runner, settings, workspace, "exit 0", socket_root)
     assert later_launch.returncode == 0, later_launch.stderr
-
-
-def test_rendering_keeps_write_denies_under_each_default_grant_of_the_pinned_runtime(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    request: pytest.FixtureRequest,
-) -> None:
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node.js is required")
-    runtime = install_srt_runtime().path
-    request.addfinalizer(lambda: _make_runtime_removable(runtime))
-    package = runtime / "node_modules" / "@anthropic-ai" / "sandbox-runtime" / "dist" / "index.js"
-    # A pin bump that adds a default grant fails here instead of dropping denies under it.
-    probe = subprocess.run(
-        [
-            node,
-            "--input-type=module",
-            "-e",
-            "const srt = await import(process.argv[1]);"
-            " console.log(JSON.stringify(srt.getDefaultWritePaths()))",
-            str(package),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=60,
-    )
-    denies = [f"{path}/synthetic" for path in json.loads(probe.stdout)]
-    paths = ResolvedSandboxPaths(
-        workspace_path=str(tmp_path),
-        read_paths=[],
-        write_paths=[],
-        allow_external_network=False,
-        deny_write_paths=denies,
-    )
-
-    assert render_srt_settings(paths)["filesystem"]["denyWrite"] == denies

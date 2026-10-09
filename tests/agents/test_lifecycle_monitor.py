@@ -28,7 +28,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 import pytest
 
 import gobby.agents.lifecycle_monitor as lifecycle_monitor_module
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector
+from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.lifecycle_reconciliation import has_dispatch_stage_context
 from gobby.autonomous.progress_tracker import ProgressTracker, ProgressType
@@ -50,6 +50,7 @@ from gobby.storage.tasks._stage_states import StageManifestSpec
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import (
     NamedKey,
@@ -1424,8 +1425,8 @@ async def test_nonfatal_progress_stagnation_action_is_not_deferred(
         handled = await monitor.check_autonomous_stuck_agents()
 
     assert handled == 1
-    # The only capture is the composer probe guarding the Enter, not a grace read.
-    assert runtime.snapshot_calls == [COMPOSER_PROBE_LINES]
+    # The ledger guards the Enter, so nothing reads the pane, not even a grace read.
+    assert runtime.snapshot_calls == []
     assert runtime.write_log == [("key", "enter")]
 
 
@@ -1434,6 +1435,7 @@ async def test_stuck_enter_leaves_an_operator_draft_unsubmitted(
     agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
     sample_session: dict[str, Any],
+    composer_ledger: ComposerLedger,
     layer: str,
 ) -> None:
     monitor, run, _stuck_detector = _make_progress_stagnation_monitor(
@@ -1443,12 +1445,16 @@ async def test_stuck_enter_leaves_an_operator_draft_unsubmitted(
         suggested_action="change_approach",
         layer=layer,
     )
+    assert run.terminal_id is not None
+    composer_ledger.observe_write(
+        run.terminal_id, origin="operator", kind="text", payload="Reply ACK"
+    )
 
-    with _pane_text(monitor, "────────────\n❯ Reply ACK\n────────────\n") as runtime:
+    with _pane_text(monitor, None) as runtime:
         handled = await monitor.check_autonomous_stuck_agents()
 
     assert handled == 1
-    assert runtime.snapshot_calls == [COMPOSER_PROBE_LINES]
+    assert runtime.snapshot_calls == []
     assert runtime.write_log == []
     stored = agent_run_manager.get(run.id)
     assert stored is not None
@@ -2584,8 +2590,8 @@ class TestCheckIdleAgents:
 
         assert handled == 1
         # Pane capture SHOULD have been called since session was stale; the
-        # reprompt then probes the composer once more before draining it.
-        assert runtime.snapshot_calls == [15, COMPOSER_PROBE_LINES]
+        # reprompt then drains the composer the ledger reads clean.
+        assert runtime.snapshot_calls == [15]
         assert _runtime_of(mon).write_log[0] == ("key", "ctrl_u")
 
     @pytest.mark.asyncio
@@ -2726,7 +2732,7 @@ class TestCheckIdleAgents:
             handled = await mon.check_idle_agents()
 
         assert handled == 1
-        assert runtime.snapshot_calls == [15, COMPOSER_PROBE_LINES]
+        assert runtime.snapshot_calls == [15]
         assert runtime.write_log[0] == ("key", "ctrl_u")
 
     @pytest.mark.asyncio
@@ -2851,7 +2857,7 @@ class TestCheckIdleAgents:
             handled = await mon.check_idle_agents()
 
         assert handled == 1
-        assert runtime.snapshot_calls == [15, COMPOSER_PROBE_LINES]
+        assert runtime.snapshot_calls == [15]
         assert runtime.write_log[0] == ("key", "ctrl_u")
 
     @pytest.mark.asyncio

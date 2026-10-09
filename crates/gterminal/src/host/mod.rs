@@ -32,6 +32,7 @@ pub(crate) mod sigterm;
 #[cfg(all(unix, feature = "vt-engine"))]
 mod spawn;
 mod state;
+mod submit;
 mod theme;
 #[cfg(all(unix, feature = "vt-engine"))]
 mod upgrade;

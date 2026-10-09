@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # multi-line draft plus the status lines a provider draws below it.
 COMPOSER_PROBE_LINES = 40
 
-ComposerState = Literal["empty", "draft", "unknown"]
+ComposerState = Literal["empty", "draft", "held", "unknown"]
 
 # Box edge, then the provider's prompt marker, then the draft text; the trailing
 # box edge Droid draws after the text is stripped separately.
@@ -109,11 +109,12 @@ def _apply_sgr(params: str, faint: bool, reverse: bool) -> tuple[bool, bool]:
 
 @dataclass(frozen=True)
 class ComposerRead:
-    """What a pane snapshot says about the provider's composer.
+    """What a pane snapshot or the composer ledger says about the provider's composer.
 
-    ``empty`` and ``draft`` are positive reads of a visible composer frame;
-    ``unknown`` covers no snapshot, no frame, or a frame the manifest cannot
-    classify, and callers fall back to the blind drain.
+    ``empty`` and ``draft`` are positive reads; ``unknown`` covers no snapshot, no
+    frame, a frame the manifest cannot classify, or a blocked or untracked ledger
+    entry. Only the ledger reads ``held``: daemon text with no human input since,
+    with ``line`` when the ledger knows it.
     """
 
     state: ComposerState
@@ -122,7 +123,7 @@ class ComposerRead:
     def holds_payload(self, payload: str) -> bool:
         """Match the whole draft, ignoring whitespace introduced by visual wrapping."""
         return (
-            self.state == "draft"
+            self.state in {"draft", "held"}
             and self.line is not None
             and " ".join(self.line.split()) == " ".join(payload.split())
         )

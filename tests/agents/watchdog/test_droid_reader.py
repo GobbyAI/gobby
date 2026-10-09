@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,7 +26,7 @@ def _message(
     }
 
 
-def _write(path: Path, records: list[dict[str, object] | str | bytes]) -> None:
+def _write(path: Path, records: Sequence[dict[str, object] | str | bytes]) -> None:
     with path.open("wb") as handle:
         for record in records:
             if isinstance(record, bytes):

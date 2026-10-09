@@ -18,7 +18,11 @@ from weakref import WeakKeyDictionary
 
 from gobby.agents.detection.provider import DetectionRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector, plain_text
-from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.composer_ledger import (
+    composer_drain_keys,
+    read_composer,
+    record_composer_drain,
+)
 from gobby.terminals.key_bytes import tmux_key_name
 from gobby.terminals.native_runtime import (
     NativeBatchFailure,
@@ -55,6 +59,7 @@ __all__ = [
     "ComposerReader",
     "ComposerVerdict",
     "CoordinatorPaneIO",
+    "DrainResult",
     "PaneIO",
     "RuntimePaneIO",
     "SendResult",
@@ -392,50 +397,84 @@ def _outcome_result(outcome: object, action: str) -> SendResult:
     return False, f"{action} was not delivered: {type(outcome).__name__}"
 
 
-async def clear_composer(pane: PaneIO, cli_source: str | None) -> SendResult:
-    """Drain the composer blind; the first key that fails to send aborts the drain."""
-    for key in composer_clear_sequence(cli_source):
+@dataclass(frozen=True)
+class DrainResult:
+    """Whether a drain emptied the composer, and the post-drain verdict when one was read."""
+
+    ok: bool
+    reason: str | None = None
+    verdict: ComposerVerdict | None = None
+
+
+async def clear_composer(
+    pane: PaneIO,
+    cli_source: str | None,
+    composer_read: ComposerReader | None = None,
+    *,
+    verify_seconds: float | None = None,
+) -> DrainResult:
+    """Drain the composer, read it back, and record the drain on the composer ledger.
+
+    No clear key is trusted to empty the line: Codex binds none (C-u on a held
+    ``/compact`` opened the slash popup) and one backspace removes one character.
+    Daemon text the ledger knows gets one backspace per character before the
+    standard pass. Text of unknown length -- after an interrupt, say -- gets the
+    standard pass alone. With a ``composer_read`` the frame is polled through
+    ``composer_verdict``: a draft that is still there (``held`` or ``changed``)
+    fails the drain and keeps the ledger entry, while ``left`` or ``unreadable``
+    records the drain, so only a positive draft stops the caller. Without a reader
+    (Grok) the drain stays blind and is recorded. A caller that must prove the
+    composer empty checks for the ``left`` verdict. The first key that fails to send
+    aborts the drain.
+    """
+    held = read_composer(pane.target)
+    for key in composer_drain_keys(pane.target, cli_source):
         ok, reason = await pane.send_key(key)
         if not ok:
-            return False, reason
-    return True, None
+            return DrainResult(False, reason)
+    verdict: ComposerVerdict | None = None
+    if composer_read is not None:
+        window = SUBMIT_VERIFY_SECONDS if verify_seconds is None else verify_seconds
+        verdict = await composer_verdict(
+            pane, held.line or "", composer_read, window_seconds=max(window, 0.0)
+        )
+        if verdict in {"held", "changed"}:
+            return DrainResult(False, "the composer still shows a draft after the drain", verdict)
+    record_composer_drain(pane.target)
+    return DrainResult(True, verdict=verdict)
 
 
 async def composer_gate_for_write(
     pane: PaneIO,
-    cli_source: str | None,
-    composer_read: ComposerReader | None,
     *,
     action: str,
     pending_payload: str | None = None,
 ) -> tuple[bool, str | None, str]:
-    """Admit an empty composer or an exact pending payload; refuse other drafts.
+    """Admit a write by the composer ledger's provenance, never by reading the screen.
 
-    A blind write into an unread composer is what let a daemon wake land inside an
-    operator's half-typed word and let a staged ``/compact`` collide with a wake.
-    A ``draft`` is refused unless it exactly matches ``pending_payload``; that
-    held copy is submitted with bare Enter. An ``unknown``
-    frame is refused for a provider whose manifest can classify a composer at all,
-    because the frame may hold a draft the probe could not read. A provider whose
-    manifest has no composer rules answers ``unknown`` to every probe, so
-    withholding there would starve it forever; that case keeps the drain. No probe
-    bound means the caller has no safer read to offer and keeps its existing path.
-
-    Callers retain their durable fallback when an unreadable frame refuses a write.
+    ``empty`` admits typing. ``held`` is daemon text: an exact ``pending_payload``
+    is admitted as ``held`` for a bare Enter, and any other daemon text as ``stale``
+    for the caller to drain. A human ``draft`` refuses, and so does ``unknown`` (a
+    blocked, untracked or unbound ledger entry), because only a submit or an
+    operator release vouches for that composer again. Callers retain their durable
+    fallback when a write is refused.
     """
-    if composer_read is None:
-        return True, None, "unprobed"
-    snapshot = await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi")
-    read = composer_read(snapshot)
+    read = read_composer(pane.target)
     if read.state == "empty":
         return True, None, "empty"
-    if read.state == "draft":
+    if read.state == "held":
         if pending_payload is not None and read.holds_payload(pending_payload):
             return True, None, "held"
-        _log_composer_refusal(pane, read, pending_payload, snapshot)
+        return True, None, "stale"
+    _log_ledger_refusal(pane, read)
+    if read.state == "draft":
         return False, "composer holds an operator draft", "draft"
-    _log_composer_refusal(pane, read, pending_payload, snapshot)
-    return False, f"composer could not be confirmed empty before {action}", "unknown"
+    return (
+        False,
+        f"composer could not be confirmed empty before {action}; once the pane shows an "
+        "empty composer, an operator can release it with gobby-sessions release_composer",
+        "unknown",
+    )
 
 
 def _log_composer_refusal(
@@ -466,6 +505,20 @@ def _log_composer_refusal(
             "snapshot_row_count": len(row_widths),
             "snapshot_row_widths": row_widths,
             "snapshot_requested_rows": COMPOSER_PROBE_LINES,
+        },
+    )
+
+
+def _log_ledger_refusal(pane: PaneIO, read: ComposerRead) -> None:
+    # A refused read is a human draft or an unknown entry: the ledger holds no text for it.
+    logger.warning(
+        "Composer write refused: target=%s classification=%s source=ledger",
+        pane.target,
+        read.state,
+        extra={
+            "event": "composer_write_refused",
+            "composer_state": read.state,
+            "snapshot_source": "ledger",
         },
     )
 
@@ -590,25 +643,27 @@ async def submit_text(
     the draft then; matching the text alone read the stuck draft as ``left``
     (#23730).
 
-    Protected callers supply ``pending_payload``: an existing exact copy gets
-    bare Enter without another text write, and every other draft is refused.
+    Protected callers supply ``pending_payload`` and are gated by the composer
+    ledger instead of that read: an exact held copy gets bare Enter without another
+    text write, and every other non-empty composer is refused.
     Protected retry verification also requires the entire pending payload to
     match, so appended operator text cannot receive a retry Enter.
     """
     held_text = text
     already_held = False
-    if composer_read is not None:
-        snapshot = await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi")
-        before = composer_read(snapshot)
-        if pending_payload is not None and before.state != "empty":
+    if pending_payload is not None:
+        before = read_composer(pane.target)
+        if before.state != "empty":
             already_held = before.holds_payload(pending_payload)
             if not already_held:
-                _log_composer_refusal(pane, before, pending_payload, snapshot)
+                _log_ledger_refusal(pane, before)
                 return SubmitResult(
                     False,
                     "composer does not hold the pending payload",
                     "composer_occupied" if before.state == "draft" else COMPOSER_UNKNOWN_ERROR_CODE,
                 )
+    elif composer_read is not None:
+        before = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
         if before.state == "draft":
             held_text = before.line or ""
     try:

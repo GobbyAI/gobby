@@ -6,8 +6,8 @@ MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     # Floors track published helper release tags.
     "ghook": "0.7.3",
     "gcode": "1.5.0",
-    "gdaemon": "0.4.11",
-    "gterm": "0.1.8",
+    "gdaemon": "0.4.12",
+    "gterm": "0.1.9",
     "gclient": "0.1.25",
 }
 

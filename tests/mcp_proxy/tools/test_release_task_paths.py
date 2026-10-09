@@ -719,3 +719,211 @@ async def test_inspect_task_path_ownership_reports_staged_dirty_and_unowned_path
     }
     assert inspected["unowned_paths"] == [unowned_path]
     assert "inspect_task_path_ownership" in {item["name"] for item in harness.registry.list_tools()}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_worktree", [False, True], ids=["main", "worktree"])
+@pytest.mark.parametrize("subdirectory", [False, True], ids=["root", "subdirectory"])
+async def test_inspect_path_ownership_uses_session_workspace(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    use_worktree: bool,
+    subdirectory: bool,
+) -> None:
+    harness = _harness(temp_db, _committed_repo(tmp_path))
+    worktree = tmp_path / "lane"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(worktree), "HEAD"],
+        cwd=harness.repo,
+        check=True,
+    )
+    LocalWorktreeManager(temp_db).create(
+        project_id=harness.project_id,
+        branch_name=None,
+        worktree_path=str(worktree),
+    )
+    workspace = worktree if use_worktree else harness.repo
+    cwd = workspace / "src" if subdirectory else workspace
+    harness.sessions.update(harness.owner.id, workspace_path=str(cwd))
+    main_path = "src/main_only.py"
+    lane_path = "src/lane_only.py"
+    (harness.repo / main_path).write_text("main_dirty = True\n", encoding="utf-8")
+    (worktree / lane_path).write_text("lane_staged = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", "--", lane_path], cwd=worktree, check=True)
+
+    with session_context_for_test(harness.owner.id):
+        result = await harness.registry.call("inspect_task_path_ownership", {})
+
+    expected_path = lane_path if use_worktree else main_path
+    assert result["success"] is True
+    assert result["checkout_root"] == normalize_task_checkout_root(str(workspace))
+    assert result["paths"] == [
+        {
+            "path": expected_path,
+            "dirty": True,
+            "staged": use_worktree,
+            "owners": [],
+            "unowned": True,
+        }
+    ]
+    assert result["unowned_paths"] == [expected_path]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["inspect_task_path_ownership", "release_task_paths"])
+async def test_inspect_path_ownership_rejects_unregistered_session_workspace(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    tool: str,
+) -> None:
+    harness = _harness(temp_db, _committed_repo(tmp_path))
+    worktree = tmp_path / "unregistered"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(worktree), "HEAD"],
+        cwd=harness.repo,
+        check=True,
+    )
+    harness.sessions.update(harness.owner.id, workspace_path=str(worktree))
+    (harness.repo / SHARED_PATH).write_text("main_dirty = True\n", encoding="utf-8")
+
+    with session_context_for_test(harness.owner.id):
+        arguments = (
+            {"task_id": harness.task.id, "paths": [SHARED_PATH]}
+            if tool == "release_task_paths"
+            else {}
+        )
+        result = await harness.registry.call(tool, arguments)
+
+    assert result["success"] is False
+    assert result["error_type"] == "checkout_unresolved"
+    assert "paths" not in result
+    assert "checkout_root" not in result
+
+
+@pytest.mark.asyncio
+async def test_inspect_and_release_prefer_assigned_worktree_over_primary_workspace(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    harness = _harness(temp_db, _committed_repo(tmp_path))
+    worktree = tmp_path / "assigned"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(worktree), "HEAD"],
+        cwd=harness.repo,
+        check=True,
+    )
+    LocalWorktreeManager(temp_db).create(
+        project_id=harness.project_id,
+        branch_name=None,
+        worktree_path=str(worktree),
+        agent_session_id=harness.owner.id,
+    )
+    harness.sessions.update(harness.owner.id, workspace_path=str(harness.repo))
+    (worktree / SHARED_PATH).write_text("assigned_dirty = True\n", encoding="utf-8")
+
+    with session_context_for_test(harness.owner.id):
+        inspected = await harness.registry.call("inspect_task_path_ownership", {})
+        released = await harness.registry.call(
+            "release_task_paths", {"task_id": harness.task.id, "paths": [SHARED_PATH]}
+        )
+
+    assert inspected["success"] is True
+    assert inspected["checkout_root"] == normalize_task_checkout_root(str(worktree))
+    assert [entry["path"] for entry in inspected["paths"]] == [SHARED_PATH]
+    assert released["success"] is False
+    assert released["dirty_paths"] == [SHARED_PATH]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("subdirectory", [False, True], ids=["root", "subdirectory"])
+async def test_release_uses_unassigned_session_workspace(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    subdirectory: bool,
+) -> None:
+    harness = _harness(temp_db, _committed_repo(tmp_path))
+    worktree = tmp_path / "unassigned"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(worktree), "HEAD"],
+        cwd=harness.repo,
+        check=True,
+    )
+    LocalWorktreeManager(temp_db).create(
+        project_id=harness.project_id,
+        branch_name=None,
+        worktree_path=str(worktree),
+    )
+    cwd = worktree / "src" if subdirectory else worktree
+    harness.sessions.update(harness.owner.id, workspace_path=str(cwd))
+    main_root = normalize_task_checkout_root(str(harness.repo))
+    lane_root = normalize_task_checkout_root(str(worktree))
+    assert main_root is not None
+    assert lane_root is not None
+    harness.variables.merge_variables(
+        harness.owner.id,
+        {
+            "task_edited_file_checkouts": {
+                harness.task.id: {
+                    main_root: [SHARED_PATH],
+                    lane_root: [SHARED_PATH],
+                }
+            }
+        },
+    )
+    (harness.repo / SHARED_PATH).write_text("main_dirty = True\n", encoding="utf-8")
+
+    with session_context_for_test(harness.owner.id):
+        result = await harness.registry.call(
+            "release_task_paths", {"task_id": harness.task.id, "paths": [SHARED_PATH]}
+        )
+
+    assert result["success"] is True
+    assert result["released_paths"] == [SHARED_PATH]
+    ledger = harness.variables.get_variables(harness.owner.id)["task_edited_file_checkouts"]
+    assert ledger[harness.task.id] == {main_root: [SHARED_PATH]}
+
+
+@pytest.mark.asyncio
+async def test_release_checks_artifact_worktree_before_primary_workspace(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    harness = _harness(temp_db, _committed_repo(tmp_path))
+    worktree = tmp_path / "recovered-worker"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(worktree), "HEAD"],
+        cwd=harness.repo,
+        check=True,
+    )
+    registered = LocalWorktreeManager(temp_db).create(
+        project_id=harness.project_id,
+        branch_name=None,
+        worktree_path=str(worktree),
+    )
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=worktree, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    harness.tasks.artifacts.set_artifacts_atomic(
+        harness.task.id,
+        worktree_path=str(worktree),
+        worktree_id=registered.id,
+        base_commit_sha=base,
+    )
+    harness.sessions.update(harness.owner.id, workspace_path=str(harness.repo))
+    root = normalize_task_checkout_root(str(worktree))
+    assert root is not None
+    harness.variables.merge_variables(
+        harness.owner.id,
+        {"task_edited_file_checkouts": {harness.task.id: {root: [SHARED_PATH]}}},
+    )
+    (worktree / SHARED_PATH).write_text("worker_uncommitted = True\n", encoding="utf-8")
+    before = harness.variables.get_variables(harness.owner.id)
+
+    with session_context_for_test(harness.owner.id):
+        result = await harness.registry.call(
+            "release_task_paths", {"task_id": harness.task.id, "paths": [SHARED_PATH]}
+        )
+
+    assert result["success"] is False
+    assert result["dirty_paths"] == [SHARED_PATH]
+    assert harness.variables.get_variables(harness.owner.id) == before

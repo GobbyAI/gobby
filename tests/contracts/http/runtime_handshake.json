@@ -31,12 +31,12 @@
           "fencing_epoch": "@mask@"
         },
         "schema_identity": {
-          "assets_root_hash": "065a4d931e418df49ee2c859b9993bd9734428fdde79a7c905bc818a15e86b85",
-          "baseline_checksum": "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55",
+          "runner_protocol": 1,
           "baseline_version": 420,
-          "latest_checksum": "5690e3755f9b78d94617b71e72a8c4584bf5adaf8d0fde4e3d1093c1ce3fc621",
-          "latest_version": 464,
-          "runner_protocol": 1
+          "baseline_checksum": "e5b08e67d3f5df97cfac96b9b12aac1f4f936a9465220f27b95d6e067e207e3a",
+          "latest_version": 465,
+          "latest_checksum": "b9ce19c5bc0b15a9f14e4bc29ea9ccb03babf3cb50303f0e126125ecc562c23d",
+          "assets_root_hash": "5dbbf46ec70e1689b991fabc3e398a703c84bcc62b8b9dd26564ae5e58a3d78c"
         },
         "principal": {
           "kind": "interactive",

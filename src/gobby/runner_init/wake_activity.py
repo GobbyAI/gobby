@@ -2,50 +2,46 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
+from gobby.agents.idle_detector import ComposerRead
 from gobby.events.live_wake import TerminalActivity
-
-if TYPE_CHECKING:
-    from gobby.runner import GobbyRunner
+from gobby.sessions.transcript_cursor import TranscriptObservationError, build_turn_settled_observer
+from gobby.terminals.composer_ledger import read_composer
 
 logger = logging.getLogger(__name__)
 
+# In-flight evidence from the transcript rather than the pane: its last turn is open.
+TRANSCRIPT_TURN_OPEN = "transcript-turn-open"
 
-async def probe_terminal_activity(
-    runner: GobbyRunner,
-    session: Any,
-    terminal: Any | None,
-) -> TerminalActivity:
-    """Classify composer and in-flight evidence from one ANSI snapshot."""
-    unknown = TerminalActivity(ComposerRead("unknown"))
-    source = getattr(session, "source", None)
-    registry = getattr(runner, "detection_registry", None)
-    # Every registered runtime snapshots the same way, so a managed tmux row gets the
-    # real probe too; an unregistered backend raises below and stays unconfirmed.
-    if not source or registry is None or terminal is None:
-        return unknown
+
+async def probe_terminal_activity(session: Any, terminal: Any | None) -> TerminalActivity:
+    """Read the composer from the ledger and an open turn from the transcript.
+
+    Nothing reads the screen. A provider without transcript turn records, or a
+    transcript that cannot be read, offers no in-flight evidence, so the ledger
+    and the session's reconciled status decide alone.
+    """
+    if terminal is None:
+        return TerminalActivity(ComposerRead("unknown"))
+    open_turn = await asyncio.to_thread(_transcript_turn_open, session)
+    return TerminalActivity(
+        composer=read_composer(str(terminal.id)),
+        turn_in_flight_fingerprint=TRANSCRIPT_TURN_OPEN if open_turn else None,
+    )
+
+
+def _transcript_turn_open(session: Any) -> bool:
+    session_id = getattr(session, "id", None)
     try:
-        services = runner.terminal_services
-        if services is None:
-            return unknown
-        result = await services.runtime_for(terminal).snapshot(
-            terminal,
-            COMPOSER_PROBE_LINES,
-            mode="ansi",
+        observer = build_turn_settled_observer(
+            getattr(session, "source", None),
+            getattr(session, "transcript_path", None),
+            session_id=session_id,
         )
-        text: str | None = result.text
-        detector = IdleDetector(registry, str(source))
-        return TerminalActivity(
-            composer=detector.composer_read(text),
-            turn_in_flight_fingerprint=detector.turn_in_flight_fingerprint(text or ""),
-        )
-    except Exception:
-        logger.debug(
-            "Terminal activity probe failed for session %s",
-            getattr(session, "id", None),
-            exc_info=True,
-        )
-        return unknown
+    except TranscriptObservationError:
+        logger.debug("No transcript turn state for session %s", session_id, exc_info=True)
+        return False
+    return observer is not None and observer() is False
