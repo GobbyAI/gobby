@@ -134,7 +134,9 @@ rules:
           {{ 'Compact boundary remains unconfirmed. Read queued coordination messages with
           gobby-agents:get_inter_session_messages. Once the provider compact boundary arrives,
           call gobby-sessions:get_handoff with failed_attempt_id and reconcile_late_compact=true
-          to reconcile the failed attempt before any new set_handoff.'
+          to reconcile the failed attempt before any new set_handoff. If none arrives within
+          20 minutes of the handoff, Gobby releases this gate on its own and wakes the seat,
+          so end the turn instead of polling.'
           if variables.get('context_compact_handoff_result', {}).get('error_code')
           == 'compact_unconfirmed' else
           'Terminal handoff delivery failed after set_handoff returned. Retry

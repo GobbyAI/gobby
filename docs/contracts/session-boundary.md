@@ -221,7 +221,12 @@ attempt and exposes retry guidance. Compensation clears pending delivery markers
 but retains the authored payload under an explicit `failed_not_deliverable`
 attempt marker. The owner can read it only with `get_handoff(failed_attempt_id=...)`.
 That read creates no receipt and cannot dispatch a held command. A new staged
-attempt replaces the failed marker. A receipt prevents late failure compensation from
+attempt replaces the failed marker. An unconfirmed compact (`compact_unconfirmed`)
+keeps its retry gate while a provider boundary within 20 minutes of authoring can
+still reconcile it. Once that window closes without one, the daemon releases the gate
+and the attempt's continuation marker, keeps the failed marker readable, writes no
+receipt, types nothing, and wakes the seat once. Daemon startup re-owns that release
+for every such gate a previous process left. A receipt prevents late failure compensation from
 rolling back a confirmed boundary; `get_handoff()` can still retry the receipt
 idempotently while consuming the marker.
 A compact successor binds to a row of its exact terminal process that is

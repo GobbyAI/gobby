@@ -458,7 +458,10 @@ pending, turn-start meta skill loads wait so the pull runs before
 If terminal delivery fails, the failure result gives an `attempt_id`. The owner can
 call `get_handoff(failed_attempt_id="<attempt_id>")` to recover its authored content.
 This explicit read does not deliver the handoff, create a receipt, or submit a held
-`/compact` command. Clear a held command before retrying `set_handoff`.
+`/compact` command. Clear a held command before retrying `set_handoff`. When the
+provider never confirms the compact (`error_code="compact_unconfirmed"`), tools stay
+gated for 20 minutes after the handoff so a late boundary can still deliver it; Gobby
+then releases the gate on its own, wakes the seat, and admits one fresh `set_handoff`.
 
 For terminal sessions, the tool result reports `handoff_staged=true` and
 `delivery_pending=true` before Gobby touches provider input. The proxy strips the
