@@ -12,6 +12,9 @@ from unittest.mock import MagicMock
 import psycopg
 import pytest
 
+from gobby.cli._plan_daemon_tasks import DaemonTaskLookup
+from gobby.mcp_proxy.services.argument_validation import check_arguments
+from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.plans.parser import parse_plan
 from gobby.plans.semantic_lint import lint_plan_document
 from gobby.plans.symbol_targets import (
@@ -549,3 +552,59 @@ def test_size_growth_checks_covering_leaves_beyond_first_page(
     ]
     assert bool(growth_issues) is not last_closed, result
     assert result["valid"] is last_closed, result
+
+
+def test_plan_validation_pages_through_schema_validating_daemon_client(
+    landed_plan: tuple[Path, _Index],
+) -> None:
+    plan, index = landed_plan
+    plan.write_text(
+        plan.read_text().replace("`tests/test_created.py`", "`tests/test_created.py::test_created`")
+    )
+    tasks = [_task(closed=True) for _ in range(51)]
+    for number, task in enumerate(tasks):
+        task.id = f"leaf-{number}"
+    records = {task.id: task.to_dict() for task in tasks}
+    manager = MagicMock(spec=LocalTaskManager)
+    manager.db = MagicMock()
+    registry = create_task_registry(manager)
+
+    class SchemaValidatingClient:
+        def __init__(self) -> None:
+            self.pages: list[tuple[str, int]] = []
+
+        def call_mcp_tool(
+            self, server_name: str, tool_name: str, arguments: dict[str, Any]
+        ) -> dict[str, Any]:
+            assert server_name == "gobby-tasks"
+            schema = registry.get_schema(tool_name)
+            assert schema is not None
+            errors = check_arguments(arguments, schema["inputSchema"])
+            if errors:
+                return {"success": False, "error": "; ".join(errors)}
+            if tool_name == "get_task":
+                return {"success": True, "result": records[arguments["task_id"]]}
+            assert tool_name == "list_tasks"
+            assert arguments["project"] == PROJECT_ID
+            assert arguments["sort_by"] == "created_at"
+            offset, limit = arguments["offset"], arguments["limit"]
+            self.pages.append((arguments["label"], offset))
+            page = tasks[offset : offset + limit]
+            return {
+                "success": True,
+                "result": {"tasks": [{"id": task.id} for task in page], "count": len(page)},
+            }
+
+    client = SchemaValidatingClient()
+    result = validate_plan_file(
+        SimpleNamespace(),
+        plan,
+        project_context={"id": PROJECT_ID, "project_path": str(plan.parent)},
+        code_index=index,
+        task_manager=DaemonTaskLookup(client),
+        require_symbol_validation=True,
+    )
+    assert result["valid"] is True, result
+    assert client.pages == [
+        (f"covers:landed-lint:1.1:1.1.{item}", offset) for item in (1, 2, 3) for offset in (0, 50)
+    ]

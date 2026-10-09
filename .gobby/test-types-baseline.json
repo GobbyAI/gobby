@@ -3861,16 +3861,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/mcp_proxy/tools/test_tasks_schema_coverage.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 15,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 10,
-      "path": "tests/mcp_proxy/tools/test_tasks_schema_coverage.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/mcp_proxy/tools/test_worktrees_create.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 459,
