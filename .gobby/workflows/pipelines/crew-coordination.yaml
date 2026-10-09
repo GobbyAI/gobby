@@ -4,7 +4,8 @@ version: "1.0"
 description: |
   Relaunch selected seats in the shared checkout, in one lane tab.
   Approved seats: assistant, orchestrator, archivist, log-monitor, merge-manager, inbox-manager.
-  The operator launches missing seats only; agent definitions own seat behavior.
+  The operator or the Orchestrator launches missing seats only, the Assistant only while the
+  Orchestrator is down; agent definitions own seat behavior.
   Supply lane_pane to add seats to an existing tab across runs.
 tags: [runbook]
 resume_on_restart: true

@@ -425,11 +425,13 @@ not reach.
 registers a child session (`source="pipeline"`) whose parent is the calling
 session for MCP, the system session for the CLI and web routes, and the cron
 session for cron. That child is the `parent_session_id` of every seat. When cron
-cannot create its session, the pipeline does not start. Agent seats are blocked
-from `run_pipeline`, the exposed `pipeline:<name>` tools and a shell
-`gobby pipelines run` by the `seat-no-pipeline-launch` and `seat-no-launch-cli`
-rules, so runbooks launch from operator CLI, web or gclient surfaces or an
-authorized cron job.
+cannot create its session, the pipeline does not start. Runbooks launch from
+operator CLI, web or gclient surfaces, an authorized cron job, or the
+Orchestrator seat; the Assistant seat launches only while the Orchestrator is
+down. Every other agent seat is blocked from `run_pipeline`, the exposed
+`pipeline:<name>` tools and a shell `gobby pipelines run` by the
+`seat-no-pipeline-launch` and `seat-no-pipeline-cli` rules, and sends the
+request to the Orchestrator.
 
 **Restart.** On daemon startup, an opted-in running execution resumes from the
 definition snapshot taken at launch, so a sync during the restart cannot change
