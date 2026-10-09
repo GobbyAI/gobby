@@ -1,4 +1,17 @@
 nextest-version = { required = "0.9.133" }
+experimental = ["setup-scripts"]
+
+[scripts.setup.gclient-test-gterm]
+# Validate/build the checkout's host once, before any test's timeout starts.
+command = ["cargo", "build", "-p", "gobby-terminal", "--features", "vt-engine", "--bin", "gterm"]
+
+[[profile.default.scripts]]
+filter = '''package(gobby-client) & binary(frame_source_live) & (
+    test(=direct_frames_verify_epoch_and_render) |
+    test(=granted_direct_input_echoes_and_revoke_refuses) |
+    test(=tmux_pane_attaches_through_host_observer)
+)'''
+setup = 'gclient-test-gterm'
 
 [store]
 dir = ".nextest"

@@ -501,7 +501,10 @@ class TestRestore:
         calls: list[tuple[Path, dict[str, object]]] = []
         restore_steps: list[str] = []
 
-        def restore_globals(_database_url: str, _globals_path: Path) -> None:
+        def restore_globals(
+            _database_url: str, globals_path: Path, *, expected_sha256: str
+        ) -> None:
+            assert expected_sha256 == hashlib.sha256(globals_path.read_bytes()).hexdigest()
             restore_steps.append("globals")
 
         def reconcile_principals(_database_url: str) -> int:
@@ -551,6 +554,9 @@ class TestRestore:
                     "allow_unverified": True,
                     "gobby_home": harness.gobby_home,
                     "database_url": "postgresql://gobby:secret@target:5432/gobby",
+                    "expected_sha256": hashlib.sha256(
+                        (backup_root / "postgres" / "gobby.dump").read_bytes()
+                    ).hexdigest(),
                 },
             )
         ]

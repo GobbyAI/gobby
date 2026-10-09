@@ -85,6 +85,44 @@ def _is_known_no_repo_project(project_id: str | None) -> bool:
     return isinstance(project_id, str) and project_id in _NO_REPO_SYSTEM_PROJECTS
 
 
+_SNAPSHOT_ATOMS = frozenset({str, int, float, bool, type(None), bytes})
+
+
+def snapshot_variables(variables: dict[str, Any]) -> dict[str, Any]:
+    """Copy session variables for the change diff, as deepcopy would.
+
+    deepcopy of every hook's variables held the GIL for ~116 samples/min (#23359).
+    Exact dicts and lists, the shapes decoded from the store, are walked directly;
+    other values go to deepcopy with the same memo, so cycles and shared references
+    copy as they would there.
+    """
+    copied: dict[str, Any] = _snapshot_value(variables, {})
+    return copied
+
+
+def _snapshot_value(value: Any, memo: dict[int, Any]) -> Any:
+    kind = type(value)
+    if kind in _SNAPSHOT_ATOMS:
+        return value
+    if kind is not dict and kind is not list:
+        return deepcopy(value, memo)
+    if id(value) in memo:
+        return memo[id(value)]
+    if kind is dict:
+        copied_dict: dict[Any, Any] = {}
+        memo[id(value)] = copied_dict
+        for key, item in value.items():
+            copied_dict[key] = (
+                item if type(item) in _SNAPSHOT_ATOMS else _snapshot_value(item, memo)
+            )
+        return copied_dict
+    copied_list: list[Any] = []
+    memo[id(value)] = copied_list
+    for item in value:
+        copied_list.append(item if type(item) in _SNAPSHOT_ATOMS else _snapshot_value(item, memo))
+    return copied_list
+
+
 class _EvalLockState:
     """Per-session evaluation lock plus registry bookkeeping."""
 
@@ -589,7 +627,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     )
 
                 # Snapshot BEFORE observers to capture both observer and rule changes in the diff
-                pre_eval = deepcopy(variables)
+                pre_eval = snapshot_variables(variables)
 
                 # Run built-in observers BEFORE rule evaluation
                 observer_failures = await asyncio.to_thread(

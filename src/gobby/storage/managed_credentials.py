@@ -556,15 +556,15 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         """Refuse ambiguous bindings and ended owners before minting any successor."""
         from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 
-        now = datetime.now(UTC)
+        # An expired Postgres password is refreshable for a live owner. Binding
+        # revocation and owner status, rather than password expiry, end that authority.
         bindings = [
             row
             for row in self._database.fetchall(
                 f"SELECT * FROM {self.auth_schema}.list_active_principals()"
             )
             if str(_row_value(row, "managed_execution_id")) == str(execution_id)
-            and isinstance(expiry := _row_value(row, "expires_at"), datetime)
-            and expiry > now
+            and isinstance(_row_value(row, "expires_at"), datetime)
         ]
         if len(bindings) != 1:
             return False
