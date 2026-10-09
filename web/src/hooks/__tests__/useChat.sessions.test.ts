@@ -1331,7 +1331,7 @@ describe("useChat viewed session state", () => {
 
   it.each([
     ["codex", "gpt-5.4"],
-    ["qwen", "qwen3-coder"],
+    ["grok", "grok-build"],
   ])(
     "keeps live %s tmux sessions attachable even when the session row is awaiting_handoff",
     async (source, model) => {

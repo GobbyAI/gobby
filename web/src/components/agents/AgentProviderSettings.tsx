@@ -13,7 +13,7 @@ import { coarseHitAreaCls } from "../ui/controlStyles";
 import type { AgentFormData } from "./AgentEditForm.types";
 import { AgentMetaRow as MetaRow } from "./AgentMetaRow";
 
-const FALLBACK_PROVIDER_OPTIONS = ["claude", "codex", "qwen", "droid"];
+const FALLBACK_PROVIDER_OPTIONS = ["claude", "codex", "droid"];
 
 interface AgentProviderSettingsProps {
   form: AgentFormData;
