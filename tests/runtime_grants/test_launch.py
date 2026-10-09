@@ -7,6 +7,7 @@ import os
 import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -66,6 +67,8 @@ def test_rotation_renews_capability_in_existing_envelope(
     from tests.runtime_grants.support import DEPLOYMENT_TOKEN
 
     now = 1_800_000_000
+    process = Mock(side_effect=AssertionError("capability renewal must not start a process"))
+    monkeypatch.setattr("subprocess.Popen", process)
     monkeypatch.setattr("gobby.utils.local_token.time.time", lambda: now)
     monkeypatch.setattr(local_token, "read_managed_signing_key", lambda: b"test-renewal-key")
     grant = _grant().model_copy(
@@ -110,6 +113,7 @@ def test_rotation_renews_capability_in_existing_envelope(
     assert signature_matches(GrantBundle.model_validate(envelope), "test-grant-signing-secret")
     assert stat.S_IMODE(launch.grant_path.stat().st_mode) == 0o600
     assert original not in caplog.text and renewed not in caplog.text
+    process.assert_not_called()
 
 
 def test_python_reader_rereads_envelope_instead_of_launch_environment(
