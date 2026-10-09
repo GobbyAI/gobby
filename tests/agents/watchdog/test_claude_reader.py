@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -297,6 +298,53 @@ async def test_empty_transcript_returns_empty_snapshot(tmp_path: Path) -> None:
 async def test_reader_raises_oserror_for_missing_path(tmp_path: Path) -> None:
     with pytest.raises(OSError):
         await ClaudeTranscriptWatchdogReader().read(str(tmp_path / "missing.jsonl"))
+
+
+async def test_reader_decodes_only_records_appended_since_its_last_read(tmp_path: Path) -> None:
+    path = tmp_path / "incremental.jsonl"
+    _write(path, [_user_record(), _assistant_record("thinking"), _assistant_record()])
+    reader = ClaudeTranscriptWatchdogReader()
+    await reader.read(str(path))
+
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(_turn_duration_record()) + "\n")
+    with patch("gobby.agents.watchdog._scan.json.loads", wraps=json.loads) as loads:
+        snapshot = await reader.read(str(path))
+
+    assert loads.call_count == 1
+    assert snapshot == await ClaudeTranscriptWatchdogReader().read(str(path))
+    assert snapshot.latest_turn_kind == "completed"
+
+
+async def test_reader_rescans_an_unterminated_record_once_its_newline_lands(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "partial.jsonl"
+    record = json.dumps(_turn_duration_record()).encode("utf-8")
+    path.write_bytes(json.dumps(_user_record()).encode("utf-8") + b"\n" + record[:10])
+    reader = ClaudeTranscriptWatchdogReader()
+    assert (await reader.read(str(path))).last_malformed_line_num == 2
+
+    with path.open("ab") as handle:
+        handle.write(record[10:] + b"\n")
+    snapshot = await reader.read(str(path))
+
+    assert snapshot.last_malformed_line_num is None
+    assert snapshot.latest_turn_kind == "completed"
+    assert snapshot.has_conclusive_turn_completed is True
+
+
+async def test_reader_starts_over_when_the_transcript_is_truncated(tmp_path: Path) -> None:
+    path = tmp_path / "truncated.jsonl"
+    _write(path, [_user_record(), _assistant_record(), _turn_duration_record()])
+    reader = ClaudeTranscriptWatchdogReader()
+    assert (await reader.read(str(path))).latest_turn_kind == "completed"
+
+    _write(path, [_user_record()])
+    snapshot = await reader.read(str(path))
+
+    assert snapshot == await ClaudeTranscriptWatchdogReader().read(str(path))
+    assert snapshot.latest_turn_kind == "started"
 
 
 _AUTH_401_TEXT = (

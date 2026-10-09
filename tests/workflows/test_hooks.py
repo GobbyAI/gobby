@@ -14,7 +14,9 @@ import concurrent.futures
 import json
 import logging
 import threading
+from collections import OrderedDict
 from collections.abc import Collection, Coroutine
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NoReturn
@@ -35,7 +37,7 @@ from gobby.tasks.state_semantics import current_stage_state
 from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import ChildEvaluationCancelled, WorkflowEvaluationRuntime
-from gobby.workflows.hooks import WorkflowHookHandler
+from gobby.workflows.hooks import WorkflowHookHandler, snapshot_variables
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import wait_forever
 from tests.storage.tasks._stage_test_helpers import set_stage_state
@@ -1736,6 +1738,72 @@ class TestVariablePersistence:
         assert response.decision == "allow"
         variables = session_var_manager.get_variables(SESSION_ID)
         assert variables["later_observer_ran"] is True
+
+    @pytest.mark.asyncio
+    async def test_change_snapshot_copies_stored_variables_without_deepcopy(
+        self,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
+    ) -> None:
+        session_var_manager.merge_variables(SESSION_ID, {"ledger": {"paths": ["a.py", "b.py"]}})
+
+        with patch("gobby.workflows.hooks.deepcopy", wraps=deepcopy) as copy_spy:
+            await handler._evaluate_rules(self._make_stop_event())
+
+        assert copy_spy.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_observer_in_place_change_to_a_stored_list_is_persisted(
+        self,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
+    ) -> None:
+        session_var_manager.merge_variables(SESSION_ID, {"seen_paths": ["a.py"]})
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id="test-ext",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"tool_name": "Read"},
+            metadata={"_platform_session_id": SESSION_ID},
+        )
+
+        def append_in_place(
+            _event: HookEvent, variables: dict[str, list[str]], _session_id: str
+        ) -> None:
+            variables["seen_paths"].append("b.py")
+
+        with patch("gobby.workflows.observers.detect_commit_link", side_effect=append_in_place):
+            await handler._evaluate_rules(event)
+
+        assert session_var_manager.get_variables(SESSION_ID)["seen_paths"] == ["a.py", "b.py"]
+
+    def test_change_snapshot_keeps_cycles_and_shared_references(self) -> None:
+        shared = ["x"]
+        looped: list[object] = [1]
+        looped.append(looped)
+
+        snapshot = snapshot_variables({"a": shared, "b": shared, "loop": looped})
+
+        assert snapshot["a"] == shared
+        assert snapshot["a"] is not shared
+        assert snapshot["b"] is snapshot["a"]
+        assert snapshot["loop"] is not looped
+        assert snapshot["loop"][0] == 1
+        assert snapshot["loop"][1] is snapshot["loop"]
+
+    def test_change_snapshot_hands_other_types_to_deepcopy(self) -> None:
+        ordered = OrderedDict(paths=["a.py"])
+        pair = (["b.py"],)
+
+        with patch("gobby.workflows.hooks.deepcopy", wraps=deepcopy) as copy_spy:
+            snapshot = snapshot_variables({"ordered": ordered, "pair": pair})
+
+        assert copy_spy.call_count == 2
+        assert snapshot == {"ordered": ordered, "pair": pair}
+        assert type(snapshot["ordered"]) is OrderedDict
+        assert snapshot["ordered"]["paths"] is not ordered["paths"]
+        assert snapshot["pair"][0] is not pair[0]
 
     @pytest.mark.asyncio
     async def test_turn_end_reconciles_claimed_tasks_for_after_agent(
