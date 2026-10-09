@@ -10,6 +10,7 @@ from typing import Any
 from gobby.storage.definitions._shared import (
     DefinitionNotFoundError,
     DefinitionSource,
+    DefinitionSyncCandidate,
     apply_definition_update,
     assert_live_name_free,
     decode_json_list,
@@ -21,6 +22,7 @@ from gobby.storage.definitions._shared import (
     hard_delete_definition,
     insert_definition_row,
     list_definition_rows,
+    list_definition_sync_candidates,
     move_definition_scope,
     new_definition_id,
     prepare_sync_values,
@@ -101,6 +103,17 @@ class RuleDefinitionRow:
             updated_at=row["updated_at"],
             deleted_at=row["deleted_at"] if "deleted_at" in row.keys() else None,
         )
+
+
+@normalize_datetime_model(required=("updated_at",))
+@dataclass(frozen=True)
+class RuleDispositionCandidate:
+    """Only fields read by delivery classification; hydrate before rewriting."""
+
+    id: str
+    name: str
+    updated_at: datetime
+    definition_json: dict[str, Any]
 
 
 class RuleDefinitionManager:
@@ -284,6 +297,53 @@ class RuleDefinitionManager:
             if count:
                 touch_revision(txn, "rules")
         return count
+
+    def list_sync_candidates(self) -> list[DefinitionSyncCandidate]:
+        """List live identity and ownership without loading rule bodies."""
+        return list_definition_sync_candidates(self.db, _TABLE)
+
+    def list_delivery_disposition_candidates(self) -> list[RuleDispositionCandidate]:
+        """Read classification fields without transferring effect payloads."""
+        rows = self.db.fetchall(
+            """
+            SELECT id, name, updated_at,
+                jsonb_build_object(
+                    'when', definition_json -> 'when',
+                    'effects', COALESCE((
+                        SELECT jsonb_agg(
+                            jsonb_build_object(
+                                'type', effect -> 'type',
+                                'when', effect -> 'when',
+                                'variable', effect -> 'variable',
+                                'acknowledge_variable', effect -> 'acknowledge_variable',
+                                'success_variable', effect -> 'success_variable',
+                                'inject_result', effect -> 'inject_result',
+                                'delivery', effect -> 'delivery'
+                            ) ORDER BY ordinal
+                        )
+                        FROM jsonb_array_elements(
+                            CASE
+                                WHEN jsonb_typeof(definition_json -> 'effects') = 'array'
+                                    THEN definition_json -> 'effects'
+                                WHEN jsonb_typeof(definition_json -> 'effect') = 'object'
+                                    THEN jsonb_build_array(definition_json -> 'effect')
+                                ELSE '[]'::jsonb
+                            END
+                        ) WITH ORDINALITY AS effects(effect, ordinal)
+                    ), '[]'::jsonb)
+                ) AS definition_json
+            FROM rule_definitions WHERE deleted_at IS NULL ORDER BY name
+            """
+        )
+        return [
+            RuleDispositionCandidate(
+                id=str(row["id"]),
+                name=row["name"],
+                updated_at=row["updated_at"],
+                definition_json=decode_json_object(row["definition_json"]) or {},
+            )
+            for row in rows
+        ]
 
     def list_all(
         self,

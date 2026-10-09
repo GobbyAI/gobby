@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import os
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
+import psutil
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
@@ -392,3 +395,133 @@ def test_self_claimed_task_keeps_every_transfer_refusal(
     with pytest.raises(ValueError, match="still live"):
         _transfer(manager, task, fixtures.successor)
     assert manager.get_task(task.id).delegated_by_session_id == live.id
+
+
+# #23885: a paused holder with no terminal can still be working, so only positive
+# evidence that it is gone releases its authority.
+
+
+def _live_process() -> tuple[int, float]:
+    return os.getpid(), psutil.Process().create_time()
+
+
+def _exited_process() -> tuple[int, float]:
+    # This PID runs under another start time, so the recorded process is gone.
+    pid, started = _live_process()
+    return pid, started - 3600.0
+
+
+def _pause(db: HubDatabase, session: Session, process: tuple[int, float] | None = None) -> None:
+    context = (
+        None if process is None else {"parent_pid": process[0], "parent_create_time": process[1]}
+    )
+    db.execute(
+        "UPDATE sessions SET status = 'paused', terminal_context = %s::jsonb WHERE id = %s",
+        (None if context is None else json.dumps(context), session.id),
+    )
+
+
+def _link_run(db: HubDatabase, session: Session, parent: Session, status: str) -> None:
+    db.execute(
+        """
+        INSERT INTO agent_runs (
+            id, parent_session_id, child_session_id, machine_id, status, provider, prompt
+        )
+        VALUES (%s, %s, %s, %s, %s, 'claude', 'seat')
+        """,
+        (str(uuid4()), parent.id, session.id, require_machine_id(), status),
+    )
+
+
+def test_transfer_from_a_paused_creator_whose_process_exited(
+    temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
+) -> None:
+    manager, task, fixtures = authority_task
+    _set_authority(temp_db, task, fixtures.filer.id, None)
+    _pause(temp_db, fixtures.filer, _exited_process())
+
+    updated = _transfer(manager, task, fixtures.successor, reason="creator process exited")
+
+    assert updated.delegated_by_session_id == fixtures.successor.id
+    assert updated.delegation_reason == (
+        f"authority transferred from {_seq_ref(temp_db, fixtures.filer.id)} (status=paused) "
+        f"to {_seq_ref(temp_db, fixtures.successor.id)}: creator process exited"
+    )
+    assert _activation(temp_db, updated, fixtures.successor.id).author_session_id == (
+        fixtures.successor.id
+    )
+
+
+def test_transfer_from_a_paused_creator_whose_agent_run_ended(
+    temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
+) -> None:
+    manager, task, fixtures = authority_task
+    _set_authority(temp_db, task, fixtures.filer.id, None)
+    _pause(temp_db, fixtures.filer)
+    _link_run(temp_db, fixtures.filer, fixtures.claimant, "success")
+
+    updated = _transfer(manager, task, fixtures.successor, reason="creator run ended")
+
+    assert updated.delegated_by_session_id == fixtures.successor.id
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        pytest.param("live-process", id="live-process"),
+        pytest.param("none", id="no-evidence"),
+        pytest.param("running-run", id="running-run"),
+        pytest.param("ended-and-running-runs", id="ended-and-running-runs"),
+    ],
+)
+def test_paused_creator_without_proof_it_is_gone_keeps_authority(
+    temp_db: HubDatabase,
+    authority_task: tuple[LocalTaskManager, Task, _Fixtures],
+    evidence: str,
+) -> None:
+    """Losing the terminal or wake binding alone never releases authority."""
+    manager, task, fixtures = authority_task
+    _set_authority(temp_db, task, fixtures.filer.id, None)
+    _pause(temp_db, fixtures.filer, _live_process() if evidence == "live-process" else None)
+    if evidence in ("running-run", "ended-and-running-runs"):
+        _link_run(temp_db, fixtures.filer, fixtures.claimant, "running")
+    if evidence == "ended-and-running-runs":
+        _link_run(temp_db, fixtures.filer, fixtures.claimant, "success")
+
+    with pytest.raises(ValueError, match="still live"):
+        _transfer(manager, task, fixtures.successor)
+    assert manager.get_task(task.id).delegated_by_session_id is None
+
+
+def test_transfer_from_a_paused_delegator_whose_process_exited(
+    temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
+) -> None:
+    manager, task, fixtures = authority_task
+    delegator = fixtures._add("Paused delegator")
+    _set_authority(temp_db, task, fixtures.filer.id, delegator.id)
+    _expire(temp_db, fixtures.filer)
+    _pause(temp_db, delegator, _exited_process())
+
+    updated = _transfer(manager, task, fixtures.successor, reason="delegator process exited")
+
+    assert updated.delegated_by_session_id == fixtures.successor.id
+    assert updated.delegation_reason == (
+        f"authority transferred from {_seq_ref(temp_db, delegator.id)} (status=paused) "
+        f"to {_seq_ref(temp_db, fixtures.successor.id)}: delegator process exited"
+    )
+
+
+def test_exited_process_on_another_machine_is_not_evidence(
+    temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
+) -> None:
+    """A PID is only meaningful on the machine that recorded it."""
+    manager, task, fixtures = authority_task
+    _set_authority(temp_db, task, fixtures.filer.id, None)
+    _pause(temp_db, fixtures.filer, _exited_process())
+
+    # The creator recorded its process on _MACHINE; this daemon runs elsewhere.
+    with (
+        patch("gobby.utils.machine_id._cached_machine_id", "21000000-0000-4000-8000-000000000099"),
+        pytest.raises(ValueError, match="still live"),
+    ):
+        _transfer(manager, task, fixtures.successor)

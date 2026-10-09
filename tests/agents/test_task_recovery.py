@@ -186,9 +186,10 @@ async def test_restarted_recovery_preserves_rebound_session_claim(
         terminal_id="old-pane",
     )
     # Startup reconstructs this handler; its settled-run cache is empty.
+    sweep_runs = _SweepRunManager(run)
     handler = TaskRecoveryHandler(
         LocalTaskManager(temp_db),
-        _SweepRunManager(run),
+        sweep_runs,
         _Classifier(),
         terminal_agent_killer=killer,
         run_db=_run_db,
@@ -218,6 +219,11 @@ async def test_restarted_recovery_preserves_rebound_session_claim(
         assert task.id not in variables.get_variables(session.id)["claimed_tasks"]
         return
     assert variables.get_variables(session.id)["claimed_tasks"] == {task.id: f"#{task.seq_num}"}
+    if binding == "rebound":
+        assert await handler.recover_tasks_from_terminal_agents() == 0
+        assert sweep_runs.detail_reads == [old_id]
+        assert killer.await_count == 0
+        assert tasks.get_task(task.id).claimed_by_session_id == session.id
 
 
 @pytest.mark.asyncio

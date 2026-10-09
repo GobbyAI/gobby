@@ -20,9 +20,10 @@ launches `gobby mcp-server`. That is a Python stdio wrapper
 daemon's REST API. It is slow to start: `src/gobby/agents/constants.py` records
 a cold wrapper taking 25 s beside concurrent spawns, with two siblings past 30 s,
 which left those agents without Gobby tools. It needs a Python environment,
-which a thin node will not have. Its daemon auto-start is dead code: it runs a
-module that does not exist (#23525, MCP stdio wrapper's daemon auto-start runs a
-module that does not exist).
+which a thin node will not have. Its daemon auto-start ran a module that did not
+exist until #23525 (MCP stdio wrapper's daemon auto-start runs a module that
+does not exist) was fixed on 2026-10-06; `gmcp` does not carry it forward
+(Decision 5).
 
 **When the leaves close:**
 - The workspace crate `crates/gmcp` (package `gobby-mcp`, binary `gmcp`) serves
@@ -60,11 +61,12 @@ to Josh at approval.
 
 1. **Option (a).** `crates/gmcp` joins the workspace now. The timing rule in
    `crates/AGENTS.md` covers `RouteFamily` crates only, and `gmcp` is a client
-   binary like `ghook`. The new dependency is **rmcp 3.5.0** (crates.io,
-   2026-09-28, Apache-2.0, `rust_version` 1.88, matching the workspace). `gmcp`
-   uses its `server` and `transport-io` features only, so rmcp's optional
-   reqwest 0.13 is not pulled in. The crates.io name `gobby-mcp` is free
-   (checked 2026-10-05).
+   binary like `ghook`. The new dependency is **rmcp 3.5** (crates.io,
+   Apache-2.0, `rust_version` 1.88, matching the workspace). 3.5.0 shipped on
+   2026-09-28, and 3.5.1 was the latest release at the 2026-10-09 recheck, which
+   `version = "3.5"` resolves to. `gmcp` uses its `server` and `transport-io`
+   features only, so rmcp's optional reqwest is not pulled in. The crates.io
+   name `gobby-mcp` is free (checked 2026-10-05 and 2026-10-09).
 2. **Every D3 obligation is planned here or is a typed deferral with an owner.**
    Native streamable HTTP and restart-stateless HTTP serving go to #21570 (MCP
    front door flip). The OAuth 2.1 authorization server, the second bearer kind,
@@ -77,12 +79,20 @@ to Josh at approval.
 5. **No daemon auto-start** (11:24 CT). `gmcp` returns the typed
    `DAEMON_UNAVAILABLE` result with `gobby start` guidance.
    `src/gobby/mcp_proxy/daemon_control.py` retires with the wrapper.
+   - The basis has changed since the ruling. When it was made, the wrapper's
+     auto-start could not work (#23525).
+   - `f3d55136b7` (#23531, 2026-10-06) fixed it to run `python -m gobby.cli
+     start`, as an interim until this plan retires the wrapper.
+     `tests/e2e/test_daemon_lifecycle.py::TestBridgeAutoStart` proves it.
+   - Retiring `daemon_control.py` therefore removes a working path. The ruling
+     is unchanged, and 1.7 deletes that test with the module.
 6. **Bridge readiness for agent-token sessions** (11:48 CT). `gmcp` keeps the
-   wrapper's wire call `POST /api/mcp/bridge/ready`. Capability-token sessions
-   are refused on that route today, and #23531 (Spawned agents cannot report MCP
-   bridge readiness: agent capability matrix lacks POST /api/mcp/bridge/ready)
-   fixes the server. Operator sessions report readiness without #23531. Agent
-   sessions report it once #23531 lands. No leaf here waits on it.
+   wrapper's wire call `POST /api/mcp/bridge/ready`. #23531 (Spawned agents
+   cannot report MCP bridge readiness: agent capability matrix lacks POST
+   /api/mcp/bridge/ready) landed at `f3d55136b7` on 2026-10-06.
+   `src/gobby/servers/auth_service.py` now admits agent tokens on that route,
+   bound to their own identity, so a token marks only its own session ready.
+   Operator and agent sessions both report readiness. No leaf here waits on it.
 
 Writer decisions:
 
@@ -121,12 +131,18 @@ Writer decisions:
     `crates/ghook/src/terminal_context.rs::capture` emits a different set for
     `SESSION_START` (it has `gobby_*` identity keys and no generation), so
     moving it into gcore would serve neither caller exactly.
-12. **Retire `mcp_client_proxy.tool_timeouts`.** Its only reader is the
-    wrapper (`DaemonProxy._get_tool_timeouts`). `gmcp` has no hub access, and
-    `/api/config/values` is outside the agent capability matrix, so keeping the
-    setting would need a new route and a lazy fetch. It defaults to empty.
-    Ordinary calls keep the 30 s client timeout; the wait and extended tools
-    keep their contract timeouts.
+12. **Retire `mcp_client_proxy.tool_timeouts`.** The setting defaults to
+    empty, and its only reader is the wrapper (`DaemonProxy._get_tool_timeouts`).
+    - Since #23680 (Close-orchestration test times out on its stdio MCP read
+      under machine load; `f7ebca019a`, 2026-10-06), the wrapper no longer loads
+      the map from the hub. It fetches it once per process from
+      `GET /api/mcp/bridge/tool-timeouts`, a route agent tokens may read.
+    - Keeping the setting would mean porting that fetch, its cache, and its
+      retry into `gmcp`, for a map that ships empty.
+    - Retiring it removes the setting, its web editor, the route, the route's
+      agent-matrix entry, and the fetch together, in 1.7.
+    - Ordinary calls keep the 30 s client timeout; the wait and extended tools
+      keep their contract timeouts.
 13. **A front-door typed 503 is `DAEMON_UNAVAILABLE`.** While Python is down,
     gdaemon answers proxied routes with
     `{"status":"unavailable","backend":{...}}` and 503
@@ -147,15 +163,15 @@ Writer decisions:
     - `mcp_config_read_exceptions` grants the main repo as a read root, because
       the isolated entry runs `uv run --project <main repo>`. The `gmcp` entry
       has no arguments, so after 1.6 the function grants nothing.
-    - The files involved are `src/gobby/agents/sandbox_policy.py` (935 lines)
-      and `src/gobby/agents/srt_runtime.py` (867 lines). `production-size-growth`
+    - The files involved are `src/gobby/agents/sandbox_policy.py` (940 lines)
+      and `src/gobby/agents/srt_runtime.py` (932 lines). `production-size-growth`
       requires any deliverable that targets them to move code into a new file.
     - 1.8 moves the two functions that hold the stale text into new modules and
       deletes the dead grant.
-    - #23273 (Hub-side key validation, front-door identity, and shared-token
-      cutover) splits `sandbox_policy.py` too, moving `_credential_roots` and
-      `_gcode_runtime_root` to `sandbox_credentials.py`. The only overlap is
-      import lines, and whichever change lands second rebases them.
+    - `23328c7392` (#23519, Shared-token cutover) has already moved the
+      credential helpers out of `sandbox_policy.py` into
+      `sandbox_credentials.py` (`credential_roots`, `gcode_runtime_root`). 1.8
+      starts from that tree.
 
 ## Constraints
 `kind: framing`
@@ -173,10 +189,12 @@ Writer decisions:
 - **No backward compatibility.** 0.5.0 has not shipped. `gobby mcp-server` and
   the setting leave without aliases. The installer's repair (1.6) rewrites
   existing wrapper entries to `gmcp`.
-- **Consumer sweeps** ran read-only on `0.5.0` at `6f5d0c8733` (2026-10-05):
+- **Consumer sweeps** ran read-only on `0.5.0` at `6f5d0c8733` (2026-10-05),
+  and again at `ba4aa371f8` (2026-10-09), where every file with a new hit was
+  checked:
   - `gcode grep -F` for `mcp-server`, `mcp_proxy.stdio`, `daemon_control`,
     `current_terminal_context`, `serialize_terminal_context`, `tool_timeouts`,
-    and `_call_tool_wrapper`;
+    `tool-timeouts` (2026-10-09 only), and `_call_tool_wrapper`;
   - `gcode grep -w` for `_resolved_gobby_mcp_command`,
     `_is_repairable_stale_gobby_mcp_server_config`, and
     `mcp_config_read_exceptions`.
@@ -237,11 +255,19 @@ Targets:
     body `session_id`, but only when there is no `tmux_pane`. Otherwise
     `X-Gobby-Terminal-Context` carries the compact terminal-context JSON.
     `X-Gobby-Agent-Run-Id` is `GOBBY_AGENT_RUN_ID` when set.
-  - Auth comes from `src/gobby/utils/local_token.py::daemon_auth_headers`. A
-    non-empty `GOBBY_AGENT_API_TOKEN` gives a Bearer plus the
-    `_AGENT_IDENTITY_ENV_HEADERS` pairs (session, caller project, agent run,
-    managed execution). Otherwise the local credential gives a Bearer. Auth
-    headers are merged last, so they win.
+  - Auth comes from `src/gobby/utils/local_token.py::daemon_auth_headers`:
+    - An agent token gives a Bearer plus the `_AGENT_IDENTITY_ENV_HEADERS`
+      pairs (session, caller project, agent run, managed execution). It comes
+      from the private grant envelope that `GOBBY_MANAGED_EXECUTION_BOOTSTRAP`
+      names, or else from a non-empty `GOBBY_AGENT_API_TOKEN`.
+    - With `GOBBY_MANAGED_EXECUTION_BOOTSTRAP` set and no agent token, it
+      refuses. Otherwise the local credential gives a Bearer.
+    - Auth headers are merged last, so they win.
+  - While `GOBBY_MANAGED_EXECUTION_BOOTSTRAP` is set, `_request` re-reads auth
+    before every request. That picks up a capability the daemon renews in the
+    envelope, from #23865 (Standing seats lose their managed capability after
+    24 hours, so their hooks spool until a resume). Otherwise auth is read
+    once and cached.
   - A 401 re-reads auth and retries once. A 200 returns the JSON body. A 409
     whose `detail.error_code` is `SESSION_REQUIRED` returns `detail`. Any other
     status gives `{"success": false, "error": "HTTP <n>: <body>"}`. A connect
@@ -256,9 +282,15 @@ Targets:
 - gcore reuse:
   - `crates/gcore/src/daemon_url.rs::daemon_url` is the shared resolver:
     `GOBBY_DAEMON_URL`, then `GOBBY_PORT`, then `bootstrap.yaml`.
-  - `crates/gcore/src/local_token.rs::read_local_cli_token` prefers
-    `GOBBY_AGENT_API_TOKEN`. #23519 rewrites it to the bootstrap key, and `gmcp`
-    follows without edits.
+  - `crates/gcore/src/local_token.rs::read_api_key` (`read_api_key_for` with an
+    explicit home) resolves the credential in the wrapper's order:
+    1. the managed envelope;
+    2. `GOBBY_AGENT_API_TOKEN`;
+    3. a refusal while `GOBBY_MANAGED_EXECUTION_BOOTSTRAP` is set;
+    4. the bootstrap `api_key`.
+    An agent token is in use exactly when `GOBBY_MANAGED_EXECUTION_BOOTSTRAP`
+    is set or `GOBBY_AGENT_API_TOKEN` is non-empty, and that decides the
+    identity headers. `gmcp` needs no gcore change.
   - `crates/gcore/src/project.rs::find_project_root` and `read_project_id`.
   - gcore's default features exclude postgres. `ureq` 2 is already its HTTP
     client, and `ghook` uses ureq deliberately so that tiny binaries stay off
@@ -306,9 +338,12 @@ Targets:
   - `serialize()` keeps contract keys and drops nulls.
   - The tmux runner is a function parameter, so unit tests inject outputs.
 - `daemon.rs` exposes `Dialer`, which is constructed once per process:
-  - It holds the cached auth headers, the cached caller project id, the
+  - It holds the auth headers, the cached caller project id, the
     `GOBBY_SESSION_ID` value, the serialized terminal context, a
     `has_tmux_pane` flag, and the last preflight success time.
+  - Auth headers come from `read_api_key`. They are cached, unless
+    `GOBBY_MANAGED_EXECUTION_BOOTSTRAP` is set, in which case they are re-read
+    before every request.
   - `Dialer::request(method, path, body, RequestOptions) -> serde_json::Value`
     implements every rule in the research context, in the same order. The base
     URL is resolved with `daemon_url()` on every request, so a port change
@@ -334,7 +369,7 @@ Targets:
   `local_token._AGENT_IDENTITY_ENV_HEADERS`.
 
 **Granularity:** one leaf. Twelve new files make up one lifecycle owner, the
-dialer, and its tests. Seven acceptance items each cover a rule of that one
+dialer, and its tests. Eight acceptance items each cover a rule of that one
 request path.
 
 **Focused verification (planned):** `cargo nextest run -p gobby-mcp` and
@@ -343,13 +378,14 @@ request path.
 
 **Acceptance:**
 
-- 1.1.1 - Requests carry the protocol header `1`, and the target and caller project headers follow the wrapper's rules. The session header comes from `GOBBY_SESSION_ID` before the body, the body value is used only without a tmux pane, and otherwise the terminal-context header is sent. With an agent token, the identity headers override. test: `crates/gmcp/tests/dialer.rs::request_headers_match_python_wrapper`.
+- 1.1.1 - Requests carry the protocol header `1`, and the target and caller project headers follow the wrapper's rules. The session header comes from `GOBBY_SESSION_ID` before the body, the body value is used only without a tmux pane, and otherwise the terminal-context header is sent. With an agent token, from the managed envelope or `GOBBY_AGENT_API_TOKEN`, the identity headers override. test: `crates/gmcp/tests/dialer.rs::request_headers_match_python_wrapper`.
 - 1.1.2 - A 401 re-reads the credential and retries exactly once. test: `crates/gmcp/tests/dialer.rs::unauthorized_rereads_credential_and_retries_once`.
 - 1.1.3 - A 409 `SESSION_REQUIRED` returns its `detail`. Other non-200 answers return `HTTP <n>: <body>`. test: `crates/gmcp/tests/dialer.rs::conflict_and_error_statuses_match_wrapper`.
 - 1.1.4 - A refused connection and the front door's typed 503 both return `DAEMON_UNAVAILABLE` naming `gobby start`. A read timeout returns `REQUEST_TIMEOUT` with the spawn-agent hint on `/tools/spawn_agent`. test: `crates/gmcp/tests/dialer.rs::unavailable_and_timeout_results_are_typed`.
 - 1.1.5 - One `Dialer` returns `DAEMON_UNAVAILABLE` while the stub is down and succeeds after the stub re-binds the same port, with no new `Dialer`. Preflight is cached for 5 s only after a success. test: `crates/gmcp/tests/dialer.rs::dialer_survives_daemon_restart`.
 - 1.1.6 - Terminal context prefers the generation query, falls back to window identity, applies the environment fallbacks only to unset keys, and serializes only the twelve contract keys without nulls. test: `crates/gmcp/src/terminal_context.rs::capture_matches_python_wrapper_rules`.
 - 1.1.7 - The wrapper contract equals the Python constants it mirrors. test: `tests/mcp_proxy/test_gmcp_contracts.py::test_wrapper_contract_matches_python_constants`.
+- 1.1.8 - While `GOBBY_MANAGED_EXECUTION_BOOTSTRAP` is set, every request re-reads the credential, so a capability renewed in the envelope between two requests is sent on the second. Without it, the credential is read once and re-read only after a 401. test: `crates/gmcp/tests/dialer.rs::managed_envelope_credential_is_reread_per_request`.
 
 ### 1.2 `gmcp` serves the wrapper's tool surface over stdio [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -379,8 +415,7 @@ Targets:
     15, 30, and 30 s. It retries on `SESSION_REQUIRED`, `DAEMON_UNAVAILABLE`,
     and `REQUEST_TIMEOUT`. A final `SESSION_REQUIRED` logs at debug, and other
     failures log a warning.
-  - Agent-token sessions are refused on that route until #23531 lands
-    (Decision 6).
+  - Agent-token sessions may post it since #23531 landed (Decision 6).
 - `src/gobby/mcp_proxy/stdio_tools.py::register_proxy_tools` defines twelve
   tools. Apart from `call_tool` (1.3), each maps to one `DaemonProxy` method and
   one route:
@@ -396,15 +431,17 @@ Targets:
   - `set_variable` and `get_variable`:
     `POST /api/sessions/{id}/variables/set|get`.
   - `init_project`: a static error with no request.
-  - Each method's body, query, and `preflight` flag are in `stdio_proxy.py`
-    (lines 335 to 619); the executor copies them exactly.
+  - Each method's body, query, and `preflight` flag are in its `DaemonProxy`
+    method in `stdio_proxy.py`; the executor copies them exactly.
+    `set_variable` sends `{name, value, scope}`, where `scope` is `session`
+    (the default) or `step`.
 - `src/gobby/mcp_proxy/instructions.py::build_gobby_instructions` reads the
   bundled `progressive-discovery.md` with its front matter stripped. It stays,
   because `server.py` uses it.
 - The wrapper returns each tool's dict through the Python MCP SDK. The
   call-result envelope (content blocks and structured content) is part of what
   clients see, so the parity capture includes it.
-- rmcp 3.5.0 provides `ServerHandler`, the `transport-io` stdio transport, and
+- rmcp 3.5 provides `ServerHandler`, the `transport-io` stdio transport, and
   progress notifications through the request context's peer. tokio 1.50 is
   already in `Cargo.lock`.
 
@@ -558,8 +595,8 @@ Targets:
   - it writes a source hash and a version stamp;
   - outside a checkout, an unpublished binary raises
     `ManagedBinaryReleaseMissing`.
-- `install_setup.py` (615 lines) runs every `MANAGED_NATIVE_BINARY_NAMES` entry
-  on a default `gobby install`. `install_components.py` (367 lines) lets
+- `install_setup.py` (569 lines) runs every `MANAGED_NATIVE_BINARY_NAMES` entry
+  on a default `gobby install`. `install_components.py` (361 lines) lets
   `gobby install gclient` re-promote one binary without claiming the daemon
   singleton.
 - `bin_freshness_promotion.py::WORKSPACE_BINARY_CRATES` drives the
@@ -615,10 +652,10 @@ Targets:
 - `tests/servers/routes/mcp_endpoints/test_template_routes.py::*` — scope-reason: the disabled-template case asserts the route's answer instead of `DaemonProxy` and `_capture_stdio_tools`
 - `tests/servers/test_mcp_execution_context.py::*` — scope-reason: the stdio half sends the wrapper's headers with the test client instead of `DaemonProxy`
 - `tests/skills/reference_library_helpers.py::*` — scope-reason: the stdio tool inventory comes from `crates/gmcp/contracts/tools_list.v1.json` instead of `register_proxy_tools`
-- `tests/agents/test_spawn_executor.py::*` — scope-reason: `test_scrubbed_child_env_reaches_daemon_proxy_identity` asserts the scrubbed child environment carries the session, daemon URL, and capability that `gmcp` reads, without `DaemonProxy`
+- `tests/agents/test_spawn_executor.py::*` — scope-reason: `test_scrubbed_child_env_reaches_daemon_proxy_identity` asserts the scrubbed child environment carries the session, daemon URL, grant envelope path, and capability that `gmcp` reads, without `DaemonProxy`; its `tool_timeouts` response mock leaves with `DaemonProxy`
 
 **Research context:**
-- `tests/e2e/test_stateless_ambient_session.py` (548 lines) covers, through
+- `tests/e2e/test_stateless_ambient_session.py` (546 lines) covers, through
   `DaemonProxy` against an isolated daemon: the ambient session following
   `/clear`, the schema lease bound to the child identity, hookless terminals
   requiring a session, and the same proxy resolving its session after a daemon
@@ -651,20 +688,20 @@ with `gmcp` built by `cargo build -p gobby-mcp` (heavy work).
 - 1.5.1 - Through `gmcp`, the ambient session follows `/clear`, the schema lease binds to the child identity, and a hookless terminal gets `SESSION_REQUIRED`. test: `tests/e2e/test_stateless_ambient_session.py::test_ambient_proxy_follows_clear_and_attributes_schema_lease`.
 - 1.5.2 - One `gmcp` process answers `DAEMON_UNAVAILABLE` while the isolated daemon is stopped, and resolves the same session after it restarts. test: `tests/e2e/test_stateless_ambient_session.py::test_same_proxy_resolves_existing_session_after_daemon_restart`.
 - 1.5.3 - The route tests, the execution-context test, and the reference inventory pass with no import of `gobby.mcp_proxy.stdio*`. test: `tests/servers/test_mcp_execution_context.py::test_stdio_and_http_share_trusted_agent_identity`.
-- 1.5.4 - The scrubbed Codex child environment carries `GOBBY_SESSION_ID`, `GOBBY_DAEMON_URL`, and the capability token. test: `tests/agents/test_spawn_executor.py::test_scrubbed_child_env_reaches_daemon_proxy_identity`.
+- 1.5.4 - The scrubbed Codex child environment carries `GOBBY_SESSION_ID`, `GOBBY_DAEMON_URL`, `GOBBY_MANAGED_EXECUTION_BOOTSTRAP` naming the private grant envelope, and the capability token. test: `tests/agents/test_spawn_executor.py::test_scrubbed_child_env_reaches_daemon_proxy_identity`.
 
-### 1.6 Every launch site starts `~/.gobby/bin/gmcp` [category: code] (depends: 1.3, 1.4)
+### 1.6 Every launch site starts `~/.gobby/bin/gmcp` [category: code] (depends: 1.3, 1.4, 1.5)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/cli/installers/mcp_config_shared.py::*` — scope-reason: `_GOBBY_MCP_COMMAND`/`_GOBBY_MCP_ARGS` become `gmcp` with no arguments, `_resolved_gobby_mcp_command` returns the managed `gmcp` path, and the stale-entry repair also rewrites `gobby mcp-server` entries
+- `src/gobby/cli/installers/mcp_config_shared.py::*` — scope-reason: `_GOBBY_MCP_COMMAND`/`_GOBBY_MCP_ARGS` become `gmcp` with no arguments, `_resolved_gobby_mcp_command` becomes the public `gmcp_command()` and returns the managed `gmcp` path, and the stale-entry repair also rewrites `gobby mcp-server` entries
 - `src/gobby/cli/installers/mcp_config_toml.py::*` — scope-reason: the Codex block writes `args = []`
 - `src/gobby/cli/installers/mcp_config_json.py::*` — scope-reason: the repair and fresh-entry paths write `gmcp` with no arguments
 - `src/gobby/agents/spawn_executor_support.py::*` — scope-reason: `_codex_mcp_config_overrides` sets the managed `gmcp` command with empty arguments instead of `uv run`
 - `src/gobby/agents/isolation_repair.py::*` — scope-reason: `_patch_mcp_config_for_isolation` writes the `gmcp` entry, and `provider_mcp_config_error` accepts exactly that entry
 - `src/gobby/servers/chat_session_helpers.py::*` — scope-reason: `_build_gobby_mcp_entry` returns the managed `gmcp` path with no arguments
 - `src/gobby/agents/constants.py::*` — scope-reason: the `MCP_CONNECT_TIMEOUT_MS` and `MCP_TIMEOUT` comments describe `gmcp`; the values stay
-- `src/gobby/utils/local_token.py::*` — scope-reason: the docstring that names `gobby mcp-server` names `gmcp`
+- `src/gobby/agents/grok_sandbox_home.py::*` — scope-reason: `_declare_gobby_mcp_server` writes the `gmcp` entry with no arguments into the managed Grok `config.toml`
 - `src/gobby/install/shared/skills/gobby/references/admin/clients.md`
 - `tests/e2e/composer_proof_setup.py::*` — scope-reason: `main` points the proof's MCP entry at the checkout's built `gmcp` and refuses when it is absent
 - `tests/cli/installers/test_cli_installers_mcp_config.py::*` — scope-reason: installer and repair expectations move to `gmcp`
@@ -676,6 +713,8 @@ Targets:
 - `tests/agents/test_spawn_executor_support.py::*` — scope-reason: the override expectation moves to `gmcp`
 - `tests/agents/test_isolation.py::*` — scope-reason: the isolation config and preflight expectations move to `gmcp`
 - `tests/agents/test_local_context_setup.py::*` — scope-reason: the mocked entry becomes `gmcp`
+- `tests/agents/test_grok_sandbox_home.py::*` — scope-reason: the two Gobby-entry cases expect `gmcp_command()` with no arguments
+- `tests/agents/test_spawn_executor.py::*` — scope-reason: `test_codex_terminal_direct_spawn` expects the `gmcp` override instead of `uv run --no-sync --project /main/repo gobby mcp-server`; the `.mcp.json` samples that feed the timeout tests stay
 
 **Research context:**
 - `mcp_config_shared.py` (221 lines) resolves `gobby` next to `sys.executable`,
@@ -683,13 +722,13 @@ Targets:
   `uv run [--directory X] gobby mcp-server`. Two other wrapper shapes exist:
   - `_patch_mcp_config_for_isolation` persists
     `uv run --project <main repo> gobby mcp-server` in each isolated
-    workspace's `.mcp.json` (`isolation_repair.py` lines 225 to 235);
+    workspace's `.mcp.json` (`isolation_repair.py`, lines 207 to 286);
   - the Codex overrides run `uv run --no-sync --project <main repo> gobby mcp-server`.
   After 1.7 deletes the command and 1.8 drops the main-repo grant, any
   surviving entry of these shapes fails to start. The TOML (203 lines) and JSON (420
   lines) writers share those helpers. Codex keeps `required = true`, the 120 s
   startup, the 360 s tool timeout, and `default_tools_approval_mode`.
-- `spawn_executor_support.py::_codex_mcp_config_overrides` (599-line file)
+- `spawn_executor_support.py::_codex_mcp_config_overrides` (648-line file)
   runs `uv run --no-sync --project <main repo> gobby mcp-server`. That way an
   isolated worktree's old code never serves the proxy (memory ce6ece28). A
   native client has no per-worktree code, so the managed binary serves every
@@ -700,6 +739,20 @@ Targets:
   `mcp-server` in `args`.
 - `chat_session_helpers.py::_build_gobby_mcp_entry` builds the chat SDK's
   stdio entry.
+- `src/gobby/agents/grok_sandbox_home.py::_declare_gobby_mcp_server` came from
+  #23554 (Harden managed sandbox policy: protect hook config and trust state,
+  deny credential-store reads; `6f56a8ec50`).
+  - It writes `{"command": _resolved_gobby_mcp_command(), "args": ["mcp-server"]}`
+    as `mcp_servers.gobby` in each managed Grok run's `config.toml`, replacing
+    any operator entry.
+  - `tests/agents/test_grok_sandbox_home.py` asserts that entry in
+    `test_managed_config_declares_gobby_mcp_server` and
+    `test_operator_gobby_mcp_server_is_replaced_and_others_kept`.
+  - Every prepare rewrites the entry, so it needs no repair.
+- `tests/agents/test_spawn_executor.py::test_codex_terminal_direct_spawn`
+  asserts the Codex `-c` override
+  `args=["run","--no-sync","--project","/main/repo","gobby","mcp-server"]`.
+  1.5 also edits that file, so this leaf depends on 1.5.
 - The managed path is `get_gobby_home() / "bin" / native_bin_name("gmcp")`
   (`src/gobby/utils/native_bin.py`). Sandboxed CLIs already execute `ghook`
   from that directory.
@@ -723,6 +776,8 @@ Targets:
   other servers alone.
 - `_patch_mcp_config_for_isolation` replaces the whole `gobby` entry, so
   re-patching a workspace that holds the `--project` shape writes `gmcp`.
+- `_declare_gobby_mcp_server` writes the same entry into the managed Grok
+  `config.toml`.
 - `provider_mcp_config_error` requires the `gmcp` entry.
 - `clients.md` describes `gmcp` as the stdio transport. `gmcp` does not start
   the daemon; it reports `DAEMON_UNAVAILABLE` with `gobby start` guidance.
@@ -735,7 +790,7 @@ spawns would launch `gmcp` while repairs and preflights still demanded the `uv`
 entry, so they land together.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/installers/ tests/agents/spawners/test_command_builder.py tests/agents/test_spawn_executor_support.py tests/agents/test_isolation.py tests/agents/test_local_context_setup.py -q`,
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/installers/ tests/agents/spawners/test_command_builder.py tests/agents/test_spawn_executor_support.py tests/agents/test_spawn_executor.py tests/agents/test_isolation.py tests/agents/test_local_context_setup.py tests/agents/test_grok_sandbox_home.py -q`,
 then `uv run ruff check` and `uv run mypy` on the touched modules.
 
 Consumers unchanged:
@@ -749,6 +804,7 @@ Consumers unchanged:
 - 1.6.3 - Spawned Codex agents get `gmcp` through `-c` overrides with the same timeouts, environment forwarding, and approvals. test: `tests/agents/test_spawn_executor_support.py::test_codex_overrides_launch_gmcp`.
 - 1.6.4 - Isolated agents get a `gmcp` `.mcp.json`, re-patching a workspace that holds the `uv run --project` entry replaces it, and the preflight accepts the `gmcp` entry and rejects a `uv` entry. test: `tests/agents/test_isolation.py::test_isolation_writes_and_accepts_gmcp_entry`.
 - 1.6.5 - The chat SDK entry and the clients reference name `gmcp`. behavior: "gmcp" in `src/gobby/install/shared/skills/gobby/references/admin/clients.md`.
+- 1.6.6 - A managed Grok run's `config.toml` declares `gobby` as the managed `gmcp` path with no arguments, replacing an operator `gobby` entry and keeping other servers. test: `tests/agents/test_grok_sandbox_home.py::test_operator_gobby_mcp_server_is_replaced_and_others_kept`.
 
 ### 1.7 The Python wrapper and its setting are gone [category: code] (depends: 1.5, 1.6)
 `kind: deliverable`
@@ -767,6 +823,9 @@ Targets:
 - `src/gobby/tasks/criterion_commands.py::*` — scope-reason: `mcp-server` leaves the CLI command-name list
 - `src/gobby/config/servers.py::*` — scope-reason: `MCPClientProxyConfig.tool_timeouts` leaves (Decision 12)
 - `src/gobby/config/registry.py::*` — scope-reason: the `mcp_client_proxy.tool_timeouts` mapping pattern leaves
+- `src/gobby/servers/routes/mcp/endpoints/bridge.py::*` — scope-reason: `get_bridge_tool_timeouts` leaves (Decision 12); `report_bridge_ready` stays
+- `src/gobby/servers/routes/mcp/tools.py::*` — scope-reason: the `/bridge/tool-timeouts` registration and its import leave
+- `src/gobby/servers/auth_service.py::*` — scope-reason: only the `GET /api/mcp/bridge/tool-timeouts` agent route leaves; `POST /api/mcp/bridge/ready` stays
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated without the `tool_timeouts` pattern
 - `web/src/api/runtimeConfigCodecVectors.gen.ts::*` — scope-reason: regenerated with the contract
 - `tests/contracts/http/config_schema.json::*` — scope-reason: the `/api/config/schema` snapshot drops `tool_timeouts`
@@ -774,6 +833,7 @@ Targets:
 - `web/src/components/settings/sections/McpToolsSection.tsx::*` — scope-reason: the `tool_timeouts` path and its Per-tool timeouts editor leave
 - `web/src/components/settings/sections/configFields.tsx::*` — scope-reason: `NumberMapConfigField` leaves; the `tool_timeouts` editor was its only consumer
 - `docs/guides/configuration.md`
+- `docs/guides/http-endpoints.md`
 - `docs/guides/mcp-tools.md`
 - `docs/guides/cli-commands.md`
 - `docs/architecture/development-guide.md`
@@ -791,16 +851,42 @@ Targets:
 - `tests/cli/test_cli.py::*` — scope-reason: the `mcp-server` command and help assertions leave
 - `tests/config/test_servers.py::*` — scope-reason: the `tool_timeouts` cases leave
 - `tests/config/test_config_registry.py::*` — scope-reason: the `tool_timeouts` mapping pattern leaves the expected set
+- `tests/servers/routes/mcp_endpoints/test_bridge.py::*` — scope-reason: the three tool-timeouts tests leave, and `test_router_registers_bridge_routes` asserts that route is absent
+- `tests/mcp_proxy/tools/tasks/test_lifecycle_close_orchestration.py::*` — scope-reason: the config stub drops `tool_timeouts={}`
+- `tests/e2e/test_daemon_lifecycle.py::*` — scope-reason: `TestBridgeAutoStart` and its `_BRIDGE_AUTO_START` script leave with `daemon_control.py` (Decision 5); the helpers `TestFrontDoor` shares stay
+- `tests/utils/test_posix_spawn.py::*` — scope-reason: `_NOT_DAEMON` drops its `mcp_proxy/daemon_control.py` and `mcp_proxy/stdio` entries
 - `web/src/components/settings/sections/__tests__/McpToolsSection.test.tsx::*` — scope-reason: the `tool_timeouts` fixture and editor case leave, and a case asserts the editor is absent
 - `web/tests/style-surfaces.spec.ts::*` — scope-reason: the settings fixture drops `tool_timeouts`
 
 **Research context:**
 - Only `cli/mcp.py`, the stdio modules, and tests import the stdio modules
-  and `daemon_control.py`. After 1.5, no server or e2e test does.
+  and `daemon_control.py`. After 1.5, no server test does, and the only e2e
+  importer is `test_daemon_lifecycle.py`'s auto-start script, which leaves
+  here.
 - `request_context.py` imports `TERMINAL_CONTEXT_KEYS`.
   `current_terminal_context` and `serialize_terminal_context` have no
   non-wrapper caller.
-- `tool_timeouts` is read only by `DaemonProxy._get_tool_timeouts`.
+- `tool_timeouts` is read only by `DaemonProxy._get_tool_timeouts`, through
+  the route #23680 added (Decision 12):
+  - the handler is `src/gobby/servers/routes/mcp/endpoints/bridge.py::get_bridge_tool_timeouts`,
+    registered in `src/gobby/servers/routes/mcp/tools.py`;
+  - `src/gobby/servers/auth_service.py` admits agent tokens on it;
+  - the route has a row in `docs/guides/http-endpoints.md`;
+  - `tests/servers/routes/mcp_endpoints/test_bridge.py` tests it with
+    `test_bridge_tool_timeouts_serve_the_active_config`,
+    `test_bridge_tool_timeouts_wait_for_daemon_config`, and
+    `test_agent_tokens_may_read_bridge_tool_timeouts`, and
+    `test_router_registers_bridge_routes` lists it.
+- Two other test files name the setting. The close-orchestration test's config
+  stub sets `tool_timeouts={}`. `tests/agents/test_spawn_executor.py` mocks
+  the route's answer, and that mock leaves in 1.5.
+- `tests/e2e/test_daemon_lifecycle.py::TestBridgeAutoStart` runs
+  `stdio_daemon.ensure_daemon_running` with `daemon_control` patched (#23531's
+  auto-start fix). Decision 5 gives it no `gmcp` successor. `TestFrontDoor`
+  also uses `_CLI_WITHOUT_MANAGED_SERVICES` and `_real_cli_env`.
+- `tests/utils/test_posix_spawn.py::_NOT_DAEMON` exempts
+  `mcp_proxy/daemon_control.py` and `mcp_proxy/stdio` from the daemon spawn
+  lint.
 - The web settings page edits it.
   `web/src/components/settings/sections/McpToolsSection.tsx` lists
   `mcp_client_proxy.tool_timeouts` in `PROXY_PATHS` and renders the "Per-tool
@@ -823,10 +909,16 @@ Targets:
 - Delete the eight modules and the seven wrapper test files. Remove
   `mcp-server` from `cli/__init__.py`'s lazy map and from `criterion_commands.py`.
   Trim `terminal_context.py` to `TERMINAL_CONTEXT_KEYS`.
+- Delete `TestBridgeAutoStart` and `_BRIDGE_AUTO_START`, and drop the two
+  `_NOT_DAEMON` entries.
 - Remove `tool_timeouts` from `MCPClientProxyConfig` and from `registry.py`'s
   mapping patterns, then regenerate with
   `uv run python scripts/generate_runtime_config_contract.py` and refresh the
-  HTTP config-schema snapshot.
+  HTTP config-schema snapshot. The close-orchestration stub drops the key.
+- Delete `get_bridge_tool_timeouts`, its registration, its agent route, its
+  `http-endpoints.md` row, and its three tests.
+  `test_router_registers_bridge_routes` asserts the route is absent and
+  `/bridge/ready` is present.
 - The MCP & Tools settings section drops the `tool_timeouts` path and editor,
   and `configFields.tsx` drops `NumberMapConfigField`. The unit test replaces
   the editor case with `omitsRetiredPerToolTimeoutsEditor`, and both web
@@ -837,16 +929,20 @@ Targets:
 - The guides, the development guide, and `README.md` describe `gmcp`. The
   `configuration.md` example drops `tool_timeouts`.
 
-**Granularity:** one leaf. The deletions, the setting, and the references are
-one retirement. Splitting them would leave the wrapper importable after the
-inventory forgets it, or the setting documented after its reader is gone.
+**Granularity:** one leaf. The deletions, the setting, its route, and the
+references are one retirement. Splitting them would leave the wrapper
+importable after the inventory forgets it, or the setting and its route served
+after their reader is gone.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/ tests/cli/test_cli.py tests/config/ tests/skills/ tests/contracts/test_http_corpus.py -q`,
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/ tests/cli/test_cli.py tests/config/ tests/skills/ tests/contracts/test_http_corpus.py tests/servers/routes/mcp_endpoints/test_bridge.py tests/utils/test_posix_spawn.py -q`
+and `uv run pytest tests/e2e/test_daemon_lifecycle.py --collect-only -q`,
 then `npx vitest run src/components/settings/sections/__tests__/McpToolsSection.test.tsx`
 and `npx tsc --noEmit` in `web/`, `uv run ruff check src/`, `uv run mypy src/`,
-and `gcode grep -F "mcp_proxy.stdio" src tests` and
-`gcode grep -F "tool_timeouts" src tests web` with no hits.
+and `gcode grep -F "mcp_proxy.stdio" src tests`,
+`gcode grep -w "daemon_control" src tests`,
+`gcode grep -F "tool_timeouts" src tests web`, and
+`gcode grep -F "tool-timeouts" src tests web docs/guides` with no hits.
 
 **Acceptance:**
 
@@ -856,6 +952,7 @@ and `gcode grep -F "mcp_proxy.stdio" src tests` and
 - 1.7.4 - The reference audit carries a `gmcp` row and no `gobby mcp-server` row. behavior: "gmcp" in `docs/reference-audit/admin.json`.
 - 1.7.5 - The guides describe `gmcp` as the stdio transport. behavior: "gmcp" in `docs/guides/mcp-tools.md`.
 - 1.7.6 - The MCP & Tools settings section renders no Per-tool timeouts editor, and `NumberMapConfigField` no longer exists. test: `web/src/components/settings/sections/__tests__/McpToolsSection.test.tsx::omitsRetiredPerToolTimeoutsEditor`.
+- 1.7.7 - `GET /api/mcp/bridge/tool-timeouts` is neither registered nor in the agent route matrix, and `POST /api/mcp/bridge/ready` is still registered. test: `tests/servers/routes/mcp_endpoints/test_bridge.py::test_router_registers_bridge_routes`.
 
 ### 1.8 The sandbox drops the wrapper's read grant [category: code] (depends: 1.6)
 `kind: deliverable`
@@ -880,16 +977,16 @@ Targets:
   `tests/agents/test_sandbox.py::test_isolated_mcp_project_root_is_readable_but_not_writable`
   covers it. The grant must outlive the `uv run` entries, so this leaf follows
   1.6.
-- `src/gobby/agents/srt_runtime.py::render_srt_settings` (lines 504 to 567)
+- `src/gobby/agents/srt_runtime.py::render_srt_settings` (lines 554 to 617)
   holds the loopback-egress comment that names `gobby mcp-server`. Its
   consumers are `prepare_sandbox_launch` and the three test files above.
-- `src/gobby/agents/sandbox_policy.py::gobby_read_exceptions` (lines 335 to
-  367) holds the `uv` comments about the wrapper subprocess. Its only consumer
+- `src/gobby/agents/sandbox_policy.py::gobby_read_exceptions` (lines 349 to
+  381) holds the `uv` comments about the wrapper subprocess. Its only consumer
   is `sandbox.py`. Its `uv` cache and binary read roots still serve agent shell
   `uv run` commands.
-- `sandbox_policy.py` has 935 lines and `srt_runtime.py` has 867, so
-  `production-size-growth` requires the moves (Decision 16). #23273 moves other
-  symbols out of `sandbox_policy.py`; only import lines overlap.
+- `sandbox_policy.py` has 940 lines and `srt_runtime.py` has 932, so
+  `production-size-growth` requires the moves (Decision 16). The credential
+  helpers already live in `sandbox_credentials.py` (`23328c7392`).
 
 **Implementation:**
 - Move `render_srt_settings` from `srt_runtime.py` to the new
@@ -1098,282 +1195,47 @@ root is #23275. Drafting creates no tasks, labels, or edges.
     - F4: the repair covers every `uv run … gobby mcp-server` shape.
     - N1: 1.6 records its Granularity decision.
   - No disagreement went to the Orchestrator.
+- 2026-10-09: Evidence refresh by the Lane 7 Plan Writer gobby#15860, under
+  LM7 gobby#15389's assignment, for delta review by the Plan Adversary
+  gobby#15401. Josh had not yet approved the plan, and it had no tasks. The
+  consumers were re-swept at `ba4aa371f8`.
+  - Auth (1.1): gcore's `read_api_key` replaces the removed
+    `read_local_cli_token`. The managed grant envelope is now a token source.
+    New item 1.1.8 re-reads it per request, as the wrapper does since #23865.
+  - Decision 5 is unchanged, but its basis moved. #23525 was fixed at
+    `f3d55136b7`, so retiring `daemon_control.py` now removes a working
+    auto-start. 1.7 deletes its e2e test and the spawn-lint exemption.
+  - Decision 6: #23531 has landed.
+  - Decision 12 keeps the approved retirement with an updated rationale.
+    1.7 now also retires #23680's `GET /api/mcp/bridge/tool-timeouts`: the
+    route, its registration, its agent route, its tests, and its docs row
+    (new item 1.7.7). That leaves no reader of `tool_timeouts`.
+  - 1.6 gains the managed Grok launch site from #23554 (new item 1.6.6) and
+    `test_codex_terminal_direct_spawn`. Because 1.5 shares that test file,
+    1.6 now depends on 1.5. The stale `local_token.py` docstring target is
+    dropped.
+  - Decision 1 rechecks rmcp (3.5.1 resolves from `version = "3.5"`).
+    `set_variable` gains `scope`. File sizes and line ranges are re-measured.
+    Decision 16 and 1.8 record that `sandbox_credentials.py` has already
+    landed. V2 is worded as completion gates.
+  - New acceptance items left the M1 manifest stale. Following the PD's
+    withdrawal route, the whole `## M1 Task Manifest` block is withdrawn; its
+    bytes stay in Git history at `e4e60efccd`. The Adversary derives a fresh
+    M1 after delta review.
 
 ## V2: Verification
 `kind: verification`
 
-After every leaf has passed:
+These are completion gates for the implementation. Except for plan validation,
+none has run yet. Each runs after the 1.1 to 1.8 leaves land, and each must
+hold before #23275 closes.
 
-1. Run the focused suites of 1.1 to 1.8 together against the test hub, plus
-   `cargo nextest run -p gobby-mcp` and
+1. The focused suites of 1.1 to 1.8 must pass together against the test hub,
+   with `cargo nextest run -p gobby-mcp` and
    `cargo clippy -p gobby-mcp --all-targets -- -D warnings` (heavy work).
-2. Run `tests/e2e/test_stateless_ambient_session.py` against an isolated
+2. `tests/e2e/test_stateless_ambient_session.py` must pass against an isolated
    daemon with the checkout's `gmcp`.
-3. Run `uv run gobby plans validate .gobby/plans/gmcp-stdio.md -p <root>` and
-   `gcode grep -F "gobby mcp-server" src`. Hits remain only in the 1.6
+3. `uv run gobby plans validate .gobby/plans/gmcp-stdio.md -p <root>` must
+   pass, and `gcode grep -F "gobby mcp-server" src` must hit only the 1.6
    repair.
-4. D6 records the post-switch smoke proof.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: '`gobby-mcp` crate and its daemon dialer'
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: Requests carry the protocol header `1`, and the target
-    and caller project headers follow the wrapper''s rules. The session header comes
-    from `GOBBY_SESSION_ID` before the body, the body value is used only without a
-    tmux pane, and otherwise the terminal-context header is sent. With an agent token,
-    the identity headers override. test: `crates/gmcp/tests/dialer.rs::request_headers_match_python_wrapper`.
-
-    1.1.2: A 401 re-reads the credential and retries exactly once. test: `crates/gmcp/tests/dialer.rs::unauthorized_rereads_credential_and_retries_once`.
-
-    1.1.3: A 409 `SESSION_REQUIRED` returns its `detail`. Other non-200 answers return
-    `HTTP <n>: <body>`. test: `crates/gmcp/tests/dialer.rs::conflict_and_error_statuses_match_wrapper`.
-
-    1.1.4: A refused connection and the front door''s typed 503 both return `DAEMON_UNAVAILABLE`
-    naming `gobby start`. A read timeout returns `REQUEST_TIMEOUT` with the spawn-agent
-    hint on `/tools/spawn_agent`. test: `crates/gmcp/tests/dialer.rs::unavailable_and_timeout_results_are_typed`.
-
-    1.1.5: One `Dialer` returns `DAEMON_UNAVAILABLE` while the stub is down and succeeds
-    after the stub re-binds the same port, with no new `Dialer`. Preflight is cached
-    for 5 s only after a success. test: `crates/gmcp/tests/dialer.rs::dialer_survives_daemon_restart`.
-
-    1.1.6: Terminal context prefers the generation query, falls back to window identity,
-    applies the environment fallbacks only to unset keys, and serializes only the
-    twelve contract keys without nulls. test: `crates/gmcp/src/terminal_context.rs::capture_matches_python_wrapper_rules`.
-
-    1.1.7: The wrapper contract equals the Python constants it mirrors. test: `tests/mcp_proxy/test_gmcp_contracts.py::test_wrapper_contract_matches_python_constants`.'
-  labels:
-  - covers:gmcp-stdio:1.1:1.1.1
-  - covers:gmcp-stdio:1.1:1.1.2
-  - covers:gmcp-stdio:1.1:1.1.3
-  - covers:gmcp-stdio:1.1:1.1.4
-  - covers:gmcp-stdio:1.1:1.1.5
-  - covers:gmcp-stdio:1.1:1.1.6
-  - covers:gmcp-stdio:1.1:1.1.7
-  tdd: true
-  source_section: '1.1'
-  implementation_domain: backend
-- title: '`gmcp` serves the wrapper''s tool surface over stdio'
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: '1.2.1: `initialize` succeeds with the stub daemon closed and
-    its listener never touched, and returns the embedded instructions. test: `crates/gmcp/tests/server.rs::initialize_does_no_io`.
-
-    1.2.2: `gmcp`''s `tools/list` equals `tools_list.v1.json`, and both fixtures equal
-    the Python wrapper''s capture. test: `tests/mcp_proxy/test_gmcp_parity.py::test_fixture_matches_python_wrapper`
-    and `crates/gmcp/tests/server.rs::tools_list_matches_fixture`.
-
-    1.2.3: Each of the eleven non-`call_tool` tools sends the wrapper''s method, path,
-    query, and body. `gmcp`''s `initialize` result and call-result envelopes equal
-    `wire_cases.v1.json`. `init_project` makes no request. test: `crates/gmcp/tests/server.rs::tools_forward_like_python_wrapper`
-    and `crates/gmcp/tests/server.rs::wire_results_match_fixture`.
-
-    1.2.4: After the first `tools/list`, readiness is posted once. `SESSION_REQUIRED`,
-    `DAEMON_UNAVAILABLE`, and `REQUEST_TIMEOUT` are retried on the wrapper''s schedule,
-    and other failures are not. test: `crates/gmcp/tests/server.rs::bridge_ready_follows_wrapper_schedule`.
-
-    1.2.5: The embedded instructions equal the bundled prompt byte for byte. test:
-    `tests/mcp_proxy/test_gmcp_contracts.py::test_instructions_copy_matches_bundled_prompt`.
-
-    1.2.6: `gmcp --version` prints the crate version. Closing stdin exits 0 within
-    a 2 s deadline, both when idle and while the stub holds a wait request''s response
-    open. The child exits before the held response is released. test: `crates/gmcp/tests/server.rs::binary_version_and_clean_exit`
-    and `crates/gmcp/tests/server.rs::stdin_close_exits_with_outstanding_wait`.'
-  labels:
-  - covers:gmcp-stdio:1.2:1.2.1
-  - covers:gmcp-stdio:1.2:1.2.2
-  - covers:gmcp-stdio:1.2:1.2.3
-  - covers:gmcp-stdio:1.2:1.2.4
-  - covers:gmcp-stdio:1.2:1.2.5
-  - covers:gmcp-stdio:1.2:1.2.6
-  tdd: true
-  source_section: '1.2'
-  implementation_domain: backend
-- title: '`call_tool` keeps the wrapper''s canonicalization, wait guard, and heartbeat'
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.2'
-  validation_criteria: '1.3.1: Every shared canonicalization case gives the same result
-    in Rust and in Python. test: `crates/gmcp/tests/call_tool.rs::canonicalization_matches_shared_cases`
-    and `tests/mcp_proxy/test_gmcp_contracts.py::test_call_tool_cases_match_python_canonicalizer`.
-
-    1.3.2: A wait tool asking for 900 s is sent with 300 s, through `/api/mcp/tools/call`,
-    with an HTTP timeout of 330 s, and the result carries the three capped-timeout
-    fields. test: `crates/gmcp/tests/call_tool.rs::wait_tool_timeout_is_capped_with_metadata`.
-
-    1.3.3: A heartbeat tool that blocks past 15 s emits progress with the wrapper''s
-    fields when a progress token is present, and none without one. test: `crates/gmcp/tests/call_tool.rs::heartbeat_reports_progress_while_waiting`.
-
-    1.3.4: Past timeout + 5 s, the call returns the wrapper-timeout result while the
-    request continues. test: `crates/gmcp/tests/call_tool.rs::guard_timeout_returns_background_result`.
-
-    1.3.5: Ordinary tools post to `/api/mcp/{server}/tools/{tool}` with the intent
-    query and a 30 s timeout, and extended tools use 300 s. test: `crates/gmcp/tests/call_tool.rs::ordinary_and_extended_tools_use_wrapper_routes`.
-
-    1.3.6: While the stub holds a wait request''s response, one `gmcp` process completes
-    a concurrent ordinary call with the correct request id and identity. Releasing
-    the held response then completes the wait. test: `crates/gmcp/tests/call_tool.rs::ordinary_call_completes_during_wait`.'
-  labels:
-  - covers:gmcp-stdio:1.3:1.3.1
-  - covers:gmcp-stdio:1.3:1.3.2
-  - covers:gmcp-stdio:1.3:1.3.3
-  - covers:gmcp-stdio:1.3:1.3.4
-  - covers:gmcp-stdio:1.3:1.3.5
-  - covers:gmcp-stdio:1.3:1.3.6
-  tdd: true
-  source_section: '1.3'
-  implementation_domain: backend
-- title: '`gobby install` builds, promotes, and tracks `gmcp`'
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.2'
-  validation_criteria: '1.4.1: In a checkout, the gmcp installer builds `gobby-mcp`,
-    promotes `gmcp` through a new inode with the lock held, and writes the version
-    stamp and source hash. Outside a checkout it raises `ManagedBinaryReleaseMissing`.
-    test: `tests/cli/test_install_setup_gmcp.py::test_submodule_install_promotes_and_stamps`.
-
-    1.4.2: A default install runs the `gmcp` installer with the other managed binaries.
-    test: `tests/cli/test_install_setup.py::test_managed_native_binaries_include_gmcp`.
-
-    1.4.3: `gobby install gmcp` promotes only `gmcp` and does not claim the daemon
-    singleton. test: `tests/cli/test_install_components.py::test_gmcp_component_promotes_client_binary`.
-
-    1.4.4: Freshness treats a `gcore` or `gmcp` source change as making `gmcp` stale,
-    and the pins mark it unpublished at 0.1.0. test: `tests/install/test_bin_freshness.py::test_gmcp_tracks_gmcp_and_gcore`.
-
-    1.4.5: The release workflow publishes on `gmcp-v*` tags and fails when the package
-    list lacks the contract or asset files. behavior: "gmcp-v" in `.github/workflows/release-gmcp.yml`.'
-  labels:
-  - covers:gmcp-stdio:1.4:1.4.1
-  - covers:gmcp-stdio:1.4:1.4.2
-  - covers:gmcp-stdio:1.4:1.4.3
-  - covers:gmcp-stdio:1.4:1.4.4
-  - covers:gmcp-stdio:1.4:1.4.5
-  tdd: true
-  source_section: '1.4'
-  implementation_domain: backend
-- title: E2e and server tests drive `gmcp` or the routes, not the wrapper
-  category: test
-  task_type: chore
-  depends_on:
-  - '1.3'
-  validation_criteria: '1.5.1: Through `gmcp`, the ambient session follows `/clear`,
-    the schema lease binds to the child identity, and a hookless terminal gets `SESSION_REQUIRED`.
-    test: `tests/e2e/test_stateless_ambient_session.py::test_ambient_proxy_follows_clear_and_attributes_schema_lease`.
-
-    1.5.2: One `gmcp` process answers `DAEMON_UNAVAILABLE` while the isolated daemon
-    is stopped, and resolves the same session after it restarts. test: `tests/e2e/test_stateless_ambient_session.py::test_same_proxy_resolves_existing_session_after_daemon_restart`.
-
-    1.5.3: The route tests, the execution-context test, and the reference inventory
-    pass with no import of `gobby.mcp_proxy.stdio*`. test: `tests/servers/test_mcp_execution_context.py::test_stdio_and_http_share_trusted_agent_identity`.
-
-    1.5.4: The scrubbed Codex child environment carries `GOBBY_SESSION_ID`, `GOBBY_DAEMON_URL`,
-    and the capability token. test: `tests/agents/test_spawn_executor.py::test_scrubbed_child_env_reaches_daemon_proxy_identity`.'
-  labels:
-  - covers:gmcp-stdio:1.5:1.5.1
-  - covers:gmcp-stdio:1.5:1.5.2
-  - covers:gmcp-stdio:1.5:1.5.3
-  - covers:gmcp-stdio:1.5:1.5.4
-  tdd: false
-  source_section: '1.5'
-  assigned_agent: backend-developer
-- title: Every launch site starts `~/.gobby/bin/gmcp`
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.3'
-  - '1.4'
-  validation_criteria: '1.6.1: Fresh JSON and TOML installs write the managed `gmcp`
-    path with no arguments, and Codex keeps `required`, both timeouts, and the approval
-    mode. test: `tests/cli/installers/test_cli_installers_mcp_config.py::test_fresh_install_writes_gmcp_entry`.
-
-    1.6.2: In JSON and TOML configs, the repair rewrites `uv run gobby mcp-server`,
-    `uv run --directory X gobby mcp-server`, `uv run --project X gobby mcp-server`,
-    `uv run --no-sync --project X gobby mcp-server`, and `gobby mcp-server` entries
-    (bare or at any path) to `gmcp`. It keeps each entry''s `env` and timeouts and
-    leaves other servers alone. test: `tests/cli/installers/test_cli_installers_mcp_config.py::test_repair_rewrites_wrapper_entries_to_gmcp`,
-    parameterized over every shape and both formats.
-
-    1.6.3: Spawned Codex agents get `gmcp` through `-c` overrides with the same timeouts,
-    environment forwarding, and approvals. test: `tests/agents/test_spawn_executor_support.py::test_codex_overrides_launch_gmcp`.
-
-    1.6.4: Isolated agents get a `gmcp` `.mcp.json`, re-patching a workspace that
-    holds the `uv run --project` entry replaces it, and the preflight accepts the
-    `gmcp` entry and rejects a `uv` entry. test: `tests/agents/test_isolation.py::test_isolation_writes_and_accepts_gmcp_entry`.
-
-    1.6.5: The chat SDK entry and the clients reference name `gmcp`. behavior: "gmcp"
-    in `src/gobby/install/shared/skills/gobby/references/admin/clients.md`.'
-  labels:
-  - covers:gmcp-stdio:1.6:1.6.1
-  - covers:gmcp-stdio:1.6:1.6.2
-  - covers:gmcp-stdio:1.6:1.6.3
-  - covers:gmcp-stdio:1.6:1.6.4
-  - covers:gmcp-stdio:1.6:1.6.5
-  tdd: true
-  source_section: '1.6'
-  implementation_domain: backend
-- title: The Python wrapper and its setting are gone
-  category: code
-  task_type: chore
-  depends_on:
-  - '1.5'
-  - '1.6'
-  validation_criteria: '1.7.1: No module under `src/` or `tests/` imports the stdio
-    modules or `daemon_control`, and the eight files are gone. test: `tests/cli/test_cli.py::test_mcp_server_command_is_absent`.
-
-    1.7.2: `TERMINAL_CONTEXT_KEYS` still serves `request_context.py`, and the contract
-    test still passes. test: `tests/mcp_proxy/test_gmcp_contracts.py::test_wrapper_contract_matches_python_constants`.
-
-    1.7.3: `mcp_client_proxy.tool_timeouts` is absent from the config model, the registry,
-    the gcore contract, the web vectors, and the HTTP schema snapshot. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
-
-    1.7.4: The reference audit carries a `gmcp` row and no `gobby mcp-server` row.
-    behavior: "gmcp" in `docs/reference-audit/admin.json`.
-
-    1.7.5: The guides describe `gmcp` as the stdio transport. behavior: "gmcp" in
-    `docs/guides/mcp-tools.md`.
-
-    1.7.6: The MCP & Tools settings section renders no Per-tool timeouts editor, and
-    `NumberMapConfigField` no longer exists. test: `web/src/components/settings/sections/__tests__/McpToolsSection.test.tsx::omitsRetiredPerToolTimeoutsEditor`.'
-  labels:
-  - covers:gmcp-stdio:1.7:1.7.1
-  - covers:gmcp-stdio:1.7:1.7.2
-  - covers:gmcp-stdio:1.7:1.7.3
-  - covers:gmcp-stdio:1.7:1.7.4
-  - covers:gmcp-stdio:1.7:1.7.5
-  - covers:gmcp-stdio:1.7:1.7.6
-  tdd: true
-  source_section: '1.7'
-  implementation_domain: fullstack
-- title: The sandbox drops the wrapper's read grant
-  category: code
-  task_type: chore
-  depends_on:
-  - '1.6'
-  validation_criteria: '1.8.1: An isolated workspace whose `.mcp.json` holds the `gmcp`
-    entry gets no main-repo read root, and `mcp_config_read_exceptions` no longer
-    exists. test: `tests/agents/test_sandbox.py::test_isolated_gmcp_entry_adds_no_project_read_root`.
-
-    1.8.2: The rendered SRT settings are unchanged by the move. test: `tests/agents/test_srt_runtime.py::test_render_settings_uses_srt_credential_schema`.
-
-    1.8.3: The sandbox read paths keep the `uv` cache roots after the move. test:
-    `tests/agents/test_sandbox.py::test_package_installs_use_explicit_per_run_cache_paths`.
-
-    1.8.4: The loopback-egress comment names `gmcp`. behavior: "gmcp" in `src/gobby/agents/srt_settings.py`.'
-  labels:
-  - covers:gmcp-stdio:1.8:1.8.1
-  - covers:gmcp-stdio:1.8:1.8.2
-  - covers:gmcp-stdio:1.8:1.8.3
-  - covers:gmcp-stdio:1.8:1.8.4
-  tdd: true
-  source_section: '1.8'
-  implementation_domain: backend
-```
+4. D6 must record the post-switch smoke proof.
