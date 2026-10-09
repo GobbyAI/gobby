@@ -184,6 +184,8 @@ class TaskRecoveryHandler:
             return False
         try:
             if not await self._run_db(self._run_owns_session, db_run):
+                # A rebound session never returns to a historical run's identity.
+                self._settled_run_ids.add(db_run.id)
                 return False
             resolved = await self.resolve_claimed_task_for_run(db_run)
             if resolved is None:
