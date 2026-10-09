@@ -342,6 +342,41 @@ def test_non_validation_rerun_never_earns_confinement_credit(
     assert _credit(candidate, context, green=green) == (frozenset(), [])
 
 
+@pytest.mark.parametrize(
+    "option",
+    [
+        "--sw-skip",
+        "--stepwise-skip",
+        "-o addopts=--co",
+        "-oaddopts=--co",
+        "--override-ini addopts=--co",
+        "--override-ini=addopts=--co",
+        "-o 'addopts = -k chosen'",
+    ],
+)
+@pytest.mark.parametrize("side", ["failure", "rerun"])
+def test_hidden_pytest_limits_never_earn_confinement_credit(
+    case: tuple[CloseCandidate, ConfinementContext], option: str, side: str
+) -> None:
+    candidate, context = case
+    failure = _run(Path(candidate.root), 1, failed=True)
+    green = _run(Path(candidate.root), 4)
+    if side == "failure":
+        failure = replace(failure, command=failure.command + " " + option)
+        context = replace(
+            context,
+            handoffs=(
+                replace(
+                    context.handoffs[0],
+                    content=f"Failing command: {failure.command}; {FOREIGN}: AssertionError; blocks close.",
+                ),
+            ),
+        )
+    else:
+        green = replace(green, command=green.command + " " + option)
+    assert _credit(candidate, context, failure=failure, green=green) == (frozenset(), [])
+
+
 @pytest.mark.parametrize("option", ["--co", "--setup-plan"])
 @pytest.mark.parametrize("confined", [False, True])
 def test_close_gate_does_not_credit_non_validation_pytest_coverage(

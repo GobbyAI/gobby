@@ -102,6 +102,8 @@ _LIMITS = (
     "--last-failed",
     "--sw",
     "--stepwise",
+    "--sw-skip",
+    "--stepwise-skip",
     "--collect-only",
     "--deselect",
     "--ignore",
@@ -117,6 +119,7 @@ def _full_pytest(run: TranscriptValidationRun) -> bool:
     arguments = words[pytest_index + 1 :]
     return not any(
         "::" in word
+        or re.match(r"^(?:-o|--override-ini=)?\s*addopts\s*=", word) is not None
         or word == limit
         or word.startswith(limit + "=")
         or (word.startswith("-") and not word.startswith("--") and set(word[1:]) & {"k", "m", "x"})
