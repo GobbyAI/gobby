@@ -435,7 +435,7 @@ class TestDispatchBatch:
         assert all(r["success"] for r in result["results"])
 
     @pytest.mark.asyncio
-    async def test_dispatch_batch_bounds_concurrent_spawns(
+    async def test_dispatch_batch_respects_configured_cap(
         self, registry_deps: RegistryDeps
     ) -> None:
         runner, tm, db, session_manager = registry_deps
@@ -458,7 +458,7 @@ class TestDispatchBatch:
             patch("gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body", return_value=None),
             patch("gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl") as mock_impl_patch,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._factory.max_active_agents_for_project",
+                "gobby.mcp_proxy.tools.spawn_agent._dispatch_batch.configured_max_active_agents",
                 return_value=2,
             ),
         ):
@@ -487,7 +487,7 @@ class TestDispatchBatch:
             )
 
         assert result["dispatched"] == 5
-        assert max_seen <= 2
+        assert max_seen == 2
 
     @pytest.mark.asyncio
     async def test_empty_suggestions(self, registry_deps: RegistryDeps) -> None:

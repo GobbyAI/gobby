@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import asyncio
+import inspect
 import threading
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -10,6 +12,7 @@ from uuid import uuid4
 import pytest
 import yaml
 
+from gobby import app_context
 from gobby.agents.sync import get_bundled_agents_path
 from gobby.mcp_proxy.tools.spawn_agent import _factory, _spawn_guards
 from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import resolve_spawn_task_context
@@ -416,7 +419,7 @@ async def test_cap_error_reports_caller_owned_runs(
         prompt="other",
         agent_name="backend-developer",
     )
-    monkeypatch.setattr(_spawn_guards, "max_active_agents_for_project", lambda _path: 4)
+    monkeypatch.setattr(_spawn_guards, "configured_max_active_agents", lambda: 4)
 
     with session_context_for_test(caller.id):
         async with _spawn_guards.reserve_agent_slot(
@@ -431,6 +434,68 @@ async def test_cap_error_reports_caller_owned_runs(
     )
 
 
+def test_slot_cap_reads_daemon_config_max_active_agents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = MagicMock(ready=True)
+    runtime.capture.return_value.snapshot.active.max_active_agents = 2
+    container = MagicMock(config_runtime=runtime)
+    monkeypatch.setattr(app_context, "get_app_context", lambda: container)
+    monkeypatch.setattr(_spawn_guards, "_count_active_agents", lambda *_args, **_kwargs: 2)
+
+    response = _spawn_guards.agent_slot_cap_refusal(
+        object(),
+        project_id="project-live-cap",
+        project_path="/tmp/live-cap",
+        caller_session_id=None,
+    )
+    assert response is not None
+    assert response["cap_reached"] is True
+    assert "(2/2)" in response["error"]
+
+    runtime.capture.return_value.snapshot.active.max_active_agents = 3
+    assert (
+        _spawn_guards.agent_slot_cap_refusal(
+            object(),
+            project_id="project-live-cap",
+            project_path="/tmp/live-cap",
+            caller_session_id=None,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("state", ["absent", "no-runtime", "not-ready"])
+def test_slot_cap_defaults_without_ready_runtime(
+    monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    runtime = MagicMock(ready=False)
+    container = MagicMock(config_runtime=runtime if state == "not-ready" else None)
+    monkeypatch.setattr(
+        app_context, "get_app_context", lambda: None if state == "absent" else container
+    )
+    assert _spawn_guards.configured_max_active_agents() == 20
+    runtime.capture.assert_not_called()
+
+
+def test_spawn_guards_import_no_build_or_dispatch() -> None:
+    imports = ast.parse(inspect.getsource(_spawn_guards))
+    forbidden = {"gobby.config.build", "gobby.dispatch"}
+    for node in ast.walk(imports):
+        modules = (
+            [node.module]
+            if isinstance(node, ast.ImportFrom)
+            else [alias.name for alias in node.names]
+            if isinstance(node, ast.Import)
+            else []
+        )
+        assert all(
+            module is None
+            or not any(module == root or module.startswith(root + ".") for root in forbidden)
+            for module in modules
+        )
+
+
 @pytest.mark.asyncio
 async def test_reserve_agent_slot_counts_active_agents_off_event_loop(
     monkeypatch: pytest.MonkeyPatch,
@@ -443,7 +508,7 @@ async def test_reserve_agent_slot_counts_active_agents_off_event_loop(
         return 0
 
     monkeypatch.setattr(_spawn_guards, "_count_active_agents", count_active_agents)
-    monkeypatch.setattr(_spawn_guards, "max_active_agents_for_project", lambda _path: 1)
+    monkeypatch.setattr(_spawn_guards, "configured_max_active_agents", lambda: 1)
 
     async with _spawn_guards.reserve_agent_slot(
         db=object(),
@@ -576,7 +641,7 @@ def test_task_spawn_lease_releases_mutex_when_enter_raises(
             events.append(("exit", exc_type, str(exc)))
             return False
 
-    monkeypatch.setattr("gobby.dispatch.mutex.RuntimeDispatchMutex", ExplodingMutex)
+    monkeypatch.setattr(_spawn_guards, "RuntimeDispatchMutex", ExplodingMutex)
     monkeypatch.setattr(_spawn_guards, "TaskDispatchMutexManager", lambda _db: object())
 
     lease = _spawn_guards.TaskSpawnLease(db=object(), task_id="task-1")

@@ -11,6 +11,8 @@ from uuid import uuid4
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.utils.datetime import parse_stored_datetime
 
+DISPATCH_TTL_SECONDS = 600
+
 CandidateLoader = Callable[[str], object | None]
 RuntimeStageSnapshotState = Literal["ready", "in_progress", "needs_review", "review_approved"]
 
@@ -306,6 +308,7 @@ def _coerce_actionable_stage_state(
 
 
 __all__ = [
+    "DISPATCH_TTL_SECONDS",
     "DispatchCandidateChangedError",
     "DispatchMutexUnavailableError",
     "RuntimeDispatchMutex",
