@@ -12,6 +12,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from gobby.storage.definitions._shared import DefinitionSyncCandidate
 from gobby.storage.definitions.variables import (
     SessionVariableDefaultManager,
     SessionVariableDefaultRow,
@@ -134,12 +135,7 @@ def sync_bundled_variables(
     result["orphaned"] = 0
     if scan_is_authoritative and variable_files and not result["errors"]:
         for row in manager.list_sync_candidates():
-            if (
-                row.source == "installed"
-                and row.project_id is None
-                and tag in (row.tags or [])
-                and row.name not in on_disk
-            ):
+            if _is_sync_managed_variable(row, tag) and row.name not in on_disk:
                 manager.delete(row.id)
                 logger.debug("Soft-deleted orphaned bundled variable", extra={"variable": row.name})
                 result["orphaned"] += 1
@@ -229,7 +225,9 @@ def _sync_single_variable(
     result["synced"] += 1
 
 
-def _is_sync_managed_variable(existing: SessionVariableDefaultRow, sync_tag: str) -> bool:
+def _is_sync_managed_variable(
+    existing: SessionVariableDefaultRow | DefinitionSyncCandidate, sync_tag: str
+) -> bool:
     """Return whether an existing row is safe for template sync to manage."""
     return (
         existing.source == "installed"

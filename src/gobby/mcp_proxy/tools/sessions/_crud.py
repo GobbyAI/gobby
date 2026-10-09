@@ -178,7 +178,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
         if session_manager is None:
             return {"error": "Session manager not available"}
 
-        sessions = session_manager.list(
+        sessions = session_manager.list_brief(
             project_id=project_id,
             status=status,
             source=source,

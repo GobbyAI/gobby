@@ -32,6 +32,43 @@ _TASK_REF_ROLE_COLUMNS: dict[str, str] = {
     "closed": "closed_in_session_id",
 }
 
+# Keep Session.from_row's required metadata while omitting conversation bodies.
+# NULL aliases satisfy its full-row constructor without fetching those values.
+_BRIEF_SESSION_COLUMNS = """
+    sessions.id, external_id, machine_id, source, sessions.project_id, title,
+    title_source, reasoning_effort, status, transcript_path, summary_path,
+    NULL AS summary_markdown, git_branch, parent_session_id, created_at, updated_at,
+    last_activity, summary_generation_mode, summary_generated_at, agent_depth,
+    spawned_by_agent_id, workflow_name, agent_run_id, context_injected,
+    NULL AS original_prompt, usage_input_tokens, usage_output_tokens,
+    usage_cache_creation_tokens, usage_cache_read_tokens, model, is_local,
+    terminal_context, seq_num, had_edits, message_count, turn_count, tool_call_count,
+    session_type, sandbox_enabled, sandbox_policy_hash, workspace_path, workspace_generation
+"""
+
+
+def _read_session_page(
+    db: HubDatabase,
+    conditions: list[str],
+    params: list[Any],
+    limit: int,
+    columns: str = "sessions.*",
+) -> _Sessions:
+    where_clause = " AND ".join(conditions)
+    rows = db.fetchall(
+        f"""
+        SELECT {columns}, session_projects.project_name
+        FROM sessions LEFT JOIN
+            (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects
+            USING (project_id)
+        WHERE {where_clause}
+        ORDER BY updated_at DESC, id DESC
+        LIMIT %s
+        """,  # nosec B608
+        (*params, limit),
+    )
+    return [Session.from_row(row) for row in rows]
+
 
 def _build_session_filters(
     project_id: str | None,
@@ -219,19 +256,25 @@ class _QueryMixin:
             conditions.append("(updated_at < %s OR (updated_at = %s AND id < %s))")
             params.extend([cursor_updated_at, cursor_updated_at, cursor_id])
 
-        where_clause = " AND ".join(conditions)
-        params.append(limit)
+        return _read_session_page(self.db, conditions, params, limit)
 
-        rows = self.db.fetchall(
-            f"""
-            SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
-            WHERE {where_clause}
-            ORDER BY updated_at DESC, id DESC
-            LIMIT %s
-            """,  # nosec B608
-            tuple(params),
+    def list_brief(
+        self: _ManagerState,
+        project_id: str | None = None,
+        status: str | None = None,
+        source: str | None = None,
+        limit: int = 100,
+        machine_id: str | None = None,
+    ) -> _Sessions:
+        """Read list metadata and liveness without stored conversation bodies.
+
+        These Session projections are for to_brief(), not full-session serialization.
+        Task refs remain unloaded until the caller invokes load_task_refs().
+        """
+        conditions, params = _build_session_filters(
+            project_id, status, source, machine_id=machine_id
         )
-        return [Session.from_row(row) for row in rows]
+        return _read_session_page(self.db, conditions, params, limit, _BRIEF_SESSION_COLUMNS)
 
     def list_newest_created(
         self: _ManagerState,
