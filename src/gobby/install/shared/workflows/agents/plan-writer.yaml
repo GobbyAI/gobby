@@ -10,6 +10,7 @@ priority: 20
 surfaces: [spawn, persona]
 provider: codex
 execution_mode: interactive
+send_message_targets: [parent, session]
 model: gpt-5.6-sol
 reasoning_effort: medium
 checkout_mode: none
