@@ -152,6 +152,8 @@ PIPELINE_LAUNCHES = (
     _proxy_call("gobby-workflows", "pipeline:nightly"),
     _shell("cd /tmp && uv run gobby pipelines run nightly"),
     _shell("gobby --config /tmp/gobby.yaml pipelines run nightly"),
+    _shell("python -m gobby.cli pipelines run nightly"),
+    _shell("uv run --module gobby.cli pipelines run nightly"),
 )
 
 
@@ -246,6 +248,8 @@ async def test_orchestrator_still_cannot_spawn_from_the_shell(
         "gobby agents spawn developer --task '#1'",
         "uv run gobby agents spawn developer --resume gobby#15771",
         "gobby --config /tmp/gobby.yaml agents spawn developer",
+        "python -m gobby.cli agents spawn developer",
+        "uv run -m gobby.cli agents spawn developer",
         "gobby pipelines run nightly && gobby agents spawn developer",
     ):
         refused = await _decide(engine, _shell(command), seat)
@@ -304,7 +308,10 @@ PROJECT_CREATES = (
     _shell("GOBBY_HOME=/tmp/home gobby init --name scratch"),
     _shell("/Users/josh/.local/bin/gobby init"),
     _shell("gobby --config /tmp/gobby.yaml init"),
-    _shell("python -m gobby init"),
+    _shell("python -m gobby.cli init"),
+    _shell("uv run python -m gobby.cli init"),
+    _shell("uv run -m gobby.cli init"),
+    _shell("python3 -m gobby.cli install --no-interactive"),
     _shell("cd /tmp/scratch; gobby init"),
     _shell("true && gobby init"),
     _shell("false || gobby init"),

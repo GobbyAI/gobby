@@ -258,7 +258,12 @@ def _uv_run_argv(name: str, args: list[str]) -> list[str] | None:
         return None
     subcommand = _after_options(args, _UV_GLOBAL_VALUE_OPTIONS)
     if subcommand[:1] == ["run"]:
-        return _after_options(subcommand[1:], _UV_RUN_VALUE_OPTIONS)
+        argv = _after_options(subcommand[1:], _UV_RUN_VALUE_OPTIONS)
+        # `uv run -m X` runs module X as `python -m X` would.
+        options = subcommand[1 : len(subcommand) - len(argv)]
+        if argv and {"-m", "--module"} & set(options):
+            return ["python", "-m", *argv]
+        return argv
     if subcommand[:1] == ["tool"]:
         tool = _after_options(subcommand[1:], _UV_GLOBAL_VALUE_OPTIONS)
         if tool[:1] in (["run"], ["uvx"]):
@@ -341,8 +346,9 @@ def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) ->
             continue
         if _python_name(name):
             module_args = _python_program(unwrapped)[2]
-            if module_args[:1] == ["gobby"]:
-                scripts.append(shlex.join(module_args))
+            # `gobby.cli` is the runnable module; `gobby` names the same CLI.
+            if module_args[:1] in (["gobby"], ["gobby.cli"]):
+                scripts.append(shlex.join(["gobby", *module_args[1:]]))
         if name == "su":
             for index, word in enumerate(unwrapped[1:], 1):
                 if word in {"-c", "--command"} and index + 1 < len(unwrapped):
